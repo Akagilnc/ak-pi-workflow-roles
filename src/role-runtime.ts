@@ -37,8 +37,7 @@ import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
-  isDurablePackagedRoleTerminalResult,
-  isNavigatorInfrastructureFailureFact,
+  classifyPackagedRoleTerminalResult,
   NAVIGATOR_INVOCATION_ENTRY,
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
@@ -75,9 +74,13 @@ import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-r
 
 export {
   buildNavigatorInfrastructureFailureFact,
+  classifyPackagedRoleTerminalResult,
+  isAcceptedPackagedRoleTerminalResult,
+  isDurablePackagedRoleTerminalResult,
   isNavigatorInfrastructureFailureFact,
   NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
   type NavigatorInfrastructureFailureFact,
+  type PackagedRoleTerminalClassification,
 } from "./navigator-invocation-identity.ts";
 export { activationTraceRecordSchema, namedActivationCause } from "./activation-trace.ts";
 export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
@@ -362,16 +365,18 @@ function navigatorOutputTool(role: string): string | undefined {
   return packagedRoleOutputTool(role);
 }
 
-export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError: boolean; details: unknown }): NavigatorSettlement | undefined {
-  // Shared durable-completion gate (lifecycle + settlement) — registry output tool only.
+export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError?: unknown; details: unknown }): NavigatorSettlement | undefined {
+  // One shared classifier owns terminal discriminant (lifecycle + settlement + extractors).
   if (event.toolName !== navigatorOutputTool(role)) return undefined;
-  if (!isDurablePackagedRoleTerminalResult(event)) return undefined;
+  const classification = classifyPackagedRoleTerminalResult(event);
+  if (classification.kind === "nonterminal") return undefined;
+  if (classification.kind === "infrastructure") {
+    return { kind: "role_infrastructure_failure", role, phase };
+  }
+  // accepted/human — project role/phase status; classifier already rejected infra/contradiction.
   const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
     ? event.details as Record<string, unknown>
     : {};
-  if (isNavigatorInfrastructureFailureFact(event.details)) {
-    return { kind: "role_infrastructure_failure", role, phase };
-  }
   if (isAuditEscalationResult(event.details)) {
     return { kind: "human_decision", role, phase, status: "audit_escalation" };
   }

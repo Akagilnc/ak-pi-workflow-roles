@@ -2,6 +2,11 @@ import { PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.js";
 import { isUuidV7, uuidv7 } from "./uuidv7.js";
 const NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
 const NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
+const NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
+  "kind",
+  "source",
+  "reasonCode"
+];
 function buildNavigatorInfrastructureFailureFact() {
   return {
     kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
@@ -12,6 +17,11 @@ function buildNavigatorInfrastructureFailureFact() {
 function isNavigatorInfrastructureFailureFact(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value;
+  const keys = Object.keys(record);
+  if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
+  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
+    if (!Object.hasOwn(record, key)) return false;
+  }
   return record.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record.source === "shared-role-lifecycle" && record.reasonCode === "host_failure";
 }
 const PACKAGED_ROLE_OUTPUT_TOOLS = new Set(
@@ -27,13 +37,26 @@ function invocationIdFromData(data) {
   const trimmed = invocationId.trim();
   return isUuidV7(trimmed) ? trimmed : void 0;
 }
+function classifyPackagedRoleTerminalResult(message) {
+  if (typeof message.toolName !== "string") return { kind: "nonterminal" };
+  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
+  const infraFact = isNavigatorInfrastructureFailureFact(message.details) ? message.details : void 0;
+  if (message.isError === true) {
+    if (infraFact === void 0) return { kind: "nonterminal" };
+    return { kind: "infrastructure", fact: infraFact };
+  }
+  if (message.isError === false) {
+    if (infraFact !== void 0) return { kind: "nonterminal" };
+    return { kind: "accepted" };
+  }
+  return { kind: "nonterminal" };
+}
 function isDurablePackagedRoleTerminalResult(message) {
-  if (typeof message.toolName !== "string") return false;
-  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return false;
-  const hasInfraFact = isNavigatorInfrastructureFailureFact(message.details);
-  if (message.isError === true) return hasInfraFact;
-  if (message.isError === false) return !hasInfraFact;
-  return false;
+  const classification = classifyPackagedRoleTerminalResult(message);
+  return classification.kind === "accepted" || classification.kind === "infrastructure";
+}
+function isAcceptedPackagedRoleTerminalResult(message) {
+  return classifyPackagedRoleTerminalResult(message).kind === "accepted";
 }
 function isPackagedRoleTerminalEntry(entry) {
   if (entry?.type !== "message") return false;
@@ -80,7 +103,9 @@ export {
   NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
   NAVIGATOR_INVOCATION_ENTRY,
   buildNavigatorInfrastructureFailureFact,
+  classifyPackagedRoleTerminalResult,
   currentInvocationPrincipalFromSession,
+  isAcceptedPackagedRoleTerminalResult,
   isDurablePackagedRoleTerminalResult,
   isNavigatorInfrastructureFailureFact,
   mintNavigatorInvocationId,

@@ -11,12 +11,11 @@
  * self-shape, markers after the terminal, or stale older markers behind a
  * malformed nearest. Non-UUIDv7 principals are never accepted.
  *
- * Durable completion of a packaged role terminal is registry-driven and shared
- * with publicNavigatorSettlement. Exact typed discriminants only:
- *   - accepted/human: isError === false and no infrastructure-failure fact
- *   - infrastructure: isError === true plus valid typed infrastructure fact
- * Missing/non-boolean isError, ordinary retryable isError === true, and
- * contradictory isError === false + infrastructure fact fail closed (non-terminal).
+ * One shared typed terminal classifier owns durable completion for lifecycle,
+ * publicNavigatorSettlement, and every public CLI Receipt extractor:
+ *   - accepted/human: isError exactly false and no infrastructure-failure fact
+ *   - infrastructure: isError exactly true plus exact closed infrastructure fact
+ *   - retryable/missing/nonboolean/contradictory/malformed: nonterminal
  */
 
 import { PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
@@ -26,6 +25,14 @@ export const NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation" as const;
 
 /** Typed durable infrastructure-failure fact on a packaged role output toolResult. */
 export const NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure" as const;
+
+/** Closed fact keys — extras/missing/wrong keys fail closed. */
+const NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
+  "kind",
+  "source",
+  "reasonCode",
+] as const;
+
 export type NavigatorInfrastructureFailureFact = {
   kind: typeof NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND;
   source: "shared-role-lifecycle";
@@ -40,11 +47,20 @@ export function buildNavigatorInfrastructureFailureFact(): NavigatorInfrastructu
   };
 }
 
+/**
+ * Exact closed infrastructure-failure fact.
+ * Rejects extras, missing keys, wrong values/types, and non-objects.
+ */
 export function isNavigatorInfrastructureFailureFact(
   value: unknown,
 ): value is NavigatorInfrastructureFailureFact {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
+  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
+    if (!Object.hasOwn(record, key)) return false;
+  }
   return (
     record.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND &&
     record.source === "shared-role-lifecycle" &&
@@ -82,25 +98,66 @@ function invocationIdFromData(data: unknown): string | undefined {
   return isUuidV7(trimmed) ? trimmed : undefined;
 }
 
-/**
- * Shared durable-completion gate for packaged role output toolResults.
- * Mirrors publicNavigatorSettlement's terminal/non-terminal split without role/phase
- * projection. Fail closed on missing/non-boolean isError and contradictory shapes.
- */
-export function isDurablePackagedRoleTerminalResult(message: {
+/** Shared terminal discriminant owned by one classifier. */
+export type PackagedRoleTerminalClassification =
+  | { readonly kind: "accepted" }
+  | {
+      readonly kind: "infrastructure";
+      readonly fact: NavigatorInfrastructureFailureFact;
+    }
+  | { readonly kind: "nonterminal" };
+
+export type PackagedRoleTerminalMessage = {
   readonly toolName?: unknown;
   readonly isError?: unknown;
   readonly details?: unknown;
-}): boolean {
-  if (typeof message.toolName !== "string") return false;
-  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return false;
-  const hasInfraFact = isNavigatorInfrastructureFailureFact(message.details);
-  // Infrastructure completion: exact isError === true + valid typed infra fact.
-  if (message.isError === true) return hasInfraFact;
+};
+
+/**
+ * One shared typed terminal classifier for packaged role output toolResults.
+ * Consumed by lifecycle principal completion, publicNavigatorSettlement, and
+ * every public CLI role Receipt extractor. No second classifier.
+ */
+export function classifyPackagedRoleTerminalResult(
+  message: PackagedRoleTerminalMessage,
+): PackagedRoleTerminalClassification {
+  if (typeof message.toolName !== "string") return { kind: "nonterminal" };
+  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
+
+  const infraFact = isNavigatorInfrastructureFailureFact(message.details)
+    ? message.details
+    : undefined;
+
+  // Infrastructure completion: exact isError === true + exact closed infra fact.
+  if (message.isError === true) {
+    if (infraFact === undefined) return { kind: "nonterminal" };
+    return { kind: "infrastructure", fact: infraFact };
+  }
   // Accepted/human completion: exact isError === false and must not carry infra fact.
-  if (message.isError === false) return !hasInfraFact;
-  // Missing or non-boolean isError is non-terminal.
-  return false;
+  if (message.isError === false) {
+    if (infraFact !== undefined) return { kind: "nonterminal" };
+    return { kind: "accepted" };
+  }
+  // Missing, non-boolean, contradictory, or malformed shapes fail closed.
+  return { kind: "nonterminal" };
+}
+
+/**
+ * Durable-completion boolean over the shared classifier
+ * (accepted/human or infrastructure terminal).
+ */
+export function isDurablePackagedRoleTerminalResult(
+  message: PackagedRoleTerminalMessage,
+): boolean {
+  const classification = classifyPackagedRoleTerminalResult(message);
+  return classification.kind === "accepted" || classification.kind === "infrastructure";
+}
+
+/** Receipt extractors admit only exact accepted/human terminals. */
+export function isAcceptedPackagedRoleTerminalResult(
+  message: PackagedRoleTerminalMessage,
+): boolean {
+  return classifyPackagedRoleTerminalResult(message).kind === "accepted";
 }
 
 function isPackagedRoleTerminalEntry(entry: NavigatorInvocationEntryLike | undefined): boolean {

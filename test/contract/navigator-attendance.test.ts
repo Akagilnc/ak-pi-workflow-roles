@@ -1595,8 +1595,10 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
   const {
     NAVIGATOR_INVOCATION_ENTRY,
     buildNavigatorInfrastructureFailureFact,
+    classifyPackagedRoleTerminalResult,
     currentInvocationPrincipalFromSession,
     isDurablePackagedRoleTerminalResult,
+    isNavigatorInfrastructureFailureFact,
     resolveLifecycleInvocationPrincipal,
   } = await import("../../src/navigator-invocation-identity.ts");
   const { isUuidV7 } = await import("../../src/uuidv7.ts");
@@ -1689,7 +1691,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       assert.equal(isDurablePackagedRoleTerminalResult(retryableMsg), false, `${entry.role}:${String(phase)}:retryable`);
       assert.equal(isDurablePackagedRoleTerminalResult(infraMsg), true, `${entry.role}:${String(phase)}:infra`);
 
-      // Typed negative regressions: missing / non-boolean isError / contradictory accepted+infra fail closed.
+      // Typed negative regressions: missing / non-boolean / zero / contradictory / extra-key infra fail closed.
       const missingIsErrorMsg = {
         toolName: entry.outputTool,
         details: acceptedDetails,
@@ -1699,14 +1701,37 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         isError: "false" as unknown as boolean,
         details: acceptedDetails,
       };
+      const zeroIsErrorMsg = {
+        toolName: entry.outputTool,
+        isError: 0 as unknown as boolean,
+        details: acceptedDetails,
+      };
       const contradictoryAcceptedInfraMsg = {
         toolName: entry.outputTool,
         isError: false,
         details: infraFact,
       };
+      const extraKeyInfraMsg = {
+        toolName: entry.outputTool,
+        isError: true,
+        details: { ...infraFact, extra: "not-closed" },
+      };
+      const malformedInfraMsg = {
+        toolName: entry.outputTool,
+        isError: true,
+        details: { kind: "role_infrastructure_failure", source: "other", reasonCode: "host_failure" },
+      };
+      assert.equal(classifyPackagedRoleTerminalResult(acceptedMsg).kind, "accepted", `${entry.role}:${String(phase)}:classify-accepted`);
+      assert.equal(classifyPackagedRoleTerminalResult(infraMsg).kind, "infrastructure", `${entry.role}:${String(phase)}:classify-infra`);
+      assert.equal(classifyPackagedRoleTerminalResult(retryableMsg).kind, "nonterminal", `${entry.role}:${String(phase)}:classify-retryable`);
       assert.equal(isDurablePackagedRoleTerminalResult(missingIsErrorMsg), false, `${entry.role}:${String(phase)}:missing-isError`);
       assert.equal(isDurablePackagedRoleTerminalResult(stringFalseIsErrorMsg), false, `${entry.role}:${String(phase)}:string-false-isError`);
+      assert.equal(isDurablePackagedRoleTerminalResult(zeroIsErrorMsg), false, `${entry.role}:${String(phase)}:zero-isError`);
       assert.equal(isDurablePackagedRoleTerminalResult(contradictoryAcceptedInfraMsg), false, `${entry.role}:${String(phase)}:contradictory-accepted-infra`);
+      assert.equal(isDurablePackagedRoleTerminalResult(extraKeyInfraMsg), false, `${entry.role}:${String(phase)}:extra-key-infra`);
+      assert.equal(isDurablePackagedRoleTerminalResult(malformedInfraMsg), false, `${entry.role}:${String(phase)}:malformed-infra`);
+      assert.equal(isNavigatorInfrastructureFailureFact(extraKeyInfraMsg.details), false, `${entry.role}:${String(phase)}:closed-fact-extras`);
+      assert.equal(isNavigatorInfrastructureFailureFact(malformedInfraMsg.details), false, `${entry.role}:${String(phase)}:closed-fact-wrong-source`);
 
       assert.notEqual(
         publicNavigatorSettlement(entry.role, phase, acceptedMsg)?.kind,
@@ -1734,9 +1759,24 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         `${entry.role}:${String(phase)}:settlement-string-false-isError`,
       );
       assert.equal(
+        publicNavigatorSettlement(entry.role, phase, zeroIsErrorMsg),
+        undefined,
+        `${entry.role}:${String(phase)}:settlement-zero-isError`,
+      );
+      assert.equal(
         publicNavigatorSettlement(entry.role, phase, contradictoryAcceptedInfraMsg),
         undefined,
         `${entry.role}:${String(phase)}:settlement-contradictory-accepted-infra`,
+      );
+      assert.equal(
+        publicNavigatorSettlement(entry.role, phase, extraKeyInfraMsg),
+        undefined,
+        `${entry.role}:${String(phase)}:settlement-extra-key-infra`,
+      );
+      assert.equal(
+        publicNavigatorSettlement(entry.role, phase, malformedInfraMsg),
+        undefined,
+        `${entry.role}:${String(phase)}:settlement-malformed-infra`,
       );
 
       const roleMarker = marker(validA, entry.role, phase);

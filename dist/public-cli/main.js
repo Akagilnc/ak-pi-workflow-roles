@@ -13058,6 +13058,22 @@ var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 
 // src/navigator-invocation-identity.ts
 var NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
+var NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
+var NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
+  "kind",
+  "source",
+  "reasonCode"
+];
+function isNavigatorInfrastructureFailureFact(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record5 = value;
+  const keys = Object.keys(record5);
+  if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
+  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
+    if (!Object.hasOwn(record5, key)) return false;
+  }
+  return record5.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record5.source === "shared-role-lifecycle" && record5.reasonCode === "host_failure";
+}
 var PACKAGED_ROLE_OUTPUT_TOOLS = new Set(
   PACKAGED_ROLE_REGISTRY.map((entry) => entry.outputTool)
 );
@@ -13067,6 +13083,23 @@ function invocationIdFromData(data) {
   if (typeof invocationId !== "string") return void 0;
   const trimmed = invocationId.trim();
   return isUuidV7(trimmed) ? trimmed : void 0;
+}
+function classifyPackagedRoleTerminalResult(message) {
+  if (typeof message.toolName !== "string") return { kind: "nonterminal" };
+  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
+  const infraFact = isNavigatorInfrastructureFailureFact(message.details) ? message.details : void 0;
+  if (message.isError === true) {
+    if (infraFact === void 0) return { kind: "nonterminal" };
+    return { kind: "infrastructure", fact: infraFact };
+  }
+  if (message.isError === false) {
+    if (infraFact !== void 0) return { kind: "nonterminal" };
+    return { kind: "accepted" };
+  }
+  return { kind: "nonterminal" };
+}
+function isAcceptedPackagedRoleTerminalResult(message) {
+  return classifyPackagedRoleTerminalResult(message).kind === "accepted";
 }
 function currentInvocationPrincipalFromSession(entries, beforeIndex = entries.length) {
   const limit = Math.min(Math.max(beforeIndex, 0), entries.length);
@@ -13624,7 +13657,7 @@ function extractJudgeRoleOutcome(entries) {
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== JUDGE_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     if (isAuditEscalationResult(details)) {
       return {
@@ -13922,7 +13955,7 @@ function extractCoderRoleOutcome(entries) {
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const output = validateAcceptedCoderDetails(message.details);
       const outcome = {
@@ -14100,7 +14133,7 @@ function extractFixerRoleOutcome(entries) {
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     if (isAuditEscalationResult(details)) {
       return {
@@ -14216,7 +14249,7 @@ function extractCollectorRoleOutcome(entries) {
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== COLLECTOR_OUTPUT_TOOL) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const receipt = validateAcceptedCollectorReceipt(message.details);
       const outcome = {
@@ -14324,7 +14357,7 @@ function extractDoctorRoleOutcome(entries) {
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     if (isAuditEscalationResult(details)) {
       return {
@@ -14489,7 +14522,7 @@ function extractReviewerRoleOutcome(entries) {
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const receipt = validateRuntimeReviewerReceipt(message.details);
       const outcome = {
@@ -14638,7 +14671,7 @@ function extractMergerRoleOutcome(entries) {
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== MERGER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const output = validateMergerOutput(message.details);
       const outcome = {
