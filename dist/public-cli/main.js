@@ -13056,62 +13056,6 @@ var COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
 var COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 
-// src/navigator-invocation-identity.ts
-var NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
-var NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
-var NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
-  "kind",
-  "source",
-  "reasonCode"
-];
-function isNavigatorInfrastructureFailureFact(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record5 = value;
-  const keys = Object.keys(record5);
-  if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
-  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
-    if (!Object.hasOwn(record5, key)) return false;
-  }
-  return record5.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record5.source === "shared-role-lifecycle" && record5.reasonCode === "host_failure";
-}
-var PACKAGED_ROLE_OUTPUT_TOOLS = new Set(
-  PACKAGED_ROLE_REGISTRY.map((entry) => entry.outputTool)
-);
-function invocationIdFromData(data) {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
-  const invocationId = data.invocationId;
-  if (typeof invocationId !== "string") return void 0;
-  const trimmed = invocationId.trim();
-  return isUuidV7(trimmed) ? trimmed : void 0;
-}
-function classifyPackagedRoleTerminalResult(message) {
-  if (typeof message.toolName !== "string") return { kind: "nonterminal" };
-  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
-  const infraFact = isNavigatorInfrastructureFailureFact(message.details) ? message.details : void 0;
-  if (message.isError === true) {
-    if (infraFact === void 0) return { kind: "nonterminal" };
-    return { kind: "infrastructure", fact: infraFact };
-  }
-  if (message.isError === false) {
-    if (infraFact !== void 0) return { kind: "nonterminal" };
-    return { kind: "accepted" };
-  }
-  return { kind: "nonterminal" };
-}
-function isAcceptedPackagedRoleTerminalResult(message) {
-  return classifyPackagedRoleTerminalResult(message).kind === "accepted";
-}
-function currentInvocationPrincipalFromSession(entries, beforeIndex = entries.length) {
-  const limit = Math.min(Math.max(beforeIndex, 0), entries.length);
-  for (let i = limit - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "custom") continue;
-    if (entry.customType !== NAVIGATOR_INVOCATION_ENTRY) continue;
-    return invocationIdFromData(entry.data);
-  }
-  return void 0;
-}
-
 // src/work-subject-identity.ts
 import { resolve as resolve5 } from "node:path";
 function issueRoot(value) {
@@ -13154,6 +13098,150 @@ function workSubjectKeyFromProjectRoot(projectRoot) {
 }
 function workSubjectKeysEqual(left, right) {
   return physicalPathIdentity(left) === physicalPathIdentity(right);
+}
+
+// src/navigator-invocation-identity.ts
+var NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
+var NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
+var NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
+  "kind",
+  "source",
+  "reasonCode"
+];
+function isNavigatorInfrastructureFailureFact(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record5 = value;
+  const keys = Object.keys(record5);
+  if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
+  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
+    if (!Object.hasOwn(record5, key)) return false;
+  }
+  return record5.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record5.source === "shared-role-lifecycle" && record5.reasonCode === "host_failure";
+}
+var PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
+  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
+);
+function invocationPhaseFromUnknown(value) {
+  if (value === null || value === "plan" || value === "apply") return value;
+  return void 0;
+}
+function parseInvocationMarkerIdentity(data) {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
+  const record5 = data;
+  const invocationId = record5.invocationId;
+  if (typeof invocationId !== "string") return void 0;
+  const trimmedId = invocationId.trim();
+  if (!isUuidV7(trimmedId)) return void 0;
+  if (typeof record5.role !== "string" || record5.role.trim() === "") return void 0;
+  const phase = invocationPhaseFromUnknown(record5.phase);
+  if (phase === void 0) return void 0;
+  if (typeof record5.subjectKey !== "string" || record5.subjectKey.trim() === "") return void 0;
+  return {
+    invocationId: trimmedId,
+    role: record5.role,
+    phase,
+    subjectKey: record5.subjectKey
+  };
+}
+function markerMatchesExpectedIdentity(marker, expected) {
+  if (marker.role !== expected.role) return false;
+  if (expected.phase !== void 0) {
+    if (marker.phase !== expected.phase) return false;
+  } else if (expected.allowedPhases !== void 0) {
+    if (!expected.allowedPhases.includes(marker.phase)) return false;
+  }
+  if (expected.subjectKey !== void 0) {
+    if (!workSubjectKeysEqual(marker.subjectKey, expected.subjectKey)) return false;
+  }
+  return true;
+}
+function classifyPackagedRoleTerminalResult(message) {
+  if (typeof message.toolName !== "string") return { kind: "nonterminal" };
+  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
+  const infraFact = isNavigatorInfrastructureFailureFact(message.details) ? message.details : void 0;
+  if (message.isError === true) {
+    if (infraFact === void 0) return { kind: "nonterminal" };
+    return { kind: "infrastructure", fact: infraFact };
+  }
+  if (message.isError === false) {
+    if (infraFact !== void 0) return { kind: "nonterminal" };
+    return { kind: "accepted" };
+  }
+  return { kind: "nonterminal" };
+}
+function isAcceptedPackagedRoleTerminalResult(message) {
+  return classifyPackagedRoleTerminalResult(message).kind === "accepted";
+}
+function durableTerminalAt(entries, index) {
+  const entry = entries[index];
+  if (entry?.type !== "message") return void 0;
+  const message = entry.message;
+  if (message?.role !== "toolResult") return void 0;
+  if (typeof message.toolName !== "string") return void 0;
+  const role = PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
+  if (role === void 0) return void 0;
+  const classification = classifyPackagedRoleTerminalResult(message);
+  if (classification.kind !== "accepted" && classification.kind !== "infrastructure") {
+    return void 0;
+  }
+  return {
+    index,
+    role,
+    toolName: message.toolName,
+    classification: classification.kind,
+    message
+  };
+}
+function isInvocationMarkerEntry(entry) {
+  return entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY;
+}
+function findLatestDurablePackagedRoleTerminal(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const terminal = durableTerminalAt(entries, i);
+    if (terminal !== void 0) return terminal;
+  }
+  return void 0;
+}
+function bindCurrentDurableTerminalToMarker(entries) {
+  const terminal = findLatestDurablePackagedRoleTerminal(entries);
+  if (terminal === void 0) return { kind: "absent" };
+  let markerIndex = -1;
+  for (let i = terminal.index - 1; i >= 0; i -= 1) {
+    if (isInvocationMarkerEntry(entries[i])) {
+      markerIndex = i;
+      break;
+    }
+  }
+  if (markerIndex < 0) {
+    return { kind: "unbound", terminal };
+  }
+  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
+  if (marker === void 0) {
+    return { kind: "unbound", terminal };
+  }
+  let windowEnd = entries.length;
+  for (let i = markerIndex + 1; i < entries.length; i += 1) {
+    if (isInvocationMarkerEntry(entries[i])) {
+      windowEnd = i;
+      break;
+    }
+  }
+  let durableCount = 0;
+  for (let i = markerIndex + 1; i < windowEnd; i += 1) {
+    if (durableTerminalAt(entries, i) !== void 0) durableCount += 1;
+  }
+  if (durableCount !== 1) return { kind: "ambiguous" };
+  if (terminal.index <= markerIndex || terminal.index >= windowEnd) {
+    return { kind: "ambiguous" };
+  }
+  return {
+    kind: "bound",
+    terminal,
+    marker: { ...marker, index: markerIndex }
+  };
+}
+function isReceiptSettlementBindingClear(entries) {
+  return bindCurrentDurableTerminalToMarker(entries).kind !== "ambiguous";
 }
 
 // src/public-command-renderer.ts
@@ -13651,6 +13739,7 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds
   }
 }
 function extractJudgeRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -13685,55 +13774,6 @@ function navigatorPhaseValue(value) {
   if (value === "plan" || value === "apply") return value;
   return null;
 }
-var OUTPUT_TOOL_TO_ROLE = new Map(
-  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
-);
-function findCurrentRoleTerminal(entries) {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (typeof message.toolName !== "string") continue;
-    const role = OUTPUT_TOOL_TO_ROLE.get(message.toolName);
-    if (role === void 0) continue;
-    return { index: i, role };
-  }
-  return void 0;
-}
-function independentAttendanceIdentity(entries, terminalRole, terminalIndex, supplied) {
-  const identity = {};
-  const invocationId = currentInvocationPrincipalFromSession(
-    entries,
-    terminalIndex
-  );
-  if (invocationId !== void 0) {
-    identity.invocationId = invocationId;
-  }
-  for (const entry of entries) {
-    if (entry?.type !== "session") continue;
-    if (typeof entry.cwd === "string" && entry.cwd.trim() !== "") {
-      identity.subjectKey = workSubjectKeyFromProjectRoot(entry.cwd);
-    }
-    break;
-  }
-  if (typeof supplied?.subjectKey === "string") {
-    identity.subjectKey = supplied.subjectKey;
-  }
-  if (supplied !== void 0 && Object.hasOwn(supplied, "phase")) {
-    identity.phase = supplied.phase ?? null;
-  } else {
-    const meta = packagedRoleMetadata(terminalRole);
-    if (meta !== void 0) {
-      if (meta.phases.length === 1) {
-        identity.phase = meta.phases[0];
-      } else {
-        identity.allowedPhases = meta.phases;
-      }
-    }
-  }
-  return identity;
-}
 function attendanceIdentityFromAdmitted(admitted) {
   const subjectKey = workSubjectKeyFromProjectRoot(admitted.projectRoot);
   if (admitted.role === "coder" || admitted.role === "fixer") {
@@ -13741,26 +13781,48 @@ function attendanceIdentityFromAdmitted(admitted) {
   }
   return { phase: null, subjectKey };
 }
-function navigatorAttendanceCorrelatedWithTerminal(details, attendanceIndex, terminal, identity) {
-  if (terminal === void 0) return false;
+function independentExpectedIdentity(entries, terminalRole, supplied) {
+  let subjectKey;
+  for (const entry of entries) {
+    if (entry?.type !== "session") continue;
+    if (typeof entry.cwd === "string" && entry.cwd.trim() !== "") {
+      subjectKey = workSubjectKeyFromProjectRoot(entry.cwd);
+    }
+    break;
+  }
+  if (typeof supplied?.subjectKey === "string") {
+    subjectKey = supplied.subjectKey;
+  }
+  let phase;
+  let allowedPhases;
+  if (supplied !== void 0 && Object.hasOwn(supplied, "phase")) {
+    phase = supplied.phase ?? null;
+  } else {
+    const meta = packagedRoleMetadata(terminalRole);
+    if (meta !== void 0) {
+      if (meta.phases.length === 1) {
+        phase = meta.phases[0];
+      } else {
+        allowedPhases = meta.phases;
+      }
+    }
+  }
+  return {
+    role: terminalRole,
+    ...phase !== void 0 ? { phase } : {},
+    ...allowedPhases !== void 0 ? { allowedPhases } : {},
+    ...subjectKey !== void 0 ? { subjectKey } : {}
+  };
+}
+function navigatorAttendanceCorrelatedWithBoundMarker(details, attendanceIndex, terminal, marker) {
   if (attendanceIndex <= terminal.index) return false;
   if (details.version !== 1) return false;
   if (details.role !== terminal.role) return false;
-  if (identity.invocationId === void 0) return false;
-  if (details.invocationId !== identity.invocationId) return false;
-  if (identity.phase !== void 0) {
-    if (details.phase !== identity.phase) return false;
-  } else if (identity.allowedPhases !== void 0) {
-    if (!identity.allowedPhases.includes(details.phase)) {
-      return false;
-    }
-  }
-  if (identity.subjectKey !== void 0) {
-    if (typeof details.subjectKey !== "string") return false;
-    if (!workSubjectKeysEqual(details.subjectKey, identity.subjectKey)) {
-      return false;
-    }
-  }
+  if (details.role !== marker.role) return false;
+  if (details.invocationId !== marker.invocationId) return false;
+  if (details.phase !== marker.phase) return false;
+  if (typeof details.subjectKey !== "string") return false;
+  if (!workSubjectKeysEqual(details.subjectKey, marker.subjectKey)) return false;
   return true;
 }
 function parseNavigatorAttendanceDetails(details) {
@@ -13806,7 +13868,44 @@ function parseNavigatorAttendanceDetails(details) {
   };
 }
 function extractNavigatorFact(entries, identity) {
-  const terminal = findCurrentRoleTerminal(entries);
+  const binding = bindCurrentDurableTerminalToMarker(entries);
+  if (binding.kind === "absent") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance has no durable packaged role terminal"
+    };
+  }
+  if (binding.kind === "ambiguous") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is ambiguous across multiple durable role terminals"
+    };
+  }
+  if (binding.kind === "unbound") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts"
+    };
+  }
+  const { terminal, marker } = binding;
+  if (marker.role !== terminal.role) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts"
+    };
+  }
+  const expected = independentExpectedIdentity(entries, terminal.role, identity);
+  if (!markerMatchesExpectedIdentity(marker, expected)) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts"
+    };
+  }
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
@@ -13818,8 +13917,12 @@ function extractNavigatorFact(entries, identity) {
           reason: "Navigator attendance is unparseable"
         };
       }
-      const independent = terminal === void 0 ? {} : independentAttendanceIdentity(entries, terminal.role, terminal.index, identity);
-      if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal, independent)) {
+      if (!navigatorAttendanceCorrelatedWithBoundMarker(
+        details,
+        i,
+        { index: terminal.index, role: terminal.role },
+        marker
+      )) {
         return {
           disposition: "unavailable",
           source: "unknown",
@@ -13949,6 +14052,7 @@ async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, op
   ];
 }
 function extractCoderRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -14127,6 +14231,7 @@ async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, op
   ];
 }
 function extractFixerRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -14243,6 +14348,7 @@ async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory
   ];
 }
 function extractCollectorRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -14351,6 +14457,7 @@ async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, o
   ];
 }
 function extractDoctorRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -14516,6 +14623,7 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
   ];
 }
 function extractReviewerRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -14665,6 +14773,7 @@ async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, o
   ];
 }
 function extractMergerRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;

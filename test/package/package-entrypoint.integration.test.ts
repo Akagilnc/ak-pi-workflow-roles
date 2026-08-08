@@ -552,6 +552,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
       const activeModel = { ...faux.getModel(), baseUrl: defaultBaseUrl };
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
+      try {
       await writeNavigatorModelSetting(`${activeModel.provider}/${activeModel.id}`, resolve(agentDir, "navigator-model.json"));
       const authResolvedProvider = {
         ...faux.provider,
@@ -796,8 +797,10 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.equal(isUuidV7(nearest.data?.invocationId), true);
         assert.equal(String(nearest.data?.invocationId).includes(":"), false);
       });
-      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      } finally {
+        if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      }
     },
   );
 });

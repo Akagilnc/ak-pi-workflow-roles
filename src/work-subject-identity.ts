@@ -12,7 +12,11 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 
-function issueRoot(value: string): string | undefined {
+/**
+ * Issue-root segment under `.ak/work/issues/<id>` (optional `#…` suffix stripped).
+ * Single low-level owner — Navigator subject helpers must not reimplement this.
+ */
+export function issueRoot(value: string): string | undefined {
   const normalized = value.replaceAll("\\", "/");
   const marker = ".ak/work/issues/";
   const index = normalized.indexOf(marker);

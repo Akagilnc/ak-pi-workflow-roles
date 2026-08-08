@@ -14,7 +14,7 @@ import {
 } from "./navigator-invocation-identity.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
-import { subjectPath } from "./work-subject-identity.ts";
+import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
@@ -330,15 +330,6 @@ function targetText(target: NavigatorRouteTarget): string {
 function oneLine(value: string): string {
   return value.split(/\r?\n/, 1)[0]!.trim();
 }
-function issueRoot(value: string): string | undefined {
-  const normalized = value.replaceAll("\\", "/");
-  const marker = ".ak/work/issues/";
-  const index = normalized.indexOf(marker);
-  if (index < 0) return undefined;
-  const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
-  return issue === undefined || issue === "" ? undefined : normalized.slice(0, index + marker.length) + issue;
-}
-
 export function navigatorSubjectKey(
   subjectRoot: string,
   subject: string,

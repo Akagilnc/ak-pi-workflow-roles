@@ -7,9 +7,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  bindCurrentDurableTerminalToMarker,
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
   isNavigatorInfrastructureFailureFact,
+  isReceiptSettlementBindingClear,
 } from "../../src/navigator-invocation-identity.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
@@ -417,4 +419,56 @@ test("registry public extractors and settlement share one closed terminal classi
     [...rolesSeen].sort(),
     ["coder", "collector", "doctor", "fixer", "judge", "merger", "reviewer"],
   );
+
+  // Singleton marker cardinality: two durable terminals after one marker fail closed.
+  const invocationId = "019f8c2a-7b3e-7d11-8a4f-1c2d3e4f5a6b";
+  for (const registryEntry of PACKAGED_ROLE_REGISTRY) {
+    const acceptedDetails = ACCEPTED_DETAILS_BY_TOOL.get(registryEntry.outputTool)!;
+    const phase = registryEntry.phases[0]!;
+    const marker = {
+      type: "custom" as const,
+      customType: "ak-navigator-invocation",
+      data: {
+        invocationId,
+        role: registryEntry.role,
+        phase,
+        subjectKey: "/repo/.ak/work",
+      },
+    };
+    const twoDurable = [
+      marker,
+      entry(registryEntry.outputTool, acceptedDetails, false),
+      entry(registryEntry.outputTool, acceptedDetails, false),
+    ] as const;
+    assert.equal(
+      bindCurrentDurableTerminalToMarker(twoDurable).kind,
+      "ambiguous",
+      `${registryEntry.role}:two-durable-ambiguous`,
+    );
+    assert.equal(
+      isReceiptSettlementBindingClear(twoDurable),
+      false,
+      `${registryEntry.role}:receipt-binding-unclear`,
+    );
+    assert.equal(
+      extractForTool(registryEntry.outputTool, twoDurable as never),
+      undefined,
+      `${registryEntry.role}:extractor-ambiguous-fail-closed`,
+    );
+
+    const oneDurable = [
+      marker,
+      entry(registryEntry.outputTool, acceptedDetails, false),
+    ] as const;
+    assert.equal(
+      bindCurrentDurableTerminalToMarker(oneDurable).kind,
+      "bound",
+      `${registryEntry.role}:one-durable-bound`,
+    );
+    assert.equal(
+      acceptedKind(extractForTool(registryEntry.outputTool, oneDurable as never)),
+      "accepted",
+      `${registryEntry.role}:extractor-singleton-accepted`,
+    );
+  }
 });
