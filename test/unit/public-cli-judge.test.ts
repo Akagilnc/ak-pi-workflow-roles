@@ -6,10 +6,12 @@
 import assert from "node:assert/strict";
 import {
   access,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
   rm,
+  symlink,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -52,6 +54,56 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+}
+
+/** Temp physical root + dir-symlink alias; owns cleanup after successful mkdtemp. */
+async function withPhysicalAliasFixture<T>(
+  body: (paths: { physicalRoot: string; aliasRoot: string }) => Promise<T>,
+  hooks?: {
+    mkdirWork?: (physicalRoot: string) => Promise<void>;
+    linkAlias?: (physicalRoot: string, aliasRoot: string) => Promise<void>;
+    /** Test-only: inject teardown unlink failure after successful setup. */
+    unlinkAlias?: (aliasRoot: string) => Promise<void>;
+  },
+): Promise<T> {
+  const physicalRoot = await mkdtemp(join(tmpdir(), "ak-nav-subject-"));
+  const aliasRoot = `${physicalRoot}-alias`;
+  let aliasCreated = false;
+  const mkdirWork =
+    hooks?.mkdirWork ??
+    (async (root: string) => {
+      await mkdir(join(root, "repo", ".ak", "work"), { recursive: true });
+    });
+  const linkAlias =
+    hooks?.linkAlias ??
+    (async (root: string, alias: string) => {
+      await symlink(root, alias, "dir");
+    });
+  const unlinkAlias =
+    hooks?.unlinkAlias ??
+    (async (alias: string) => {
+      await unlink(alias);
+    });
+  try {
+    // Every fallible step after mkdtemp stays inside the cleanup region.
+    await mkdirWork(physicalRoot);
+    await linkAlias(physicalRoot, aliasRoot);
+    aliasCreated = true;
+    return await body({ physicalRoot, aliasRoot });
+  } finally {
+    try {
+      if (aliasCreated) {
+        await unlinkAlias(aliasRoot);
+      }
+    } finally {
+      // Root removal still runs if alias unlink rejects.
+      await rm(physicalRoot, { recursive: true, force: true });
+    }
+  }
+}
+
+async function assertPathGone(path: string): Promise<void> {
+  await assert.rejects(() => access(path), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
 }
 
 function captureIo() {
@@ -337,8 +389,552 @@ test("Terminal free-text encoding preserves newlines/tabs and rejects forged art
   );
 });
 
+test("extractNavigatorFact keeps three-state attendance: affirmative no-advice vs missing/uncorrelated/unparseable", () => {
+  const invocationId = "019f8c2a-1111-7111-8111-111111111111";
+  const correlated = {
+    version: 1,
+    invocationId,
+    role: "judge",
+    phase: null,
+    subjectKey: "/repo/.ak/work",
+  };
+  const invocationPrincipal = {
+    type: "custom",
+    customType: "ak-navigator-invocation",
+    data: { invocationId, role: "judge", phase: null, subjectKey: "/repo/.ak/work" },
+  };
+  const judgeTerminal = {
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: false,
+      details: { judgeStatus: "converged" },
+    },
+  };
+
+  const noAdvice = extractNavigatorFact([
+    invocationPrincipal,
+    judgeTerminal,
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: { details: { ...correlated, disposition: "no-advice" } },
+    },
+  ]);
+  assert.equal(noAdvice.disposition, "no-advice");
+
+  const missing = extractNavigatorFact([judgeTerminal]);
+  assert.equal(missing.disposition, "unavailable");
+  if (missing.disposition === "unavailable") {
+    assert.equal(missing.source, "unknown");
+    assert.equal(typeof missing.reason, "string");
+  }
+
+  const uncorrelated = extractNavigatorFact([
+    invocationPrincipal,
+    judgeTerminal,
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: {
+        details: {
+          disposition: "no-advice",
+          // missing invocation/role/phase/subject correlation facts
+        },
+      },
+    },
+  ]);
+  assert.equal(uncorrelated.disposition, "unavailable");
+  if (uncorrelated.disposition === "unavailable") {
+    assert.equal(uncorrelated.source, "unknown");
+  }
+
+  const unparseable = extractNavigatorFact([
+    judgeTerminal,
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: { details: "not-an-object" },
+    },
+  ]);
+  assert.equal(unparseable.disposition, "unavailable");
+  if (unparseable.disposition === "unavailable") {
+    assert.equal(unparseable.source, "unknown");
+  }
+
+  const badDisposition = extractNavigatorFact([
+    invocationPrincipal,
+    judgeTerminal,
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: { details: { ...correlated, disposition: "mystery" } },
+    },
+  ]);
+  assert.equal(badDisposition.disposition, "unavailable");
+});
+
+test("extractNavigatorFact correlates attendance to exact independent invocation/phase/subject identity", async () => {
+  const sessionId = "019f-session-current";
+  const cwd = "/repo";
+  const subjectKey = "/repo/.ak/work";
+  // Opaque principals — not sessionId:sequence (restart-repeatable).
+  const currentInvocationId = "019f8c2a-7b3e-7d11-8a4f-1c2d3e4f5a6b";
+  const oldInvocationId = "019f8c2a-0000-7000-8000-000000000001";
+  const futureInvocationId = "019f8c2a-ffff-7fff-8fff-ffffffffffff";
+  const sessionHeader = {
+    type: "session",
+    id: sessionId,
+    cwd,
+  };
+  const invocation = (invocationId: string, data: Record<string, unknown> = {}) => ({
+    type: "custom",
+    customType: "ak-navigator-invocation",
+    data: { invocationId, role: "judge", phase: null, subjectKey, ...data },
+  });
+  // Durable accepted terminal (shared classifier). isError:true/details:{} is nonterminal.
+  const currentTerminal = {
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: false,
+      details: { judgeStatus: "converged" },
+    },
+  };
+  const attendance = (details: Record<string, unknown>) => ({
+    type: "custom_message",
+    customType: "ak-navigator-attendance",
+    message: { details: { version: 1, disposition: "no-advice", ...details } },
+  });
+  const matched = {
+    invocationId: currentInvocationId,
+    role: "judge",
+    phase: null,
+    subjectKey,
+  };
+
+  // Attendance before the current role terminal is an old-round/stale fact.
+  const beforeTerminal = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    attendance(matched),
+    currentTerminal,
+  ]);
+  assert.equal(beforeTerminal.disposition, "unavailable");
+
+  // Well-shaped attendance for a different role is unrelated.
+  const wrongRole = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({ ...matched, role: "fixer", phase: "apply" }),
+  ]);
+  assert.equal(wrongRole.disposition, "unavailable");
+
+  // Old attendance token (and old marker left behind a newer principal) rejected.
+  const oldAttendance = extractNavigatorFact([
+    sessionHeader,
+    invocation(oldInvocationId),
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({ ...matched, invocationId: oldInvocationId }),
+  ]);
+  assert.equal(oldAttendance.disposition, "unavailable");
+  // Old attendance event before the current terminal is stale, even with matching old marker.
+  const oldAttendanceEvent = extractNavigatorFact([
+    sessionHeader,
+    invocation(oldInvocationId),
+    attendance({ ...matched, invocationId: oldInvocationId }),
+    invocation(currentInvocationId),
+    currentTerminal,
+  ]);
+  assert.equal(oldAttendanceEvent.disposition, "unavailable");
+
+  // Future marker/event after terminal must not supply the principal.
+  const futureMarker = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    invocation(futureInvocationId),
+    attendance({ ...matched, invocationId: futureInvocationId }),
+  ]);
+  assert.equal(futureMarker.disposition, "unavailable");
+  // Attendance carrying future token while current marker is before terminal.
+  const futureAttendance = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({ ...matched, invocationId: futureInvocationId }),
+  ]);
+  assert.equal(futureAttendance.disposition, "unavailable");
+
+  // Malformed nearest marker before terminal blocks fallback to older valid marker.
+  const malformedNearest = extractNavigatorFact([
+    sessionHeader,
+    invocation(oldInvocationId),
+    { type: "custom", customType: "ak-navigator-invocation", data: { invocationId: "" } },
+    currentTerminal,
+    attendance({ ...matched, invocationId: oldInvocationId }),
+  ]);
+  assert.equal(malformedNearest.disposition, "unavailable");
+  const malformedData = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    { type: "custom", customType: "ak-navigator-invocation", data: "not-an-object" },
+    currentTerminal,
+    attendance(matched),
+  ]);
+  assert.equal(malformedData.disposition, "unavailable");
+
+  // Missing independent invocation principal → unavailable even with phase/subject.
+  const noInvocationPrincipal = extractNavigatorFact([
+    sessionHeader,
+    currentTerminal,
+    attendance(matched),
+  ]);
+  assert.equal(noInvocationPrincipal.disposition, "unavailable");
+
+  // No session header and no independent invocation principal → unavailable.
+  const noSessionHeader = extractNavigatorFact([
+    currentTerminal,
+    attendance(matched),
+  ]);
+  assert.equal(noSessionHeader.disposition, "unavailable");
+
+  // Wrong invocation id (different opaque principal) is not this call.
+  const wrongInvocation = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({ ...matched, invocationId: "019f8c2a-aaaa-7bbb-8ccc-ddddeeeeffff" }),
+  ]);
+  assert.equal(wrongInvocation.disposition, "unavailable");
+
+  // Judge has independent phase=null; well-shaped apply is still uncorrelated.
+  const wrongPhase = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({ ...matched, phase: "apply" }),
+  ]);
+  assert.equal(wrongPhase.disposition, "unavailable");
+
+  // Subject must match the independent session-derived work identity.
+  const wrongSubject = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({ ...matched, subjectKey: "/other/work" }),
+  ]);
+  assert.equal(wrongSubject.disposition, "unavailable");
+
+  // Exact current token (nearest before terminal) correlates; older rounds stay ignored.
+  const current = extractNavigatorFact([
+    sessionHeader,
+    invocation(oldInvocationId),
+    attendance({
+      invocationId: oldInvocationId,
+      role: "judge",
+      phase: null,
+      subjectKey,
+    }),
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance(matched),
+  ]);
+  assert.equal(current.disposition, "no-advice");
+
+  // Future marker after terminal is ignored when current marker is before terminal.
+  const ignoreFutureMarker = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    invocation(futureInvocationId),
+    attendance(matched),
+  ]);
+  assert.equal(ignoreFutureMarker.disposition, "no-advice");
+
+  // Same-session new invocation: only the current token (nearest before terminal) correlates.
+  const priorTerminal = {
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: false,
+      details: { judgeStatus: "converged" },
+    },
+  };
+  const sameSessionNewInvocation = extractNavigatorFact([
+    sessionHeader,
+    invocation(oldInvocationId),
+    priorTerminal,
+    attendance({
+      invocationId: oldInvocationId,
+      role: "judge",
+      phase: null,
+      subjectKey,
+    }),
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance(matched),
+  ]);
+  assert.equal(sameSessionNewInvocation.disposition, "no-advice");
+  const sameSessionStaleAttendance = extractNavigatorFact([
+    sessionHeader,
+    invocation(oldInvocationId),
+    priorTerminal,
+    attendance({
+      invocationId: oldInvocationId,
+      role: "judge",
+      phase: null,
+      subjectKey,
+    }),
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({ ...matched, invocationId: oldInvocationId }),
+  ]);
+  assert.equal(sameSessionStaleAttendance.disposition, "unavailable");
+
+  // Physical aliases are one work subject. Build a real alias instead of assuming
+  // macOS-only /var ↔ /private/var topology on every CI operating system.
+  await withPhysicalAliasFixture(async ({ physicalRoot, aliasRoot }) => {
+    const physicalSubject = join(physicalRoot, "repo", ".ak", "work");
+    const aliasSubject = join(aliasRoot, "repo", ".ak", "work");
+    const physicalAlias = extractNavigatorFact([
+      { type: "session", id: sessionId, cwd: join(physicalRoot, "repo") },
+      invocation(currentInvocationId, { subjectKey: physicalSubject }),
+      currentTerminal,
+      attendance({ ...matched, subjectKey: aliasSubject }),
+    ]);
+    assert.equal(physicalAlias.disposition, "no-advice");
+  });
+
+  // Judge A: contradictory marker role/phase/subject vs current durable terminal → unavailable.
+  const wrongMarkerRole = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId, { role: "coder", phase: "apply" }),
+    currentTerminal,
+    attendance({ ...matched, role: "coder", phase: "apply" }),
+  ]);
+  assert.equal(wrongMarkerRole.disposition, "unavailable");
+  const wrongMarkerPhase = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId, { phase: "apply" }),
+    currentTerminal,
+    attendance({ ...matched, phase: "apply" }),
+  ]);
+  assert.equal(wrongMarkerPhase.disposition, "unavailable");
+  const wrongMarkerSubject = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId, { subjectKey: "/other/work" }),
+    currentTerminal,
+    attendance({ ...matched, subjectKey: "/other/work" }),
+  ]);
+  assert.equal(wrongMarkerSubject.disposition, "unavailable");
+
+  // Judge B: two durable terminals after the same marker → ambiguous / unavailable.
+  // Attendance correlation failure must not be required to fail closed here.
+  const twoDurable = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: { judgeStatus: "revise" },
+      },
+    },
+    attendance(matched),
+  ]);
+  assert.equal(twoDurable.disposition, "unavailable");
+  if (twoDurable.disposition === "unavailable") {
+    assert.match(twoDurable.reason, /ambiguous/i);
+  }
+
+  // Coder/fixer exact phase comes from admitted lifecycle identity, not self-enum.
+  const coderTerminal = {
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolName: "ak_coder_output",
+      isError: false,
+      details: { status: "completed" },
+    },
+  };
+  const coderSession = {
+    type: "session",
+    id: "coder-session",
+    cwd,
+  };
+  const coderInvocation = {
+    type: "custom",
+    customType: "ak-navigator-invocation",
+    data: {
+      invocationId: "019f8c2a-2222-7222-8222-222222222222",
+      role: "coder",
+      phase: "plan",
+      subjectKey,
+    },
+  };
+  const wrongCoderPhase = extractNavigatorFact(
+    [
+      coderSession,
+      coderInvocation,
+      coderTerminal,
+      attendance({
+        invocationId: "019f8c2a-2222-7222-8222-222222222222",
+        role: "coder",
+        phase: "apply",
+        subjectKey,
+      }),
+    ],
+    { phase: "plan", subjectKey },
+  );
+  assert.equal(wrongCoderPhase.disposition, "unavailable");
+  const coderMatched = extractNavigatorFact(
+    [
+      coderSession,
+      coderInvocation,
+      coderTerminal,
+      attendance({
+        invocationId: "019f8c2a-2222-7222-8222-222222222222",
+        role: "coder",
+        phase: "plan",
+        subjectKey,
+      }),
+    ],
+    { phase: "plan", subjectKey },
+  );
+  assert.equal(coderMatched.disposition, "no-advice");
+});
+
+test("withPhysicalAliasFixture cleans alias and root when body rejects", async () => {
+  let physicalRoot = "";
+  let aliasRoot = "";
+  const bodyRejected = new Error("body rejected");
+  await assert.rejects(
+    () =>
+      withPhysicalAliasFixture(async (paths) => {
+        physicalRoot = paths.physicalRoot;
+        aliasRoot = paths.aliasRoot;
+        await access(physicalRoot);
+        await access(aliasRoot);
+        throw bodyRejected;
+      }),
+    (error: unknown) => error === bodyRejected,
+  );
+  assert.notEqual(physicalRoot, "");
+  assert.notEqual(aliasRoot, "");
+  await assertPathGone(aliasRoot);
+  await assertPathGone(physicalRoot);
+});
+
+test("withPhysicalAliasFixture cleans root when mkdir setup rejects after mkdtemp", async () => {
+  let physicalRoot = "";
+  let aliasRoot = "";
+  const mkdirRejected = new Error("mkdir rejected");
+  await assert.rejects(
+    () =>
+      withPhysicalAliasFixture(
+        async () => {
+          assert.fail("body must not run after mkdir rejection");
+        },
+        {
+          mkdirWork: async (root) => {
+            physicalRoot = root;
+            aliasRoot = `${root}-alias`;
+            throw mkdirRejected;
+          },
+        },
+      ),
+    (error: unknown) => error === mkdirRejected,
+  );
+  assert.notEqual(physicalRoot, "");
+  await assertPathGone(physicalRoot);
+  await assertPathGone(aliasRoot);
+});
+
+test("withPhysicalAliasFixture cleans root when symlink setup rejects after mkdtemp", async () => {
+  let physicalRoot = "";
+  let aliasRoot = "";
+  const symlinkRejected = new Error("symlink rejected");
+  await assert.rejects(
+    () =>
+      withPhysicalAliasFixture(
+        async () => {
+          assert.fail("body must not run after symlink rejection");
+        },
+        {
+          linkAlias: async (root, alias) => {
+            physicalRoot = root;
+            aliasRoot = alias;
+            await access(physicalRoot);
+            throw symlinkRejected;
+          },
+        },
+      ),
+    (error: unknown) => error === symlinkRejected,
+  );
+  assert.notEqual(physicalRoot, "");
+  assert.notEqual(aliasRoot, "");
+  await assertPathGone(aliasRoot);
+  await assertPathGone(physicalRoot);
+});
+
+test("withPhysicalAliasFixture removes root and rethrows original unlink error", async () => {
+  let physicalRoot = "";
+  let aliasRoot = "";
+  const unlinkRejected = new Error("unlink rejected");
+  try {
+    await assert.rejects(
+      () =>
+        withPhysicalAliasFixture(
+          async (paths) => {
+            physicalRoot = paths.physicalRoot;
+            aliasRoot = paths.aliasRoot;
+            await access(physicalRoot);
+            await access(aliasRoot);
+          },
+          {
+            unlinkAlias: async () => {
+              throw unlinkRejected;
+            },
+          },
+        ),
+      (error: unknown) => error === unlinkRejected,
+    );
+    assert.notEqual(physicalRoot, "");
+    assert.notEqual(aliasRoot, "");
+    // Nested finally still removed the physical root despite unlink rejection.
+    await assertPathGone(physicalRoot);
+    // Alias intentionally retained (dangling after root rm); lstat avoids follow.
+    assert.equal((await lstat(aliasRoot)).isSymbolicLink(), true);
+  } finally {
+    // Test owns residual alias cleanup so the baseline stays clean.
+    if (aliasRoot !== "") {
+      await unlink(aliasRoot).catch(() => undefined);
+    }
+  }
+  await assertPathGone(aliasRoot);
+});
+
 test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {
   const entries = [
+    {
+      type: "custom",
+      customType: "ak-navigator-invocation",
+      data: {
+        invocationId: "019f8c2a-3333-7333-8333-333333333333",
+        role: "judge",
+        phase: null,
+        subjectKey: "/repo/.ak/work",
+      },
+    },
     {
       type: "message",
       message: {
@@ -357,7 +953,12 @@ test("settlement extracts Judge outcome and Navigator recommendation without mod
       customType: "ak-navigator-attendance",
       message: {
         details: {
+          version: 1,
           disposition: "recommendation",
+          invocationId: "019f8c2a-3333-7333-8333-333333333333",
+          role: "judge",
+          phase: null,
+          subjectKey: "/repo/.ak/work",
           next: { role: "fixer", phase: "apply" },
           reason: "typed next",
           command: "Usage: pi --ak-role fixer --help",
@@ -389,6 +990,16 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
   const reason = "because\nthis\tpath";
   const continueEntries = [
     {
+      type: "custom",
+      customType: "ak-navigator-invocation",
+      data: {
+        invocationId: "019f8c2a-4444-7444-8444-444444444444",
+        role: "judge",
+        phase: null,
+        subjectKey: "/repo/.ak/work",
+      },
+    },
+    {
       type: "message",
       message: {
         role: "toolResult",
@@ -407,7 +1018,12 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
       customType: "ak-navigator-attendance",
       message: {
         details: {
+          version: 1,
           disposition: "recommendation",
+          invocationId: "019f8c2a-4444-7444-8444-444444444444",
+          role: "judge",
+          phase: null,
+          subjectKey: "/repo/.ak/work",
           next: { role: "reviewer", phase: null },
           reason,
           command: "Usage: pi --ak-role reviewer --help",
@@ -578,7 +1194,18 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
           const sessionDir = args[sessionDirIdx + 1]!;
           await mkdir(sessionDir, { recursive: true });
           const sessionFile = join(sessionDir, "session.jsonl");
+          const subjectKey = join(project, ".ak/work");
           const rows = [
+            {
+              type: "custom",
+              customType: "ak-navigator-invocation",
+              data: {
+                invocationId: "019f8c2a-5555-7555-8555-555555555555",
+                role: "judge",
+                phase: null,
+                subjectKey,
+              },
+            },
             {
               type: "message",
               message: {
@@ -593,7 +1220,13 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
               customType: "ak-navigator-attendance",
               message: {
                 details: {
+                  version: 1,
                   disposition: "recommendation",
+                  invocationId: "019f8c2a-5555-7555-8555-555555555555",
+                  role: "judge",
+                  phase: null,
+                  // Matches admitted projectRoot work identity.
+                  subjectKey,
                   next: { role: "reviewer", phase: null },
                   reason: "review next",
                   command: "Usage: pi --ak-role reviewer --help",
@@ -772,7 +1405,12 @@ test("runAkRole judge empty request does not invent semantic task content on the
       attachments: [],
       admittedRequestPath: join(runDir, "admitted-request.json"),
     });
-    assert.equal(terminal.navigator.disposition, "no-advice");
+    // Missing attendance is not successful no-advice — require affirmative typed fact.
+    assert.equal(terminal.navigator.disposition, "unavailable");
+    if (terminal.navigator.disposition === "unavailable") {
+      assert.equal(terminal.navigator.source, "unknown");
+      assert.equal(typeof terminal.navigator.reason, "string");
+    }
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(terminal.roleOutcome.status, "converged");
   });

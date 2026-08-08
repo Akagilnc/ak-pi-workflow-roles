@@ -35,6 +35,12 @@ import {
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import {
+  buildNavigatorInfrastructureFailureFact,
+  classifyPackagedRoleTerminalResult,
+  NAVIGATOR_INVOCATION_ENTRY,
+  resolveLifecycleInvocationPrincipal,
+} from "./navigator-invocation-identity.ts";
 import { EMPTY_INVOCATION_TRANSPORT_ENVELOPE } from "./public-cli/invocation.ts";
 import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
@@ -66,6 +72,16 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "./merger-contracts.ts";
 import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-role.ts";
 
+export {
+  buildNavigatorInfrastructureFailureFact,
+  classifyPackagedRoleTerminalResult,
+  isAcceptedPackagedRoleTerminalResult,
+  isDurablePackagedRoleTerminalResult,
+  isNavigatorInfrastructureFailureFact,
+  NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
+  type NavigatorInfrastructureFailureFact,
+  type PackagedRoleTerminalClassification,
+} from "./navigator-invocation-identity.ts";
 export { activationTraceRecordSchema, namedActivationCause } from "./activation-trace.ts";
 export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
 export {
@@ -294,7 +310,7 @@ export type RoleRuntimeDependencies = {
   auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
-  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendance | Promise<NavigatorAttendance>;
+  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendance | Promise<NavigatorAttendance>;
   loadNavigatorWorkContext?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
@@ -349,33 +365,18 @@ function navigatorOutputTool(role: string): string | undefined {
   return packagedRoleOutputTool(role);
 }
 
-export const NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure" as const;
-export type NavigatorInfrastructureFailureFact = {
-  kind: typeof NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND;
-  source: "shared-role-lifecycle";
-  reasonCode: "host_failure";
-};
-
-export function buildNavigatorInfrastructureFailureFact(): NavigatorInfrastructureFailureFact {
-  return { kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND, source: "shared-role-lifecycle", reasonCode: "host_failure" };
-}
-
-function isNavigatorInfrastructureFailureFact(value: unknown): value is NavigatorInfrastructureFailureFact {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return record.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND &&
-    record.source === "shared-role-lifecycle" && record.reasonCode === "host_failure";
-}
-
-export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError: boolean; details: unknown }): NavigatorSettlement | undefined {
+export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError?: unknown; details: unknown }): NavigatorSettlement | undefined {
+  // One shared classifier owns terminal discriminant (lifecycle + settlement + extractors).
   if (event.toolName !== navigatorOutputTool(role)) return undefined;
+  const classification = classifyPackagedRoleTerminalResult(event);
+  if (classification.kind === "nonterminal") return undefined;
+  if (classification.kind === "infrastructure") {
+    return { kind: "role_infrastructure_failure", role, phase };
+  }
+  // accepted/human — project role/phase status; classifier already rejected infra/contradiction.
   const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
     ? event.details as Record<string, unknown>
     : {};
-  if (isNavigatorInfrastructureFailureFact(event.details)) {
-    return { kind: "role_infrastructure_failure", role, phase };
-  }
-  if (event.isError) return undefined;
   if (isAuditEscalationResult(event.details)) {
     return { kind: "human_decision", role, phase, status: "audit_escalation" };
   }
@@ -417,16 +418,22 @@ export function createRoleRuntimeExtension(
         // A bare Judge (and other bare packaged entrypoint) gets its concrete
         // user task at this seam; do not copy the assembled system prompt.
         // Replacement is keyed by typed subject provenance, never prose prefixes.
+        // Soft session_start placeholders (no materials yet) recover here; hard
+        // contextError from true loader failures stays poisoned and honest.
         if (navigatorWorkContext.subjectProvenance === "placeholder") {
           const subject = event.prompt.trim();
           // Public empty-request transport envelope is not semantic task content.
           if (subject !== "" && subject !== EMPTY_INVOCATION_TRANSPORT_ENVELOPE) {
             const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
             const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
+            const priorAuthority = navigatorWorkContext.authority;
+            const authority = typeof priorAuthority === "string" && priorAuthority.trim() !== ""
+              ? priorAuthority
+              : subject;
             navigatorWorkContext = {
-              ...navigatorWorkContext,
               subjectKey: navigatorSubjectKey(root, subject, subjectProvenance),
               subject,
+              authority,
               subjectProvenance,
             };
             navigatorAttendance.setWorkContext(navigatorWorkContext);
@@ -439,10 +446,17 @@ export function createRoleRuntimeExtension(
       const role = selectedRole;
       if (role === undefined || navigatorAttendance === undefined) return;
       const isRoleInfrastructureFailure = pendingInfrastructureToolCallIds.delete(event.toolCallId);
+      // Overlay typed infra fact so live settlement and durable session entry agree.
+      const infrastructureDetails = isRoleInfrastructureFailure
+        ? buildNavigatorInfrastructureFailureFact()
+        : undefined;
+      const classified = infrastructureDetails === undefined
+        ? event
+        : { ...event, details: infrastructureDetails };
       const settlement = publicNavigatorSettlement(
         role,
         navigatorPhase(pi, role),
-        isRoleInfrastructureFailure ? { ...event, details: buildNavigatorInfrastructureFailureFact() } : event,
+        classified,
       );
       if (settlement !== undefined) {
         const attendance = navigatorAttendance;
@@ -451,6 +465,8 @@ export function createRoleRuntimeExtension(
           // Accepted role terminal starts the post-role Navigator grace (#101/#106).
           if (settlement.kind !== "accepted") {
             await attendance.settle(settlement);
+            // Emission stays on agent_settled (normal completion) or session_shutdown
+            // flush (abort/infrastructure teardown that skips agent_settled).
             return;
           }
           const settlePromise = attendance.settle(settlement);
@@ -483,10 +499,15 @@ export function createRoleRuntimeExtension(
         pendingNavigatorSettlement = pending;
         await pending;
       }
+      // Persist typed infrastructure-failure fact onto the role session toolResult so
+      // exact-session restart shares the same durable completion classification.
+      if (infrastructureDetails !== undefined) {
+        return { details: infrastructureDetails, isError: true };
+      }
       // Recommendation rides the accepted settlement record's content so the one
       // mandatory last-ak_*_output extraction surfaces route/next/reason without
       // a second file, grep, or nesting step. Receipt details stay contract-pure;
-      // unavailable/silence leave the settlement untouched.
+      // unavailable/no-advice leave the settlement untouched.
       if (event.isError) return;
       const decorated = decorateSettlementWithNavigation(event, pendingNavigatorPresentation);
       if (decorated === undefined) return;
@@ -497,18 +518,14 @@ export function createRoleRuntimeExtension(
     pi.on("agent_settled", async () => {
       if (pendingNavigatorSettlement !== undefined) {
         await pendingNavigatorSettlement;
-      } else if (navigatorAttendance?.isPreparing()) {
-        // A provider/network failure can settle the role without ever producing
-        // a terminating tool result. Drain this same preparation as silence;
-        // the next agent turn will prepare a new correlated invocation.
-        const pending = navigatorAttendance.settle({
-          kind: "role_infrastructure_failure",
-          role: selectedRole ?? "unknown",
-          phase: selectedRole === undefined ? null : navigatorPhase(pi, selectedRole),
-        });
-        pendingNavigatorSettlement = pending;
-        await pending;
       }
+      // Do not auto-drain Navigator on ordinary mid-turn agent_settled.
+      // Multi-turn roles (#162 coder) fire agent_settled after every tool turn;
+      // discarding a healthy/in-flight prepare there forces a cold prepare on the
+      // final accepted terminal and races the post-role grace. Keep preparation
+      // until an accepted/human/infrastructure tool_result settlement (or dispose).
+      // Provider death without any role tool_result leaves preparation held; the
+      // next explicit settlement or session end owns it — not mid-turn churn.
       pendingNavigatorSettlement = undefined;
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
@@ -520,10 +537,25 @@ export function createRoleRuntimeExtension(
         details: presentation.event,
       }, { triggerTurn: false });
     });
-    pi.on("session_shutdown", () => {
+    pi.on("session_shutdown", async () => {
+      // Flush any still-pending affirmative attendance before teardown. Accepted
+      // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
+      const presentation = pendingNavigatorPresentation;
+      pendingNavigatorPresentation = undefined;
+      if (presentation !== undefined) {
+        try {
+          await pi.sendMessage({
+            customType: NAVIGATOR_EVENT_TYPE,
+            content: formatNavigatorReport(presentation.report),
+            display: true,
+            details: presentation.event,
+          }, { triggerTurn: false });
+        } catch {
+          // Teardown must not mask the original role failure cause.
+        }
+      }
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
-      pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
       observationFace.reset();
@@ -749,49 +781,6 @@ export function createRoleRuntimeExtension(
       selectedRole = entry.role;
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
-      if (dependencies.createNavigatorAttendance !== undefined) {
-        let work: NavigatorWorkContext;
-        let contextError: unknown;
-        if (dependencies.loadNavigatorWorkContext === undefined) {
-          const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-          contextError = new Error("Navigator work context loader is not configured");
-          work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
-        } else {
-          try {
-            work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
-            contextError = work.contextError;
-          } catch (error) {
-            // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
-            contextError = navigatorUnavailableError("context", error);
-            const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-            work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
-          }
-        }
-        navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
-        navigatorAttendance = await dependencies.createNavigatorAttendance({
-          context: ctx,
-          role: entry.role,
-          phase: navigatorPhase(pi, entry.role),
-          subjectKey: work.subjectKey,
-          subject: work.subject,
-          authority: work.authority,
-          ...(contextError === undefined ? {} : { contextError }),
-          onEvent: (navigatorEvent, report) => {
-            pendingNavigatorPresentation = { event: navigatorEvent, report };
-          },
-        });
-        // Warm live help during activation so prepare is not help-bound under load.
-        // Concrete work context also starts full preparation so session create
-        // overlaps the role run. Placeholder subjects wait for before_agent_start
-        // (user prompt may replace the subject key) but still inherit warm help.
-        navigatorAttendance.warmHelp?.();
-        if (
-          navigatorWorkContext.contextError === undefined &&
-          navigatorWorkContext.subjectProvenance !== "placeholder"
-        ) {
-          navigatorAttendance.prepare();
-        }
-      }
       const runtime: ActivationRuntime = {
         event,
         context: ctx,
@@ -811,10 +800,78 @@ export function createRoleRuntimeExtension(
       };
       try {
         // Production topology only (ADR 0048/0049): no test-only ledger hooks.
+        // Admit durable session file first so lifecycle getEntries/appendEntry are truthful:
+        // deferred SM materialization must not wipe an in-memory principal marker.
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
         const ledgerHome = resolveActivationLedgerHome();
         const session = durableSessionPointer(ctx.sessionManager, { ledgerHome, bookKey });
+
+        if (dependencies.createNavigatorAttendance !== undefined) {
+          let work: NavigatorWorkContext;
+          let contextError: unknown;
+          if (dependencies.loadNavigatorWorkContext === undefined) {
+            const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
+            contextError = new Error("Navigator work context loader is not configured");
+            work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
+          } else {
+            try {
+              work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
+              contextError = work.contextError;
+            } catch (error) {
+              // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
+              contextError = navigatorUnavailableError("context", error);
+              const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
+              work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
+            }
+          }
+          navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
+          // Shared envelope owns exact invocation principal from admitted session lifecycle.
+          // session_start is process activation: resume unfinished principal only when marker
+          // role/phase/subjectKey still match; mint for contradictory marker, malformed nearest,
+          // missing marker, or terminal already completed.
+          const sessionEntries = ctx.sessionManager.getEntries();
+          const invocationPhase = navigatorPhase(pi, entry.role);
+          const lifecyclePrincipal = resolveLifecycleInvocationPrincipal(sessionEntries, {
+            role: entry.role,
+            phase: invocationPhase,
+            subjectKey: work.subjectKey,
+          });
+          const invocationId = lifecyclePrincipal.invocationId;
+          if (!lifecyclePrincipal.resume) {
+            pi.appendEntry(NAVIGATOR_INVOCATION_ENTRY, {
+              invocationId,
+              role: entry.role,
+              phase: invocationPhase,
+              subjectKey: work.subjectKey,
+            });
+          }
+          navigatorAttendance = await dependencies.createNavigatorAttendance({
+            context: ctx,
+            role: entry.role,
+            phase: invocationPhase,
+            subjectKey: work.subjectKey,
+            subject: work.subject,
+            authority: work.authority,
+            invocationId,
+            ...(contextError === undefined ? {} : { contextError }),
+            onEvent: (navigatorEvent, report) => {
+              pendingNavigatorPresentation = { event: navigatorEvent, report };
+            },
+          });
+          // Warm live help during activation so prepare is not help-bound under load.
+          // Concrete work context also starts full preparation so session create
+          // overlaps the role run. Placeholder subjects wait for before_agent_start
+          // (user prompt may replace the subject key) but still inherit warm help.
+          navigatorAttendance.warmHelp?.();
+          if (
+            navigatorWorkContext.contextError === undefined &&
+            navigatorWorkContext.subjectProvenance !== "placeholder"
+          ) {
+            navigatorAttendance.prepare();
+          }
+        }
+
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
         appendAcceptedActivationToBook({
           ledgerHome,
