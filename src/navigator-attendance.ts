@@ -181,26 +181,15 @@ export type NavigatorContextProjection = {
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
 
-// v1 schema accepts direction advice; ancillary route/match/command fields are optional and never a resubmit gate.
-const targetSchema = Type.Object({
-  role: Type.String({ minLength: 1 }),
-  phase: Type.Optional(Type.Union([Type.Null(), Type.Literal("plan"), Type.Literal("apply")])),
-}, { additionalProperties: true });
-const candidateSchema = Type.Object({
-  id: Type.Optional(Type.String()),
-  matches: Type.Optional(Type.Object({
-    role: Type.Optional(Type.String()),
-    phase: Type.Optional(Type.Union([Type.Null(), Type.Literal("plan"), Type.Literal("apply")])),
-    kind: Type.Optional(Type.String()),
-    statuses: Type.Optional(Type.Array(Type.String())),
-  }, { additionalProperties: true })),
-  route: Type.Optional(Type.Array(targetSchema)),
-  next: Type.Optional(targetSchema),
-  reason: Type.Optional(Type.String()),
-  command: Type.Optional(Type.String()),
-}, { additionalProperties: true });
+// Provider schema is object-root + direction hint only (ADR 0060). Ancillary
+// route/matches/reason/command/id types are NOT admission gates — malformed or
+// missing values reach the unique execute/normalize path and are dropped there.
 const prepareSchema = Type.Object({
-  candidates: Type.Array(candidateSchema),
+  candidates: Type.Optional(Type.Array(Type.Object({
+    next: Type.Optional(Type.Object({
+      role: Type.Optional(Type.String()),
+    }, { additionalProperties: true })),
+  }, { additionalProperties: true }))),
 }, { additionalProperties: true });
 type PrepareOutput = Static<typeof prepareSchema>;
 
@@ -512,6 +501,20 @@ export function selectNavigatorCandidate(candidates: readonly NavigatorCandidate
   return usable.find((candidate) => candidate.matches === undefined);
 }
 
+/**
+ * Post-worker advice defaults (not execution, not a router).
+ * accepted/completed Fixer → Judge; accepted/completed Coder → Reviewer.
+ * Explicit model/authority-submitted next outranks these defaults at selection time.
+ * Missing Reviewer history never diverts completed Fixer to Reviewer.
+ */
+export function defaultNavigatorDirection(settlement: NavigatorSettlement): NavigatorRouteTarget | undefined {
+  if (settlement.kind !== "accepted") return undefined;
+  if (settlement.status !== "completed" && settlement.status !== "accepted") return undefined;
+  if (settlement.role === "fixer") return { role: "judge", phase: null };
+  if (settlement.role === "coder") return { role: "reviewer", phase: null };
+  return undefined;
+}
+
 export function formatNavigatorReport(report: NavigatorReport): string {
   if (report.disposition === "silence") return "";
   if (report.disposition === "unavailable") return `导航不可用：${oneLine(report.unavailableReason ?? "未能完成导航准备")}`;
@@ -761,6 +764,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         `<live_role_help>\n${helpContext}\n</live_role_help>`,
         `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call.`,
         "v1 requires a usable next direction: candidates[].next.role, with phase only when present and meaningful. route, matches, id, reason, and command are optional context — never retry to satisfy optional shape.",
+        "Post-worker advice defaults (override only when controlling authority explicitly names a different next): accepted/completed Fixer → Judge; accepted/completed Coder → Reviewer. Do not send completed Fixer to Reviewer merely because Reviewer has not settled or prior route lacks Reviewer.",
         "Do not put task-specific paths, prompts, packets, or Skill bindings in any field. Command display is rendered by the host from next, not from model prose.",
       ].join("\n\n");
       try {
@@ -883,17 +887,19 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const prepared = await preparation;
           session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
           const selected = selectNavigatorCandidate(prepared, settlement);
-          if (selected?.next === undefined) {
+          // Model/authority-submitted next wins; else apply post-worker defaults. Never invent from prose.
+          const next = selected?.next ?? defaultNavigatorDirection(settlement);
+          if (next === undefined) {
             throw new Error("Navigator prepared no machine-usable next direction");
           }
-          const selectedRoute = selected.route;
+          const selectedRoute = selected?.route;
           const routeChanged = selectedRoute !== undefined && !routeEqual(previousRoute, selectedRoute);
-          const command = renderAdviceCommand(selected.next);
+          const command = renderAdviceCommand(next);
           report = {
             disposition: "recommendation",
             ...(routeChanged ? { route: selectedRoute } : {}),
-            next: selected.next,
-            ...(selected.reason === undefined ? {} : { reason: oneLine(selected.reason) }),
+            next,
+            ...(selected?.reason === undefined ? {} : { reason: oneLine(selected.reason) }),
             ...(command === undefined ? {} : { command }),
           };
           if (selectedRoute !== undefined) {
