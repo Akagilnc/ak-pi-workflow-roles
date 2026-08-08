@@ -215,6 +215,7 @@ test("Fixer production activation args reach the real Pi loader for both optiona
     const rows = [
       { name: "initial-plan", args: buildFixerActivationExtraArgs(planAdmitted, { packageRoot }), sessionFile: planAdmitted.sessionFile },
       { name: "initial-apply", args: buildFixerActivationExtraArgs(applyAdmitted, { packageRoot }), sessionFile: applyAdmitted.sessionFile },
+      { name: "resume-plan", args: buildFixerResumeActivationExtraArgs(planAdmitted, { packageRoot }), sessionFile: planAdmitted.sessionFile },
       { name: "resume-apply", args: buildFixerResumeActivationExtraArgs(applyAdmitted, { packageRoot }), sessionFile: applyAdmitted.sessionFile },
     ];
     for (const row of rows) {

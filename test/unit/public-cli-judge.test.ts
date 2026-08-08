@@ -22,6 +22,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -600,6 +601,83 @@ test("Judge compliance table uses the real role, audit, SessionManager, and publ
       assert.equal(stderr.length > 0, variant.expectedOutcome === "failure");
     });
   }
+});
+
+test("real persisted Judge escalation remains bound to the retained audit response", async () => {
+  await withActivationHome({ prefix: "ak-judge-persisted-escalation-" }, async ({ home, agentDir }) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const conflicts = ["audit-owned conflict"];
+    const decisionGate = { question: "Which authority?", options: ["owner", "audit"] };
+    const result = await runAkRole(["judge", "--project", project, "escalate"], {
+      packageRoot,
+      home,
+      agentDir,
+      cwd: project,
+      createRunId: () => "run-judge-persisted-escalation",
+      io,
+      piRunner: async (args) => {
+        const sessionFile = args[args.indexOf("--session") + 1]!;
+        const sessionDirectory = args[args.indexOf("--session-dir") + 1]!;
+        const seedFile = persistActivationSessionFile({
+          home,
+          bookKey: resolveBookKeyFromGit(project),
+          name: "s4-persisted-escalation",
+          cwd: project,
+        });
+        await copyFile(seedFile, sessionFile);
+        const sessionManager = SessionManager.open(sessionFile, sessionDirectory, project);
+        const faux = (await import("@earendil-works/pi-ai")).fauxProvider({
+          api: "ak-judge-persisted-escalation",
+          provider: "ak-judge-persisted-escalation",
+        });
+        faux.setResponses([
+          fauxAssistantMessage(
+            fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged", note: "persisted escalation" }, { id: "judge-escalating-role" }),
+            { stopReason: "toolUse" },
+          ),
+          fauxAssistantMessage(
+            fauxToolCall(JUDGE_AUDIT_TOOL_NAME, { status: "escalate", conflicts, decisionGate }, { id: "judge-escalating-audit" }),
+            { stopReason: "toolUse" },
+          ),
+        ]);
+        await withInProcessPi({
+          cwd: project,
+          agentDir,
+          faux,
+          sessionManager,
+          additionalExtensionPaths: [resolveInternalRoleEntrypoint(packageRoot)],
+          systemPrompt: "PERSISTED ESCALATION",
+          mode: "json",
+          flags: { "ak-role": "judge" },
+          noTools: "builtin",
+        }, async ({ session }) => {
+          await session.prompt("escalate");
+        });
+        return { code: 0, stderr: "", timedOut: false, args: [...args] };
+      },
+    });
+    assert.equal(result.exitCode, 0, `${stdout.join("")} ${stderr.join("")}`);
+    assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
+    const sessionFile = join(
+      home,
+      ".ak-roles",
+      "books",
+      resolveBookKeyFromGit(project),
+      "runs",
+      "run-judge-persisted-escalation@judge",
+      "session",
+      "session.jsonl",
+    );
+    const entries = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { message?: { role?: string; toolName?: string; details?: unknown } });
+    const terminal = entries.find((entry) => entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
+    assert.ok(terminal);
+    assert.equal(isAuditEscalationResult(terminal.message?.details), true);
+    assert.deepEqual((terminal.message?.details as any).conflicts, conflicts);
+    assert.deepEqual((terminal.message?.details as any).auditDecisionGate, decisionGate);
+  });
 });
 
 test("runAkRole judge rejects burden selector before admission", async () => {
