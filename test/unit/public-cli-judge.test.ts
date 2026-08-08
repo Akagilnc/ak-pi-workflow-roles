@@ -10,6 +10,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  symlink,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -423,7 +424,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   assert.equal(badDisposition.disposition, "unavailable");
 });
 
-test("extractNavigatorFact correlates attendance to exact independent invocation/phase/subject identity", () => {
+test("extractNavigatorFact correlates attendance to exact independent invocation/phase/subject identity", async () => {
   const sessionId = "019f-session-current";
   const cwd = "/repo";
   const subjectKey = "/repo/.ak/work";
@@ -645,18 +646,26 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
   ]);
   assert.equal(sameSessionStaleAttendance.disposition, "unavailable");
 
-  // Physical path aliases (/var ↔ /private/var) are one work subject.
-  const varSubject = "/var/folders/xx/repo/.ak/work";
-  const varAlias = extractNavigatorFact([
-    { type: "session", id: sessionId, cwd: "/var/folders/xx/repo" },
-    invocation(currentInvocationId, { subjectKey: varSubject }),
-    currentTerminal,
-    attendance({
-      ...matched,
-      subjectKey: "/private/var/folders/xx/repo/.ak/work",
-    }),
-  ]);
-  assert.equal(varAlias.disposition, "no-advice");
+  // Physical aliases are one work subject. Build a real alias instead of assuming
+  // macOS-only /var ↔ /private/var topology on every CI operating system.
+  const physicalRoot = await mkdtemp(join(tmpdir(), "ak-nav-subject-"));
+  const aliasRoot = `${physicalRoot}-alias`;
+  await mkdir(join(physicalRoot, "repo", ".ak", "work"), { recursive: true });
+  await symlink(physicalRoot, aliasRoot, "dir");
+  try {
+    const physicalSubject = join(physicalRoot, "repo", ".ak", "work");
+    const aliasSubject = join(aliasRoot, "repo", ".ak", "work");
+    const physicalAlias = extractNavigatorFact([
+      { type: "session", id: sessionId, cwd: join(physicalRoot, "repo") },
+      invocation(currentInvocationId, { subjectKey: physicalSubject }),
+      currentTerminal,
+      attendance({ ...matched, subjectKey: aliasSubject }),
+    ]);
+    assert.equal(physicalAlias.disposition, "no-advice");
+  } finally {
+    await unlink(aliasRoot);
+    await rm(physicalRoot, { recursive: true, force: true });
+  }
 
   // Judge A: contradictory marker role/phase/subject vs current durable terminal → unavailable.
   const wrongMarkerRole = extractNavigatorFact([
