@@ -131,11 +131,13 @@ export type ComplianceDecisionHandlers<T> = {
   auditIncomplete?: (result: AuditIncompleteToolResult) => T | PromiseLike<T>;
 };
 
-/** Dispose a parsed audit decision without repeating status handling in roles. */
+/**
+ * Dispose a parsed audit decision without repeating status handling in roles.
+ * Role output already delivered is preserved on the escalate face (ADR 0055).
+ */
 export async function disposeComplianceDecision<T>(
   decision: ComplianceDecision,
   handlers: ComplianceDecisionHandlers<T>,
-  /** Role output already delivered; preserved on the escalate face (ADR 0055). */
   deliveredOutput?: unknown,
 ): Promise<Awaited<T>> {
   switch (decision.status) {

@@ -67,10 +67,11 @@ export function isAuditEscalationResult(value) {
     }
     return value.kind === AUDIT_ESCALATION_KIND;
 }
-/** Dispose a parsed audit decision without repeating status handling in roles. */
-export async function disposeComplianceDecision(decision, handlers, 
-/** Role output already delivered; preserved on the escalate face (ADR 0055). */
-deliveredOutput) {
+/**
+ * Dispose a parsed audit decision without repeating status handling in roles.
+ * Role output already delivered is preserved on the escalate face (ADR 0055).
+ */
+export async function disposeComplianceDecision(decision, handlers, deliveredOutput) {
     switch (decision.status) {
         case "pass":
             return await handlers.pass(decision.usage);
