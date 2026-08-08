@@ -587,7 +587,13 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     toolCallId: "fatal-judge",
     toolName: "ak_judge_output",
     isError: true,
-    details: {},
+    // Shared lifecycle persists the typed infra fact so exact-session restart
+    // classifies this terminal as durable completion (not a retryable isError).
+    details: {
+      kind: "role_infrastructure_failure",
+      source: "shared-role-lifecycle",
+      reasonCode: "host_failure",
+    },
   });
   assert.equal(
     evidence.role.failedOutputCorrelation,
@@ -617,13 +623,18 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     ),
     true,
   );
+  // JSON stream emits message_end with role=custom; session principal uses custom_message.
+  const attendance = events.filter(
+    (event) =>
+      (event.type === "message_end" &&
+        event.message?.role === "custom" &&
+        event.message?.customType === "ak-navigator-attendance") ||
+      (event.type === "custom_message" && event.customType === "ak-navigator-attendance"),
+  );
+  assert.equal(attendance.length, 1, "infrastructure failure emits affirmative typed no-advice");
   assert.equal(
-    events.some(
-      (event) =>
-        event.type === "custom_message" && event.customType === "ak-navigator-attendance",
-    ),
-    false,
-    "infrastructure failure must remain typed silence",
+    attendance[0]?.message?.details?.disposition ?? attendance[0]?.details?.disposition,
+    "no-advice",
   );
 });
 

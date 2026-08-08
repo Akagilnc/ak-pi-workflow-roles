@@ -273,7 +273,15 @@ export async function loadNavigatorWorkContext(
   // Absent or whitespace-only input yields to the existing file fallback.
   const authority = resolveNavigatorAuthorityMaterial(input, authorityMaterial);
   if (authority === undefined) {
-    throw navigatorUnavailableError("context", new Error("controlling authority content was not supplied as typed work context"));
+    // Bare developer seams (judge -p, etc.) supply the prompt only at
+    // before_agent_start. session_start absence is a soft placeholder, not a
+    // permanent context poison — prepare still fails honestly if nothing arrives.
+    return {
+      subjectKey: subjectRoot,
+      subject: `work subject: ${subjectRoot}`,
+      authority: "",
+      subjectProvenance: "placeholder",
+    };
   }
   return { subjectKey, subject, authority, subjectProvenance };
 }
@@ -311,6 +319,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
         sessionDirectory: (subjectKey) => navigatorSessionDirectory(options.context, subjectKey),
         subject: options.subject,
         authority: options.authority,
+        invocationId: options.invocationId,
         loadSoul: () => readFile(navigatorSoulPath, "utf8"),
         // In-process help: subprocess pi --help is reserved for cold-install proofs.
         // N child pi processes cannot fit the accepted 3s post-role grace under CI load.

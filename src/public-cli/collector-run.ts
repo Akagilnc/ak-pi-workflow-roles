@@ -162,11 +162,7 @@ async function presentControlledFailure(
   // Collector does not support resume/fork/reload — always terminal.
   await markRunTerminal(admitted.runDirectory).catch(() => undefined);
 
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    { disposition: "no-advice" },
-  );
+  const terminal = await settleFailureTerminalResult(admitted, failure);
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),

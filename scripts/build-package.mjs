@@ -3,7 +3,15 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
-const entries = ["packaged-role-registry", "navigator-attendance", "activation-ledger-topology", "activation-reconciliation"];
+const entries = [
+  "packaged-role-registry",
+  "public-command-renderer",
+  "work-subject-identity",
+  "navigator-invocation-identity",
+  "navigator-attendance",
+  "activation-ledger-topology",
+  "activation-reconciliation",
+];
 
 /**
  * Public ak-role CLI bundle (ADR 0052): one bin, no peer-runtime import required

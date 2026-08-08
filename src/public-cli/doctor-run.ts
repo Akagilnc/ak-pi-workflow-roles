@@ -159,11 +159,7 @@ async function presentControlledFailure(
   // Doctor does not support resume — always terminal.
   await markRunTerminal(admitted.runDirectory).catch(() => undefined);
 
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    { disposition: "no-advice" },
-  );
+  const terminal = await settleFailureTerminalResult(admitted, failure);
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
