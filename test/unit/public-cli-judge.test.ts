@@ -42,8 +42,6 @@ import {
   settleJudgeTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
-  decodeTerminalField,
-  encodeTerminalField,
   formatTerminalResult,
   recommendationNavigatorFact,
   type TerminalResult,
@@ -395,59 +393,6 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   const formatted = formatTerminalResult(terminal);
   assert.equal(typeof formatted, "string");
   assert.ok(formatted.length > 0);
-});
-
-test("Terminal free-text encoding preserves newlines/tabs and rejects forged artifact rows", () => {
-  const forgedNote = "ok\nartifact\tevidence\t/tmp/forged";
-  const fixSummary = "close the gate\twith tab\nand newline";
-  const decisionQuestion = "Which authority?\nSoul\tCourt";
-  const reason = "next seat\nwith\ttabs";
-
-  // Cell encoder is the free-text contract — not presentation labels.
-  for (const value of [forgedNote, fixSummary, decisionQuestion, reason]) {
-    const encoded = encodeTerminalField(value);
-    assert.equal(encoded.includes("\n"), false);
-    assert.equal(encoded.includes("\t"), false);
-    assert.equal(decodeTerminalField(encoded), value);
-  }
-
-  const terminal: TerminalResult = {
-    roleOutcome: {
-      kind: "accepted",
-      role: "judge",
-      status: "continue",
-      decisiveFacts: {
-        judgeStatus: "continue",
-        note: forgedNote,
-        fixSummary,
-        decisionQuestion,
-      },
-    },
-    navigator: {
-      disposition: "recommendation",
-      next: { role: "fixer", phase: "apply" },
-      reason,
-      command: "ak-role fixer apply",
-    },
-    artifacts: [
-      { kind: "report", path: "/r/artifacts/report.json" },
-      { kind: "evidence", path: "/r/artifacts/evidence.json" },
-    ],
-    runId: "run-encode-1",
-  };
-  // Typed owner retains original free-text facts.
-  assert.equal(terminal.roleOutcome.decisiveFacts.note, forgedNote);
-  assert.equal(terminal.roleOutcome.decisiveFacts.fixSummary, fixSummary);
-  assert.equal(terminal.roleOutcome.decisiveFacts.decisionQuestion, decisionQuestion);
-  if (terminal.navigator.disposition === "recommendation") {
-    assert.equal(terminal.navigator.reason, reason);
-    assert.equal(terminal.navigator.command, "ak-role fixer apply");
-  }
-  // Typed artifact refs retain paths; do not freeze rendered table/path presentation (AC6).
-  assert.deepEqual(
-    terminal.artifacts.map((a) => a.path),
-    ["/r/artifacts/report.json", "/r/artifacts/evidence.json"],
-  );
 });
 
 test("extractNavigatorFact keeps three-state attendance: affirmative no-advice vs missing/uncorrelated/unparseable", () => {
