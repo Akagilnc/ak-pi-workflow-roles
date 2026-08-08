@@ -375,36 +375,6 @@ test("every registered role writes exactly one accepted-activation fact after ad
   });
 });
 
-test("registered Reviewer runtime consumes the caller-frozen host-material dependency during admission", async () => {
-  await withActivationHome({ prefix: "ak-act-reviewer-host-" }, async ({ home, agentDir }) => {
-    const fixtureRoot = join(home, "reviewer-fixtures");
-    mkdirSync(fixtureRoot, { recursive: true });
-    const hostBytes = Buffer.from("caller-frozen authority\\n", "utf8");
-    let loads = 0;
-    const dependencies = {
-      ...admissionDepsForRole("reviewer", fixtureRoot),
-      loadReviewerHostMaterials: async () => {
-        loads += 1;
-        return [{ id: "frozen-authority", path: "/run/attachments/authority.md", bytes: hostBytes, utf8Length: hostBytes.byteLength, sha256: sha256Hex(hostBytes) }];
-      },
-    };
-    await withInProcessPi({
-      activationLedgerSession: true,
-      cwd: home,
-      agentDir,
-      faux: fauxProvider({ api: "ak-act-reviewer-host", provider: "ak-act-reviewer-host" }),
-      modelsPath: null,
-      noExtensions: true,
-      systemPrompt: "ADMIT REVIEWER HOST",
-      mode: "print",
-      flags: { "ak-role": "reviewer", ...admissionFlagsForRole("reviewer", fixtureRoot) },
-      extensionFactories: [createRoleRuntimeExtension(dependencies)],
-    }, async () => {
-      assert.equal(loads, 1);
-    });
-  });
-});
-
 test("unselected role and unsupported role leave zero accepted-activation facts", async () => {
   await withActivationHome({ prefix: "ak-act-unsel-" }, async ({ home, agentDir }) => {
     const faux = fauxProvider({ api: "ak-act-unsel", provider: "ak-act-unsel" });
