@@ -27,13 +27,17 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 全局覆盖前后皆可：`ak-role --model xai/grok-4.5:high resume <runId>`。
 
-每次运行游奕使自动出席，建议随同一 Terminal 给出（下一步、理由、渲染好的命令）；它从不强制，不可用也不影响角色结果。配置：`ak-role config set navigator openai-codex/gpt-5.6-luna:medium`。
+每次运行游奕使自动出席，建议随同一 Terminal 给出。配置：
+
+```bash
+ak-role config set navigator openai-codex/gpt-5.6-luna:medium
+```
 
 回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
 
 ## 调用百官
 
-通用旗标：`--attach <文件>`（可重复，受理即冻结）、`--project <路径>`，末尾接可选指令。
+通用旗标：`--attach <文件>`（可重复，受理即冻结）、`--project <路径>`。指令对大理寺、门下省、太医署可省略，对将作监、修内司、御史台、校书郎必须非空。
 
 ```bash
 # 大理寺——审断所供材料；自行推断举证责任，无 burden 旗标
@@ -52,7 +56,7 @@ ak-role reviewer --base main --attach ./issue.md "Review the branch."
 ak-role collector --pr 42 --leg codex:CodexBot --leg cursor:cursor-bot,cursor-bot-2
 # leg 语法 id:author[,author...]；repo 默认取 origin，--repo owner/repo 覆盖
 
-# 修内司——缮修所指 findings；phase 默认 apply
+# 修内司——缮修所指 findings；phase 默认 apply，或显式 plan
 ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
 # --prerequisites 为 {id, requirement} JSON 数组；语法畸形退出 2
 
@@ -94,7 +98,7 @@ ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
 **merge 按钮归调用者**，没有任何角色握不可逆权限：门下省把收证这件苦活做完并报收集终态，人（或 AI）自己判断、自己点，点完想调主簿就调、不调也可以。
 
-上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；审刑院也并非只跟在大理寺之后，Judge、Fixer、Reviewer、Doctor 各自都有一次。
+上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；审刑院也并非只跟在大理寺之后，大理寺、修内司、御史台、太医署各自都有一次。
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 
