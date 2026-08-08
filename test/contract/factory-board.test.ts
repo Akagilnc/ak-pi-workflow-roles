@@ -10,8 +10,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
+import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, watch as watchDirectory, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
@@ -4419,20 +4418,92 @@ function findChromeExecutable(): string | null {
   return null;
 }
 
-async function freePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const s = createServer();
-    s.listen(0, "127.0.0.1", () => {
-      const addr = s.address();
-      if (!addr || typeof addr === "string") {
-        s.close();
-        reject(new Error("no port"));
-        return;
-      }
-      const port = addr.port;
-      s.close((err) => (err ? reject(err) : resolve(port)));
-    });
+/**
+ * Wait for Chrome's own DevToolsActivePort readiness record. Chrome writes this
+ * file only after its DevTools server has bound the selected port, so readiness
+ * is observed at the browser-owned boundary rather than guessed from elapsed time.
+ */
+async function waitForChromeDevTools(
+  chromeProc: ReturnType<typeof spawn>,
+  userDataDir: string,
+  stderr: () => string,
+): Promise<{ port: number; webSocketDebuggerUrl: string }> {
+  const activePortPath = join(userDataDir, "DevToolsActivePort");
+  const readEndpoint = async (): Promise<{ port: number; webSocketDebuggerUrl: string } | null> => {
+    let raw: string;
+    try {
+      raw = await readFile(activePortPath, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+    const [portText, browserPath] = raw.trim().split(/\r?\n/);
+    const port = Number(portText);
+    if (!Number.isInteger(port) || port <= 0 || !browserPath?.startsWith("/")) {
+      throw new Error(`Chrome wrote an invalid DevToolsActivePort record: ${JSON.stringify(raw)}`);
+    }
+    return { port, webSocketDebuggerUrl: `ws://127.0.0.1:${port}${browserPath}` };
+  };
+  const initial = await readEndpoint();
+  if (initial) return initial;
+
+  const watcher = watchDirectory(userDataDir);
+  let waitError: unknown;
+  const processFailure = new Promise<never>((_resolve, reject) => {
+    const report = (detail: string): void => {
+      const evidence = stderr().trim();
+      reject(
+        new Error(
+          `${detail}${evidence ? `; Chrome stderr:\n${evidence}` : "; Chrome produced no stderr"}`,
+        ),
+      );
+    };
+    chromeProc.once("error", (error) => report(`Chrome failed to start: ${error.message}`));
+    chromeProc.once("close", (code, signal) =>
+      report(`Chrome closed before DevTools was ready (code=${code ?? "none"}, signal=${signal ?? "none"})`),
+    );
   });
+  try {
+    const fileReady = (async (): Promise<{ port: number; webSocketDebuggerUrl: string }> => {
+      // Close the small race between the initial read and watcher registration.
+      const afterWatch = await readEndpoint();
+      if (afterWatch) return afterWatch;
+      for await (const event of watcher) {
+        if (String(event.filename) !== "DevToolsActivePort") continue;
+        const endpoint = await readEndpoint();
+        if (endpoint) return endpoint;
+        throw new Error("Chrome signalled DevToolsActivePort readiness but the record disappeared");
+      }
+      throw new Error("Chrome DevTools readiness watcher ended before an endpoint was published");
+    })();
+    return await Promise.race([fileReady, processFailure]);
+  } catch (error) {
+    waitError = error;
+    throw error;
+  } finally {
+    chromeProc.removeAllListeners("error");
+    chromeProc.removeAllListeners("close");
+    try {
+      await watcher.return?.();
+    } catch (cleanupError) {
+      if (waitError) throw new AggregateError([waitError, cleanupError], "Chrome readiness cleanup failed");
+      throw cleanupError;
+    }
+  }
+}
+
+async function stopChromeGracefully(chromeProc: ReturnType<typeof spawn>): Promise<void> {
+  if (chromeProc.exitCode !== null || chromeProc.signalCode !== null) return;
+  const closed = new Promise<void>((resolve) => chromeProc.once("close", () => resolve()));
+  if (!chromeProc.kill("SIGTERM")) {
+    if (chromeProc.exitCode !== null || chromeProc.signalCode !== null) return;
+    throw new Error("Chrome graceful shutdown could not be requested");
+  }
+  await closed;
+}
+
+function closeWebSocketGracefully(ws: WebSocket): void {
+  if (ws.readyState !== WebSocket.CLOSED) ws.close();
 }
 
 /**
@@ -4459,13 +4530,12 @@ async function ticketStripComputedStyles(
   const workspace = await mkdtemp(join(tmpdir(), "factory-board-strip-"));
   const htmlPath = join(workspace, "board.html");
   await writeFile(htmlPath, html, "utf8");
-  const port = await freePort();
   const userDataDir = join(workspace, "chrome-profile");
   await mkdir(userDataDir, { recursive: true });
   const chromeProc = spawn(
     chrome,
     [
-      `--remote-debugging-port=${port}`,
+      "--remote-debugging-port=0",
       `--user-data-dir=${userDataDir}`,
       "--remote-allow-origins=*",
       "--headless=new",
@@ -4476,73 +4546,17 @@ async function ticketStripComputedStyles(
     ],
     { stdio: ["ignore", "ignore", "pipe"] },
   );
+  let chromeStderr = "";
+  chromeProc.stderr?.setEncoding("utf8");
+  chromeProc.stderr?.on("data", (chunk: string) => {
+    chromeStderr += chunk;
+  });
+  let pageWs: WebSocket | null = null;
+  let operationError: unknown;
   try {
-    // Wait for DevTools endpoint.
-    let version: { webSocketDebuggerUrl?: string } | null = null;
-    for (let i = 0; i < 50; i += 1) {
-      try {
-        const res = await fetch(`http://127.0.0.1:${port}/json/version`);
-        if (res.ok) {
-          version = (await res.json()) as { webSocketDebuggerUrl?: string };
-          if (version.webSocketDebuggerUrl) break;
-        }
-      } catch {
-        // retry
-      }
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    assert.ok(version?.webSocketDebuggerUrl, "Chrome DevTools endpoint did not come up");
+    const endpoint = await waitForChromeDevTools(chromeProc, userDataDir, () => chromeStderr);
 
-    const ws = new WebSocket(version.webSocketDebuggerUrl);
-    await new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve(), { once: true });
-      ws.addEventListener("error", () => reject(new Error("CDP websocket failed")), { once: true });
-    });
-
-    let nextId = 1;
-    const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-    ws.addEventListener("message", (ev) => {
-      const msg = JSON.parse(String(ev.data)) as {
-        id?: number;
-        result?: unknown;
-        error?: { message?: string };
-        method?: string;
-        params?: { sessionId?: string; message?: string };
-      };
-      // Flatten session-target events if any
-      if (msg.method === "Target.receivedMessageFromTarget" && msg.params?.message) {
-        const inner = JSON.parse(msg.params.message) as {
-          id?: number;
-          result?: unknown;
-          error?: { message?: string };
-        };
-        if (inner.id !== undefined && pending.has(inner.id)) {
-          const p = pending.get(inner.id)!;
-          pending.delete(inner.id);
-          if (inner.error) p.reject(new Error(inner.error.message ?? "cdp error"));
-          else p.resolve(inner.result);
-        }
-        return;
-      }
-      if (msg.id !== undefined && pending.has(msg.id)) {
-        const p = pending.get(msg.id)!;
-        pending.delete(msg.id);
-        if (msg.error) p.reject(new Error(msg.error.message ?? "cdp error"));
-        else p.resolve(msg.result);
-      }
-    });
-
-    const send = (method: string, params?: Record<string, unknown>): Promise<unknown> => {
-      const id = nextId++;
-      const payload = JSON.stringify({ id, method, params });
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        ws.send(payload);
-      });
-    };
-
-    // Attach to the only available target (browser-level targets list).
-    const targets = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as Array<{
+    const targets = (await (await fetch(`http://127.0.0.1:${endpoint.port}/json/list`)).json()) as Array<{
       id: string;
       type: string;
       webSocketDebuggerUrl?: string;
@@ -4550,20 +4564,26 @@ async function ticketStripComputedStyles(
     const pageTarget = targets.find((t) => t.type === "page") ?? targets[0];
     assert.ok(pageTarget?.webSocketDebuggerUrl, "no page target");
 
-    // Prefer a dedicated page socket for simpler command routing.
-    ws.close();
-    const pageWs = new WebSocket(pageTarget.webSocketDebuggerUrl);
+    const activePageWs = new WebSocket(pageTarget.webSocketDebuggerUrl);
+    pageWs = activePageWs;
     await new Promise<void>((resolve, reject) => {
-      pageWs.addEventListener("open", () => resolve(), { once: true });
-      pageWs.addEventListener("error", () => reject(new Error("page CDP failed")), { once: true });
+      activePageWs.addEventListener("open", () => resolve(), { once: true });
+      activePageWs.addEventListener("error", () => reject(new Error("page CDP failed")), { once: true });
+    });
+    let nextId = 1;
+    let loadResolve: (() => void) | null = null;
+    const pageLoaded = new Promise<void>((resolve) => {
+      loadResolve = resolve;
     });
     const pagePending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-    pageWs.addEventListener("message", (ev) => {
+    activePageWs.addEventListener("message", (ev) => {
       const msg = JSON.parse(String(ev.data)) as {
         id?: number;
         result?: unknown;
         error?: { message?: string };
+        method?: string;
       };
+      if (msg.method === "Page.loadEventFired") loadResolve?.();
       if (msg.id !== undefined && pagePending.has(msg.id)) {
         const p = pagePending.get(msg.id)!;
         pagePending.delete(msg.id);
@@ -4575,15 +4595,14 @@ async function ticketStripComputedStyles(
       const id = nextId++;
       return new Promise((resolve, reject) => {
         pagePending.set(id, { resolve, reject });
-        pageWs.send(JSON.stringify({ id, method, params }));
+        activePageWs.send(JSON.stringify({ id, method, params }));
       });
     };
 
     await pageSend("Page.enable");
     const fileUrl = `file://${htmlPath}`;
     await pageSend("Page.navigate", { url: fileUrl });
-    // Wait for load
-    await new Promise((r) => setTimeout(r, 200));
+    await pageLoaded;
     await pageSend("Runtime.enable");
 
     const expression = `(() => {
@@ -4636,11 +4655,33 @@ async function ticketStripComputedStyles(
       assert.ok(row.dotColor, `ticket #${n} missing data-state-dot computed color`);
       map.set(n, { ...row, dotColor: row.dotColor });
     }
-    pageWs.close();
     return map;
+  } catch (error) {
+    operationError = error;
+    throw error;
   } finally {
-    chromeProc.kill("SIGKILL");
-    await rm(workspace, { recursive: true, force: true });
+    const cleanupErrors: unknown[] = [];
+    if (pageWs) {
+      try {
+        closeWebSocketGracefully(pageWs);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    try {
+      await stopChromeGracefully(chromeProc);
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await rm(workspace, { recursive: true, force: true });
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (cleanupErrors.length > 0) {
+      const failures = operationError ? [operationError, ...cleanupErrors] : cleanupErrors;
+      throw new AggregateError(failures, "Chrome computed-style lifecycle cleanup failed");
+    }
   }
 }
 
