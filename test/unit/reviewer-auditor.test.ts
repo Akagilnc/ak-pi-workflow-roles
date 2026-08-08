@@ -12,6 +12,7 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 import {
   REVIEWER_AUDIT_TOOL_NAME,
   createPiReviewerAuditor,
+  ReviewerAuditEvidenceError,
 } from "../../src/reviewer-auditor.ts";
 
 const input: any = {
@@ -101,6 +102,17 @@ test("Reviewer auditor preserves active-provider authentication failures", async
     })(input, { context: unavailable }),
     /Reviewer compliance audit authentication failed: login expired/,
   );
+});
+
+test("Reviewer auditor rejects a current-shaped receipt when a materialized leg is not readable", async () => {
+  const currentRecord = structuredClone(input.record) as any;
+  currentRecord.accepted.materials = [{ id: "rules", repositoryPath: "RULES.md", source: "pinned-git", sourcePath: "RULES.md", text: "rules", utf8Length: 5, sha256: "rules" }];
+  currentRecord.accepted.bundle = { manifestSha256: "manifest", entries: [{ id: "canonical-skill", relativeClonePath: ".ak-reviewer/materials/canonical-skill.md", utf8Length: 1, sha256: "skill" }] };
+  currentRecord.results.standards.runtimeConstructionEvidence = { leg: "standards", workspaceIdentity: "workspace", manifestSha256: "manifest", entries: [{ id: "canonical-skill", relativeClonePath: ".ak-reviewer/materials/canonical-skill.md", utf8Length: 1, sha256: "skill", verified: true }] };
+  const audit = createPiReviewerAuditor(async () => {
+    throw new Error("provider must not run");
+  });
+  await assert.rejects(audit({ ...input, record: currentRecord }, { context }), ReviewerAuditEvidenceError);
 });
 
 test("Reviewer auditor enforces exact pass or revise decisions", async () => {

@@ -55,7 +55,7 @@ export function createReviewerDispatcher(d) {
             throw fatal; if (accepted || accepting)
             return close(id); let dispatch; try {
             const admitted = admitReviewerProposal(proposal, d.capabilities, host);
-            const evidence = await acquireReviewerPinnedEvidence(d.reader, target, admitted);
+            const evidence = await acquireReviewerPinnedEvidence(d.reader, target, admitted, d.hostMaterials);
             let taskText;
             try {
                 taskText = exactUtf8(task, "Reviewer task");

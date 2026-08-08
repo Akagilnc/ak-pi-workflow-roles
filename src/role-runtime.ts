@@ -173,7 +173,7 @@ export type {
   ReviewerUsage,
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
-export type { AcceptedReviewerDispatch, AcceptedReviewerExecution, ReviewerPinnedGitReader, ReviewerProposalV1 } from "./reviewer-dispatch.ts";
+export type { AcceptedReviewerDispatch, AcceptedReviewerExecution, ReviewerHostMaterial, ReviewerMaterialSource, ReviewerPinnedGitReader, ReviewerProposalV1 } from "./reviewer-dispatch.ts";
 export type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 export type { CollectorReceipt } from "./collector-receipt.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";

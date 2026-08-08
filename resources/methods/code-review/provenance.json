@@ -13,9 +13,9 @@
   "packageAdaptation": "reviewer-no-setup-fixed-target-two-axis",
   "files": {
     "SKILL.md": {
-      "sha256": "2575a2a2ddc91a779d98d43a3a342a112f612513d291a756539e0a0f4a8aac95",
-      "byteLength": 7346,
-      "gitBlob": "7136b24b9959ad43edce8d8c3a26442cc3bb58c2"
+      "sha256": "17840093c3a69ebffa3a3bd9582f6a944fa58623df6a65481d5a1dc2a85dd913",
+      "byteLength": 7588,
+      "gitBlob": "768371d43a38fadf2657ff890cca5fc2b038b7e1"
     },
     "agents/openai.yaml": {
       "sha256": "8229ca854e11dc8e6aef2131ee03f31fb1561cf905fab9ccc325180cf3331352",

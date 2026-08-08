@@ -6,7 +6,7 @@ import { verifyBundleIdentity, type PinnedMechanicalBundleV1 } from "./reviewer-
 
 export type MaterializedBundleEvidenceV1 = Readonly<{
   leg: "standards" | "spec"; workspaceIdentity: string; manifestSha256: string;
-  entries: readonly Readonly<{ id: string; relativeClonePath: string; utf8Length: number; sha256: string; verified: true }>[];
+  entries: readonly Readonly<{ id: string; relativeClonePath: string; utf8Length: number; sha256: string; verified: true; readable?: true }>[];
 }>;
 function confined(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
@@ -52,7 +52,7 @@ export async function materializeMechanicalBundle(workspace: string, leg: "stand
       const bytes = await readFile(destination);
       if (bytes.byteLength !== item.utf8Length || sha256Hex(bytes) !== item.sha256) throw new Error("Mechanical bundle readback mismatch");
     }
-    return Object.freeze({ leg, workspaceIdentity: sha256Hex(root), manifestSha256: bundle.manifestSha256, entries: Object.freeze(bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => Object.freeze({ id, relativeClonePath, utf8Length, sha256, verified: true as const }))) });
+    return Object.freeze({ leg, workspaceIdentity: sha256Hex(root), manifestSha256: bundle.manifestSha256, entries: Object.freeze(bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => Object.freeze({ id, relativeClonePath, utf8Length, sha256, verified: true as const, readable: true as const }))) });
   } catch (error) {
     await Promise.all(staged.map(({ temporary, destination }) => Promise.all([rm(temporary, { force: true }), rm(destination, { force: true })])));
     throw error;
