@@ -861,7 +861,13 @@ test("cold-installed live help follows the loaded extension and changes on the n
         };
         await writeFile(runtimePath, original.replace("Activate a packaged workflow role:", `${firstMarker}:`));
         const nav = attendanceModule.createNavigatorAttendance({
-          context: { sessionManager: { getSessionId: () => "cold-help" }, cwd: fixture } as never,
+          context: {
+            sessionManager: {
+              getSessionId: () => "cold-help",
+              appendCustomEntry() { return "ok"; },
+            },
+            cwd: fixture,
+          } as never,
           role: "coder",
           phase: "apply",
           subjectKey: resolve(fixture, "task.md"),

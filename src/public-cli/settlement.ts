@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { loadCollectorManifest } from "../collector-config.ts";
@@ -52,11 +52,16 @@ import {
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
+import { currentInvocationPrincipalFromSession } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import {
   PACKAGED_ROLE_REGISTRY,
   packagedRoleMetadata,
 } from "../packaged-role-registry.ts";
+import {
+  workSubjectKeyFromProjectRoot,
+  workSubjectKeysEqual,
+} from "../work-subject-identity.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
@@ -408,6 +413,8 @@ type SessionEntry = {
   type?: string;
   customType?: string;
   message?: SessionMessage;
+  /** Custom entry payload (e.g. ak-navigator-invocation principal). */
+  data?: unknown;
   timestamp?: string;
   /** Session principal id from the durable header entry. */
   id?: string;
@@ -420,29 +427,6 @@ export type NavigatorAttendanceIdentity = {
   readonly phase?: NavigatorPhase;
   readonly subjectKey?: string;
 };
-
-/**
- * Project/cwd work identity used by Navigator for public CLI / empty-sessionDir runs.
- * Kept local so settlement does not pull the Navigator preparation graph into the bin.
- * Equivalent to subjectPath("", projectRoot) in navigator-attendance.ts.
- */
-function workSubjectKeyFromProjectRoot(projectRoot: string): string {
-  const resolved = resolve(projectRoot, ".");
-  const normalized = resolved.replaceAll("\\", "/");
-  const marker = ".ak/work/issues/";
-  const index = normalized.indexOf(marker);
-  if (index >= 0) {
-    const issue = normalized
-      .slice(index + marker.length)
-      .split("/")[0]
-      ?.split("#")[0];
-    if (issue !== undefined && issue !== "") {
-      return normalized.slice(0, index + marker.length) + issue;
-    }
-  }
-  if (normalized.includes("/.ak/work/")) return resolved;
-  return resolve(projectRoot, ".ak/work");
-}
 
 function isMissingPathError(error: unknown): boolean {
   return (
@@ -893,32 +877,39 @@ function findCurrentRoleTerminal(
   return undefined;
 }
 
+type IndependentAttendanceIdentity = {
+  /** Exact current invocation token from independent role-session principal. */
+  invocationId?: string;
+  phase?: NavigatorPhase;
+  allowedPhases?: readonly NavigatorPhase[];
+  subjectKey?: string;
+};
+
 /**
  * Independent invocation identity already present on the session / admitted lifecycle.
  * Only fields with a real independent source are populated — never invent authority.
+ * Exact invocation principal comes from ak-navigator-invocation on the role session
+ * (written by Navigator lifecycle at prepare), never from attendance self-fields or a
+ * bare session-id prefix.
  */
 function independentAttendanceIdentity(
   entries: readonly SessionEntry[],
   terminalRole: string,
+  attendanceIndex: number,
   supplied?: NavigatorAttendanceIdentity,
-): {
-  sessionId?: string;
-  phase?: NavigatorPhase;
-  allowedPhases?: readonly NavigatorPhase[];
-  subjectKey?: string;
-} {
-  const identity: {
-    sessionId?: string;
-    phase?: NavigatorPhase;
-    allowedPhases?: readonly NavigatorPhase[];
-    subjectKey?: string;
-  } = {};
+): IndependentAttendanceIdentity {
+  const identity: IndependentAttendanceIdentity = {};
+
+  const invocationId = currentInvocationPrincipalFromSession(
+    entries,
+    attendanceIndex,
+  );
+  if (invocationId !== undefined) {
+    identity.invocationId = invocationId;
+  }
 
   for (const entry of entries) {
     if (entry?.type !== "session") continue;
-    if (typeof entry.id === "string" && entry.id.trim() !== "") {
-      identity.sessionId = entry.id;
-    }
     if (typeof entry.cwd === "string" && entry.cwd.trim() !== "") {
       identity.subjectKey = workSubjectKeyFromProjectRoot(entry.cwd);
     }
@@ -966,12 +957,7 @@ function navigatorAttendanceCorrelatedWithTerminal(
   details: Record<string, unknown>,
   attendanceIndex: number,
   terminal: { index: number; role: string } | undefined,
-  identity: {
-    sessionId?: string;
-    phase?: NavigatorPhase;
-    allowedPhases?: readonly NavigatorPhase[];
-    subjectKey?: string;
-  },
+  identity: IndependentAttendanceIdentity,
 ): boolean {
   if (terminal === undefined) return false;
   if (attendanceIndex <= terminal.index) return false;
@@ -980,13 +966,10 @@ function navigatorAttendanceCorrelatedWithTerminal(
   // Role comes from the packaged terminal tool — compare, do not self-validate.
   if (details.role !== terminal.role) return false;
 
-  // Invocation principal is session id when the header is present on this session.
-  if (identity.sessionId !== undefined) {
-    if (typeof details.invocationId !== "string") return false;
-    const prefix = `${identity.sessionId}:`;
-    if (!details.invocationId.startsWith(prefix)) return false;
-    if (details.invocationId.slice(prefix.length).trim() === "") return false;
-  }
+  // Exact current invocation token is mandatory independent principal.
+  // Missing principal or non-equal token (old/future same-session suffix) → uncorrelated.
+  if (identity.invocationId === undefined) return false;
+  if (details.invocationId !== identity.invocationId) return false;
 
   // Phase: exact admitted/registry fact, else role-allowed set — never bare enum shape.
   if (identity.phase !== undefined) {
@@ -998,7 +981,11 @@ function navigatorAttendanceCorrelatedWithTerminal(
   }
 
   if (identity.subjectKey !== undefined) {
-    if (details.subjectKey !== identity.subjectKey) return false;
+    if (typeof details.subjectKey !== "string") return false;
+    // Physical path aliases (/var ↔ /private/var) are one work subject.
+    if (!workSubjectKeysEqual(details.subjectKey, identity.subjectKey)) {
+      return false;
+    }
   }
 
   return true;
@@ -1068,10 +1055,6 @@ export function extractNavigatorFact(
 ): TerminalNavigatorFact {
   // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
   const terminal = findCurrentRoleTerminal(entries);
-  const independent =
-    terminal === undefined
-      ? {}
-      : independentAttendanceIdentity(entries, terminal.role, identity);
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
@@ -1083,6 +1066,11 @@ export function extractNavigatorFact(
           reason: "Navigator attendance is unparseable",
         };
       }
+      // Exact invocation principal is scoped to entries before this attendance index.
+      const independent =
+        terminal === undefined
+          ? {}
+          : independentAttendanceIdentity(entries, terminal.role, i, identity);
       if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal, independent)) {
         return {
           disposition: "unavailable",
