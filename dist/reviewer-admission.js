@@ -42,7 +42,15 @@ export function admitReviewerProposal(proposal, ceiling, hostTools) {
         if (!record(value) || typeof value.id !== "string" || !SAFE_ID.test(value.id) || typeof value.repositoryPath !== "string" || !value.repositoryPath)
             fail("material-invalid", "each materials entry requires a safe id and nonempty repositoryPath");
         const material = value;
-        materials.push(Object.freeze({ id: material.id, repositoryPath: material.repositoryPath }));
+        const sourceValue = material.source === undefined ? "pinned-git" : material.source;
+        if (sourceValue !== "pinned-git" && sourceValue !== "host-input")
+            fail("material-invalid", "material source must be pinned-git or host-input");
+        const source = sourceValue;
+        if (source === "host-input" && (typeof material.sourcePath !== "string" || !material.sourcePath.trim()))
+            fail("material-invalid", "host-input material requires an explicit sourcePath");
+        if (source === "pinned-git" && material.sourcePath !== undefined)
+            fail("material-invalid", "pinned-git material cannot carry a host sourcePath");
+        materials.push(Object.freeze({ id: material.id, repositoryPath: material.repositoryPath, source, ...(source === "host-input" ? { sourcePath: material.sourcePath } : {}) }));
     }
     if (!unique(materials.map(x => x.id)) || !unique(materials.map(x => x.repositoryPath.normalize("NFC"))))
         fail("material-invalid", "materials ids and normalized repositoryPath values must be unique");

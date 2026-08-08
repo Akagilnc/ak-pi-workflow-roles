@@ -8,7 +8,8 @@
 空 findings 是合法结果。completed testimony 的过程成本由 runtime 随后补入，不因
 候选交卷尚未包含该事实而拒绝。
 
-合规则 `pass`；明确违反 Soul 则 `revise` 并逐条指出；Soul 或 controlling authority
+合规则 `pass`；明确违反 Soul 则 `revise`，逐条指出违反的条目以及你查到的原因；
+没有具体证据不得连续打回。Soul 或 controlling authority
 冲突导致无法判断合规时，提交 `escalate` 并写明问题和可选项。
 
 恰好调用一次 `ak_doctor_audit_decision`。

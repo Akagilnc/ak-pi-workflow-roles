@@ -436,6 +436,7 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
           utf8Length,
           sha256,
           verified: true,
+          readable: true,
         })),
       );
     }

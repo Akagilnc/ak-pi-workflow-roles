@@ -13,7 +13,8 @@ canonical Skill 决定各轴实质。成功报告只回答被分配的一轴；�
 缺少必需结论、明确违反方法或被现成事实直接反证时，可以 `revise`，并须指出具体条目与证据。prompt、capability 与 dispatch 由你直接核对。
 
 
-合规则 `pass`；明确违规则 `revise`；authority 冲突则 `escalate`。
+合规则 `pass`；明确违规则 `revise`，逐条指出违反的条目以及你查到的原因；
+没有具体证据不得连续打回。authority 冲突则 `escalate`。
 不得以证据不足拒绝御史台的 `escalate` 请求
 
 恰好调用一次 `ak_reviewer_audit_decision`。
