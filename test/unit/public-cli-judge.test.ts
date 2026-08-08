@@ -55,6 +55,49 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
   }
 }
 
+/** Temp physical root + dir-symlink alias; owns cleanup after successful mkdtemp. */
+async function withPhysicalAliasFixture<T>(
+  body: (paths: { physicalRoot: string; aliasRoot: string }) => Promise<T>,
+  hooks?: {
+    mkdirWork?: (physicalRoot: string) => Promise<void>;
+    linkAlias?: (physicalRoot: string, aliasRoot: string) => Promise<void>;
+  },
+): Promise<T> {
+  const physicalRoot = await mkdtemp(join(tmpdir(), "ak-nav-subject-"));
+  const aliasRoot = `${physicalRoot}-alias`;
+  let aliasCreated = false;
+  try {
+    const mkdirWork =
+      hooks?.mkdirWork ??
+      (async (root: string) => {
+        await mkdir(join(root, "repo", ".ak", "work"), { recursive: true });
+      });
+    const linkAlias =
+      hooks?.linkAlias ??
+      (async (root: string, alias: string) => {
+        await symlink(root, alias, "dir");
+      });
+    // Every fallible step after mkdtemp stays inside the cleanup region.
+    await mkdirWork(physicalRoot);
+    await linkAlias(physicalRoot, aliasRoot);
+    aliasCreated = true;
+    return await body({ physicalRoot, aliasRoot });
+  } finally {
+    try {
+      if (aliasCreated) {
+        await unlink(aliasRoot);
+      }
+    } finally {
+      // Root removal still runs if alias unlink rejects.
+      await rm(physicalRoot, { recursive: true, force: true });
+    }
+  }
+}
+
+async function assertPathGone(path: string): Promise<void> {
+  await assert.rejects(() => access(path), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+}
+
 function captureIo() {
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -648,11 +691,7 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
 
   // Physical aliases are one work subject. Build a real alias instead of assuming
   // macOS-only /var ↔ /private/var topology on every CI operating system.
-  const physicalRoot = await mkdtemp(join(tmpdir(), "ak-nav-subject-"));
-  const aliasRoot = `${physicalRoot}-alias`;
-  await mkdir(join(physicalRoot, "repo", ".ak", "work"), { recursive: true });
-  await symlink(physicalRoot, aliasRoot, "dir");
-  try {
+  await withPhysicalAliasFixture(async ({ physicalRoot, aliasRoot }) => {
     const physicalSubject = join(physicalRoot, "repo", ".ak", "work");
     const aliasSubject = join(aliasRoot, "repo", ".ak", "work");
     const physicalAlias = extractNavigatorFact([
@@ -662,10 +701,7 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
       attendance({ ...matched, subjectKey: aliasSubject }),
     ]);
     assert.equal(physicalAlias.disposition, "no-advice");
-  } finally {
-    await unlink(aliasRoot);
-    await rm(physicalRoot, { recursive: true, force: true });
-  }
+  });
 
   // Judge A: contradictory marker role/phase/subject vs current durable terminal → unavailable.
   const wrongMarkerRole = extractNavigatorFact([
@@ -767,6 +803,76 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     { phase: "plan", subjectKey },
   );
   assert.equal(coderMatched.disposition, "no-advice");
+});
+
+test("withPhysicalAliasFixture cleans alias and root when body rejects", async () => {
+  let physicalRoot = "";
+  let aliasRoot = "";
+  await assert.rejects(
+    () =>
+      withPhysicalAliasFixture(async (paths) => {
+        physicalRoot = paths.physicalRoot;
+        aliasRoot = paths.aliasRoot;
+        await access(physicalRoot);
+        await access(aliasRoot);
+        throw new Error("body rejected");
+      }),
+    /body rejected/,
+  );
+  assert.notEqual(physicalRoot, "");
+  assert.notEqual(aliasRoot, "");
+  await assertPathGone(aliasRoot);
+  await assertPathGone(physicalRoot);
+});
+
+test("withPhysicalAliasFixture cleans root when mkdir setup rejects after mkdtemp", async () => {
+  let physicalRoot = "";
+  let aliasRoot = "";
+  await assert.rejects(
+    () =>
+      withPhysicalAliasFixture(
+        async () => {
+          assert.fail("body must not run after mkdir rejection");
+        },
+        {
+          mkdirWork: async (root) => {
+            physicalRoot = root;
+            aliasRoot = `${root}-alias`;
+            throw new Error("mkdir rejected");
+          },
+        },
+      ),
+    /mkdir rejected/,
+  );
+  assert.notEqual(physicalRoot, "");
+  await assertPathGone(physicalRoot);
+  await assertPathGone(aliasRoot);
+});
+
+test("withPhysicalAliasFixture cleans root when symlink setup rejects after mkdtemp", async () => {
+  let physicalRoot = "";
+  let aliasRoot = "";
+  await assert.rejects(
+    () =>
+      withPhysicalAliasFixture(
+        async () => {
+          assert.fail("body must not run after symlink rejection");
+        },
+        {
+          linkAlias: async (root, alias) => {
+            physicalRoot = root;
+            aliasRoot = alias;
+            await access(physicalRoot);
+            throw new Error("symlink rejected");
+          },
+        },
+      ),
+    /symlink rejected/,
+  );
+  assert.notEqual(physicalRoot, "");
+  assert.notEqual(aliasRoot, "");
+  await assertPathGone(aliasRoot);
+  await assertPathGone(physicalRoot);
 });
 
 test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {
