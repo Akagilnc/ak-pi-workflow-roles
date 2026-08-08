@@ -6,6 +6,7 @@
  * extra rows or shift column boundaries (note / fix.summary / decision question / reason).
  */
 import { renderPublicAkRoleCommand } from "./command-renderer.ts";
+import type { ComplianceAuditIncomplete } from "../compliance-transport.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 
 /** Encode one free-text Terminal cell. JSON string form cannot embed raw tab/newline. */
@@ -52,6 +53,19 @@ export type TerminalRoleName =
   | "reviewer"
   | "merger";
 
+export type AuditIncompleteTerminalOutcome = {
+  kind: "audit_incomplete";
+  role: TerminalRoleName;
+  status: "audit-incomplete";
+  decision: "no-usable-decision";
+  /** The original role submission arguments, retained independently. */
+  roleCandidate: unknown;
+  /** The malformed auditor candidate and observation retained by compliance transport. */
+  audit: ComplianceAuditIncomplete;
+  acceptedReceipt: false;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
 export type TerminalRoleOutcome =
   | {
       kind: "accepted";
@@ -66,6 +80,7 @@ export type TerminalRoleOutcome =
       status: "audit_escalation";
       decisiveFacts: Readonly<Record<string, unknown>>;
     }
+  | AuditIncompleteTerminalOutcome
   | {
       kind: "failure";
       role: TerminalRoleName;
@@ -87,6 +102,28 @@ export function exitCodeForTerminalOutcome(
   outcome: TerminalRoleOutcome,
 ): number {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
+}
+
+export function buildAuditIncompleteTerminalOutcome(input: {
+  role: TerminalRoleName;
+  roleCandidate: unknown;
+  audit: ComplianceAuditIncomplete;
+}): AuditIncompleteTerminalOutcome {
+  return {
+    kind: "audit_incomplete",
+    role: input.role,
+    status: "audit-incomplete",
+    decision: "no-usable-decision",
+    roleCandidate: input.roleCandidate,
+    audit: input.audit,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-decision",
+      observationKind: input.audit.observation.kind,
+      observationType: input.audit.observation.type,
+      acceptedReceipt: false,
+    },
+  };
 }
 
 export type TerminalNavigatorFact =

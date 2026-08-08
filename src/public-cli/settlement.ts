@@ -8,6 +8,11 @@ import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
+import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
+import {
+  COMPLIANCE_RESPONSE_ENTRY_TYPE,
+  type ComplianceAuditIncomplete,
+} from "../compliance-transport.ts";
 import { loadCollectorManifest } from "../collector-config.ts";
 import {
   COLLECTOR_OBSERVE_TOOL,
@@ -69,6 +74,7 @@ import {
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
   recommendationNavigatorFact,
+  buildAuditIncompleteTerminalOutcome,
   redactExactRunId,
   type ControlledFailureCause,
   type TerminalArtifactRef,
@@ -388,6 +394,7 @@ export const NAVIGATOR_POST_ROLE_GRACE_MS = 10_000;
 type SessionMessage = {
   role?: string;
   toolName?: string;
+  toolCallId?: string;
   isError?: boolean;
   details?: unknown;
   content?: unknown;
@@ -404,6 +411,7 @@ type SessionEntry = {
   type?: string;
   customType?: string;
   message?: SessionMessage;
+  data?: unknown;
   timestamp?: string;
 };
 
@@ -787,6 +795,149 @@ export function assertCollectorReceiptMatchesAdmitted(
       `Collector receipt leg set [${receiptLegIds.join(",")}] does not match admitted leg set [${expectedLegIds.join(",")}]`,
     );
   }
+}
+
+/**
+ * Shared audit-incomplete extraction for the four roles with Soul auditors.
+ * The role submission and retained auditor response are separate evidence faces;
+ * neither is converted into an accepted Receipt.
+ */
+function isComplianceAuditIncomplete(value: unknown): value is ComplianceAuditIncomplete {
+  if (!isRecord(value) || value.status !== "audit-incomplete") return false;
+  const observation = value.observation;
+  if (!isRecord(observation) || observation.kind !== "non-object-arguments") {
+    return false;
+  }
+  return ["null", "array", "undefined", "string", "number", "boolean", "bigint", "symbol", "function"]
+    .includes(observation.type as string);
+}
+
+function sameRetainedCandidate(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
+function roleCandidateForToolResult(
+  entries: readonly SessionEntry[],
+  resultIndex: number,
+  message: SessionMessage,
+  outputToolName: string,
+): { found: true; candidate: unknown } | { found: false } {
+  const callId = message.toolCallId;
+  for (let index = resultIndex - 1; index >= 0; index -= 1) {
+    const candidateMessage = entries[index]?.message;
+    if (candidateMessage?.role !== "assistant" || !Array.isArray(candidateMessage.content)) {
+      continue;
+    }
+    for (const part of candidateMessage.content) {
+      if (
+        !isRecord(part) ||
+        part.type !== "toolCall" ||
+        part.name !== outputToolName ||
+        (callId !== undefined && part.id !== callId)
+      ) {
+        continue;
+      }
+      return { found: true, candidate: part.arguments };
+    }
+  }
+  return { found: false };
+}
+
+function retainedComplianceCandidate(
+  entries: readonly SessionEntry[],
+  auditCandidate: unknown,
+): boolean {
+  for (const entry of entries) {
+    if (entry.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
+      continue;
+    }
+    if (!isRecord(entry.data) || !isRecord(entry.data.response)) continue;
+    const response = entry.data.response;
+    if (!Array.isArray(response.content)) continue;
+    const calls = response.content.filter(
+      (part): part is Record<string, unknown> =>
+        isRecord(part) && part.type === "toolCall",
+    );
+    if (calls.length === 1 && sameRetainedCandidate(calls[0]?.arguments, auditCandidate)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function extractComplianceAuditIncompleteRoleOutcome(
+  entries: readonly SessionEntry[],
+  role: (typeof AUDITOR_SOUL_ROLES)[number],
+  outputToolName: string,
+): { outcome: ReturnType<typeof buildAuditIncompleteTerminalOutcome> } | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (
+      entries[index]?.type !== "message" ||
+      message?.role !== "toolResult" ||
+      message.toolName !== outputToolName ||
+      message.isError === true ||
+      !isComplianceAuditIncomplete(message.details)
+    ) {
+      continue;
+    }
+    if (!retainedComplianceCandidate(entries, message.details.candidate)) continue;
+    const roleCandidate = roleCandidateForToolResult(
+      entries,
+      index,
+      message,
+      outputToolName,
+    );
+    if (!roleCandidate.found) continue;
+    return {
+      outcome: buildAuditIncompleteTerminalOutcome({
+        role,
+        roleCandidate: roleCandidate.candidate,
+        audit: message.details,
+      }),
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Settle the shared audit-incomplete Terminal for Judge/Fixer/Reviewer/Doctor.
+ * Callers invoke this only after their ordinary lawful extractor found no result,
+ * which preserves the no-other-lawful-result invariant without a second validator.
+ */
+export async function trySettleComplianceAuditIncompleteTerminalResult(
+  admitted: AdmittedRoleInvocation,
+): Promise<TerminalResult | undefined> {
+  if (!(AUDITOR_SOUL_ROLES as readonly string[]).includes(admitted.role)) {
+    return undefined;
+  }
+  const outputToolName =
+    admitted.role === "judge"
+      ? JUDGE_OUTPUT_TOOL_NAME
+      : admitted.role === "fixer"
+        ? FIXER_OUTPUT_TOOL_NAME
+        : admitted.role === "reviewer"
+          ? REVIEWER_OUTPUT_TOOL_NAME
+          : DOCTOR_OUTPUT_TOOL_NAME;
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const extracted = extractComplianceAuditIncompleteRoleOutcome(
+    entries,
+    admitted.role as (typeof AUDITOR_SOUL_ROLES)[number],
+    outputToolName,
+  );
+  if (extracted === undefined) return undefined;
+  return {
+    roleOutcome: extracted.outcome,
+    navigator: extractNavigatorFact(entries),
+    artifacts: [],
+    runId: admitted.runId,
+  };
 }
 
 /** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
