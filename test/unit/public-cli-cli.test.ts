@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { access, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome,
+} from "../../src/activation-ledger-topology.ts";
 import {
   buildExplicitInternalActivationArgs,
   helpDocument,
@@ -173,6 +179,78 @@ test("every public callable role is a completed path (no deferred slice)", async
         false,
         role,
       );
+    }
+  });
+});
+
+test("public runs write one identity-bound invocation ledger for every role", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: project });
+    execFileSync("git", ["config", "user.email", "cli@test.local"], { cwd: project });
+    execFileSync("git", ["config", "user.name", "CLI Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+    await writeFile(join(project, "conflict.txt"), "base\n", "utf8");
+    execFileSync("git", ["add", "conflict.txt"], { cwd: project });
+    execFileSync("git", ["commit", "-m", "base conflict fixture"], { cwd: project });
+    execFileSync("git", ["checkout", "-b", "ledger-side"], { cwd: project });
+    await writeFile(join(project, "conflict.txt"), "side\n", "utf8");
+    execFileSync("git", ["commit", "-am", "side conflict fixture"], { cwd: project });
+    execFileSync("git", ["checkout", "main"], { cwd: project });
+    await writeFile(join(project, "conflict.txt"), "main\n", "utf8");
+    execFileSync("git", ["commit", "-am", "main conflict fixture"], { cwd: project });
+    try {
+      execFileSync("git", ["merge", "ledger-side"], { cwd: project, stdio: "ignore" });
+    } catch {
+      // The unresolved conflict is the real production prerequisite for Merger admission.
+    }
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const ledgerHome = resolveActivationLedgerHome(() => home);
+    const piRunner = async (args: readonly string[]) => ({
+      code: 1,
+      stderr: "public ledger tracer",
+      timedOut: false,
+      args: [...args],
+    });
+    const cases = [
+      { role: "judge", runId: "public-judge-001", args: ["judge", "--project", project, "judge task"] },
+      { role: "coder", runId: "public-coder-001", args: ["coder", "--project", project, "coder task"] },
+      { role: "fixer", runId: "public-fixer-001", args: ["fixer", "--project", project, "fixer task"] },
+      { role: "reviewer", runId: "public-reviewer-001", args: ["reviewer", "--project", project, "reviewer task"] },
+      { role: "collector", runId: "public-collector-001", args: ["collector", "--project", project, "--pr", "177", "--repo", "acme/widgets", "--leg", "primary:bot"] },
+      { role: "doctor", runId: "public-doctor-001", args: ["doctor", "--project", project, "--issue", "177"] },
+      { role: "merger", runId: "public-merger-001", args: ["merger", "--project", project, "merger task"] },
+    ] as const;
+
+    for (const scenario of cases) {
+      await runAkRole(scenario.args, {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => scenario.runId,
+        piRunner,
+        io: captureIo().io,
+      });
+
+      const runDirectory = join(
+        activationBookDirectory(ledgerHome, bookKey),
+        "runs",
+        `${scenario.runId}@${scenario.role}`,
+      );
+      const ledger = JSON.parse(
+        await readFile(join(runDirectory, "invocation.json"), "utf8"),
+      ) as Record<string, unknown>;
+      assert.deepEqual(ledger, {
+        role: scenario.role,
+        runId: scenario.runId,
+        bookKey,
+        projectRoot: project,
+        runDirectory,
+        sessionDirectory: join(runDirectory, "session"),
+        sessionFile: join(runDirectory, "session", "session.jsonl"),
+      });
     }
   });
 });

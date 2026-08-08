@@ -274,7 +274,9 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(terminal.roleOutcome.status, "completed");
     assert.equal(terminal.runId, "run-coder-settle-001");
-    assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
+    const report = terminal.artifacts.find((a) => a.kind === "report");
+    assert.ok(report);
+    assert.ok((await readFile(report.path, "utf8")).includes(receipt.report));
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
 
     const evidence = JSON.parse(
