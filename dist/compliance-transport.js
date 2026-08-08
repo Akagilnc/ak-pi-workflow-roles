@@ -11,53 +11,34 @@ const COMPLIANCE_REQUEST_TIMEOUT_MS = 183000;
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
 /** Honest label when compliance bookkeeping `status` is missing or outside pass|revise|escalate. */
 export const COMPLIANCE_BOOKKEEPING_UNREADABLE = "审刑院记账位不可读";
+const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
+const decisionGateSchema = Type.Object({
+    question: nonblank,
+    options: Type.Array(nonblank, { minItems: 1 }),
+}, { additionalProperties: false });
 /**
- * Compliance decision tool parameters (ADR 0057):
- * - four field declarations + descriptions retained as model guidance
- * - required array empty (including bookkeeping `status`)
- * - additional properties allowed
- * Runtime must not reject for missing/extra/wrong-typed fields (CLAUDE.md art. 0).
+ * The one provider-facing compliance schema. It deliberately remains an open,
+ * zero-required object: the auditor owns decision meaning, while transport
+ * retains the provider response and only enforces dispatch facts.
  */
 export const complianceDecisionSchema = Type.Object({
-    status: Type.Optional(Type.Union([
+    status: Type.Union([
         Type.Literal("pass"),
         Type.Literal("revise"),
         Type.Literal("escalate"),
-    ], {
-        description: "Bookkeeping discriminator. Exact key and domain pass|revise|escalate are guidance for the model, not machine-enforced required checks.",
-    })),
-    violations: Type.Optional(Type.Array(Type.String(), {
-        description: "When status is revise, list each violation reason. Empty is allowed at runtime (soul-enforced per ADR 0056).",
-    })),
-    conflicts: Type.Optional(Type.Array(Type.String(), {
-        description: "When status is escalate, list each conflict the human gate must resolve.",
-    })),
-    decisionGate: Type.Optional(Type.Union([
-        Type.Object({
-            question: Type.Optional(Type.String({
-                description: "Non-blank human decision question",
-            })),
-            options: Type.Optional(Type.Array(Type.String(), {
-                description: "One or more non-blank options",
-            })),
-        }, { additionalProperties: true }),
-        Type.Null(),
-    ], {
-        description: "When status is escalate, human decision gate with question and options; otherwise null.",
-    })),
-}, { additionalProperties: true });
-const complianceDecisionArgumentInstructions = [
-    "Call the supplied decision tool exactly once with all four required fields.",
-    'pass: {"status":"pass","violations":[],"conflicts":[],"decisionGate":null}',
-    'revise: {"status":"revise","violations":["non-blank violation"],"conflicts":[],"decisionGate":null}',
-    'escalate: {"status":"escalate","violations":[],"conflicts":["non-blank conflict"],"decisionGate":{"question":"non-blank question","options":["non-blank option"]}}',
-    "Use the neutral values shown for fields not used by the selected status.",
-].join("\n");
+    ], { description: "Auditor decision status." }),
+    violations: Type.Array(nonblank, { description: "Observed compliance violations." }),
+    conflicts: Type.Array(nonblank, { description: "Unresolved authority or execution conflicts." }),
+    decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "Escalation question and available options." }),
+}, {
+    additionalProperties: true,
+    required: [],
+});
 function complianceToolChoice(model, toolName) {
     switch (model.api) {
         case "anthropic-messages":
         case "bedrock-converse-stream":
-            return { type: "tool", name: toolName };
+            return undefined;
         case "mistral-conversations":
         case "openai-completions":
         case "pi-messages":
@@ -99,10 +80,6 @@ export function createComplianceDecisionTool(name, description) {
         name,
         description,
         parameters: complianceDecisionSchema,
-        constrainedSampling: {
-            type: "json_schema",
-            strict: "prefer",
-        },
     };
 }
 export async function prepareComplianceDispatch(model, context, label) {
@@ -280,6 +257,7 @@ export async function runComplianceAudit(options) {
     // Silence clock starts with each attempt and resets only on real AssistantMessageEvent
     // yields from provider.stream — not on outbound payload transform or response headers.
     const onPayload = singleComplianceToolCallPayload(dispatch.model, options.tool.name);
+    const toolChoice = complianceToolChoice(dispatch.model, options.tool.name);
     const requestContext = {
         systemPrompt: options.systemPrompt,
         messages: [
@@ -287,7 +265,7 @@ export async function runComplianceAudit(options) {
                 role: "user",
                 content: [{
                         type: "text",
-                        text: `${options.serializedInput}\n<decision_tool_contract>\n${complianceDecisionArgumentInstructions}\n</decision_tool_contract>`,
+                        text: options.serializedInput,
                     }],
                 timestamp: Date.now(),
             },
@@ -333,7 +311,7 @@ export async function runComplianceAudit(options) {
                         maxTokens: 2048,
                         cacheRetention: "none",
                         sessionId: uuidv7(),
-                        toolChoice: complianceToolChoice(dispatch.model, options.tool.name),
+                        ...(toolChoice === undefined ? {} : { toolChoice }),
                         ...(onPayload === undefined ? {} : { onPayload }),
                         signal: idle.signal,
                     }).then((value) => {

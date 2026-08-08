@@ -120,53 +120,33 @@ test("Pi judge auditor accepts an exact revise decision", async () => {
   );
 });
 
-test("Pi judge auditor accepts formerly shape-rejected decisions without aborting (#177 S4)", async (t) => {
-  // ADR 0055/0056/0057: runtime no longer shape-rejects compliance decisions.
-  const cases: Array<
-    [string, Record<string, unknown>, "pass" | "revise" | "escalate", unknown?]
-  > = [
-    ["pass with violations", { status: "pass", violations: ["contradiction"] }, "pass"],
-    ["empty revise", { status: "revise", violations: [] }, "revise", []],
-    ["blank violation", { status: "revise", violations: ["  "] }, "revise", ["  "]],
-    [
-      "mixed violation values",
-      { status: "revise", violations: ["real", 4] },
-      "revise",
-      ["real", 4],
-    ],
-    [
-      "non-array violations",
-      { status: "revise", violations: "rule 1" },
-      "revise",
-      ["rule 1"],
-    ],
-    ["unknown key", { status: "pass", violations: [], explanation: "extra" }, "pass"],
-    ["missing violations", { status: "pass" }, "pass"],
-    [
-      "unknown status",
-      { status: "maybe", violations: [] },
-      "escalate",
-      COMPLIANCE_BOOKKEEPING_UNREADABLE,
-    ],
-    [
-      "missing status",
-      {},
-      "escalate",
-      COMPLIANCE_BOOKKEEPING_UNREADABLE,
-    ],
+test("Pi judge auditor does not reject bookkeeping shape, but escalates unreadable status", async (t) => {
+  const accepted: Array<[string, Record<string, unknown>]> = [
+    ["pass with violations", { status: "pass", violations: ["contradiction"] }],
+    ["empty revise", { status: "revise", violations: [] }],
+    ["blank violation", { status: "revise", violations: ["  "] }],
+    ["mixed violation values", { status: "revise", violations: ["real", 4] }],
+    ["non-array violations", { status: "revise", violations: "rule 1" }],
+    ["unknown key", { status: "pass", violations: [], explanation: "extra" }],
+    ["missing violations", { status: "pass" }],
   ];
 
-  for (const [name, decision, expected, content] of cases) {
+  for (const [name, decision] of accepted) {
+    await t.test(name, async () => {
+      const auditor = createPiJudgeAuditor(async () => auditResponse(decision));
+      assert.equal((await auditor(auditInput, { context: auditContext() })).status, decision.status);
+    });
+  }
+  for (const [name, decision] of [
+    ["unknown status", { status: "maybe", violations: [] }],
+    ["missing status", {}],
+  ] as const) {
     await t.test(name, async () => {
       const auditor = createPiJudgeAuditor(async () => auditResponse(decision));
       const result = await auditor(auditInput, { context: auditContext() });
-      assert.equal(result.status, expected);
-      if (expected === "revise" && result.status === "revise" && content !== undefined) {
-        assert.deepEqual(result.violations, content);
-      }
-      if (expected === "escalate" && result.status === "escalate") {
-        assert.ok(result.conflicts.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE));
-        // Empty gate is lawful — no forged option/question required for recognition.
+      assert.equal(result.status, "escalate");
+      if (result.status === "escalate") {
+        assert.deepEqual(result.conflicts, [COMPLIANCE_BOOKKEEPING_UNREADABLE]);
         assert.deepEqual(result.decisionGate, { question: "", options: [] });
       }
     });

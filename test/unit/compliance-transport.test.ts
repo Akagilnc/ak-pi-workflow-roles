@@ -8,6 +8,7 @@ import {
   fauxAssistantMessage,
   fauxToolCall,
   type AssistantMessage,
+  type Context,
 } from "@earendil-works/pi-ai";
 import {
   SessionManager,
@@ -15,6 +16,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import {
+  COMPLIANCE_BOOKKEEPING_UNREADABLE,
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
   ComplianceDecisionContractError,
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
@@ -170,6 +172,7 @@ test("default compliance completion sends the production timeout and merges pare
       signal: parent.signal,
     });
     assert.equal(decision.status, "pass");
+    assert.equal("constrainedSampling" in decisionTool, false);
     assert.equal(seen.options?.timeoutMs, 183000);
     assert.ok(seen.options?.signal instanceof AbortSignal);
     assert.notStrictEqual(seen.options?.signal, parent.signal);
@@ -290,172 +293,57 @@ test("shared compliance transport retains valid nested decisions verbatim", asyn
   }
 });
 
-test("Codex decision schema is an object with empty required and four declared properties", () => {
+test("Codex decision schema is an open zero-required object with declared fields", () => {
   assert.equal(complianceDecisionSchema.type, "object");
-  // JSON round-trip reads wire shape without fighting TObject's `required: undefined` typing.
-  const wire = JSON.parse(JSON.stringify(complianceDecisionSchema)) as {
-    anyOf?: unknown;
-    required?: string[];
-    properties?: Record<string, unknown>;
-    additionalProperties?: unknown;
-  };
-  assert.equal(wire.anyOf, undefined);
-  assert.deepEqual(wire.required ?? [], []);
-  assert.deepEqual(Object.keys(complianceDecisionSchema.properties ?? {}).sort(), [
-    "conflicts",
-    "decisionGate",
+  assert.equal((complianceDecisionSchema as { anyOf?: unknown }).anyOf, undefined);
+  assert.deepEqual(complianceDecisionSchema.required, []);
+  assert.equal((complianceDecisionSchema as unknown as { additionalProperties?: unknown }).additionalProperties, true);
+  assert.deepEqual(Object.keys(complianceDecisionSchema.properties), [
     "status",
     "violations",
+    "conflicts",
+    "decisionGate",
   ]);
-  assert.notEqual(wire.additionalProperties, false);
+  for (const property of Object.values(complianceDecisionSchema.properties)) {
+    assert.equal(typeof (property as { description?: unknown }).description, "string");
+  }
 });
 
-test("status-dependent and loose decision shapes are accepted without aborting the run", async () => {
-  // Former reject matrix (#177 S4 / ADR 0055-0057): runtime no longer shape-rejects.
-  // Each variant asserts its concrete status and retained content (no tautology over the union).
-  const looseArguments: Array<{
-    arguments: Record<string, unknown>;
-    expect: {
-      status: "pass" | "revise" | "escalate";
-      violations?: readonly unknown[];
-      conflicts?: readonly unknown[];
-      decisionGate?: { question: string; options: readonly unknown[] };
-    };
-  }> = [
-    {
-      arguments: { status: "pass", violations: [], conflicts: ["unexpected"], decisionGate: null },
-      expect: { status: "pass" },
-    },
-    {
-      arguments: {
-        status: "pass",
-        violations: [],
-        conflicts: [],
-        decisionGate: { question: "Choose", options: ["A"] },
-      },
-      expect: { status: "pass" },
-    },
-    {
-      arguments: { status: "pass", violations: ["unexpected"], conflicts: [], decisionGate: null },
-      expect: { status: "pass" },
-    },
-    {
-      arguments: { status: "revise", violations: [], conflicts: [], decisionGate: null },
-      expect: { status: "revise", violations: [] },
-    },
-    {
-      arguments: {
-        status: "revise",
-        violations: ["real"],
-        conflicts: ["unexpected"],
-        decisionGate: null,
-      },
-      expect: { status: "revise", violations: ["real"] },
-    },
-    {
-      arguments: {
-        status: "revise",
-        violations: ["real"],
-        conflicts: [],
-        decisionGate: { question: "Choose", options: ["A"] },
-      },
-      expect: { status: "revise", violations: ["real"] },
-    },
-    {
-      arguments: {
-        status: "revise",
-        violations: ["real", 4],
-        conflicts: [],
-        decisionGate: null,
-      },
-      expect: { status: "revise", violations: ["real", 4] },
-    },
-    {
-      arguments: {
-        status: "escalate",
-        violations: [],
-        conflicts: [],
-        decisionGate: { question: "Choose", options: ["A"] },
-      },
-      expect: {
-        status: "escalate",
-        conflicts: [],
-        decisionGate: { question: "Choose", options: ["A"] },
-      },
-    },
-    {
-      arguments: {
-        status: "escalate",
-        violations: ["unexpected"],
-        conflicts: ["conflict"],
-        decisionGate: { question: "Choose", options: ["A"] },
-      },
-      expect: {
-        status: "escalate",
-        conflicts: ["conflict"],
-        decisionGate: { question: "Choose", options: ["A"] },
-      },
-    },
-    {
-      // Empty gate escalate: degrade in place, never reject.
-      arguments: {
-        status: "escalate",
-        violations: [],
-        conflicts: ["conflict"],
-        decisionGate: null,
-      },
-      expect: {
-        status: "escalate",
-        conflicts: ["conflict"],
-        decisionGate: { question: "", options: [] },
-      },
-    },
-    {
-      arguments: { status: "pass" },
-      expect: { status: "pass" },
-    },
-    {
-      // #179 glm-5.2: arrays written as strings — pass path does not read them.
-      arguments: { status: "pass", violations: "[]", conflicts: "[]", decisionGate: null },
-      expect: { status: "pass" },
-    },
+test("transport accepts known statuses without shape rejection and escalates unreadable status", async () => {
+  const acceptedArguments = [
+    { status: "pass", conflicts: ["non-neutral bookkeeping"], auditCost: 3 },
+    { status: "revise" },
+    { status: "escalate", decisionGate: "provider-shaped bookkeeping" },
   ];
-
-  for (const [index, entry] of looseArguments.entries()) {
+  for (const [index, arguments_] of acceptedArguments.entries()) {
     await withPersistedSession(async (sessionManager) => {
-      const decision = await audit(
-        response(`loose-status-${index}`, [
-          fauxToolCall(decisionToolName, entry.arguments),
-        ]),
+      const result = await audit(
+        response(`open-status-${index}`, [fauxToolCall(decisionToolName, arguments_)]),
         sessionManager,
       );
-      assert.equal(decision.status, entry.expect.status, `variant ${index}`);
-      if (entry.expect.status === "revise" && decision.status === "revise") {
-        assert.deepEqual(decision.violations, entry.expect.violations, `variant ${index}`);
-      }
-      if (entry.expect.status === "escalate" && decision.status === "escalate") {
-        assert.deepEqual(decision.conflicts, entry.expect.conflicts, `variant ${index}`);
-        assert.deepEqual(
-          decision.decisionGate,
-          entry.expect.decisionGate,
-          `variant ${index} empty-gate degrade must be asserted`,
-        );
+      assert.equal(result.status, arguments_.status);
+    });
+  }
+  for (const [id, arguments_] of [[
+    "unknown-status",
+    { status: "unknown", auditCost: 3 },
+  ], ["missing-status", {}]] as const) {
+    await withPersistedSession(async (sessionManager) => {
+      const result = await audit(
+        response(id, [fauxToolCall(decisionToolName, arguments_)]),
+        sessionManager,
+      );
+      assert.equal(result.status, "escalate");
+      if (result.status === "escalate") {
+        assert.deepEqual(result.conflicts, [COMPLIANCE_BOOKKEEPING_UNREADABLE]);
+        assert.deepEqual(result.decisionGate, { question: "", options: [] });
       }
     });
   }
 });
 
 test("malformed nested decisions retain raw responses and report typed facts", async () => {
-  const cases: Array<{
-    id: string;
-    content: AssistantMessage["content"];
-    stopReason: AssistantMessage["stopReason"];
-    errorMessage?: string;
-    diagnostics?: AssistantMessage["diagnostics"];
-    expectedCount: number;
-    expectedNames: string[];
-    errorPresent: boolean;
-  }> = [
+  const cases = [
     {
       id: "terminal-error-with-valid-call",
       content: [
@@ -507,7 +395,29 @@ test("malformed nested decisions retain raw responses and report typed facts", a
       errorPresent: false,
     },
     {
-      // Non-object arguments still rejected (out of #177; object-guard retained).
+      id: "malformed-arguments",
+      content: [
+        fauxToolCall(decisionToolName, {
+          status: "pass",
+          violations: ["pass must be empty"],
+          conflicts: [],
+          decisionGate: null,
+        }),
+      ],
+      stopReason: "error" as const,
+      diagnostics: [
+        {
+          type: "schema-diagnostic",
+          timestamp: 11,
+          details: { source: "test" },
+        },
+      ],
+      expectedCount: 1,
+      expectedNames: [decisionToolName],
+      errorPresent: true,
+    },
+    {
+      // No fields are readable when tool arguments are not an object.
       id: "malformed-arguments-not-object",
       content: [
         fauxToolCall(decisionToolName, "not-an-object" as unknown as Record<string, unknown>),
@@ -695,6 +605,57 @@ test("silent compliance completion exhausts idle retries as typed infrastructure
       false,
     );
   });
+});
+
+test("compliance dispatch keeps one object-root tool across every supported API", async () => {
+  const expectedToolChoices: Record<string, unknown> = {
+    "anthropic-messages": undefined,
+    "bedrock-converse-stream": undefined,
+    "mistral-conversations": { type: "function", function: { name: decisionToolName } },
+    "openai-completions": { type: "function", function: { name: decisionToolName } },
+    "pi-messages": { type: "function", function: { name: decisionToolName } },
+    "azure-openai-responses": { type: "function", name: decisionToolName },
+    "openai-responses": { type: "function", name: decisionToolName },
+    "google-generative-ai": "any",
+    "google-vertex": "any",
+    "openai-codex-responses": "required",
+    default: "required",
+  };
+  for (const api of Object.keys(expectedToolChoices)) {
+    await withPersistedSession(async (sessionManager) => {
+      const base = context(sessionManager);
+      const seen: { model?: string; request?: Record<string, unknown>; context?: Context } = {};
+      const auditContext = {
+        ...base,
+        model: { ...(base.model as object), api: api === "default" ? "future-api" : api },
+      };
+      const result = await runComplianceAudit({
+        tool: decisionTool,
+        systemPrompt: "audit system",
+        serializedInput: "audit input",
+        roleLabel: "Compliance",
+        invalidDecisionLabel: "invalid compliance decision",
+        context: {
+          ...auditContext,
+          modelRegistry: {
+            ...(base.modelRegistry as object),
+            getProviderAuth: async () => ({ auth: { apiKey: "test-secret" } }),
+            getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-secret" }),
+          },
+        } as unknown as ExtensionContext,
+        runCompletion: async (model, requestContext, request) => {
+          seen.model = model.api;
+          seen.context = requestContext;
+          seen.request = request;
+          return response(`dispatch-${api}`, [fauxToolCall(decisionToolName, { status: "pass" })]);
+        },
+      });
+      assert.equal(result.status, "pass");
+      assert.equal((seen.context?.tools?.[0]?.parameters as { type?: unknown } | undefined)?.type, "object");
+      assert.deepEqual(seen.request?.toolChoice, expectedToolChoices[api]);
+      assert.equal(api !== "default" && api.includes("openai"), typeof seen.request?.onPayload === "function");
+    });
+  }
 });
 
 test("payload and response-header hooks do not extend the first body-event silence budget", async (t) => {
