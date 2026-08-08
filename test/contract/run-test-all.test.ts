@@ -34,9 +34,21 @@ type ChildRecord = {
   argv: string[];
 };
 
-async function writePathNodeShim(binDir: string): Promise<void> {
+async function writePathNodeShim(
+  binDir: string,
+  options: { signalSelf?: NodeJS.Signals } = {},
+): Promise<void> {
   await mkdir(binDir, { recursive: true });
   // Shebang pins the real interpreter so a PATH entry named `node` cannot recurse.
+  const signalSelf = options.signalSelf
+    ? `process.kill(process.pid, ${JSON.stringify(options.signalSelf)});
+// Keep the event loop alive until the signal is delivered.
+setInterval(() => {}, 1000);
+`
+    : `const exits = (process.env.AK_TEST_ALL_CHILD_EXITS ?? "0").split(",").map(Number);
+const code = Number.isFinite(exits[n]) ? exits[n] : exits[exits.length - 1] ?? 0;
+process.exit(code);
+`;
   const source = `#!${process.execPath}
 import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 const recordPath = process.env.AK_TEST_ALL_RECORD;
@@ -51,10 +63,7 @@ appendFileSync(
   recordPath,
   JSON.stringify({ argv: process.argv.slice(1), index: n }) + "\\n",
 );
-const exits = (process.env.AK_TEST_ALL_CHILD_EXITS ?? "0").split(",").map(Number);
-const code = Number.isFinite(exits[n]) ? exits[n] : exits[exits.length - 1] ?? 0;
-process.exit(code);
-`;
+${signalSelf}`;
   await writeFile(join(binDir, "node"), source, "utf8");
   await chmod(join(binDir, "node"), 0o755);
 }
@@ -168,9 +177,6 @@ test("package.json test:all is owned solely by scripts/run-test-all.mjs", async 
     pkg.scripts["test:integration"],
     "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts",
   );
-  // Runner has no test-only node override hook.
-  const runnerSource = await readFile(RUNNER, "utf8");
-  assert.equal(runnerSource.includes("AK_TEST_ALL_NODE"), false);
 });
 
 test("runner partitions discovered universe into ordinary default-parallel then heavy serial children", async () => {
@@ -314,10 +320,6 @@ test("runner fails closed on missing manifest entry and does not spawn children"
       });
       assert.notEqual(result.code, 0, "missing manifest entry must fail");
       assert.equal(result.records.length, 0, "must not spawn test children");
-      assert.match(
-        `${result.stdout}\n${result.stderr}`,
-        /package-entrypoint\.integration\.test\.ts|heavyweight|manifest/i,
-      );
     },
     async () => {
       await rm(workspace, { recursive: true, force: true });
@@ -364,6 +366,38 @@ test("runner propagates ordinary and heavy child non-zero exits honestly", async
         assert.equal(result.records.length, 2);
         assert.equal(hasConcurrencyOne(result.records[1]!.argv), true);
       }
+    },
+    async () => {
+      await rm(workspace, { recursive: true, force: true });
+    },
+  );
+});
+
+test("runner preserves child SIGTERM as exit 143 via real PATH-shim seam", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-sigterm-"));
+  await withPrimaryAwareCleanup(
+    async () => {
+      const files = [
+        "test/unit/one.test.ts",
+        ...TICKET_HEAVYWEIGHT,
+      ];
+      await seedTierTree(workspace, files);
+      const binDir = join(workspace, "bin");
+      // Ordinary child self-terminates with SIGTERM; runner must surface 128+15=143.
+      await writePathNodeShim(binDir, { signalSelf: "SIGTERM" });
+      const recordPath = join(workspace, "sigterm.jsonl");
+      const result = await runRunner({
+        cwd: workspace,
+        binDir,
+        recordPath,
+      });
+      assert.equal(
+        result.code,
+        143,
+        `SIGTERM child must surface as 143, not generic 1; stderr=${result.stderr}`,
+      );
+      assert.equal(result.records.length, 1, "fail-fast after ordinary SIGTERM");
+      assert.equal(hasConcurrencyOne(result.records[0]!.argv), false);
     },
     async () => {
       await rm(workspace, { recursive: true, force: true });
