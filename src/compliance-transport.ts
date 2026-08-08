@@ -44,6 +44,27 @@ export type ComplianceCompletion = (
   options: ProviderStreamOptions,
 ) => Promise<AssistantMessage>;
 
+export type ComplianceArgumentRootType =
+  | "null"
+  | "array"
+  | "undefined"
+  | "string"
+  | "number"
+  | "boolean"
+  | "bigint"
+  | "symbol"
+  | "function";
+
+export type ComplianceAuditIncomplete = {
+  status: "audit-incomplete";
+  observation: {
+    kind: "non-object-arguments";
+    type: ComplianceArgumentRootType;
+  };
+  candidate: unknown;
+  usage?: Usage;
+};
+
 export type ComplianceDecision =
   | { status: "pass"; usage?: Usage }
   | { status: "revise"; violations: readonly string[]; usage?: Usage }
@@ -52,7 +73,8 @@ export type ComplianceDecision =
     conflicts: readonly string[];
     decisionGate: { question: string; options: readonly string[] };
     usage?: Usage;
-  };
+  }
+  | ComplianceAuditIncomplete;
 
 export type ComplianceDispatch = {
   model: Model<Api>;
@@ -329,13 +351,19 @@ export function readComplianceDecision(
     arguments_ === null ||
     Array.isArray(arguments_)
   ) {
-    // The response and candidate have already been retained. A successful
-    // single named call with a non-object candidate is an observable audit
-    // residual, not transport failure; the existing revise path keeps it out
-    // of accepted receipts for #182 to settle publicly.
+    // The response and candidate have already been retained. This is an
+    // observable audit residual, not an auditor decision and not transport
+    // failure. Preserve the root observation and candidate for #182's public
+    // settlement; do not manufacture a revise reason here.
+    const type: ComplianceArgumentRootType = arguments_ === null
+      ? "null"
+      : Array.isArray(arguments_)
+        ? "array"
+        : typeof arguments_ as ComplianceArgumentRootType;
     return {
-      status: "revise",
-      violations: ["compliance decision arguments were not an object"],
+      status: "audit-incomplete",
+      observation: { kind: "non-object-arguments", type },
+      candidate: arguments_,
       usage: response.usage,
     };
   }

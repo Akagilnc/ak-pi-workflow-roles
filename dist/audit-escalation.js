@@ -28,6 +28,14 @@ export function projectAuditEscalation(decision) {
         ...(decision.usage === undefined ? {} : { usage: decision.usage }),
     };
 }
+export function projectAuditIncomplete(decision) {
+    return {
+        content: [{ type: "text", text: "Compliance audit incomplete; no role receipt was formed." }],
+        details: decision,
+        terminate: true,
+        ...(decision.usage === undefined ? {} : { usage: decision.usage }),
+    };
+}
 export function isAuditEscalationResult(value) {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
         return false;
@@ -59,5 +67,7 @@ export async function disposeComplianceDecision(decision, handlers) {
             return await handlers.revise(decision.violations);
         case "escalate":
             return await handlers.escalate(projectAuditEscalation(decision));
+        case "audit-incomplete":
+            return await handlers.auditIncomplete(projectAuditIncomplete(decision));
     }
 }

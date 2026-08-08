@@ -348,7 +348,17 @@ test("successful non-object decision arguments retain a typed residual without a
       ]);
       const decision = await audit(nested, sessionManager);
 
-      assert.equal(decision.status, "revise");
+      assert.equal(decision.status, "audit-incomplete");
+      if (decision.status !== "audit-incomplete") return;
+      assert.deepEqual(decision.observation, {
+        kind: "non-object-arguments",
+        type: candidate.arguments === null
+          ? "null"
+          : Array.isArray(candidate.arguments)
+            ? "array"
+            : typeof candidate.arguments,
+      });
+      assert.deepEqual(decision.candidate, candidate.arguments);
       assert.equal(sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE).length, 1);
       assert.deepEqual(
         JSON.parse(JSON.stringify(persistedResponse(sessionManager, candidate.id))),

@@ -173,13 +173,19 @@ export function readComplianceDecision(response, toolName, invalidLabel) {
     if (typeof arguments_ !== "object" ||
         arguments_ === null ||
         Array.isArray(arguments_)) {
-        // The response and candidate have already been retained. A successful
-        // single named call with a non-object candidate is an observable audit
-        // residual, not transport failure; the existing revise path keeps it out
-        // of accepted receipts for #182 to settle publicly.
+        // The response and candidate have already been retained. This is an
+        // observable audit residual, not an auditor decision and not transport
+        // failure. Preserve the root observation and candidate for #182's public
+        // settlement; do not manufacture a revise reason here.
+        const type = arguments_ === null
+            ? "null"
+            : Array.isArray(arguments_)
+                ? "array"
+                : typeof arguments_;
         return {
-            status: "revise",
-            violations: ["compliance decision arguments were not an object"],
+            status: "audit-incomplete",
+            observation: { kind: "non-object-arguments", type },
+            candidate: arguments_,
             usage: response.usage,
         };
     }
