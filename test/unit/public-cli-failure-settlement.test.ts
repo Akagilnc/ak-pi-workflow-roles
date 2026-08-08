@@ -21,6 +21,7 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
+import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
@@ -31,6 +32,7 @@ import {
   classifyPostAdmissionFailure,
   CONCISE_DIAGNOSTIC_MAX_CHARS,
   exitCodeForTerminalOutcome,
+  extractComplianceAuditIncompleteRoleOutcome,
   extractJudgeRoleOutcome,
   extractSessionProviderStop,
   formatFailureStderrDiagnostic,
@@ -976,6 +978,74 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
     // One-line stderr emission already asserted by helper; durable diagnostic stays full.
     assert.equal(stderr[0]!.includes("\n"), true);
   });
+});
+
+test("shared audit-incomplete terminal extraction enumerates every audited seat", () => {
+  const outputTools = {
+    judge: "ak_judge_output",
+    fixer: "ak_fixer_output",
+    reviewer: "ak_reviewer_output",
+    doctor: "ak_doctor_output",
+  } as const;
+  for (const role of AUDITOR_SOUL_ROLES) {
+    const roleCandidate = { role, status: "candidate" };
+    const auditCandidate = [`malformed-${role}`];
+    const result = extractComplianceAuditIncompleteRoleOutcome(
+      [
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{
+              type: "toolCall",
+              id: `${role}-role-call`,
+              name: outputTools[role],
+              arguments: roleCandidate,
+            }],
+          },
+        },
+        {
+          type: "custom",
+          customType: "ak_compliance_response",
+          data: {
+            version: 1,
+            response: {
+              content: [{
+                type: "toolCall",
+                id: `${role}-audit-call`,
+                name: `ak_${role}_audit`,
+                arguments: auditCandidate,
+              }],
+            },
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolCallId: `${role}-role-call`,
+            toolName: outputTools[role],
+            isError: false,
+            details: {
+              status: "audit-incomplete",
+              observation: { kind: "non-object-arguments", type: "array" },
+              candidate: auditCandidate,
+            },
+          },
+        },
+      ],
+      role,
+      outputTools[role],
+    );
+    assert.ok(result);
+    assert.equal(result.outcome.kind, "audit_incomplete");
+    assert.equal(result.outcome.status, "audit-incomplete");
+    assert.equal(result.outcome.decision, "no-usable-decision");
+    assert.deepEqual(result.outcome.roleCandidate, roleCandidate);
+    assert.deepEqual(result.outcome.audit.candidate, auditCandidate);
+    assert.notDeepEqual(result.outcome.roleCandidate, result.outcome.audit.candidate);
+    assert.equal(result.outcome.acceptedReceipt, false);
+  }
 });
 
 test("empty object, bogus status, and incomplete continue are not lawful outcomes", () => {

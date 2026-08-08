@@ -8,7 +8,7 @@ var __export = (target, all) => {
 
 // src/public-cli/main.ts
 import { dirname as dirname6, join as join16 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/public-cli/cli.ts
 import { homedir as homedir3 } from "node:os";
@@ -12956,6 +12956,50 @@ import { randomUUID } from "node:crypto";
 import { readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname5, join as join7 } from "node:path";
 
+// src/auditor-soul.ts
+import { fileURLToPath } from "node:url";
+var AUDITOR_SOUL_ROLES = [
+  "judge",
+  "fixer",
+  "reviewer",
+  "doctor"
+];
+var auditorSoulPaths = Object.freeze({
+  judge: fileURLToPath(new URL("../souls/judge-auditor.md", import.meta.url)),
+  fixer: fileURLToPath(new URL("../souls/fixer-auditor.md", import.meta.url)),
+  reviewer: fileURLToPath(
+    new URL("../souls/reviewer-auditor.md", import.meta.url)
+  ),
+  doctor: fileURLToPath(new URL("../souls/doctor-auditor.md", import.meta.url))
+});
+
+// src/compliance-transport.ts
+var nonblank3 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
+var decisionGateSchema = typebox_exports.Object(
+  {
+    question: nonblank3,
+    options: typebox_exports.Array(nonblank3, { minItems: 1 })
+  },
+  { additionalProperties: false }
+);
+var complianceDecisionSchema = typebox_exports.Object(
+  {
+    status: typebox_exports.Union([
+      typebox_exports.Literal("pass"),
+      typebox_exports.Literal("revise"),
+      typebox_exports.Literal("escalate")
+    ], { description: "Auditor decision status." }),
+    violations: typebox_exports.Array(nonblank3, { description: "Observed compliance violations." }),
+    conflicts: typebox_exports.Array(nonblank3, { description: "Unresolved authority or execution conflicts." }),
+    decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." })
+  },
+  {
+    additionalProperties: true,
+    required: []
+  }
+);
+var COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+
 // src/collector-evidence.ts
 var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
 
@@ -13052,6 +13096,23 @@ function isLawfulTypedTerminalOutcome(outcome) {
 }
 function exitCodeForTerminalOutcome(outcome) {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
+}
+function buildAuditIncompleteTerminalOutcome(input) {
+  return {
+    kind: "audit_incomplete",
+    role: input.role,
+    status: "audit-incomplete",
+    decision: "no-usable-decision",
+    roleCandidate: input.roleCandidate,
+    audit: input.audit,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-decision",
+      observationKind: input.audit.observation.kind,
+      observationType: input.audit.observation.type,
+      acceptedReceipt: false
+    }
+  };
 }
 var REDACTED_RUN_ID_TOKEN = "[run-id]";
 function redactExactRunId(text, runId) {
@@ -13520,6 +13581,99 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds
       `Collector receipt leg set [${receiptLegIds.join(",")}] does not match admitted leg set [${expectedLegIds.join(",")}]`
     );
   }
+}
+function isComplianceAuditIncomplete(value) {
+  if (!isRecord5(value) || value.status !== "audit-incomplete") return false;
+  const observation = value.observation;
+  if (!isRecord5(observation) || observation.kind !== "non-object-arguments") {
+    return false;
+  }
+  return ["null", "array", "undefined", "string", "number", "boolean", "bigint", "symbol", "function"].includes(observation.type);
+}
+function sameRetainedCandidate(left, right) {
+  if (Object.is(left, right)) return true;
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+function roleCandidateForToolResult(entries, resultIndex, message, outputToolName) {
+  const callId = message.toolCallId;
+  for (let index = resultIndex - 1; index >= 0; index -= 1) {
+    const candidateMessage = entries[index]?.message;
+    if (candidateMessage?.role !== "assistant" || !Array.isArray(candidateMessage.content)) {
+      continue;
+    }
+    for (const part of candidateMessage.content) {
+      if (!isRecord5(part) || part.type !== "toolCall" || part.name !== outputToolName || callId !== void 0 && part.id !== callId) {
+        continue;
+      }
+      return { found: true, candidate: part.arguments };
+    }
+  }
+  return { found: false };
+}
+function retainedComplianceCandidate(entries, auditCandidate) {
+  for (const entry of entries) {
+    if (entry.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
+      continue;
+    }
+    if (!isRecord5(entry.data) || !isRecord5(entry.data.response)) continue;
+    const response = entry.data.response;
+    if (!Array.isArray(response.content)) continue;
+    const calls = response.content.filter(
+      (part) => isRecord5(part) && part.type === "toolCall"
+    );
+    if (calls.length === 1 && sameRetainedCandidate(calls[0]?.arguments, auditCandidate)) {
+      return true;
+    }
+  }
+  return false;
+}
+function extractComplianceAuditIncompleteRoleOutcome(entries, role, outputToolName) {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (entries[index]?.type !== "message" || message?.role !== "toolResult" || message.toolName !== outputToolName || message.isError === true || !isComplianceAuditIncomplete(message.details)) {
+      continue;
+    }
+    if (!retainedComplianceCandidate(entries, message.details.candidate)) continue;
+    const roleCandidate = roleCandidateForToolResult(
+      entries,
+      index,
+      message,
+      outputToolName
+    );
+    if (!roleCandidate.found) continue;
+    return {
+      outcome: buildAuditIncompleteTerminalOutcome({
+        role,
+        roleCandidate: roleCandidate.candidate,
+        audit: message.details
+      })
+    };
+  }
+  return void 0;
+}
+async function trySettleComplianceAuditIncompleteTerminalResult(admitted) {
+  if (!AUDITOR_SOUL_ROLES.includes(admitted.role)) {
+    return void 0;
+  }
+  const outputToolName = admitted.role === "judge" ? JUDGE_OUTPUT_TOOL_NAME : admitted.role === "fixer" ? FIXER_OUTPUT_TOOL_NAME : admitted.role === "reviewer" ? REVIEWER_OUTPUT_TOOL_NAME : DOCTOR_OUTPUT_TOOL_NAME;
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === void 0) return void 0;
+  const extracted = extractComplianceAuditIncompleteRoleOutcome(
+    entries,
+    admitted.role,
+    outputToolName
+  );
+  if (extracted === void 0) return void 0;
+  return {
+    roleOutcome: extracted.outcome,
+    navigator: extractNavigatorFact(entries),
+    artifacts: [],
+    runId: admitted.runId
+  };
 }
 function extractJudgeRoleOutcome(entries) {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -14861,6 +15015,16 @@ async function dispatchAdmittedJudge(input) {
         terminal: lawful
       };
     }
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== void 0) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(auditIncomplete));
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete
+      };
+    }
     const sessionProviderStop = await readSessionProviderStop(
       admitted.sessionFile
     );
@@ -15670,6 +15834,16 @@ async function dispatchAdmittedDoctor(input) {
         terminal: lawful
       };
     }
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== void 0) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(auditIncomplete));
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete
+      };
+    }
     const sessionProviderStop = await readSessionProviderStop(
       admitted.sessionFile
     );
@@ -15931,6 +16105,16 @@ async function dispatchAdmittedFixer(input) {
         exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
         admitted,
         terminal: lawful
+      };
+    }
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== void 0) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(auditIncomplete));
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete
       };
     }
     const sessionProviderStop = await readSessionProviderStop(
@@ -16716,6 +16900,16 @@ async function dispatchAdmittedReviewer(input) {
         exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
         admitted,
         terminal: lawful
+      };
+    }
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== void 0) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(auditIncomplete));
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete
       };
     }
     const sessionProviderStop = await readSessionProviderStop(
@@ -17508,7 +17702,7 @@ async function runAkRole(argv, env) {
 }
 
 // src/public-cli/main.ts
-var here = dirname6(fileURLToPath(import.meta.url));
+var here = dirname6(fileURLToPath2(import.meta.url));
 var packageRoot = join16(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

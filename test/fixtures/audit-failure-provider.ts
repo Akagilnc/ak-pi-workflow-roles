@@ -45,7 +45,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     || observation
     || deliveryMode === "recommendation"
     || deliveryMode === "silence";
-  const roleScripted = observation || deliveryMode !== undefined;
+  const roleScripted = observation || deliveryMode !== undefined || process.env.AK_AUDIT_NON_OBJECT === "1";
   let navigatorCalls = 0;
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
@@ -78,6 +78,9 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
       }
     }
     if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+      if (process.env.AK_AUDIT_NON_OBJECT === "1") {
+        return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, ["malformed auditor candidate"]));
+      }
       if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
         const timeoutMs = options?.timeoutMs;
         if (typeof timeoutMs !== "number" || timeoutMs <= 0) {
@@ -120,7 +123,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     if (healthyNavigator || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
-  faux.setResponses(healthyNavigator || deliveryMode === "unavailable" || process.env.AK_AUDIT_TIMEOUT_FAILURE === "1" ? [response, response, response, response, response] : [
+  faux.setResponses(healthyNavigator || roleScripted || deliveryMode === "unavailable" || process.env.AK_AUDIT_TIMEOUT_FAILURE === "1" ? [response, response, response, response, response] : [
     fauxAssistantMessage(
       fauxToolCall(
         JUDGE_OUTPUT_TOOL_NAME,

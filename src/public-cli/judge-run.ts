@@ -53,6 +53,7 @@ import {
   readSessionProviderStop,
   settleJudgeFailureTerminalResult,
   trySettleJudgeTerminalResult,
+  trySettleComplianceAuditIncompleteTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type {
@@ -351,6 +352,17 @@ async function dispatchAdmittedJudge(input: {
         exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
         admitted,
         terminal: lawful,
+      };
+    }
+
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== undefined) {
+      await markRunTerminal(admitted.runDirectory).catch(() => undefined);
+      io.stdout(formatTerminalResult(auditIncomplete));
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete,
       };
     }
 
