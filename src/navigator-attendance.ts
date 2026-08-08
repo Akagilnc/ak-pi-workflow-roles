@@ -319,12 +319,14 @@ function normalizePrepareOutput(value: unknown): NavigatorCandidate[] {
     .filter((candidate): candidate is NavigatorCandidate => candidate !== undefined);
 }
 
-/** Registry-shaped display command from recognized next — never model prose. */
+/** Registry-shaped display command from recognized next — never model prose or role-name lists. */
 function renderAdviceCommand(next: NavigatorRouteTarget): string | undefined {
-  if (!targetRoles.has(next.role)) return undefined;
-  if (next.phase === null) return `ak-role ${next.role}`;
-  if (next.role === "coder" || next.role === "fixer") return `ak-role ${next.role} ${next.phase}`;
-  return `ak-role ${next.role}`;
+  const metadata = packagedRoleMetadata(next.role);
+  if (metadata === undefined) return undefined;
+  // next.phase is already normalized against registry phase ownership.
+  return next.phase === null
+    ? `ak-role ${next.role}`
+    : `ak-role ${next.role} ${next.phase}`;
 }
 function routeEqual(a: readonly NavigatorRouteTarget[] | undefined, b: readonly NavigatorRouteTarget[]): boolean {
   return a !== undefined && a.length === b.length && a.every((target, index) => target.role === b[index]!.role && target.phase === b[index]!.phase);
