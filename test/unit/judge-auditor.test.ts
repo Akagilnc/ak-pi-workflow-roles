@@ -119,8 +119,8 @@ test("Pi judge auditor accepts an exact revise decision", async () => {
   );
 });
 
-test("Pi judge auditor rejects malformed and contradictory decisions", async (t) => {
-  const cases: Array<[string, Record<string, unknown>]> = [
+test("Pi judge auditor does not reject bookkeeping shape, but preserves unknown-status failure", async (t) => {
+  const accepted: Array<[string, Record<string, unknown>]> = [
     ["pass with violations", { status: "pass", violations: ["contradiction"] }],
     ["empty revise", { status: "revise", violations: [] }],
     ["blank violation", { status: "revise", violations: ["  "] }],
@@ -128,18 +128,18 @@ test("Pi judge auditor rejects malformed and contradictory decisions", async (t)
     ["non-array violations", { status: "revise", violations: "rule 1" }],
     ["unknown key", { status: "pass", violations: [], explanation: "extra" }],
     ["missing violations", { status: "pass" }],
-    ["unknown status", { status: "maybe", violations: [] }],
   ];
 
-  for (const [name, decision] of cases) {
+  for (const [name, decision] of accepted) {
     await t.test(name, async () => {
       const auditor = createPiJudgeAuditor(async () => auditResponse(decision));
-      await assert.rejects(
-        auditor(auditInput, { context: auditContext() }),
-        /invalid soul audit decision/,
-      );
+      assert.equal((await auditor(auditInput, { context: auditContext() })).status, decision.status);
     });
   }
+  await t.test("unknown status", async () => {
+    const auditor = createPiJudgeAuditor(async () => auditResponse({ status: "maybe", violations: [] }));
+    await assert.rejects(auditor(auditInput, { context: auditContext() }), /invalid soul audit decision/);
+  });
 });
 
 test("Pi judge auditor requires exactly one decision call", async () => {
