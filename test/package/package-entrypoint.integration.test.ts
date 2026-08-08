@@ -669,14 +669,12 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         const response = (context: Context, requestOptions?: unknown, _state?: unknown, requestModel?: { baseUrl?: string }) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
           if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+            // Developer exact-session v1 shape: direction-only next is enough.
+            // Full route/matches/command must not be required for recommendation.
             return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
               candidates: [{
-                id: "dev-seam-judge-to-fixer",
-                matches: { role: "judge", phase: null, kind: "accepted" },
-                route: [{ role: "fixer", phase: "apply" }],
                 next: { role: "fixer", phase: "apply" },
                 reason: "accepted judge should proceed to fixer apply",
-                command: "Usage: ak-role fixer",
               }],
             }), { stopReason: "toolUse" });
           }
@@ -775,8 +773,9 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.equal(recommendation.disposition, "recommendation");
         assert.equal(recommendation.role, "judge");
         assert.deepEqual(recommendation.next, { role: "fixer", phase: "apply" });
-        assert.equal(typeof recommendation.reason, "string");
-        assert.equal(typeof recommendation.command, "string");
+        assert.equal(recommendation.reason, "accepted judge should proceed to fixer apply");
+        // Command is registry-rendered from recognized next, not model prose.
+        assert.equal(recommendation.command, "ak-role fixer apply");
         // Exact named session principal is the only authoritative surface.
         assert.equal(typeof sessionManager.getSessionFile?.() === "string" || sessionManager.getSessionDir().length > 0, true);
       });
@@ -842,19 +841,16 @@ test("cold-installed live help follows the loaded extension and changes on the n
         await writeFile(modelSettingPath, JSON.stringify({ model: "provider/one:backup" }), "utf8");
         assert.throws(() => attendanceModule.parseNavigatorModelSetting("provider/one:backup"), /:max|thinking suffix/);
         await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
-        const events: Array<{ command?: string }> = [];
+        const events: Array<{ command?: string; disposition?: string; unavailableReason?: string }> = [];
+        const prepareRequests: string[] = [];
         let prepareTool: any;
         const session = {
           async prompt(request: string) {
-            const command = request.includes(secondMarker) ? `Usage: ${secondMarker}` : `Usage: ${firstMarker}`;
+            prepareRequests.push(request);
             await prepareTool.execute("cold-help-prepare", {
               candidates: [{
-                id: "cold-help-route",
-                matches: { role: "coder", phase: "apply", kind: "accepted" },
-                route: [{ role: "coder", phase: "apply" }, { role: "judge", phase: null }],
                 next: { role: "judge", phase: null },
-                reason: "typed cold-installed route",
-                command,
+                reason: "typed cold-installed direction",
               }],
             });
           },
@@ -884,12 +880,15 @@ test("cold-installed live help follows the loaded extension and changes on the n
         nav.prepare();
         await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
         assert.equal(events.length, 2);
+        assert.equal(prepareRequests.length, 2);
+        assert.equal(prepareRequests[0]!.includes(firstMarker), true, "first prepare must carry live help marker");
+        assert.equal(prepareRequests[1]!.includes(secondMarker), true, "second prepare must reread live help");
         assert.deepEqual(events.map((event: any) => ({ disposition: event.disposition, command: event.command, unavailableReason: event.unavailableReason })), [
-          { disposition: "recommendation", command: `Usage: ${firstMarker}`, unavailableReason: undefined },
-          { disposition: "recommendation", command: `Usage: ${secondMarker}`, unavailableReason: undefined },
+          { disposition: "recommendation", command: "ak-role judge", unavailableReason: undefined },
+          { disposition: "recommendation", command: "ak-role judge", unavailableReason: undefined },
         ]);
-        assert.equal(events[0]!.command, `Usage: ${firstMarker}`);
-        assert.equal(events[1]!.command, `Usage: ${secondMarker}`);
+        assert.equal(events[0]!.command, "ak-role judge");
+        assert.equal(events[1]!.command, "ak-role judge");
         assert.equal(events[1]!.command?.includes("/task.md"), false);
 
         // Cross the installed package entrypoint with the bundled Luna Max default,
