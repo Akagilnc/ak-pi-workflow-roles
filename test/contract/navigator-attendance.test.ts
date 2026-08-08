@@ -1184,8 +1184,46 @@ test("direction-only prepare settles recommendation; missing next is honest unav
       await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "unavailable");
-      assert.match(String(events[0].unavailableReason), /no machine-usable next/i);
       assert.equal(events[0].next, undefined);
+      assert.equal(events[0].unavailableSource, "unknown");
+      assert.equal(events[0].unavailableCause, "unknown");
+      assert.notEqual(events[0].unavailableReason, undefined);
+    }
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
+});
+
+test("advice command derives phase token from registry metadata for every packaged role", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-command-registry-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+
+    // Command ownership is registry phases on normalized next — no parallel role-name list.
+    for (const entry of PACKAGED_ROLE_REGISTRY) {
+      for (const phase of entry.phases) {
+        const harness = sessionHarness();
+        const events: any[] = [];
+        const nav = await attendance(setting, harness, events);
+        nav.prepare();
+        while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+        await harness.tool().execute(
+          `cmd-${entry.role}-${String(phase)}`,
+          { candidates: [{ next: { role: entry.role, phase } }] },
+          undefined,
+          undefined,
+          {} as never,
+        );
+        harness.release();
+        await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+        assert.equal(events[0]?.disposition, "recommendation", entry.role);
+        assert.deepEqual(events[0]?.next, { role: entry.role, phase });
+        const expected = phase === null ? `ak-role ${entry.role}` : `ak-role ${entry.role} ${phase}`;
+        assert.equal(events[0]?.command, expected, `${entry.role}/${String(phase)}`);
+      }
     }
   } catch (error) {
     await cleanupTempDir(root, error);
@@ -1224,16 +1262,20 @@ test("completed Fixer/Coder settlement does not invent next without model/author
     // Empty advice after completed Fixer → honest unavailable; never invent Judge/Reviewer.
     const fixerEmpty = await settleEmptyAdvice("fixer", { candidates: [] });
     assert.equal(fixerEmpty?.disposition, "unavailable");
-    assert.match(String(fixerEmpty?.unavailableReason), /no machine-usable next/i);
     assert.equal(fixerEmpty?.next, undefined);
+    assert.equal(fixerEmpty?.unavailableSource, "unknown");
+    assert.equal(fixerEmpty?.unavailableCause, "unknown");
+    assert.notEqual(fixerEmpty?.unavailableReason, undefined);
     assert.notEqual(fixerEmpty?.next?.role, "judge");
     assert.notEqual(fixerEmpty?.next?.role, "reviewer");
 
     // Empty advice after completed Coder → honest unavailable; never invent Reviewer.
     const coderEmpty = await settleEmptyAdvice("coder", {});
     assert.equal(coderEmpty?.disposition, "unavailable");
-    assert.match(String(coderEmpty?.unavailableReason), /no machine-usable next/i);
     assert.equal(coderEmpty?.next, undefined);
+    assert.equal(coderEmpty?.unavailableSource, "unknown");
+    assert.equal(coderEmpty?.unavailableCause, "unknown");
+    assert.notEqual(coderEmpty?.unavailableReason, undefined);
     assert.notEqual(coderEmpty?.next?.role, "reviewer");
 
     // Explicit model next still settles as recommendation (no host default involved).
@@ -1296,7 +1338,9 @@ test("empty authority at prepare is honest context unavailable", async () => {
     assert.equal(events.length, 1);
     assert.equal(events[0].disposition, "unavailable");
     assert.equal(events[0].unavailableSource, "context");
-    assert.match(String(events[0].unavailableReason), /controlling authority content was not supplied/);
+    assert.equal(events[0].unavailableCause, "context");
+    assert.equal(events[0].next, undefined);
+    assert.notEqual(events[0].unavailableReason, undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
