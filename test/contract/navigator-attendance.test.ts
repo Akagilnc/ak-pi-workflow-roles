@@ -1893,6 +1893,34 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
   assert.equal(isUuidV7(malformedLatest.invocationId), true);
   assert.notEqual(malformedLatest.invocationId, validA);
 
+  // Contradictory marker role/phase/subject must not resume.
+  const unfinishedJudge = resolveLifecycleInvocationPrincipal([marker(validA, "judge", null)], {
+    role: "judge",
+    phase: null,
+    subjectKey: "/repo/.ak/work",
+  });
+  assert.equal(unfinishedJudge.resume, true);
+  assert.equal(unfinishedJudge.invocationId, validA);
+  const wrongRoleResume = resolveLifecycleInvocationPrincipal([marker(validA, "coder", "apply")], {
+    role: "judge",
+    phase: null,
+    subjectKey: "/repo/.ak/work",
+  });
+  assert.equal(wrongRoleResume.resume, false);
+  assert.notEqual(wrongRoleResume.invocationId, validA);
+  const wrongPhaseResume = resolveLifecycleInvocationPrincipal([marker(validA, "judge", null)], {
+    role: "judge",
+    phase: "apply",
+    subjectKey: "/repo/.ak/work",
+  });
+  assert.equal(wrongPhaseResume.resume, false);
+  const wrongSubjectResume = resolveLifecycleInvocationPrincipal([marker(validA, "judge", null)], {
+    role: "judge",
+    phase: null,
+    subjectKey: "/other/work",
+  });
+  assert.equal(wrongSubjectResume.resume, false);
+
   // Reader rejects non-UUIDv7 nearest (forged matching marker+attendance cannot bind).
   assert.equal(
     currentInvocationPrincipalFromSession([marker(validB), marker(forged)], 2),

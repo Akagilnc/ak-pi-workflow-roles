@@ -827,12 +827,17 @@ export function createRoleRuntimeExtension(
           }
           navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
           // Shared envelope owns exact invocation principal from admitted session lifecycle.
-          // session_start is process activation: resume unfinished principal; mint only for
-          // a new invocation (no marker, malformed nearest, or terminal already completed).
+          // session_start is process activation: resume unfinished principal only when marker
+          // role/phase/subjectKey still match; mint for contradictory marker, malformed nearest,
+          // missing marker, or terminal already completed.
           const sessionEntries = ctx.sessionManager.getEntries();
-          const lifecyclePrincipal = resolveLifecycleInvocationPrincipal(sessionEntries);
-          const invocationId = lifecyclePrincipal.invocationId;
           const invocationPhase = navigatorPhase(pi, entry.role);
+          const lifecyclePrincipal = resolveLifecycleInvocationPrincipal(sessionEntries, {
+            role: entry.role,
+            phase: invocationPhase,
+            subjectKey: work.subjectKey,
+          });
+          const invocationId = lifecyclePrincipal.invocationId;
           if (!lifecyclePrincipal.resume) {
             pi.appendEntry(NAVIGATOR_INVOCATION_ENTRY, {
               invocationId,

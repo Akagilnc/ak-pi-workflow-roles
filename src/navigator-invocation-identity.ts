@@ -4,10 +4,11 @@
  * it on the role session via Pi's guaranteed `pi.appendEntry` boundary.
  *
  * session_start is process/session activation, not a new Role invocation:
- * unfinished exact-session resume reuses the latest valid marker; a packaged
- * role terminal completing that marker starts the next invocation (fresh mint).
- * Terminal settlement reads the nearest independent marker strictly before the
- * current packaged role terminal and compares equality — never attendance
+ * unfinished exact-session resume reuses the latest valid marker only when its
+ * role/phase/subjectKey still match the expected identity; a packaged role
+ * terminal completing that marker starts the next invocation (fresh mint).
+ * Terminal settlement binds the nearest independent marker strictly before the
+ * current durable packaged role terminal and compares equality — never attendance
  * self-shape, markers after the terminal, or stale older markers behind a
  * malformed nearest. Non-UUIDv7 principals are never accepted.
  *
@@ -16,10 +17,16 @@
  *   - accepted/human: isError exactly false and no infrastructure-failure fact
  *   - infrastructure: isError exactly true plus exact closed infrastructure fact
  *   - retryable/missing/nonboolean/contradictory/malformed: nonterminal
+ *
+ * One truth table also owns marker↔terminal cardinality:
+ *   - a marker binds exactly one durable packaged role terminal
+ *   - multiple durable terminals after the same marker → ambiguous / fail-closed
+ *   - marker role/phase/subjectKey must match the terminal + independent expected
  */
 
 import { PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
 import { isUuidV7, uuidv7 } from "./uuidv7.ts";
+import { workSubjectKeysEqual } from "./work-subject-identity.ts";
 
 export const NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation" as const;
 
@@ -68,8 +75,8 @@ export function isNavigatorInfrastructureFailureFact(
   );
 }
 
-const PACKAGED_ROLE_OUTPUT_TOOLS: ReadonlySet<string> = new Set(
-  PACKAGED_ROLE_REGISTRY.map((entry) => entry.outputTool),
+const PACKAGED_ROLE_OUTPUT_TOOLS: ReadonlyMap<string, string> = new Map(
+  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role]),
 );
 
 export type NavigatorInvocationEntryLike = {
@@ -89,13 +96,73 @@ export function mintNavigatorInvocationId(): string {
   return uuidv7();
 }
 
-function invocationIdFromData(data: unknown): string | undefined {
+/** Phase carried on the durable invocation marker / expected identity. */
+export type InvocationPhase = "plan" | "apply" | null;
+
+/** Full exact-invocation marker identity persisted on the role session. */
+export type InvocationMarkerIdentity = {
+  readonly invocationId: string;
+  readonly role: string;
+  readonly phase: InvocationPhase;
+  readonly subjectKey: string;
+};
+
+/** Independently admitted / registry / cwd expected identity for resume and correlation. */
+export type ExpectedInvocationIdentity = {
+  readonly role: string;
+  readonly phase?: InvocationPhase;
+  readonly allowedPhases?: readonly InvocationPhase[];
+  readonly subjectKey?: string;
+};
+
+function invocationPhaseFromUnknown(value: unknown): InvocationPhase | undefined {
+  if (value === null || value === "plan" || value === "apply") return value;
+  return undefined;
+}
+
+/**
+ * Parse a full invocation marker payload. All identity fields are required;
+ * non-UUIDv7 principals and partial shapes fail closed.
+ */
+export function parseInvocationMarkerIdentity(
+  data: unknown,
+): InvocationMarkerIdentity | undefined {
   if (data === null || typeof data !== "object" || Array.isArray(data)) return undefined;
-  const invocationId = (data as { invocationId?: unknown }).invocationId;
+  const record = data as Record<string, unknown>;
+  const invocationId = record.invocationId;
   if (typeof invocationId !== "string") return undefined;
-  const trimmed = invocationId.trim();
-  // Opaque principal must be uuidv7 — reject caller-overwrite / legacy spellings.
-  return isUuidV7(trimmed) ? trimmed : undefined;
+  const trimmedId = invocationId.trim();
+  if (!isUuidV7(trimmedId)) return undefined;
+  if (typeof record.role !== "string" || record.role.trim() === "") return undefined;
+  const phase = invocationPhaseFromUnknown(record.phase);
+  if (phase === undefined) return undefined;
+  if (typeof record.subjectKey !== "string" || record.subjectKey.trim() === "") return undefined;
+  return {
+    invocationId: trimmedId,
+    role: record.role,
+    phase,
+    subjectKey: record.subjectKey,
+  };
+}
+
+/**
+ * Marker identity agrees with independently expected role/phase/subject.
+ * Role is mandatory. Phase and subject apply when the expected side knows them.
+ */
+export function markerMatchesExpectedIdentity(
+  marker: InvocationMarkerIdentity,
+  expected: ExpectedInvocationIdentity,
+): boolean {
+  if (marker.role !== expected.role) return false;
+  if (expected.phase !== undefined) {
+    if (marker.phase !== expected.phase) return false;
+  } else if (expected.allowedPhases !== undefined) {
+    if (!expected.allowedPhases.includes(marker.phase)) return false;
+  }
+  if (expected.subjectKey !== undefined) {
+    if (!workSubjectKeysEqual(marker.subjectKey, expected.subjectKey)) return false;
+  }
+  return true;
 }
 
 /** Shared terminal discriminant owned by one classifier. */
@@ -160,6 +227,38 @@ export function isAcceptedPackagedRoleTerminalResult(
   return classifyPackagedRoleTerminalResult(message).kind === "accepted";
 }
 
+export type DurablePackagedRoleTerminalRef = {
+  readonly index: number;
+  readonly role: string;
+  readonly toolName: string;
+  readonly classification: "accepted" | "infrastructure";
+  readonly message: PackagedRoleTerminalMessage;
+};
+
+function durableTerminalAt(
+  entries: readonly NavigatorInvocationEntryLike[],
+  index: number,
+): DurablePackagedRoleTerminalRef | undefined {
+  const entry = entries[index];
+  if (entry?.type !== "message") return undefined;
+  const message = entry.message;
+  if (message?.role !== "toolResult") return undefined;
+  if (typeof message.toolName !== "string") return undefined;
+  const role = PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
+  if (role === undefined) return undefined;
+  const classification = classifyPackagedRoleTerminalResult(message);
+  if (classification.kind !== "accepted" && classification.kind !== "infrastructure") {
+    return undefined;
+  }
+  return {
+    index,
+    role,
+    toolName: message.toolName,
+    classification: classification.kind,
+    message,
+  };
+}
+
 function isPackagedRoleTerminalEntry(entry: NavigatorInvocationEntryLike | undefined): boolean {
   if (entry?.type !== "message") return false;
   const message = entry.message;
@@ -167,16 +266,105 @@ function isPackagedRoleTerminalEntry(entry: NavigatorInvocationEntryLike | undef
   return isDurablePackagedRoleTerminalResult(message);
 }
 
+function isInvocationMarkerEntry(entry: NavigatorInvocationEntryLike | undefined): boolean {
+  return entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY;
+}
+
 function latestInvocationMarkerIndex(
   entries: readonly NavigatorInvocationEntryLike[],
 ): number {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "custom") continue;
-    if (entry.customType !== NAVIGATOR_INVOCATION_ENTRY) continue;
-    return i;
+    if (isInvocationMarkerEntry(entries[i])) return i;
   }
   return -1;
+}
+
+/** Latest durable packaged role terminal in session order. */
+export function findLatestDurablePackagedRoleTerminal(
+  entries: readonly NavigatorInvocationEntryLike[],
+): DurablePackagedRoleTerminalRef | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const terminal = durableTerminalAt(entries, i);
+    if (terminal !== undefined) return terminal;
+  }
+  return undefined;
+}
+
+/**
+ * Truth-table binding of the current durable packaged role terminal to its
+ * owning invocation marker. Singleton cardinality: multiple durable terminals
+ * after the same marker are ambiguous and fail closed.
+ */
+export type DurableTerminalMarkerBinding =
+  | {
+      readonly kind: "bound";
+      readonly terminal: DurablePackagedRoleTerminalRef;
+      readonly marker: InvocationMarkerIdentity & { readonly index: number };
+    }
+  | {
+      readonly kind: "unbound";
+      readonly terminal: DurablePackagedRoleTerminalRef;
+    }
+  | { readonly kind: "absent" }
+  | { readonly kind: "ambiguous" };
+
+export function bindCurrentDurableTerminalToMarker(
+  entries: readonly NavigatorInvocationEntryLike[],
+): DurableTerminalMarkerBinding {
+  const terminal = findLatestDurablePackagedRoleTerminal(entries);
+  if (terminal === undefined) return { kind: "absent" };
+
+  let markerIndex = -1;
+  for (let i = terminal.index - 1; i >= 0; i -= 1) {
+    if (isInvocationMarkerEntry(entries[i])) {
+      markerIndex = i;
+      break;
+    }
+  }
+  if (markerIndex < 0) {
+    return { kind: "unbound", terminal };
+  }
+
+  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
+  if (marker === undefined) {
+    // Malformed nearest marker: no stale fallback; terminal exists but is unbound.
+    return { kind: "unbound", terminal };
+  }
+
+  let windowEnd = entries.length;
+  for (let i = markerIndex + 1; i < entries.length; i += 1) {
+    if (isInvocationMarkerEntry(entries[i])) {
+      windowEnd = i;
+      break;
+    }
+  }
+
+  let durableCount = 0;
+  for (let i = markerIndex + 1; i < windowEnd; i += 1) {
+    if (durableTerminalAt(entries, i) !== undefined) durableCount += 1;
+  }
+  if (durableCount !== 1) return { kind: "ambiguous" };
+  // Current terminal must be the singleton inside this marker window.
+  if (terminal.index <= markerIndex || terminal.index >= windowEnd) {
+    return { kind: "ambiguous" };
+  }
+
+  return {
+    kind: "bound",
+    terminal,
+    marker: { ...marker, index: markerIndex },
+  };
+}
+
+/**
+ * Whether public Receipt settlement may proceed for the current durable terminal.
+ * Only ambiguous multi-terminal bindings fail closed; attendance mismatch does not
+ * pollute an otherwise legal single Receipt.
+ */
+export function isReceiptSettlementBindingClear(
+  entries: readonly NavigatorInvocationEntryLike[],
+): boolean {
+  return bindCurrentDurableTerminalToMarker(entries).kind !== "ambiguous";
 }
 
 export type LifecycleInvocationPrincipal = {
@@ -189,21 +377,29 @@ export type LifecycleInvocationPrincipal = {
  * Resolve the exact-invocation principal at shared role lifecycle start from the
  * admitted session's typed entries only.
  *
- * - Latest marker is valid uuidv7 and no packaged role terminal follows it → resume.
+ * - Latest marker is valid full identity, matches expected (when supplied), and no
+ *   packaged role terminal follows it → resume.
+ * - Contradictory marker role/phase/subjectKey vs expected → mint (do not resume).
  * - Latest marker is valid and a packaged role terminal already completed it → mint.
  * - Missing or malformed latest marker → mint; never fall back to a stale older marker.
  */
 export function resolveLifecycleInvocationPrincipal(
   entries: readonly NavigatorInvocationEntryLike[],
+  expected?: ExpectedInvocationIdentity,
 ): LifecycleInvocationPrincipal {
   const markerIndex = latestInvocationMarkerIndex(entries);
   if (markerIndex < 0) {
     return { invocationId: mintNavigatorInvocationId(), resume: false };
   }
 
-  const principal = invocationIdFromData(entries[markerIndex]?.data);
-  if (principal === undefined) {
+  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
+  if (marker === undefined) {
     // Malformed nearest marker: honest new principal, no stale fallback.
+    return { invocationId: mintNavigatorInvocationId(), resume: false };
+  }
+
+  if (expected !== undefined && !markerMatchesExpectedIdentity(marker, expected)) {
+    // Contradictory marker must not resume a different role/phase/subject invocation.
     return { invocationId: mintNavigatorInvocationId(), resume: false };
   }
 
@@ -213,7 +409,7 @@ export function resolveLifecycleInvocationPrincipal(
     }
   }
 
-  return { invocationId: principal, resume: true };
+  return { invocationId: marker.invocationId, resume: true };
 }
 
 /**
@@ -228,13 +424,23 @@ export function currentInvocationPrincipalFromSession(
   entries: readonly NavigatorInvocationEntryLike[],
   beforeIndex: number = entries.length,
 ): string | undefined {
+  return currentInvocationMarkerFromSession(entries, beforeIndex)?.invocationId;
+}
+
+/**
+ * Full marker identity nearest before `beforeIndex` (current durable terminal).
+ * Malformed nearest fails closed — no stale older fallback.
+ */
+export function currentInvocationMarkerFromSession(
+  entries: readonly NavigatorInvocationEntryLike[],
+  beforeIndex: number = entries.length,
+): InvocationMarkerIdentity | undefined {
   const limit = Math.min(Math.max(beforeIndex, 0), entries.length);
   for (let i = limit - 1; i >= 0; i -= 1) {
     const entry = entries[i];
-    if (entry?.type !== "custom") continue;
-    if (entry.customType !== NAVIGATOR_INVOCATION_ENTRY) continue;
-    // Nearest marker only — parse or fail closed; do not scan older entries.
-    return invocationIdFromData(entry.data);
+    if (!isInvocationMarkerEntry(entry)) continue;
+    // Nearest marker only — parse full identity or fail closed.
+    return parseInvocationMarkerIdentity(entry?.data);
   }
   return undefined;
 }

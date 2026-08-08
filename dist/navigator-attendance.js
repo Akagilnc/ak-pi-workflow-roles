@@ -12,7 +12,7 @@ import {
 } from "./navigator-invocation-identity.js";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
-import { subjectPath } from "./work-subject-identity.js";
+import { issueRoot, subjectPath } from "./work-subject-identity.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
@@ -167,14 +167,6 @@ function targetText(target) {
 }
 function oneLine(value) {
   return value.split(/\r?\n/, 1)[0].trim();
-}
-function issueRoot(value) {
-  const normalized = value.replaceAll("\\", "/");
-  const marker = ".ak/work/issues/";
-  const index = normalized.indexOf(marker);
-  if (index < 0) return void 0;
-  const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
-  return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
 }
 function navigatorSubjectKey(subjectRoot, subject, provenance = "role_input") {
   if (issueRoot(subjectRoot) !== void 0 || !subjectRoot.includes("/.ak/work/")) return subjectRoot;

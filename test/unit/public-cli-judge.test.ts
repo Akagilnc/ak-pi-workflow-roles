@@ -441,13 +441,14 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     customType: "ak-navigator-invocation",
     data: { invocationId, role: "judge", phase: null, subjectKey, ...data },
   });
+  // Durable accepted terminal (shared classifier). isError:true/details:{} is nonterminal.
   const currentTerminal = {
     type: "message",
     message: {
       role: "toolResult",
       toolName: JUDGE_OUTPUT_TOOL_NAME,
-      isError: true,
-      details: {},
+      isError: false,
+      details: { judgeStatus: "converged" },
     },
   };
   const attendance = (details: Record<string, unknown>) => ({
@@ -645,9 +646,10 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
   assert.equal(sameSessionStaleAttendance.disposition, "unavailable");
 
   // Physical path aliases (/var ↔ /private/var) are one work subject.
+  const varSubject = "/var/folders/xx/repo/.ak/work";
   const varAlias = extractNavigatorFact([
     { type: "session", id: sessionId, cwd: "/var/folders/xx/repo" },
-    invocation(currentInvocationId),
+    invocation(currentInvocationId, { subjectKey: varSubject }),
     currentTerminal,
     attendance({
       ...matched,
@@ -655,6 +657,51 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     }),
   ]);
   assert.equal(varAlias.disposition, "no-advice");
+
+  // Judge A: contradictory marker role/phase/subject vs current durable terminal → unavailable.
+  const wrongMarkerRole = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId, { role: "coder", phase: "apply" }),
+    currentTerminal,
+    attendance({ ...matched, role: "coder", phase: "apply" }),
+  ]);
+  assert.equal(wrongMarkerRole.disposition, "unavailable");
+  const wrongMarkerPhase = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId, { phase: "apply" }),
+    currentTerminal,
+    attendance({ ...matched, phase: "apply" }),
+  ]);
+  assert.equal(wrongMarkerPhase.disposition, "unavailable");
+  const wrongMarkerSubject = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId, { subjectKey: "/other/work" }),
+    currentTerminal,
+    attendance({ ...matched, subjectKey: "/other/work" }),
+  ]);
+  assert.equal(wrongMarkerSubject.disposition, "unavailable");
+
+  // Judge B: two durable terminals after the same marker → ambiguous / unavailable.
+  // Attendance correlation failure must not be required to fail closed here.
+  const twoDurable = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: { judgeStatus: "revise" },
+      },
+    },
+    attendance(matched),
+  ]);
+  assert.equal(twoDurable.disposition, "unavailable");
+  if (twoDurable.disposition === "unavailable") {
+    assert.match(twoDurable.reason, /ambiguous/i);
+  }
 
   // Coder/fixer exact phase comes from admitted lifecycle identity, not self-enum.
   const coderTerminal = {

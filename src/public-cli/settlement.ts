@@ -53,14 +53,15 @@ import {
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
 import {
-  currentInvocationPrincipalFromSession,
+  bindCurrentDurableTerminalToMarker,
   isAcceptedPackagedRoleTerminalResult,
+  isReceiptSettlementBindingClear,
+  markerMatchesExpectedIdentity,
+  type ExpectedInvocationIdentity,
+  type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
-import {
-  PACKAGED_ROLE_REGISTRY,
-  packagedRoleMetadata,
-} from "../packaged-role-registry.ts";
+import { packagedRoleMetadata } from "../packaged-role-registry.ts";
 import {
   workSubjectKeyFromProjectRoot,
   workSubjectKeysEqual,
@@ -822,6 +823,8 @@ export type LawfulJudgeRoleOutcome = Extract<
 export function extractJudgeRoleOutcome(
   entries: readonly SessionEntry[],
 ): LawfulJudgeRoleOutcome | undefined {
+  // Singleton marker↔terminal cardinality — ambiguous multi-terminal fails closed.
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -860,87 +863,6 @@ function navigatorPhaseValue(value: unknown): NavigatorPhase {
   return null;
 }
 
-const OUTPUT_TOOL_TO_ROLE: ReadonlyMap<string, string> = new Map(
-  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role]),
-);
-
-/** Latest packaged role output toolResult — the current role terminal in session order. */
-function findCurrentRoleTerminal(
-  entries: readonly SessionEntry[],
-): { index: number; role: string } | undefined {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (typeof message.toolName !== "string") continue;
-    const role = OUTPUT_TOOL_TO_ROLE.get(message.toolName);
-    if (role === undefined) continue;
-    return { index: i, role };
-  }
-  return undefined;
-}
-
-type IndependentAttendanceIdentity = {
-  /** Exact current invocation token from independent role-session principal. */
-  invocationId?: string;
-  phase?: NavigatorPhase;
-  allowedPhases?: readonly NavigatorPhase[];
-  subjectKey?: string;
-};
-
-/**
- * Independent invocation identity already present on the session / admitted lifecycle.
- * Only fields with a real independent source are populated — never invent authority.
- * Exact invocation principal comes from the nearest ak-navigator-invocation marker
- * strictly before the current packaged role terminal (shared lifecycle via pi.appendEntry),
- * never from attendance self-fields, markers after the terminal, or stale fallback.
- */
-function independentAttendanceIdentity(
-  entries: readonly SessionEntry[],
-  terminalRole: string,
-  terminalIndex: number,
-  supplied?: NavigatorAttendanceIdentity,
-): IndependentAttendanceIdentity {
-  const identity: IndependentAttendanceIdentity = {};
-
-  const invocationId = currentInvocationPrincipalFromSession(
-    entries,
-    terminalIndex,
-  );
-  if (invocationId !== undefined) {
-    identity.invocationId = invocationId;
-  }
-
-  for (const entry of entries) {
-    if (entry?.type !== "session") continue;
-    if (typeof entry.cwd === "string" && entry.cwd.trim() !== "") {
-      identity.subjectKey = workSubjectKeyFromProjectRoot(entry.cwd);
-    }
-    break;
-  }
-
-  if (typeof supplied?.subjectKey === "string") {
-    identity.subjectKey = supplied.subjectKey;
-  }
-
-  // null is a real phase fact (Judge/Reviewer/…); only omit when not independently known.
-  if (supplied !== undefined && Object.hasOwn(supplied, "phase")) {
-    identity.phase = supplied.phase ?? null;
-  } else {
-    const meta = packagedRoleMetadata(terminalRole);
-    if (meta !== undefined) {
-      if (meta.phases.length === 1) {
-        identity.phase = meta.phases[0] as NavigatorPhase;
-      } else {
-        identity.allowedPhases = meta.phases as readonly NavigatorPhase[];
-      }
-    }
-  }
-
-  return identity;
-}
-
 function attendanceIdentityFromAdmitted(
   admitted: AdmittedRoleInvocation,
 ): NavigatorAttendanceIdentity {
@@ -954,43 +876,77 @@ function attendanceIdentityFromAdmitted(
 }
 
 /**
- * Attendance must match the current role terminal and every independently available
- * invocation/phase/subject fact. Self-shape of attendance fields is not correlation.
+ * Independent expected role/phase/subject for marker correlation.
+ * Role comes from the durable packaged terminal tool; phase/subject from admitted
+ * lifecycle, Developer session cwd, or registry — never attendance self-fields.
  */
-function navigatorAttendanceCorrelatedWithTerminal(
+function independentExpectedIdentity(
+  entries: readonly SessionEntry[],
+  terminalRole: string,
+  supplied?: NavigatorAttendanceIdentity,
+): ExpectedInvocationIdentity {
+  let subjectKey: string | undefined;
+  for (const entry of entries) {
+    if (entry?.type !== "session") continue;
+    if (typeof entry.cwd === "string" && entry.cwd.trim() !== "") {
+      subjectKey = workSubjectKeyFromProjectRoot(entry.cwd);
+    }
+    break;
+  }
+  if (typeof supplied?.subjectKey === "string") {
+    subjectKey = supplied.subjectKey;
+  }
+
+  let phase: NavigatorPhase | undefined;
+  let allowedPhases: readonly NavigatorPhase[] | undefined;
+  // null is a real phase fact (Judge/Reviewer/…); only omit when not independently known.
+  if (supplied !== undefined && Object.hasOwn(supplied, "phase")) {
+    phase = supplied.phase ?? null;
+  } else {
+    const meta = packagedRoleMetadata(terminalRole);
+    if (meta !== undefined) {
+      if (meta.phases.length === 1) {
+        phase = meta.phases[0] as NavigatorPhase;
+      } else {
+        allowedPhases = meta.phases as readonly NavigatorPhase[];
+      }
+    }
+  }
+
+  return {
+    role: terminalRole,
+    ...(phase !== undefined ? { phase } : {}),
+    ...(allowedPhases !== undefined ? { allowedPhases } : {}),
+    ...(subjectKey !== undefined ? { subjectKey } : {}),
+  };
+}
+
+/**
+ * Attendance must match the bound marker identity and current durable terminal role.
+ * Self-shape of attendance fields is not correlation. Marker already matched the
+ * independent expected identity before this check runs.
+ */
+function navigatorAttendanceCorrelatedWithBoundMarker(
   details: Record<string, unknown>,
   attendanceIndex: number,
-  terminal: { index: number; role: string } | undefined,
-  identity: IndependentAttendanceIdentity,
+  terminal: { index: number; role: string },
+  marker: InvocationMarkerIdentity,
 ): boolean {
-  if (terminal === undefined) return false;
   if (attendanceIndex <= terminal.index) return false;
   if (details.version !== 1) return false;
 
   // Role comes from the packaged terminal tool — compare, do not self-validate.
   if (details.role !== terminal.role) return false;
+  // Marker role must already equal terminal role (checked by caller); attendance follows marker.
+  if (details.role !== marker.role) return false;
 
-  // Exact current invocation token is mandatory independent principal.
-  // Missing principal or non-equal token (old/future same-session suffix) → uncorrelated.
-  if (identity.invocationId === undefined) return false;
-  if (details.invocationId !== identity.invocationId) return false;
+  // Exact current invocation token is the bound marker principal.
+  if (details.invocationId !== marker.invocationId) return false;
 
-  // Phase: exact admitted/registry fact, else role-allowed set — never bare enum shape.
-  if (identity.phase !== undefined) {
-    if (details.phase !== identity.phase) return false;
-  } else if (identity.allowedPhases !== undefined) {
-    if (!identity.allowedPhases.includes(details.phase as NavigatorPhase)) {
-      return false;
-    }
-  }
-
-  if (identity.subjectKey !== undefined) {
-    if (typeof details.subjectKey !== "string") return false;
-    // Physical path aliases (/var ↔ /private/var) are one work subject.
-    if (!workSubjectKeysEqual(details.subjectKey, identity.subjectKey)) {
-      return false;
-    }
-  }
+  // Phase and subject ride the same marker identity truth table.
+  if (details.phase !== marker.phase) return false;
+  if (typeof details.subjectKey !== "string") return false;
+  if (!workSubjectKeysEqual(details.subjectKey, marker.subjectKey)) return false;
 
   return true;
 }
@@ -1058,7 +1014,49 @@ export function extractNavigatorFact(
   identity?: NavigatorAttendanceIdentity,
 ): TerminalNavigatorFact {
   // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
-  const terminal = findCurrentRoleTerminal(entries);
+  // One truth table: durable classifier + singleton marker binding + marker identity match.
+  const binding = bindCurrentDurableTerminalToMarker(entries);
+  if (binding.kind === "absent") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance has no durable packaged role terminal",
+    };
+  }
+  if (binding.kind === "ambiguous") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is ambiguous across multiple durable role terminals",
+    };
+  }
+  if (binding.kind === "unbound") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts",
+    };
+  }
+
+  const { terminal, marker } = binding;
+  // Marker role must match the durable terminal tool's role.
+  if (marker.role !== terminal.role) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts",
+    };
+  }
+  // Marker phase/subject (and role) must match independently admitted expected identity.
+  const expected = independentExpectedIdentity(entries, terminal.role, identity);
+  if (!markerMatchesExpectedIdentity(marker, expected)) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts",
+    };
+  }
+
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
@@ -1070,12 +1068,14 @@ export function extractNavigatorFact(
           reason: "Navigator attendance is unparseable",
         };
       }
-      // Exact invocation principal is the nearest marker before the current terminal.
-      const independent =
-        terminal === undefined
-          ? {}
-          : independentAttendanceIdentity(entries, terminal.role, terminal.index, identity);
-      if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal, independent)) {
+      if (
+        !navigatorAttendanceCorrelatedWithBoundMarker(
+          details,
+          i,
+          { index: terminal.index, role: terminal.role },
+          marker,
+        )
+      ) {
         return {
           disposition: "unavailable",
           source: "unknown",
@@ -1243,6 +1243,7 @@ export type LawfulCoderRoleOutcome = {
 export function extractCoderRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulCoderRoleOutcome; output: CoderOutput } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -1564,6 +1565,7 @@ export type LawfulFixerRoleOutcome =
 export function extractFixerRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulFixerRoleOutcome; output?: FixerOutput } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -1727,6 +1729,7 @@ export type LawfulCollectorRoleOutcome = {
 export function extractCollectorRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulCollectorRoleOutcome; receipt: CollectorReceipt } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -1883,6 +1886,7 @@ export type LawfulDoctorRoleOutcome =
 export function extractDoctorRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulDoctorRoleOutcome; output?: DoctorOutput } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -2135,6 +2139,7 @@ export type LawfulReviewerRoleOutcome = {
 export function extractReviewerRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulReviewerRoleOutcome; receipt: RuntimeReviewerReceiptV2 } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -2359,6 +2364,7 @@ export type LawfulMergerRoleOutcome = {
 export function extractMergerRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulMergerRoleOutcome; output: MergerOutput } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;

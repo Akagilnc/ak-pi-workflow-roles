@@ -46,6 +46,7 @@ function workSubjectKeysEqual(left, right) {
   return physicalPathIdentity(left) === physicalPathIdentity(right);
 }
 export {
+  issueRoot,
   subjectPath,
   workSubjectKeyFromProjectRoot,
   workSubjectKeysEqual
