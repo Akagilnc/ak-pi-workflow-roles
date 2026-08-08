@@ -16,6 +16,7 @@ import {
   type AcceptedReviewerDispatch,
   type AcceptedReviewerExecution,
   type ReviewerCapabilitiesV1,
+  type ReviewerHostMaterial,
   type ReviewerPinnedGitReader,
   type ReviewerProposalV1,
 } from "./reviewer-dispatch.ts";
@@ -32,7 +33,7 @@ const requestSchema = Type.Object({
   tools: Type.Array(StringEnum(REVIEWER_CHILD_TOOLS), { uniqueItems: true }),
   prerequisiteOperations: Type.Array(StringEnum(REVIEWER_PREREQUISITES), { uniqueItems: true }),
 }, { additionalProperties: true });
-const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }) }, { additionalProperties: true });
+const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }), source: Type.Optional(StringEnum(["pinned-git", "host-input"] as const)), sourcePath: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: true });
 export const reviewerProposalSchema = Type.Object({
   version: Type.Literal(1),
   base: Type.Object({ revision: Type.String({ minLength: 1 }) }, { additionalProperties: true }),
@@ -53,6 +54,7 @@ export type ReviewerRoleDependencies = {
   loadCanonicalSkillBinding(name: "code-review"): Promise<AnyCanonicalSkillBinding>;
   createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
   hostTools(): readonly string[];
+  loadHostMaterials?(): Promise<readonly ReviewerHostMaterial[]>;
   runDispatch(execution: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
   compilePrompt?(prompt: string, axis: "standards" | "spec", pass: 1 | 2): ReturnType<typeof reviewerPromptIdentity>;
   shutdownAgent?(): Promise<void>;
@@ -128,6 +130,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
     binding = loaded;
     reader = await dependencies.createPinnedGitReader();
+    const hostMaterials = await dependencies.loadHostMaterials?.() ?? [];
 
     let acceptedDispatch: AcceptedReviewerDispatch | undefined;
     const executeAndProjectDispatch = async (execution: AcceptedReviewerExecution, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
@@ -154,6 +157,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       capabilities,
       reader,
       hostTools: dependencies.hostTools(),
+      ...(hostMaterials.length === 0 ? {} : { hostMaterials }),
       ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
       ...(dependencies.compilePrompt === undefined ? {} : { compilePrompt: dependencies.compilePrompt }),
       decisionEvidence(decision) {

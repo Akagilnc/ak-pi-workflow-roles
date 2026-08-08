@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, and `merger`.
+Packaged workflow roles for [Pi](https://pi.dev): `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`. 中文说明见 [README.zh-CN.md](README.zh-CN.md)。
 
 ## Public CLI (`ak-role`)
 
@@ -160,6 +160,10 @@ ak-role merger \
 There is no phase token. The adapter derives the active merge envelope; callers do not author internal merger-input JSON. Package-owned merge-only method is forced from the install.
 
 Read every Terminal result from `ak-role` stdout (or a normal redirect of that same stream). Do not scrape Pi event streams, session JSONL, or status-only `grep`/`jq` recipes for role outcomes or Navigator advice.
+
+## Names
+
+Roles are named after Tang/Song offices; the full roster and naming rule live in [README.zh-CN.md](README.zh-CN.md).
 
 ## 班子（唐宋官署命名）
 

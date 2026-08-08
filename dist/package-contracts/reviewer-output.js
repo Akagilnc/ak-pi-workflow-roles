@@ -56,7 +56,7 @@ export function validateRuntimeReviewerReceipt(output) {
         if (expectedAxes[0] !== "standards" || (expectedAxes.length === 2 && expectedAxes[1] !== "spec") || expectedLegs.some((leg) => !isRecord(leg) || !exactKeys(leg, ["axis", "prompt"]) || !isReceiptText(leg.prompt)))
             throw new Error("Invalid Reviewer accepted-leg projection");
         const objectId = (value) => typeof value === "string" && new RegExp(target.objectFormat === "sha1" ? "^[0-9a-f]{40}$" : "^[0-9a-f]{64}$").test(value);
-        if (!exactKeys(construction, ["recipe", "bundle"]) || construction.recipe !== "reviewer-common-bundle-v1" || !isRecord(construction.bundle) || !verifyBundleIdentity(construction.bundle) ||
+        if (!exactKeys(construction, ["recipe", "bundle"]) || construction.recipe !== "reviewer-common-bundle-v1" || !isRecord(construction.bundle) || !exactKeys(construction.bundle, ["recipeIdentity", "manifestSha256", "entries"]) || !Array.isArray(construction.bundle.entries) || construction.bundle.entries.some((entry) => !isRecord(entry) || !exactKeys(entry, ["id", "relativeClonePath", "origin", "sourceIdentity", "utf8Length", "sha256"]) || Object.hasOwn(entry, "bytes")) || !verifyBundleIdentity(construction.bundle) ||
             !exactKeys(target, ["repositoryRoot", "objectFormat", "targetHead", "refs"]) || typeof target.repositoryRoot !== "string" || target.repositoryRoot.length === 0 ||
             (target.objectFormat !== "sha1" && target.objectFormat !== "sha256") || !objectId(target.targetHead) || !isRecord(target.refs) ||
             Object.values(target.refs).some((ref) => !isRecord(ref) || !exactKeys(ref, ["objectId", "peeledCommitId"]) || !objectId(ref.objectId) || (ref.peeledCommitId !== null && !objectId(ref.peeledCommitId))))
@@ -83,7 +83,7 @@ export function validateRuntimeReviewerReceipt(output) {
                 typeof materialized.workspaceIdentity !== "string" || materialized.workspaceIdentity.length === 0 || materialized.manifestSha256 !== bundle.manifestSha256 ||
                 !Array.isArray(materialized.entries) || materialized.entries.length !== entries.length || materialized.entries.some((entry, index) => {
                 const expected = entries[index];
-                return !isRecord(entry) || !exactKeys(entry, ["id", "relativeClonePath", "utf8Length", "sha256", "verified"]) || entry.verified !== true ||
+                return !isRecord(entry) || !exactKeys(entry, ["id", "relativeClonePath", "utf8Length", "sha256", "verified", "readable"]) || entry.verified !== true || entry.readable !== true ||
                     entry.id !== expected.id || entry.relativeClonePath !== expected.relativeClonePath || entry.utf8Length !== expected.utf8Length || entry.sha256 !== expected.sha256;
             }))
                 throw new Error("Reviewer runtime construction evidence disagrees with accepted bundle or leg");

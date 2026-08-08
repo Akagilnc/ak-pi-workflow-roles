@@ -1,4 +1,5 @@
 import type { ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
+import { projectMechanicalBundleIdentity } from "./reviewer-construction.ts";
 import type { ReviewerIntent, RuntimeReviewerOutcome, RuntimeReviewerReceiptV2, VerbatimChildReport } from "./package-contracts/reviewer-output.ts";
 
 export type { RuntimeReviewerOutcome, RuntimeReviewerReceiptV2, VerbatimChildReport } from "./package-contracts/reviewer-output.ts";
@@ -58,7 +59,7 @@ export function assembleRuntimeReviewerReceipt(input: {
     outcomes,
     identities: {
       canonicalSkill: { text: skillText },
-      ...(accepted === undefined ? {} : { construction: { recipe: accepted.recipe, bundle: accepted.bundle }, target: accepted.target }),
+      ...(accepted === undefined ? {} : { construction: { recipe: accepted.recipe, bundle: projectMechanicalBundleIdentity(accepted.bundle) }, target: accepted.target }),
     },
   });
 }

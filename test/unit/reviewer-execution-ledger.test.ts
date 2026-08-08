@@ -30,7 +30,7 @@ function accepted(spec = true): ReviewerEvidenceEvent {
 
 function settled(axis: "standards" | "spec", prompt: string): ReviewerEvidenceEvent {
   const event = accepted() as Extract<ReviewerEvidenceEvent, { source: "reviewer-dispatch"; type: "accepted" }>;
-  return { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: "proposal-1", axis, status: "successful", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, target, report: `${axis} report`, usage, runtimeConstructionEvidence: { leg: axis, workspaceIdentity: `${axis}-workspace`, manifestSha256: event.bundle.manifestSha256, entries: event.bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256, verified: true })) }, workspaceDisposition: "deleted" } as const;
+  return { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: "proposal-1", axis, status: "successful", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, target, report: `${axis} report`, usage, runtimeConstructionEvidence: { leg: axis, workspaceIdentity: `${axis}-workspace`, manifestSha256: event.bundle.manifestSha256, entries: event.bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256, verified: true, readable: true })) }, workspaceDisposition: "deleted" } as const;
 }
 
 test("transport rejection is immutable, bounded, ordered, and retains no raw arguments", () => {
@@ -177,6 +177,7 @@ test("failed-leg dispositions project through the durable ledger by classificati
                 utf8Length,
                 sha256,
                 verified: true,
+                readable: true,
               })),
             },
           }
