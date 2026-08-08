@@ -531,7 +531,7 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
     const attendanceDetails = {
       version: 1,
       disposition: "no-advice",
-      invocationId: "inv-fail-1",
+      invocationId: "019f8c2a-6666-7666-8666-666666666666",
       role: "judge",
       phase: null,
       subjectKey: `${project}/.ak/work`,
@@ -543,7 +543,7 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
           type: "custom",
           customType: "ak-navigator-invocation",
           data: {
-            invocationId: "inv-fail-1",
+            invocationId: "019f8c2a-6666-7666-8666-666666666666",
             role: "judge",
             phase: null,
             subjectKey: attendanceDetails.subjectKey,

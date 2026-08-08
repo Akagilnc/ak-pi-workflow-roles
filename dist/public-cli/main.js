@@ -10622,6 +10622,10 @@ function createProductionMergerGitState(repositoryRoot = process.cwd()) {
 
 // src/uuidv7.ts
 import { randomBytes } from "node:crypto";
+var UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function isUuidV7(value) {
+  return typeof value === "string" && UUIDV7.test(value);
+}
 function uuidv7(now = Date.now()) {
   const b = randomBytes(16);
   let n = BigInt(now);
@@ -13054,12 +13058,15 @@ var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 
 // src/navigator-invocation-identity.ts
 var NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
+var PACKAGED_ROLE_OUTPUT_TOOLS = new Set(
+  PACKAGED_ROLE_REGISTRY.map((entry) => entry.outputTool)
+);
 function invocationIdFromData(data) {
   if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
   const invocationId = data.invocationId;
   if (typeof invocationId !== "string") return void 0;
   const trimmed = invocationId.trim();
-  return trimmed === "" ? void 0 : trimmed;
+  return isUuidV7(trimmed) ? trimmed : void 0;
 }
 function currentInvocationPrincipalFromSession(entries, beforeIndex = entries.length) {
   const limit = Math.min(Math.max(beforeIndex, 0), entries.length);

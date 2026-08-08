@@ -791,7 +791,9 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.equal(typeof nearest.data?.invocationId, "string");
         assert.ok(String(nearest.data?.invocationId).length > 0);
         assert.equal(recommendation.invocationId, nearest.data?.invocationId);
-        // Opaque principal — not sessionId:sequence spelling.
+        // Opaque uuidv7 principal — not sessionId:sequence spelling.
+        const { isUuidV7 } = await import("../../src/uuidv7.ts");
+        assert.equal(isUuidV7(nearest.data?.invocationId), true);
         assert.equal(String(nearest.data?.invocationId).includes(":"), false);
       });
       if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

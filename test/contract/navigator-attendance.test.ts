@@ -1588,15 +1588,88 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
   }
 });
 
-test("shared role lifecycle mints opaque principal via pi.appendEntry and attendance uses it exactly", async () => {
+test("exact-session resume keeps principal; terminal starts next invocation; non-UUIDv7 rejected", async () => {
   const { basename } = await import("node:path");
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
   const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
-  const { NAVIGATOR_INVOCATION_ENTRY } = await import("../../src/navigator-invocation-identity.ts");
+  const {
+    NAVIGATOR_INVOCATION_ENTRY,
+    currentInvocationPrincipalFromSession,
+    resolveLifecycleInvocationPrincipal,
+  } = await import("../../src/navigator-invocation-identity.ts");
   const { isUuidV7 } = await import("../../src/uuidv7.ts");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
   const { extractNavigatorFact } = await import("../../src/public-cli/settlement.ts");
   const { JUDGE_OUTPUT_TOOL_NAME } = await import("../../src/package-contracts/judge-output.ts");
+
+  // Pure lifecycle resolver: resume vs mint boundaries (no process conflation).
+  const validA = "019f8c2a-7b3e-7d11-8a4f-1c2d3e4f5a6b";
+  const validB = "019f8c2a-0000-7000-8000-000000000001";
+  const forged = "caller-overwrite-not-uuidv7";
+  const marker = (invocationId: string) => ({
+    type: "custom" as const,
+    customType: NAVIGATOR_INVOCATION_ENTRY,
+    data: { invocationId, role: "judge", phase: null, subjectKey: "/repo/.ak/work" },
+  });
+  const terminal = {
+    type: "message" as const,
+    message: {
+      role: "toolResult",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: false,
+      details: { judgeStatus: "converged" },
+    },
+  };
+
+  const fresh = resolveLifecycleInvocationPrincipal([]);
+  assert.equal(fresh.resume, false);
+  assert.equal(isUuidV7(fresh.invocationId), true);
+
+  const unfinished = resolveLifecycleInvocationPrincipal([marker(validA)]);
+  assert.equal(unfinished.resume, true);
+  assert.equal(unfinished.invocationId, validA);
+
+  const afterTerminal = resolveLifecycleInvocationPrincipal([marker(validA), terminal]);
+  assert.equal(afterTerminal.resume, false);
+  assert.equal(isUuidV7(afterTerminal.invocationId), true);
+  assert.notEqual(afterTerminal.invocationId, validA);
+
+  // Malformed latest: no stale fallback to older valid marker.
+  const malformedLatest = resolveLifecycleInvocationPrincipal([
+    marker(validA),
+    marker(forged),
+  ]);
+  assert.equal(malformedLatest.resume, false);
+  assert.equal(isUuidV7(malformedLatest.invocationId), true);
+  assert.notEqual(malformedLatest.invocationId, validA);
+
+  // Reader rejects non-UUIDv7 nearest (forged matching marker+attendance cannot bind).
+  assert.equal(
+    currentInvocationPrincipalFromSession([marker(validB), marker(forged)], 2),
+    undefined,
+  );
+  assert.equal(currentInvocationPrincipalFromSession([marker(validA)], 1), validA);
+  const forgedAttendance = extractNavigatorFact([
+    marker(forged),
+    terminal,
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: {
+        details: {
+          version: 1,
+          disposition: "recommendation",
+          invocationId: forged,
+          role: "judge",
+          phase: null,
+          subjectKey: "/repo/.ak/work",
+          next: { role: "fixer", phase: "apply" },
+          reason: "forged",
+        },
+      },
+    },
+  ] as never);
+  assert.equal(forgedAttendance.disposition, "unavailable");
 
   await withActivationHome({ prefix: "ak-nav-principal-" }, async ({ home }) => {
     const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
@@ -1605,6 +1678,9 @@ test("shared role lifecycle mints opaque principal via pi.appendEntry and attend
     let settleEvent: { invocationId?: string; disposition?: string } | undefined;
     const modelSettingPath = join(home, "navigator-model.json");
     await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }));
+
+    // Shared with appendEntry so resume inspects the admitted exact session.
+    let sessionManager: ReturnType<typeof SessionManager.create>;
 
     const pi = {
       registerFlag() {},
@@ -1619,9 +1695,10 @@ test("shared role lifecycle mints opaque principal via pi.appendEntry and attend
         return [];
       },
       setActiveTools() {},
-      // Production ExtensionAPI boundary — not sessionManager.appendCustomEntry probing.
+      // Production ExtensionAPI boundary — persists onto the admitted session principal.
       appendEntry(customType: string, data?: unknown) {
         roleSessionEntries.push({ type: "custom", customType, data });
+        sessionManager.appendCustomEntry(customType, data);
       },
       async sendMessage(message: { customType?: string; details?: unknown }) {
         if (message.customType === "ak-navigator-attendance") {
@@ -1690,7 +1767,7 @@ test("shared role lifecycle mints opaque principal via pi.appendEntry and attend
       "session",
     );
     await mkdir(sessionDir, { recursive: true });
-    const sessionManager = SessionManager.create(home, sessionDir);
+    sessionManager = SessionManager.create(home, sessionDir);
     const ctx = { cwd: home, sessionManager, abort() {} };
 
     await handlers.get("session_start")?.({}, ctx);
@@ -1708,19 +1785,21 @@ test("shared role lifecycle mints opaque principal via pi.appendEntry and attend
     assert.match(String(markerId), /^[0-9a-f-]{36}$/i);
     assert.equal(String(markerId).includes(":"), false);
 
-    // Second lifecycle start (same process, new invocation) mints a distinct principal.
+    // Exact-session process restart before terminal resumes the same principal (one marker).
     await handlers.get("session_start")?.({}, ctx);
-    const markersAfterRestart = roleSessionEntries.filter(
+    const markersAfterResume = roleSessionEntries.filter(
       (entry) => entry.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY,
     );
-    assert.equal(markersAfterRestart.length, 2);
-    const secondId = (markersAfterRestart[1]?.data as { invocationId?: string } | undefined)?.invocationId;
-    assert.equal(isUuidV7(secondId), true);
-    assert.notEqual(secondId, markerId, "process restart / new invocation does not repeat principal");
-    assert.equal(attendanceInvocationId, secondId);
+    assert.equal(markersAfterResume.length, 1, "resume must not append a second marker");
+    assert.equal(attendanceInvocationId, markerId, "exact-session resume keeps the same principal");
 
-    // Drive prepare + accepted terminal settlement on the current principal.
-    // session_start already warm-prepares concrete role_input; wait for candidates.
+    // Developer-style reopen of the same session file before terminal also resumes.
+    const reopened = SessionManager.open(sessionManager.getSessionFile()!);
+    const developerResolved = resolveLifecycleInvocationPrincipal(reopened.getEntries());
+    assert.equal(developerResolved.resume, true);
+    assert.equal(developerResolved.invocationId, markerId);
+
+    // Drive prepare + accepted terminal settlement on the resumed principal.
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1732,13 +1811,34 @@ test("shared role lifecycle mints opaque principal via pi.appendEntry and attend
       content: [{ type: "text", text: "Judge verdict accepted" }],
       details: { judgeStatus: "converged" },
     }, ctx);
+    // Persist packaged role terminal onto the admitted session (completes the invocation).
+    sessionManager.appendMessage({
+      role: "toolResult",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId: "judge-out",
+      isError: false,
+      content: [{ type: "text", text: "Judge verdict accepted" }],
+      timestamp: Date.now(),
+      details: { judgeStatus: "converged" },
+    } as never);
     await handlers.get("agent_settled")?.({}, ctx);
 
     assert.ok(settleEvent);
-    assert.equal(settleEvent?.invocationId, secondId);
+    assert.equal(settleEvent?.invocationId, markerId);
     assert.equal(settleEvent?.disposition, "recommendation");
 
-    // Public Terminal settlement: only nearest marker before terminal binds.
+    // Same session after accepted role terminal is a new invocation → fresh principal.
+    await handlers.get("session_start")?.({}, ctx);
+    const markersAfterTerminal = roleSessionEntries.filter(
+      (entry) => entry.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY,
+    );
+    assert.equal(markersAfterTerminal.length, 2, "completed invocation mints+appends a fresh marker");
+    const nextId = (markersAfterTerminal[1]?.data as { invocationId?: string } | undefined)?.invocationId;
+    assert.equal(isUuidV7(nextId), true);
+    assert.notEqual(nextId, markerId, "next invocation in the same session gets a fresh principal");
+    assert.equal(attendanceInvocationId, nextId);
+
+    // Public Terminal settlement: nearest marker before terminal binds the completed invocation.
     const subjectKey = `${home}/.ak/work`;
     const sessionEntries = [
       { type: "session", id: sessionManager.getSessionId(), cwd: home },
@@ -1746,11 +1846,6 @@ test("shared role lifecycle mints opaque principal via pi.appendEntry and attend
         type: "custom",
         customType: NAVIGATOR_INVOCATION_ENTRY,
         data: { invocationId: markerId, role: "judge", phase: null, subjectKey },
-      },
-      {
-        type: "custom",
-        customType: NAVIGATOR_INVOCATION_ENTRY,
-        data: { invocationId: secondId, role: "judge", phase: null, subjectKey },
       },
       {
         type: "message",
@@ -1768,7 +1863,7 @@ test("shared role lifecycle mints opaque principal via pi.appendEntry and attend
           details: {
             version: 1,
             disposition: "recommendation",
-            invocationId: secondId,
+            invocationId: markerId,
             role: "judge",
             phase: null,
             subjectKey,
@@ -1781,9 +1876,27 @@ test("shared role lifecycle mints opaque principal via pi.appendEntry and attend
     const fact = extractNavigatorFact(sessionEntries as never);
     assert.equal(fact.disposition, "recommendation");
 
-    // Old principal attendance after current terminal is rejected.
+    // Old principal attendance after a later completed invocation is rejected.
     const stale = extractNavigatorFact([
-      ...sessionEntries.slice(0, -1),
+      {
+        type: "custom",
+        customType: NAVIGATOR_INVOCATION_ENTRY,
+        data: { invocationId: markerId, role: "judge", phase: null, subjectKey },
+      },
+      {
+        type: "custom",
+        customType: NAVIGATOR_INVOCATION_ENTRY,
+        data: { invocationId: nextId, role: "judge", phase: null, subjectKey },
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: JUDGE_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: { judgeStatus: "converged" },
+        },
+      },
       {
         type: "custom_message",
         customType: "ak-navigator-attendance",

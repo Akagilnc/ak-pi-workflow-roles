@@ -37,7 +37,7 @@ import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   NAVIGATOR_INVOCATION_ENTRY,
-  mintNavigatorInvocationId,
+  resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
 import { EMPTY_INVOCATION_TRANSPORT_ENVELOPE } from "./public-cli/invocation.ts";
 import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.ts";
@@ -772,60 +772,6 @@ export function createRoleRuntimeExtension(
       selectedRole = entry.role;
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
-      if (dependencies.createNavigatorAttendance !== undefined) {
-        let work: NavigatorWorkContext;
-        let contextError: unknown;
-        if (dependencies.loadNavigatorWorkContext === undefined) {
-          const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-          contextError = new Error("Navigator work context loader is not configured");
-          work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
-        } else {
-          try {
-            work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
-            contextError = work.contextError;
-          } catch (error) {
-            // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
-            contextError = navigatorUnavailableError("context", error);
-            const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-            work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
-          }
-        }
-        navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
-        // Shared envelope owns exact invocation principal: mint once at lifecycle
-        // start and persist via Pi's guaranteed appendEntry (not optional SM probe).
-        const invocationId = mintNavigatorInvocationId();
-        const invocationPhase = navigatorPhase(pi, entry.role);
-        pi.appendEntry(NAVIGATOR_INVOCATION_ENTRY, {
-          invocationId,
-          role: entry.role,
-          phase: invocationPhase,
-          subjectKey: work.subjectKey,
-        });
-        navigatorAttendance = await dependencies.createNavigatorAttendance({
-          context: ctx,
-          role: entry.role,
-          phase: invocationPhase,
-          subjectKey: work.subjectKey,
-          subject: work.subject,
-          authority: work.authority,
-          invocationId,
-          ...(contextError === undefined ? {} : { contextError }),
-          onEvent: (navigatorEvent, report) => {
-            pendingNavigatorPresentation = { event: navigatorEvent, report };
-          },
-        });
-        // Warm live help during activation so prepare is not help-bound under load.
-        // Concrete work context also starts full preparation so session create
-        // overlaps the role run. Placeholder subjects wait for before_agent_start
-        // (user prompt may replace the subject key) but still inherit warm help.
-        navigatorAttendance.warmHelp?.();
-        if (
-          navigatorWorkContext.contextError === undefined &&
-          navigatorWorkContext.subjectProvenance !== "placeholder"
-        ) {
-          navigatorAttendance.prepare();
-        }
-      }
       const runtime: ActivationRuntime = {
         event,
         context: ctx,
@@ -845,10 +791,73 @@ export function createRoleRuntimeExtension(
       };
       try {
         // Production topology only (ADR 0048/0049): no test-only ledger hooks.
+        // Admit durable session file first so lifecycle getEntries/appendEntry are truthful:
+        // deferred SM materialization must not wipe an in-memory principal marker.
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
         const ledgerHome = resolveActivationLedgerHome();
         const session = durableSessionPointer(ctx.sessionManager, { ledgerHome, bookKey });
+
+        if (dependencies.createNavigatorAttendance !== undefined) {
+          let work: NavigatorWorkContext;
+          let contextError: unknown;
+          if (dependencies.loadNavigatorWorkContext === undefined) {
+            const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
+            contextError = new Error("Navigator work context loader is not configured");
+            work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
+          } else {
+            try {
+              work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
+              contextError = work.contextError;
+            } catch (error) {
+              // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
+              contextError = navigatorUnavailableError("context", error);
+              const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
+              work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
+            }
+          }
+          navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
+          // Shared envelope owns exact invocation principal from admitted session lifecycle.
+          // session_start is process activation: resume unfinished principal; mint only for
+          // a new invocation (no marker, malformed nearest, or terminal already completed).
+          const sessionEntries = ctx.sessionManager.getEntries();
+          const lifecyclePrincipal = resolveLifecycleInvocationPrincipal(sessionEntries);
+          const invocationId = lifecyclePrincipal.invocationId;
+          const invocationPhase = navigatorPhase(pi, entry.role);
+          if (!lifecyclePrincipal.resume) {
+            pi.appendEntry(NAVIGATOR_INVOCATION_ENTRY, {
+              invocationId,
+              role: entry.role,
+              phase: invocationPhase,
+              subjectKey: work.subjectKey,
+            });
+          }
+          navigatorAttendance = await dependencies.createNavigatorAttendance({
+            context: ctx,
+            role: entry.role,
+            phase: invocationPhase,
+            subjectKey: work.subjectKey,
+            subject: work.subject,
+            authority: work.authority,
+            invocationId,
+            ...(contextError === undefined ? {} : { contextError }),
+            onEvent: (navigatorEvent, report) => {
+              pendingNavigatorPresentation = { event: navigatorEvent, report };
+            },
+          });
+          // Warm live help during activation so prepare is not help-bound under load.
+          // Concrete work context also starts full preparation so session create
+          // overlaps the role run. Placeholder subjects wait for before_agent_start
+          // (user prompt may replace the subject key) but still inherit warm help.
+          navigatorAttendance.warmHelp?.();
+          if (
+            navigatorWorkContext.contextError === undefined &&
+            navigatorWorkContext.subjectProvenance !== "placeholder"
+          ) {
+            navigatorAttendance.prepare();
+          }
+        }
+
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
         appendAcceptedActivationToBook({
           ledgerHome,
