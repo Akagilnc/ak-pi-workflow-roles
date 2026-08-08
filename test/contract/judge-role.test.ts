@@ -331,7 +331,6 @@ test("after_provider_response production handler writes typed 429 into resumable
         admittedRequestPath,
       },
       { cause: "provider", diagnostic: "upstream declined this request" },
-      { disposition: "no-advice" },
       { resume: { command: renderResumeCommand(runId) } },
     );
 

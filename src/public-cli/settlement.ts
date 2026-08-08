@@ -53,6 +53,7 @@ import {
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
+import { PACKAGED_ROLE_REGISTRY } from "../packaged-role-registry.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
@@ -835,23 +836,115 @@ function navigatorPhaseValue(value: unknown): NavigatorPhase {
   return null;
 }
 
-function navigatorAttendanceCorrelated(details: Record<string, unknown>): boolean {
-  // Reuse existing session attendance correlation facts only — no caller flag or new reader.
-  return (
-    details.version === 1
-    && typeof details.invocationId === "string"
-    && details.invocationId.trim() !== ""
-    && typeof details.role === "string"
-    && details.role.trim() !== ""
-    && (details.phase === null || details.phase === "plan" || details.phase === "apply")
-    && typeof details.subjectKey === "string"
-  );
+const OUTPUT_TOOL_TO_ROLE: ReadonlyMap<string, string> = new Map(
+  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role]),
+);
+
+/** Latest packaged role output toolResult — the current role terminal in session order. */
+function findCurrentRoleTerminal(
+  entries: readonly SessionEntry[],
+): { index: number; role: string } | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (typeof message.toolName !== "string") continue;
+    const role = OUTPUT_TOOL_TO_ROLE.get(message.toolName);
+    if (role === undefined) continue;
+    return { index: i, role };
+  }
+  return undefined;
+}
+
+/**
+ * Attendance must share the current role terminal's identity facts already present
+ * on the session event (role + order + invocation/phase/subject). Self-shape alone
+ * is not correlation — stale/unrelated well-shaped events are unavailable.
+ */
+function navigatorAttendanceCorrelatedWithTerminal(
+  details: Record<string, unknown>,
+  attendanceIndex: number,
+  terminal: { index: number; role: string } | undefined,
+): boolean {
+  if (terminal === undefined) return false;
+  if (attendanceIndex <= terminal.index) return false;
+  if (details.version !== 1) return false;
+  if (typeof details.invocationId !== "string" || details.invocationId.trim() === "") {
+    return false;
+  }
+  if (typeof details.role !== "string" || details.role.trim() === "") return false;
+  if (details.role !== terminal.role) return false;
+  if (details.phase !== null && details.phase !== "plan" && details.phase !== "apply") {
+    return false;
+  }
+  if (typeof details.subjectKey !== "string") return false;
+  return true;
+}
+
+function parseNavigatorAttendanceDetails(
+  details: Record<string, unknown>,
+): TerminalNavigatorFact {
+  const disposition = details.disposition;
+  if (disposition === "recommendation") {
+    const next = details.next;
+    if (!isRecord(next) || typeof next.role !== "string") {
+      return {
+        disposition: "unavailable",
+        source: "unknown",
+        reason: "navigator recommendation missing typed next role",
+      };
+    }
+    const reason = typeof details.reason === "string" ? details.reason : "";
+    const route = Array.isArray(details.route)
+      ? details.route
+          .filter(isRecord)
+          .map((target) => ({
+            role: String(target.role),
+            phase: navigatorPhaseValue(target.phase),
+          }))
+      : undefined;
+    return recommendationNavigatorFact({
+      next: {
+        role: next.role,
+        phase: navigatorPhaseValue(next.phase),
+      },
+      reason,
+      ...(route === undefined ? {} : { route }),
+      ...(typeof details.command === "string"
+        ? { modelCommand: details.command }
+        : {}),
+    });
+  }
+  if (disposition === "unavailable") {
+    return {
+      disposition: "unavailable",
+      source:
+        typeof details.unavailableSource === "string"
+          ? details.unavailableSource
+          : "unknown",
+      reason:
+        typeof details.unavailableReason === "string"
+          ? details.unavailableReason
+          : "Navigator unavailable",
+    };
+  }
+  // arrival and legacy silence both mean affirmative lawful no next-role advice.
+  if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
+    return { disposition: "no-advice" };
+  }
+  return {
+    disposition: "unavailable",
+    source: "unknown",
+    reason: "Navigator attendance disposition is unparseable",
+  };
 }
 
 export function extractNavigatorFact(
   entries: readonly SessionEntry[],
 ): TerminalNavigatorFact {
   // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
+  const terminal = findCurrentRoleTerminal(entries);
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
@@ -863,66 +956,14 @@ export function extractNavigatorFact(
           reason: "Navigator attendance is unparseable",
         };
       }
-      if (!navigatorAttendanceCorrelated(details)) {
+      if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal)) {
         return {
           disposition: "unavailable",
           source: "unknown",
           reason: "Navigator attendance is uncorrelated with session invocation facts",
         };
       }
-      const disposition = details.disposition;
-      if (disposition === "recommendation") {
-        const next = details.next;
-        if (!isRecord(next) || typeof next.role !== "string") {
-          return {
-            disposition: "unavailable",
-            source: "unknown",
-            reason: "navigator recommendation missing typed next role",
-          };
-        }
-        const reason = typeof details.reason === "string" ? details.reason : "";
-        const route = Array.isArray(details.route)
-          ? details.route
-              .filter(isRecord)
-              .map((target) => ({
-                role: String(target.role),
-                phase: navigatorPhaseValue(target.phase),
-              }))
-          : undefined;
-        return recommendationNavigatorFact({
-          next: {
-            role: next.role,
-            phase: navigatorPhaseValue(next.phase),
-          },
-          reason,
-          ...(route === undefined ? {} : { route }),
-          ...(typeof details.command === "string"
-            ? { modelCommand: details.command }
-            : {}),
-        });
-      }
-      if (disposition === "unavailable") {
-        return {
-          disposition: "unavailable",
-          source:
-            typeof details.unavailableSource === "string"
-              ? details.unavailableSource
-              : "unknown",
-          reason:
-            typeof details.unavailableReason === "string"
-              ? details.unavailableReason
-              : "Navigator unavailable",
-        };
-      }
-      // arrival and legacy silence both mean affirmative lawful no next-role advice.
-      if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
-        return { disposition: "no-advice" };
-      }
-      return {
-        disposition: "unavailable",
-        source: "unknown",
-        reason: "Navigator attendance disposition is unparseable",
-      };
+      return parseNavigatorAttendanceDetails(details);
     }
   }
   // Absence is not successful no-advice — require affirmative typed attendance.
@@ -931,6 +972,33 @@ export function extractNavigatorFact(
     source: "unknown",
     reason: "Navigator attendance is missing from the session",
   };
+}
+
+/**
+ * Exact-session Navigator fact for failure Terminal settlement.
+ * Never infers no-advice from omission; session read failures stay typed unavailable
+ * so the controlled-failure Terminal itself still settles.
+ */
+async function extractNavigatorFactFromAdmittedSession(
+  admitted: AdmittedRoleInvocation,
+): Promise<TerminalNavigatorFact> {
+  try {
+    const entries = await readBoundSessionEntries(admitted.sessionFile);
+    return extractNavigatorFact(entries);
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return {
+        disposition: "unavailable",
+        source: "unknown",
+        reason: "Navigator attendance is missing from the session",
+      };
+    }
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is unavailable because the session could not be read",
+    };
+  }
 }
 
 export async function publishJudgeArtifacts(
@@ -2509,9 +2577,10 @@ function redactNavigatorFactForPublicTerminal(
 export async function settleFailureTerminalResult(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
-  navigator: TerminalNavigatorFact = { disposition: "no-advice" },
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
+  // Exact-session attendance only — never infer no-advice from caller omission.
+  const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
   const artifacts = await publishFailureArtifacts(admitted, failure);
   const decisiveFacts: Record<string, unknown> = {
@@ -2567,10 +2636,9 @@ export async function settleFailureTerminalResult(
 export async function settleJudgeFailureTerminalResult(
   admitted: AdmittedJudgeInvocation,
   failure: ControlledFailure,
-  navigator: TerminalNavigatorFact = { disposition: "no-advice" },
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
-  return settleFailureTerminalResult(admitted, failure, navigator, options);
+  return settleFailureTerminalResult(admitted, failure, options);
 }
 
 /**

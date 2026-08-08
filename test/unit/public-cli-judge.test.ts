@@ -345,8 +345,18 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
     phase: null,
     subjectKey: "/repo/.ak/work",
   };
+  const judgeTerminal = {
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: false,
+      details: { judgeStatus: "converged" },
+    },
+  };
 
   const noAdvice = extractNavigatorFact([
+    judgeTerminal,
     {
       type: "custom_message",
       customType: "ak-navigator-attendance",
@@ -355,17 +365,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   ]);
   assert.equal(noAdvice.disposition, "no-advice");
 
-  const missing = extractNavigatorFact([
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: JUDGE_OUTPUT_TOOL_NAME,
-        isError: false,
-        details: { judgeStatus: "converged" },
-      },
-    },
-  ]);
+  const missing = extractNavigatorFact([judgeTerminal]);
   assert.equal(missing.disposition, "unavailable");
   if (missing.disposition === "unavailable") {
     assert.equal(missing.source, "unknown");
@@ -373,6 +373,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   }
 
   const uncorrelated = extractNavigatorFact([
+    judgeTerminal,
     {
       type: "custom_message",
       customType: "ak-navigator-attendance",
@@ -390,6 +391,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   }
 
   const unparseable = extractNavigatorFact([
+    judgeTerminal,
     {
       type: "custom_message",
       customType: "ak-navigator-attendance",
@@ -402,6 +404,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   }
 
   const badDisposition = extractNavigatorFact([
+    judgeTerminal,
     {
       type: "custom_message",
       customType: "ak-navigator-attendance",
@@ -409,6 +412,83 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
     },
   ]);
   assert.equal(badDisposition.disposition, "unavailable");
+});
+
+test("extractNavigatorFact rejects stale/unrelated well-shaped attendance; accepts current correlation", () => {
+  const staleAttendance = {
+    type: "custom_message",
+    customType: "ak-navigator-attendance",
+    message: {
+      details: {
+        version: 1,
+        invocationId: "inv-stale",
+        role: "judge",
+        phase: null,
+        subjectKey: "/repo/.ak/work",
+        disposition: "no-advice",
+      },
+    },
+  };
+  const currentTerminal = {
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: true,
+      details: {},
+    },
+  };
+  // Well-shaped attendance before the current role terminal is stale.
+  const stale = extractNavigatorFact([staleAttendance, currentTerminal]);
+  assert.equal(stale.disposition, "unavailable");
+  if (stale.disposition === "unavailable") {
+    assert.equal(stale.source, "unknown");
+    assert.match(stale.reason, /uncorrelated/i);
+  }
+
+  // Well-shaped attendance for a different role is unrelated.
+  const wrongRole = extractNavigatorFact([
+    currentTerminal,
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: {
+        details: {
+          version: 1,
+          invocationId: "inv-wrong-role",
+          role: "fixer",
+          phase: "apply",
+          subjectKey: "/repo/.ak/work",
+          disposition: "no-advice",
+        },
+      },
+    },
+  ]);
+  assert.equal(wrongRole.disposition, "unavailable");
+  if (wrongRole.disposition === "unavailable") {
+    assert.match(wrongRole.reason, /uncorrelated/i);
+  }
+
+  // Current terminal + matching attendance after it correlates.
+  const current = extractNavigatorFact([
+    staleAttendance,
+    currentTerminal,
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: {
+        details: {
+          version: 1,
+          invocationId: "inv-current",
+          role: "judge",
+          phase: null,
+          subjectKey: "/repo/.ak/work",
+          disposition: "no-advice",
+        },
+      },
+    },
+  ]);
+  assert.equal(current.disposition, "no-advice");
 });
 
 test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {

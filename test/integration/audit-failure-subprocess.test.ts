@@ -617,9 +617,13 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     ),
     true,
   );
+  // JSON stream emits message_end with role=custom; session principal uses custom_message.
   const attendance = events.filter(
     (event) =>
-      event.type === "custom_message" && event.customType === "ak-navigator-attendance",
+      (event.type === "message_end" &&
+        event.message?.role === "custom" &&
+        event.message?.customType === "ak-navigator-attendance") ||
+      (event.type === "custom_message" && event.customType === "ak-navigator-attendance"),
   );
   assert.equal(attendance.length, 1, "infrastructure failure emits affirmative typed no-advice");
   assert.equal(
