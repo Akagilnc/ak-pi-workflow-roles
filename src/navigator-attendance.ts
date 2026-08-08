@@ -575,7 +575,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
 
       // Load soul / model setting / live help in parallel. Live help is N pi --help
-      // subprocesses; serializing it behind session create made the post-role 3s
+      // subprocesses; serializing it behind session create made the post-role 10s
       // grace cover help-boot under load (ENOENT / unavailable flake). Session
       // create still follows context load so tool registration and prompt stay
       // one readiness step for callers.

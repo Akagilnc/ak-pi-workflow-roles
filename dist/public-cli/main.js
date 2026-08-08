@@ -9758,10 +9758,15 @@ var defaultExplicitInternalPiRunner = async (args, options) => {
     });
     let stderr = "";
     let timedOut = false;
-    const timer = options.timeoutMs === void 0 ? void 0 : setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-    }, options.timeoutMs);
+    let timer;
+    const armTimeoutAfterChildReady = () => {
+      if (options.timeoutMs === void 0) return;
+      timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, options.timeoutMs);
+    };
+    child.once("spawn", armTimeoutAfterChildReady);
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });
@@ -10599,7 +10604,6 @@ function uuidv7(now = Date.now()) {
 }
 
 // src/public-cli/invocation.ts
-var EMPTY_INVOCATION_TRANSPORT_ENVELOPE = "[ak-role:structurally-empty-request]";
 var ROLE_RUN_SESSION_FILE_NAME = "session.jsonl";
 function roleRunSessionFile(sessionDirectory) {
   return join4(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
@@ -10881,12 +10885,7 @@ async function admitJudgeInvocation(options) {
   };
 }
 function buildJudgeTransportPrompt(admitted) {
-  const lines = [];
-  if (admitted.instructionEmpty) {
-    lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
-  } else {
-    lines.push(admitted.instruction);
-  }
+  const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
     lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
@@ -11698,12 +11697,7 @@ async function admitDoctorInvocation(options) {
   };
 }
 function buildDoctorTransportPrompt(admitted) {
-  const lines = [];
-  if (admitted.instructionEmpty) {
-    lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
-  } else {
-    lines.push(admitted.instruction);
-  }
+  const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
     lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
@@ -13183,7 +13177,7 @@ function buildAuditIncompleteTerminalOutcome(input) {
       auditCandidate: audit.candidate,
       auditObservation: audit.observation,
       observationKind: audit.observation.kind,
-      observationType: audit.observation.type,
+      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.status,
       acceptedReceipt: false
     }
   };
@@ -13667,10 +13661,21 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds
 function isComplianceAuditIncomplete(value) {
   if (!isRecord5(value) || value.status !== "audit-incomplete") return false;
   const observation = value.observation;
-  if (!isRecord5(observation) || observation.kind !== "non-object-arguments") {
-    return false;
+  if (!isRecord5(observation)) return false;
+  if (observation.kind === "object-status-unreadable") {
+    return observation.status === "missing" || observation.status === "unknown";
   }
-  return ["null", "array", "undefined", "string", "number", "boolean", "bigint", "symbol", "function"].includes(observation.type);
+  return observation.kind === "non-object-arguments" && [
+    "null",
+    "array",
+    "undefined",
+    "string",
+    "number",
+    "boolean",
+    "bigint",
+    "symbol",
+    "function"
+  ].includes(observation.type);
 }
 function auditToolNameForRole(role) {
   switch (role) {
@@ -13727,6 +13732,29 @@ function boundRoleToolCallForResult(entries, resultIndex, message, outputToolNam
   }
   return calls.length === 1 && resultCount === 1 && matchingResultIndex === resultIndex && calls[0].callIndex < resultIndex ? calls[0] : void 0;
 }
+function auditIncompleteFromCandidate(candidate) {
+  const type = nonObjectComplianceArgumentType(candidate);
+  if (type !== void 0) {
+    return {
+      status: "audit-incomplete",
+      observation: { kind: "non-object-arguments", type },
+      candidate
+    };
+  }
+  if (!isRecord5(candidate)) return void 0;
+  const status = candidate.status;
+  if (status === "pass" || status === "revise" || status === "escalate") {
+    return void 0;
+  }
+  return {
+    status: "audit-incomplete",
+    observation: {
+      kind: "object-status-unreadable",
+      status: status === void 0 ? "missing" : "unknown"
+    },
+    candidate
+  };
+}
 function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolName) {
   const matches = [];
   let retainedResponseCount = 0;
@@ -13769,13 +13797,8 @@ function extractComplianceAuditIncompleteRoleOutcome(entries, role, outputToolNa
       auditToolName
     );
     if (retained === void 0) continue;
-    const observationType = nonObjectComplianceArgumentType(retained.candidate);
-    if (observationType === void 0) continue;
-    const audit = {
-      status: "audit-incomplete",
-      observation: { kind: "non-object-arguments", type: observationType },
-      candidate: retained.candidate
-    };
+    const audit = auditIncompleteFromCandidate(retained.candidate);
+    if (audit === void 0) continue;
     return {
       outcome: buildAuditIncompleteTerminalOutcome({
         role,

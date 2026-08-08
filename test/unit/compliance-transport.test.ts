@@ -16,7 +16,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import {
-  COMPLIANCE_BOOKKEEPING_UNREADABLE,
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
   ComplianceDecisionContractError,
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
@@ -309,7 +308,7 @@ test("Codex decision schema is an open zero-required object with declared fields
   }
 });
 
-test("transport accepts known statuses without shape rejection and escalates unreadable status", async () => {
+test("transport accepts known statuses and retains unreadable object status as residual", async () => {
   const acceptedArguments = [
     { status: "pass", conflicts: ["non-neutral bookkeeping"], auditCost: 3 },
     { status: "revise" },
@@ -333,10 +332,13 @@ test("transport accepts known statuses without shape rejection and escalates unr
         response(id, [fauxToolCall(decisionToolName, arguments_)]),
         sessionManager,
       );
-      assert.equal(result.status, "escalate");
-      if (result.status === "escalate") {
-        assert.deepEqual(result.conflicts, [COMPLIANCE_BOOKKEEPING_UNREADABLE]);
-        assert.deepEqual(result.decisionGate, { question: "", options: [] });
+      assert.equal(result.status, "audit-incomplete");
+      if (result.status === "audit-incomplete") {
+        assert.deepEqual(result.candidate, arguments_);
+        assert.deepEqual(result.observation, {
+          kind: "object-status-unreadable",
+          status: id === "missing-status" ? "missing" : "unknown",
+        });
       }
     });
   }

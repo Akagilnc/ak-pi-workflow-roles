@@ -822,11 +822,21 @@ export function assertCollectorReceiptMatchesAdmitted(
 function isComplianceAuditIncomplete(value: unknown): value is ComplianceAuditIncomplete {
   if (!isRecord(value) || value.status !== "audit-incomplete") return false;
   const observation = value.observation;
-  if (!isRecord(observation) || observation.kind !== "non-object-arguments") {
-    return false;
+  if (!isRecord(observation)) return false;
+  if (observation.kind === "object-status-unreadable") {
+    return observation.status === "missing" || observation.status === "unknown";
   }
-  return ["null", "array", "undefined", "string", "number", "boolean", "bigint", "symbol", "function"]
-    .includes(observation.type as string);
+  return observation.kind === "non-object-arguments" && [
+    "null",
+    "array",
+    "undefined",
+    "string",
+    "number",
+    "boolean",
+    "bigint",
+    "symbol",
+    "function",
+  ].includes(observation.type as string);
 }
 
 function auditToolNameForRole(
@@ -929,6 +939,32 @@ type BoundRetainedAuditResponse = {
   candidate: unknown;
 };
 
+function auditIncompleteFromCandidate(
+  candidate: unknown,
+): ComplianceAuditIncomplete | undefined {
+  const type = nonObjectComplianceArgumentType(candidate);
+  if (type !== undefined) {
+    return {
+      status: "audit-incomplete",
+      observation: { kind: "non-object-arguments", type },
+      candidate,
+    };
+  }
+  if (!isRecord(candidate)) return undefined;
+  const status = candidate.status;
+  if (status === "pass" || status === "revise" || status === "escalate") {
+    return undefined;
+  }
+  return {
+    status: "audit-incomplete",
+    observation: {
+      kind: "object-status-unreadable",
+      status: status === undefined ? "missing" : "unknown",
+    },
+    candidate,
+  };
+}
+
 function boundRetainedAuditResponse(
   entries: readonly SessionEntry[],
   callIndex: number,
@@ -988,13 +1024,8 @@ export function extractComplianceAuditIncompleteRoleOutcome(
       auditToolName,
     );
     if (retained === undefined) continue;
-    const observationType = nonObjectComplianceArgumentType(retained.candidate);
-    if (observationType === undefined) continue;
-    const audit: ComplianceAuditIncomplete = {
-      status: "audit-incomplete",
-      observation: { kind: "non-object-arguments", type: observationType },
-      candidate: retained.candidate,
-    };
+    const audit = auditIncompleteFromCandidate(retained.candidate);
+    if (audit === undefined) continue;
     return {
       outcome: buildAuditIncompleteTerminalOutcome({
         role,

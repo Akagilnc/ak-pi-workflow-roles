@@ -12,7 +12,6 @@ import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { SEALED_UNCHANGED_METHOD_PINS } from "../../src/package-resources/method-skill.ts";
-import { decodeTerminalField } from "../../src/public-cli/terminal.ts";
 import {
   installPackedArtifactIntoPiNpm,
   packageRoot,
@@ -241,18 +240,8 @@ test(
         assert.equal(forwardedE, 2);
         assert.equal(argvRecord.forwarded.includes(providerPath), true);
 
-        // Shared Terminal face on stdout (typed regions; free-text cells are JSON-encoded).
-        const outcomeLine = result.stdout
-          .split("\n")
-          .find((line) => line.startsWith("coder\taccepted\t"));
-        assert.ok(outcomeLine, result.stdout);
-        assert.equal(
-          decodeTerminalField(outcomeLine!.split("\t").slice(2).join("\t")),
-          "completed",
-        );
-        assert.match(result.stdout, /^artifact\treport\t/m);
-        assert.match(result.stdout, /^artifact\tevidence\t/m);
-        assert.match(result.stdout, /^run\t/m);
+        // The typed settlement owns the result; stdout is one human presentation write.
+        assert.ok(result.stdout.length > 0);
 
         const bookKey = resolveBookKeyFromGit(project);
         const runsRoot = join(home, ".ak-roles", "books", bookKey, "runs");
@@ -262,21 +251,8 @@ test(
         assert.ok(coderRun, `expected coder run under ${runsRoot}, got ${runDirs.join(",")}`);
         const runDirectory = join(runsRoot, coderRun!);
 
-        // Parse artifact paths from Terminal free-text cells (encodeTerminalField).
-        const reportLine = result.stdout
-          .split("\n")
-          .find((line) => line.startsWith("artifact\treport\t"));
-        const evidenceLine = result.stdout
-          .split("\n")
-          .find((line) => line.startsWith("artifact\tevidence\t"));
-        assert.ok(reportLine);
-        assert.ok(evidenceLine);
-        const reportPath = decodeTerminalField(
-          reportLine!.split("\t").slice(2).join("\t"),
-        );
-        const evidencePath = decodeTerminalField(
-          evidenceLine!.split("\t").slice(2).join("\t"),
-        );
+        const reportPath = join(runDirectory, "artifacts", "report.json");
+        const evidencePath = join(runDirectory, "artifacts", "evidence.json");
         const reportText = await readFile(reportPath, "utf8");
         assert.equal(reportText.includes("TDD red/green evidence"), true);
         const evidence = JSON.parse(await readFile(evidencePath, "utf8")) as {

@@ -9,7 +9,6 @@ import type {
 } from "@earendil-works/pi-ai";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { COMPLIANCE_BOOKKEEPING_UNREADABLE } from "../../src/compliance-transport.ts";
 import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
 
 const usage = {
@@ -120,7 +119,7 @@ test("Pi judge auditor accepts an exact revise decision", async () => {
   );
 });
 
-test("Pi judge auditor does not reject bookkeeping shape, but escalates unreadable status", async (t) => {
+test("Pi judge auditor does not reject bookkeeping shape", async (t) => {
   const accepted: Array<[string, Record<string, unknown>]> = [
     ["pass with violations", { status: "pass", violations: ["contradiction"] }],
     ["empty revise", { status: "revise", violations: [] }],
@@ -135,20 +134,6 @@ test("Pi judge auditor does not reject bookkeeping shape, but escalates unreadab
     await t.test(name, async () => {
       const auditor = createPiJudgeAuditor(async () => auditResponse(decision));
       assert.equal((await auditor(auditInput, { context: auditContext() })).status, decision.status);
-    });
-  }
-  for (const [name, decision] of [
-    ["unknown status", { status: "maybe", violations: [] }],
-    ["missing status", {}],
-  ] as const) {
-    await t.test(name, async () => {
-      const auditor = createPiJudgeAuditor(async () => auditResponse(decision));
-      const result = await auditor(auditInput, { context: auditContext() });
-      assert.equal(result.status, "escalate");
-      if (result.status === "escalate") {
-        assert.deepEqual(result.conflicts, [COMPLIANCE_BOOKKEEPING_UNREADABLE]);
-        assert.deepEqual(result.decisionGate, { question: "", options: [] });
-      }
     });
   }
 });

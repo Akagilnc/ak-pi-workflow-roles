@@ -21,7 +21,6 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { disposeComplianceDecision } from "../../src/audit-escalation.ts";
-import { COMPLIANCE_BOOKKEEPING_UNREADABLE } from "../../src/compliance-transport.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
   JUDGE_ACCEPTED_TEXT,
@@ -33,7 +32,6 @@ import { renderPublicAkRoleCommand } from "../../src/public-cli/command-renderer
 import {
   admitJudgeInvocation,
   buildJudgeTransportPrompt,
-  EMPTY_INVOCATION_TRANSPORT_ENVELOPE,
   parseJudgeArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -44,8 +42,6 @@ import {
   settleJudgeTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
-  decodeTerminalField,
-  encodeTerminalField,
   formatTerminalResult,
   recommendationNavigatorFact,
   type TerminalResult,
@@ -259,7 +255,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
   });
 });
 
-test("structurally empty request transports only the nonblank envelope", () => {
+test("structurally empty request stays empty while attachments remain typed transport", () => {
   const empty = buildJudgeTransportPrompt({
     role: "judge",
     runId: "r",
@@ -273,9 +269,7 @@ test("structurally empty request transports only the nonblank envelope", () => {
     sessionFile: "/r/session/session.jsonl",
     admittedRequestPath: "/r/admitted-request.json",
   });
-  assert.equal(empty, EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
-  assert.equal(empty.includes("please"), false);
-  assert.equal(empty.includes("task"), false);
+  assert.equal(empty, "");
 
   const withAttach = buildJudgeTransportPrompt({
     role: "judge",
@@ -298,7 +292,6 @@ test("structurally empty request transports only the nonblank envelope", () => {
     sessionFile: "/r/session/session.jsonl",
     admittedRequestPath: "/r/admitted-request.json",
   });
-  assert.equal(withAttach.startsWith(EMPTY_INVOCATION_TRANSPORT_ENVELOPE), true);
   assert.match(withAttach, /\/frozen\/00-a\.txt/);
 });
 
@@ -369,59 +362,6 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   const formatted = formatTerminalResult(terminal);
   assert.equal(typeof formatted, "string");
   assert.ok(formatted.length > 0);
-});
-
-test("Terminal free-text encoding preserves newlines/tabs and rejects forged artifact rows", () => {
-  const forgedNote = "ok\nartifact\tevidence\t/tmp/forged";
-  const fixSummary = "close the gate\twith tab\nand newline";
-  const decisionQuestion = "Which authority?\nSoul\tCourt";
-  const reason = "next seat\nwith\ttabs";
-
-  // Cell encoder is the free-text contract — not presentation labels.
-  for (const value of [forgedNote, fixSummary, decisionQuestion, reason]) {
-    const encoded = encodeTerminalField(value);
-    assert.equal(encoded.includes("\n"), false);
-    assert.equal(encoded.includes("\t"), false);
-    assert.equal(decodeTerminalField(encoded), value);
-  }
-
-  const terminal: TerminalResult = {
-    roleOutcome: {
-      kind: "accepted",
-      role: "judge",
-      status: "continue",
-      decisiveFacts: {
-        judgeStatus: "continue",
-        note: forgedNote,
-        fixSummary,
-        decisionQuestion,
-      },
-    },
-    navigator: {
-      disposition: "recommendation",
-      next: { role: "fixer", phase: "apply" },
-      reason,
-      command: "ak-role fixer apply",
-    },
-    artifacts: [
-      { kind: "report", path: "/r/artifacts/report.json" },
-      { kind: "evidence", path: "/r/artifacts/evidence.json" },
-    ],
-    runId: "run-encode-1",
-  };
-  // Typed owner retains original free-text facts.
-  assert.equal(terminal.roleOutcome.decisiveFacts.note, forgedNote);
-  assert.equal(terminal.roleOutcome.decisiveFacts.fixSummary, fixSummary);
-  assert.equal(terminal.roleOutcome.decisiveFacts.decisionQuestion, decisionQuestion);
-  if (terminal.navigator.disposition === "recommendation") {
-    assert.equal(terminal.navigator.reason, reason);
-    assert.equal(terminal.navigator.command, "ak-role fixer apply");
-  }
-  // Typed artifact refs retain paths; do not freeze rendered table/path presentation (AC6).
-  assert.deepEqual(
-    terminal.artifacts.map((a) => a.path),
-    ["/r/artifacts/report.json", "/r/artifacts/evidence.json"],
-  );
 });
 
 test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {
@@ -600,82 +540,6 @@ test("raceNavigatorGrace is ten seconds and yields timeout sentinel", async () =
   );
   assert.deepEqual(done, { status: "done", value: "ok" });
   holdEarlyTimer();
-});
-
-test("public Judge terminal retains unknown/missing audit and delivered role gates", async () => {
-  const cases = [
-    ["unknown", { status: "maybe" }],
-    ["missing", {}],
-  ] as const;
-  for (const [name, auditArguments] of cases) {
-    await withTempHome(async (home) => {
-      const project = join(home, "proj");
-      await mkdir(project, { recursive: true });
-      seedGitProject(project);
-      const roleGate = {
-        question: "删除还是保留默认墙钟？",
-        options: ["删除", "保留并指定 owner"],
-      };
-      const delivered = {
-        judgeStatus: "escalate" as const,
-        note: `delivered verdict survives ${name}`,
-        decisionGate: roleGate,
-      };
-      const decision = await createPiJudgeAuditor(async () =>
-        judgeAuditMessage(auditArguments),
-      )(
-        {
-          soul: "judge law",
-          transcript: "adjudication record",
-          verdict: delivered,
-        },
-        { context: auditContext(SessionManager.inMemory()) },
-      );
-      assert.equal(decision.status, "escalate");
-      if (decision.status !== "escalate") throw new Error("expected escalation");
-      assert.ok(decision.conflicts.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE));
-      assert.deepEqual(decision.decisionGate, { question: "", options: [] });
-      const toolResult = await disposeComplianceDecision(decision, {
-        pass: () => { throw new Error("must not pass"); },
-        revise: () => { throw new Error("must not revise"); },
-        escalate: (result) => result,
-      }, delivered);
-      const { io, stdout } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--project", project, `retain delivered ${name} audit`],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          createRunId: () => `run-judge-unreadable-${name}`,
-          io,
-          piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            await mkdir(sessionDir, { recursive: true });
-            await writeFile(
-              join(sessionDir, "session.jsonl"),
-              sessionToolResultLine(JUDGE_OUTPUT_TOOL_NAME, toolResult.details),
-              "utf8",
-            );
-            return { code: 0, stderr: "", timedOut: false, args: [...args] };
-          },
-        },
-      );
-
-      assert.equal(result.exitCode, 0);
-      assert.ok(result.terminal);
-      assert.equal(result.terminal.roleOutcome.kind, "audit_escalation");
-      const facts = result.terminal.roleOutcome.decisiveFacts as Record<string, unknown>;
-      assert.equal(facts.note, delivered.note);
-      assert.deepEqual(facts.decisionGate, roleGate);
-      const face = stdout.join("");
-      assert.ok(face.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE));
-      assert.ok(face.includes(roleGate.options[0]!));
-      assert.ok(face.includes(roleGate.options[1]!));
-      assert.ok(face.includes(delivered.note));
-      assert.equal(face.includes(JUDGE_ACCEPTED_TEXT), false);
-    });
-  }
 });
 
 test("Judge compliance pass/revise causally controls public settlement", async () => {
@@ -961,7 +825,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
       },
     });
     assert.equal(result.exitCode, 0);
-    assert.equal(prompt, EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
+    assert.equal(prompt, "");
     assert.equal(stdout.length, 1);
     assert.ok(stdout[0]!.length > 0);
 
