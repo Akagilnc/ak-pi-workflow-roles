@@ -8,7 +8,7 @@ var __export = (target, all) => {
 
 // src/public-cli/main.ts
 import { dirname as dirname6, join as join16 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/public-cli/cli.ts
 import { homedir as homedir3 } from "node:os";
@@ -12983,8 +12983,81 @@ async function peekRoleRunRole(home, runId) {
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
+import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname5, join as join7 } from "node:path";
+
+// src/auditor-soul.ts
+import { fileURLToPath } from "node:url";
+var AUDITOR_SOUL_ROLES = [
+  "judge",
+  "fixer",
+  "reviewer",
+  "doctor"
+];
+var auditorSoulPaths = Object.freeze({
+  judge: fileURLToPath(new URL("../souls/judge-auditor.md", import.meta.url)),
+  fixer: fileURLToPath(new URL("../souls/fixer-auditor.md", import.meta.url)),
+  reviewer: fileURLToPath(
+    new URL("../souls/reviewer-auditor.md", import.meta.url)
+  ),
+  doctor: fileURLToPath(new URL("../souls/doctor-auditor.md", import.meta.url))
+});
+
+// src/compliance-transport.ts
+var nonblank3 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
+var decisionGateSchema = typebox_exports.Object(
+  {
+    question: nonblank3,
+    options: typebox_exports.Array(nonblank3, { minItems: 1 })
+  },
+  { additionalProperties: false }
+);
+var complianceDecisionSchema = typebox_exports.Object(
+  {
+    status: typebox_exports.Union([
+      typebox_exports.Literal("pass"),
+      typebox_exports.Literal("revise"),
+      typebox_exports.Literal("escalate")
+    ], { description: "Auditor decision status." }),
+    violations: typebox_exports.Array(nonblank3, { description: "Observed compliance violations." }),
+    conflicts: typebox_exports.Array(nonblank3, { description: "Unresolved authority or execution conflicts." }),
+    decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." })
+  },
+  {
+    additionalProperties: true,
+    required: []
+  }
+);
+function createComplianceDecisionTool(name, description) {
+  return {
+    name,
+    description,
+    parameters: complianceDecisionSchema
+  };
+}
+var COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+
+// src/doctor-auditor.ts
+var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
+var tool = createComplianceDecisionTool(DOCTOR_AUDIT_TOOL_NAME, "Return whether the proposed Doctor testimony demonstrably follows the supplied Doctor Soul and frozen evidence record. Completed receipts are later augmented with runtime-owned cost; empty findings are valid.");
+
+// src/fixer-auditor.ts
+var FIXER_AUDIT_TOOL_NAME = "ak_fixer_audit_decision";
+var tool2 = createComplianceDecisionTool(FIXER_AUDIT_TOOL_NAME, "Decide whether the Fixer candidate demonstrably complies with its supplied law and assignment.");
+
+// src/judge-auditor.ts
+var JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
+var auditDecisionTool = createComplianceDecisionTool(
+  JUDGE_AUDIT_TOOL_NAME,
+  "Return whether the proposed verdict demonstrably follows the supplied judge soul."
+);
+
+// src/reviewer-auditor.ts
+var REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
+var reviewerDecisionTool = createComplianceDecisionTool(
+  REVIEWER_AUDIT_TOOL_NAME,
+  "Decide whether the Reviewer receipt demonstrably followed its supplied method and boundaries."
+);
 
 // src/collector-evidence.ts
 var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
@@ -13077,11 +13150,43 @@ function renderPublicAkRoleCommand(target) {
 function encodeTerminalField(value) {
   return JSON.stringify(value);
 }
+var JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
+  kind: "json-safe-sentinel",
+  type: "undefined"
+});
+function jsonSafeComplianceCandidate(value) {
+  return value === void 0 ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
+}
 function isLawfulTypedTerminalOutcome(outcome) {
   return outcome.kind === "accepted" || outcome.kind === "audit_escalation";
 }
 function exitCodeForTerminalOutcome(outcome) {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
+}
+function buildAuditIncompleteTerminalOutcome(input) {
+  const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
+  const audit = {
+    ...input.audit,
+    candidate: jsonSafeComplianceCandidate(input.audit.candidate)
+  };
+  return {
+    kind: "audit_incomplete",
+    role: input.role,
+    status: "audit-incomplete",
+    decision: "no-usable-decision",
+    roleCandidate,
+    audit,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-decision",
+      roleCandidate,
+      auditCandidate: audit.candidate,
+      auditObservation: audit.observation,
+      observationKind: audit.observation.kind,
+      observationType: audit.observation.type,
+      acceptedReceipt: false
+    }
+  };
 }
 var REDACTED_RUN_ID_TOKEN = "[run-id]";
 function redactExactRunId(text, runId) {
@@ -13557,6 +13662,253 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds
     throw collectorReceiptBindingFailure(
       `Collector receipt leg set [${receiptLegIds.join(",")}] does not match admitted leg set [${expectedLegIds.join(",")}]`
     );
+  }
+}
+function isComplianceAuditIncomplete(value) {
+  if (!isRecord5(value) || value.status !== "audit-incomplete") return false;
+  const observation = value.observation;
+  if (!isRecord5(observation) || observation.kind !== "non-object-arguments") {
+    return false;
+  }
+  return ["null", "array", "undefined", "string", "number", "boolean", "bigint", "symbol", "function"].includes(observation.type);
+}
+function auditToolNameForRole(role) {
+  switch (role) {
+    case "judge":
+      return JUDGE_AUDIT_TOOL_NAME;
+    case "fixer":
+      return FIXER_AUDIT_TOOL_NAME;
+    case "reviewer":
+      return REVIEWER_AUDIT_TOOL_NAME;
+    case "doctor":
+      return DOCTOR_AUDIT_TOOL_NAME;
+  }
+}
+function outputToolNameForAuditedRole(role) {
+  switch (role) {
+    case "judge":
+      return JUDGE_OUTPUT_TOOL_NAME;
+    case "fixer":
+      return FIXER_OUTPUT_TOOL_NAME;
+    case "reviewer":
+      return REVIEWER_OUTPUT_TOOL_NAME;
+    case "doctor":
+      return DOCTOR_OUTPUT_TOOL_NAME;
+  }
+}
+function nonObjectComplianceArgumentType(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  const type = typeof value;
+  return type === "undefined" || type === "string" || type === "number" || type === "boolean" || type === "bigint" || type === "symbol" || type === "function" ? type : void 0;
+}
+function boundRoleToolCallForResult(entries, resultIndex, message, outputToolName) {
+  const callId = message.toolCallId;
+  if (typeof callId !== "string" || callId.trim() === "") return void 0;
+  const calls = [];
+  let resultCount = 0;
+  let matchingResultIndex = -1;
+  for (let index = 0; index < entries.length; index += 1) {
+    const candidateMessage = entries[index]?.message;
+    if (candidateMessage?.role === "assistant" && Array.isArray(candidateMessage.content)) {
+      for (const part of candidateMessage.content) {
+        if (!isRecord5(part) || part.type !== "toolCall" || part.id !== callId) {
+          continue;
+        }
+        if (part.name !== outputToolName) return void 0;
+        calls.push({ callIndex: index, candidate: part.arguments });
+      }
+    }
+    if (candidateMessage?.role === "toolResult" && candidateMessage.toolCallId === callId) {
+      resultCount += 1;
+      if (candidateMessage.toolName !== outputToolName) return void 0;
+      matchingResultIndex = index;
+    }
+  }
+  return calls.length === 1 && resultCount === 1 && matchingResultIndex === resultIndex && calls[0].callIndex < resultIndex ? calls[0] : void 0;
+}
+function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolName) {
+  const matches = [];
+  let retainedResponseCount = 0;
+  for (let index = callIndex + 1; index < resultIndex; index += 1) {
+    const entry = entries[index];
+    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
+      continue;
+    }
+    retainedResponseCount += 1;
+    if (!isRecord5(entry.data) || !isRecord5(entry.data.response)) continue;
+    const response = entry.data.response;
+    if (!Array.isArray(response.content)) continue;
+    const calls = response.content.filter(
+      (part) => isRecord5(part) && part.type === "toolCall"
+    );
+    if (calls.length !== 1 || calls[0]?.name !== auditToolName) continue;
+    matches.push({ candidate: calls[0]?.arguments });
+  }
+  return retainedResponseCount === 1 && matches.length === 1 ? matches[0] : void 0;
+}
+function extractComplianceAuditIncompleteRoleOutcome(entries, role, outputToolName) {
+  if (outputToolName !== outputToolNameForAuditedRole(role)) return void 0;
+  const auditToolName = auditToolNameForRole(role);
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (entries[index]?.type !== "message" || message?.role !== "toolResult" || message.toolName !== outputToolName || message.isError === true || !isComplianceAuditIncomplete(message.details)) {
+      continue;
+    }
+    const roleCall = boundRoleToolCallForResult(
+      entries,
+      index,
+      message,
+      outputToolName
+    );
+    if (roleCall === void 0) continue;
+    const retained = boundRetainedAuditResponse(
+      entries,
+      roleCall.callIndex,
+      index,
+      auditToolName
+    );
+    if (retained === void 0) continue;
+    const observationType = nonObjectComplianceArgumentType(retained.candidate);
+    if (observationType === void 0) continue;
+    const audit = {
+      status: "audit-incomplete",
+      observation: { kind: "non-object-arguments", type: observationType },
+      candidate: retained.candidate
+    };
+    return {
+      outcome: buildAuditIncompleteTerminalOutcome({
+        role,
+        roleCandidate: roleCall.candidate,
+        audit
+      })
+    };
+  }
+  return void 0;
+}
+function auditArtifactPublicationError(message, code) {
+  const error = new Error(message);
+  error.name = "ArtifactPublicationError";
+  error.code = code;
+  return error;
+}
+async function ensureAuditEvidenceDirectory(runDirectory) {
+  const artifactsDir = join7(runDirectory, "artifacts");
+  const runStat = await lstat3(runDirectory);
+  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
+    throw auditArtifactPublicationError(
+      "audit evidence run directory is not a real directory",
+      "ELOOP"
+    );
+  }
+  try {
+    const existing = await lstat3(artifactsDir);
+    if (existing.isSymbolicLink()) {
+      throw auditArtifactPublicationError(
+        "audit evidence artifacts directory is a symlink",
+        "ELOOP"
+      );
+    }
+    if (!existing.isDirectory()) {
+      throw auditArtifactPublicationError(
+        "audit evidence artifacts path is not a directory",
+        "EEXIST"
+      );
+    }
+  } catch (error) {
+    if (!isMissingPathError2(error)) throw error;
+    await mkdir3(artifactsDir, { recursive: true });
+    const created = await lstat3(artifactsDir);
+    if (created.isSymbolicLink() || !created.isDirectory()) {
+      throw auditArtifactPublicationError(
+        "audit evidence artifacts directory is not a real directory",
+        "ELOOP"
+      );
+    }
+  }
+  return artifactsDir;
+}
+async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
+  const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
+  const evidencePath = join7(artifactsDir, "audit-incomplete.json");
+  try {
+    const existing = await lstat3(evidencePath);
+    throw auditArtifactPublicationError(
+      existing.isSymbolicLink() ? "audit evidence destination is a symlink" : "audit evidence destination collision",
+      existing.isSymbolicLink() ? "ELOOP" : "EEXIST"
+    );
+  } catch (error) {
+    if (!isMissingPathError2(error)) throw error;
+  }
+  const handle = await open2(evidencePath, "wx", 384);
+  try {
+    await handle.writeFile(`${JSON.stringify(outcome, null, 2)}
+`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  return { kind: "evidence", path: evidencePath };
+}
+function auditPublicationFailureTerminal(admitted, entries, outcome, error) {
+  const attempt = publicationAttemptFromError(
+    join7(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
+    error
+  );
+  const diagnostic = `audit-incomplete evidence publication failed: ${attempt.diagnostic}`;
+  const decisiveFacts = {
+    ...outcome.decisiveFacts,
+    cause: "unrecognized",
+    diagnostic,
+    publicationFailure: attempt
+  };
+  if (attempt.identity?.name !== void 0) decisiveFacts.errorName = attempt.identity.name;
+  if (attempt.identity?.code !== void 0) decisiveFacts.errorCode = attempt.identity.code;
+  const auditResidual = {
+    roleCandidate: outcome.roleCandidate,
+    audit: outcome.audit,
+    acceptedReceipt: false
+  };
+  return {
+    roleOutcome: {
+      kind: "failure",
+      role: admitted.role,
+      cause: "unrecognized",
+      diagnostic,
+      decisiveFacts,
+      auditResidual
+    },
+    navigator: extractNavigatorFact(entries),
+    artifacts: [],
+    runId: admitted.runId
+  };
+}
+async function trySettleComplianceAuditIncompleteTerminalResult(admitted) {
+  if (!AUDITOR_SOUL_ROLES.includes(admitted.role)) {
+    return void 0;
+  }
+  const outputToolName = admitted.role === "judge" ? JUDGE_OUTPUT_TOOL_NAME : admitted.role === "fixer" ? FIXER_OUTPUT_TOOL_NAME : admitted.role === "reviewer" ? REVIEWER_OUTPUT_TOOL_NAME : DOCTOR_OUTPUT_TOOL_NAME;
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === void 0) return void 0;
+  const extracted = extractComplianceAuditIncompleteRoleOutcome(
+    entries,
+    admitted.role,
+    outputToolName
+  );
+  if (extracted === void 0) return void 0;
+  try {
+    const evidence = await publishComplianceAuditIncompleteEvidence(
+      admitted,
+      extracted.outcome
+    );
+    return {
+      roleOutcome: extracted.outcome,
+      navigator: extractNavigatorFact(entries),
+      artifacts: [evidence],
+      runId: admitted.runId
+    };
+  } catch (error) {
+    return auditPublicationFailureTerminal(admitted, entries, extracted.outcome, error);
   }
 }
 function extractJudgeRoleOutcome(entries) {
@@ -14913,6 +15265,20 @@ async function dispatchAdmittedJudge(input) {
         terminal: lawful
       };
     }
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== void 0) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete
+      };
+    }
     const sessionProviderStop = await readSessionProviderStop(
       admitted.sessionFile
     );
@@ -15722,6 +16088,20 @@ async function dispatchAdmittedDoctor(input) {
         terminal: lawful
       };
     }
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== void 0) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete
+      };
+    }
     const sessionProviderStop = await readSessionProviderStop(
       admitted.sessionFile
     );
@@ -15991,6 +16371,20 @@ async function dispatchAdmittedFixer(input) {
         terminal: lawful
       };
     }
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== void 0) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete
+      };
+    }
     const sessionProviderStop = await readSessionProviderStop(
       admitted.sessionFile
     );
@@ -16151,7 +16545,7 @@ async function runPublicFixerResume(argv, env, io) {
 }
 
 // src/public-cli/merger-run.ts
-import { mkdir as mkdir3, writeFile as writeFile10 } from "node:fs/promises";
+import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
 import { join as join13, resolve as resolve5 } from "node:path";
 function buildModelArgs6(model) {
   if (model === void 0) return [];
@@ -16379,7 +16773,7 @@ async function admitMergerShellForActivationFailure(options) {
   const sessionDirectory = join13(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  await mkdir3(runDirectory, { recursive: true });
+  await mkdir4(runDirectory, { recursive: true });
   const emptyDerived = {
     targetObjectId: "",
     sourceObjectId: "",
@@ -16774,6 +17168,20 @@ async function dispatchAdmittedReviewer(input) {
         exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
         admitted,
         terminal: lawful
+      };
+    }
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== void 0) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete
       };
     }
     const sessionProviderStop = await readSessionProviderStop(
@@ -17566,7 +17974,7 @@ async function runAkRole(argv, env) {
 }
 
 // src/public-cli/main.ts
-var here = dirname6(fileURLToPath(import.meta.url));
+var here = dirname6(fileURLToPath2(import.meta.url));
 var packageRoot = join16(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

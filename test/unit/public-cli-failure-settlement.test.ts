@@ -21,6 +21,11 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
+import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
+import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
+import { FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
+import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
@@ -31,6 +36,7 @@ import {
   classifyPostAdmissionFailure,
   CONCISE_DIAGNOSTIC_MAX_CHARS,
   exitCodeForTerminalOutcome,
+  extractComplianceAuditIncompleteRoleOutcome,
   extractJudgeRoleOutcome,
   extractSessionProviderStop,
   formatFailureStderrDiagnostic,
@@ -965,6 +971,232 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
     assert.equal(errorBody.details?.timedOut, true);
     // One-line stderr emission already asserted by helper; durable diagnostic stays full.
     assert.equal(stderr[0]!.includes("\n"), true);
+  });
+});
+
+test("shared audit-incomplete terminal extraction enumerates every audited seat", () => {
+  const outputTools = {
+    judge: "ak_judge_output",
+    fixer: "ak_fixer_output",
+    reviewer: "ak_reviewer_output",
+    doctor: "ak_doctor_output",
+  } as const;
+  const auditTools = {
+    judge: JUDGE_AUDIT_TOOL_NAME,
+    fixer: FIXER_AUDIT_TOOL_NAME,
+    reviewer: REVIEWER_AUDIT_TOOL_NAME,
+    doctor: DOCTOR_AUDIT_TOOL_NAME,
+  } as const;
+  for (const role of AUDITOR_SOUL_ROLES) {
+    const roleCandidate = { role, status: "candidate" };
+    const auditCandidate = [`malformed-${role}`];
+    const result = extractComplianceAuditIncompleteRoleOutcome(
+      [
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{
+              type: "toolCall",
+              id: `${role}-role-call`,
+              name: outputTools[role],
+              arguments: roleCandidate,
+            }],
+          },
+        },
+        {
+          type: "custom",
+          customType: "ak_compliance_response",
+          data: {
+            version: 1,
+            response: {
+              content: [{
+                type: "toolCall",
+                id: `${role}-audit-call`,
+                name: auditTools[role],
+                arguments: auditCandidate,
+              }],
+            },
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolCallId: `${role}-role-call`,
+            toolName: outputTools[role],
+            isError: false,
+            details: {
+              status: "audit-incomplete",
+              observation: { kind: "non-object-arguments", type: "array" },
+              candidate: auditCandidate,
+            },
+          },
+        },
+      ],
+      role,
+      outputTools[role],
+    );
+    assert.ok(result);
+    assert.equal(result.outcome.kind, "audit_incomplete");
+    assert.equal(result.outcome.status, "audit-incomplete");
+    assert.equal(result.outcome.decision, "no-usable-decision");
+    assert.deepEqual(result.outcome.roleCandidate, roleCandidate);
+    assert.deepEqual(result.outcome.audit.candidate, auditCandidate);
+    assert.notDeepEqual(result.outcome.roleCandidate, result.outcome.audit.candidate);
+    assert.equal(result.outcome.acceptedReceipt, false);
+    assert.deepEqual(result.outcome.decisiveFacts.roleCandidate, roleCandidate);
+    assert.deepEqual(result.outcome.decisiveFacts.auditCandidate, auditCandidate);
+    assert.deepEqual(result.outcome.decisiveFacts.auditObservation, {
+      kind: "non-object-arguments",
+      type: "array",
+    });
+  }
+});
+
+test("audit-incomplete binding rejects wrong seats, collisions, and missing role ids", () => {
+  const base = [
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "role-call-1",
+          name: "ak_judge_output",
+          arguments: { judgeStatus: "converged" },
+        }],
+      },
+    },
+    {
+      type: "custom",
+      customType: "ak_compliance_response",
+      data: {
+        response: {
+          content: [{
+            type: "toolCall",
+            id: "audit-call-1",
+            name: JUDGE_AUDIT_TOOL_NAME,
+            arguments: ["retained-candidate"],
+          }],
+        },
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: "role-call-1",
+        toolName: "ak_judge_output",
+        isError: false,
+        details: {
+          status: "audit-incomplete",
+          observation: { kind: "non-object-arguments", type: "array" },
+          candidate: ["same-bytes"],
+        },
+      },
+    },
+  ] as const;
+  const extract = (entries: readonly unknown[]) =>
+    extractComplianceAuditIncompleteRoleOutcome(
+      entries as Parameters<typeof extractComplianceAuditIncompleteRoleOutcome>[0],
+      "judge",
+      "ak_judge_output",
+    );
+  const bound = extract(base);
+  assert.ok(bound);
+  assert.deepEqual(bound.outcome.audit.candidate, ["retained-candidate"]);
+  assert.deepEqual(bound.outcome.audit.observation, {
+    kind: "non-object-arguments",
+    type: "array",
+  });
+  assert.equal(extract(base.map((entry, index) => index === 1
+    ? { ...entry, data: { response: { content: [{ type: "toolCall", name: "wrong_audit_tool", arguments: ["retained-candidate"] }] } } }
+    : entry)), undefined);
+  assert.equal(extract(base.map((entry, index) => index === 2
+    ? { ...entry, message: { ...(entry as any).message, toolCallId: "missing-role-call" } }
+    : entry)), undefined);
+  assert.equal(extract(base.map((entry, index) => index === 2
+    ? { ...entry, message: { ...(entry as any).message, toolCallId: undefined } }
+    : entry)), undefined);
+  // A same-value retained response outside this role call/result interval is unrelated.
+  assert.equal(extract([base[0], base[2], base[1]]), undefined);
+  // Two retained responses in one interval are not a unique binding.
+  assert.equal(extract([
+    base[0],
+    base[1],
+    { ...base[1], data: { response: { content: [{ type: "toolCall", name: JUDGE_AUDIT_TOOL_NAME, arguments: ["other"] }] } } },
+    base[2],
+  ]), undefined);
+  // A second result for the same non-empty call ID is not a second chance to settle.
+  assert.equal(extract([
+    base[0],
+    base[1],
+    base[2],
+    { ...base[2] },
+  ]), undefined);
+});
+
+test("public audit evidence collision returns a typed nonzero Terminal with residual", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "audit evidence collision"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-audit-artifact-collision-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const runDir = join(sessionDir, "..");
+          await mkdir(join(runDir, "artifacts", "audit-incomplete.json"), { recursive: true });
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            `${JSON.stringify({
+              type: "message",
+              message: {
+                role: "assistant",
+                content: [{ type: "toolCall", id: "role-1", name: JUDGE_OUTPUT_TOOL_NAME, arguments: { judgeStatus: "converged" } }],
+              },
+            })}\n${JSON.stringify({
+              type: "custom",
+              customType: "ak_compliance_response",
+              data: { response: { content: [{ type: "toolCall", name: JUDGE_AUDIT_TOOL_NAME, arguments: ["retained"] }] } },
+            })}\n${JSON.stringify({
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolCallId: "role-1",
+                toolName: JUDGE_OUTPUT_TOOL_NAME,
+                isError: false,
+                details: { status: "audit-incomplete", observation: { kind: "non-object-arguments", type: "array" }, candidate: ["ignored"] },
+              },
+            })}\n`,
+            "utf8",
+          );
+          return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
+        },
+      },
+    );
+    assert.equal(result.exitCode, 1);
+    assert.equal(stdout.length, 1);
+    assert.equal(stderr.length, 1);
+    assert.ok(result.terminal);
+    const outcome = result.terminal!.roleOutcome;
+    assert.equal(outcome.kind, "failure");
+    if (outcome.kind !== "failure") throw new Error("expected publication failure");
+    assert.equal(outcome.cause, "unrecognized");
+    assert.equal(outcome.decisiveFacts.errorCode, "EEXIST");
+    assert.equal(outcome.auditResidual?.acceptedReceipt, false);
+    assert.deepEqual(outcome.auditResidual?.roleCandidate, { judgeStatus: "converged" });
+    assert.deepEqual(outcome.auditResidual?.audit.candidate, ["retained"]);
+    assert.equal(result.terminal!.artifacts.length, 0);
   });
 });
 
