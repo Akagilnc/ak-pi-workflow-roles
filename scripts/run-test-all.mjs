@@ -5,6 +5,7 @@
 // runs ordinary files first under default Node file parallelism.
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 import { join, relative } from "node:path";
 
 const HEAVYWEIGHT_MANIFEST = Object.freeze([
@@ -135,7 +136,10 @@ function runNodeTest(files, { concurrency } = {}) {
     child.on("error", reject);
     child.on("exit", (code, signal) => {
       if (signal) {
-        resolvePromise(1);
+        // Preserve signal identity as the conventional 128 + signo status
+        // (e.g. SIGTERM => 143) rather than washing to generic 1.
+        const signo = osConstants.signals[signal];
+        resolvePromise(typeof signo === "number" ? 128 + signo : 1);
         return;
       }
       resolvePromise(code ?? 1);
