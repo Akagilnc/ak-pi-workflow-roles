@@ -50,7 +50,7 @@ import {
   createReviewerRoleRuntime,
   type ReviewerAuditInput,
 } from "./reviewer-role.ts";
-import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+import type { AcceptedReviewerExecution, ReviewerHostMaterial, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
@@ -281,6 +281,7 @@ export type RoleRuntimeDependencies = {
   loadReviewerTask?(path: string): Promise<Uint8Array>;
   loadReviewerCapabilities?(path: string): Promise<Uint8Array>;
   createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
+  loadReviewerHostMaterials?(): Promise<readonly ReviewerHostMaterial[]>;
   reviewerHostTools?: readonly string[];
   loadCollectorSoul?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
@@ -613,6 +614,9 @@ export function createRoleRuntimeExtension(
           if (dependencies.createReviewerPinnedGitReader === undefined) throw new Error("Reviewer runtime dependencies are not configured");
           return dependencies.createReviewerPinnedGitReader();
         },
+        ...(dependencies.loadReviewerHostMaterials === undefined
+          ? {}
+          : { loadHostMaterials: dependencies.loadReviewerHostMaterials }),
         hostTools() { return dependencies.reviewerHostTools ?? ["read", "grep", "find", "ls", "bash", "write", "edit"]; },
         async loadCanonicalSkillBinding(name) {
           if (dependencies.loadCanonicalSkillBinding === undefined) {

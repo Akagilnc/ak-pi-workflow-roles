@@ -6,14 +6,14 @@ import { verifyBundleIdentity, type PinnedMechanicalBundleV1 } from "./reviewer-
 
 export type MaterializedBundleEvidenceV1 = Readonly<{
   leg: "standards" | "spec"; workspaceIdentity: string; manifestSha256: string;
-  entries: readonly Readonly<{ id: string; relativeClonePath: string; utf8Length: number; sha256: string; verified: true; readable?: true }>[];
+  entries: readonly Readonly<{ id: string; relativeClonePath: string; utf8Length: number; sha256: string; verified: true; readable: true }>[];
 }>;
 function confined(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 export async function materializeMechanicalBundle(workspace: string, leg: "standards" | "spec", bundle: PinnedMechanicalBundleV1): Promise<MaterializedBundleEvidenceV1> {
-  if (!verifyBundleIdentity(bundle)) throw new Error("Mechanical bundle digest or manifest mismatch");
+  if (!verifyBundleIdentity(bundle) || bundle.entries.some(({ bytes }) => typeof bytes !== "string")) throw new Error("Mechanical bundle digest or manifest mismatch");
   const root = await realpath(workspace);
   const destinations = new Set<string>();
   const staged: Array<{ temporary: string; destination: string }> = [];

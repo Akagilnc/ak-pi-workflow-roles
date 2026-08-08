@@ -65,13 +65,13 @@ export async function acquireReviewerPinnedEvidence(reader: ReviewerPinnedGitRea
   if(readRange!.base!==base!||readRange!.target!==target.targetHead||readRange!.diffCommand!==`git diff ${base!}...${target.targetHead}`||!/^[0-9a-f]{64}$/.test(readRange!.diffSha256)||readRange!.diffSha256===sha256Hex("")||!Array.isArray(readRange!.commits)||!readRange!.commits.every(x=>typeof x==="string")||new Set(readRange!.commits).size!==readRange!.commits.length)evidenceViolation("range-invalid");
   const range=Object.freeze({...readRange!,commits:Object.freeze([...readRange!.commits])});
   const materials: ReviewerMaterialEvidence[]=[];
-  const hostById=new Map(hostMaterials.map((item)=>[item.id,item]));
+  const hostByPath=new Map(hostMaterials.map((item)=>[item.path,item]));
   for(const item of admitted.materials){
     let bytes:Uint8Array;
     let sourcePath=item.source==="host-input"?item.sourcePath!:item.repositoryPath;
     if(item.source==="host-input"){
-      const supplied=hostById.get(item.id);
-      if(supplied===undefined||supplied.path!==item.sourcePath||supplied.utf8Length!==supplied.bytes.byteLength||sha256Hex(supplied.bytes)!==supplied.sha256)evidenceViolation("material-invalid");
+      const supplied=hostByPath.get(item.sourcePath!);
+      if(supplied===undefined||supplied.path!==item.sourcePath||!(supplied.bytes instanceof Uint8Array)||supplied.utf8Length!==supplied.bytes.byteLength||sha256Hex(supplied.bytes)!==supplied.sha256)evidenceViolation("material-invalid");
       bytes=Uint8Array.from(supplied!.bytes);
     } else {
       try{bytes=await reader.material(item.repositoryPath,target.targetHead);}catch(error){classifyEvidenceRead(error);}
