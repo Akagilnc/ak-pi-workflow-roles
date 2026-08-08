@@ -44,6 +44,27 @@ export type ComplianceCompletion = (
   options: ProviderStreamOptions,
 ) => Promise<AssistantMessage>;
 
+export type ComplianceArgumentRootType =
+  | "null"
+  | "array"
+  | "undefined"
+  | "string"
+  | "number"
+  | "boolean"
+  | "bigint"
+  | "symbol"
+  | "function";
+
+export type ComplianceAuditIncomplete = {
+  status: "audit-incomplete";
+  observation: {
+    kind: "non-object-arguments";
+    type: ComplianceArgumentRootType;
+  };
+  candidate: unknown;
+  usage?: Usage;
+};
+
 export type ComplianceDecision =
   | { status: "pass"; usage?: Usage }
   | { status: "revise"; violations: readonly string[]; usage?: Usage }
@@ -52,7 +73,8 @@ export type ComplianceDecision =
     conflicts: readonly string[];
     decisionGate: { question: string; options: readonly string[] };
     usage?: Usage;
-  };
+  }
+  | ComplianceAuditIncomplete;
 
 export type ComplianceDispatch = {
   model: Model<Api>;
@@ -329,13 +351,21 @@ export function readComplianceDecision(
     arguments_ === null ||
     Array.isArray(arguments_)
   ) {
-    throw malformedComplianceDecision(
-      response,
-      toolName,
-      invalidLabel,
-      "arguments must be an object",
-      calls,
-    );
+    // The response and candidate have already been retained. This is an
+    // observable audit residual, not an auditor decision and not transport
+    // failure. Preserve the root observation and candidate for #182's public
+    // settlement; do not manufacture a revise reason here.
+    const type: ComplianceArgumentRootType = arguments_ === null
+      ? "null"
+      : Array.isArray(arguments_)
+        ? "array"
+        : typeof arguments_ as ComplianceArgumentRootType;
+    return {
+      status: "audit-incomplete",
+      observation: { kind: "non-object-arguments", type },
+      candidate: arguments_,
+      usage: response.usage,
+    };
   }
   const args = arguments_ as Record<string, unknown>;
   switch (args.status) {
