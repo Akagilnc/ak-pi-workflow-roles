@@ -9,8 +9,6 @@ const COMPLIANCE_REQUEST_TIMEOUT_MS = 183000;
  * Provider HTTP maxRetries stay on the error path; do not stack a second idle-retry loop.
  */
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
-/** Honest label when compliance bookkeeping `status` is missing or outside pass|revise|escalate. */
-export const COMPLIANCE_BOOKKEEPING_UNREADABLE = "审刑院记账位不可读";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({
     question: nonblank,
@@ -234,17 +232,15 @@ export function readComplianceDecision(response, toolName, invalidLabel) {
             usage: response.usage,
         };
     }
-    // Missing or unknown bookkeeping value: do not abort (CONTEXT.md), and do not
-    // launder into pass (ADR 0040/0055). Reuse escalate as the existing hand-to-human
-    // channel, labeled only with the unreadable fact — never a forged auditor decision
-    // and never a placeholder option (recogniser no longer demands non-empty gate).
+    // An object with no usable status is retained as an audit residual. It is not
+    // an auditor decision and must not be laundered into pass, revise, or escalate.
     return {
-        status: "escalate",
-        conflicts: [COMPLIANCE_BOOKKEEPING_UNREADABLE],
-        decisionGate: {
-            question: "",
-            options: [],
+        status: "audit-incomplete",
+        observation: {
+            kind: "object-status-unreadable",
+            status: status === undefined ? "missing" : "unknown",
         },
+        candidate: arguments_,
         usage: response.usage,
     };
 }

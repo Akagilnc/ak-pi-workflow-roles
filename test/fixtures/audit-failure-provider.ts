@@ -45,7 +45,8 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     || observation
     || deliveryMode === "recommendation"
     || deliveryMode === "silence";
-  const roleScripted = observation || deliveryMode !== undefined || process.env.AK_AUDIT_NON_OBJECT === "1";
+  const roleScripted = observation || deliveryMode !== undefined ||
+    process.env.AK_AUDIT_NON_OBJECT === "1" || process.env.AK_AUDIT_UNKNOWN_STATUS === "1";
   let navigatorCalls = 0;
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
@@ -80,6 +81,12 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
       if (process.env.AK_AUDIT_NON_OBJECT === "1") {
         return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, ["malformed auditor candidate"]));
+      }
+      if (process.env.AK_AUDIT_UNKNOWN_STATUS === "1") {
+        return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
+          status: "mystery",
+          retained: "raw auditor candidate",
+        }));
       }
       if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
         const timeoutMs = options?.timeoutMs;

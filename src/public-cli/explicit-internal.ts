@@ -144,13 +144,17 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
     let timedOut = false;
     // No default wall clock. Only an explicit caller budget arms a timer (ADR 0010).
     // SIGKILL is unconditionally forbidden (host constitution art. 9) — graceful SIGTERM only.
-    const timer =
-      options.timeoutMs === undefined
-        ? undefined
-        : setTimeout(() => {
-            timedOut = true;
-            child.kill("SIGTERM");
-          }, options.timeoutMs);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const armTimeoutAfterChildReady = (): void => {
+      if (options.timeoutMs === undefined) return;
+      timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, options.timeoutMs);
+    };
+    // The spawn event is the child-process readiness seam. Start the caller's
+    // budget only after the child is actually created, not while spawn is pending.
+    child.once("spawn", armTimeoutAfterChildReady);
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });

@@ -35,7 +35,6 @@ import {
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
-import { EMPTY_INVOCATION_TRANSPORT_ENVELOPE } from "./public-cli/invocation.ts";
 import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
@@ -419,8 +418,7 @@ export function createRoleRuntimeExtension(
         // Replacement is keyed by typed subject provenance, never prose prefixes.
         if (navigatorWorkContext.subjectProvenance === "placeholder") {
           const subject = event.prompt.trim();
-          // Public empty-request transport envelope is not semantic task content.
-          if (subject !== "" && subject !== EMPTY_INVOCATION_TRANSPORT_ENVELOPE) {
+          if (subject !== "") {
             const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
             const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
             navigatorWorkContext = {

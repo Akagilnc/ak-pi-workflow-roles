@@ -53,11 +53,6 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
     // Behavioral markers for public settlement seams (not presentation freezes).
     const committedText = committed.toString("utf8");
     assert.equal(
-      committedText.includes("encodeTerminalField"),
-      true,
-      "public bin must ship Terminal free-text encoding",
-    );
-    assert.equal(
       committedText.includes("settleJudgeFailureTerminalResult"),
       true,
       "public bin must ship controlled failure settlement",

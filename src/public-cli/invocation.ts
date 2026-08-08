@@ -51,10 +51,6 @@ import { sha256Hex } from "../sha256.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import { CliUsageError } from "./cli-errors.ts";
 
-/** Transport-only envelope for a structurally empty public request. Not a semantic task. */
-export const EMPTY_INVOCATION_TRANSPORT_ENVELOPE =
-  "[ak-role:structurally-empty-request]" as const;
-
 export type FrozenAttachment = {
   /** Original caller path retained only as provenance. */
   readonly provenancePath: string;
@@ -588,20 +584,11 @@ export async function admitJudgeInvocation(
   };
 }
 
-/**
- * Build the Pi prompt transport for an admitted Judge request.
- * Empty public requests receive the canonical nonblank transport envelope only —
- * no invented semantic task content.
- */
+/** Build the Pi prompt transport for an admitted Judge request. */
 export function buildJudgeTransportPrompt(
   admitted: AdmittedJudgeInvocation,
 ): string {
-  const lines: string[] = [];
-  if (admitted.instructionEmpty) {
-    lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
-  } else {
-    lines.push(admitted.instruction);
-  }
+  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
     lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
@@ -1648,19 +1635,11 @@ export async function admitDoctorInvocation(
   };
 }
 
-/**
- * Build the Pi prompt transport for an admitted Doctor request.
- * Empty public requests receive the canonical nonblank transport envelope only.
- */
+/** Build the Pi prompt transport for an admitted Doctor request. */
 export function buildDoctorTransportPrompt(
   admitted: AdmittedDoctorInvocation,
 ): string {
-  const lines: string[] = [];
-  if (admitted.instructionEmpty) {
-    lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
-  } else {
-    lines.push(admitted.instruction);
-  }
+  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
     lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
