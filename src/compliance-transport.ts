@@ -109,11 +109,14 @@ type ComplianceToolChoice =
   | { type: "function"; function: { name: string } }
   | { type: "tool"; name: string };
 
-function complianceToolChoice(model: Model<Api>, toolName: string): ComplianceToolChoice {
+function complianceToolChoice(
+  model: Model<Api>,
+  toolName: string,
+): ComplianceToolChoice | undefined {
   switch (model.api) {
     case "anthropic-messages":
     case "bedrock-converse-stream":
-      return { type: "tool", name: toolName };
+      return undefined;
     case "mistral-conversations":
     case "openai-completions":
     case "pi-messages":
@@ -499,6 +502,7 @@ export async function runComplianceAudit(options: {
     dispatch.model,
     options.tool.name,
   );
+  const toolChoice = complianceToolChoice(dispatch.model, options.tool.name);
   const requestContext: Context = {
     systemPrompt: options.systemPrompt,
     messages: [
@@ -562,7 +566,7 @@ export async function runComplianceAudit(options: {
               maxTokens: 2048,
               cacheRetention: "none",
               sessionId: uuidv7(),
-              toolChoice: complianceToolChoice(dispatch.model, options.tool.name),
+              ...(toolChoice === undefined ? {} : { toolChoice }),
               ...(onPayload === undefined ? {} : { onPayload }),
               signal: idle.signal,
             },
