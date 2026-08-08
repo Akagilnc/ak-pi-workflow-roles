@@ -30,9 +30,10 @@ function invocationIdFromData(data) {
 function isDurablePackagedRoleTerminalResult(message) {
   if (typeof message.toolName !== "string") return false;
   if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return false;
-  if (isNavigatorInfrastructureFailureFact(message.details)) return true;
-  if (message.isError === true) return false;
-  return true;
+  const hasInfraFact = isNavigatorInfrastructureFailureFact(message.details);
+  if (message.isError === true) return hasInfraFact;
+  if (message.isError === false) return !hasInfraFact;
+  return false;
 }
 function isPackagedRoleTerminalEntry(entry) {
   if (entry?.type !== "message") return false;
