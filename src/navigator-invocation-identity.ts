@@ -10,12 +10,45 @@
  * current packaged role terminal and compares equality — never attendance
  * self-shape, markers after the terminal, or stale older markers behind a
  * malformed nearest. Non-UUIDv7 principals are never accepted.
+ *
+ * Durable completion of a packaged role terminal is registry-driven and shared
+ * with publicNavigatorSettlement: accepted/human (isError:false) and genuine
+ * infrastructure-failure facts complete the invocation; ordinary correctable
+ * tool-output isError rejections do not.
  */
 
 import { PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
 import { isUuidV7, uuidv7 } from "./uuidv7.ts";
 
 export const NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation" as const;
+
+/** Typed durable infrastructure-failure fact on a packaged role output toolResult. */
+export const NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure" as const;
+export type NavigatorInfrastructureFailureFact = {
+  kind: typeof NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND;
+  source: "shared-role-lifecycle";
+  reasonCode: "host_failure";
+};
+
+export function buildNavigatorInfrastructureFailureFact(): NavigatorInfrastructureFailureFact {
+  return {
+    kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
+    source: "shared-role-lifecycle",
+    reasonCode: "host_failure",
+  };
+}
+
+export function isNavigatorInfrastructureFailureFact(
+  value: unknown,
+): value is NavigatorInfrastructureFailureFact {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    record.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND &&
+    record.source === "shared-role-lifecycle" &&
+    record.reasonCode === "host_failure"
+  );
+}
 
 const PACKAGED_ROLE_OUTPUT_TOOLS: ReadonlySet<string> = new Set(
   PACKAGED_ROLE_REGISTRY.map((entry) => entry.outputTool),
@@ -28,6 +61,8 @@ export type NavigatorInvocationEntryLike = {
   readonly message?: {
     readonly role?: unknown;
     readonly toolName?: unknown;
+    readonly isError?: unknown;
+    readonly details?: unknown;
   };
 };
 
@@ -45,12 +80,31 @@ function invocationIdFromData(data: unknown): string | undefined {
   return isUuidV7(trimmed) ? trimmed : undefined;
 }
 
+/**
+ * Shared durable-completion gate for packaged role output toolResults.
+ * Mirrors publicNavigatorSettlement's terminal/non-terminal split without role/phase
+ * projection: registry output tool + (accepted/human isError:false | infra fact).
+ */
+export function isDurablePackagedRoleTerminalResult(message: {
+  readonly toolName?: unknown;
+  readonly isError?: unknown;
+  readonly details?: unknown;
+}): boolean {
+  if (typeof message.toolName !== "string") return false;
+  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return false;
+  // Genuine host infrastructure failure that terminated the role run.
+  if (isNavigatorInfrastructureFailureFact(message.details)) return true;
+  // Ordinary correctable tool-output rejection remains open for retry.
+  if (message.isError === true) return false;
+  // Accepted role terminal or human_decision (isError:false).
+  return true;
+}
+
 function isPackagedRoleTerminalEntry(entry: NavigatorInvocationEntryLike | undefined): boolean {
   if (entry?.type !== "message") return false;
   const message = entry.message;
   if (message?.role !== "toolResult") return false;
-  if (typeof message.toolName !== "string") return false;
-  return PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName as string);
+  return isDurablePackagedRoleTerminalResult(message);
 }
 
 function latestInvocationMarkerIndex(

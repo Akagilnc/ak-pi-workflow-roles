@@ -1,6 +1,19 @@
 import { PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.js";
 import { isUuidV7, uuidv7 } from "./uuidv7.js";
 const NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
+const NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
+function buildNavigatorInfrastructureFailureFact() {
+  return {
+    kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
+    source: "shared-role-lifecycle",
+    reasonCode: "host_failure"
+  };
+}
+function isNavigatorInfrastructureFailureFact(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value;
+  return record.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record.source === "shared-role-lifecycle" && record.reasonCode === "host_failure";
+}
 const PACKAGED_ROLE_OUTPUT_TOOLS = new Set(
   PACKAGED_ROLE_REGISTRY.map((entry) => entry.outputTool)
 );
@@ -14,12 +27,18 @@ function invocationIdFromData(data) {
   const trimmed = invocationId.trim();
   return isUuidV7(trimmed) ? trimmed : void 0;
 }
+function isDurablePackagedRoleTerminalResult(message) {
+  if (typeof message.toolName !== "string") return false;
+  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return false;
+  if (isNavigatorInfrastructureFailureFact(message.details)) return true;
+  if (message.isError === true) return false;
+  return true;
+}
 function isPackagedRoleTerminalEntry(entry) {
   if (entry?.type !== "message") return false;
   const message = entry.message;
   if (message?.role !== "toolResult") return false;
-  if (typeof message.toolName !== "string") return false;
-  return PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName);
+  return isDurablePackagedRoleTerminalResult(message);
 }
 function latestInvocationMarkerIndex(entries) {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -57,8 +76,12 @@ function currentInvocationPrincipalFromSession(entries, beforeIndex = entries.le
   return void 0;
 }
 export {
+  NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
   NAVIGATOR_INVOCATION_ENTRY,
+  buildNavigatorInfrastructureFailureFact,
   currentInvocationPrincipalFromSession,
+  isDurablePackagedRoleTerminalResult,
+  isNavigatorInfrastructureFailureFact,
   mintNavigatorInvocationId,
   resolveLifecycleInvocationPrincipal
 };

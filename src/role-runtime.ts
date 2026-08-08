@@ -36,6 +36,9 @@ import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
+  buildNavigatorInfrastructureFailureFact,
+  isDurablePackagedRoleTerminalResult,
+  isNavigatorInfrastructureFailureFact,
   NAVIGATOR_INVOCATION_ENTRY,
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
@@ -70,6 +73,12 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "./merger-contracts.ts";
 import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-role.ts";
 
+export {
+  buildNavigatorInfrastructureFailureFact,
+  isNavigatorInfrastructureFailureFact,
+  NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
+  type NavigatorInfrastructureFailureFact,
+} from "./navigator-invocation-identity.ts";
 export { activationTraceRecordSchema, namedActivationCause } from "./activation-trace.ts";
 export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
 export {
@@ -353,33 +362,16 @@ function navigatorOutputTool(role: string): string | undefined {
   return packagedRoleOutputTool(role);
 }
 
-export const NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure" as const;
-export type NavigatorInfrastructureFailureFact = {
-  kind: typeof NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND;
-  source: "shared-role-lifecycle";
-  reasonCode: "host_failure";
-};
-
-export function buildNavigatorInfrastructureFailureFact(): NavigatorInfrastructureFailureFact {
-  return { kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND, source: "shared-role-lifecycle", reasonCode: "host_failure" };
-}
-
-function isNavigatorInfrastructureFailureFact(value: unknown): value is NavigatorInfrastructureFailureFact {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return record.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND &&
-    record.source === "shared-role-lifecycle" && record.reasonCode === "host_failure";
-}
-
 export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError: boolean; details: unknown }): NavigatorSettlement | undefined {
+  // Shared durable-completion gate (lifecycle + settlement) — registry output tool only.
   if (event.toolName !== navigatorOutputTool(role)) return undefined;
+  if (!isDurablePackagedRoleTerminalResult(event)) return undefined;
   const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
     ? event.details as Record<string, unknown>
     : {};
   if (isNavigatorInfrastructureFailureFact(event.details)) {
     return { kind: "role_infrastructure_failure", role, phase };
   }
-  if (event.isError) return undefined;
   if (isAuditEscalationResult(event.details)) {
     return { kind: "human_decision", role, phase, status: "audit_escalation" };
   }
@@ -449,10 +441,17 @@ export function createRoleRuntimeExtension(
       const role = selectedRole;
       if (role === undefined || navigatorAttendance === undefined) return;
       const isRoleInfrastructureFailure = pendingInfrastructureToolCallIds.delete(event.toolCallId);
+      // Overlay typed infra fact so live settlement and durable session entry agree.
+      const infrastructureDetails = isRoleInfrastructureFailure
+        ? buildNavigatorInfrastructureFailureFact()
+        : undefined;
+      const classified = infrastructureDetails === undefined
+        ? event
+        : { ...event, details: infrastructureDetails };
       const settlement = publicNavigatorSettlement(
         role,
         navigatorPhase(pi, role),
-        isRoleInfrastructureFailure ? { ...event, details: buildNavigatorInfrastructureFailureFact() } : event,
+        classified,
       );
       if (settlement !== undefined) {
         const attendance = navigatorAttendance;
@@ -494,6 +493,11 @@ export function createRoleRuntimeExtension(
         })();
         pendingNavigatorSettlement = pending;
         await pending;
+      }
+      // Persist typed infrastructure-failure fact onto the role session toolResult so
+      // exact-session restart shares the same durable completion classification.
+      if (infrastructureDetails !== undefined) {
+        return { details: infrastructureDetails, isError: true };
       }
       // Recommendation rides the accepted settlement record's content so the one
       // mandatory last-ak_*_output extraction surfaces route/next/reason without
