@@ -15,7 +15,7 @@ import { runPublicReviewer } from "../../src/public-cli/reviewer-run.ts";
 import { packageRoot, runPiSubprocess, withHermeticHome } from "../helpers/pi-test-harness.ts";
 
 const FROZEN_BYTES = "frozen authority bytes — only from this run\n";
-const OUTSIDE_BYTES = "outside authority bytes\n";
+const OUTSIDE_BYTES = "outside authority bytes — not this run!!!!!\n";
 const PROVIDER = resolve(packageRoot, "test/fixtures/reviewer-production-provider.ts");
 
 async function runProductionPi(args: readonly string[], options: Parameters<typeof runPiSubprocess>[1]) {
