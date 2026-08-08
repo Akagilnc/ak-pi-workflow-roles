@@ -186,7 +186,7 @@ type RoleInvocationLedgerIdentity = Pick<
 };
 
 /**
- * Persist the one public-run identity page consumed by trajectory readers.
+ * Persist one `invocation.json` identity page for the public run.
  * Admission is the sole source for every field; callers never provide an
  * independent invocation identity or a second ledger shape.
  */
