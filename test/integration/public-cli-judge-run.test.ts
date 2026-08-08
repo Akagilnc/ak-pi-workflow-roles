@@ -10,6 +10,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { settleJudgeTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
@@ -26,6 +27,253 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["config", "user.name", "Judge E2E"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
+
+test(
+  "ak-role Judge settles retained malformed compliance as a typed incomplete Terminal",
+  { timeout: 120_000 },
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-incomplete-"));
+    try {
+      const project = join(home, "work");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const providerPath = resolve(
+        packageRoot,
+        "test/fixtures/audit-failure-provider.ts",
+      );
+      const result = await runAkRole(
+        [
+          "judge",
+          "--model",
+          "ak-audit-failure/faux-1",
+          "--thinking",
+          "off",
+          "--project",
+          project,
+          "Retain the original Judge candidate.",
+        ],
+        {
+          packageRoot,
+          home,
+          agentDir: join(home, ".pi", "agent"),
+          cwd: project,
+          createRunId: () => "run-e2e-judge-incomplete-001",
+          judgeExtraPiArgs: ["-e", providerPath],
+          judgeTimeoutMs: 90_000,
+          io: {
+            stdout: (text) => stdout.push(text),
+            stderr: (text) => stderr.push(text),
+          },
+          piRunner: async (args, options) => {
+            const subprocess = await runPiSubprocess([...args], {
+              cwd: options.cwd,
+              env: {
+                ...options.env,
+                PI_OFFLINE: "1",
+                AK_AUDIT_NON_OBJECT: "1",
+              },
+              timeoutMs: options.timeoutMs ?? 90_000,
+            });
+            return {
+              code: subprocess.code,
+              stdout: subprocess.stdout,
+              stderr: subprocess.stderr,
+              timedOut: subprocess.timedOut,
+              args: [...args],
+            };
+          },
+        },
+      );
+
+      assert.equal(result.exitCode, 1, stderr.join("") || "incomplete audit unexpectedly succeeded");
+      assert.equal(stdout.length, 1);
+      assert.ok(result.terminal);
+      const outcome = result.terminal!.roleOutcome;
+      assert.equal(outcome.kind, "audit_incomplete");
+      assert.equal(outcome.role, "judge");
+      assert.equal(outcome.status, "audit-incomplete");
+      assert.equal(outcome.decision, "no-usable-decision");
+      assert.equal(outcome.acceptedReceipt, false);
+      assert.deepEqual(outcome.roleCandidate, { judgeStatus: "converged" });
+      assert.deepEqual(outcome.audit.candidate, ["malformed auditor candidate"]);
+      assert.deepEqual(outcome.audit.observation, {
+        kind: "non-object-arguments",
+        type: "array",
+      });
+      assert.notDeepEqual(outcome.roleCandidate, outcome.audit.candidate);
+
+      const bookKey = resolveBookKeyFromGit(project);
+      const sessionFile = join(
+        home,
+        ".ak-roles",
+        "books",
+        bookKey,
+        "runs",
+        "run-e2e-judge-incomplete-001@judge",
+        "session",
+        "session.jsonl",
+      );
+      const rows = (await readFile(sessionFile, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as any);
+      const retained = rows.filter(
+        (row) => row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
+      );
+      assert.equal(retained.length, 1);
+      const retainedCall = retained[0].data.response.content.find(
+        (part: any) => part.type === "toolCall",
+      );
+      assert.deepEqual(retainedCall.arguments, outcome.audit.candidate);
+      const roleCall = rows.find(
+        (row) => row.type === "message" && row.message?.role === "assistant" &&
+          row.message?.content?.some((part: any) => part.type === "toolCall" && part.name === "ak_judge_output"),
+      );
+      const originalRoleCall = roleCall.message.content.find(
+        (part: any) => part.type === "toolCall" && part.name === "ak_judge_output",
+      );
+      assert.deepEqual(originalRoleCall.arguments, outcome.roleCandidate);
+      assert.equal(rows.some(
+        (row) => row.type === "message" && row.message?.toolName === "ak_judge_output" && row.message?.isError === false && row.message?.details?.judgeStatus === "converged",
+      ), false);
+      const evidenceRef = result.terminal!.artifacts.find(
+        (artifact) => artifact.kind === "evidence",
+      );
+      assert.ok(evidenceRef);
+      const evidence = JSON.parse(await readFile(evidenceRef.path, "utf8")) as any;
+      assert.deepEqual(evidence.roleCandidate, outcome.roleCandidate);
+      assert.deepEqual(evidence.audit.candidate, outcome.audit.candidate);
+      assert.deepEqual(evidence.audit.observation, outcome.audit.observation);
+      // Public stdout exposes typed decisive facts without depending on presentation labels.
+      const publicOutput = stdout.join("");
+      assert.ok(publicOutput.includes("roleCandidate"));
+      assert.ok(publicOutput.includes("auditCandidate"));
+      assert.ok(publicOutput.includes("malformed auditor candidate"));
+      assert.ok(publicOutput.includes("auditObservation"));
+      assert.ok(publicOutput.includes("array"));
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "ak-role Judge retains omitted JSONL arguments as typed public candidates",
+  { timeout: 120_000 },
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-undefined-"));
+    try {
+      const project = join(home, "work");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const providerPath = resolve(
+        packageRoot,
+        "test/fixtures/audit-failure-provider.ts",
+      );
+      const result = await runAkRole(
+        [
+          "judge",
+          "--model",
+          "ak-audit-failure/faux-1",
+          "--thinking",
+          "off",
+          "--project",
+          project,
+          "Retain omitted arguments.",
+        ],
+        {
+          packageRoot,
+          home,
+          agentDir: join(home, ".pi", "agent"),
+          cwd: project,
+          createRunId: () => "run-e2e-judge-undefined-001",
+          judgeExtraPiArgs: ["-e", providerPath],
+          judgeTimeoutMs: 90_000,
+          io: {
+            stdout: (text) => stdout.push(text),
+            stderr: (text) => stderr.push(text),
+          },
+          piRunner: async (args, options) => {
+            const subprocess = await runPiSubprocess([...args], {
+              cwd: options.cwd,
+              env: {
+                ...options.env,
+                PI_OFFLINE: "1",
+                AK_AUDIT_NON_OBJECT: "1",
+              },
+              timeoutMs: options.timeoutMs ?? 90_000,
+            });
+            const sessionFile = join(
+              args[args.indexOf("--session-dir") + 1]!,
+              "session.jsonl",
+            );
+            const rows = (await readFile(sessionFile, "utf8"))
+              .trim()
+              .split("\n")
+              .map((line) => JSON.parse(line) as any);
+            for (const row of rows) {
+              const parts = row.message?.content;
+              if (row.message?.role === "assistant" && Array.isArray(parts)) {
+                for (const part of parts) {
+                  if (part.type === "toolCall" && part.name === "ak_judge_output") {
+                    delete part.arguments;
+                  }
+                }
+              }
+              if (row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE) {
+                const parts = row.data?.response?.content;
+                if (Array.isArray(parts)) {
+                  for (const part of parts) {
+                    if (part.type === "toolCall") delete part.arguments;
+                  }
+                }
+              }
+            }
+            await writeFile(
+              sessionFile,
+              `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+              "utf8",
+            );
+            return {
+              code: subprocess.code,
+              stdout: subprocess.stdout,
+              stderr: subprocess.stderr,
+              timedOut: subprocess.timedOut,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.equal(result.exitCode, 1, stderr.join(""));
+      assert.equal(stdout.length, 1);
+      assert.ok(result.terminal);
+      const outcome = result.terminal!.roleOutcome;
+      assert.equal(outcome.kind, "audit_incomplete");
+      if (outcome.kind !== "audit_incomplete") throw new Error("expected audit residual");
+      assert.deepEqual(outcome.roleCandidate, {
+        kind: "json-safe-sentinel",
+        type: "undefined",
+      });
+      assert.deepEqual(outcome.audit.candidate, {
+        kind: "json-safe-sentinel",
+        type: "undefined",
+      });
+      const evidenceRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "evidence");
+      assert.ok(evidenceRef);
+      const evidence = JSON.parse(await readFile(evidenceRef.path, "utf8")) as any;
+      assert.deepEqual(evidence.roleCandidate, outcome.roleCandidate);
+      assert.deepEqual(evidence.audit.candidate, outcome.audit.candidate);
+      assert.deepEqual(evidence.decisiveFacts.roleCandidate, outcome.roleCandidate);
+      assert.deepEqual(evidence.decisiveFacts.auditCandidate, outcome.audit.candidate);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   "ak-role judge reaches Judge gate and settles Terminal with registry command",
