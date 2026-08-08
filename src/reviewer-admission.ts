@@ -8,10 +8,11 @@ export const REVIEWER_PREREQUISITES = [
 ] as const;
 export type ReviewerChildToolName = (typeof REVIEWER_CHILD_TOOLS)[number];
 export type ReviewerPrerequisiteOperation = (typeof REVIEWER_PREREQUISITES)[number];
+export type ReviewerMaterialSource = "pinned-git" | "host-input";
 export type ReviewerCapabilityRequest = Readonly<{ tools: readonly ReviewerChildToolName[]; prerequisiteOperations: readonly ReviewerPrerequisiteOperation[] }>;
 export type ReviewerCapabilitiesV1 = ReviewerCapabilityRequest & Readonly<{ version: 1; taskSha256: string; document: ReviewerPromptIdentity }>;
-export type MaterialSelection = Readonly<{ id: string; repositoryPath: string }>;
-export type ReviewerProposalV1 = Readonly<{ version: 1; base: Readonly<{ revision: string }>; materials: readonly MaterialSelection[]; relevanceHints?: Readonly<{ standards?: readonly string[]; spec?: readonly string[] }>; spec: Readonly<{ state: "established" | "not-established" }>; required: Readonly<{ standards: ReviewerCapabilityRequest; spec?: ReviewerCapabilityRequest }> }>;
+export type MaterialSelection = Readonly<{ id: string; repositoryPath: string; source: ReviewerMaterialSource; sourcePath?: string }>;
+export type ReviewerProposalV1 = Readonly<{ version: 1; base: Readonly<{ revision: string }>; materials: readonly (Readonly<{ id: string; repositoryPath: string; source?: ReviewerMaterialSource; sourcePath?: string }>)[]; relevanceHints?: Readonly<{ standards?: readonly string[]; spec?: readonly string[] }>; spec: Readonly<{ state: "established" | "not-established" }>; required: Readonly<{ standards: ReviewerCapabilityRequest; spec?: ReviewerCapabilityRequest }> }>;
 export type AdmittedReviewerProposal = Readonly<{ baseRevision: string; materials: readonly MaterialSelection[]; relevanceHints?: Readonly<{ standards?: readonly string[]; spec?: readonly string[] }>; standardsGrant: ReviewerCapabilityRequest; specGrant?: ReviewerCapabilityRequest; prerequisiteOperations: readonly ReviewerPrerequisiteOperation[] }>;
 
 export class ReviewerAdmissionError extends Error {
@@ -40,7 +41,16 @@ export function admitReviewerProposal(proposal: unknown, ceiling: ReviewerCapabi
   if(!Array.isArray(p.materials)) fail("material-invalid", "materials must be an array");
   const materialValues=p.materials as unknown[];
   const materials: MaterialSelection[]=[];
-  for(const value of materialValues){if(!record(value)||typeof value.id!=="string"||!SAFE_ID.test(value.id)||typeof value.repositoryPath!=="string"||!value.repositoryPath) fail("material-invalid", "each materials entry requires a safe id and nonempty repositoryPath");const material=value as Record<string, unknown>;materials.push(Object.freeze({id:material.id as string,repositoryPath:material.repositoryPath as string}));}
+  for(const value of materialValues){
+    if(!record(value)||typeof value.id!=="string"||!SAFE_ID.test(value.id)||typeof value.repositoryPath!=="string"||!value.repositoryPath) fail("material-invalid", "each materials entry requires a safe id and nonempty repositoryPath");
+    const material=value as Record<string, unknown>;
+    const sourceValue=material.source===undefined?"pinned-git":material.source;
+    if(sourceValue!=="pinned-git"&&sourceValue!=="host-input") fail("material-invalid", "material source must be pinned-git or host-input");
+    const source: ReviewerMaterialSource=sourceValue as ReviewerMaterialSource;
+    if(source==="host-input"&&(typeof material.sourcePath!=="string"||!material.sourcePath.trim())) fail("material-invalid", "host-input material requires an explicit sourcePath");
+    if(source==="pinned-git"&&material.sourcePath!==undefined) fail("material-invalid", "pinned-git material cannot carry a host sourcePath");
+    materials.push(Object.freeze({id:material.id as string,repositoryPath:material.repositoryPath as string,source,...(source==="host-input"?{sourcePath:material.sourcePath as string}: {})}));
+  }
   if(!unique(materials.map(x=>x.id))||!unique(materials.map(x=>x.repositoryPath.normalize("NFC")))) fail("material-invalid", "materials ids and normalized repositoryPath values must be unique");
   if(!record(p.spec)||(p.spec.state!=="established"&&p.spec.state!=="not-established")) fail("spec-invalid", "spec.state must be established or not-established");
   const spec=p.spec as Record<string, unknown>;

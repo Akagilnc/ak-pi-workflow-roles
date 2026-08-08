@@ -283,7 +283,7 @@ test("completion audits projected facts and revise can be resubmitted without re
   const out=reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME); await assert.rejects(out.execute("one",{status:"completed"},undefined,undefined,outputContext("one")),/aggregate/);
   const done=await out.execute("two",{status:"completed"},undefined,undefined,outputContext("two")); assert.equal(done.terminate,true); assert.equal(reviewerHarness.starts,1); assert.equal(calls,2); assert.equal(reviewerHarness.audits[1]?.record.results.standards?.prompt.text,reviewerHarness.audits[1]?.record.accepted?.legs[0]?.prompt.text);
   const evidence=reviewerHarness.audits[1]?.record.accepted?.materials.find((item:any) => item.id === "absence");
-  assert.deepEqual(evidence,{id:"absence",repositoryPath:"README.md",text:"README.md",utf8Length:9,sha256:createHash("sha256").update("README.md").digest("hex")});
+  assert.deepEqual(evidence,{id:"absence",repositoryPath:"README.md",source:"pinned-git",sourcePath:"README.md",text:"README.md",utf8Length:9,sha256:createHash("sha256").update("README.md").digest("hex")});
 });
 
 test("one failed and one successful sibling are both audited before infrastructure termination", async()=>{
