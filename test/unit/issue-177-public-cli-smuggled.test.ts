@@ -62,6 +62,7 @@ import {
   admitReviewerInvocation,
 } from "../../src/public-cli/invocation.ts";
 import { formatTerminalResult } from "../../src/public-cli/terminal.ts";
+import { readInvocation as readTrajectoryInvocation } from "../../src/ticket-trajectory.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
@@ -283,6 +284,8 @@ test("shared public admissions write one identity-bound invocation ledger for ev
         sessionDirectory: admitted.sessionDirectory,
         sessionFile: admitted.sessionFile,
       });
+      const trajectoryInvocation = await readTrajectoryInvocation(admitted.runDirectory);
+      assert.equal(trajectoryInvocation?.role, admitted.role);
     }
   });
 });

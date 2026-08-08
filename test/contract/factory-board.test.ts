@@ -4515,9 +4515,14 @@ async function stopChromeGracefully(
     chromeProc.once("close", (code, signal) => resolve({ code, signal })),
   );
   if (!chromeProc.kill("SIGTERM")) {
-    // A false return is a normal close/kill race only after the process exposes
-    // its terminal code/signal. Never infer success from kill(false) itself.
-    validateClose(chromeProc.exitCode, chromeProc.signalCode);
+    // A false return is a normal close/kill race only after the close event
+    // supplies its terminal code/signal. Never infer success from kill(false).
+    if (chromeProc.exitCode !== null || chromeProc.signalCode !== null) {
+      validateClose(chromeProc.exitCode, chromeProc.signalCode);
+      return;
+    }
+    const result = await closed;
+    validateClose(result.code, result.signal);
     return;
   }
   const result = await closed;
@@ -4576,18 +4581,21 @@ test("Chrome cleanup preserves unsuccessful close code, signal, and stderr", asy
       args: ["-e", "process.stderr.write('code-diagnostic\\n'); process.exit(23)"],
       expected: "code=23",
       diagnostic: "code-diagnostic",
+      forceKillFalse: false,
     },
     {
       name: "signal close",
       args: ["-e", "process.stderr.write('signal-diagnostic\\n'); setInterval(() => {}, 1000)"],
       expected: "signal=SIGTERM",
       diagnostic: "signal-diagnostic",
+      forceKillFalse: false,
     },
     {
       name: "kill false close race",
-      args: ["-e", "process.stderr.write('race-diagnostic\\n'); process.exit(29)"],
-      expected: "code=29",
+      args: ["-e", "process.stderr.write('race-diagnostic\\n'); setInterval(() => {}, 1000)"],
+      expected: "signal=SIGTERM",
       diagnostic: "race-diagnostic",
+      forceKillFalse: true,
     },
   ];
 
@@ -4600,7 +4608,7 @@ test("Chrome cleanup preserves unsuccessful close code, signal, and stderr", asy
     child.stderr?.on("data", (chunk: string) => {
       stderr += chunk;
     });
-    if (scenario.name === "signal close") {
+    if (scenario.name === "signal close" || scenario.forceKillFalse) {
       await new Promise<void>((resolve) => {
         if (stderr.includes(scenario.diagnostic)) {
           resolve();
@@ -4608,9 +4616,19 @@ test("Chrome cleanup preserves unsuccessful close code, signal, and stderr", asy
         }
         child.stderr?.once("data", () => resolve());
       });
-      assert.equal(child.kill("SIGTERM"), true);
+      if (scenario.name === "signal close") {
+        assert.equal(child.kill("SIGTERM"), true);
+      }
     }
-    await waitForClose(child);
+    if (scenario.forceKillFalse) {
+      const realKill = child.kill.bind(child);
+      child.kill = (() => {
+        realKill("SIGTERM");
+        return false;
+      }) as typeof child.kill;
+    } else {
+      await waitForClose(child);
+    }
     await assert.rejects(
       () => stopChromeGracefully(child, () => stderr),
       (error: unknown) =>
