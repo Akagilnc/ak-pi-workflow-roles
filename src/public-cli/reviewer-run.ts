@@ -59,6 +59,7 @@ import {
   readSessionProviderStop,
   settleFailureTerminalResult,
   trySettleReviewerTerminalResult,
+  trySettleComplianceAuditIncompleteTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type {
@@ -346,6 +347,21 @@ async function dispatchAdmittedReviewer(input: {
         exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
         admitted,
         terminal: lawful,
+      };
+    }
+
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== undefined) {
+      await markRunTerminal(admitted.runDirectory).catch(() => undefined);
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete,
       };
     }
 
