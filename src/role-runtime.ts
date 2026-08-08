@@ -457,6 +457,8 @@ export function createRoleRuntimeExtension(
           // Accepted role terminal starts the post-role Navigator grace (#101/#106).
           if (settlement.kind !== "accepted") {
             await attendance.settle(settlement);
+            // Emission stays on agent_settled (normal completion) or session_shutdown
+            // flush (abort/infrastructure teardown that skips agent_settled).
             return;
           }
           const settlePromise = attendance.settle(settlement);
@@ -522,10 +524,25 @@ export function createRoleRuntimeExtension(
         details: presentation.event,
       }, { triggerTurn: false });
     });
-    pi.on("session_shutdown", () => {
+    pi.on("session_shutdown", async () => {
+      // Flush any still-pending affirmative attendance before teardown. Accepted
+      // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
+      const presentation = pendingNavigatorPresentation;
+      pendingNavigatorPresentation = undefined;
+      if (presentation !== undefined) {
+        try {
+          await pi.sendMessage({
+            customType: NAVIGATOR_EVENT_TYPE,
+            content: formatNavigatorReport(presentation.report),
+            display: true,
+            details: presentation.event,
+          }, { triggerTurn: false });
+        } catch {
+          // Teardown must not mask the original role failure cause.
+        }
+      }
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
-      pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
       observationFace.reset();

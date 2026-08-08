@@ -13556,50 +13556,126 @@ function navigatorPhaseValue(value) {
   if (value === "plan" || value === "apply") return value;
   return null;
 }
+var OUTPUT_TOOL_TO_ROLE = new Map(
+  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
+);
+function findCurrentRoleTerminal(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (typeof message.toolName !== "string") continue;
+    const role = OUTPUT_TOOL_TO_ROLE.get(message.toolName);
+    if (role === void 0) continue;
+    return { index: i, role };
+  }
+  return void 0;
+}
+function navigatorAttendanceCorrelatedWithTerminal(details, attendanceIndex, terminal) {
+  if (terminal === void 0) return false;
+  if (attendanceIndex <= terminal.index) return false;
+  if (details.version !== 1) return false;
+  if (typeof details.invocationId !== "string" || details.invocationId.trim() === "") {
+    return false;
+  }
+  if (typeof details.role !== "string" || details.role.trim() === "") return false;
+  if (details.role !== terminal.role) return false;
+  if (details.phase !== null && details.phase !== "plan" && details.phase !== "apply") {
+    return false;
+  }
+  if (typeof details.subjectKey !== "string") return false;
+  return true;
+}
+function parseNavigatorAttendanceDetails(details) {
+  const disposition = details.disposition;
+  if (disposition === "recommendation") {
+    const next = details.next;
+    if (!isRecord5(next) || typeof next.role !== "string") {
+      return {
+        disposition: "unavailable",
+        source: "unknown",
+        reason: "navigator recommendation missing typed next role"
+      };
+    }
+    const reason = typeof details.reason === "string" ? details.reason : "";
+    const route = Array.isArray(details.route) ? details.route.filter(isRecord5).map((target) => ({
+      role: String(target.role),
+      phase: navigatorPhaseValue(target.phase)
+    })) : void 0;
+    return recommendationNavigatorFact({
+      next: {
+        role: next.role,
+        phase: navigatorPhaseValue(next.phase)
+      },
+      reason,
+      ...route === void 0 ? {} : { route },
+      ...typeof details.command === "string" ? { modelCommand: details.command } : {}
+    });
+  }
+  if (disposition === "unavailable") {
+    return {
+      disposition: "unavailable",
+      source: typeof details.unavailableSource === "string" ? details.unavailableSource : "unknown",
+      reason: typeof details.unavailableReason === "string" ? details.unavailableReason : "Navigator unavailable"
+    };
+  }
+  if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
+    return { disposition: "no-advice" };
+  }
+  return {
+    disposition: "unavailable",
+    source: "unknown",
+    reason: "Navigator attendance disposition is unparseable"
+  };
+}
 function extractNavigatorFact(entries) {
+  const terminal = findCurrentRoleTerminal(entries);
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord5(details)) continue;
-      const disposition = details.disposition;
-      if (disposition === "recommendation") {
-        const next = details.next;
-        if (!isRecord5(next) || typeof next.role !== "string") {
-          return {
-            disposition: "unavailable",
-            source: "unknown",
-            reason: "navigator recommendation missing typed next role"
-          };
-        }
-        const reason = typeof details.reason === "string" ? details.reason : "";
-        const route = Array.isArray(details.route) ? details.route.filter(isRecord5).map((target) => ({
-          role: String(target.role),
-          phase: navigatorPhaseValue(target.phase)
-        })) : void 0;
-        return recommendationNavigatorFact({
-          next: {
-            role: next.role,
-            phase: navigatorPhaseValue(next.phase)
-          },
-          reason,
-          ...route === void 0 ? {} : { route },
-          ...typeof details.command === "string" ? { modelCommand: details.command } : {}
-        });
-      }
-      if (disposition === "unavailable") {
+      if (!isRecord5(details)) {
         return {
           disposition: "unavailable",
-          source: typeof details.unavailableSource === "string" ? details.unavailableSource : "unknown",
-          reason: typeof details.unavailableReason === "string" ? details.unavailableReason : "Navigator unavailable"
+          source: "unknown",
+          reason: "Navigator attendance is unparseable"
         };
       }
-      if (disposition === "silence" || disposition === "arrival") {
-        return { disposition: "no-advice" };
+      if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal)) {
+        return {
+          disposition: "unavailable",
+          source: "unknown",
+          reason: "Navigator attendance is uncorrelated with session invocation facts"
+        };
       }
+      return parseNavigatorAttendanceDetails(details);
     }
   }
-  return { disposition: "no-advice" };
+  return {
+    disposition: "unavailable",
+    source: "unknown",
+    reason: "Navigator attendance is missing from the session"
+  };
+}
+async function extractNavigatorFactFromAdmittedSession(admitted) {
+  try {
+    const entries = await readBoundSessionEntries(admitted.sessionFile);
+    return extractNavigatorFact(entries);
+  } catch (error) {
+    if (isMissingPathError2(error)) {
+      return {
+        disposition: "unavailable",
+        source: "unknown",
+        reason: "Navigator attendance is missing from the session"
+      };
+    }
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is unavailable because the session could not be read"
+    };
+  }
 }
 async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
@@ -14620,7 +14696,8 @@ function redactNavigatorFactForPublicTerminal(navigator, runId) {
   }
   return navigator;
 }
-async function settleFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }, options = {}) {
+async function settleFailureTerminalResult(admitted, failure, options = {}) {
+  const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
   const artifacts = await publishFailureArtifacts(admitted, failure);
   const decisiveFacts = {
     cause: failure.cause,
@@ -14666,8 +14743,8 @@ async function settleFailureTerminalResult(admitted, failure, navigator = { disp
     runId: admitted.runId
   };
 }
-async function settleJudgeFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }, options = {}) {
-  return settleFailureTerminalResult(admitted, failure, navigator, options);
+async function settleJudgeFailureTerminalResult(admitted, failure, options = {}) {
+  return settleFailureTerminalResult(admitted, failure, options);
 }
 function presentFailureTerminal(terminal, io) {
   if (terminal.roleOutcome.kind !== "failure") {
@@ -14779,7 +14856,6 @@ async function presentControlledFailure(admitted, failureInput, io) {
   const terminal = await settleJudgeFailureTerminalResult(
     admitted,
     failure,
-    { disposition: "no-advice" },
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -15076,7 +15152,6 @@ async function presentControlledFailure2(admitted, failureInput, io) {
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
-    { disposition: "no-advice" },
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -15379,11 +15454,7 @@ async function presentControlledFailure3(admitted, failureInput, io) {
     ...session === void 0 ? {} : { session }
   });
   await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    { disposition: "no-advice" }
-  );
+  const terminal = await settleFailureTerminalResult(admitted, failure);
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
@@ -15588,11 +15659,7 @@ async function presentControlledFailure4(admitted, failureInput, io) {
     ...session === void 0 ? {} : { session }
   });
   await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    { disposition: "no-advice" }
-  );
+  const terminal = await settleFailureTerminalResult(admitted, failure);
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
@@ -15846,7 +15913,6 @@ async function presentControlledFailure5(admitted, failureInput, io) {
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
-    { disposition: "no-advice" },
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -16191,7 +16257,6 @@ async function presentControlledFailure6(admitted, failureInput, io) {
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
-    { disposition: "no-advice" },
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -16631,7 +16696,6 @@ async function presentControlledFailure7(admitted, failureInput, io) {
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
-    { disposition: "no-advice" },
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);

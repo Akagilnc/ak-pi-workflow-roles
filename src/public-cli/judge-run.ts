@@ -248,7 +248,6 @@ async function presentControlledFailure(
   const terminal = await settleJudgeFailureTerminalResult(
     admitted,
     failure,
-    { disposition: "no-advice" },
     resumable
       ? { resume: { command: renderResumeCommand(admitted.runId) } }
       : {},

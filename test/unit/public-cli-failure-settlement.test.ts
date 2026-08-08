@@ -501,6 +501,83 @@ test("failure settlement durably records Error Artifact before presentation retu
     assert.equal(errorBody.runId, runId);
     assert.equal(errorBody.role, "judge");
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
+    // No session attendance → typed unavailable, never inferred no-advice.
+    assert.equal(terminal.navigator.disposition, "unavailable");
+    if (terminal.navigator.disposition === "unavailable") {
+      assert.equal(terminal.navigator.source, "unknown");
+      assert.equal(typeof terminal.navigator.reason, "string");
+    }
+  });
+});
+
+test("failure settlement Terminal agrees with exact-session affirmative attendance", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const bookKey = resolveBookKeyFromGit(project);
+    const runId = "run-fail-attendance-001";
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@judge`,
+    );
+    const sessionDirectory = join(runDirectory, "session");
+    await mkdir(sessionDirectory, { recursive: true });
+    const sessionFile = join(sessionDirectory, "session.jsonl");
+    const attendanceDetails = {
+      version: 1,
+      disposition: "no-advice",
+      invocationId: "inv-fail-1",
+      role: "judge",
+      phase: null,
+      subjectKey: `${project}/.ak/work`,
+    };
+    await writeFile(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolName: JUDGE_OUTPUT_TOOL_NAME,
+            toolCallId: "fatal-judge",
+            isError: true,
+            details: {},
+          },
+        }),
+        JSON.stringify({
+          type: "custom_message",
+          customType: "ak-navigator-attendance",
+          message: { details: attendanceDetails },
+          details: attendanceDetails,
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const admitted = {
+      role: "judge" as const,
+      runId,
+      bookKey,
+      projectRoot: project,
+      instruction: "x",
+      instructionEmpty: false,
+      attachments: [],
+      runDirectory,
+      sessionDirectory,
+      sessionFile,
+      admittedRequestPath: join(runDirectory, "admitted-request.json"),
+    };
+    await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
+
+    const terminal = await settleJudgeFailureTerminalResult(admitted, {
+      cause: "activation",
+      diagnostic: "role infrastructure failed",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
     assert.equal(terminal.navigator.disposition, "no-advice");
   });
 });
