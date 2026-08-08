@@ -7,11 +7,11 @@ import type {
 
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
-// Live Navigator settlement may consume only the object produced by this
-// owner. The non-enumerable brand survives the in-memory tool-result event but
-// is absent from role-authored copies and from persisted JSON; public persisted
-// binding remains responsible for re-authenticating those records.
-const AUDIT_ESCALATION_PROJECTION = Symbol("audit-escalation-projection");
+// Live Navigator settlement may consume only the projection produced by this
+// owner. The typed owner marker survives Pi's session serialization; role
+// output schemas cannot author it, while the public persisted binder still
+// re-authenticates retained audit evidence.
+const AUDIT_ESCALATION_PROJECTION_ID = "audit-escalation-projection-v1" as const;
 
 /**
  * Escalation delivery face.
@@ -60,6 +60,7 @@ export function buildAuditEscalationResult(
 ): AuditEscalationResult {
   const auditOwned = {
     kind: AUDIT_ESCALATION_KIND,
+    auditProjection: AUDIT_ESCALATION_PROJECTION_ID,
     conflicts: [...decision.conflicts],
     auditDecisionGate: {
       question: decision.decisionGate.question,
@@ -76,26 +77,18 @@ export function buildAuditEscalationResult(
       ...(deliveredOutput as Record<string, unknown>),
       ...auditOwned,
     } as AuditEscalationResult;
-    Object.defineProperty(result, AUDIT_ESCALATION_PROJECTION, {
-      value: true,
-      enumerable: false,
-    });
     return result;
   }
   const result = auditOwned as AuditEscalationResult;
-  Object.defineProperty(result, AUDIT_ESCALATION_PROJECTION, {
-    value: true,
-    enumerable: false,
-  });
   return result;
 }
 
-/** True only for the audit-owned live projection, never for role-shaped data. */
+/** True only for the audit-owned projection, never for role-shaped data. */
 export function isAuditEscalationProjection(
   value: unknown,
 ): value is AuditEscalationResult {
   return isAuditEscalationResult(value) &&
-    (value as Record<PropertyKey, unknown>)[AUDIT_ESCALATION_PROJECTION] === true;
+    (value as Record<string, unknown>).auditProjection === AUDIT_ESCALATION_PROJECTION_ID;
 }
 
 function humanDecisionText(result: AuditEscalationResult): string {

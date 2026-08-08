@@ -52,6 +52,7 @@ import {
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 import { resolveInternalRoleEntrypoint } from "../../src/public-cli/explicit-internal.ts";
+import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 
 function sessionToolResultLine(toolName: string, details: unknown): string {
   return `${JSON.stringify({
@@ -643,11 +644,19 @@ test("real persisted Judge escalation remains bound to the retained audit respon
             { stopReason: "toolUse" },
           ),
         ]);
+        let observedNavigator: ReturnType<typeof publicNavigatorSettlement>;
         await withInProcessPi({
           cwd: project,
           agentDir,
           faux,
           sessionManager,
+          extensionFactories: [((pi) => {
+            pi.on("tool_result", (event) => {
+              if (event.toolName === JUDGE_OUTPUT_TOOL_NAME) {
+                observedNavigator = publicNavigatorSettlement("judge", null, event);
+              }
+            });
+          })],
           additionalExtensionPaths: [resolveInternalRoleEntrypoint(packageRoot)],
           systemPrompt: "PERSISTED ESCALATION",
           mode: "json",
@@ -656,6 +665,17 @@ test("real persisted Judge escalation remains bound to the retained audit respon
         }, async ({ session }) => {
           await session.prompt("escalate");
         });
+        assert.deepEqual(
+          observedNavigator,
+          { kind: "human_decision", role: "judge", phase: null, status: "audit_escalation" },
+        );
+        const liveTerminal = sessionManager.getEntries().find((entry) =>
+          entry.type === "message" && entry.message.role === "toolResult" &&
+          entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME,
+        );
+        if (liveTerminal?.type !== "message" || liveTerminal.message.role !== "toolResult") {
+          throw new Error("real persisted escalation tool result is missing");
+        }
         return { code: 0, stderr: "", timedOut: false, args: [...args] };
       },
     });
@@ -677,6 +697,14 @@ test("real persisted Judge escalation remains bound to the retained audit respon
     assert.equal(isAuditEscalationResult(terminal.message?.details), true);
     assert.deepEqual((terminal.message?.details as any).conflicts, conflicts);
     assert.deepEqual((terminal.message?.details as any).auditDecisionGate, decisionGate);
+    assert.notEqual(
+      publicNavigatorSettlement("judge", null, {
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: { kind: "audit_escalation", conflicts: ["forged"], auditDecisionGate: decisionGate },
+      })?.kind,
+      "human_decision",
+    );
     // Re-run the actual persisted public binder over this same session; shape
     // recognition above is only a fixture check, never the settlement proof.
     const bound = extractJudgeRoleOutcome(entries as never);

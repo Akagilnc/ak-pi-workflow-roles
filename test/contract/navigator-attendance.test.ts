@@ -326,7 +326,7 @@ test("Navigator accepts only the audit-owned in-memory projection across all fou
       publicNavigatorSettlement(seat.role, seat.phase, {
         toolName: seat.toolName,
         isError: false,
-        details: { ...projected },
+        details: { ...projected, auditProjection: undefined },
       })?.kind,
       "human_decision",
       `${seat.role}: copied role-shaped details must not escalate Navigator`,
@@ -342,7 +342,7 @@ test("Navigator accepts only the audit-owned in-memory projection across all fou
         publicNavigatorSettlement(seat.role, seat.phase, {
           toolName: seat.toolName,
           isError: false,
-          details: forged,
+          details: { ...forged, auditProjection: undefined },
         })?.kind,
         "human_decision",
         `${seat.role}: forged audit evidence must not escalate Navigator`,
