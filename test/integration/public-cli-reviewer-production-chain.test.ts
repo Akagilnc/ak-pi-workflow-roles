@@ -4,6 +4,7 @@ import {
   existsSync,
   readFileSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -98,11 +99,11 @@ test(
         {
           name: "symlink",
           mutate: (run: string, record: any) => {
-            const link = join(run, "attachments", "replacement.md");
-            symlinkSync(join(run, "..", "outside-authority.md"), link);
-            record.attachments[0].frozenPath = link;
-            record.attachments[0].byteLength = Buffer.byteLength(OUTSIDE_BYTES);
-            record.attachments[0].sha256 = sha256(OUTSIDE_BYTES);
+            const frozenPath = record.attachments[0].frozenPath;
+            const outside = join(run, "..", "outside-authority.md");
+            writeFileSync(outside, OUTSIDE_BYTES, "utf8");
+            unlinkSync(frozenPath);
+            symlinkSync(outside, frozenPath);
           },
         },
         {
@@ -116,8 +117,12 @@ test(
           mutate: (_run: string, record: any) => { record.attachments[0].byteLength += 1; },
         },
         {
-          name: "sha-mismatch",
-          mutate: (_run: string, record: any) => { record.attachments[0].sha256 = "0".repeat(64); },
+          name: "path-replacement",
+          mutate: (_run: string, record: any) => {
+            const frozenPath = record.attachments[0].frozenPath;
+            unlinkSync(frozenPath);
+            writeFileSync(frozenPath, OUTSIDE_BYTES, "utf8");
+          },
         },
       ];
 

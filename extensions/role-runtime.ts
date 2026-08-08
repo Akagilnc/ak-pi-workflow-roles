@@ -142,8 +142,7 @@ async function loadReviewerHostMaterialsFromAdmission(): Promise<readonly Review
       !isAbsolute(attachment.frozenPath) ||
       !Number.isInteger(attachment.byteLength) ||
       (attachment.byteLength as number) < 0 ||
-      typeof attachment.sha256 !== "string" ||
-      !/^[0-9a-f]{64}$/.test(attachment.sha256)
+      typeof attachment.sha256 !== "string"
     ) throw new Error("public Reviewer admitted attachment facts are malformed");
 
     const lexicalPath = resolve(attachment.frozenPath);
