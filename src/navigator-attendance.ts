@@ -132,13 +132,13 @@ export type NavigatorWorkContext = {
 };
 
 export type NavigatorRouteTarget = { role: NavigatorTargetRole; phase: NavigatorPhase };
+/** Normalized preparation advice. v1 success needs machine-usable next only. */
 export type NavigatorCandidate = {
-  id: string;
-  matches: { role: string; phase: NavigatorPhase; kind: "accepted"; statuses?: string[] };
-  route: NavigatorRouteTarget[];
-  next: NavigatorRouteTarget;
-  reason: string;
-  command: string;
+  id?: string;
+  matches?: { role: string; phase: NavigatorPhase; kind: "accepted"; statuses?: string[] };
+  route?: NavigatorRouteTarget[];
+  next?: NavigatorRouteTarget;
+  reason?: string;
 };
 
 export type NavigatorReport = {
@@ -181,24 +181,27 @@ export type NavigatorContextProjection = {
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
 
+// v1 schema accepts direction advice; ancillary route/match/command fields are optional and never a resubmit gate.
 const targetSchema = Type.Object({
   role: Type.String({ minLength: 1 }),
-  phase: Type.Union([Type.Null(), Type.Literal("plan"), Type.Literal("apply")]),
-}, { additionalProperties: false });
+  phase: Type.Optional(Type.Union([Type.Null(), Type.Literal("plan"), Type.Literal("apply")])),
+}, { additionalProperties: true });
 const candidateSchema = Type.Object({
-  id: Type.String({ minLength: 1 }),
-  matches: Type.Object({
-    role: Type.String({ minLength: 1 }),
-    phase: Type.Union([Type.Null(), Type.Literal("plan"), Type.Literal("apply")]),
-    kind: Type.Literal("accepted"),
-    statuses: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-  }, { additionalProperties: false }),
-  route: Type.Array(targetSchema, { minItems: 1 }),
-  next: targetSchema,
-  reason: Type.String({ minLength: 1 }),
-  command: Type.String({ minLength: 1 }),
-}, { additionalProperties: false });
-const prepareSchema = Type.Object({ candidates: Type.Array(candidateSchema, { minItems: 1 }) }, { additionalProperties: false });
+  id: Type.Optional(Type.String()),
+  matches: Type.Optional(Type.Object({
+    role: Type.Optional(Type.String()),
+    phase: Type.Optional(Type.Union([Type.Null(), Type.Literal("plan"), Type.Literal("apply")])),
+    kind: Type.Optional(Type.String()),
+    statuses: Type.Optional(Type.Array(Type.String())),
+  }, { additionalProperties: true })),
+  route: Type.Optional(Type.Array(targetSchema)),
+  next: Type.Optional(targetSchema),
+  reason: Type.Optional(Type.String()),
+  command: Type.Optional(Type.String()),
+}, { additionalProperties: true });
+const prepareSchema = Type.Object({
+  candidates: Type.Array(candidateSchema),
+}, { additionalProperties: true });
 type PrepareOutput = Static<typeof prepareSchema>;
 
 export type NavigatorPreparationSession = {
@@ -256,37 +259,83 @@ function targetIsValid(value: unknown): value is NavigatorRouteTarget {
   const metadata = packagedRoleMetadata(String(value.role));
   return metadata !== undefined && metadata.phases.includes(value.phase as never);
 }
-function validateCandidate(value: unknown): NavigatorCandidate {
-  const next = exactRecord(value) ? value.next : undefined;
-  if (!exactRecord(value) || typeof value.id !== "string" || value.id.trim() === "" ||
-      !exactRecord(value.matches) || typeof value.matches.role !== "string" || value.matches.role.trim() === "" ||
-      (value.matches.phase !== null && value.matches.phase !== "plan" && value.matches.phase !== "apply") || value.matches.kind !== "accepted" ||
-      (value.matches.statuses !== undefined && (!Array.isArray(value.matches.statuses) || value.matches.statuses.some((s) => typeof s !== "string" || s.trim() === ""))) ||
-      !Array.isArray(value.route) || value.route.length === 0 || value.route.some((target) => !targetIsValid(target)) ||
-      !targetIsValid(next) || !value.route.some((target) => target.role === next.role && target.phase === next.phase) ||
-      typeof value.reason !== "string" || value.reason.trim() === "" ||
-      typeof value.command !== "string" || value.command.trim() === "") {
-    throw new Error("Navigator preparation output is not a typed route candidate");
+
+/** Normalize one advice target. Phase is kept only when present and meaningful; bare role stays usable. */
+function normalizeTarget(value: unknown): NavigatorRouteTarget | undefined {
+  if (!exactRecord(value)) return undefined;
+  const role = typeof value.role === "string" ? value.role.trim() : "";
+  if (!targetRoles.has(role)) return undefined;
+  const metadata = packagedRoleMetadata(role);
+  if (metadata === undefined) return undefined;
+  if (value.phase === undefined || value.phase === null) {
+    return { role: role as NavigatorTargetRole, phase: null };
   }
-  return {
-    id: value.id,
-    matches: {
-      role: value.matches.role,
-      phase: value.matches.phase as NavigatorPhase,
+  if (value.phase === "plan" || value.phase === "apply") {
+    if (metadata.phases.includes(value.phase as never)) {
+      return { role: role as NavigatorTargetRole, phase: value.phase };
+    }
+    // Present but not meaningful for this role → drop to bare role direction.
+    return { role: role as NavigatorTargetRole, phase: null };
+  }
+  return undefined;
+}
+
+function normalizeMatches(value: unknown): NavigatorCandidate["matches"] | undefined {
+  if (!exactRecord(value)) return undefined;
+  if (typeof value.role !== "string" || value.role.trim() === "") return undefined;
+  if (value.kind !== "accepted") return undefined;
+  let phase: NavigatorPhase;
+  if (value.phase === undefined || value.phase === null) phase = null;
+  else if (value.phase === "plan" || value.phase === "apply") phase = value.phase;
+  else return undefined;
+  if (value.statuses !== undefined) {
+    if (!Array.isArray(value.statuses) || value.statuses.some((status) => typeof status !== "string" || status.trim() === "")) {
+      return undefined;
+    }
+    return {
+      role: value.role,
+      phase,
       kind: "accepted",
-      ...(value.matches.statuses === undefined ? {} : { statuses: [...value.matches.statuses] }),
-    },
-    route: value.route.map((target) => ({ role: target.role as NavigatorTargetRole, phase: target.phase as NavigatorPhase })),
-    next: { role: next.role as NavigatorTargetRole, phase: next.phase as NavigatorPhase },
-    reason: value.reason,
-    command: value.command,
+      statuses: [...value.statuses],
+    };
+  }
+  return { role: value.role, phase, kind: "accepted" };
+}
+
+/** Normalize one submitted candidate. Broken ancillary fields are dropped, never a rejection. */
+function normalizeCandidate(value: unknown): NavigatorCandidate | undefined {
+  if (!exactRecord(value)) return undefined;
+  const next = normalizeTarget(value.next);
+  const route = Array.isArray(value.route)
+    ? value.route.map(normalizeTarget).filter((target): target is NavigatorRouteTarget => target !== undefined)
+    : undefined;
+  const matches = normalizeMatches(value.matches);
+  const id = typeof value.id === "string" && value.id.trim() !== "" ? value.id : undefined;
+  const reason = typeof value.reason === "string" && value.reason.trim() !== "" ? value.reason : undefined;
+  // Model command prose is never execution authority; omit from normalized advice.
+  return {
+    ...(id === undefined ? {} : { id }),
+    ...(matches === undefined ? {} : { matches }),
+    ...(route === undefined || route.length === 0 ? {} : { route }),
+    ...(next === undefined ? {} : { next }),
+    ...(reason === undefined ? {} : { reason }),
   };
 }
-function validatePrepareOutput(value: unknown): NavigatorCandidate[] {
-  if (!exactRecord(value) || !Array.isArray(value.candidates) || value.candidates.length === 0) {
-    throw new Error("Navigator must prepare at least one route candidate");
-  }
-  return value.candidates.map(validateCandidate);
+
+/** Accept any prepare submission shape; missing/malformed candidates become empty advice. */
+function normalizePrepareOutput(value: unknown): NavigatorCandidate[] {
+  if (!exactRecord(value) || !Array.isArray(value.candidates)) return [];
+  return value.candidates
+    .map(normalizeCandidate)
+    .filter((candidate): candidate is NavigatorCandidate => candidate !== undefined);
+}
+
+/** Registry-shaped display command from recognized next — never model prose. */
+function renderAdviceCommand(next: NavigatorRouteTarget): string | undefined {
+  if (!targetRoles.has(next.role)) return undefined;
+  if (next.phase === null) return `ak-role ${next.role}`;
+  if (next.role === "coder" || next.role === "fixer") return `ak-role ${next.role} ${next.phase}`;
+  return `ak-role ${next.role}`;
 }
 function routeEqual(a: readonly NavigatorRouteTarget[] | undefined, b: readonly NavigatorRouteTarget[]): boolean {
   return a !== undefined && a.length === b.length && a.every((target, index) => target.role === b[index]!.role && target.phase === b[index]!.phase);
@@ -431,24 +480,11 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
   return {
     name: NAVIGATOR_PREPARE_TOOL_NAME,
     label: "Navigator preparation",
-    description: "Submit typed route candidates for the shared Navigator attendance seat. route is the recommended future sequence; next must be one step on that route (usually the first).",
+    description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
     parameters: prepareSchema,
     async execute(_id, value) {
-      // Validate the full candidate contract here so a schema-loose batch cannot
-      // be marked accepted and then fail later as a permanent unavailable.
-      // Returning a non-terminating error lets the same navigator turn correct.
-      try {
-        validatePrepareOutput(value);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{
-            type: "text" as const,
-            text: `${message}. route is the recommended future role/phase sequence; next must appear in route (usually as its first step). Do not put only the current role in route when next is a different role.`,
-          }],
-          details: { error: message },
-        };
-      }
+      // Rule 0: the unique prepare submission is accepted once. Ancillary shape is
+      // normalized later; never open a format-correction retry loop here.
       onOutput(value as PrepareOutput);
       return { content: [{ type: "text" as const, text: "Navigator preparation accepted" }], details: value, terminate: true as const };
     },
@@ -457,15 +493,23 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
 
 export function selectNavigatorCandidate(candidates: readonly NavigatorCandidate[], settlement: NavigatorSettlement): NavigatorCandidate | undefined {
   if (settlement.kind !== "accepted") return undefined;
-  const rolePhaseMatches = candidates.filter((candidate) =>
-    candidate.matches.role === settlement.role && candidate.matches.phase === settlement.phase,
+  const usable = candidates.filter((candidate) => candidate.next !== undefined);
+  if (usable.length === 0) return undefined;
+  const matched = usable.filter((candidate) =>
+    candidate.matches !== undefined
+    && candidate.matches.role === settlement.role
+    && candidate.matches.phase === settlement.phase,
   );
   // Status-specific candidates outrank role/phase generics regardless of declaration order.
-  if (settlement.status !== undefined) {
-    const statusSpecific = rolePhaseMatches.find((candidate) => candidate.matches.statuses?.includes(settlement.status!) === true);
-    if (statusSpecific !== undefined) return statusSpecific;
+  if (matched.length > 0) {
+    if (settlement.status !== undefined) {
+      const statusSpecific = matched.find((candidate) => candidate.matches?.statuses?.includes(settlement.status!) === true);
+      if (statusSpecific !== undefined) return statusSpecific;
+    }
+    return matched.find((candidate) => candidate.matches?.statuses === undefined);
   }
-  return rolePhaseMatches.find((candidate) => candidate.matches.statuses === undefined);
+  // v1 direction-only / broken matches: absent match metadata must not drop a usable next.
+  return usable.find((candidate) => candidate.matches === undefined);
 }
 
 export function formatNavigatorReport(report: NavigatorReport): string {
@@ -475,8 +519,8 @@ export function formatNavigatorReport(report: NavigatorReport): string {
   return [
     ...(report.route === undefined ? [] : [`路线：${routeText(report.route)}`]),
     `下一步：${targetText(report.next!)}`,
-    `理由：${oneLine(report.reason ?? "")}`,
-    `命令：${oneLine(report.command ?? "")}`,
+    ...(report.reason === undefined || report.reason.trim() === "" ? [] : [`理由：${oneLine(report.reason)}`]),
+    ...(report.command === undefined || report.command.trim() === "" ? [] : [`命令：${oneLine(report.command)}`]),
   ].join("\n");
 }
 
@@ -484,20 +528,20 @@ export type SettlementNavigation = {
   disposition: "recommendation";
   route?: NavigatorRouteTarget[];
   next: NavigatorRouteTarget;
-  reason: string;
-  command: string;
+  reason?: string;
+  command?: string;
 };
 
 /** Recommendation essentials for the one mandatory last-ak_*_output extraction. */
 export function settlementNavigationFromEvent(event: NavigatorEvent): SettlementNavigation | undefined {
   if (event.disposition !== "recommendation") return undefined;
-  if (event.next === undefined || event.reason === undefined || event.command === undefined) return undefined;
+  if (event.next === undefined) return undefined;
   return {
     disposition: "recommendation",
     ...(event.route === undefined ? {} : { route: event.route }),
     next: event.next,
-    reason: event.reason,
-    command: event.command,
+    ...(event.reason === undefined ? {} : { reason: event.reason }),
+    ...(event.command === undefined ? {} : { command: event.command }),
   };
 }
 
@@ -707,7 +751,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       };
       activeSession.appendEntry(CONTEXT_ENTRY, projection);
       const request = [
-        "Act as the Navigator route judge. Prepare distinct typed route candidates; do not execute or invoke any role.",
+        "Act as the Navigator direction advisor. Submit one next-step advice batch; do not execute or invoke any role.",
         `<navigator_soul>\n${soul}\n</navigator_soul>`,
         `<work_subject>\n${subject}\n</work_subject>`,
         `<controlling_authority>\n${authority}\n</controlling_authority>`,
@@ -716,8 +760,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
         `<live_role_help>\n${helpContext}\n</live_role_help>`,
         `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call.`,
-        "Each candidate.route is the recommended future role/phase sequence (not history). candidate.next must be one element of that same route, usually the first step. Example: route:[{role:\"reviewer\",phase:null}], next:{role:\"reviewer\",phase:null}.",
-        "The command field is only a short Usage hint; never fill task-specific paths, prompts, packets, or Skill bindings.",
+        "v1 requires a usable next direction: candidates[].next.role, with phase only when present and meaningful. route, matches, id, reason, and command are optional context — never retry to satisfy optional shape.",
+        "Do not put task-specific paths, prompts, packets, or Skill bindings in any field. Command display is rendered by the host from next, not from model prose.",
       ].join("\n\n");
       try {
         try {
@@ -734,7 +778,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const nativeMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) ? nativeFailure.message : undefined;
           const errorMessage = nativeMessage !== undefined && typeof nativeMessage.errorMessage === "string"
             ? nativeMessage.errorMessage
-            : "Navigator did not submit typed route candidates";
+            : "Navigator did not submit direction advice";
           // Classification originates only at the native provider stream seam.
           // AssistantMessage metadata is a human diagnostic surface, not an acceptance oracle.
           const providerFailure = activeSession.providerFailure?.();
@@ -742,7 +786,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const cause = providerFailure?.cause ?? source;
           throw navigatorUnavailableError(source, errorMessage, cause);
         }
-        candidates = validatePrepareOutput(output);
+        candidates = normalizePrepareOutput(output);
         return candidates;
       } finally {
         outputSink = undefined;
@@ -839,17 +883,23 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const prepared = await preparation;
           session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
           const selected = selectNavigatorCandidate(prepared, settlement);
-          if (!selected) throw new Error("Navigator prepared no candidate for the typed settlement");
-          const routeChanged = !routeEqual(previousRoute, selected.route);
+          if (selected?.next === undefined) {
+            throw new Error("Navigator prepared no machine-usable next direction");
+          }
+          const selectedRoute = selected.route;
+          const routeChanged = selectedRoute !== undefined && !routeEqual(previousRoute, selectedRoute);
+          const command = renderAdviceCommand(selected.next);
           report = {
             disposition: "recommendation",
-            ...(routeChanged ? { route: selected.route } : {}),
+            ...(routeChanged ? { route: selectedRoute } : {}),
             next: selected.next,
-            reason: oneLine(selected.reason),
-            command: oneLine(selected.command),
+            ...(selected.reason === undefined ? {} : { reason: oneLine(selected.reason) }),
+            ...(command === undefined ? {} : { command }),
           };
-          previousRoute = selected.route;
-          session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selected.route });
+          if (selectedRoute !== undefined) {
+            previousRoute = selectedRoute;
+            session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selectedRoute });
+          }
         // Contract: README.md#Navigator-attendance — Navigator failures become typed unavailable without invalidating the role Receipt; retain the original cause in the unavailable report.
         } catch (error) {
           report = unavailable(invocationId, error);

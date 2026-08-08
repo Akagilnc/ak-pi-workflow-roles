@@ -55,13 +55,12 @@ function candidate(overrides: Partial<NavigatorCandidate> = {}) {
     route: [{ role: "coder" as const, phase: "apply" as const }, { role: "reviewer" as const, phase: null }, { role: "judge" as const, phase: null }],
     next: { role: "reviewer" as const, phase: null },
     reason: "The implementation is ready for an independent review.",
-    command: "Usage: pi --ak-role reviewer --help",
   };
   return {
     candidates: [{
       ...base,
       ...overrides,
-      matches: { ...base.matches, ...(overrides.matches ?? {}) },
+      matches: { ...base.matches!, ...(overrides.matches ?? {}) },
     }],
   };
 }
@@ -151,7 +150,8 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     assert.equal((route as any).data.invocationId, events[0].invocationId);
     assert.deepEqual(events[0].next, candidate().candidates[0]!.next);
     assert.equal(events[0].reason, candidate().candidates[0]!.reason);
-    assert.equal(events[0].command, candidate().candidates[0]!.command);
+    // Command is registry-rendered from next; model command prose is not authority.
+    assert.equal(events[0].command, "ak-role reviewer");
   } catch (error) {
     await cleanupTempDir(root, error);
     throw error;
@@ -215,7 +215,7 @@ test("unchanged routes are omitted after a native-session route entry, while cha
     nav.prepare();
     while (harness.prompts() < 3) await new Promise<void>((resolve) => setImmediate(resolve));
     const original = candidate().candidates[0]!;
-    const revised = { candidates: [{ id: original.id, matches: original.matches, reason: original.reason, command: original.command, route: [{ role: "coder" as const, phase: "apply" as const }, { role: "fixer" as const, phase: "apply" as const }, { role: "judge" as const, phase: null }], next: { role: "fixer" as const, phase: "apply" as const } }] };
+    const revised = { candidates: [{ id: original.id, matches: original.matches, reason: original.reason, route: [{ role: "coder" as const, phase: "apply" as const }, { role: "fixer" as const, phase: "apply" as const }, { role: "judge" as const, phase: null }], next: { role: "fixer" as const, phase: "apply" as const } }] };
     await harness.tool().execute("prepare-3", revised, undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
@@ -635,6 +635,22 @@ test("settlement decoration carries recommendation only; unavailable and silence
     reason: recommendationEvent.reason,
     command: recommendationEvent.command,
   });
+  // Direction-only recommendation (no reason/command) still settles as navigation essentials.
+  assert.deepEqual(
+    settlementNavigationFromEvent({
+      version: 1,
+      disposition: "recommendation",
+      invocationId: "i2",
+      role: "judge",
+      phase: null,
+      subjectKey: "/repo",
+      next: { role: "fixer", phase: "apply" },
+    }),
+    {
+      disposition: "recommendation",
+      next: { role: "fixer", phase: "apply" },
+    },
+  );
   assert.equal(
     decorateSettlementWithNavigation(base, {
       event: { ...recommendationEvent, disposition: "unavailable", unavailableReason: "x", unavailableSource: "model", unavailableCause: "model" },
@@ -834,7 +850,6 @@ test("status-specific route candidates outrank generics regardless of declaratio
     route,
     next: route[1]!,
     reason: "generic fallback",
-    command: "Usage: pi --ak-role judge --help",
   }).candidates[0]!;
   const unfinishedSpecific = candidate({
     id: "unfinished-specific",
@@ -842,7 +857,6 @@ test("status-specific route candidates outrank generics regardless of declaratio
     route,
     next: route[0]!,
     reason: "finish the open class",
-    command: "Usage: pi --ak-role fixer --help",
   }).candidates[0]!;
   const settlement = { kind: "accepted" as const, role: "fixer", phase: "apply" as const, status: "unfinished" };
   assert.equal(selectNavigatorCandidate([generic, unfinishedSpecific], settlement)?.id, "unfinished-specific");
@@ -1013,33 +1027,117 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
   }
 });
 
-test("prepare tool rejects next outside route without accepting the batch", async () => {
-  let accepted: unknown;
-  const tool = createNavigatorPrepareTool((value) => { accepted = value; });
-  const invalid = {
+test("prepare tool accepts direction-only and broken ancillary shape once without retry", async () => {
+  const accepted: unknown[] = [];
+  const tool = createNavigatorPrepareTool((value) => { accepted.push(value); });
+
+  // Direction-only v1 shape: usable next survives without route/matches/reason/command/ids.
+  const directionOnly = {
+    candidates: [{ next: { role: "fixer", phase: "apply" } }],
+  };
+  const first = await tool.execute("direction-only", directionOnly as never, undefined, undefined, {} as never);
+  assert.equal(accepted.length, 1, "direction-only batch must be accepted");
+  assert.equal((first as { terminate?: boolean }).terminate, true);
+
+  // Broken route / next outside route / missing reason+command must not open a correction loop.
+  const brokenAncillary = {
     candidates: [{
-      id: "broken-next",
+      id: "broken-route",
       matches: { role: "coder", phase: "apply", kind: "accepted" },
-      // Production #162 shape: model puts current role in route and next as a sibling step.
       route: [{ role: "coder", phase: "apply" }],
       next: { role: "reviewer", phase: null },
-      reason: "ready for review",
-      command: "Usage: ak-role reviewer",
+      command: "Usage: model prose must not gate acceptance",
     }],
   };
-  const rejected = await tool.execute("bad-batch", invalid as never, undefined, undefined, {} as never);
-  assert.equal(accepted, undefined, "invalid batch must not be accepted as preparation output");
-  assert.equal((rejected as { details?: { error?: string } }).details?.error !== undefined
-    || JSON.stringify(rejected).includes("typed route candidate"), true);
-  assert.equal((rejected as { terminate?: boolean }).terminate === true, false, "invalid batch must not terminate the navigator turn");
+  const second = await tool.execute("broken-ancillary", brokenAncillary as never, undefined, undefined, {} as never);
+  assert.equal(accepted.length, 2, "broken ancillary shape still accepted once");
+  assert.equal((second as { terminate?: boolean }).terminate, true);
+  assert.equal((second as { details?: { error?: string } }).details?.error, undefined);
+});
 
-  const valid = candidate({
-    route: [{ role: "reviewer", phase: null }, { role: "judge", phase: null }],
-    next: { role: "reviewer", phase: null },
-  });
-  const ok = await tool.execute("good-batch", valid as never, undefined, undefined, {} as never);
-  assert.ok(accepted);
-  assert.equal((ok as { terminate?: boolean }).terminate, true);
+test("direction-only prepare settles recommendation; missing next is honest unavailable", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-direction-only-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+
+    // 1) usable next without route/reason/command/matches/id → recommendation
+    {
+      const harness = sessionHarness();
+      const events: any[] = [];
+      const nav = await attendance(setting, harness, events);
+      nav.prepare();
+      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+      await harness.tool().execute(
+        "direction-only",
+        { candidates: [{ next: { role: "fixer", phase: "apply" } }] },
+        undefined,
+        undefined,
+        {} as never,
+      );
+      harness.release();
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      assert.equal(events.length, 1);
+      assert.equal(events[0].disposition, "recommendation");
+      assert.deepEqual(events[0].next, { role: "fixer", phase: "apply" });
+      assert.equal(events[0].route, undefined);
+      assert.equal(events[0].reason, undefined);
+      assert.equal(events[0].command, "ak-role fixer apply");
+    }
+
+    // 2) next survives broken route + absent reason/command
+    {
+      const harness = sessionHarness();
+      const events: any[] = [];
+      const nav = await attendance(setting, harness, events);
+      nav.prepare();
+      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+      await harness.tool().execute(
+        "broken-route",
+        {
+          candidates: [{
+            route: [{ role: "coder", phase: "apply" }],
+            next: { role: "reviewer", phase: null },
+          }],
+        },
+        undefined,
+        undefined,
+        {} as never,
+      );
+      harness.release();
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      assert.equal(events[0].disposition, "recommendation");
+      assert.deepEqual(events[0].next, { role: "reviewer", phase: null });
+      // Broken/historical route may normalize; next must not be downgraded.
+      assert.notEqual(events[0].disposition, "unavailable");
+    }
+
+    // 3) accepted submission with no machine-usable next → honest unavailable, no invented direction
+    {
+      const harness = sessionHarness();
+      const events: any[] = [];
+      const nav = await attendance(setting, harness, events);
+      nav.prepare();
+      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+      await harness.tool().execute(
+        "no-next",
+        { candidates: [{ reason: "still thinking", route: [{ role: "not-a-role", phase: null }] }] },
+        undefined,
+        undefined,
+        {} as never,
+      );
+      harness.release();
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      assert.equal(events.length, 1);
+      assert.equal(events[0].disposition, "unavailable");
+      assert.match(String(events[0].unavailableReason), /no machine-usable next/i);
+      assert.equal(events[0].next, undefined);
+    }
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
 });
 
 test("empty authority at prepare is honest context unavailable", async () => {
