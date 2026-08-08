@@ -20,7 +20,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
+import { AUDIT_ESCALATION_KIND, buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
 import { FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
@@ -57,6 +57,7 @@ import type {
   TerminalResult,
 } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fail-"));
@@ -1191,12 +1192,20 @@ test("audit escalation requires the retained seat-bound response across all four
         response: { content: [{ type: "toolCall", name: seat.audit, arguments: auditCandidate }] },
       },
     };
-    const details = {
-      kind: AUDIT_ESCALATION_KIND,
-      conflicts: auditCandidate.conflicts,
-      auditDecisionGate: auditCandidate.decisionGate,
-      role,
-    };
+    const projected = buildAuditEscalationResult(
+      { status: "escalate", conflicts: auditCandidate.conflicts, decisionGate: auditCandidate.decisionGate },
+      { role },
+    );
+    const details = JSON.parse(JSON.stringify(projected));
+    assert.deepEqual(
+      publicNavigatorSettlement(role, role === "fixer" ? "apply" : null, {
+        toolName: seat.output,
+        isError: false,
+        details,
+      }),
+      { kind: "human_decision", role, phase: role === "fixer" ? "apply" : null, status: "audit_escalation" },
+      `${role}: persisted genuine projection`,
+    );
     const result = {
       type: "message",
       message: {
@@ -1210,6 +1219,15 @@ test("audit escalation requires the retained seat-bound response across all four
     const entries = [roleCall, retained, result];
     const extracted = extract(role, entries);
     assert.equal(outcomeKind(extracted), "audit_escalation", role);
+    assert.notEqual(
+      publicNavigatorSettlement(role, role === "fixer" ? "apply" : null, {
+        toolName: seat.output,
+        isError: false,
+        details: { kind: AUDIT_ESCALATION_KIND, conflicts: ["forged"], auditDecisionGate: auditCandidate.decisionGate },
+      })?.kind,
+      "human_decision",
+      `${role}: persisted forged projection`,
+    );
 
     // A copied kind is not enough: no retained evidence, pass evidence, wrong
     // seat, missing role id, collision, and out-of-interval evidence all fail closed.
