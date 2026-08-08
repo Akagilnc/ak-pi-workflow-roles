@@ -1002,12 +1002,74 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
     assert.equal(filesOnly.authority, "work-root file authority\n");
     assert.equal(filesOnly.subjectProvenance, "placeholder");
 
-    // 5) neither → honest unavailable
+    // 5) neither at session_start → soft placeholder (bare -p prompt arrives later)
     await rm(resolve(workRoot, "authority.md"));
-    await assert.rejects(
-      () => loadNavigatorWorkContext(noInputPi, { context: judgeCtx, role: "judge" }),
-      (error: unknown) => error instanceof NavigatorUnavailableError && error.unavailableSource === "context",
-    );
+    const neither = await loadNavigatorWorkContext(noInputPi, { context: judgeCtx, role: "judge" });
+    assert.equal(neither.subjectProvenance, "placeholder");
+    assert.equal(neither.authority, "");
+    assert.equal("contextError" in neither, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("prepare tool rejects next outside route without accepting the batch", async () => {
+  let accepted: unknown;
+  const tool = createNavigatorPrepareTool((value) => { accepted = value; });
+  const invalid = {
+    candidates: [{
+      id: "broken-next",
+      matches: { role: "coder", phase: "apply", kind: "accepted" },
+      // Production #162 shape: model puts current role in route and next as a sibling step.
+      route: [{ role: "coder", phase: "apply" }],
+      next: { role: "reviewer", phase: null },
+      reason: "ready for review",
+      command: "Usage: ak-role reviewer",
+    }],
+  };
+  const rejected = await tool.execute("bad-batch", invalid as never, undefined, undefined, {} as never);
+  assert.equal(accepted, undefined, "invalid batch must not be accepted as preparation output");
+  assert.equal((rejected as { details?: { error?: string } }).details?.error !== undefined
+    || JSON.stringify(rejected).includes("typed route candidate"), true);
+  assert.equal((rejected as { terminate?: boolean }).terminate === true, false, "invalid batch must not terminate the navigator turn");
+
+  const valid = candidate({
+    route: [{ role: "reviewer", phase: null }, { role: "judge", phase: null }],
+    next: { role: "reviewer", phase: null },
+  });
+  const ok = await tool.execute("good-batch", valid as never, undefined, undefined, {} as never);
+  assert.ok(accepted);
+  assert.equal((ok as { terminate?: boolean }).terminate, true);
+});
+
+test("empty authority at prepare is honest context unavailable", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-empty-authority-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const events: any[] = [];
+    const nav = createNavigatorAttendance({
+      context: context(),
+      role: "judge",
+      phase: null,
+      subjectKey: "/repo/.ak/work",
+      sessionDir: join(root, "navigator"),
+      subject: "work subject: /repo/.ak/work",
+      authority: "",
+      loadSoul: async () => "route law",
+      loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
+      modelSettingPath: setting,
+      createSession: async () => {
+        throw new Error("session must not open without authority");
+      },
+      onEvent: async (event) => { events.push(event); },
+    });
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].disposition, "unavailable");
+    assert.equal(events[0].unavailableSource, "context");
+    assert.match(String(events[0].unavailableReason), /controlling authority content was not supplied/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1204,4 +1266,250 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
     else process.env.AK_ROLE_RUN_DIR = previousRunDir;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("bare developer prompt recovers Navigator work context poisoned at session_start", async () => {
+  const { basename } = await import("node:path");
+  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
+  const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
+
+  await withActivationHome({ prefix: "ak-nav-prompt-recover-" }, async ({ home }) => {
+    const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
+    const emit = async (name: string, event: unknown, ctx: unknown) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event, ctx);
+    };
+    const pi = {
+      registerFlag() {},
+      getFlag(name: string) {
+        return name === "ak-role" ? "judge" : undefined;
+      },
+      on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+        const list = handlers.get(name) ?? [];
+        list.push(handler);
+        handlers.set(name, list);
+      },
+      registerTool() {},
+      getAllTools() {
+        return [];
+      },
+      setActiveTools() {},
+    };
+
+    let latestContext: {
+      subject?: string;
+      authority?: string;
+      subjectProvenance?: string;
+      contextError?: unknown;
+    } = {};
+    let prepareCalls = 0;
+    const setContexts: Array<Record<string, unknown>> = [];
+
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "JUDGE LAW",
+      transcriptFromContext: () => "",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+      // Production soft miss: session_start has no materials yet (no throw/poison).
+      loadNavigatorWorkContext: async () => ({
+        subjectKey: join(home, ".ak/work"),
+        subject: `work subject: ${join(home, ".ak/work")}`,
+        authority: "",
+        subjectProvenance: "placeholder" as const,
+      }),
+      createNavigatorAttendance: (options) => {
+        latestContext = {
+          subject: options.subject,
+          authority: options.authority,
+          subjectProvenance: "placeholder",
+          contextError: options.contextError,
+        };
+        return {
+          prepare() {
+            prepareCalls += 1;
+          },
+          setWorkContext(next: {
+            subject: string;
+            authority: string;
+            subjectProvenance: string;
+            contextError?: unknown;
+          }) {
+            setContexts.push({ ...next });
+            latestContext = {
+              subject: next.subject,
+              authority: next.authority,
+              subjectProvenance: next.subjectProvenance,
+              contextError: next.contextError,
+            };
+          },
+          warmHelp() {},
+          isPreparing: () => false,
+          settle: async () => {},
+          dispose() {},
+        };
+      },
+    })(pi as never);
+
+    const sessionDir = join(
+      home,
+      ".ak-roles",
+      "books",
+      basename(home),
+      "runs",
+      "judge-bare-prompt",
+      "session",
+    );
+    await mkdir(sessionDir, { recursive: true });
+    const sessionManager = SessionManager.create(home, sessionDir);
+    const ctx = { cwd: home, sessionManager, abort() {} };
+    await emit("session_start", {}, ctx);
+
+    assert.equal(latestContext.contextError, undefined, "soft miss must not install contextError");
+    assert.equal(latestContext.authority, "");
+    assert.equal(prepareCalls, 0, "placeholder context must not warm-prepare");
+
+    const prompt = "Adjudicate the attached materials for issue 11 developer seam.";
+    await emit("before_agent_start", { systemPrompt: "BASE", prompt }, ctx);
+
+    assert.equal(latestContext.subject, prompt);
+    assert.equal(latestContext.authority, prompt);
+    assert.equal(latestContext.subjectProvenance, "user_prompt");
+    assert.equal(prepareCalls, 1, "recovered concrete context must prepare");
+    assert.ok(setContexts.length >= 1);
+  });
+});
+
+test("healthy Navigator preparation survives mid-turn agent_settled for later accepted terminal", async () => {
+  const { basename } = await import("node:path");
+  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
+  const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
+  const { JUDGE_OUTPUT_TOOL_NAME } = await import("../../src/package-contracts/judge-output.ts");
+
+  await withActivationHome({ prefix: "ak-nav-survive-turn-" }, async ({ home }) => {
+    const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
+    const emit = async (name: string, event: unknown, ctx: unknown) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event, ctx);
+    };
+    const pi = {
+      registerFlag() {},
+      getFlag(name: string) {
+        return name === "ak-role" ? "judge" : undefined;
+      },
+      on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+        const list = handlers.get(name) ?? [];
+        list.push(handler);
+        handlers.set(name, list);
+      },
+      registerTool() {},
+      getAllTools() {
+        return [];
+      },
+      setActiveTools() {},
+      async sendMessage() {},
+    };
+
+    let settleCount = 0;
+    let prepareCount = 0;
+    let releasePrep!: () => void;
+    const prepGate = new Promise<void>((resolve) => { releasePrep = resolve; });
+    let prepStarted!: () => void;
+    const started = new Promise<void>((resolve) => { prepStarted = resolve; });
+    const events: Array<{ disposition?: string }> = [];
+
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "JUDGE LAW",
+      transcriptFromContext: () => "",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+      loadNavigatorWorkContext: async () => ({
+        subjectKey: "/repo/.ak/work/issues/11",
+        subject: "issue 11",
+        authority: "owner authority",
+        subjectProvenance: "role_input" as const,
+      }),
+      createNavigatorAttendance: (options) => {
+        const nav = createNavigatorAttendance({
+          ...options,
+          sessionDir: join(home, "navigator-session"),
+          modelSettingPath: join(home, "navigator-model.json"),
+          loadSoul: async () => "route law",
+          loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
+          createSession: async ({ tool }) => ({
+            async prompt() {
+              prepStarted();
+              await prepGate;
+              await tool.execute(
+                "prep-1",
+                {
+                  candidates: [{
+                    id: "judge-to-fixer",
+                    matches: { role: "judge", phase: null, kind: "accepted" },
+                    route: [{ role: "fixer", phase: "apply" }],
+                    next: { role: "fixer", phase: "apply" },
+                    reason: "apply the repair",
+                    command: "Usage: ak-role fixer",
+                  }],
+                } as never,
+                undefined,
+                undefined,
+                {} as never,
+              );
+            },
+            appendEntry() {},
+            entries: () => [],
+            dispose() {},
+          }),
+          onEvent: async (event, report) => {
+            events.push(event);
+            await options.onEvent(event, report);
+          },
+        });
+        const originalPrepare = nav.prepare.bind(nav);
+        const originalSettle = nav.settle.bind(nav);
+        return {
+          ...nav,
+          prepare() {
+            prepareCount += 1;
+            originalPrepare();
+          },
+          settle(settlement: never) {
+            settleCount += 1;
+            return originalSettle(settlement);
+          },
+        };
+      },
+    })(pi as never);
+
+    await writeFile(join(home, "navigator-model.json"), JSON.stringify({ model: "provider/model" }));
+    const sessionDir = join(home, ".ak-roles", "books", basename(home), "runs", "survive", "session");
+    await mkdir(sessionDir, { recursive: true });
+    const sessionManager = SessionManager.create(home, sessionDir);
+    const ctx = { cwd: home, sessionManager, abort() {} };
+
+    await emit("session_start", {}, ctx);
+    assert.ok(prepareCount >= 1, "concrete role_input warms prepare at session_start");
+    await started;
+
+    // Mid-turn agent_settled must not discard the in-flight/healthy prepare (#162 coder grace class).
+    await emit("agent_settled", {}, ctx);
+    const settlesAfterMidTurn = settleCount;
+
+    releasePrep();
+    // Allow the in-flight prepare to finish accepting candidates before terminal.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    await emit("tool_result", {
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId: "accepted-1",
+      isError: false,
+      content: [{ type: "text", text: "Judge verdict accepted" }],
+      details: { judgeStatus: "converged" },
+    }, ctx);
+    await emit("agent_settled", {}, ctx);
+
+    assert.equal(settlesAfterMidTurn, 0, "mid-turn agent_settled must not settle Navigator");
+    assert.ok(settleCount >= 1, "accepted terminal must settle Navigator");
+    assert.equal(events.some((event) => event.disposition === "recommendation"), true);
+    assert.equal(events.some((event) => event.disposition === "unavailable"), false);
+  });
 });

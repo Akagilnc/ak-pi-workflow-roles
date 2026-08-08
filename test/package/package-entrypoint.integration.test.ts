@@ -550,6 +550,9 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
       const defaultBaseUrl = "https://default.invalid/v1";
       const resolvedBaseUrl = "https://tenant.invalid/v1";
       const activeModel = { ...faux.getModel(), baseUrl: defaultBaseUrl };
+      const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      await writeNavigatorModelSetting(`${activeModel.provider}/${activeModel.id}`, resolve(agentDir, "navigator-model.json"));
       const authResolvedProvider = {
         ...faux.provider,
         auth: {
@@ -659,25 +662,36 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
             env: Record<string, string> | undefined;
           }
           | undefined;
-        faux.setResponses([
-          (context) => {
-            judgeContext = context;
-            return fauxAssistantMessage(
-              fauxToolCall(
-                JUDGE_OUTPUT_TOOL_NAME,
-                { judgeStatus: "converged" },
-                { id: "accepted-judge" },
-              ),
-              { stopReason: "toolUse" },
-            );
-          },
-          (context, requestOptions, _state, requestModel) => {
+        // Developer exact-session shape: bare judge -p prompt is the only work
+        // context (no authority.md / role-input). Navigator must recover it and
+        // still deliver one correlated recommendation after accepted terminal.
+        const developerPrompt = "Exercise audited terminating acceptance.";
+        const response = (context: Context, requestOptions?: unknown, _state?: unknown, requestModel?: { baseUrl?: string }) => {
+          const names = context.tools?.map((tool) => tool.name) ?? [];
+          if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+            return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+              candidates: [{
+                id: "dev-seam-judge-to-fixer",
+                matches: { role: "judge", phase: null, kind: "accepted" },
+                route: [{ role: "fixer", phase: "apply" }],
+                next: { role: "fixer", phase: "apply" },
+                reason: "accepted judge should proceed to fixer apply",
+                command: "Usage: ak-role fixer",
+              }],
+            }), { stopReason: "toolUse" });
+          }
+          if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
             auditContext = context;
+            const options = requestOptions as {
+              apiKey?: string;
+              headers?: Record<string, string | null>;
+              env?: Record<string, string>;
+            } | undefined;
             auditDispatch = {
-              baseUrl: requestModel.baseUrl,
-              apiKey: requestOptions?.apiKey,
-              headers: requestOptions?.headers,
-              env: requestOptions?.env,
+              baseUrl: requestModel?.baseUrl,
+              apiKey: options?.apiKey,
+              headers: options?.headers,
+              env: options?.env,
             };
             return fauxAssistantMessage(
               fauxToolCall(
@@ -687,9 +701,19 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
               ),
               { stopReason: "toolUse" },
             );
-          },
-        ]);
-        await session.prompt("Exercise audited terminating acceptance.");
+          }
+          judgeContext = context;
+          return fauxAssistantMessage(
+            fauxToolCall(
+              JUDGE_OUTPUT_TOOL_NAME,
+              { judgeStatus: "converged" },
+              { id: "accepted-judge" },
+            ),
+            { stopReason: "toolUse" },
+          );
+        };
+        faux.setResponses([response, response, response, response, response]);
+        await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;
         assert.ok(seenJudgeContext);
@@ -737,17 +761,27 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.ok(acceptedResult?.type === "message");
         assert.equal(acceptedResult.message.role, "toolResult");
         assert.equal(acceptedResult.message.isError, false);
+        // Receipt details stay contract-pure — Navigator must not rewrite them.
         assert.deepEqual(acceptedResult.message.details, {
           judgeStatus: "converged",
         });
-        const attendanceMessages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
-        assert.equal(attendanceMessages.length, 1);
-        const unavailable = (attendanceMessages[0] as { details: { disposition: string; unavailableReason?: string; unavailableSource?: string; unavailableCause?: string } }).details;
-        assert.equal(unavailable.disposition, "unavailable");
-        assert.equal(unavailable.unavailableSource, "context");
-        assert.equal(unavailable.unavailableCause, "context");
-        assert.notEqual(unavailable.unavailableReason, undefined);
+        const entries = sessionManager.getEntries();
+        const acceptedIndex = entries.indexOf(acceptedResult);
+        const attendanceMessages = entries.filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+        assert.equal(attendanceMessages.length, 1, "exactly one Navigator terminal fact on the exact session");
+        const attendanceIndex = entries.indexOf(attendanceMessages[0]!);
+        assert.ok(attendanceIndex > acceptedIndex, "Navigator attendance follows the accepted role terminal");
+        const recommendation = (attendanceMessages[0] as { details: { disposition: string; next?: { role: string; phase: string | null }; reason?: string; command?: string; role?: string } }).details;
+        assert.equal(recommendation.disposition, "recommendation");
+        assert.equal(recommendation.role, "judge");
+        assert.deepEqual(recommendation.next, { role: "fixer", phase: "apply" });
+        assert.equal(typeof recommendation.reason, "string");
+        assert.equal(typeof recommendation.command, "string");
+        // Exact named session principal is the only authoritative surface.
+        assert.equal(typeof sessionManager.getSessionFile?.() === "string" || sessionManager.getSessionDir().length > 0, true);
       });
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
     },
   );
 });
@@ -1209,7 +1243,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
   );
 });
 
-test("ongoing packaged session drains pre-output role failure and prepares a fresh next invocation", async () => {
+test("ongoing packaged session keeps healthy Navigator prepare across pre-output role failure for the next accepted terminal", async () => {
   const manifest = await loadRawPackageManifest();
   await withActivationHome(
     { prefix: "ak-navigator-pre-output-failure-" },
@@ -1237,11 +1271,11 @@ test("ongoing packaged session drains pre-output role failure and prepares a fre
           firstNavigatorStarted();
           const answer = fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
             candidates: [{
-              id: `fresh-${navigatorCalls}`,
+              id: `kept-${navigatorCalls}`,
               matches: { role: "judge", phase: null, kind: "accepted" },
               route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
               next: { role: "reviewer", phase: null },
-              reason: "fresh typed preparation",
+              reason: "kept typed preparation",
               command: "Usage: pi --ak-role reviewer --help",
             }],
           }), { stopReason: "toolUse" });
@@ -1266,19 +1300,20 @@ test("ongoing packaged session drains pre-output role failure and prepares a fre
         await first;
         assert.equal(sessionManager.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"), false);
 
-        await session.prompt("second role turn gets fresh preparation");
+        // Healthy prepare must survive the non-terminal failure turn so the next
+        // accepted terminal does not cold-start against the post-role grace.
+        await session.prompt("second role turn reuses the kept preparation");
         const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
         assert.equal(attendance.length, 1);
         assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "recommendation");
-        assert.equal(navigatorCalls, 2);
+        assert.equal(navigatorCalls, 1, "mid-turn agent_settled must not discard a healthy prepare");
         const navigatorDir = navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot);
         const persisted = (await readFile(SessionManager.continueRecent(issueRoot, navigatorDir).getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
         const settlements = persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
         const invocations = persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
-        assert.equal(settlements.length, 2);
-        assert.equal(settlements[0].data.kind, "role_infrastructure_failure");
-        assert.equal(settlements[1].data.kind, "accepted");
-        assert.notEqual(invocations[0].data.invocationId, invocations[1].data.invocationId);
+        assert.equal(settlements.length, 1);
+        assert.equal(settlements[0].data.kind, "accepted");
+        assert.equal(invocations.length, 1);
       });
       if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
     },

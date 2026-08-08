@@ -417,16 +417,22 @@ export function createRoleRuntimeExtension(
         // A bare Judge (and other bare packaged entrypoint) gets its concrete
         // user task at this seam; do not copy the assembled system prompt.
         // Replacement is keyed by typed subject provenance, never prose prefixes.
+        // Soft session_start placeholders (no materials yet) recover here; hard
+        // contextError from true loader failures stays poisoned and honest.
         if (navigatorWorkContext.subjectProvenance === "placeholder") {
           const subject = event.prompt.trim();
           // Public empty-request transport envelope is not semantic task content.
           if (subject !== "" && subject !== EMPTY_INVOCATION_TRANSPORT_ENVELOPE) {
             const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
             const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
+            const priorAuthority = navigatorWorkContext.authority;
+            const authority = typeof priorAuthority === "string" && priorAuthority.trim() !== ""
+              ? priorAuthority
+              : subject;
             navigatorWorkContext = {
-              ...navigatorWorkContext,
               subjectKey: navigatorSubjectKey(root, subject, subjectProvenance),
               subject,
+              authority,
               subjectProvenance,
             };
             navigatorAttendance.setWorkContext(navigatorWorkContext);
@@ -497,18 +503,14 @@ export function createRoleRuntimeExtension(
     pi.on("agent_settled", async () => {
       if (pendingNavigatorSettlement !== undefined) {
         await pendingNavigatorSettlement;
-      } else if (navigatorAttendance?.isPreparing()) {
-        // A provider/network failure can settle the role without ever producing
-        // a terminating tool result. Drain this same preparation as silence;
-        // the next agent turn will prepare a new correlated invocation.
-        const pending = navigatorAttendance.settle({
-          kind: "role_infrastructure_failure",
-          role: selectedRole ?? "unknown",
-          phase: selectedRole === undefined ? null : navigatorPhase(pi, selectedRole),
-        });
-        pendingNavigatorSettlement = pending;
-        await pending;
       }
+      // Do not auto-drain Navigator on ordinary mid-turn agent_settled.
+      // Multi-turn roles (#162 coder) fire agent_settled after every tool turn;
+      // discarding a healthy/in-flight prepare there forces a cold prepare on the
+      // final accepted terminal and races the post-role grace. Keep preparation
+      // until an accepted/human/infrastructure tool_result settlement (or dispose).
+      // Provider death without any role tool_result leaves preparation held; the
+      // next explicit settlement or session end owns it — not mid-turn churn.
       pendingNavigatorSettlement = undefined;
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
