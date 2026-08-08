@@ -33,6 +33,10 @@ import {
 } from "../../src/compliance-transport.ts";
 import { disposeComplianceDecision } from "../../src/audit-escalation.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome,
+} from "../../src/activation-ledger-topology.ts";
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { loadCollectorManifest } from "../../src/collector-config.ts";
@@ -52,15 +56,6 @@ import {
   defaultExplicitInternalPiRunner,
   runExplicitInternalActivation,
 } from "../../src/public-cli/explicit-internal.ts";
-import {
-  admitCoderInvocation,
-  admitCollectorInvocation,
-  admitDoctorInvocation,
-  admitFixerInvocation,
-  admitJudgeInvocation,
-  admitMergerInvocation,
-  admitReviewerInvocation,
-} from "../../src/public-cli/invocation.ts";
 import { formatTerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
@@ -199,89 +194,69 @@ test("S1: judge escalate public CLI prints every decisionGate option text in ord
   });
 });
 
-test("shared public admissions write one identity-bound invocation ledger for every role", async () => {
+test("public runs write one identity-bound invocation ledger for every role", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    await writeFile(join(project, "conflict.txt"), "base\n", "utf8");
+    execFileSync("git", ["add", "conflict.txt"], { cwd: project });
+    execFileSync("git", ["commit", "-m", "base conflict fixture"], { cwd: project });
+    execFileSync("git", ["checkout", "-b", "ledger-side"], { cwd: project });
+    await writeFile(join(project, "conflict.txt"), "side\n", "utf8");
+    execFileSync("git", ["commit", "-am", "side conflict fixture"], { cwd: project });
+    execFileSync("git", ["checkout", "main"], { cwd: project });
+    await writeFile(join(project, "conflict.txt"), "main\n", "utf8");
+    execFileSync("git", ["commit", "-am", "main conflict fixture"], { cwd: project });
+    try {
+      execFileSync("git", ["merge", "ledger-side"], { cwd: project, stdio: "ignore" });
+    } catch {
+      // The unresolved conflict is the real production prerequisite for Merger admission.
+    }
 
-    const admissions = [
-      await admitJudgeInvocation({
-        home,
-        cwd: project,
-        instruction: "judge task",
-        attachmentPaths: [],
-        createRunId: () => "ledger-judge-001",
-      }),
-      await admitCoderInvocation({
-        home,
-        cwd: project,
-        phase: "apply",
-        instruction: "coder task",
-        attachmentPaths: [],
-        createRunId: () => "ledger-coder-001",
-      }),
-      await admitFixerInvocation({
-        home,
-        cwd: project,
-        phase: "apply",
-        instruction: "fixer task",
-        attachmentPaths: [],
-        createRunId: () => "ledger-fixer-001",
-      }),
-      await admitReviewerInvocation({
-        home,
-        cwd: project,
-        instruction: "reviewer task",
-        attachmentPaths: [],
-        createRunId: () => "ledger-reviewer-001",
-      }),
-      await admitCollectorInvocation({
-        home,
-        cwd: project,
-        prNumber: 177,
-        repo: "acme/widgets",
-        legs: [{ id: "primary", expectedAuthors: ["bot"] }],
-        createRunId: () => "ledger-collector-001",
-      }),
-      await admitDoctorInvocation({
-        home,
-        cwd: project,
-        issueNumber: 177,
-        createRunId: () => "ledger-doctor-001",
-      }),
-      await admitMergerInvocation({
-        home,
-        cwd: project,
-        instruction: "merger task",
-        attachmentPaths: [],
-        createRunId: () => "ledger-merger-001",
-        gitState: {
-          activeMerge: async () => ({
-            targetObjectId: "a".repeat(40),
-            sourceObjectId: "b".repeat(40),
-            unmergedPaths: ["src/conflict.ts"],
-            automaticMergeTreeId: "c".repeat(40),
-          }),
-          completedMerge: async () => {
-            throw new Error("not used by admission tracer");
-          },
-        },
-      }),
-    ];
+    const bookKey = resolveBookKeyFromGit(project);
+    const ledgerHome = resolveActivationLedgerHome(() => home);
+    const piRunner = async (args: readonly string[]) => ({
+      code: 1,
+      stderr: "public ledger tracer",
+      timedOut: false,
+      args: [...args],
+    });
+    const cases = [
+      { role: "judge", runId: "public-judge-001", args: ["judge", "--project", project, "judge task"] },
+      { role: "coder", runId: "public-coder-001", args: ["coder", "--project", project, "coder task"] },
+      { role: "fixer", runId: "public-fixer-001", args: ["fixer", "--project", project, "fixer task"] },
+      { role: "reviewer", runId: "public-reviewer-001", args: ["reviewer", "--project", project, "reviewer task"] },
+      { role: "collector", runId: "public-collector-001", args: ["collector", "--project", project, "--pr", "177", "--repo", "acme/widgets", "--leg", "primary:bot"] },
+      { role: "doctor", runId: "public-doctor-001", args: ["doctor", "--project", project, "--issue", "177"] },
+      { role: "merger", runId: "public-merger-001", args: ["merger", "--project", project, "merger task"] },
+    ] as const;
 
-    for (const admitted of admissions) {
-      const ledger = JSON.parse(
-        await readFile(join(admitted.runDirectory, "invocation.json"), "utf8"),
-      ) as Record<string, unknown>;
+    for (const scenario of cases) {
+      await runAkRole(scenario.args, {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => scenario.runId,
+        piRunner,
+        io: captureIo().io,
+      });
+
+      const ledgerPath = join(
+        activationBookDirectory(ledgerHome, bookKey),
+        "runs",
+        `${scenario.runId}@${scenario.role}`,
+        "invocation.json",
+      );
+      const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as Record<string, unknown>;
       assert.deepEqual(ledger, {
-        role: admitted.role,
-        runId: admitted.runId,
-        bookKey: admitted.bookKey,
-        projectRoot: admitted.projectRoot,
-        runDirectory: admitted.runDirectory,
-        sessionDirectory: admitted.sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        role: scenario.role,
+        runId: scenario.runId,
+        bookKey,
+        projectRoot: project,
+        runDirectory: join(activationBookDirectory(ledgerHome, bookKey), "runs", `${scenario.runId}@${scenario.role}`),
+        sessionDirectory: join(activationBookDirectory(ledgerHome, bookKey), "runs", `${scenario.runId}@${scenario.role}`, "session"),
+        sessionFile: join(activationBookDirectory(ledgerHome, bookKey), "runs", `${scenario.runId}@${scenario.role}`, "session", "session.jsonl"),
       });
     }
   });
