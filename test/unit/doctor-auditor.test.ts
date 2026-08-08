@@ -20,11 +20,8 @@ test("Doctor audit receives the frozen evidence index without replaying large se
   assert.ok(Array.isArray(user.content));
   const text = user.content.find((part) => part.type === "text");
   assert.ok(text?.type === "text");
-  const contractDelimiter = "\n<decision_tool_contract>\n";
-  const sections = text.text.split(contractDelimiter);
-  assert.equal(sections.length, 2, "Doctor audit must append its decision contract delimiter");
-  assert.match(sections[1]!, /[\s\S]*\n<\/decision_tool_contract>$/);
-  const payload = JSON.parse(sections[0]!);
+  assert.equal(text.text.includes("<decision_tool_contract>"), false);
+  const payload = JSON.parse(text.text);
   assert.deepEqual(Object.keys(payload).sort(), ["frozenEvidenceIndex", "proposedTestimony", "readRecord", "soul"]);
   assert.equal(payload.soul, "Doctor law");
   assert.deepEqual(payload.readRecord, [{ evidenceId: "review/session/live.jsonl", fullyRead: true }]);
