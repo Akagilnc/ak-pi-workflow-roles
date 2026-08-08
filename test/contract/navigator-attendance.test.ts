@@ -9,7 +9,6 @@ import {
   createNavigatorAttendance,
   createNavigatorPrepareTool,
   decorateSettlementWithNavigation,
-  defaultNavigatorDirection,
   formatNavigatorReport,
   NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_PREPARE_TOOL_NAME,
@@ -78,14 +77,12 @@ async function cleanupTempDir(root: string, primaryFailure?: unknown): Promise<v
 function sessionHarness() {
   const entries: unknown[] = [];
   const modelSettings: Array<{ model: string; thinkingLevel: string }> = [];
-  const promptTexts: string[] = [];
   let tool: any;
   let prompts = 0;
   let releasePrompt: (() => void) | undefined;
   const session: NavigatorPreparationSession = {
-    async prompt(text) {
+    async prompt(_text) {
       prompts += 1;
-      promptTexts.push(String(text));
       await new Promise<void>((resolve) => { releasePrompt = resolve; });
     },
     appendEntry(_type, data) { entries.push({ type: "custom", customType: _type, data }); },
@@ -98,7 +95,6 @@ function sessionHarness() {
     tool: () => tool,
     release: () => releasePrompt?.(),
     prompts: () => prompts,
-    promptTexts: () => promptTexts,
     /** Production-retained typed context fact (ak-navigator-context), not a prompt metadata channel. */
     retainedContext: () => {
       const entry = [...entries].reverse().find((item: any) => item?.customType === "ak-navigator-context");
@@ -1170,20 +1166,11 @@ test("direction-only prepare settles recommendation; missing next is honest unav
       assert.notEqual(events[0].disposition, "unavailable");
     }
 
-    // 3) no usable next and no post-worker default (non-completed / non-worker) → honest unavailable
+    // 3) accepted submission with no machine-usable next → honest unavailable, no invented direction
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = createNavigatorAttendance({
-        context: context(), role: "judge", phase: null, subjectKey: "/repo/.ak/work/issues/28",
-        sessionDir: "/repo/.ak/work/issues/28/runs/navigator/session",
-        subject: "Fix issue 28", authority: "owner decision",
-        loadSoul: async () => "route judgment",
-        loadRoleHelp: async (role) => `pi --ak-role ${role} --help`,
-        createSession: harness.factory,
-        modelSettingPath: setting,
-        onEvent: async (event) => { events.push(event); },
-      });
+      const nav = await attendance(setting, harness, events);
       nav.prepare();
       while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
       await harness.tool().execute(
@@ -1194,7 +1181,7 @@ test("direction-only prepare settles recommendation; missing next is honest unav
         {} as never,
       );
       harness.release();
-      await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "unavailable");
       assert.match(String(events[0].unavailableReason), /no machine-usable next/i);
@@ -1207,35 +1194,19 @@ test("direction-only prepare settles recommendation; missing next is honest unav
   await cleanupTempDir(root);
 });
 
-test("post-worker defaults: completed Fixer→Judge, completed Coder→Reviewer; explicit advice overrides", async () => {
-  assert.deepEqual(
-    defaultNavigatorDirection({ kind: "accepted", role: "fixer", phase: "apply", status: "completed" }),
-    { role: "judge", phase: null },
-  );
-  assert.deepEqual(
-    defaultNavigatorDirection({ kind: "accepted", role: "coder", phase: "apply", status: "completed" }),
-    { role: "reviewer", phase: null },
-  );
-  // Missing Reviewer settlement / prior route must not divert completed Fixer to Reviewer.
-  assert.notDeepEqual(
-    defaultNavigatorDirection({ kind: "accepted", role: "fixer", phase: "apply", status: "completed" }),
-    { role: "reviewer", phase: null },
-  );
-  assert.equal(defaultNavigatorDirection({ kind: "accepted", role: "fixer", phase: "apply", status: "refused" }), undefined);
-  assert.equal(defaultNavigatorDirection({ kind: "accepted", role: "judge", phase: null, status: "continue" }), undefined);
-
-  const root = await mkdtemp(join(tmpdir(), "navigator-post-worker-default-"));
+test("completed Fixer/Coder settlement does not invent next without model/authority direction", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-no-invented-route-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
-    async function settleWith(role: "fixer" | "coder" | "judge", phase: "apply" | null, status: string, batch: unknown, authority = "owner decision") {
+    async function settleEmptyAdvice(role: "fixer" | "coder", batch: unknown) {
       const harness = sessionHarness();
       const events: any[] = [];
       const nav = createNavigatorAttendance({
-        context: context(), role, phase, subjectKey: "/repo/.ak/work/issues/28",
+        context: context(), role, phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
         sessionDir: "/repo/.ak/work/issues/28/runs/navigator/session",
-        subject: "work", authority,
+        subject: "work", authority: "owner decision",
         loadSoul: async () => "route judgment",
         loadRoleHelp: async (r) => `help ${r}`,
         createSession: harness.factory,
@@ -1246,33 +1217,51 @@ test("post-worker defaults: completed Fixer→Judge, completed Coder→Reviewer;
       while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
       await harness.tool().execute("batch", batch as never, undefined, undefined, {} as never);
       harness.release();
-      await nav.settle({ kind: "accepted", role, phase, status });
-      return { events, prompt: harness.promptTexts()[0] ?? "" };
+      await nav.settle({ kind: "accepted", role, phase: "apply", status: "completed" });
+      return events[0];
     }
 
-    // Empty advice after completed Fixer → default Judge (not Reviewer).
-    const fixerDefault = await settleWith("fixer", "apply", "completed", { candidates: [] });
-    assert.equal(fixerDefault.events[0]?.disposition, "recommendation");
-    assert.deepEqual(fixerDefault.events[0]?.next, { role: "judge", phase: null });
-    assert.equal(fixerDefault.events[0]?.command, "ak-role judge");
-    assert.match(fixerDefault.prompt, /Fixer.*completed.*Judge|completed Fixer → Judge/i);
-    assert.match(fixerDefault.prompt, /Coder.*completed.*Reviewer|completed Coder → Reviewer/i);
+    // Empty advice after completed Fixer → honest unavailable; never invent Judge/Reviewer.
+    const fixerEmpty = await settleEmptyAdvice("fixer", { candidates: [] });
+    assert.equal(fixerEmpty?.disposition, "unavailable");
+    assert.match(String(fixerEmpty?.unavailableReason), /no machine-usable next/i);
+    assert.equal(fixerEmpty?.next, undefined);
+    assert.notEqual(fixerEmpty?.next?.role, "judge");
+    assert.notEqual(fixerEmpty?.next?.role, "reviewer");
 
-    // Empty advice after completed Coder → default Reviewer.
-    const coderDefault = await settleWith("coder", "apply", "completed", {});
-    assert.deepEqual(coderDefault.events[0]?.next, { role: "reviewer", phase: null });
-    assert.equal(coderDefault.events[0]?.command, "ak-role reviewer");
+    // Empty advice after completed Coder → honest unavailable; never invent Reviewer.
+    const coderEmpty = await settleEmptyAdvice("coder", {});
+    assert.equal(coderEmpty?.disposition, "unavailable");
+    assert.match(String(coderEmpty?.unavailableReason), /no machine-usable next/i);
+    assert.equal(coderEmpty?.next, undefined);
+    assert.notEqual(coderEmpty?.next?.role, "reviewer");
 
-    // Model/authority-explicit next overrides the post-worker default.
-    const override = await settleWith(
-      "fixer",
-      "apply",
-      "completed",
+    // Explicit model next still settles as recommendation (no host default involved).
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = createNavigatorAttendance({
+      context: context(), role: "fixer", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
+      sessionDir: "/repo/.ak/work/issues/28/runs/navigator/session",
+      subject: "work", authority: "Controlling authority names coder apply next.",
+      loadSoul: async () => "route judgment",
+      loadRoleHelp: async (r) => `help ${r}`,
+      createSession: harness.factory,
+      modelSettingPath: setting,
+      onEvent: async (event) => { events.push(event); },
+    });
+    nav.prepare();
+    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    await harness.tool().execute(
+      "explicit",
       { candidates: [{ next: { role: "coder", phase: "apply" }, reason: "authority names coder apply next" }] },
-      "Controlling authority: after this Fixer, run Coder apply — do not default to Judge.",
+      undefined,
+      undefined,
+      {} as never,
     );
-    assert.deepEqual(override.events[0]?.next, { role: "coder", phase: "apply" });
-    assert.notEqual(override.events[0]?.next?.role, "judge");
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "fixer", phase: "apply", status: "completed" });
+    assert.equal(events[0]?.disposition, "recommendation");
+    assert.deepEqual(events[0]?.next, { role: "coder", phase: "apply" });
   } catch (error) {
     await cleanupTempDir(root, error);
     throw error;
