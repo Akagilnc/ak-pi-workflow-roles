@@ -41,7 +41,7 @@ function complianceToolChoice(model, toolName) {
     switch (model.api) {
         case "anthropic-messages":
         case "bedrock-converse-stream":
-            return { type: "tool", name: toolName };
+            return undefined;
         case "mistral-conversations":
         case "openai-completions":
         case "pi-messages":
@@ -272,6 +272,7 @@ export async function runComplianceAudit(options) {
     // Silence clock starts with each attempt and resets only on real AssistantMessageEvent
     // yields from provider.stream — not on outbound payload transform or response headers.
     const onPayload = singleComplianceToolCallPayload(dispatch.model, options.tool.name);
+    const toolChoice = complianceToolChoice(dispatch.model, options.tool.name);
     const requestContext = {
         systemPrompt: options.systemPrompt,
         messages: [
@@ -325,7 +326,7 @@ export async function runComplianceAudit(options) {
                         maxTokens: 2048,
                         cacheRetention: "none",
                         sessionId: uuidv7(),
-                        toolChoice: complianceToolChoice(dispatch.model, options.tool.name),
+                        ...(toolChoice === undefined ? {} : { toolChoice }),
                         ...(onPayload === undefined ? {} : { onPayload }),
                         signal: idle.signal,
                     }).then((value) => {
