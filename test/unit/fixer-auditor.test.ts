@@ -27,7 +27,9 @@ test("Fixer auditor uses the active model, exact invocation inputs, and a non-ov
   assert.equal(parameters.type, "object");
   assert.equal(parameters.anyOf, undefined);
   assert.deepEqual(parameters.properties.status.anyOf.map((status: any) => status.const), ["pass", "revise", "escalate"]);
-  assert.equal(parameters.additionalProperties, false);
+  assert.deepEqual(parameters.required, []);
+  assert.equal(parameters.additionalProperties, true);
+  assert.equal("constrainedSampling" in decisionTool!, false);
   const userContent = seen?.messages.find((message) => message.role === "user")?.content;
   assert.ok(Array.isArray(userContent));
   const auditInput = userContent.map((part) => part.type === "text" ? part.text : "").join("");
