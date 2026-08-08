@@ -697,6 +697,14 @@ test("real persisted Judge escalation remains bound to the retained audit respon
     assert.equal(isAuditEscalationResult(terminal.message?.details), true);
     assert.deepEqual((terminal.message?.details as any).conflicts, conflicts);
     assert.deepEqual((terminal.message?.details as any).auditDecisionGate, decisionGate);
+    assert.deepEqual(
+      publicNavigatorSettlement("judge", null, {
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: terminal.message?.details,
+      }),
+      { kind: "human_decision", role: "judge", phase: null, status: "audit_escalation" },
+    );
     assert.notEqual(
       publicNavigatorSettlement("judge", null, {
         toolName: JUDGE_OUTPUT_TOOL_NAME,
