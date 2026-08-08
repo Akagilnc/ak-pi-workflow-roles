@@ -1594,32 +1594,57 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
   const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
   const {
     NAVIGATOR_INVOCATION_ENTRY,
+    buildNavigatorInfrastructureFailureFact,
     currentInvocationPrincipalFromSession,
+    isDurablePackagedRoleTerminalResult,
     resolveLifecycleInvocationPrincipal,
   } = await import("../../src/navigator-invocation-identity.ts");
   const { isUuidV7 } = await import("../../src/uuidv7.ts");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
   const { extractNavigatorFact } = await import("../../src/public-cli/settlement.ts");
   const { JUDGE_OUTPUT_TOOL_NAME } = await import("../../src/package-contracts/judge-output.ts");
+  const { PACKAGED_ROLE_REGISTRY } = await import("../../src/packaged-role-registry.ts");
+  const { publicNavigatorSettlement } = await import("../../src/role-runtime.ts");
 
   // Pure lifecycle resolver: resume vs mint boundaries (no process conflation).
   const validA = "019f8c2a-7b3e-7d11-8a4f-1c2d3e4f5a6b";
   const validB = "019f8c2a-0000-7000-8000-000000000001";
   const forged = "caller-overwrite-not-uuidv7";
-  const marker = (invocationId: string) => ({
+  const marker = (invocationId: string, role = "judge", phase: string | null = null) => ({
     type: "custom" as const,
     customType: NAVIGATOR_INVOCATION_ENTRY,
-    data: { invocationId, role: "judge", phase: null, subjectKey: "/repo/.ak/work" },
+    data: { invocationId, role, phase, subjectKey: "/repo/.ak/work" },
   });
-  const terminal = {
+  const toolResult = (
+    toolName: string,
+    opts: { isError?: boolean; details?: unknown } = {},
+  ) => ({
     type: "message" as const,
     message: {
-      role: "toolResult",
-      toolName: JUDGE_OUTPUT_TOOL_NAME,
-      isError: false,
-      details: { judgeStatus: "converged" },
+      role: "toolResult" as const,
+      toolName,
+      isError: opts.isError === true,
+      details: opts.details ?? {},
     },
-  };
+  });
+  const terminal = toolResult(JUDGE_OUTPUT_TOOL_NAME, {
+    isError: false,
+    details: { judgeStatus: "converged" },
+  });
+  const attendanceAfter = (invocationId: string, role = "judge", phase: string | null = null) => ({
+    type: "custom_message" as const,
+    customType: "ak-navigator-attendance",
+    message: {
+      details: {
+        version: 1,
+        disposition: "no-advice",
+        invocationId,
+        role,
+        phase,
+        subjectKey: "/repo/.ak/work",
+      },
+    },
+  });
 
   const fresh = resolveLifecycleInvocationPrincipal([]);
   assert.equal(fresh.resume, false);
@@ -1633,6 +1658,119 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
   assert.equal(afterTerminal.resume, false);
   assert.equal(isUuidV7(afterTerminal.invocationId), true);
   assert.notEqual(afterTerminal.invocationId, validA);
+
+  // Registry-driven durable completion matrix across all seven roles and phase variants.
+  const infraFact = buildNavigatorInfrastructureFailureFact();
+  for (const entry of PACKAGED_ROLE_REGISTRY) {
+    for (const phase of entry.phases) {
+      const acceptedDetails =
+        entry.role === "judge"
+          ? { judgeStatus: "converged" }
+          : entry.role === "fixer" || entry.role === "coder"
+            ? { status: "completed", report: "done" }
+            : { status: "completed" };
+      const acceptedMsg = {
+        toolName: entry.outputTool,
+        isError: false,
+        details: acceptedDetails,
+      };
+      const retryableMsg = {
+        toolName: entry.outputTool,
+        isError: true,
+        details: { message: "correctable schema wording" },
+      };
+      const infraMsg = {
+        toolName: entry.outputTool,
+        isError: true,
+        details: infraFact,
+      };
+      // Shared gate agrees with settlement projection for accepted / retryable / infra.
+      assert.equal(isDurablePackagedRoleTerminalResult(acceptedMsg), true, `${entry.role}:${String(phase)}:accepted`);
+      assert.equal(isDurablePackagedRoleTerminalResult(retryableMsg), false, `${entry.role}:${String(phase)}:retryable`);
+      assert.equal(isDurablePackagedRoleTerminalResult(infraMsg), true, `${entry.role}:${String(phase)}:infra`);
+      assert.notEqual(
+        publicNavigatorSettlement(entry.role, phase, acceptedMsg)?.kind,
+        undefined,
+        `${entry.role}:${String(phase)}:settlement-accepted`,
+      );
+      assert.equal(
+        publicNavigatorSettlement(entry.role, phase, retryableMsg),
+        undefined,
+        `${entry.role}:${String(phase)}:settlement-retryable`,
+      );
+      assert.deepEqual(
+        publicNavigatorSettlement(entry.role, phase, infraMsg),
+        { kind: "role_infrastructure_failure", role: entry.role, phase },
+        `${entry.role}:${String(phase)}:settlement-infra`,
+      );
+
+      const roleMarker = marker(validA, entry.role, phase);
+      // Accepted terminal completes → mint next.
+      const afterAccepted = resolveLifecycleInvocationPrincipal([
+        roleMarker,
+        toolResult(entry.outputTool, { isError: false, details: acceptedDetails }),
+      ]);
+      assert.equal(afterAccepted.resume, false, `${entry.role}:${String(phase)}:after-accepted-resume`);
+      assert.notEqual(afterAccepted.invocationId, validA, `${entry.role}:${String(phase)}:after-accepted-id`);
+
+      // Ordinary correctable isError does NOT complete → resume same principal.
+      const afterRetryable = resolveLifecycleInvocationPrincipal([
+        roleMarker,
+        toolResult(entry.outputTool, { isError: true, details: { message: "correctable schema wording" } }),
+      ]);
+      assert.equal(afterRetryable.resume, true, `${entry.role}:${String(phase)}:after-retryable-resume`);
+      assert.equal(afterRetryable.invocationId, validA, `${entry.role}:${String(phase)}:after-retryable-id`);
+
+      // Genuine infrastructure failure completes and stays readable after restart.
+      const afterInfra = resolveLifecycleInvocationPrincipal([
+        roleMarker,
+        toolResult(entry.outputTool, { isError: true, details: infraFact }),
+      ]);
+      assert.equal(afterInfra.resume, false, `${entry.role}:${String(phase)}:after-infra-resume`);
+      assert.notEqual(afterInfra.invocationId, validA, `${entry.role}:${String(phase)}:after-infra-id`);
+
+      // human_decision (isError:false escalate-shaped) completes.
+      if (entry.role === "judge") {
+        const afterHuman = resolveLifecycleInvocationPrincipal([
+          roleMarker,
+          toolResult(entry.outputTool, { isError: false, details: { judgeStatus: "escalate", report: "owner" } }),
+        ]);
+        assert.equal(afterHuman.resume, false, "judge:human-decision-completes");
+        assert.notEqual(afterHuman.invocationId, validA);
+      }
+
+      // Interrupted before terminal: resume.
+      const beforeTerminal = resolveLifecycleInvocationPrincipal([roleMarker]);
+      assert.equal(beforeTerminal.resume, true, `${entry.role}:${String(phase)}:before-terminal`);
+      assert.equal(beforeTerminal.invocationId, validA);
+
+      // Interrupted after durable terminal (before attendance): still completed.
+      const afterTerminalBeforeAttendance = resolveLifecycleInvocationPrincipal([
+        roleMarker,
+        toolResult(entry.outputTool, { isError: false, details: acceptedDetails }),
+      ]);
+      assert.equal(afterTerminalBeforeAttendance.resume, false, `${entry.role}:${String(phase)}:after-terminal-before-attendance`);
+
+      // Interrupted after terminal + attendance: still completed; next mints fresh.
+      const afterAttendance = resolveLifecycleInvocationPrincipal([
+        roleMarker,
+        toolResult(entry.outputTool, { isError: false, details: acceptedDetails }),
+        attendanceAfter(validA, entry.role, phase),
+      ]);
+      assert.equal(afterAttendance.resume, false, `${entry.role}:${String(phase)}:after-attendance`);
+      assert.notEqual(afterAttendance.invocationId, validA);
+
+      // Retryable rejection even with later attendance noise does not complete via isError alone.
+      // (attendance without durable terminal is not a completion signal for principal minting.)
+      const retryableOnly = resolveLifecycleInvocationPrincipal([
+        roleMarker,
+        toolResult(entry.outputTool, { isError: true, details: { message: "soul correction" } }),
+        attendanceAfter(validA, entry.role, phase),
+      ]);
+      assert.equal(retryableOnly.resume, true, `${entry.role}:${String(phase)}:retryable-not-papered`);
+      assert.equal(retryableOnly.invocationId, validA);
+    }
+  }
 
   // Malformed latest: no stale fallback to older valid marker.
   const malformedLatest = resolveLifecycleInvocationPrincipal([
@@ -1799,6 +1937,27 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     assert.equal(developerResolved.resume, true);
     assert.equal(developerResolved.invocationId, markerId);
 
+    // Ordinary correctable isError on the exact session does NOT complete the invocation.
+    sessionManager.appendMessage({
+      role: "toolResult",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId: "judge-retryable",
+      isError: true,
+      content: [{ type: "text", text: "correctable schema wording" }],
+      timestamp: Date.now(),
+      details: { message: "correctable schema wording" },
+    } as never);
+    const afterRetryable = resolveLifecycleInvocationPrincipal(sessionManager.getEntries());
+    assert.equal(afterRetryable.resume, true, "retryable isError keeps principal open");
+    assert.equal(afterRetryable.invocationId, markerId);
+    // Process restart after retryable rejection resumes the same principal (no fresh mint).
+    await handlers.get("session_start")?.({}, ctx);
+    const markersAfterRetryable = roleSessionEntries.filter(
+      (entry) => entry.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY,
+    );
+    assert.equal(markersAfterRetryable.length, 1, "retryable rejection must not mint a new principal");
+    assert.equal(attendanceInvocationId, markerId, "restart after retryable resumes same principal");
+
     // Drive prepare + accepted terminal settlement on the resumed principal.
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1837,6 +1996,31 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     assert.equal(isUuidV7(nextId), true);
     assert.notEqual(nextId, markerId, "next invocation in the same session gets a fresh principal");
     assert.equal(attendanceInvocationId, nextId);
+
+    // Genuine infrastructure failure completes the next principal and remains readable after restart.
+    const infraDetails = buildNavigatorInfrastructureFailureFact();
+    sessionManager.appendMessage({
+      role: "toolResult",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId: "judge-infra",
+      isError: true,
+      content: [{ type: "text", text: "host failure" }],
+      timestamp: Date.now(),
+      details: infraDetails,
+    } as never);
+    const afterInfra = resolveLifecycleInvocationPrincipal(sessionManager.getEntries());
+    assert.equal(afterInfra.resume, false, "infra failure completes the open principal");
+    assert.notEqual(afterInfra.invocationId, nextId);
+    await handlers.get("session_start")?.({}, ctx);
+    const markersAfterInfra = roleSessionEntries.filter(
+      (entry) => entry.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY,
+    );
+    assert.equal(markersAfterInfra.length, 3, "infra failure mints a fresh principal on restart");
+    const afterInfraId = (markersAfterInfra[2]?.data as { invocationId?: string } | undefined)?.invocationId;
+    assert.equal(isUuidV7(afterInfraId), true);
+    assert.notEqual(afterInfraId, nextId);
+    assert.notEqual(afterInfraId, markerId);
+    assert.equal(attendanceInvocationId, afterInfraId);
 
     // Public Terminal settlement: nearest marker before terminal binds the completed invocation.
     const subjectKey = `${home}/.ak/work`;

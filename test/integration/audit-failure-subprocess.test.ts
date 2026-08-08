@@ -587,7 +587,13 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     toolCallId: "fatal-judge",
     toolName: "ak_judge_output",
     isError: true,
-    details: {},
+    // Shared lifecycle persists the typed infra fact so exact-session restart
+    // classifies this terminal as durable completion (not a retryable isError).
+    details: {
+      kind: "role_infrastructure_failure",
+      source: "shared-role-lifecycle",
+      reasonCode: "host_failure",
+    },
   });
   assert.equal(
     evidence.role.failedOutputCorrelation,
