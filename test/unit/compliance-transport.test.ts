@@ -312,7 +312,7 @@ test("transport accepts known statuses and retains unreadable object status as r
   const acceptedArguments = [
     { status: "pass", conflicts: ["non-neutral bookkeeping"], auditCost: 3 },
     { status: "revise" },
-    { status: "escalate", decisionGate: "provider-shaped bookkeeping" },
+    { status: "escalate", conflicts: ["provider conflict"], decisionGate: "provider-shaped bookkeeping" },
   ];
   for (const [index, arguments_] of acceptedArguments.entries()) {
     await withPersistedSession(async (sessionManager) => {
@@ -320,7 +320,16 @@ test("transport accepts known statuses and retains unreadable object status as r
         response(`open-status-${index}`, [fauxToolCall(decisionToolName, arguments_)]),
         sessionManager,
       );
-      assert.equal(result.status, arguments_.status);
+      assert.equal(
+        result.status,
+        arguments_.status === "escalate" ? "audit-incomplete" : arguments_.status,
+      );
+      if (arguments_.status === "escalate" && result.status === "audit-incomplete") {
+        assert.deepEqual(result.observation, {
+          kind: "escalate-material-unreadable",
+          reason: "decisionGate-invalid",
+        });
+      }
     });
   }
   for (const [id, arguments_] of [[
@@ -342,6 +351,44 @@ test("transport accepts known statuses and retains unreadable object status as r
       }
     });
   }
+});
+
+test("escalation requires conflicts and a usable gate while null remains explicit", async () => {
+  const cases = [
+    { candidate: { status: "escalate", decisionGate: null }, reason: "conflicts-missing" as const },
+    { candidate: { status: "escalate", conflicts: ["c"] }, reason: "decisionGate-missing" as const },
+    { candidate: { status: "escalate", conflicts: ["c"], decisionGate: "not-a-gate" }, reason: "decisionGate-invalid" as const },
+  ];
+  for (const [index, row] of cases.entries()) {
+    await withPersistedSession(async (sessionManager) => {
+      const result = await audit(
+        response(`escalate-incomplete-${index}`, [fauxToolCall(decisionToolName, row.candidate)]),
+        sessionManager,
+      );
+      assert.equal(result.status, "audit-incomplete");
+      if (result.status === "audit-incomplete") {
+        assert.deepEqual(result.observation, {
+          kind: "escalate-material-unreadable",
+          reason: row.reason,
+        });
+        assert.deepEqual(result.candidate, row.candidate);
+      }
+    });
+  }
+  await withPersistedSession(async (sessionManager) => {
+    const result = await audit(
+      response("escalate-null-gate", [fauxToolCall(decisionToolName, {
+        status: "escalate",
+        conflicts: ["c"],
+        decisionGate: null,
+      })]),
+      sessionManager,
+    );
+    assert.equal(result.status, "escalate");
+    if (result.status === "escalate") {
+      assert.deepEqual(result.decisionGate, { question: "", options: [] });
+    }
+  });
 });
 
 test("successful non-object decision arguments retain a typed residual without aborting", async () => {

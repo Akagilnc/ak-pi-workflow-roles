@@ -375,7 +375,16 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
     return { kind: "role_infrastructure_failure", role, phase };
   }
   if (event.isError) return undefined;
-  if (isAuditEscalationResult(event.details)) {
+  // A role receipt may carry an arbitrary `kind`; only the audit-owned
+  // projection has the audit status and fixed gate face. Settlement remains the
+  // authoritative event binder for Terminal authenticity.
+  if (
+    isAuditEscalationResult(event.details) &&
+    Array.isArray(details.conflicts) &&
+    typeof details.auditDecisionGate === "object" &&
+    details.auditDecisionGate !== null &&
+    !Array.isArray(details.auditDecisionGate)
+  ) {
     return { kind: "human_decision", role, phase, status: "audit_escalation" };
   }
   const status = typeof details.status === "string"

@@ -134,7 +134,9 @@ export function buildAuditIncompleteTerminalOutcome(input: {
       observationKind: audit.observation.kind,
       observationType: audit.observation.kind === "non-object-arguments"
         ? audit.observation.type
-        : audit.observation.status,
+        : audit.observation.kind === "object-status-unreadable"
+          ? audit.observation.status
+          : audit.observation.reason,
       acceptedReceipt: false,
     },
   };

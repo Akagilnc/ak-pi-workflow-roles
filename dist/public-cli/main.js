@@ -13030,6 +13030,80 @@ function createComplianceDecisionTool(name, description) {
   };
 }
 var COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+function readListField(value) {
+  if (Array.isArray(value)) return value;
+  if (value === void 0) return [];
+  return [value];
+}
+function coerceDecisionGate(value) {
+  const question = typeof value.question === "string" ? value.question : "";
+  const options = readListField(value.options);
+  return { question, options };
+}
+function readComplianceCandidate(arguments_, usage) {
+  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
+    const type = arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_;
+    return {
+      status: "audit-incomplete",
+      observation: { kind: "non-object-arguments", type },
+      candidate: arguments_,
+      ...usage === void 0 ? {} : { usage }
+    };
+  }
+  const args = arguments_;
+  const status = args.status;
+  if (status === "pass") {
+    return { status: "pass", ...usage === void 0 ? {} : { usage } };
+  }
+  if (status === "revise") {
+    return {
+      status: "revise",
+      violations: readListField(args.violations),
+      ...usage === void 0 ? {} : { usage }
+    };
+  }
+  if (status === "escalate") {
+    if (!Object.hasOwn(args, "conflicts") || args.conflicts === void 0) {
+      return {
+        status: "audit-incomplete",
+        observation: { kind: "escalate-material-unreadable", reason: "conflicts-missing" },
+        candidate: arguments_,
+        ...usage === void 0 ? {} : { usage }
+      };
+    }
+    if (!Object.hasOwn(args, "decisionGate") || args.decisionGate === void 0) {
+      return {
+        status: "audit-incomplete",
+        observation: { kind: "escalate-material-unreadable", reason: "decisionGate-missing" },
+        candidate: arguments_,
+        ...usage === void 0 ? {} : { usage }
+      };
+    }
+    if (args.decisionGate !== null && (typeof args.decisionGate !== "object" || Array.isArray(args.decisionGate))) {
+      return {
+        status: "audit-incomplete",
+        observation: { kind: "escalate-material-unreadable", reason: "decisionGate-invalid" },
+        candidate: arguments_,
+        ...usage === void 0 ? {} : { usage }
+      };
+    }
+    return {
+      status: "escalate",
+      conflicts: readListField(args.conflicts),
+      decisionGate: args.decisionGate === null ? { question: "", options: [] } : coerceDecisionGate(args.decisionGate),
+      ...usage === void 0 ? {} : { usage }
+    };
+  }
+  return {
+    status: "audit-incomplete",
+    observation: {
+      kind: "object-status-unreadable",
+      status: status === void 0 ? "missing" : "unknown"
+    },
+    candidate: arguments_,
+    ...usage === void 0 ? {} : { usage }
+  };
+}
 
 // src/doctor-auditor.ts
 var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
@@ -13177,7 +13251,7 @@ function buildAuditIncompleteTerminalOutcome(input) {
       auditCandidate: audit.candidate,
       auditObservation: audit.observation,
       observationKind: audit.observation.kind,
-      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.status,
+      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.kind === "object-status-unreadable" ? audit.observation.status : audit.observation.reason,
       acceptedReceipt: false
     }
   };
@@ -13665,6 +13739,9 @@ function isComplianceAuditIncomplete(value) {
   if (observation.kind === "object-status-unreadable") {
     return observation.status === "missing" || observation.status === "unknown";
   }
+  if (observation.kind === "escalate-material-unreadable") {
+    return observation.reason === "conflicts-missing" || observation.reason === "decisionGate-missing" || observation.reason === "decisionGate-invalid";
+  }
   return observation.kind === "non-object-arguments" && [
     "null",
     "array",
@@ -13701,12 +13778,6 @@ function outputToolNameForAuditedRole(role) {
       return DOCTOR_OUTPUT_TOOL_NAME;
   }
 }
-function nonObjectComplianceArgumentType(value) {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "array";
-  const type = typeof value;
-  return type === "undefined" || type === "string" || type === "number" || type === "boolean" || type === "bigint" || type === "symbol" || type === "function" ? type : void 0;
-}
 function boundRoleToolCallForResult(entries, resultIndex, message, outputToolName) {
   const callId = message.toolCallId;
   if (typeof callId !== "string" || callId.trim() === "") return void 0;
@@ -13732,28 +13803,56 @@ function boundRoleToolCallForResult(entries, resultIndex, message, outputToolNam
   }
   return calls.length === 1 && resultCount === 1 && matchingResultIndex === resultIndex && calls[0].callIndex < resultIndex ? calls[0] : void 0;
 }
+function sameAuditValue(left, right) {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every(
+      (value, index) => sameAuditValue(value, right[index])
+    );
+  }
+  if (isRecord5(left) && isRecord5(right)) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return leftKeys.length === rightKeys.length && leftKeys.every((key) => Object.hasOwn(right, key) && sameAuditValue(left[key], right[key]));
+  }
+  return false;
+}
+function sameAuditList(left, right) {
+  return left.length === right.length && left.every(
+    (value, index) => sameAuditValue(value, right[index])
+  );
+}
+function boundAuditEscalationForResult(entries, resultIndex, message, role, outputToolName) {
+  const roleCall = boundRoleToolCallForResult(
+    entries,
+    resultIndex,
+    message,
+    outputToolName
+  );
+  if (roleCall === void 0) return void 0;
+  const retained = boundRetainedAuditResponse(
+    entries,
+    roleCall.callIndex,
+    resultIndex,
+    auditToolNameForRole(role)
+  );
+  if (retained === void 0) return void 0;
+  const decision = readComplianceCandidate(retained.candidate);
+  if (decision.status !== "escalate") return void 0;
+  const details = message.details;
+  if (!isAuditEscalationResult(details) || !isRecord5(details)) return void 0;
+  const gate = details.auditDecisionGate;
+  if (!Array.isArray(details.conflicts) || !isRecord5(gate)) return void 0;
+  if (!sameAuditList(details.conflicts, decision.conflicts)) return void 0;
+  if (gate.question !== decision.decisionGate.question || !sameAuditList(
+    Array.isArray(gate.options) ? gate.options : [],
+    decision.decisionGate.options
+  )) return void 0;
+  return { decision, details };
+}
 function auditIncompleteFromCandidate(candidate) {
-  const type = nonObjectComplianceArgumentType(candidate);
-  if (type !== void 0) {
-    return {
-      status: "audit-incomplete",
-      observation: { kind: "non-object-arguments", type },
-      candidate
-    };
-  }
-  if (!isRecord5(candidate)) return void 0;
-  const status = candidate.status;
-  if (status === "pass" || status === "revise" || status === "escalate") {
-    return void 0;
-  }
-  return {
-    status: "audit-incomplete",
-    observation: {
-      kind: "object-status-unreadable",
-      status: status === void 0 ? "missing" : "unknown"
-    },
-    candidate
-  };
+  const decision = readComplianceCandidate(candidate);
+  return decision.status === "audit-incomplete" ? decision : void 0;
 }
 function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolName) {
   const matches = [];
@@ -13943,12 +14042,19 @@ function extractJudgeRoleOutcome(entries) {
     if (message.toolName !== JUDGE_OUTPUT_TOOL_NAME) continue;
     if (message.isError === true) continue;
     const details = message.details;
-    if (isAuditEscalationResult(details)) {
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "judge",
+      JUDGE_OUTPUT_TOOL_NAME
+    );
+    if (escalation !== void 0) {
       return {
         kind: "audit_escalation",
         role: "judge",
         status: "audit_escalation",
-        decisiveFacts: { ...details }
+        decisiveFacts: { ...escalation.details }
       };
     }
     try {
@@ -14289,13 +14395,20 @@ function extractFixerRoleOutcome(entries) {
     if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
     if (message.isError === true) continue;
     const details = message.details;
-    if (isAuditEscalationResult(details)) {
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "fixer",
+      FIXER_OUTPUT_TOOL_NAME
+    );
+    if (escalation !== void 0) {
       return {
         outcome: {
           kind: "audit_escalation",
           role: "fixer",
           status: "audit_escalation",
-          decisiveFacts: { ...details }
+          decisiveFacts: { ...escalation.details }
         }
       };
     }
@@ -14507,13 +14620,20 @@ function extractDoctorRoleOutcome(entries) {
     if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
     if (message.isError === true) continue;
     const details = message.details;
-    if (isAuditEscalationResult(details)) {
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "doctor",
+      DOCTOR_OUTPUT_TOOL_NAME
+    );
+    if (escalation !== void 0) {
       return {
         outcome: {
           kind: "audit_escalation",
           role: "doctor",
           status: "audit_escalation",
-          decisiveFacts: { ...details }
+          decisiveFacts: { ...escalation.details }
         }
       };
     }
@@ -14668,6 +14788,23 @@ function extractReviewerRoleOutcome(entries) {
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
     if (message.isError === true) continue;
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "reviewer",
+      REVIEWER_OUTPUT_TOOL_NAME
+    );
+    if (escalation !== void 0) {
+      return {
+        outcome: {
+          kind: "audit_escalation",
+          role: "reviewer",
+          status: "audit_escalation",
+          decisiveFacts: { ...escalation.details }
+        }
+      };
+    }
     try {
       const receipt = validateRuntimeReviewerReceipt(message.details);
       const outcome = {
@@ -14700,7 +14837,7 @@ async function settleLawfulReviewerTerminalResult(admitted, options) {
     extracted.outcome,
     admitted.sessionDirectory,
     {
-      reviewerReceipt: extracted.receipt,
+      ...extracted.receipt === void 0 ? {} : { reviewerReceipt: extracted.receipt },
       methodProvenance: options.methodProvenance,
       methodInvocations
     }

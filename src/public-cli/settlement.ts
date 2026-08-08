@@ -15,8 +15,9 @@ import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
 import {
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
-  type ComplianceArgumentRootType,
+  readComplianceCandidate,
   type ComplianceAuditIncomplete,
+  type ComplianceDecision,
 } from "../compliance-transport.ts";
 import { loadCollectorManifest } from "../collector-config.ts";
 import {
@@ -826,6 +827,11 @@ function isComplianceAuditIncomplete(value: unknown): value is ComplianceAuditIn
   if (observation.kind === "object-status-unreadable") {
     return observation.status === "missing" || observation.status === "unknown";
   }
+  if (observation.kind === "escalate-material-unreadable") {
+    return observation.reason === "conflicts-missing" ||
+      observation.reason === "decisionGate-missing" ||
+      observation.reason === "decisionGate-invalid";
+  }
   return observation.kind === "non-object-arguments" && [
     "null",
     "array",
@@ -867,23 +873,6 @@ function outputToolNameForAuditedRole(
     case "doctor":
       return DOCTOR_OUTPUT_TOOL_NAME;
   }
-}
-
-function nonObjectComplianceArgumentType(
-  value: unknown,
-): ComplianceArgumentRootType | undefined {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "array";
-  const type = typeof value;
-  return type === "undefined" ||
-    type === "string" ||
-    type === "number" ||
-    type === "boolean" ||
-    type === "bigint" ||
-    type === "symbol" ||
-    type === "function"
-    ? type
-    : undefined;
 }
 
 type BoundRoleToolCall = {
@@ -939,30 +928,80 @@ type BoundRetainedAuditResponse = {
   candidate: unknown;
 };
 
+type BoundAuditEscalation = {
+  decision: Extract<ComplianceDecision, { status: "escalate" }>;
+  details: Record<string, unknown>;
+};
+
+function sameAuditValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((value, index) =>
+      sameAuditValue(value, right[index]),
+    );
+  }
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return leftKeys.length === rightKeys.length &&
+      leftKeys.every((key) => Object.hasOwn(right, key) && sameAuditValue(left[key], right[key]));
+  }
+  return false;
+}
+
+function sameAuditList(left: readonly unknown[], right: readonly unknown[]): boolean {
+  return left.length === right.length && left.every((value, index) =>
+    sameAuditValue(value, right[index]),
+  );
+}
+
+/**
+ * Bind the public escalation face to the one retained response that sits inside
+ * the same role output call/result interval. A `kind` field alone is never a
+ * terminal identity; the retained response must be this seat's real escalate
+ * decision and its projected audit-owned fields must agree with it.
+ */
+function boundAuditEscalationForResult(
+  entries: readonly SessionEntry[],
+  resultIndex: number,
+  message: SessionMessage,
+  role: (typeof AUDITOR_SOUL_ROLES)[number],
+  outputToolName: string,
+): BoundAuditEscalation | undefined {
+  const roleCall = boundRoleToolCallForResult(
+    entries,
+    resultIndex,
+    message,
+    outputToolName,
+  );
+  if (roleCall === undefined) return undefined;
+  const retained = boundRetainedAuditResponse(
+    entries,
+    roleCall.callIndex,
+    resultIndex,
+    auditToolNameForRole(role),
+  );
+  if (retained === undefined) return undefined;
+  const decision = readComplianceCandidate(retained.candidate);
+  if (decision.status !== "escalate") return undefined;
+  const details = message.details;
+  if (!isAuditEscalationResult(details) || !isRecord(details)) return undefined;
+  const gate = details.auditDecisionGate;
+  if (!Array.isArray(details.conflicts) || !isRecord(gate)) return undefined;
+  if (!sameAuditList(details.conflicts, decision.conflicts)) return undefined;
+  if (gate.question !== decision.decisionGate.question ||
+    !sameAuditList(
+      Array.isArray(gate.options) ? gate.options : [],
+      decision.decisionGate.options,
+    )) return undefined;
+  return { decision, details };
+}
+
 function auditIncompleteFromCandidate(
   candidate: unknown,
 ): ComplianceAuditIncomplete | undefined {
-  const type = nonObjectComplianceArgumentType(candidate);
-  if (type !== undefined) {
-    return {
-      status: "audit-incomplete",
-      observation: { kind: "non-object-arguments", type },
-      candidate,
-    };
-  }
-  if (!isRecord(candidate)) return undefined;
-  const status = candidate.status;
-  if (status === "pass" || status === "revise" || status === "escalate") {
-    return undefined;
-  }
-  return {
-    status: "audit-incomplete",
-    observation: {
-      kind: "object-status-unreadable",
-      status: status === undefined ? "missing" : "unknown",
-    },
-    candidate,
-  };
+  const decision = readComplianceCandidate(candidate);
+  return decision.status === "audit-incomplete" ? decision : undefined;
 }
 
 function boundRetainedAuditResponse(
@@ -1211,12 +1250,19 @@ export function extractJudgeRoleOutcome(
     if (message.toolName !== JUDGE_OUTPUT_TOOL_NAME) continue;
     if (message.isError === true) continue;
     const details = message.details;
-    if (isAuditEscalationResult(details)) {
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "judge",
+      JUDGE_OUTPUT_TOOL_NAME,
+    );
+    if (escalation !== undefined) {
       return {
         kind: "audit_escalation",
         role: "judge",
         status: "audit_escalation",
-        decisiveFacts: { ...details },
+        decisiveFacts: { ...escalation.details },
       };
     }
     // Ordinary details must pass the package Judge verdict validator (ADR 0043 / #107 AC4).
@@ -1748,14 +1794,21 @@ export function extractFixerRoleOutcome(
     if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
     if (message.isError === true) continue;
     const details = message.details;
-    // #107 owns generic audit presentation; hand off typed escalate without re-owning.
-    if (isAuditEscalationResult(details)) {
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "fixer",
+      FIXER_OUTPUT_TOOL_NAME,
+    );
+    // #107 owns generic audit presentation; hand off only a bound escalation.
+    if (escalation !== undefined) {
       return {
         outcome: {
           kind: "audit_escalation",
           role: "fixer",
           status: "audit_escalation",
-          decisiveFacts: { ...details },
+          decisiveFacts: { ...escalation.details },
         },
       };
     }
@@ -2061,13 +2114,20 @@ export function extractDoctorRoleOutcome(
     if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
     if (message.isError === true) continue;
     const details = message.details;
-    if (isAuditEscalationResult(details)) {
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "doctor",
+      DOCTOR_OUTPUT_TOOL_NAME,
+    );
+    if (escalation !== undefined) {
       return {
         outcome: {
           kind: "audit_escalation",
           role: "doctor",
           status: "audit_escalation",
-          decisiveFacts: { ...details },
+          decisiveFacts: { ...escalation.details },
         },
       };
     }
@@ -2292,16 +2352,23 @@ export async function publishReviewerArtifacts(
 }
 
 /** Lawful Reviewer accepted outcome extracted from session (shared success interface). */
-export type LawfulReviewerRoleOutcome = {
-  kind: "accepted";
-  role: "reviewer";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulReviewerRoleOutcome =
+  | {
+      kind: "accepted";
+      role: "reviewer";
+      status: string;
+      decisiveFacts: Readonly<Record<string, unknown>>;
+    }
+  | {
+      kind: "audit_escalation";
+      role: "reviewer";
+      status: "audit_escalation";
+      decisiveFacts: Readonly<Record<string, unknown>>;
+    };
 
 export function extractReviewerRoleOutcome(
   entries: readonly SessionEntry[],
-): { outcome: LawfulReviewerRoleOutcome; receipt: RuntimeReviewerReceiptV2 } | undefined {
+ ): { outcome: LawfulReviewerRoleOutcome; receipt?: RuntimeReviewerReceiptV2 } | undefined {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -2309,6 +2376,23 @@ export function extractReviewerRoleOutcome(
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
     if (message.isError === true) continue;
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "reviewer",
+      REVIEWER_OUTPUT_TOOL_NAME,
+    );
+    if (escalation !== undefined) {
+      return {
+        outcome: {
+          kind: "audit_escalation",
+          role: "reviewer",
+          status: "audit_escalation",
+          decisiveFacts: { ...escalation.details },
+        },
+      };
+    }
     try {
       const receipt = validateRuntimeReviewerReceipt(message.details);
       const outcome: LawfulReviewerRoleOutcome = {
@@ -2349,7 +2433,7 @@ async function settleLawfulReviewerTerminalResult(
     extracted.outcome,
     admitted.sessionDirectory,
     {
-      reviewerReceipt: extracted.receipt,
+      ...(extracted.receipt === undefined ? {} : { reviewerReceipt: extracted.receipt }),
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },

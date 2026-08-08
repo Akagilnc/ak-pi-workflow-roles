@@ -542,10 +542,12 @@ test("raceNavigatorGrace is ten seconds and yields timeout sentinel", async () =
   holdEarlyTimer();
 });
 
-test("Judge compliance pass/revise causally controls public settlement", async () => {
+test("Judge compliance table reaches public settlement through one retained session tracer", async () => {
   const variants = [
-    { name: "pass", arguments: { status: "pass" }, expected: "pass" as const },
-    { name: "revise", arguments: { status: "revise", violations: [] }, expected: "revise" as const },
+    { name: "string-array-pass", arguments: { status: "pass", violations: "[]", conflicts: "[]", decisionGate: null }, expectedDecision: "pass" as const, expectedOutcome: "accepted" as const },
+    { name: "status-only-pass", arguments: { status: "pass" }, expectedDecision: "pass" as const, expectedOutcome: "accepted" as const },
+    { name: "additional-key-pass", arguments: { status: "pass", auditCost: 3 }, expectedDecision: "pass" as const, expectedOutcome: "accepted" as const },
+    { name: "empty-violations-revise", arguments: { status: "revise", violations: [] }, expectedDecision: "revise" as const, expectedOutcome: "failure" as const },
   ];
   for (const variant of variants) {
     await withTempHome(async (home) => {
@@ -553,27 +555,45 @@ test("Judge compliance pass/revise causally controls public settlement", async (
       await mkdir(project, { recursive: true });
       seedGitProject(project);
       const verdict = { judgeStatus: "converged" as const, note: `verdict-${variant.name}` };
-      let sessionPayload: string | undefined;
       const sessionManager = SessionManager.inMemory();
       const auditor = createPiJudgeAuditor(async () => judgeAuditMessage(variant.arguments));
       const decision = await auditor(
         { soul: "judge law", transcript: "record", verdict },
         { context: auditContext(sessionManager) },
       );
-      assert.equal(decision.status, variant.expected);
-      if (variant.expected === "revise") return;
-
-      const accepted = await disposeComplianceDecision(decision, {
-        pass: () => ({
-          content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
-          details: verdict,
-          terminate: true as const,
-        }),
-        revise: () => { throw new Error("pass variant revised"); },
-        escalate: () => { throw new Error("pass variant escalated"); },
+      assert.equal(decision.status, variant.expectedDecision);
+      const retained = sessionManager.getEntries().map((entry) => JSON.parse(JSON.stringify(entry)));
+      let roleResult: string | undefined;
+      if (decision.status === "pass") {
+        const accepted = await disposeComplianceDecision(decision, {
+          pass: () => ({
+            content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
+            details: verdict,
+            terminate: true as const,
+          }),
+          revise: () => { throw new Error("pass variant revised"); },
+          escalate: () => { throw new Error("pass variant escalated"); },
+        });
+        roleResult = JSON.stringify({
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolCallId: `judge-role-${variant.name}`,
+            toolName: JUDGE_OUTPUT_TOOL_NAME,
+            isError: false,
+            details: accepted.details,
+          },
+        });
+      }
+      const roleCall = JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", id: `judge-role-${variant.name}`, name: JUDGE_OUTPUT_TOOL_NAME, arguments: verdict }],
+        },
       });
-      sessionPayload = sessionToolResultLine(JUDGE_OUTPUT_TOOL_NAME, accepted.details);
-      const { io, stdout } = captureIo();
+      const sessionPayload = [roleCall, ...retained.map((entry) => JSON.stringify(entry)), ...(roleResult === undefined ? [] : [roleResult])].join("\n") + "\n";
+      const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(
         ["judge", "--project", project, `deliver ${variant.name}`],
         {
@@ -585,14 +605,20 @@ test("Judge compliance pass/revise causally controls public settlement", async (
           piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
-            await writeFile(join(sessionDir, "session.jsonl"), sessionPayload!, "utf8");
+            await writeFile(join(sessionDir, "session.jsonl"), sessionPayload, "utf8");
             return { code: 0, stderr: "", timedOut: false, args: [...args] };
           },
         },
       );
-      assert.equal(result.exitCode, 0);
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      assert.ok(stdout.join("").includes(verdict.note));
+      assert.equal(result.exitCode, variant.expectedOutcome === "accepted" ? 0 : 1, variant.name);
+      assert.equal(result.terminal?.roleOutcome.kind, variant.expectedOutcome, variant.name);
+      if (variant.expectedOutcome === "accepted") {
+        assert.ok(stdout.join("").includes(verdict.note));
+        assert.equal(stderr.length, 0);
+      } else {
+        assert.equal(stdout.length, 1);
+        assert.equal(stderr.length, 1);
+      }
     });
   }
 });
