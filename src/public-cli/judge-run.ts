@@ -358,7 +358,11 @@ async function dispatchAdmittedJudge(input: {
     const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
     if (auditIncomplete !== undefined) {
       await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-      io.stdout(formatTerminalResult(auditIncomplete));
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
       return {
         exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
         admitted,

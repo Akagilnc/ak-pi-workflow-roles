@@ -1138,6 +1138,76 @@ test("audit-incomplete binding rejects wrong seats, collisions, and missing role
     { ...base[1], data: { response: { content: [{ type: "toolCall", name: JUDGE_AUDIT_TOOL_NAME, arguments: ["other"] }] } } },
     base[2],
   ]), undefined);
+  // A second result for the same non-empty call ID is not a second chance to settle.
+  assert.equal(extract([
+    base[0],
+    base[1],
+    base[2],
+    { ...base[2] },
+  ]), undefined);
+});
+
+test("public audit evidence collision returns a typed nonzero Terminal with residual", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "audit evidence collision"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-audit-artifact-collision-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const runDir = join(sessionDir, "..");
+          await mkdir(join(runDir, "artifacts", "audit-incomplete.json"), { recursive: true });
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            `${JSON.stringify({
+              type: "message",
+              message: {
+                role: "assistant",
+                content: [{ type: "toolCall", id: "role-1", name: JUDGE_OUTPUT_TOOL_NAME, arguments: { judgeStatus: "converged" } }],
+              },
+            })}\n${JSON.stringify({
+              type: "custom",
+              customType: "ak_compliance_response",
+              data: { response: { content: [{ type: "toolCall", name: JUDGE_AUDIT_TOOL_NAME, arguments: ["retained"] }] } },
+            })}\n${JSON.stringify({
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolCallId: "role-1",
+                toolName: JUDGE_OUTPUT_TOOL_NAME,
+                isError: false,
+                details: { status: "audit-incomplete", observation: { kind: "non-object-arguments", type: "array" }, candidate: ["ignored"] },
+              },
+            })}\n`,
+            "utf8",
+          );
+          return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
+        },
+      },
+    );
+    assert.equal(result.exitCode, 1);
+    assert.equal(stdout.length, 1);
+    assert.equal(stderr.length, 1);
+    assert.ok(result.terminal);
+    const outcome = result.terminal!.roleOutcome;
+    assert.equal(outcome.kind, "failure");
+    if (outcome.kind !== "failure") throw new Error("expected publication failure");
+    assert.equal(outcome.cause, "unrecognized");
+    assert.equal(outcome.decisiveFacts.errorCode, "EEXIST");
+    assert.equal(outcome.auditResidual?.acceptedReceipt, false);
+    assert.deepEqual(outcome.auditResidual?.roleCandidate, { judgeStatus: "converged" });
+    assert.deepEqual(outcome.auditResidual?.audit.candidate, ["retained"]);
+    assert.equal(result.terminal!.artifacts.length, 0);
+  });
 });
 
 test("empty object, bogus status, and incomplete continue are not lawful outcomes", () => {
