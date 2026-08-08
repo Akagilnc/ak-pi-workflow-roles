@@ -150,15 +150,89 @@ function readListField(value) {
         return [];
     return [value];
 }
-/** Read whatever decisionGate shape arrived; missing pieces degrade, never reject. */
+/** Read whatever object-shaped decisionGate content arrived without inventing values. */
 function coerceDecisionGate(value) {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        return { question: "", options: [] };
-    }
-    const record = value;
-    const question = typeof record.question === "string" ? record.question : "";
-    const options = readListField(record.options);
+    const question = typeof value.question === "string" ? value.question : "";
+    const options = readListField(value.options);
     return { question, options };
+}
+/**
+ * Interpret one retained compliance candidate. This is the single owner for
+ * escalation material semantics; settlement reuses it rather than making a
+ * second, weaker kind/status recognizer.
+ */
+export function readComplianceCandidate(arguments_, usage) {
+    if (typeof arguments_ !== "object" ||
+        arguments_ === null ||
+        Array.isArray(arguments_)) {
+        const type = arguments_ === null
+            ? "null"
+            : Array.isArray(arguments_)
+                ? "array"
+                : typeof arguments_;
+        return {
+            status: "audit-incomplete",
+            observation: { kind: "non-object-arguments", type },
+            candidate: arguments_,
+            ...(usage === undefined ? {} : { usage }),
+        };
+    }
+    const args = arguments_;
+    const status = args.status;
+    if (status === "pass") {
+        return { status: "pass", ...(usage === undefined ? {} : { usage }) };
+    }
+    if (status === "revise") {
+        return {
+            status: "revise",
+            violations: readListField(args.violations),
+            ...(usage === undefined ? {} : { usage }),
+        };
+    }
+    if (status === "escalate") {
+        if (!Object.hasOwn(args, "conflicts") || args.conflicts === undefined) {
+            return {
+                status: "audit-incomplete",
+                observation: { kind: "escalate-material-unreadable", reason: "conflicts-missing" },
+                candidate: arguments_,
+                ...(usage === undefined ? {} : { usage }),
+            };
+        }
+        if (!Object.hasOwn(args, "decisionGate") || args.decisionGate === undefined) {
+            return {
+                status: "audit-incomplete",
+                observation: { kind: "escalate-material-unreadable", reason: "decisionGate-missing" },
+                candidate: arguments_,
+                ...(usage === undefined ? {} : { usage }),
+            };
+        }
+        if (args.decisionGate !== null &&
+            (typeof args.decisionGate !== "object" || Array.isArray(args.decisionGate))) {
+            return {
+                status: "audit-incomplete",
+                observation: { kind: "escalate-material-unreadable", reason: "decisionGate-invalid" },
+                candidate: arguments_,
+                ...(usage === undefined ? {} : { usage }),
+            };
+        }
+        return {
+            status: "escalate",
+            conflicts: readListField(args.conflicts),
+            decisionGate: args.decisionGate === null
+                ? { question: "", options: [] }
+                : coerceDecisionGate(args.decisionGate),
+            ...(usage === undefined ? {} : { usage }),
+        };
+    }
+    return {
+        status: "audit-incomplete",
+        observation: {
+            kind: "object-status-unreadable",
+            status: status === undefined ? "missing" : "unknown",
+        },
+        candidate: arguments_,
+        ...(usage === undefined ? {} : { usage }),
+    };
 }
 /**
  * Retain the provider's structured response as extension state, not a
@@ -192,57 +266,9 @@ export function readComplianceDecision(response, toolName, invalidLabel) {
         throw malformedComplianceDecision(response, toolName, invalidLabel, "expected exactly one decision tool call", calls);
     }
     const arguments_ = call.arguments;
-    if (typeof arguments_ !== "object" ||
-        arguments_ === null ||
-        Array.isArray(arguments_)) {
-        // The response and candidate have already been retained. This is an
-        // observable audit residual, not an auditor decision and not transport
-        // failure. Preserve the root observation and candidate for #182's public
-        // settlement; do not manufacture a revise reason here.
-        const type = arguments_ === null
-            ? "null"
-            : Array.isArray(arguments_)
-                ? "array"
-                : typeof arguments_;
-        return {
-            status: "audit-incomplete",
-            observation: { kind: "non-object-arguments", type },
-            candidate: arguments_,
-            usage: response.usage,
-        };
-    }
-    // ADR 0055/0057: shape is guidance, not a reject gate. Read what arrived.
-    const args = arguments_;
-    const status = args.status;
-    if (status === "pass") {
-        return { status: "pass", usage: response.usage };
-    }
-    if (status === "revise") {
-        return {
-            status: "revise",
-            violations: readListField(args.violations),
-            usage: response.usage,
-        };
-    }
-    if (status === "escalate") {
-        return {
-            status: "escalate",
-            conflicts: readListField(args.conflicts),
-            decisionGate: coerceDecisionGate(args.decisionGate),
-            usage: response.usage,
-        };
-    }
-    // An object with no usable status is retained as an audit residual. It is not
-    // an auditor decision and must not be laundered into pass, revise, or escalate.
-    return {
-        status: "audit-incomplete",
-        observation: {
-            kind: "object-status-unreadable",
-            status: status === undefined ? "missing" : "unknown",
-        },
-        candidate: arguments_,
-        usage: response.usage,
-    };
+    // ADR 0055/0057: shape is guidance, not a reject gate. Read what arrived;
+    // unusable escalation material becomes a retained audit residual.
+    return readComplianceCandidate(arguments_, response.usage);
 }
 function throwIfStreamIdleTimedOut(reason) {
     if (isStreamIdleTimeoutError(reason))

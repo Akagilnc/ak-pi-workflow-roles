@@ -3,6 +3,7 @@
  * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
  */
 import assert from "node:assert/strict";
+import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import {
   access,
   mkdir,
@@ -44,7 +45,11 @@ import {
   exitCodeForTerminalOutcome,
   isLawfulTypedTerminalOutcome,
 } from "../../src/public-cli/terminal.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import {
+  packageRoot,
+  withActivationHome,
+  withInProcessPi,
+} from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
@@ -203,100 +208,94 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
   });
 });
 
-/** Collect --skill path values from activation argv (order-preserving). */
-function skillPathsFromArgs(args: readonly string[]): string[] {
-  const paths: string[] = [];
-  for (let i = 0; i < args.length; i += 1) {
-    if (args[i] === "--skill" && typeof args[i + 1] === "string") {
-      paths.push(args[i + 1]!);
-    }
-  }
-  return paths;
-}
-
-/** Load packaged method names reachable from mounted --skill paths. */
-async function methodNamesFromSkillPaths(
-  paths: readonly string[],
-): Promise<Set<string>> {
-  const names = new Set<string>();
-  for (const skillPath of paths) {
-    for (const name of ["diagnosing-bugs", "tdd"] as const) {
-      const expected = resolvePackagedMethodSkillPath(packageRoot, name);
-      if (skillPath === expected) {
-        const material = await loadPackagedMethodSkillMaterial(packageRoot, name);
-        names.add(material.name);
-      }
-    }
-  }
-  return names;
-}
-
-test("buildFixerActivationExtraArgs makes diagnosing-bugs and tdd available without forcing skill text", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    const apply = await admitFixerInvocation({
+test("Fixer production assembly exposes both methods to real Pi only on invocation", async () => {
+  await withActivationHome({ prefix: "ak-fixer-method-trace-" }, async ({ home, agentDir }) => {
+    const planAdmitted = await admitFixerInvocation({
       home,
-      cwd: project,
+      cwd: home,
+      phase: "plan",
+      instruction: "Plan the approved repair.",
+      attachmentPaths: [],
+      createRunId: () => "run-fixer-method-trace-plan",
+    });
+    const applyAdmitted = await admitFixerInvocation({
+      home,
+      cwd: home,
       phase: "apply",
       instruction: "Apply the approved repair.",
       attachmentPaths: [],
-      createRunId: () => "run-fixer-apply-args",
+      createRunId: () => "run-fixer-method-trace-apply",
     });
-    const applyArgs = buildFixerActivationExtraArgs(apply, { packageRoot });
-    assert.equal(applyArgs.includes("--no-skills"), true);
-    // External fact: both package methods load from the mounted skill paths.
-    const applyNames = await methodNamesFromSkillPaths(skillPathsFromArgs(applyArgs));
-    assert.equal(applyNames.has("diagnosing-bugs"), true);
-    assert.equal(applyNames.has("tdd"), true);
-    assert.equal(applyArgs.includes("--ak-fixer-phase"), true);
-    assert.equal(applyArgs[applyArgs.indexOf("--ak-fixer-phase") + 1], "apply");
-    assert.equal(applyArgs[applyArgs.indexOf("--ak-fix-packet") + 1], apply.packetPath);
-    // Methods are available but not forced into the first prompt transport.
-    const prompt = applyArgs[applyArgs.length - 1]!;
-    assert.equal(prompt.includes("/skill:diagnosing-bugs"), false);
-    assert.equal(prompt.includes("/skill:tdd"), false);
-    assert.equal(prompt.includes("Apply the approved repair."), true);
-    assert.equal(
-      applyArgs.some((a) => a.includes(".agents/skills")),
-      false,
-    );
-
-    const prereq = join(home, "prereq.json");
-    await writeFile(
-      prereq,
-      JSON.stringify([{ id: "repo.ready", requirement: "Repository is ready." }]),
-      "utf8",
-    );
-    const plan = await admitFixerInvocation({
-      home,
-      cwd: project,
-      phase: "plan",
-      instruction: "Plan only.",
-      attachmentPaths: [],
-      prerequisitesPath: prereq,
-      createRunId: () => "run-fixer-plan-args",
-    });
-    const planArgs = buildFixerActivationExtraArgs(plan, { packageRoot });
-    const planNames = await methodNamesFromSkillPaths(skillPathsFromArgs(planArgs));
-    assert.equal(planNames.has("diagnosing-bugs"), true);
-    assert.equal(planNames.has("tdd"), true);
-    assert.equal(planArgs[planArgs.indexOf("--ak-fixer-phase") + 1], "plan");
-    assert.equal(planArgs.includes("--ak-fixer-prerequisites"), true);
-    assert.equal(
-      planArgs[planArgs.indexOf("--ak-fixer-prerequisites") + 1],
-      plan.prerequisitesPath,
-    );
-
-    const resume = buildFixerResumeActivationExtraArgs(apply, { packageRoot });
-    assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
-    assert.equal(resume.includes(apply.instruction), false);
-    const resumeNames = await methodNamesFromSkillPaths(skillPathsFromArgs(resume));
-    assert.equal(resumeNames.has("diagnosing-bugs"), true);
-    assert.equal(resumeNames.has("tdd"), true);
-    assert.equal(resume[resume.indexOf("--ak-fixer-phase") + 1], "apply");
+    const rows = [
+      { name: "initial-plan", args: buildFixerActivationExtraArgs(planAdmitted, { packageRoot }), phase: "plan" as const, packetPath: planAdmitted.packetPath, first: "plan request" },
+      { name: "initial-apply", args: buildFixerActivationExtraArgs(applyAdmitted, { packageRoot }), phase: "apply" as const, packetPath: applyAdmitted.packetPath, first: "apply request" },
+      { name: "resume-apply", args: buildFixerResumeActivationExtraArgs(applyAdmitted, { packageRoot }), phase: "apply" as const, packetPath: applyAdmitted.packetPath, first: RESUME_TRANSPORT_ENVELOPE },
+    ];
+    for (const row of rows) {
+      const skillPaths: string[] = [];
+      for (let index = 0; index < row.args.length; index += 1) {
+        if (row.args[index] === "--skill") skillPaths.push(row.args[index + 1]!);
+      }
+      assert.deepEqual(
+        skillPaths.sort(),
+        [
+          resolvePackagedMethodSkillPath(packageRoot, "diagnosing-bugs"),
+          resolvePackagedMethodSkillPath(packageRoot, "tdd"),
+        ].sort(),
+        row.name,
+      );
+      const faux = fauxProvider({ api: `ak-fixer-${row.name}`, provider: `ak-fixer-${row.name}` });
+      const seenUserTurns: string[] = [];
+      faux.setResponses([
+        (context) => {
+          const message = context.messages.at(-1);
+          if (message?.role === "user") {
+            seenUserTurns.push(typeof message.content === "string" ? message.content : message.content.map((part) => part.type === "text" ? part.text : "").join(""));
+          }
+          return fauxAssistantMessage(fauxText("trace"), { stopReason: "stop" });
+        },
+        (context) => {
+          const message = context.messages.at(-1);
+          if (message?.role === "user") {
+            seenUserTurns.push(typeof message.content === "string" ? message.content : message.content.map((part) => part.type === "text" ? part.text : "").join(""));
+          }
+          return fauxAssistantMessage(fauxText("trace"), { stopReason: "stop" });
+        },
+        (context) => {
+          const message = context.messages.at(-1);
+          if (message?.role === "user") {
+            seenUserTurns.push(typeof message.content === "string" ? message.content : message.content.map((part) => part.type === "text" ? part.text : "").join(""));
+          }
+          return fauxAssistantMessage(fauxText("trace"), { stopReason: "stop" });
+        },
+      ]);
+      await withInProcessPi({
+        activationLedgerSession: true,
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        additionalExtensionPaths: [join(packageRoot, "extensions", "role-runtime.ts")],
+        additionalSkillPaths: skillPaths,
+        noSkills: false,
+        systemPrompt: "FIXER METHOD TRACE",
+        mode: "print",
+        flags: {
+          "ak-role": "fixer",
+          "ak-fixer-phase": row.phase,
+          "ak-fix-packet": row.packetPath,
+        },
+      }, async ({ session }) => {
+        await session.prompt(row.first);
+        await session.prompt("/skill:diagnosing-bugs inspect the root cause");
+        await session.prompt("/skill:tdd verify the repair");
+      });
+      assert.equal(seenUserTurns.length, 3, row.name);
+      assert.equal(seenUserTurns[0]!.includes("<skill name=\"diagnosing-bugs\""), false, row.name);
+      assert.equal(seenUserTurns[0]!.includes("<skill name=\"tdd\""), false, row.name);
+      assert.equal(seenUserTurns[1]!.includes("<skill name=\"diagnosing-bugs\""), true, row.name);
+      assert.equal(seenUserTurns[2]!.includes("<skill name=\"tdd\""), true, row.name);
+    }
   });
 });
 
@@ -553,20 +552,9 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       assert.equal(result.exitCode, 0, stdout.join("") || "fixer plan failed");
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-fixer-phase") + 1], "plan");
-      const planMounted = await methodNamesFromSkillPaths(
-        skillPathsFromArgs(captured!),
-      );
-      assert.equal(planMounted.has("diagnosing-bugs"), true);
-      assert.equal(planMounted.has("tdd"), true);
-      // Not forced: first prompt must not auto-inject skill invocation.
-      assert.equal(
-        captured![captured!.length - 1]?.includes("/skill:diagnosing-bugs"),
-        false,
-      );
-      assert.equal(
-        captured![captured!.length - 1]?.includes("/skill:tdd"),
-        false,
-      );
+      // Real Pi loader/invocation coverage is table-driven above; this CLI
+      // row only keeps the public plan phase and settlement regression.
+
       assert.equal(result.terminal?.roleOutcome.role, "fixer");
       assert.equal(
         result.terminal?.roleOutcome.kind === "accepted"
@@ -611,11 +599,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       );
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-fixer-phase") + 1], "apply");
-      const applyMounted = await methodNamesFromSkillPaths(
-        skillPathsFromArgs(captured!),
-      );
-      assert.equal(applyMounted.has("diagnosing-bugs"), true);
-      assert.equal(applyMounted.has("tdd"), true);
+      // Real Pi loader/invocation coverage is table-driven above.
     }
   });
 });
@@ -1021,14 +1005,9 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         },
       },
     ]);
-    assert.ok(escalationExtracted);
-    assert.equal(escalationExtracted.outcome.kind, "audit_escalation");
-    assert.equal(escalationExtracted.outcome.status, "audit_escalation");
-    assert.equal(
-      escalationExtracted.outcome.decisiveFacts.kind,
-      AUDIT_ESCALATION_KIND,
-    );
-    assert.equal(escalationExtracted.output, undefined);
+    // A role-authored kind is not an audit identity without the retained,
+    // seat-bound compliance response.
+    assert.equal(escalationExtracted, undefined);
 
     // settle + runAkRole production path for each lawful status → exit 0.
     const cases: Array<{
@@ -1066,15 +1045,6 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         status: "partially_completed",
         factKey: "fixerStatus",
         factValue: "partially_completed",
-      },
-      {
-        runId: "run-fixer-status-escalate",
-        phase: "apply",
-        details: escalation,
-        kind: "audit_escalation",
-        status: "audit_escalation",
-        factKey: "kind",
-        factValue: AUDIT_ESCALATION_KIND,
       },
     ];
 

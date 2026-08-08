@@ -27,6 +27,9 @@ import { FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   ExplicitInternalActivationError,
@@ -37,7 +40,10 @@ import {
   CONCISE_DIAGNOSTIC_MAX_CHARS,
   exitCodeForTerminalOutcome,
   extractComplianceAuditIncompleteRoleOutcome,
+  extractDoctorRoleOutcome,
+  extractFixerRoleOutcome,
   extractJudgeRoleOutcome,
+  extractReviewerRoleOutcome,
   extractSessionProviderStop,
   formatFailureStderrDiagnostic,
   isChildDiagnosticFloodLine,
@@ -658,13 +664,20 @@ test("audit_escalation is a lawful typed terminal result exiting zero without be
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
 
-    const escalation = {
-      kind: AUDIT_ESCALATION_KIND,
+    const auditCandidate = {
+      status: "escalate",
       conflicts: ["soul procedure conflict"],
       decisionGate: {
         question: "Which authority controls this gate?",
         options: ["owner", "caller"],
       },
+    };
+    const escalation = {
+      judgeStatus: "escalate",
+      decisionGate: { question: "role gate", options: ["role"] },
+      kind: AUDIT_ESCALATION_KIND,
+      conflicts: auditCandidate.conflicts,
+      auditDecisionGate: auditCandidate.decisionGate,
     };
 
     const result = await runAkRole(
@@ -680,15 +693,45 @@ test("audit_escalation is a lawful typed terminal result exiting zero without be
           await mkdir(sessionDir, { recursive: true });
           await writeFile(
             join(sessionDir, "session.jsonl"),
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolName: JUDGE_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: escalation,
+            `${[
+              {
+                type: "message",
+                message: {
+                  role: "assistant",
+                  content: [{
+                    type: "toolCall",
+                    id: "judge-role-call",
+                    name: JUDGE_OUTPUT_TOOL_NAME,
+                    arguments: { judgeStatus: "escalate" },
+                  }],
+                },
               },
-            })}\n`,
+              {
+                type: "custom",
+                customType: "ak_compliance_response",
+                data: {
+                  version: 1,
+                  response: {
+                    content: [{
+                      type: "toolCall",
+                      id: "judge-audit-call",
+                      name: JUDGE_AUDIT_TOOL_NAME,
+                      arguments: auditCandidate,
+                    }],
+                  },
+                },
+              },
+              {
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "judge-role-call",
+                  toolName: JUDGE_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: escalation,
+                },
+              },
+            ].map((entry) => JSON.stringify(entry)).join("\n")}\n`,
             "utf8",
           );
           return {
@@ -1101,6 +1144,93 @@ test("shared audit-incomplete extraction binds every audited seat and rejects am
       ], role),
       undefined,
     );
+  }
+});
+
+test("audit escalation requires the retained seat-bound response across all four seats", () => {
+  const seats = {
+    judge: { output: JUDGE_OUTPUT_TOOL_NAME, audit: JUDGE_AUDIT_TOOL_NAME },
+    fixer: { output: FIXER_OUTPUT_TOOL_NAME, audit: FIXER_AUDIT_TOOL_NAME },
+    reviewer: { output: REVIEWER_OUTPUT_TOOL_NAME, audit: REVIEWER_AUDIT_TOOL_NAME },
+    doctor: { output: DOCTOR_OUTPUT_TOOL_NAME, audit: DOCTOR_AUDIT_TOOL_NAME },
+  } as const;
+  const auditCandidate = {
+    status: "escalate",
+    conflicts: ["authority conflict"],
+    decisionGate: { question: "Who decides?", options: ["owner", "caller"] },
+  };
+  const extract = (role: (typeof AUDITOR_SOUL_ROLES)[number], entries: readonly unknown[]) => {
+    switch (role) {
+      case "judge": return extractJudgeRoleOutcome(entries as never);
+      case "fixer": return extractFixerRoleOutcome(entries as never);
+      case "reviewer": return extractReviewerRoleOutcome(entries as never);
+      case "doctor": return extractDoctorRoleOutcome(entries as never);
+    }
+  };
+  const outcomeKind = (value: unknown): unknown => {
+    if (!value || typeof value !== "object") return undefined;
+    return "outcome" in value
+      ? (value as { outcome?: { kind?: unknown } }).outcome?.kind
+      : (value as { kind?: unknown }).kind;
+  };
+  for (const role of AUDITOR_SOUL_ROLES) {
+    const seat = seats[role];
+    const roleCallId = `${role}-role-call`;
+    const roleCall = {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: roleCallId, name: seat.output, arguments: { role } }],
+      },
+    };
+    const retained = {
+      type: "custom",
+      customType: "ak_compliance_response",
+      data: {
+        version: 1,
+        response: { content: [{ type: "toolCall", name: seat.audit, arguments: auditCandidate }] },
+      },
+    };
+    const details = {
+      kind: AUDIT_ESCALATION_KIND,
+      conflicts: auditCandidate.conflicts,
+      auditDecisionGate: auditCandidate.decisionGate,
+      role,
+    };
+    const result = {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: roleCallId,
+        toolName: seat.output,
+        isError: false,
+        details,
+      },
+    };
+    const entries = [roleCall, retained, result];
+    const extracted = extract(role, entries);
+    assert.equal(outcomeKind(extracted), "audit_escalation", role);
+
+    // A copied kind is not enough: no retained evidence, pass evidence, wrong
+    // seat, missing role id, collision, and out-of-interval evidence all fail closed.
+    assert.equal(outcomeKind(extract(role, [result])), undefined, `${role}: smuggle`);
+    assert.equal(
+      outcomeKind(extract(role, [roleCall, { ...retained, data: { response: { content: [{ type: "toolCall", name: seat.audit, arguments: { status: "pass" } }] } } }, result])),
+      undefined,
+      `${role}: pass evidence`,
+    );
+    assert.equal(
+      outcomeKind(extract(role, [roleCall, { ...retained, data: { response: { content: [{ type: "toolCall", name: "wrong-seat-audit", arguments: auditCandidate }] } } }, result])),
+      undefined,
+      `${role}: wrong seat`,
+    );
+    assert.equal(
+      outcomeKind(extract(role, [{ ...roleCall, message: { ...roleCall.message, content: [{ ...roleCall.message.content[0], id: undefined }] } }, retained, result])),
+      undefined,
+      `${role}: missing id`,
+    );
+    assert.equal(outcomeKind(extract(role, [roleCall, retained, result, result])), undefined, `${role}: duplicate result`);
+    assert.equal(outcomeKind(extract(role, [retained, roleCall, result])), undefined, `${role}: outside interval`);
   }
 });
 
