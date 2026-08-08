@@ -231,6 +231,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
               try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
               return result;
             },
+            auditIncomplete: (result) => result,
           });
         } });
       pi.on("tool_execution_start", (event) => {
