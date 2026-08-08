@@ -52,6 +52,15 @@ import {
   defaultExplicitInternalPiRunner,
   runExplicitInternalActivation,
 } from "../../src/public-cli/explicit-internal.ts";
+import {
+  admitCoderInvocation,
+  admitCollectorInvocation,
+  admitDoctorInvocation,
+  admitFixerInvocation,
+  admitJudgeInvocation,
+  admitMergerInvocation,
+  admitReviewerInvocation,
+} from "../../src/public-cli/invocation.ts";
 import { formatTerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
@@ -187,6 +196,94 @@ test("S1: judge escalate public CLI prints every decisionGate option text in ord
       false,
       "face built without the second option must fail the option-presence check",
     );
+  });
+});
+
+test("shared public admissions write one identity-bound invocation ledger for every role", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const admissions = [
+      await admitJudgeInvocation({
+        home,
+        cwd: project,
+        instruction: "judge task",
+        attachmentPaths: [],
+        createRunId: () => "ledger-judge-001",
+      }),
+      await admitCoderInvocation({
+        home,
+        cwd: project,
+        phase: "apply",
+        instruction: "coder task",
+        attachmentPaths: [],
+        createRunId: () => "ledger-coder-001",
+      }),
+      await admitFixerInvocation({
+        home,
+        cwd: project,
+        phase: "apply",
+        instruction: "fixer task",
+        attachmentPaths: [],
+        createRunId: () => "ledger-fixer-001",
+      }),
+      await admitReviewerInvocation({
+        home,
+        cwd: project,
+        instruction: "reviewer task",
+        attachmentPaths: [],
+        createRunId: () => "ledger-reviewer-001",
+      }),
+      await admitCollectorInvocation({
+        home,
+        cwd: project,
+        prNumber: 177,
+        repo: "acme/widgets",
+        legs: [{ id: "primary", expectedAuthors: ["bot"] }],
+        createRunId: () => "ledger-collector-001",
+      }),
+      await admitDoctorInvocation({
+        home,
+        cwd: project,
+        issueNumber: 177,
+        createRunId: () => "ledger-doctor-001",
+      }),
+      await admitMergerInvocation({
+        home,
+        cwd: project,
+        instruction: "merger task",
+        attachmentPaths: [],
+        createRunId: () => "ledger-merger-001",
+        gitState: {
+          activeMerge: async () => ({
+            targetObjectId: "a".repeat(40),
+            sourceObjectId: "b".repeat(40),
+            unmergedPaths: ["src/conflict.ts"],
+            automaticMergeTreeId: "c".repeat(40),
+          }),
+          completedMerge: async () => {
+            throw new Error("not used by admission tracer");
+          },
+        },
+      }),
+    ];
+
+    for (const admitted of admissions) {
+      const ledger = JSON.parse(
+        await readFile(join(admitted.runDirectory, "invocation.json"), "utf8"),
+      ) as Record<string, unknown>;
+      assert.deepEqual(ledger, {
+        role: admitted.role,
+        runId: admitted.runId,
+        bookKey: admitted.bookKey,
+        projectRoot: admitted.projectRoot,
+        runDirectory: admitted.runDirectory,
+        sessionDirectory: admitted.sessionDirectory,
+        sessionFile: admitted.sessionFile,
+      });
+    }
   });
 });
 
