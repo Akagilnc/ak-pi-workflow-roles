@@ -138,7 +138,21 @@ test(
       assert.equal(rows.some(
         (row) => row.type === "message" && row.message?.toolName === "ak_judge_output" && row.message?.isError === false && row.message?.details?.judgeStatus === "converged",
       ), false);
-      assert.equal(result.terminal!.artifacts.length, 0);
+      const evidenceRef = result.terminal!.artifacts.find(
+        (artifact) => artifact.kind === "evidence",
+      );
+      assert.ok(evidenceRef);
+      const evidence = JSON.parse(await readFile(evidenceRef.path, "utf8")) as any;
+      assert.deepEqual(evidence.roleCandidate, outcome.roleCandidate);
+      assert.deepEqual(evidence.audit.candidate, outcome.audit.candidate);
+      assert.deepEqual(evidence.audit.observation, outcome.audit.observation);
+      // Public stdout exposes typed decisive facts without depending on presentation labels.
+      const publicOutput = stdout.join("");
+      assert.ok(publicOutput.includes("roleCandidate"));
+      assert.ok(publicOutput.includes("auditCandidate"));
+      assert.ok(publicOutput.includes("malformed auditor candidate"));
+      assert.ok(publicOutput.includes("auditObservation"));
+      assert.ok(publicOutput.includes("array"));
     } finally {
       await rm(home, { recursive: true, force: true });
     }

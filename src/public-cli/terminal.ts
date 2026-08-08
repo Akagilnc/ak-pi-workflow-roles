@@ -119,6 +119,9 @@ export function buildAuditIncompleteTerminalOutcome(input: {
     acceptedReceipt: false,
     decisiveFacts: {
       decision: "no-usable-decision",
+      roleCandidate: input.roleCandidate,
+      auditCandidate: input.audit.candidate,
+      auditObservation: input.audit.observation,
       observationKind: input.audit.observation.kind,
       observationType: input.audit.observation.type,
       acceptedReceipt: false,

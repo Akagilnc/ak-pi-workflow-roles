@@ -9,8 +9,13 @@ import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
+import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
+import { FIXER_AUDIT_TOOL_NAME } from "../fixer-auditor.ts";
+import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
+import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
 import {
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
+  type ComplianceArgumentRootType,
   type ComplianceAuditIncomplete,
 } from "../compliance-transport.ts";
 import { loadCollectorManifest } from "../collector-config.ts";
@@ -812,22 +817,67 @@ function isComplianceAuditIncomplete(value: unknown): value is ComplianceAuditIn
     .includes(observation.type as string);
 }
 
-function sameRetainedCandidate(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
-  try {
-    return JSON.stringify(left) === JSON.stringify(right);
-  } catch {
-    return false;
+function auditToolNameForRole(
+  role: (typeof AUDITOR_SOUL_ROLES)[number],
+): string {
+  switch (role) {
+    case "judge":
+      return JUDGE_AUDIT_TOOL_NAME;
+    case "fixer":
+      return FIXER_AUDIT_TOOL_NAME;
+    case "reviewer":
+      return REVIEWER_AUDIT_TOOL_NAME;
+    case "doctor":
+      return DOCTOR_AUDIT_TOOL_NAME;
   }
 }
 
-function roleCandidateForToolResult(
+function outputToolNameForAuditedRole(
+  role: (typeof AUDITOR_SOUL_ROLES)[number],
+): string {
+  switch (role) {
+    case "judge":
+      return JUDGE_OUTPUT_TOOL_NAME;
+    case "fixer":
+      return FIXER_OUTPUT_TOOL_NAME;
+    case "reviewer":
+      return REVIEWER_OUTPUT_TOOL_NAME;
+    case "doctor":
+      return DOCTOR_OUTPUT_TOOL_NAME;
+  }
+}
+
+function nonObjectComplianceArgumentType(
+  value: unknown,
+): ComplianceArgumentRootType | undefined {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  const type = typeof value;
+  return type === "undefined" ||
+    type === "string" ||
+    type === "number" ||
+    type === "boolean" ||
+    type === "bigint" ||
+    type === "symbol" ||
+    type === "function"
+    ? type
+    : undefined;
+}
+
+type BoundRoleToolCall = {
+  callIndex: number;
+  candidate: unknown;
+};
+
+function boundRoleToolCallForResult(
   entries: readonly SessionEntry[],
   resultIndex: number,
   message: SessionMessage,
   outputToolName: string,
-): { found: true; candidate: unknown } | { found: false } {
+): BoundRoleToolCall | undefined {
   const callId = message.toolCallId;
+  if (typeof callId !== "string" || callId.trim() === "") return undefined;
+  const matches: BoundRoleToolCall[] = [];
   for (let index = resultIndex - 1; index >= 0; index -= 1) {
     const candidateMessage = entries[index]?.message;
     if (candidateMessage?.role !== "assistant" || !Array.isArray(candidateMessage.content)) {
@@ -838,24 +888,34 @@ function roleCandidateForToolResult(
         !isRecord(part) ||
         part.type !== "toolCall" ||
         part.name !== outputToolName ||
-        (callId !== undefined && part.id !== callId)
+        part.id !== callId
       ) {
         continue;
       }
-      return { found: true, candidate: part.arguments };
+      matches.push({ callIndex: index, candidate: part.arguments });
     }
   }
-  return { found: false };
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
-function retainedComplianceCandidate(
+type BoundRetainedAuditResponse = {
+  candidate: unknown;
+};
+
+function boundRetainedAuditResponse(
   entries: readonly SessionEntry[],
-  auditCandidate: unknown,
-): boolean {
-  for (const entry of entries) {
-    if (entry.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
+  callIndex: number,
+  resultIndex: number,
+  auditToolName: string,
+): BoundRetainedAuditResponse | undefined {
+  const matches: BoundRetainedAuditResponse[] = [];
+  let retainedResponseCount = 0;
+  for (let index = callIndex + 1; index < resultIndex; index += 1) {
+    const entry = entries[index];
+    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
       continue;
     }
+    retainedResponseCount += 1;
     if (!isRecord(entry.data) || !isRecord(entry.data.response)) continue;
     const response = entry.data.response;
     if (!Array.isArray(response.content)) continue;
@@ -863,11 +923,10 @@ function retainedComplianceCandidate(
       (part): part is Record<string, unknown> =>
         isRecord(part) && part.type === "toolCall",
     );
-    if (calls.length === 1 && sameRetainedCandidate(calls[0]?.arguments, auditCandidate)) {
-      return true;
-    }
+    if (calls.length !== 1 || calls[0]?.name !== auditToolName) continue;
+    matches.push({ candidate: calls[0]?.arguments });
   }
-  return false;
+  return retainedResponseCount === 1 && matches.length === 1 ? matches[0] : undefined;
 }
 
 export function extractComplianceAuditIncompleteRoleOutcome(
@@ -875,6 +934,8 @@ export function extractComplianceAuditIncompleteRoleOutcome(
   role: (typeof AUDITOR_SOUL_ROLES)[number],
   outputToolName: string,
 ): { outcome: ReturnType<typeof buildAuditIncompleteTerminalOutcome> } | undefined {
+  if (outputToolName !== outputToolNameForAuditedRole(role)) return undefined;
+  const auditToolName = auditToolNameForRole(role);
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const message = entries[index]?.message;
     if (
@@ -886,19 +947,32 @@ export function extractComplianceAuditIncompleteRoleOutcome(
     ) {
       continue;
     }
-    if (!retainedComplianceCandidate(entries, message.details.candidate)) continue;
-    const roleCandidate = roleCandidateForToolResult(
+    const roleCall = boundRoleToolCallForResult(
       entries,
       index,
       message,
       outputToolName,
     );
-    if (!roleCandidate.found) continue;
+    if (roleCall === undefined) continue;
+    const retained = boundRetainedAuditResponse(
+      entries,
+      roleCall.callIndex,
+      index,
+      auditToolName,
+    );
+    if (retained === undefined) continue;
+    const observationType = nonObjectComplianceArgumentType(retained.candidate);
+    if (observationType === undefined) continue;
+    const audit: ComplianceAuditIncomplete = {
+      status: "audit-incomplete",
+      observation: { kind: "non-object-arguments", type: observationType },
+      candidate: retained.candidate,
+    };
     return {
       outcome: buildAuditIncompleteTerminalOutcome({
         role,
-        roleCandidate: roleCandidate.candidate,
-        audit: message.details,
+        roleCandidate: roleCall.candidate,
+        audit,
       }),
     };
   }
@@ -932,10 +1006,17 @@ export async function trySettleComplianceAuditIncompleteTerminalResult(
     outputToolName,
   );
   if (extracted === undefined) return undefined;
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const evidencePath = join(artifactsDir, "audit-incomplete.json");
+  await writeFile(
+    evidencePath,
+    `${JSON.stringify(extracted.outcome, null, 2)}\n`,
+    "utf8",
+  );
   return {
     roleOutcome: extracted.outcome,
     navigator: extractNavigatorFact(entries),
-    artifacts: [],
+    artifacts: [{ kind: "evidence", path: evidencePath }],
     runId: admitted.runId,
   };
 }
