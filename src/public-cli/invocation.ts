@@ -178,23 +178,31 @@ export type AdmittedRoleInvocation =
   | AdmittedReviewerInvocation
   | AdmittedMergerInvocation;
 
-type RoleInvocationLedgerIdentity = Pick<
+type RoleInvocationLedgerSource = Pick<
   AdmittedRoleInvocationBase,
   "runId" | "bookKey" | "projectRoot" | "runDirectory" | "sessionDirectory" | "sessionFile"
-> & {
-  readonly role: AdmittedRoleInvocation["role"];
-};
+>;
 
 /**
  * Persist one `invocation.json` identity page for the public run.
- * Admission is the sole source for every field; callers never provide an
- * independent invocation identity or a second ledger shape.
+ * Admission is the sole source for every field; this is the only identity
+ * projection and callers never provide an independent ledger shape.
  */
 async function writeRoleInvocationLedger(
-  identity: RoleInvocationLedgerIdentity,
+  source: RoleInvocationLedgerSource,
+  role: AdmittedRoleInvocation["role"],
 ): Promise<void> {
+  const identity = {
+    role,
+    runId: source.runId,
+    bookKey: source.bookKey,
+    projectRoot: source.projectRoot,
+    runDirectory: source.runDirectory,
+    sessionDirectory: source.sessionDirectory,
+    sessionFile: source.sessionFile,
+  };
   await writeFile(
-    join(identity.runDirectory, "invocation.json"),
+    join(source.runDirectory, "invocation.json"),
     `${JSON.stringify(identity, null, 2)}\n`,
     "utf8",
   );
@@ -548,6 +556,9 @@ export async function admitJudgeInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -560,15 +571,7 @@ export async function admitJudgeInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger({
-    role: admitted.role,
-    runId: admitted.runId,
-    bookKey: admitted.bookKey,
-    projectRoot: admitted.projectRoot,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-  });
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "judge",
@@ -709,6 +712,9 @@ export async function admitCoderInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -722,15 +728,7 @@ export async function admitCoderInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger({
-    role: admitted.role,
-    runId: admitted.runId,
-    bookKey: admitted.bookKey,
-    projectRoot: admitted.projectRoot,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-  });
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "coder",
@@ -867,6 +865,9 @@ export async function admitFixerInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     packetPath,
@@ -885,15 +886,7 @@ export async function admitFixerInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger({
-    role: admitted.role,
-    runId: admitted.runId,
-    bookKey: admitted.bookKey,
-    projectRoot: admitted.projectRoot,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-  });
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "fixer",
@@ -1267,6 +1260,9 @@ export async function admitCollectorInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty,
     prNumber,
@@ -1288,15 +1284,7 @@ export async function admitCollectorInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger({
-    role: admitted.role,
-    runId: admitted.runId,
-    bookKey: admitted.bookKey,
-    projectRoot: admitted.projectRoot,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-  });
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "collector",
@@ -1618,6 +1606,9 @@ export async function admitDoctorInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty,
     issueNumber: options.issueNumber,
@@ -1637,15 +1628,7 @@ export async function admitDoctorInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger({
-    role: admitted.role,
-    runId: admitted.runId,
-    bookKey: admitted.bookKey,
-    projectRoot: admitted.projectRoot,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-  });
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "doctor",
@@ -1865,6 +1848,9 @@ export async function admitReviewerInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -1887,15 +1873,7 @@ export async function admitReviewerInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger({
-    role: admitted.role,
-    runId: admitted.runId,
-    bookKey: admitted.bookKey,
-    projectRoot: admitted.projectRoot,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-  });
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "reviewer",
@@ -2151,6 +2129,9 @@ export async function admitMergerInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     mergerInputPath,
@@ -2175,15 +2156,7 @@ export async function admitMergerInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger({
-    role: admitted.role,
-    runId: admitted.runId,
-    bookKey: admitted.bookKey,
-    projectRoot: admitted.projectRoot,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-  });
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "merger",
