@@ -96,7 +96,8 @@ process.on("SIGTERM", () => {
   });
 });
 
-test("explicit short budget sends only SIGTERM after readiness and preserves prior session output", async () => {
+test("explicit short budget sends only SIGTERM after readiness and preserves prior session output", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   await withTempHome(async (home) => {
     const signalFile = join(home, "signal");
     const ready = join(home, "ready");
@@ -136,6 +137,7 @@ process.on("SIGINT", () => {
       env: { PI_BINARY: stub },
     });
     await waitForFile(ready, resultPromise);
+    t.mock.timers.tick(750);
     const result = await resultPromise;
 
     assert.equal(result.timedOut, true);
