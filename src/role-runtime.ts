@@ -38,7 +38,7 @@ import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVEN
 import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
-import { isAuditEscalationResult } from "./audit-escalation.ts";
+import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
   type JudgeAdjudicativeVerdict,
@@ -379,7 +379,7 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   // projection has the audit status and fixed gate face. Settlement remains the
   // authoritative event binder for Terminal authenticity.
   if (
-    isAuditEscalationResult(event.details) &&
+    isAuditEscalationProjection(event.details) &&
     Array.isArray(details.conflicts) &&
     typeof details.auditDecisionGate === "object" &&
     details.auditDecisionGate !== null &&

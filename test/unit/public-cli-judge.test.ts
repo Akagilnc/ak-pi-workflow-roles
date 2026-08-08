@@ -8,6 +8,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   access,
+  copyFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -20,12 +21,8 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
-import { disposeComplianceDecision } from "../../src/audit-escalation.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import {
-  JUDGE_ACCEPTED_TEXT,
-  JUDGE_OUTPUT_TOOL_NAME,
-} from "../../src/package-contracts/judge-output.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { renderPublicAkRoleCommand } from "../../src/public-cli/command-renderer.ts";
@@ -46,8 +43,14 @@ import {
   recommendationNavigatorFact,
   type TerminalResult,
 } from "../../src/public-cli/terminal.ts";
-import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import {
+  packageRoot,
+  persistActivationSessionFile,
+  withActivationHome,
+  withInProcessPi,
+} from "../helpers/pi-test-harness.ts";
+import { resolveInternalRoleEntrypoint } from "../../src/public-cli/explicit-internal.ts";
 
 function sessionToolResultLine(toolName: string, details: unknown): string {
   return `${JSON.stringify({
@@ -59,32 +62,6 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
       details,
     },
   })}\n`;
-}
-
-function auditContext(sessionManager: SessionManager) {
-  return {
-    model: {
-      api: "openai-responses",
-      provider: "audit-test",
-      id: "audit-model",
-    },
-    modelRegistry: {
-      async getProviderAuth() {
-        return { auth: { apiKey: "test-secret" } };
-      },
-      async getApiKeyAndHeaders() {
-        return { ok: true as const, apiKey: "test-secret" };
-      },
-    },
-    sessionManager,
-  } as never;
-}
-
-function judgeAuditMessage(arguments_: Record<string, unknown>) {
-  return fauxAssistantMessage(
-    [fauxToolCall(JUDGE_AUDIT_TOOL_NAME, arguments_)],
-    { stopReason: "toolUse" },
-  );
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -542,83 +519,85 @@ test("raceNavigatorGrace is ten seconds and yields timeout sentinel", async () =
   holdEarlyTimer();
 });
 
-test("Judge compliance table reaches public settlement through one retained session tracer", async () => {
+test("Judge compliance table uses the real role, audit, SessionManager, and public settlement", async () => {
   const variants = [
-    { name: "string-array-pass", arguments: { status: "pass", violations: "[]", conflicts: "[]", decisionGate: null }, expectedDecision: "pass" as const, expectedOutcome: "accepted" as const },
-    { name: "status-only-pass", arguments: { status: "pass" }, expectedDecision: "pass" as const, expectedOutcome: "accepted" as const },
-    { name: "additional-key-pass", arguments: { status: "pass", auditCost: 3 }, expectedDecision: "pass" as const, expectedOutcome: "accepted" as const },
-    { name: "empty-violations-revise", arguments: { status: "revise", violations: [] }, expectedDecision: "revise" as const, expectedOutcome: "failure" as const },
+    { name: "string-array-pass", arguments: { status: "pass", violations: "[]", conflicts: "[]", decisionGate: null }, expectedOutcome: "accepted" as const },
+    { name: "status-only-pass", arguments: { status: "pass" }, expectedOutcome: "accepted" as const },
+    { name: "additional-key-pass", arguments: { status: "pass", auditCost: 3 }, expectedOutcome: "accepted" as const },
+    { name: "empty-violations-revise", arguments: { status: "revise", violations: [] }, expectedOutcome: "failure" as const },
   ];
   for (const variant of variants) {
-    await withTempHome(async (home) => {
+    await withActivationHome({ prefix: `ak-judge-s4-${variant.name}-` }, async ({ home, agentDir }) => {
       const project = join(home, "proj");
       await mkdir(project, { recursive: true });
       seedGitProject(project);
-      const verdict = { judgeStatus: "converged" as const, note: `verdict-${variant.name}` };
-      const sessionManager = SessionManager.inMemory();
-      const auditor = createPiJudgeAuditor(async () => judgeAuditMessage(variant.arguments));
-      const decision = await auditor(
-        { soul: "judge law", transcript: "record", verdict },
-        { context: auditContext(sessionManager) },
-      );
-      assert.equal(decision.status, variant.expectedDecision);
-      const retained = sessionManager.getEntries().map((entry) => JSON.parse(JSON.stringify(entry)));
-      let roleResult: string | undefined;
-      if (decision.status === "pass") {
-        const accepted = await disposeComplianceDecision(decision, {
-          pass: () => ({
-            content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
-            details: verdict,
-            terminate: true as const,
-          }),
-          revise: () => { throw new Error("pass variant revised"); },
-          escalate: () => { throw new Error("pass variant escalated"); },
-        });
-        roleResult = JSON.stringify({
-          type: "message",
-          message: {
-            role: "toolResult",
-            toolCallId: `judge-role-${variant.name}`,
-            toolName: JUDGE_OUTPUT_TOOL_NAME,
-            isError: false,
-            details: accepted.details,
-          },
-        });
-      }
-      const roleCall = JSON.stringify({
-        type: "message",
-        message: {
-          role: "assistant",
-          content: [{ type: "toolCall", id: `judge-role-${variant.name}`, name: JUDGE_OUTPUT_TOOL_NAME, arguments: verdict }],
-        },
-      });
-      const sessionPayload = [roleCall, ...retained.map((entry) => JSON.stringify(entry)), ...(roleResult === undefined ? [] : [roleResult])].join("\n") + "\n";
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(
         ["judge", "--project", project, `deliver ${variant.name}`],
         {
           packageRoot,
           home,
+          agentDir,
           cwd: project,
           createRunId: () => `run-judge-compliance-${variant.name}`,
           io,
           piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            await mkdir(sessionDir, { recursive: true });
-            await writeFile(join(sessionDir, "session.jsonl"), sessionPayload, "utf8");
-            return { code: 0, stderr: "", timedOut: false, args: [...args] };
+            const sessionFile = args[args.indexOf("--session") + 1]!;
+            const sessionDirectory = args[args.indexOf("--session-dir") + 1]!;
+            const seedFile = persistActivationSessionFile({
+              home,
+              bookKey: resolveBookKeyFromGit(project),
+              name: `s4-${variant.name}`,
+              cwd: project,
+            });
+            await copyFile(seedFile, sessionFile);
+            const sessionManager = SessionManager.open(sessionFile, sessionDirectory, project);
+            const faux = (await import("@earendil-works/pi-ai")).fauxProvider({
+              api: `ak-judge-s4-${variant.name}`,
+              provider: `ak-judge-s4-${variant.name}`,
+            });
+            faux.setResponses([
+              fauxAssistantMessage(
+                fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, {
+                  judgeStatus: "converged",
+                  note: `verdict-${variant.name}`,
+                }, { id: `judge-role-${variant.name}` }),
+                { stopReason: "toolUse" },
+              ),
+              fauxAssistantMessage(
+                fauxToolCall(JUDGE_AUDIT_TOOL_NAME, variant.arguments, { id: `judge-audit-${variant.name}` }),
+                { stopReason: "toolUse" },
+              ),
+              ...(variant.expectedOutcome === "failure"
+                ? [fauxAssistantMessage("audit revision observed", { stopReason: "stop" })]
+                : []),
+            ]);
+            await withInProcessPi({
+              cwd: project,
+              agentDir,
+              faux,
+              sessionManager,
+              additionalExtensionPaths: [resolveInternalRoleEntrypoint(packageRoot)],
+              systemPrompt: "S4 REAL JUDGE",
+              mode: "json",
+              flags: { "ak-role": "judge" },
+              noTools: "builtin",
+            }, async ({ session }) => {
+              await session.prompt(`deliver ${variant.name}`);
+            });
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
           },
         },
       );
-      assert.equal(result.exitCode, variant.expectedOutcome === "accepted" ? 0 : 1, variant.name);
+      assert.equal(result.exitCode, variant.expectedOutcome === "accepted" ? 0 : 1, `${variant.name}: ${stdout.join("")} ${stderr.join("")}`);
       assert.equal(result.terminal?.roleOutcome.kind, variant.expectedOutcome, variant.name);
-      if (variant.expectedOutcome === "accepted") {
-        assert.ok(stdout.join("").includes(verdict.note));
-        assert.equal(stderr.length, 0);
-      } else {
-        assert.equal(stdout.length, 1);
-        assert.equal(stderr.length, 1);
-      }
+      assert.equal(stdout.join("").includes(`verdict-${variant.name}`), variant.expectedOutcome === "accepted");
+      assert.equal(stderr.length > 0, variant.expectedOutcome === "failure");
     });
   }
 });

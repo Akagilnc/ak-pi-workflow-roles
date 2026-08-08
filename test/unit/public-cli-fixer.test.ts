@@ -3,7 +3,6 @@
  * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
  */
 import assert from "node:assert/strict";
-import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import {
   access,
   mkdir,
@@ -25,6 +24,7 @@ import {
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { runExplicitInternalActivation } from "../../src/public-cli/explicit-internal.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   buildFixerActivationExtraArgs,
@@ -47,8 +47,8 @@ import {
 } from "../../src/public-cli/terminal.ts";
 import {
   packageRoot,
+  runPiSubprocess,
   withActivationHome,
-  withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -208,93 +208,57 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
   });
 });
 
-test("Fixer production assembly exposes both methods to real Pi only on invocation", async () => {
+test("Fixer production activation args reach the real Pi loader for both optional methods", async () => {
   await withActivationHome({ prefix: "ak-fixer-method-trace-" }, async ({ home, agentDir }) => {
-    const planAdmitted = await admitFixerInvocation({
-      home,
-      cwd: home,
-      phase: "plan",
-      instruction: "Plan the approved repair.",
-      attachmentPaths: [],
-      createRunId: () => "run-fixer-method-trace-plan",
-    });
-    const applyAdmitted = await admitFixerInvocation({
-      home,
-      cwd: home,
-      phase: "apply",
-      instruction: "Apply the approved repair.",
-      attachmentPaths: [],
-      createRunId: () => "run-fixer-method-trace-apply",
-    });
+    const planAdmitted = await admitFixerInvocation({ home, cwd: home, phase: "plan", instruction: "Plan the approved repair.", attachmentPaths: [], createRunId: () => "run-fixer-method-trace-plan" });
+    const applyAdmitted = await admitFixerInvocation({ home, cwd: home, phase: "apply", instruction: "Apply the approved repair.", attachmentPaths: [], createRunId: () => "run-fixer-method-trace-apply" });
     const rows = [
-      { name: "initial-plan", args: buildFixerActivationExtraArgs(planAdmitted, { packageRoot }), phase: "plan" as const, packetPath: planAdmitted.packetPath, first: "plan request" },
-      { name: "initial-apply", args: buildFixerActivationExtraArgs(applyAdmitted, { packageRoot }), phase: "apply" as const, packetPath: applyAdmitted.packetPath, first: "apply request" },
-      { name: "resume-apply", args: buildFixerResumeActivationExtraArgs(applyAdmitted, { packageRoot }), phase: "apply" as const, packetPath: applyAdmitted.packetPath, first: RESUME_TRANSPORT_ENVELOPE },
+      { name: "initial-plan", args: buildFixerActivationExtraArgs(planAdmitted, { packageRoot }), sessionFile: planAdmitted.sessionFile },
+      { name: "initial-apply", args: buildFixerActivationExtraArgs(applyAdmitted, { packageRoot }), sessionFile: applyAdmitted.sessionFile },
+      { name: "resume-apply", args: buildFixerResumeActivationExtraArgs(applyAdmitted, { packageRoot }), sessionFile: applyAdmitted.sessionFile },
     ];
     for (const row of rows) {
-      const skillPaths: string[] = [];
-      for (let index = 0; index < row.args.length; index += 1) {
-        if (row.args[index] === "--skill") skillPaths.push(row.args[index + 1]!);
-      }
-      assert.deepEqual(
-        skillPaths.sort(),
-        [
-          resolvePackagedMethodSkillPath(packageRoot, "diagnosing-bugs"),
-          resolvePackagedMethodSkillPath(packageRoot, "tdd"),
-        ].sort(),
-        row.name,
-      );
-      const faux = fauxProvider({ api: `ak-fixer-${row.name}`, provider: `ak-fixer-${row.name}` });
-      const seenUserTurns: string[] = [];
-      faux.setResponses([
-        (context) => {
-          const message = context.messages.at(-1);
-          if (message?.role === "user") {
-            seenUserTurns.push(typeof message.content === "string" ? message.content : message.content.map((part) => part.type === "text" ? part.text : "").join(""));
-          }
-          return fauxAssistantMessage(fauxText("trace"), { stopReason: "stop" });
-        },
-        (context) => {
-          const message = context.messages.at(-1);
-          if (message?.role === "user") {
-            seenUserTurns.push(typeof message.content === "string" ? message.content : message.content.map((part) => part.type === "text" ? part.text : "").join(""));
-          }
-          return fauxAssistantMessage(fauxText("trace"), { stopReason: "stop" });
-        },
-        (context) => {
-          const message = context.messages.at(-1);
-          if (message?.role === "user") {
-            seenUserTurns.push(typeof message.content === "string" ? message.content : message.content.map((part) => part.type === "text" ? part.text : "").join(""));
-          }
-          return fauxAssistantMessage(fauxText("trace"), { stopReason: "stop" });
-        },
-      ]);
-      await withInProcessPi({
-        activationLedgerSession: true,
+      const result = await runExplicitInternalActivation({
+        packageRoot,
         cwd: home,
+        home,
         agentDir,
-        faux,
-        modelsPath: null,
-        additionalExtensionPaths: [join(packageRoot, "extensions", "role-runtime.ts")],
-        additionalSkillPaths: skillPaths,
-        noSkills: false,
-        systemPrompt: "FIXER METHOD TRACE",
-        mode: "print",
-        flags: {
-          "ak-role": "fixer",
-          "ak-fixer-phase": row.phase,
-          "ak-fix-packet": row.packetPath,
+        extraArgs: [
+          "-e",
+          join(packageRoot, "test", "fixtures", "fixer-dual-skill-availability-provider.ts"),
+          "--provider",
+          "ak-fixer-dual-skill-availability",
+          "--model",
+          "faux-1",
+          ...row.args,
+        ],
+        runner: async (args, options) => {
+          const subprocess = await runPiSubprocess([
+            ...args,
+            "--mode",
+            "print",
+            "--print",
+            "/skill:diagnosing-bugs inspect the root cause",
+            "--print",
+            "/skill:tdd verify the repair",
+          ], {
+            cwd: options.cwd,
+            env: options.env,
+            timeoutMs: 30_000,
+          });
+          return { ...subprocess, args: [...args] };
         },
-      }, async ({ session }) => {
-        await session.prompt(row.first);
-        await session.prompt("/skill:diagnosing-bugs inspect the root cause");
-        await session.prompt("/skill:tdd verify the repair");
       });
-      assert.equal(seenUserTurns.length, 3, row.name);
-      assert.equal(seenUserTurns[0]!.includes("<skill name=\"diagnosing-bugs\""), false, row.name);
-      assert.equal(seenUserTurns[0]!.includes("<skill name=\"tdd\""), false, row.name);
-      assert.equal(seenUserTurns[1]!.includes("<skill name=\"diagnosing-bugs\""), true, row.name);
-      assert.equal(seenUserTurns[2]!.includes("<skill name=\"tdd\""), true, row.name);
+      assert.equal(result.code, 0, `${row.name}: ${result.stderr}`);
+      const sessionText = await readFile(row.sessionFile, "utf8");
+      const userTexts = sessionText.split("\n")
+        .filter((line) => line.trim() !== "")
+        .map((line) => JSON.parse(line) as { message?: { role?: string; content?: Array<{ type?: string; text?: string }> } })
+        .filter((entry) => entry.message?.role === "user")
+        .map((entry) => entry.message?.content?.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n") ?? "");
+      assert.equal(userTexts.some((text) => text.includes('<skill name="diagnosing-bugs"')), true, row.name);
+      assert.equal(userTexts.some((text) => text.includes('<skill name="tdd"')), true, row.name);
+      assert.equal(userTexts[0]?.includes("<skill name="), false, row.name);
     }
   });
 });

@@ -7,6 +7,12 @@ import type {
 
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
+// Live Navigator settlement may consume only the object produced by this
+// owner. The non-enumerable brand survives the in-memory tool-result event but
+// is absent from role-authored copies and from persisted JSON; public persisted
+// binding remains responsible for re-authenticating those records.
+const AUDIT_ESCALATION_PROJECTION = Symbol("audit-escalation-projection");
+
 /**
  * Escalation delivery face.
  * `kind` / `conflicts` / `auditDecisionGate` are audit-owned and fixed-shape.
@@ -66,12 +72,30 @@ export function buildAuditEscalationResult(
     typeof deliveredOutput === "object" &&
     !Array.isArray(deliveredOutput)
   ) {
-    return {
+    const result = {
       ...(deliveredOutput as Record<string, unknown>),
       ...auditOwned,
-    };
+    } as AuditEscalationResult;
+    Object.defineProperty(result, AUDIT_ESCALATION_PROJECTION, {
+      value: true,
+      enumerable: false,
+    });
+    return result;
   }
-  return auditOwned;
+  const result = auditOwned as AuditEscalationResult;
+  Object.defineProperty(result, AUDIT_ESCALATION_PROJECTION, {
+    value: true,
+    enumerable: false,
+  });
+  return result;
+}
+
+/** True only for the audit-owned live projection, never for role-shaped data. */
+export function isAuditEscalationProjection(
+  value: unknown,
+): value is AuditEscalationResult {
+  return isAuditEscalationResult(value) &&
+    (value as Record<PropertyKey, unknown>)[AUDIT_ESCALATION_PROJECTION] === true;
 }
 
 function humanDecisionText(result: AuditEscalationResult): string {

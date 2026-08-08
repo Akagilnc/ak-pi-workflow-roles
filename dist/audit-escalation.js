@@ -1,4 +1,9 @@
 export const AUDIT_ESCALATION_KIND = "audit_escalation";
+// Live Navigator settlement may consume only the object produced by this
+// owner. The non-enumerable brand survives the in-memory tool-result event but
+// is absent from role-authored copies and from persisted JSON; public persisted
+// binding remains responsible for re-authenticating those records.
+const AUDIT_ESCALATION_PROJECTION = Symbol("audit-escalation-projection");
 /**
  * Build the escalation delivery face.
  * Role-delivered fields ride under the escalation discriminator (ADR 0055).
@@ -21,12 +26,27 @@ export function buildAuditEscalationResult(decision, deliveredOutput) {
         deliveredOutput !== null &&
         typeof deliveredOutput === "object" &&
         !Array.isArray(deliveredOutput)) {
-        return {
+        const result = {
             ...deliveredOutput,
             ...auditOwned,
         };
+        Object.defineProperty(result, AUDIT_ESCALATION_PROJECTION, {
+            value: true,
+            enumerable: false,
+        });
+        return result;
     }
-    return auditOwned;
+    const result = auditOwned;
+    Object.defineProperty(result, AUDIT_ESCALATION_PROJECTION, {
+        value: true,
+        enumerable: false,
+    });
+    return result;
+}
+/** True only for the audit-owned live projection, never for role-shaped data. */
+export function isAuditEscalationProjection(value) {
+    return isAuditEscalationResult(value) &&
+        value[AUDIT_ESCALATION_PROJECTION] === true;
 }
 function humanDecisionText(result) {
     // Read only the audit-owned, fixed-shape gate. Role payload is not assumed

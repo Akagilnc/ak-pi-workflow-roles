@@ -35,6 +35,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
+import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import {
   loadNavigatorWorkContext,
   resolveNavigatorAuthorityMaterial,
@@ -298,6 +299,58 @@ test("Navigator session creation failures become unavailable without rejecting s
   await cleanupTempDir(root);
 });
 
+test("Navigator accepts only the audit-owned in-memory projection across all four seats", () => {
+  const seats = [
+    { role: "judge", phase: null, toolName: JUDGE_OUTPUT_TOOL_NAME },
+    { role: "fixer", phase: "apply", toolName: FIXER_OUTPUT_TOOL_NAME },
+    { role: "reviewer", phase: null, toolName: REVIEWER_OUTPUT_TOOL_NAME },
+    { role: "doctor", phase: null, toolName: DOCTOR_OUTPUT_TOOL_NAME },
+  ] as const;
+  for (const seat of seats) {
+    const projected = buildAuditEscalationResult({
+      status: "escalate",
+      conflicts: [`${seat.role} conflict`],
+      decisionGate: { question: `${seat.role} question`, options: ["owner", "audit"] },
+    }, { [seat.role]: "role output" });
+    assert.deepEqual(
+      publicNavigatorSettlement(seat.role, seat.phase, {
+        toolName: seat.toolName,
+        isError: false,
+        details: projected,
+      }),
+      { kind: "human_decision", role: seat.role, phase: seat.phase, status: "audit_escalation" },
+      seat.role,
+    );
+    // Same visible shape, including a role-owned payload, is not an audit identity.
+    assert.notEqual(
+      publicNavigatorSettlement(seat.role, seat.phase, {
+        toolName: seat.toolName,
+        isError: false,
+        details: { ...projected },
+      })?.kind,
+      "human_decision",
+      `${seat.role}: copied role-shaped details must not escalate Navigator`,
+    );
+    for (const forged of [
+      { ...projected, status: "pass" },
+      { ...projected, kind: "audit_escalation", auditDecisionGate: undefined },
+      { ...projected, conflicts: ["wrong"] },
+      { ...projected, conflicts: [...projected.conflicts, "duplicate"] },
+      { ...projected, conflicts: [...projected.conflicts].reverse() },
+    ]) {
+      assert.notEqual(
+        publicNavigatorSettlement(seat.role, seat.phase, {
+          toolName: seat.toolName,
+          isError: false,
+          details: forged,
+        })?.kind,
+        "human_decision",
+        `${seat.role}: forged audit evidence must not escalate Navigator`,
+      );
+    }
+  }
+});
+
 test("model settings are exact and typed settlement projection ignores prose and correctable errors", () => {
   assert.deepEqual(parseNavigatorModelSetting("openai-codex/gpt-5.6-luna:max"), { provider: "openai-codex", model: "gpt-5.6-luna", thinkingLevel: "max" });
   assert.deepEqual(parseNavigatorModelSetting("provider/model"), { provider: "provider", model: "model", thinkingLevel: "off" });
@@ -306,7 +359,7 @@ test("model settings are exact and typed settlement projection ignores prose and
   assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: buildNavigatorInfrastructureFailureFact() }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { terminal: "infrastructure_failure", message: "network wording" } }), undefined);
   assert.deepEqual(publicNavigatorSettlement("judge", null, { toolName: "ak_judge_output", isError: false, details: { judgeStatus: "escalate", report: "any wording" } }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
-  assert.deepEqual(publicNavigatorSettlement("fixer", "apply", { toolName: "ak_fixer_output", isError: false, details: { kind: "audit_escalation", conflicts: ["authority"], auditDecisionGate: { question: "Which?", options: ["owner"] } } }), { kind: "human_decision", role: "fixer", phase: "apply", status: "audit_escalation" });
+  assert.notEqual(publicNavigatorSettlement("fixer", "apply", { toolName: "ak_fixer_output", isError: false, details: { kind: "audit_escalation", conflicts: ["authority"], auditDecisionGate: { question: "Which?", options: ["owner"] } } })?.kind, "human_decision");
   // selectNavigatorCandidate status membership is owned by the status-specific outrank table.
 });
 
