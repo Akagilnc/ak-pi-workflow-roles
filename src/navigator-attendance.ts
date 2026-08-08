@@ -431,9 +431,24 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
   return {
     name: NAVIGATOR_PREPARE_TOOL_NAME,
     label: "Navigator preparation",
-    description: "Submit typed route candidates for the shared Navigator attendance seat.",
+    description: "Submit typed route candidates for the shared Navigator attendance seat. route is the recommended future sequence; next must be one step on that route (usually the first).",
     parameters: prepareSchema,
     async execute(_id, value) {
+      // Validate the full candidate contract here so a schema-loose batch cannot
+      // be marked accepted and then fail later as a permanent unavailable.
+      // Returning a non-terminating error lets the same navigator turn correct.
+      try {
+        validatePrepareOutput(value);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{
+            type: "text" as const,
+            text: `${message}. route is the recommended future role/phase sequence; next must appear in route (usually as its first step). Do not put only the current role in route when next is a different role.`,
+          }],
+          details: { error: message },
+        };
+      }
       onOutput(value as PrepareOutput);
       return { content: [{ type: "text" as const, text: "Navigator preparation accepted" }], details: value, terminate: true as const };
     },
@@ -573,6 +588,12 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     const invocationId = `${options.context.sessionManager.getSessionId()}:${++invocationNumber}`;
     activeInvocationId = invocationId;
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
+    if (typeof authority !== "string" || authority.trim() === "") {
+      throw navigatorUnavailableError(
+        "context",
+        new Error("controlling authority content was not supplied as typed work context"),
+      );
+    }
 
       // Load soul / model setting / live help in parallel. Live help is N pi --help
       // subprocesses; serializing it behind session create made the post-role 3s
@@ -694,7 +715,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         `<prior_route>\n${JSON.stringify(prior ?? null)}\n</prior_route>`,
         `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
         `<live_role_help>\n${helpContext}\n</live_role_help>`,
-        `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call. The command field is only a short Usage hint; never fill task-specific paths, prompts, packets, or Skill bindings.`,
+        `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call.`,
+        "Each candidate.route is the recommended future role/phase sequence (not history). candidate.next must be one element of that same route, usually the first step. Example: route:[{role:\"reviewer\",phase:null}], next:{role:\"reviewer\",phase:null}.",
+        "The command field is only a short Usage hint; never fill task-specific paths, prompts, packets, or Skill bindings.",
       ].join("\n\n");
       try {
         try {
