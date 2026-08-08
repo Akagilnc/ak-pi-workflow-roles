@@ -7,11 +7,12 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import {
-  physicallyContainedIn,
-  resolveActivationLedgerHome
-} from "./activation-ledger-topology.js";
+  NAVIGATOR_INVOCATION_ENTRY,
+  mintNavigatorInvocationId
+} from "./navigator-invocation-identity.js";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
-import { renderPublicAkRoleCommand } from "./public-cli/command-renderer.js";
+import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
+import { subjectPath } from "./work-subject-identity.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
@@ -83,7 +84,7 @@ function navigatorUnavailableError(source, error, cause = source) {
 const prepareSchema = Type.Object({}, { additionalProperties: true });
 const ROUTE_ENTRY = "ak-navigator-route";
 const CONTEXT_ENTRY = "ak-navigator-context";
-const INVOCATION_ENTRY = "ak-navigator-invocation";
+const INVOCATION_ENTRY = NAVIGATOR_INVOCATION_ENTRY;
 const SETTLEMENT_ENTRY = "ak-navigator-settlement";
 const targetRoles = new Set(NAVIGATOR_TARGETS.map(({ role }) => role));
 const unavailableKeys = /* @__PURE__ */ new Set(["context", "session", "model", "thinking", "auth", "quota", "transport", "unknown"]);
@@ -174,33 +175,6 @@ function issueRoot(value) {
   if (index < 0) return void 0;
   const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
   return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
-}
-function workIdentityFromCwd(cwd) {
-  const resolvedCwd = resolve(cwd, ".");
-  const cwdIssue = issueRoot(resolvedCwd);
-  if (cwdIssue !== void 0) return cwdIssue;
-  if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
-  return void 0;
-}
-function isMachineLedgerSessionPath(sessionPath) {
-  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
-}
-function subjectPath(sessionDir, cwd = process.cwd()) {
-  if (sessionDir === "") {
-    return workIdentityFromCwd(cwd) ?? resolve(cwd, ".ak/work");
-  }
-  const resolvedSession = resolve(cwd, sessionDir || ".ak/work");
-  if (isMachineLedgerSessionPath(resolvedSession)) {
-    return workIdentityFromCwd(cwd) ?? resolve(cwd, ".ak/work");
-  }
-  const issue = issueRoot(resolvedSession);
-  if (issue !== void 0) return issue;
-  const runsMarker = "/runs/";
-  const runsIndex = resolvedSession.indexOf(runsMarker);
-  if (runsIndex >= 0) {
-    return resolvedSession.slice(0, runsIndex);
-  }
-  return resolvedSession;
 }
 function navigatorSubjectKey(subjectRoot, subject, provenance = "role_input") {
   if (issueRoot(subjectRoot) !== void 0 || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
@@ -374,8 +348,18 @@ function createNavigatorAttendance(options) {
     };
   };
   const prepare = async () => {
-    const invocationId = `${options.context.sessionManager.getSessionId()}:${++invocationNumber}`;
+    const invocationId = mintNavigatorInvocationId(
+      options.context.sessionManager.getSessionId(),
+      ++invocationNumber
+    );
     activeInvocationId = invocationId;
+    const roleSession = options.context.sessionManager;
+    roleSession.appendCustomEntry?.(INVOCATION_ENTRY, {
+      invocationId,
+      role: options.role,
+      phase: options.phase,
+      subjectKey
+    });
     if (contextError !== void 0) throw navigatorUnavailableError("context", contextError);
     if (typeof authority !== "string" || authority.trim() === "") {
       throw navigatorUnavailableError(
@@ -585,7 +569,10 @@ ${helpContext}
     }
   };
   async function settleOnce(settlement) {
-    const invocationId = activeInvocationId ?? `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
+    const invocationId = activeInvocationId ?? mintNavigatorInvocationId(
+      options.context.sessionManager.getSessionId(),
+      invocationNumber || 1
+    );
     let report;
     if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
       if (sessionReady !== void 0) {

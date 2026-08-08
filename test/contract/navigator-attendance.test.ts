@@ -42,8 +42,17 @@ import {
 import { createHash } from "node:crypto";
 
 function context() {
+  const roleEntries: unknown[] = [];
   return {
-    sessionManager: { getSessionId: () => "invocation" },
+    sessionManager: {
+      getSessionId: () => "invocation",
+      appendCustomEntry: (customType: string, data?: unknown) => {
+        roleEntries.push({ type: "custom", customType, data });
+        return "ok";
+      },
+      /** Test-only: independent role-session invocation principals. */
+      roleEntries,
+    },
     cwd: "/repo",
   } as never;
 }

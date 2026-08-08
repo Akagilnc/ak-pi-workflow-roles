@@ -9,11 +9,12 @@ import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
 import {
-  physicallyContainedIn,
-  resolveActivationLedgerHome,
-} from "./activation-ledger-topology.ts";
+  NAVIGATOR_INVOCATION_ENTRY,
+  mintNavigatorInvocationId,
+} from "./navigator-invocation-identity.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
-import { renderPublicAkRoleCommand } from "./public-cli/command-renderer.ts";
+import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
+import { subjectPath } from "./work-subject-identity.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
@@ -225,7 +226,7 @@ export type NavigatorAttendanceOptions = {
 
 const ROUTE_ENTRY = "ak-navigator-route";
 const CONTEXT_ENTRY = "ak-navigator-context";
-const INVOCATION_ENTRY = "ak-navigator-invocation";
+const INVOCATION_ENTRY = NAVIGATOR_INVOCATION_ENTRY;
 const SETTLEMENT_ENTRY = "ak-navigator-settlement";
 const targetRoles = new Set<string>(NAVIGATOR_TARGETS.map(({ role }) => role));
 const unavailableKeys = new Set<NavigatorUnavailableKey>(["context", "session", "model", "thinking", "auth", "quota", "transport", "unknown"]);
@@ -334,50 +335,6 @@ function issueRoot(value: string): string | undefined {
   if (index < 0) return undefined;
   const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
   return issue === undefined || issue === "" ? undefined : normalized.slice(0, index + marker.length) + issue;
-}
-
-function workIdentityFromCwd(cwd: string): string | undefined {
-  const resolvedCwd = resolve(cwd, ".");
-  const cwdIssue = issueRoot(resolvedCwd);
-  if (cwdIssue !== undefined) return cwdIssue;
-  if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
-  return undefined;
-}
-
-/** Machine-ledger session paths are not work identity (ADR 0048 session-in-home). */
-function isMachineLedgerSessionPath(sessionPath: string): boolean {
-  // Physical containment under the package ledger home — never directory spelling,
-  // and stable across macOS /var ↔ /private/var realpath asymmetry.
-  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
-}
-
-function subjectPath(sessionDir: string, cwd = process.cwd()): string {
-  // Session placement is an implementation detail. Resolve it before deriving
-  // the work identity so relative and absolute role invocations share one key.
-  if (sessionDir === "") {
-    // Preserve prior fall-through: empty sessionDir with no work cwd → cwd/.ak/work.
-    return workIdentityFromCwd(cwd) ?? resolve(cwd, ".ak/work");
-  }
-  const resolvedSession = resolve(cwd, sessionDir || ".ak/work");
-  // Durable role sessions under the machine ledger home are not work roots.
-  // Derive subject from cwd (same as empty sessionDir / in-memory) so Navigator
-  // keeps issue-root identity when ignition places --session-dir under ADR 0048.
-  // Ordinary repository cwd with no explicit work identity uses the established
-  // cwd-derived `.ak/work` fallback — never the per-invocation ledger session path.
-  if (isMachineLedgerSessionPath(resolvedSession)) {
-    return workIdentityFromCwd(cwd) ?? resolve(cwd, ".ak/work");
-  }
-  const issue = issueRoot(resolvedSession);
-  if (issue !== undefined) return issue;
-  // Ad-hoc role sessions live below the same work root.  Remove the role's
-  // private run directory before deriving identity; the run/session spelling
-  // must not become a cross-role routing key.
-  const runsMarker = "/runs/";
-  const runsIndex = resolvedSession.indexOf(runsMarker);
-  if (runsIndex >= 0) {
-    return resolvedSession.slice(0, runsIndex);
-  }
-  return resolvedSession;
 }
 
 export function navigatorSubjectKey(
@@ -607,8 +564,22 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     };
   };
   const prepare = async (): Promise<NavigatorCandidate[]> => {
-    const invocationId = `${options.context.sessionManager.getSessionId()}:${++invocationNumber}`;
+    const invocationId = mintNavigatorInvocationId(
+      options.context.sessionManager.getSessionId(),
+      ++invocationNumber,
+    );
     activeInvocationId = invocationId;
+    // Independent principal on the role session — Terminal settlement compares
+    // attendance.invocationId by equality against this fact, not self-shape.
+    const roleSession = options.context.sessionManager as {
+      appendCustomEntry?: (customType: string, data?: unknown) => string;
+    };
+    roleSession.appendCustomEntry?.(INVOCATION_ENTRY, {
+      invocationId,
+      role: options.role,
+      phase: options.phase,
+      subjectKey,
+    });
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
     if (typeof authority !== "string" || authority.trim() === "") {
       throw navigatorUnavailableError(
@@ -822,7 +793,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   };
 
   async function settleOnce(settlement: NavigatorSettlement): Promise<void> {
-      const invocationId = activeInvocationId ?? `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
+      const invocationId = activeInvocationId ?? mintNavigatorInvocationId(
+        options.context.sessionManager.getSessionId(),
+        invocationNumber || 1,
+      );
       let report: NavigatorReport;
       if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
         // Contract: lawful human/role outcomes emit affirmative typed no-advice when

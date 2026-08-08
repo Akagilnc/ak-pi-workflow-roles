@@ -338,12 +338,18 @@ test("Terminal free-text encoding preserves newlines/tabs and rejects forged art
 });
 
 test("extractNavigatorFact keeps three-state attendance: affirmative no-advice vs missing/uncorrelated/unparseable", () => {
+  const invocationId = "inv-no-advice";
   const correlated = {
     version: 1,
-    invocationId: "inv-no-advice",
+    invocationId,
     role: "judge",
     phase: null,
     subjectKey: "/repo/.ak/work",
+  };
+  const invocationPrincipal = {
+    type: "custom",
+    customType: "ak-navigator-invocation",
+    data: { invocationId, role: "judge", phase: null, subjectKey: "/repo/.ak/work" },
   };
   const judgeTerminal = {
     type: "message",
@@ -356,6 +362,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   };
 
   const noAdvice = extractNavigatorFact([
+    invocationPrincipal,
     judgeTerminal,
     {
       type: "custom_message",
@@ -373,6 +380,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   }
 
   const uncorrelated = extractNavigatorFact([
+    invocationPrincipal,
     judgeTerminal,
     {
       type: "custom_message",
@@ -404,6 +412,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   }
 
   const badDisposition = extractNavigatorFact([
+    invocationPrincipal,
     judgeTerminal,
     {
       type: "custom_message",
@@ -414,15 +423,21 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   assert.equal(badDisposition.disposition, "unavailable");
 });
 
-test("extractNavigatorFact correlates attendance to independent session/role identity, not self-shape", () => {
+test("extractNavigatorFact correlates attendance to exact independent invocation/phase/subject identity", () => {
   const sessionId = "019f-session-current";
   const cwd = "/repo";
   const subjectKey = "/repo/.ak/work";
+  const currentInvocationId = `${sessionId}:1`;
   const sessionHeader = {
     type: "session",
     id: sessionId,
     cwd,
   };
+  const invocation = (invocationId: string) => ({
+    type: "custom",
+    customType: "ak-navigator-invocation",
+    data: { invocationId, role: "judge", phase: null, subjectKey },
+  });
   const currentTerminal = {
     type: "message",
     message: {
@@ -438,7 +453,7 @@ test("extractNavigatorFact correlates attendance to independent session/role ide
     message: { details: { version: 1, disposition: "no-advice", ...details } },
   });
   const matched = {
-    invocationId: `${sessionId}:1`,
+    invocationId: currentInvocationId,
     role: "judge",
     phase: null,
     subjectKey,
@@ -447,6 +462,7 @@ test("extractNavigatorFact correlates attendance to independent session/role ide
   // Attendance before the current role terminal is an old-round/stale fact.
   const beforeTerminal = extractNavigatorFact([
     sessionHeader,
+    invocation(currentInvocationId),
     attendance(matched),
     currentTerminal,
   ]);
@@ -458,6 +474,7 @@ test("extractNavigatorFact correlates attendance to independent session/role ide
   // Well-shaped attendance for a different role is unrelated.
   const wrongRole = extractNavigatorFact([
     sessionHeader,
+    invocation(currentInvocationId),
     currentTerminal,
     attendance({ ...matched, role: "fixer", phase: "apply" }),
   ]);
@@ -466,9 +483,55 @@ test("extractNavigatorFact correlates attendance to independent session/role ide
     assert.match(wrongRole.reason, /uncorrelated/i);
   }
 
+  // Old same-session token after current terminal is not the exact current principal.
+  const oldSameSession = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({ ...matched, invocationId: `${sessionId}:0` }),
+  ]);
+  assert.equal(oldSameSession.disposition, "unavailable");
+  if (oldSameSession.disposition === "unavailable") {
+    assert.match(oldSameSession.reason, /uncorrelated/i);
+  }
+
+  // Future same-session token after current terminal is not the exact current principal.
+  const futureSameSession = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({ ...matched, invocationId: `${sessionId}:99` }),
+  ]);
+  assert.equal(futureSameSession.disposition, "unavailable");
+  if (futureSameSession.disposition === "unavailable") {
+    assert.match(futureSameSession.reason, /uncorrelated/i);
+  }
+
+  // Missing independent invocation principal → unavailable even with phase/subject.
+  const noInvocationPrincipal = extractNavigatorFact([
+    sessionHeader,
+    currentTerminal,
+    attendance(matched),
+  ]);
+  assert.equal(noInvocationPrincipal.disposition, "unavailable");
+  if (noInvocationPrincipal.disposition === "unavailable") {
+    assert.match(noInvocationPrincipal.reason, /uncorrelated/i);
+  }
+
+  // No session header and no independent invocation principal → unavailable.
+  const noSessionHeader = extractNavigatorFact([
+    currentTerminal,
+    attendance(matched),
+  ]);
+  assert.equal(noSessionHeader.disposition, "unavailable");
+  if (noSessionHeader.disposition === "unavailable") {
+    assert.match(noSessionHeader.reason, /uncorrelated/i);
+  }
+
   // Wrong invocation id (different session principal) is not this call.
   const wrongInvocation = extractNavigatorFact([
     sessionHeader,
+    invocation(currentInvocationId),
     currentTerminal,
     attendance({ ...matched, invocationId: "other-session:1" }),
   ]);
@@ -480,6 +543,7 @@ test("extractNavigatorFact correlates attendance to independent session/role ide
   // Judge has independent phase=null; well-shaped apply is still uncorrelated.
   const wrongPhase = extractNavigatorFact([
     sessionHeader,
+    invocation(currentInvocationId),
     currentTerminal,
     attendance({ ...matched, phase: "apply" }),
   ]);
@@ -491,6 +555,7 @@ test("extractNavigatorFact correlates attendance to independent session/role ide
   // Subject must match the independent session-derived work identity.
   const wrongSubject = extractNavigatorFact([
     sessionHeader,
+    invocation(currentInvocationId),
     currentTerminal,
     attendance({ ...matched, subjectKey: "/other/work" }),
   ]);
@@ -499,19 +564,33 @@ test("extractNavigatorFact correlates attendance to independent session/role ide
     assert.match(wrongSubject.reason, /uncorrelated/i);
   }
 
-  // Current terminal + attendance matching independent identity correlates.
+  // Exact current token after terminal correlates.
   const current = extractNavigatorFact([
     sessionHeader,
+    invocation(`${sessionId}:0`),
     attendance({
       invocationId: `${sessionId}:0`,
       role: "judge",
       phase: null,
       subjectKey,
     }),
+    invocation(currentInvocationId),
     currentTerminal,
     attendance(matched),
   ]);
   assert.equal(current.disposition, "no-advice");
+
+  // Physical path aliases (/var ↔ /private/var) are one work subject.
+  const varAlias = extractNavigatorFact([
+    { type: "session", id: sessionId, cwd: "/var/folders/xx/repo" },
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({
+      ...matched,
+      subjectKey: "/private/var/folders/xx/repo/.ak/work",
+    }),
+  ]);
+  assert.equal(varAlias.disposition, "no-advice");
 
   // Coder/fixer exact phase comes from admitted lifecycle identity, not self-enum.
   const coderTerminal = {
@@ -528,9 +607,20 @@ test("extractNavigatorFact correlates attendance to independent session/role ide
     id: "coder-session",
     cwd,
   };
+  const coderInvocation = {
+    type: "custom",
+    customType: "ak-navigator-invocation",
+    data: {
+      invocationId: "coder-session:1",
+      role: "coder",
+      phase: "plan",
+      subjectKey,
+    },
+  };
   const wrongCoderPhase = extractNavigatorFact(
     [
       coderSession,
+      coderInvocation,
       coderTerminal,
       attendance({
         invocationId: "coder-session:1",
@@ -548,6 +638,7 @@ test("extractNavigatorFact correlates attendance to independent session/role ide
   const coderMatched = extractNavigatorFact(
     [
       coderSession,
+      coderInvocation,
       coderTerminal,
       attendance({
         invocationId: "coder-session:1",
@@ -563,6 +654,16 @@ test("extractNavigatorFact correlates attendance to independent session/role ide
 
 test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {
   const entries = [
+    {
+      type: "custom",
+      customType: "ak-navigator-invocation",
+      data: {
+        invocationId: "inv-1",
+        role: "judge",
+        phase: null,
+        subjectKey: "/repo/.ak/work",
+      },
+    },
     {
       type: "message",
       message: {
@@ -617,6 +718,16 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
   const decisionQuestion = "Choose:\nA\tB";
   const reason = "because\nthis\tpath";
   const continueEntries = [
+    {
+      type: "custom",
+      customType: "ak-navigator-invocation",
+      data: {
+        invocationId: "inv-continue",
+        role: "judge",
+        phase: null,
+        subjectKey: "/repo/.ak/work",
+      },
+    },
     {
       type: "message",
       message: {
@@ -812,7 +923,18 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
           const sessionDir = args[sessionDirIdx + 1]!;
           await mkdir(sessionDir, { recursive: true });
           const sessionFile = join(sessionDir, "session.jsonl");
+          const subjectKey = join(project, ".ak/work");
           const rows = [
+            {
+              type: "custom",
+              customType: "ak-navigator-invocation",
+              data: {
+                invocationId: "inv-cli",
+                role: "judge",
+                phase: null,
+                subjectKey,
+              },
+            },
             {
               type: "message",
               message: {
@@ -832,8 +954,8 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
                   invocationId: "inv-cli",
                   role: "judge",
                   phase: null,
-                  // Matches admitted projectRoot work identity (no session header here).
-                  subjectKey: join(project, ".ak/work"),
+                  // Matches admitted projectRoot work identity.
+                  subjectKey,
                   next: { role: "reviewer", phase: null },
                   reason: "review next",
                   command: "Usage: pi --ak-role reviewer --help",

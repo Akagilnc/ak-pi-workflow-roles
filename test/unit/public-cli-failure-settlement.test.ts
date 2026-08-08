@@ -540,6 +540,16 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
       sessionFile,
       [
         JSON.stringify({
+          type: "custom",
+          customType: "ak-navigator-invocation",
+          data: {
+            invocationId: "inv-fail-1",
+            role: "judge",
+            phase: null,
+            subjectKey: attendanceDetails.subjectKey,
+          },
+        }),
+        JSON.stringify({
           type: "message",
           message: {
             role: "toolResult",

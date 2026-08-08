@@ -9491,9 +9491,6 @@ function listHelpCapabilities() {
   });
   return [...support, ...roles];
 }
-function isPublicCallableRole(value) {
-  return PUBLIC_CALLABLE_ROLES.includes(value);
-}
 function isPublicConfigurableSeat(value) {
   return PUBLIC_CONFIGURABLE_SEATS.includes(value);
 }
@@ -9851,6 +9848,28 @@ function activationBookDirectory(ledgerHome, bookKey) {
 function pathContainedIn(root, candidate) {
   const rel = relative(root, candidate);
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+function physicalPathIdentity(path) {
+  const absolute = resolve(path);
+  const missing = [];
+  let cursor = absolute;
+  while (true) {
+    try {
+      const real = realpathSync(cursor);
+      return missing.length === 0 ? real : join3(real, ...missing);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        return absolute;
+      }
+      const parent = dirname2(cursor);
+      if (parent === cursor) return absolute;
+      missing.unshift(basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+function physicallyContainedIn(root, candidate) {
+  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
 }
 function errnoCode(error) {
   return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
@@ -12957,7 +12976,7 @@ async function peekRoleRunRole(home, runId) {
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
 import { readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname5, join as join7, resolve as resolve5 } from "node:path";
+import { dirname as dirname5, join as join7 } from "node:path";
 
 // src/collector-evidence.ts
 var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
@@ -13033,9 +13052,77 @@ var COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
 var COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 
-// src/public-cli/command-renderer.ts
+// src/navigator-invocation-identity.ts
+var NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
+function invocationIdFromData(data) {
+  if (data === null || typeof data !== "object") return void 0;
+  const invocationId = data.invocationId;
+  if (typeof invocationId !== "string") return void 0;
+  const trimmed = invocationId.trim();
+  return trimmed === "" ? void 0 : trimmed;
+}
+function currentInvocationPrincipalFromSession(entries, beforeIndex = entries.length) {
+  const limit = Math.min(Math.max(beforeIndex, 0), entries.length);
+  for (let i = limit - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "custom") continue;
+    if (entry.customType !== NAVIGATOR_INVOCATION_ENTRY) continue;
+    const id = invocationIdFromData(entry.data);
+    if (id !== void 0) return id;
+  }
+  return void 0;
+}
+
+// src/work-subject-identity.ts
+import { resolve as resolve5 } from "node:path";
+function issueRoot(value) {
+  const normalized = value.replaceAll("\\", "/");
+  const marker = ".ak/work/issues/";
+  const index = normalized.indexOf(marker);
+  if (index < 0) return void 0;
+  const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
+  return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
+}
+function workIdentityFromCwd(cwd) {
+  const resolvedCwd = resolve5(cwd, ".");
+  const cwdIssue = issueRoot(resolvedCwd);
+  if (cwdIssue !== void 0) return cwdIssue;
+  if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
+  return void 0;
+}
+function isMachineLedgerSessionPath(sessionPath) {
+  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
+}
+function subjectPath(sessionDir, cwd = process.cwd()) {
+  if (sessionDir === "") {
+    return workIdentityFromCwd(cwd) ?? resolve5(cwd, ".ak/work");
+  }
+  const resolvedSession = resolve5(cwd, sessionDir || ".ak/work");
+  if (isMachineLedgerSessionPath(resolvedSession)) {
+    return workIdentityFromCwd(cwd) ?? resolve5(cwd, ".ak/work");
+  }
+  const issue = issueRoot(resolvedSession);
+  if (issue !== void 0) return issue;
+  const runsMarker = "/runs/";
+  const runsIndex = resolvedSession.indexOf(runsMarker);
+  if (runsIndex >= 0) {
+    return resolvedSession.slice(0, runsIndex);
+  }
+  return resolvedSession;
+}
+function workSubjectKeyFromProjectRoot(projectRoot) {
+  return subjectPath("", projectRoot);
+}
+function workSubjectKeysEqual(left, right) {
+  return physicalPathIdentity(left) === physicalPathIdentity(right);
+}
+
+// src/public-command-renderer.ts
+var PUBLIC_CALLABLE_ROLES2 = new Set(
+  PACKAGED_ROLE_REGISTRY.map((entry) => entry.role)
+);
 function renderPublicAkRoleCommand(target) {
-  if (!isPublicCallableRole(target.role)) return void 0;
+  if (!PUBLIC_CALLABLE_ROLES2.has(target.role)) return void 0;
   const role = target.role;
   if (target.phase === null || target.phase === void 0) {
     return `ak-role ${role}`;
@@ -13277,20 +13364,6 @@ function classifyPostAdmissionFailure(input) {
     diagnostic: "Judge Role run completed without a lawful typed terminal result",
     details: { code: input.code }
   };
-}
-function workSubjectKeyFromProjectRoot(projectRoot) {
-  const resolved = resolve5(projectRoot, ".");
-  const normalized = resolved.replaceAll("\\", "/");
-  const marker = ".ak/work/issues/";
-  const index = normalized.indexOf(marker);
-  if (index >= 0) {
-    const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
-    if (issue !== void 0 && issue !== "") {
-      return normalized.slice(0, index + marker.length) + issue;
-    }
-  }
-  if (normalized.includes("/.ak/work/")) return resolved;
-  return resolve5(projectRoot, ".ak/work");
 }
 function isMissingPathError2(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
@@ -13589,13 +13662,17 @@ function findCurrentRoleTerminal(entries) {
   }
   return void 0;
 }
-function independentAttendanceIdentity(entries, terminalRole, supplied) {
+function independentAttendanceIdentity(entries, terminalRole, attendanceIndex, supplied) {
   const identity = {};
+  const invocationId = currentInvocationPrincipalFromSession(
+    entries,
+    attendanceIndex
+  );
+  if (invocationId !== void 0) {
+    identity.invocationId = invocationId;
+  }
   for (const entry of entries) {
     if (entry?.type !== "session") continue;
-    if (typeof entry.id === "string" && entry.id.trim() !== "") {
-      identity.sessionId = entry.id;
-    }
     if (typeof entry.cwd === "string" && entry.cwd.trim() !== "") {
       identity.subjectKey = workSubjectKeyFromProjectRoot(entry.cwd);
     }
@@ -13630,12 +13707,8 @@ function navigatorAttendanceCorrelatedWithTerminal(details, attendanceIndex, ter
   if (attendanceIndex <= terminal.index) return false;
   if (details.version !== 1) return false;
   if (details.role !== terminal.role) return false;
-  if (identity.sessionId !== void 0) {
-    if (typeof details.invocationId !== "string") return false;
-    const prefix = `${identity.sessionId}:`;
-    if (!details.invocationId.startsWith(prefix)) return false;
-    if (details.invocationId.slice(prefix.length).trim() === "") return false;
-  }
+  if (identity.invocationId === void 0) return false;
+  if (details.invocationId !== identity.invocationId) return false;
   if (identity.phase !== void 0) {
     if (details.phase !== identity.phase) return false;
   } else if (identity.allowedPhases !== void 0) {
@@ -13644,7 +13717,10 @@ function navigatorAttendanceCorrelatedWithTerminal(details, attendanceIndex, ter
     }
   }
   if (identity.subjectKey !== void 0) {
-    if (details.subjectKey !== identity.subjectKey) return false;
+    if (typeof details.subjectKey !== "string") return false;
+    if (!workSubjectKeysEqual(details.subjectKey, identity.subjectKey)) {
+      return false;
+    }
   }
   return true;
 }
@@ -13692,7 +13768,6 @@ function parseNavigatorAttendanceDetails(details) {
 }
 function extractNavigatorFact(entries, identity) {
   const terminal = findCurrentRoleTerminal(entries);
-  const independent = terminal === void 0 ? {} : independentAttendanceIdentity(entries, terminal.role, identity);
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
@@ -13704,6 +13779,7 @@ function extractNavigatorFact(entries, identity) {
           reason: "Navigator attendance is unparseable"
         };
       }
+      const independent = terminal === void 0 ? {} : independentAttendanceIdentity(entries, terminal.role, i, identity);
       if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal, independent)) {
         return {
           disposition: "unavailable",
