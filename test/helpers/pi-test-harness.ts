@@ -891,6 +891,8 @@ export interface InProcessPiOptions {
   additionalExtensionPaths?: string[];
   extensionFactories?: InlineExtension[];
   additionalSkillPaths?: string[];
+  /** Optional caller-owned persisted SessionManager for same-session assertions. */
+  sessionManager?: SessionManager;
   /** When set, forwarded to DefaultResourceLoader; default remains true. */
   noSkills?: boolean;
   /** When set, forwarded to DefaultResourceLoader; default remains true. */
@@ -991,8 +993,8 @@ export async function withInProcessPi<T>(
   await loader.reload();
   // Default: plain in-memory session — no git discovery, no durable-session I/O.
   // Activation-owning tests opt in via activationLedgerSession.
-  let sessionManager: SessionManager = SessionManager.inMemory(options.cwd);
-  if (options.activationLedgerSession === true) {
+  let sessionManager: SessionManager = options.sessionManager ?? SessionManager.inMemory(options.cwd);
+  if (options.sessionManager === undefined && options.activationLedgerSession === true) {
     // Keep in-memory session-dir semantics (empty getSessionDir) so Navigator subject
     // derivation from cwd/.ak/work stays intact, while exposing a genuinely persisted
     // session file under the machine ledger book (ADR 0048).
