@@ -42,16 +42,9 @@ import {
 import { createHash } from "node:crypto";
 
 function context() {
-  const roleEntries: unknown[] = [];
   return {
     sessionManager: {
       getSessionId: () => "invocation",
-      appendCustomEntry: (customType: string, data?: unknown) => {
-        roleEntries.push({ type: "custom", customType, data });
-        return "ok";
-      },
-      /** Test-only: independent role-session invocation principals. */
-      roleEntries,
     },
     cwd: "/repo",
   } as never;
@@ -264,12 +257,14 @@ test("typed owner-decision and role-infrastructure outcomes emit affirmative no-
     await infra;
     assert.equal(events.length, 2);
     assert.equal(events[0]?.disposition, "no-advice");
-    assert.equal(events[0]?.invocationId, "invocation:1");
+    assert.equal(typeof events[0]?.invocationId, "string");
+    assert.ok(String(events[0]?.invocationId).length > 0);
     assert.equal(events[0]?.role, "coder");
     assert.equal(events[0]?.phase, "apply");
     assert.equal(typeof events[0]?.subjectKey, "string");
     assert.equal(events[1]?.disposition, "no-advice");
-    assert.equal(events[1]?.invocationId, "invocation:2");
+    // One attendance instance keeps one exact principal across settles.
+    assert.equal(events[1]?.invocationId, events[0]?.invocationId);
     assert.equal(harness.prompts(), 2);
   } catch (error) {
     await cleanupTempDir(root, error);
@@ -1523,6 +1518,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
     await withActivationHome({ prefix: "ak-nav-admitted-" }, async ({ home }) => {
       let observed: { subject?: string; authority?: string; subjectKey?: string } | undefined;
       const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+      const appendedEntries: Array<{ customType: string; data?: unknown }> = [];
       const pi = {
         registerFlag() {},
         getFlag(name: string) {
@@ -1536,6 +1532,9 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
           return [];
         },
         setActiveTools() {},
+        appendEntry(customType: string, data?: unknown) {
+          appendedEntries.push({ customType, data });
+        },
       };
 
       createRoleRuntimeExtension({
@@ -1589,6 +1588,223 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
   }
 });
 
+test("shared role lifecycle mints opaque principal via pi.appendEntry and attendance uses it exactly", async () => {
+  const { basename } = await import("node:path");
+  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
+  const { NAVIGATOR_INVOCATION_ENTRY } = await import("../../src/navigator-invocation-identity.ts");
+  const { isUuidV7 } = await import("../../src/uuidv7.ts");
+  const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
+  const { extractNavigatorFact } = await import("../../src/public-cli/settlement.ts");
+  const { JUDGE_OUTPUT_TOOL_NAME } = await import("../../src/package-contracts/judge-output.ts");
+
+  await withActivationHome({ prefix: "ak-nav-principal-" }, async ({ home }) => {
+    const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+    const roleSessionEntries: Array<{ type: string; customType?: string; data?: unknown; message?: unknown }> = [];
+    let attendanceInvocationId: string | undefined;
+    let settleEvent: { invocationId?: string; disposition?: string } | undefined;
+    const modelSettingPath = join(home, "navigator-model.json");
+    await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }));
+
+    const pi = {
+      registerFlag() {},
+      getFlag(name: string) {
+        return name === "ak-role" ? "judge" : undefined;
+      },
+      on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+        handlers.set(name, handler);
+      },
+      registerTool() {},
+      getAllTools() {
+        return [];
+      },
+      setActiveTools() {},
+      // Production ExtensionAPI boundary — not sessionManager.appendCustomEntry probing.
+      appendEntry(customType: string, data?: unknown) {
+        roleSessionEntries.push({ type: "custom", customType, data });
+      },
+      async sendMessage(message: { customType?: string; details?: unknown }) {
+        if (message.customType === "ak-navigator-attendance") {
+          roleSessionEntries.push({
+            type: "custom_message",
+            customType: message.customType,
+            message: { details: message.details },
+          });
+        }
+      },
+    };
+
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "JUDGE LAW",
+      transcriptFromContext: () => "",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+      loadNavigatorWorkContext: async () => ({
+        subjectKey: `${home}/.ak/work`,
+        subject: "exact principal lifecycle",
+        authority: "owner authority",
+        subjectProvenance: "role_input" as const,
+      }),
+      createNavigatorAttendance: (options) => {
+        attendanceInvocationId = options.invocationId;
+        const nav = createNavigatorAttendance({
+          ...options,
+          sessionDir: join(home, "navigator-session"),
+          modelSettingPath,
+          loadSoul: async () => "route law",
+          loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
+          createSession: async ({ tool }) => ({
+            async prompt() {
+              await tool.execute(
+                "prep-principal",
+                {
+                  candidates: [{
+                    next: { role: "fixer", phase: "apply" },
+                    reason: "continue to fixer",
+                  }],
+                } as never,
+                undefined,
+                undefined,
+                {} as never,
+              );
+            },
+            appendEntry() {},
+            entries: () => [],
+            dispose() {},
+          }),
+          onEvent: async (event, report) => {
+            settleEvent = event;
+            await options.onEvent(event, report);
+          },
+        });
+        return nav;
+      },
+    })(pi as never);
+
+    const sessionDir = join(
+      home,
+      ".ak-roles",
+      "books",
+      basename(home),
+      "runs",
+      "judge-principal",
+      "session",
+    );
+    await mkdir(sessionDir, { recursive: true });
+    const sessionManager = SessionManager.create(home, sessionDir);
+    const ctx = { cwd: home, sessionManager, abort() {} };
+
+    await handlers.get("session_start")?.({}, ctx);
+
+    const markers = roleSessionEntries.filter(
+      (entry) => entry.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY,
+    );
+    assert.equal(markers.length, 1, "lifecycle writes exactly one principal marker via pi.appendEntry");
+    const markerId = (markers[0]?.data as { invocationId?: string } | undefined)?.invocationId;
+    assert.equal(typeof markerId, "string");
+    assert.equal(isUuidV7(markerId), true, "principal is globally unique opaque uuidv7");
+    assert.equal(attendanceInvocationId, markerId, "attendance receives the exact lifecycle principal");
+    // Opaque: not derived from session id / sequence spelling.
+    assert.equal(String(markerId).includes(sessionManager.getSessionId()), false);
+    assert.match(String(markerId), /^[0-9a-f-]{36}$/i);
+    assert.equal(String(markerId).includes(":"), false);
+
+    // Second lifecycle start (same process, new invocation) mints a distinct principal.
+    await handlers.get("session_start")?.({}, ctx);
+    const markersAfterRestart = roleSessionEntries.filter(
+      (entry) => entry.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY,
+    );
+    assert.equal(markersAfterRestart.length, 2);
+    const secondId = (markersAfterRestart[1]?.data as { invocationId?: string } | undefined)?.invocationId;
+    assert.equal(isUuidV7(secondId), true);
+    assert.notEqual(secondId, markerId, "process restart / new invocation does not repeat principal");
+    assert.equal(attendanceInvocationId, secondId);
+
+    // Drive prepare + accepted terminal settlement on the current principal.
+    // session_start already warm-prepares concrete role_input; wait for candidates.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    await handlers.get("tool_result")?.({
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId: "judge-out",
+      isError: false,
+      content: [{ type: "text", text: "Judge verdict accepted" }],
+      details: { judgeStatus: "converged" },
+    }, ctx);
+    await handlers.get("agent_settled")?.({}, ctx);
+
+    assert.ok(settleEvent);
+    assert.equal(settleEvent?.invocationId, secondId);
+    assert.equal(settleEvent?.disposition, "recommendation");
+
+    // Public Terminal settlement: only nearest marker before terminal binds.
+    const subjectKey = `${home}/.ak/work`;
+    const sessionEntries = [
+      { type: "session", id: sessionManager.getSessionId(), cwd: home },
+      {
+        type: "custom",
+        customType: NAVIGATOR_INVOCATION_ENTRY,
+        data: { invocationId: markerId, role: "judge", phase: null, subjectKey },
+      },
+      {
+        type: "custom",
+        customType: NAVIGATOR_INVOCATION_ENTRY,
+        data: { invocationId: secondId, role: "judge", phase: null, subjectKey },
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: JUDGE_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: { judgeStatus: "converged" },
+        },
+      },
+      {
+        type: "custom_message",
+        customType: "ak-navigator-attendance",
+        message: {
+          details: {
+            version: 1,
+            disposition: "recommendation",
+            invocationId: secondId,
+            role: "judge",
+            phase: null,
+            subjectKey,
+            next: { role: "fixer", phase: "apply" },
+            reason: "continue to fixer",
+          },
+        },
+      },
+    ];
+    const fact = extractNavigatorFact(sessionEntries as never);
+    assert.equal(fact.disposition, "recommendation");
+
+    // Old principal attendance after current terminal is rejected.
+    const stale = extractNavigatorFact([
+      ...sessionEntries.slice(0, -1),
+      {
+        type: "custom_message",
+        customType: "ak-navigator-attendance",
+        message: {
+          details: {
+            version: 1,
+            disposition: "recommendation",
+            invocationId: markerId,
+            role: "judge",
+            phase: null,
+            subjectKey,
+            next: { role: "fixer", phase: "apply" },
+            reason: "stale",
+          },
+        },
+      },
+    ] as never);
+    assert.equal(stale.disposition, "unavailable");
+  });
+});
+
 test("bare developer prompt recovers Navigator work context poisoned at session_start", async () => {
   const { basename } = await import("node:path");
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
@@ -1615,6 +1831,7 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
         return [];
       },
       setActiveTools() {},
+      appendEntry() {},
     };
 
     let latestContext: {
@@ -1726,6 +1943,7 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
         return [];
       },
       setActiveTools() {},
+      appendEntry() {},
       async sendMessage() {},
     };
 

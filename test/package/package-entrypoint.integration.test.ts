@@ -769,7 +769,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.equal(attendanceMessages.length, 1, "exactly one Navigator terminal fact on the exact session");
         const attendanceIndex = entries.indexOf(attendanceMessages[0]!);
         assert.ok(attendanceIndex > acceptedIndex, "Navigator attendance follows the accepted role terminal");
-        const recommendation = (attendanceMessages[0] as { details: { disposition: string; next?: { role: string; phase: string | null }; reason?: string; command?: string; role?: string } }).details;
+        const recommendation = (attendanceMessages[0] as { details: { disposition: string; next?: { role: string; phase: string | null }; reason?: string; command?: string; role?: string; invocationId?: string } }).details;
         assert.equal(recommendation.disposition, "recommendation");
         assert.equal(recommendation.role, "judge");
         assert.deepEqual(recommendation.next, { role: "fixer", phase: "apply" });
@@ -778,6 +778,21 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.equal(recommendation.command, "ak-role fixer apply");
         // Exact named session principal is the only authoritative surface.
         assert.equal(typeof sessionManager.getSessionFile?.() === "string" || sessionManager.getSessionDir().length > 0, true);
+        // Shared lifecycle principal on the exact role session (pi.appendEntry), bound to attendance.
+        const invocationMarkers = entries.filter(
+          (entry) => entry.type === "custom" && (entry as { customType?: string }).customType === "ak-navigator-invocation",
+        );
+        assert.ok(invocationMarkers.length >= 1, "exact session carries independent invocation principal marker");
+        const markersBeforeTerminal = invocationMarkers.filter((entry) => entries.indexOf(entry) < acceptedIndex);
+        assert.ok(markersBeforeTerminal.length >= 1, "principal marker is before the role terminal");
+        const nearest = markersBeforeTerminal[markersBeforeTerminal.length - 1] as {
+          data?: { invocationId?: string };
+        };
+        assert.equal(typeof nearest.data?.invocationId, "string");
+        assert.ok(String(nearest.data?.invocationId).length > 0);
+        assert.equal(recommendation.invocationId, nearest.data?.invocationId);
+        // Opaque principal — not sessionId:sequence spelling.
+        assert.equal(String(nearest.data?.invocationId).includes(":"), false);
       });
       if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
       else process.env.PI_CODING_AGENT_DIR = oldAgentDir;

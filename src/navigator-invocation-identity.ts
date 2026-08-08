@@ -1,9 +1,13 @@
 /**
  * Exact current-invocation principal for Navigator attendance correlation.
- * Lifecycle mints and records the token on the role session; Terminal settlement
- * reads that independent fact and compares equality — never attendance self-shape
- * or a bare session-id prefix that admits stale/future same-session suffixes.
+ * Shared role lifecycle mints one globally unique opaque token and persists it
+ * on the role session via Pi's guaranteed `pi.appendEntry` boundary. Terminal
+ * settlement reads the nearest independent marker strictly before the current
+ * packaged role terminal and compares equality — never attendance self-shape,
+ * markers after the terminal, or stale older markers behind a malformed nearest.
  */
+
+import { uuidv7 } from "./uuidv7.ts";
 
 export const NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation" as const;
 
@@ -13,16 +17,13 @@ export type NavigatorInvocationEntryLike = {
   readonly data?: unknown;
 };
 
-/** Mint one invocation token bound to the role session principal + sequence. */
-export function mintNavigatorInvocationId(
-  sessionId: string,
-  sequence: number,
-): string {
-  return `${sessionId}:${sequence}`;
+/** Mint one globally unique opaque invocation principal. */
+export function mintNavigatorInvocationId(): string {
+  return uuidv7();
 }
 
 function invocationIdFromData(data: unknown): string | undefined {
-  if (data === null || typeof data !== "object") return undefined;
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return undefined;
   const invocationId = (data as { invocationId?: unknown }).invocationId;
   if (typeof invocationId !== "string") return undefined;
   const trimmed = invocationId.trim();
@@ -31,9 +32,10 @@ function invocationIdFromData(data: unknown): string | undefined {
 
 /**
  * Exact current invocation principal already present on the role session.
- * Scans entries strictly before `beforeIndex` (attendance index) so a later
- * prepare cannot supply a future token for an earlier attendance event.
- * Missing independent principal → undefined (caller projects typed unavailable).
+ * `beforeIndex` is the current packaged role terminal index: only the nearest
+ * marker strictly before that bound is applicable. A malformed nearest marker
+ * fails closed (undefined) — never falls back to a stale older valid marker.
+ * Markers at/after the terminal (future prepare/event) are never considered.
  */
 export function currentInvocationPrincipalFromSession(
   entries: readonly NavigatorInvocationEntryLike[],
@@ -44,8 +46,8 @@ export function currentInvocationPrincipalFromSession(
     const entry = entries[i];
     if (entry?.type !== "custom") continue;
     if (entry.customType !== NAVIGATOR_INVOCATION_ENTRY) continue;
-    const id = invocationIdFromData(entry.data);
-    if (id !== undefined) return id;
+    // Nearest marker only — parse or fail closed; do not scan older entries.
+    return invocationIdFromData(entry.data);
   }
   return undefined;
 }

@@ -35,6 +35,10 @@ import {
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import {
+  NAVIGATOR_INVOCATION_ENTRY,
+  mintNavigatorInvocationId,
+} from "./navigator-invocation-identity.ts";
 import { EMPTY_INVOCATION_TRANSPORT_ENVELOPE } from "./public-cli/invocation.ts";
 import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
@@ -294,7 +298,7 @@ export type RoleRuntimeDependencies = {
   auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
-  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendance | Promise<NavigatorAttendance>;
+  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendance | Promise<NavigatorAttendance>;
   loadNavigatorWorkContext?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
@@ -787,13 +791,24 @@ export function createRoleRuntimeExtension(
           }
         }
         navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
+        // Shared envelope owns exact invocation principal: mint once at lifecycle
+        // start and persist via Pi's guaranteed appendEntry (not optional SM probe).
+        const invocationId = mintNavigatorInvocationId();
+        const invocationPhase = navigatorPhase(pi, entry.role);
+        pi.appendEntry(NAVIGATOR_INVOCATION_ENTRY, {
+          invocationId,
+          role: entry.role,
+          phase: invocationPhase,
+          subjectKey: work.subjectKey,
+        });
         navigatorAttendance = await dependencies.createNavigatorAttendance({
           context: ctx,
           role: entry.role,
-          phase: navigatorPhase(pi, entry.role),
+          phase: invocationPhase,
           subjectKey: work.subjectKey,
           subject: work.subject,
           authority: work.authority,
+          invocationId,
           ...(contextError === undefined ? {} : { contextError }),
           onEvent: (navigatorEvent, report) => {
             pendingNavigatorPresentation = { event: navigatorEvent, report };

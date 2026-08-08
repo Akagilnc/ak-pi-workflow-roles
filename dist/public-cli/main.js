@@ -13055,7 +13055,7 @@ var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 // src/navigator-invocation-identity.ts
 var NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
 function invocationIdFromData(data) {
-  if (data === null || typeof data !== "object") return void 0;
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
   const invocationId = data.invocationId;
   if (typeof invocationId !== "string") return void 0;
   const trimmed = invocationId.trim();
@@ -13067,8 +13067,7 @@ function currentInvocationPrincipalFromSession(entries, beforeIndex = entries.le
     const entry = entries[i];
     if (entry?.type !== "custom") continue;
     if (entry.customType !== NAVIGATOR_INVOCATION_ENTRY) continue;
-    const id = invocationIdFromData(entry.data);
-    if (id !== void 0) return id;
+    return invocationIdFromData(entry.data);
   }
   return void 0;
 }
@@ -13662,11 +13661,11 @@ function findCurrentRoleTerminal(entries) {
   }
   return void 0;
 }
-function independentAttendanceIdentity(entries, terminalRole, attendanceIndex, supplied) {
+function independentAttendanceIdentity(entries, terminalRole, terminalIndex, supplied) {
   const identity = {};
   const invocationId = currentInvocationPrincipalFromSession(
     entries,
-    attendanceIndex
+    terminalIndex
   );
   if (invocationId !== void 0) {
     identity.invocationId = invocationId;
@@ -13779,7 +13778,7 @@ function extractNavigatorFact(entries, identity) {
           reason: "Navigator attendance is unparseable"
         };
       }
-      const independent = terminal === void 0 ? {} : independentAttendanceIdentity(entries, terminal.role, i, identity);
+      const independent = terminal === void 0 ? {} : independentAttendanceIdentity(entries, terminal.role, terminal.index, identity);
       if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal, independent)) {
         return {
           disposition: "unavailable",

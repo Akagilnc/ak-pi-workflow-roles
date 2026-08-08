@@ -427,16 +427,19 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
   const sessionId = "019f-session-current";
   const cwd = "/repo";
   const subjectKey = "/repo/.ak/work";
-  const currentInvocationId = `${sessionId}:1`;
+  // Opaque principals — not sessionId:sequence (restart-repeatable).
+  const currentInvocationId = "019f8c2a-7b3e-7d11-8a4f-1c2d3e4f5a6b";
+  const oldInvocationId = "019f8c2a-0000-7000-8000-000000000001";
+  const futureInvocationId = "019f8c2a-ffff-7fff-8fff-ffffffffffff";
   const sessionHeader = {
     type: "session",
     id: sessionId,
     cwd,
   };
-  const invocation = (invocationId: string) => ({
+  const invocation = (invocationId: string, data: Record<string, unknown> = {}) => ({
     type: "custom",
     customType: "ak-navigator-invocation",
-    data: { invocationId, role: "judge", phase: null, subjectKey },
+    data: { invocationId, role: "judge", phase: null, subjectKey, ...data },
   });
   const currentTerminal = {
     type: "message",
@@ -483,28 +486,77 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     assert.match(wrongRole.reason, /uncorrelated/i);
   }
 
-  // Old same-session token after current terminal is not the exact current principal.
-  const oldSameSession = extractNavigatorFact([
+  // Old attendance token (and old marker left behind a newer principal) rejected.
+  const oldAttendance = extractNavigatorFact([
     sessionHeader,
+    invocation(oldInvocationId),
     invocation(currentInvocationId),
     currentTerminal,
-    attendance({ ...matched, invocationId: `${sessionId}:0` }),
+    attendance({ ...matched, invocationId: oldInvocationId }),
   ]);
-  assert.equal(oldSameSession.disposition, "unavailable");
-  if (oldSameSession.disposition === "unavailable") {
-    assert.match(oldSameSession.reason, /uncorrelated/i);
+  assert.equal(oldAttendance.disposition, "unavailable");
+  if (oldAttendance.disposition === "unavailable") {
+    assert.match(oldAttendance.reason, /uncorrelated/i);
+  }
+  // Old attendance event before the current terminal is stale, even with matching old marker.
+  const oldAttendanceEvent = extractNavigatorFact([
+    sessionHeader,
+    invocation(oldInvocationId),
+    attendance({ ...matched, invocationId: oldInvocationId }),
+    invocation(currentInvocationId),
+    currentTerminal,
+  ]);
+  assert.equal(oldAttendanceEvent.disposition, "unavailable");
+  if (oldAttendanceEvent.disposition === "unavailable") {
+    assert.match(oldAttendanceEvent.reason, /uncorrelated|missing/i);
   }
 
-  // Future same-session token after current terminal is not the exact current principal.
-  const futureSameSession = extractNavigatorFact([
+  // Future marker/event after terminal must not supply the principal.
+  const futureMarker = extractNavigatorFact([
     sessionHeader,
     invocation(currentInvocationId),
     currentTerminal,
-    attendance({ ...matched, invocationId: `${sessionId}:99` }),
+    invocation(futureInvocationId),
+    attendance({ ...matched, invocationId: futureInvocationId }),
   ]);
-  assert.equal(futureSameSession.disposition, "unavailable");
-  if (futureSameSession.disposition === "unavailable") {
-    assert.match(futureSameSession.reason, /uncorrelated/i);
+  assert.equal(futureMarker.disposition, "unavailable");
+  if (futureMarker.disposition === "unavailable") {
+    assert.match(futureMarker.reason, /uncorrelated/i);
+  }
+  // Attendance carrying future token while current marker is before terminal.
+  const futureAttendance = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({ ...matched, invocationId: futureInvocationId }),
+  ]);
+  assert.equal(futureAttendance.disposition, "unavailable");
+  if (futureAttendance.disposition === "unavailable") {
+    assert.match(futureAttendance.reason, /uncorrelated/i);
+  }
+
+  // Malformed nearest marker before terminal blocks fallback to older valid marker.
+  const malformedNearest = extractNavigatorFact([
+    sessionHeader,
+    invocation(oldInvocationId),
+    { type: "custom", customType: "ak-navigator-invocation", data: { invocationId: "" } },
+    currentTerminal,
+    attendance({ ...matched, invocationId: oldInvocationId }),
+  ]);
+  assert.equal(malformedNearest.disposition, "unavailable");
+  if (malformedNearest.disposition === "unavailable") {
+    assert.match(malformedNearest.reason, /uncorrelated/i);
+  }
+  const malformedData = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    { type: "custom", customType: "ak-navigator-invocation", data: "not-an-object" },
+    currentTerminal,
+    attendance(matched),
+  ]);
+  assert.equal(malformedData.disposition, "unavailable");
+  if (malformedData.disposition === "unavailable") {
+    assert.match(malformedData.reason, /uncorrelated/i);
   }
 
   // Missing independent invocation principal → unavailable even with phase/subject.
@@ -528,12 +580,12 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     assert.match(noSessionHeader.reason, /uncorrelated/i);
   }
 
-  // Wrong invocation id (different session principal) is not this call.
+  // Wrong invocation id (different opaque principal) is not this call.
   const wrongInvocation = extractNavigatorFact([
     sessionHeader,
     invocation(currentInvocationId),
     currentTerminal,
-    attendance({ ...matched, invocationId: "other-session:1" }),
+    attendance({ ...matched, invocationId: "019f8c2a-aaaa-7bbb-8ccc-ddddeeeeffff" }),
   ]);
   assert.equal(wrongInvocation.disposition, "unavailable");
   if (wrongInvocation.disposition === "unavailable") {
@@ -564,12 +616,12 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     assert.match(wrongSubject.reason, /uncorrelated/i);
   }
 
-  // Exact current token after terminal correlates.
+  // Exact current token (nearest before terminal) correlates; older rounds stay ignored.
   const current = extractNavigatorFact([
     sessionHeader,
-    invocation(`${sessionId}:0`),
+    invocation(oldInvocationId),
     attendance({
-      invocationId: `${sessionId}:0`,
+      invocationId: oldInvocationId,
       role: "judge",
       phase: null,
       subjectKey,
@@ -579,6 +631,57 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     attendance(matched),
   ]);
   assert.equal(current.disposition, "no-advice");
+
+  // Future marker after terminal is ignored when current marker is before terminal.
+  const ignoreFutureMarker = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    invocation(futureInvocationId),
+    attendance(matched),
+  ]);
+  assert.equal(ignoreFutureMarker.disposition, "no-advice");
+
+  // Same-session new invocation: only the current token (nearest before terminal) correlates.
+  const priorTerminal = {
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: false,
+      details: { judgeStatus: "converged" },
+    },
+  };
+  const sameSessionNewInvocation = extractNavigatorFact([
+    sessionHeader,
+    invocation(oldInvocationId),
+    priorTerminal,
+    attendance({
+      invocationId: oldInvocationId,
+      role: "judge",
+      phase: null,
+      subjectKey,
+    }),
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance(matched),
+  ]);
+  assert.equal(sameSessionNewInvocation.disposition, "no-advice");
+  const sameSessionStaleAttendance = extractNavigatorFact([
+    sessionHeader,
+    invocation(oldInvocationId),
+    priorTerminal,
+    attendance({
+      invocationId: oldInvocationId,
+      role: "judge",
+      phase: null,
+      subjectKey,
+    }),
+    invocation(currentInvocationId),
+    currentTerminal,
+    attendance({ ...matched, invocationId: oldInvocationId }),
+  ]);
+  assert.equal(sameSessionStaleAttendance.disposition, "unavailable");
 
   // Physical path aliases (/var ↔ /private/var) are one work subject.
   const varAlias = extractNavigatorFact([
