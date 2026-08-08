@@ -7,10 +7,12 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import {
-  physicallyContainedIn,
-  resolveActivationLedgerHome
-} from "./activation-ledger-topology.js";
+  NAVIGATOR_INVOCATION_ENTRY,
+  mintNavigatorInvocationId
+} from "./navigator-invocation-identity.js";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
+import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
+import { issueRoot, subjectPath } from "./work-subject-identity.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
@@ -79,27 +81,10 @@ function navigatorUnavailableError(source, error, cause = source) {
   const message = error instanceof Error ? error.message : String(error);
   return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
 }
-const targetSchema = Type.Object({
-  role: Type.String({ minLength: 1 }),
-  phase: Type.Union([Type.Null(), Type.Literal("plan"), Type.Literal("apply")])
-}, { additionalProperties: false });
-const candidateSchema = Type.Object({
-  id: Type.String({ minLength: 1 }),
-  matches: Type.Object({
-    role: Type.String({ minLength: 1 }),
-    phase: Type.Union([Type.Null(), Type.Literal("plan"), Type.Literal("apply")]),
-    kind: Type.Literal("accepted"),
-    statuses: Type.Optional(Type.Array(Type.String({ minLength: 1 })))
-  }, { additionalProperties: false }),
-  route: Type.Array(targetSchema, { minItems: 1 }),
-  next: targetSchema,
-  reason: Type.String({ minLength: 1 }),
-  command: Type.String({ minLength: 1 })
-}, { additionalProperties: false });
-const prepareSchema = Type.Object({ candidates: Type.Array(candidateSchema, { minItems: 1 }) }, { additionalProperties: false });
+const prepareSchema = Type.Object({}, { additionalProperties: true });
 const ROUTE_ENTRY = "ak-navigator-route";
 const CONTEXT_ENTRY = "ak-navigator-context";
-const INVOCATION_ENTRY = "ak-navigator-invocation";
+const INVOCATION_ENTRY = NAVIGATOR_INVOCATION_ENTRY;
 const SETTLEMENT_ENTRY = "ak-navigator-settlement";
 const targetRoles = new Set(NAVIGATOR_TARGETS.map(({ role }) => role));
 const unavailableKeys = /* @__PURE__ */ new Set(["context", "session", "model", "thinking", "auth", "quota", "transport", "unknown"]);
@@ -114,30 +99,62 @@ function targetIsValid(value) {
   const metadata = packagedRoleMetadata(String(value.role));
   return metadata !== void 0 && metadata.phases.includes(value.phase);
 }
-function validateCandidate(value) {
-  const next = exactRecord(value) ? value.next : void 0;
-  if (!exactRecord(value) || typeof value.id !== "string" || value.id.trim() === "" || !exactRecord(value.matches) || typeof value.matches.role !== "string" || value.matches.role.trim() === "" || value.matches.phase !== null && value.matches.phase !== "plan" && value.matches.phase !== "apply" || value.matches.kind !== "accepted" || value.matches.statuses !== void 0 && (!Array.isArray(value.matches.statuses) || value.matches.statuses.some((s) => typeof s !== "string" || s.trim() === "")) || !Array.isArray(value.route) || value.route.length === 0 || value.route.some((target) => !targetIsValid(target)) || !targetIsValid(next) || !value.route.some((target) => target.role === next.role && target.phase === next.phase) || typeof value.reason !== "string" || value.reason.trim() === "" || typeof value.command !== "string" || value.command.trim() === "") {
-    throw new Error("Navigator preparation output is not a typed route candidate");
+function normalizeTarget(value) {
+  if (!exactRecord(value)) return void 0;
+  const role = typeof value.role === "string" ? value.role.trim() : "";
+  if (!targetRoles.has(role)) return void 0;
+  const metadata = packagedRoleMetadata(role);
+  if (metadata === void 0) return void 0;
+  if (value.phase === void 0 || value.phase === null) {
+    return { role, phase: null };
   }
-  return {
-    id: value.id,
-    matches: {
-      role: value.matches.role,
-      phase: value.matches.phase,
+  if (value.phase === "plan" || value.phase === "apply") {
+    if (metadata.phases.includes(value.phase)) {
+      return { role, phase: value.phase };
+    }
+    return { role, phase: null };
+  }
+  return void 0;
+}
+function normalizeMatches(value) {
+  if (!exactRecord(value)) return void 0;
+  if (typeof value.role !== "string" || value.role.trim() === "") return void 0;
+  if (value.kind !== "accepted") return void 0;
+  let phase;
+  if (value.phase === void 0 || value.phase === null) phase = null;
+  else if (value.phase === "plan" || value.phase === "apply") phase = value.phase;
+  else return void 0;
+  if (value.statuses !== void 0) {
+    if (!Array.isArray(value.statuses) || value.statuses.some((status) => typeof status !== "string" || status.trim() === "")) {
+      return void 0;
+    }
+    return {
+      role: value.role,
+      phase,
       kind: "accepted",
-      ...value.matches.statuses === void 0 ? {} : { statuses: [...value.matches.statuses] }
-    },
-    route: value.route.map((target) => ({ role: target.role, phase: target.phase })),
-    next: { role: next.role, phase: next.phase },
-    reason: value.reason,
-    command: value.command
+      statuses: [...value.statuses]
+    };
+  }
+  return { role: value.role, phase, kind: "accepted" };
+}
+function normalizeCandidate(value) {
+  if (!exactRecord(value)) return void 0;
+  const next = normalizeTarget(value.next);
+  const route = Array.isArray(value.route) ? value.route.map(normalizeTarget).filter((target) => target !== void 0) : void 0;
+  const matches = normalizeMatches(value.matches);
+  const id = typeof value.id === "string" && value.id.trim() !== "" ? value.id : void 0;
+  const reason = typeof value.reason === "string" && value.reason.trim() !== "" ? value.reason : void 0;
+  return {
+    ...id === void 0 ? {} : { id },
+    ...matches === void 0 ? {} : { matches },
+    ...route === void 0 || route.length === 0 ? {} : { route },
+    ...next === void 0 ? {} : { next },
+    ...reason === void 0 ? {} : { reason }
   };
 }
-function validatePrepareOutput(value) {
-  if (!exactRecord(value) || !Array.isArray(value.candidates) || value.candidates.length === 0) {
-    throw new Error("Navigator must prepare at least one route candidate");
-  }
-  return value.candidates.map(validateCandidate);
+function normalizePrepareOutput(value) {
+  if (!exactRecord(value) || !Array.isArray(value.candidates)) return [];
+  return value.candidates.map(normalizeCandidate).filter((candidate) => candidate !== void 0);
 }
 function routeEqual(a, b) {
   return a !== void 0 && a.length === b.length && a.every((target, index) => target.role === b[index].role && target.phase === b[index].phase);
@@ -150,41 +167,6 @@ function targetText(target) {
 }
 function oneLine(value) {
   return value.split(/\r?\n/, 1)[0].trim();
-}
-function issueRoot(value) {
-  const normalized = value.replaceAll("\\", "/");
-  const marker = ".ak/work/issues/";
-  const index = normalized.indexOf(marker);
-  if (index < 0) return void 0;
-  const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
-  return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
-}
-function workIdentityFromCwd(cwd) {
-  const resolvedCwd = resolve(cwd, ".");
-  const cwdIssue = issueRoot(resolvedCwd);
-  if (cwdIssue !== void 0) return cwdIssue;
-  if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
-  return void 0;
-}
-function isMachineLedgerSessionPath(sessionPath) {
-  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
-}
-function subjectPath(sessionDir, cwd = process.cwd()) {
-  if (sessionDir === "") {
-    return workIdentityFromCwd(cwd) ?? resolve(cwd, ".ak/work");
-  }
-  const resolvedSession = resolve(cwd, sessionDir || ".ak/work");
-  if (isMachineLedgerSessionPath(resolvedSession)) {
-    return workIdentityFromCwd(cwd) ?? resolve(cwd, ".ak/work");
-  }
-  const issue = issueRoot(resolvedSession);
-  if (issue !== void 0) return issue;
-  const runsMarker = "/runs/";
-  const runsIndex = resolvedSession.indexOf(runsMarker);
-  if (runsIndex >= 0) {
-    return resolvedSession.slice(0, runsIndex);
-  }
-  return resolvedSession;
 }
 function navigatorSubjectKey(subjectRoot, subject, provenance = "role_input") {
   if (issueRoot(subjectRoot) !== void 0 || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
@@ -248,7 +230,7 @@ function createNavigatorPrepareTool(onOutput) {
   return {
     name: NAVIGATOR_PREPARE_TOOL_NAME,
     label: "Navigator preparation",
-    description: "Submit typed route candidates for the shared Navigator attendance seat.",
+    description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
     parameters: prepareSchema,
     async execute(_id, value) {
       onOutput(value);
@@ -258,35 +240,40 @@ function createNavigatorPrepareTool(onOutput) {
 }
 function selectNavigatorCandidate(candidates, settlement) {
   if (settlement.kind !== "accepted") return void 0;
-  const rolePhaseMatches = candidates.filter(
-    (candidate) => candidate.matches.role === settlement.role && candidate.matches.phase === settlement.phase
+  const usable = candidates.filter((candidate) => candidate.next !== void 0);
+  if (usable.length === 0) return void 0;
+  const matched = usable.filter(
+    (candidate) => candidate.matches !== void 0 && candidate.matches.role === settlement.role && candidate.matches.phase === settlement.phase
   );
-  if (settlement.status !== void 0) {
-    const statusSpecific = rolePhaseMatches.find((candidate) => candidate.matches.statuses?.includes(settlement.status) === true);
-    if (statusSpecific !== void 0) return statusSpecific;
+  if (matched.length > 0) {
+    if (settlement.status !== void 0) {
+      const statusSpecific = matched.find((candidate) => candidate.matches?.statuses?.includes(settlement.status) === true);
+      if (statusSpecific !== void 0) return statusSpecific;
+    }
+    return matched.find((candidate) => candidate.matches?.statuses === void 0);
   }
-  return rolePhaseMatches.find((candidate) => candidate.matches.statuses === void 0);
+  return usable.find((candidate) => candidate.matches === void 0);
 }
 function formatNavigatorReport(report) {
-  if (report.disposition === "silence") return "";
+  if (report.disposition === "no-advice") return "";
   if (report.disposition === "unavailable") return `\u5BFC\u822A\u4E0D\u53EF\u7528\uFF1A${oneLine(report.unavailableReason ?? "\u672A\u80FD\u5B8C\u6210\u5BFC\u822A\u51C6\u5907")}`;
   if (report.disposition === "arrival") return oneLine(report.arrivalMessage ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730");
   return [
     ...report.route === void 0 ? [] : [`\u8DEF\u7EBF\uFF1A${routeText(report.route)}`],
     `\u4E0B\u4E00\u6B65\uFF1A${targetText(report.next)}`,
-    `\u7406\u7531\uFF1A${oneLine(report.reason ?? "")}`,
-    `\u547D\u4EE4\uFF1A${oneLine(report.command ?? "")}`
+    ...report.reason === void 0 || report.reason.trim() === "" ? [] : [`\u7406\u7531\uFF1A${oneLine(report.reason)}`],
+    ...report.command === void 0 || report.command.trim() === "" ? [] : [`\u547D\u4EE4\uFF1A${oneLine(report.command)}`]
   ].join("\n");
 }
 function settlementNavigationFromEvent(event) {
   if (event.disposition !== "recommendation") return void 0;
-  if (event.next === void 0 || event.reason === void 0 || event.command === void 0) return void 0;
+  if (event.next === void 0) return void 0;
   return {
     disposition: "recommendation",
     ...event.route === void 0 ? {} : { route: event.route },
     next: event.next,
-    reason: event.reason,
-    command: event.command
+    ...event.reason === void 0 ? {} : { reason: event.reason },
+    ...event.command === void 0 ? {} : { command: event.command }
   };
 }
 function appendNavigatorReportToContent(content, reportText) {
@@ -322,8 +309,8 @@ function createNavigatorAttendance(options) {
   let contextError = options.contextError;
   let sessionDir = options.sessionDir;
   let candidates;
-  let invocationNumber = 0;
-  let activeInvocationId;
+  const invocationPrincipal = options.invocationId ?? mintNavigatorInvocationId();
+  let activeInvocationId = invocationPrincipal;
   let previousRoute;
   let outputSink;
   let settlementTail = Promise.resolve();
@@ -353,9 +340,15 @@ function createNavigatorAttendance(options) {
     };
   };
   const prepare = async () => {
-    const invocationId = `${options.context.sessionManager.getSessionId()}:${++invocationNumber}`;
+    const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
     if (contextError !== void 0) throw navigatorUnavailableError("context", contextError);
+    if (typeof authority !== "string" || authority.trim() === "") {
+      throw navigatorUnavailableError(
+        "context",
+        new Error("controlling authority content was not supplied as typed work context")
+      );
+    }
     let soul;
     let modelSetting;
     let help;
@@ -458,7 +451,7 @@ ${text}
     };
     activeSession.appendEntry(CONTEXT_ENTRY, projection);
     const request = [
-      "Act as the Navigator route judge. Prepare distinct typed route candidates; do not execute or invoke any role.",
+      "Act as the Navigator direction advisor. Submit one next-step advice batch; do not execute or invoke any role.",
       `<navigator_soul>
 ${soul}
 </navigator_soul>`,
@@ -480,7 +473,9 @@ ${JSON.stringify(projection.publicSettlementHistory)}
       `<live_role_help>
 ${helpContext}
 </live_role_help>`,
-      `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call. The command field is only a short Usage hint; never fill task-specific paths, prompts, packets, or Skill bindings.`
+      `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call.`,
+      "v1 requires a usable next direction: candidates[].next.role, with phase only when present and meaningful. route, matches, id, reason, and command are optional context \u2014 never retry to satisfy optional shape.",
+      "Do not put task-specific paths, prompts, packets, or Skill bindings in any field. Command display is rendered by the host from next, not from model prose."
     ].join("\n\n");
     try {
       try {
@@ -495,13 +490,13 @@ ${helpContext}
           return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
         });
         const nativeMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) ? nativeFailure.message : void 0;
-        const errorMessage = nativeMessage !== void 0 && typeof nativeMessage.errorMessage === "string" ? nativeMessage.errorMessage : "Navigator did not submit typed route candidates";
+        const errorMessage = nativeMessage !== void 0 && typeof nativeMessage.errorMessage === "string" ? nativeMessage.errorMessage : "Navigator did not submit direction advice";
         const providerFailure = activeSession.providerFailure?.();
         const source = providerFailure?.source ?? "unknown";
         const cause = providerFailure?.cause ?? source;
         throw navigatorUnavailableError(source, errorMessage, cause);
       }
-      candidates = validatePrepareOutput(output);
+      candidates = normalizePrepareOutput(output);
       return candidates;
     } finally {
       outputSink = void 0;
@@ -556,9 +551,8 @@ ${helpContext}
     }
   };
   async function settleOnce(settlement) {
-    const invocationId = activeInvocationId ?? `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
+    const invocationId = activeInvocationId ?? invocationPrincipal;
     let report;
-    let suppressEvent = false;
     if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
       if (sessionReady !== void 0) {
         try {
@@ -577,9 +571,8 @@ ${helpContext}
       session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.kind === "human_decision" ? { status: settlement.status } : {} });
       if (preparationFailure !== void 0) {
         report = unavailable(invocationId, preparationFailure);
-        suppressEvent = true;
       } else {
-        report = { disposition: "silence" };
+        report = { disposition: "no-advice" };
       }
     } else if (settlement.kind === "arrival") {
       if (sessionReady !== void 0) {
@@ -605,17 +598,23 @@ ${helpContext}
         const prepared = await preparation;
         session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
         const selected = selectNavigatorCandidate(prepared, settlement);
-        if (!selected) throw new Error("Navigator prepared no candidate for the typed settlement");
-        const routeChanged = !routeEqual(previousRoute, selected.route);
+        if (selected?.next === void 0) {
+          throw new Error("Navigator prepared no machine-usable next direction");
+        }
+        const selectedRoute = selected.route;
+        const routeChanged = selectedRoute !== void 0 && !routeEqual(previousRoute, selectedRoute);
+        const command = renderPublicAkRoleCommand(selected.next);
         report = {
           disposition: "recommendation",
-          ...routeChanged ? { route: selected.route } : {},
+          ...routeChanged ? { route: selectedRoute } : {},
           next: selected.next,
-          reason: oneLine(selected.reason),
-          command: oneLine(selected.command)
+          ...selected.reason === void 0 ? {} : { reason: oneLine(selected.reason) },
+          ...command === void 0 ? {} : { command }
         };
-        previousRoute = selected.route;
-        session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selected.route });
+        if (selectedRoute !== void 0) {
+          previousRoute = selectedRoute;
+          session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selectedRoute });
+        }
       } catch (error) {
         report = unavailable(invocationId, error);
       }
@@ -636,7 +635,7 @@ ${helpContext}
       ...report.unavailableCause === void 0 ? {} : { unavailableCause: report.unavailableCause },
       ...report.arrivalMessage === void 0 ? {} : { arrivalMessage: report.arrivalMessage }
     };
-    if (!disposed && report.disposition !== "silence" && !suppressEvent) {
+    if (!disposed) {
       await options.onEvent(event, report);
     }
     preparation = void 0;

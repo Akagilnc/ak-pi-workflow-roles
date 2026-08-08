@@ -1195,7 +1195,6 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
     const withResume = await settleJudgeFailureTerminalResult(
       admitted,
       { cause: "provider", diagnostic: "upstream declined" },
-      { disposition: "no-advice" },
       {
         resume: {
           command: renderResumeCommand(runId),

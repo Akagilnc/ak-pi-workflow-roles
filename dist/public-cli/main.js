@@ -9417,6 +9417,9 @@ var PACKAGED_ROLE_REGISTRY = [
   { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: void 0, activationStage: "load-and-install" },
   { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: void 0, activationStage: "prepare-git-and-install" }
 ];
+function packagedRoleMetadata(role) {
+  return PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === role);
+}
 
 // src/public-cli/registry.ts
 var INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -9487,9 +9490,6 @@ function listHelpCapabilities() {
     };
   });
   return [...support, ...roles];
-}
-function isPublicCallableRole(value) {
-  return PUBLIC_CALLABLE_ROLES.includes(value);
 }
 function isPublicConfigurableSeat(value) {
   return PUBLIC_CONFIGURABLE_SEATS.includes(value);
@@ -9848,6 +9848,28 @@ function activationBookDirectory(ledgerHome, bookKey) {
 function pathContainedIn(root, candidate) {
   const rel = relative(root, candidate);
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+function physicalPathIdentity(path) {
+  const absolute = resolve(path);
+  const missing = [];
+  let cursor = absolute;
+  while (true) {
+    try {
+      const real = realpathSync(cursor);
+      return missing.length === 0 ? real : join3(real, ...missing);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        return absolute;
+      }
+      const parent = dirname2(cursor);
+      if (parent === cursor) return absolute;
+      missing.unshift(basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+function physicallyContainedIn(root, candidate) {
+  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
 }
 function errnoCode(error) {
   return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
@@ -10591,6 +10613,10 @@ function createProductionMergerGitState(repositoryRoot = process.cwd()) {
 
 // src/uuidv7.ts
 import { randomBytes } from "node:crypto";
+var UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function isUuidV7(value) {
+  return typeof value === "string" && UUIDV7.test(value);
+}
 function uuidv7(now = Date.now()) {
   const b = randomBytes(16);
   let n = BigInt(now);
@@ -13202,9 +13228,200 @@ var COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
 var COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 
-// src/public-cli/command-renderer.ts
+// src/work-subject-identity.ts
+import { resolve as resolve5 } from "node:path";
+function issueRoot(value) {
+  const normalized = value.replaceAll("\\", "/");
+  const marker = ".ak/work/issues/";
+  const index = normalized.indexOf(marker);
+  if (index < 0) return void 0;
+  const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
+  return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
+}
+function workIdentityFromCwd(cwd) {
+  const resolvedCwd = resolve5(cwd, ".");
+  const cwdIssue = issueRoot(resolvedCwd);
+  if (cwdIssue !== void 0) return cwdIssue;
+  if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
+  return void 0;
+}
+function isMachineLedgerSessionPath(sessionPath) {
+  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
+}
+function subjectPath(sessionDir, cwd = process.cwd()) {
+  if (sessionDir === "") {
+    return workIdentityFromCwd(cwd) ?? resolve5(cwd, ".ak/work");
+  }
+  const resolvedSession = resolve5(cwd, sessionDir || ".ak/work");
+  if (isMachineLedgerSessionPath(resolvedSession)) {
+    return workIdentityFromCwd(cwd) ?? resolve5(cwd, ".ak/work");
+  }
+  const issue = issueRoot(resolvedSession);
+  if (issue !== void 0) return issue;
+  const runsMarker = "/runs/";
+  const runsIndex = resolvedSession.indexOf(runsMarker);
+  if (runsIndex >= 0) {
+    return resolvedSession.slice(0, runsIndex);
+  }
+  return resolvedSession;
+}
+function workSubjectKeyFromProjectRoot(projectRoot) {
+  return subjectPath("", projectRoot);
+}
+function workSubjectKeysEqual(left, right) {
+  return physicalPathIdentity(left) === physicalPathIdentity(right);
+}
+
+// src/navigator-invocation-identity.ts
+var NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
+var NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
+var NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
+  "kind",
+  "source",
+  "reasonCode"
+];
+function isNavigatorInfrastructureFailureFact(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record5 = value;
+  const keys = Object.keys(record5);
+  if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
+  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
+    if (!Object.hasOwn(record5, key)) return false;
+  }
+  return record5.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record5.source === "shared-role-lifecycle" && record5.reasonCode === "host_failure";
+}
+var PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
+  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
+);
+function invocationPhaseFromUnknown(value) {
+  if (value === null || value === "plan" || value === "apply") return value;
+  return void 0;
+}
+function parseInvocationMarkerIdentity(data) {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
+  const record5 = data;
+  const invocationId = record5.invocationId;
+  if (typeof invocationId !== "string") return void 0;
+  const trimmedId = invocationId.trim();
+  if (!isUuidV7(trimmedId)) return void 0;
+  if (typeof record5.role !== "string" || record5.role.trim() === "") return void 0;
+  const phase = invocationPhaseFromUnknown(record5.phase);
+  if (phase === void 0) return void 0;
+  if (typeof record5.subjectKey !== "string" || record5.subjectKey.trim() === "") return void 0;
+  return {
+    invocationId: trimmedId,
+    role: record5.role,
+    phase,
+    subjectKey: record5.subjectKey
+  };
+}
+function markerMatchesExpectedIdentity(marker, expected) {
+  if (marker.role !== expected.role) return false;
+  if (expected.phase !== void 0) {
+    if (marker.phase !== expected.phase) return false;
+  } else if (expected.allowedPhases !== void 0) {
+    if (!expected.allowedPhases.includes(marker.phase)) return false;
+  }
+  if (expected.subjectKey !== void 0) {
+    if (!workSubjectKeysEqual(marker.subjectKey, expected.subjectKey)) return false;
+  }
+  return true;
+}
+function classifyPackagedRoleTerminalResult(message) {
+  if (typeof message.toolName !== "string") return { kind: "nonterminal" };
+  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
+  const infraFact = isNavigatorInfrastructureFailureFact(message.details) ? message.details : void 0;
+  if (message.isError === true) {
+    if (infraFact === void 0) return { kind: "nonterminal" };
+    return { kind: "infrastructure", fact: infraFact };
+  }
+  if (message.isError === false) {
+    if (infraFact !== void 0) return { kind: "nonterminal" };
+    return { kind: "accepted" };
+  }
+  return { kind: "nonterminal" };
+}
+function isAcceptedPackagedRoleTerminalResult(message) {
+  return classifyPackagedRoleTerminalResult(message).kind === "accepted";
+}
+function durableTerminalAt(entries, index) {
+  const entry = entries[index];
+  if (entry?.type !== "message") return void 0;
+  const message = entry.message;
+  if (message?.role !== "toolResult") return void 0;
+  if (typeof message.toolName !== "string") return void 0;
+  const role = PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
+  if (role === void 0) return void 0;
+  const classification = classifyPackagedRoleTerminalResult(message);
+  if (classification.kind !== "accepted" && classification.kind !== "infrastructure") {
+    return void 0;
+  }
+  return {
+    index,
+    role,
+    toolName: message.toolName,
+    classification: classification.kind,
+    message
+  };
+}
+function isInvocationMarkerEntry(entry) {
+  return entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY;
+}
+function findLatestDurablePackagedRoleTerminal(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const terminal = durableTerminalAt(entries, i);
+    if (terminal !== void 0) return terminal;
+  }
+  return void 0;
+}
+function bindCurrentDurableTerminalToMarker(entries) {
+  const terminal = findLatestDurablePackagedRoleTerminal(entries);
+  if (terminal === void 0) return { kind: "absent" };
+  let markerIndex = -1;
+  for (let i = terminal.index - 1; i >= 0; i -= 1) {
+    if (isInvocationMarkerEntry(entries[i])) {
+      markerIndex = i;
+      break;
+    }
+  }
+  if (markerIndex < 0) {
+    return { kind: "unbound", terminal };
+  }
+  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
+  if (marker === void 0) {
+    return { kind: "unbound", terminal };
+  }
+  let windowEnd = entries.length;
+  for (let i = markerIndex + 1; i < entries.length; i += 1) {
+    if (isInvocationMarkerEntry(entries[i])) {
+      windowEnd = i;
+      break;
+    }
+  }
+  let durableCount = 0;
+  for (let i = markerIndex + 1; i < windowEnd; i += 1) {
+    if (durableTerminalAt(entries, i) !== void 0) durableCount += 1;
+  }
+  if (durableCount !== 1) return { kind: "ambiguous" };
+  if (terminal.index <= markerIndex || terminal.index >= windowEnd) {
+    return { kind: "ambiguous" };
+  }
+  return {
+    kind: "bound",
+    terminal,
+    marker: { ...marker, index: markerIndex }
+  };
+}
+function isReceiptSettlementBindingClear(entries) {
+  return bindCurrentDurableTerminalToMarker(entries).kind !== "ambiguous";
+}
+
+// src/public-command-renderer.ts
+var PUBLIC_CALLABLE_ROLES2 = new Set(
+  PACKAGED_ROLE_REGISTRY.map((entry) => entry.role)
+);
 function renderPublicAkRoleCommand(target) {
-  if (!isPublicCallableRole(target.role)) return void 0;
+  if (!PUBLIC_CALLABLE_ROLES2.has(target.role)) return void 0;
   const role = target.role;
   if (target.phase === null || target.phase === void 0) {
     return `ak-role ${role}`;
@@ -14035,13 +14252,14 @@ async function trySettleComplianceAuditIncompleteTerminalResult(admitted) {
   }
 }
 function extractJudgeRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== JUDGE_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     const escalation = boundAuditEscalationForResult(
       entries,
@@ -14076,50 +14294,188 @@ function navigatorPhaseValue(value) {
   if (value === "plan" || value === "apply") return value;
   return null;
 }
-function extractNavigatorFact(entries) {
+function attendanceIdentityFromAdmitted(admitted) {
+  const subjectKey = workSubjectKeyFromProjectRoot(admitted.projectRoot);
+  if (admitted.role === "coder" || admitted.role === "fixer") {
+    return { phase: admitted.phase, subjectKey };
+  }
+  return { phase: null, subjectKey };
+}
+function independentExpectedIdentity(entries, terminalRole, supplied) {
+  let subjectKey;
+  for (const entry of entries) {
+    if (entry?.type !== "session") continue;
+    if (typeof entry.cwd === "string" && entry.cwd.trim() !== "") {
+      subjectKey = workSubjectKeyFromProjectRoot(entry.cwd);
+    }
+    break;
+  }
+  if (typeof supplied?.subjectKey === "string") {
+    subjectKey = supplied.subjectKey;
+  }
+  let phase;
+  let allowedPhases;
+  if (supplied !== void 0 && Object.hasOwn(supplied, "phase")) {
+    phase = supplied.phase ?? null;
+  } else {
+    const meta = packagedRoleMetadata(terminalRole);
+    if (meta !== void 0) {
+      if (meta.phases.length === 1) {
+        phase = meta.phases[0];
+      } else {
+        allowedPhases = meta.phases;
+      }
+    }
+  }
+  return {
+    role: terminalRole,
+    ...phase !== void 0 ? { phase } : {},
+    ...allowedPhases !== void 0 ? { allowedPhases } : {},
+    ...subjectKey !== void 0 ? { subjectKey } : {}
+  };
+}
+function navigatorAttendanceCorrelatedWithBoundMarker(details, attendanceIndex, terminal, marker) {
+  if (attendanceIndex <= terminal.index) return false;
+  if (details.version !== 1) return false;
+  if (details.role !== terminal.role) return false;
+  if (details.role !== marker.role) return false;
+  if (details.invocationId !== marker.invocationId) return false;
+  if (details.phase !== marker.phase) return false;
+  if (typeof details.subjectKey !== "string") return false;
+  if (!workSubjectKeysEqual(details.subjectKey, marker.subjectKey)) return false;
+  return true;
+}
+function parseNavigatorAttendanceDetails(details) {
+  const disposition = details.disposition;
+  if (disposition === "recommendation") {
+    const next = details.next;
+    if (!isRecord5(next) || typeof next.role !== "string") {
+      return {
+        disposition: "unavailable",
+        source: "unknown",
+        reason: "navigator recommendation missing typed next role"
+      };
+    }
+    const reason = typeof details.reason === "string" ? details.reason : "";
+    const route = Array.isArray(details.route) ? details.route.filter(isRecord5).map((target) => ({
+      role: String(target.role),
+      phase: navigatorPhaseValue(target.phase)
+    })) : void 0;
+    return recommendationNavigatorFact({
+      next: {
+        role: next.role,
+        phase: navigatorPhaseValue(next.phase)
+      },
+      reason,
+      ...route === void 0 ? {} : { route },
+      ...typeof details.command === "string" ? { modelCommand: details.command } : {}
+    });
+  }
+  if (disposition === "unavailable") {
+    return {
+      disposition: "unavailable",
+      source: typeof details.unavailableSource === "string" ? details.unavailableSource : "unknown",
+      reason: typeof details.unavailableReason === "string" ? details.unavailableReason : "Navigator unavailable"
+    };
+  }
+  if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
+    return { disposition: "no-advice" };
+  }
+  return {
+    disposition: "unavailable",
+    source: "unknown",
+    reason: "Navigator attendance disposition is unparseable"
+  };
+}
+function extractNavigatorFact(entries, identity) {
+  const binding = bindCurrentDurableTerminalToMarker(entries);
+  if (binding.kind === "absent") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance has no durable packaged role terminal"
+    };
+  }
+  if (binding.kind === "ambiguous") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is ambiguous across multiple durable role terminals"
+    };
+  }
+  if (binding.kind === "unbound") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts"
+    };
+  }
+  const { terminal, marker } = binding;
+  if (marker.role !== terminal.role) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts"
+    };
+  }
+  const expected = independentExpectedIdentity(entries, terminal.role, identity);
+  if (!markerMatchesExpectedIdentity(marker, expected)) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts"
+    };
+  }
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord5(details)) continue;
-      const disposition = details.disposition;
-      if (disposition === "recommendation") {
-        const next = details.next;
-        if (!isRecord5(next) || typeof next.role !== "string") {
-          return {
-            disposition: "unavailable",
-            source: "unknown",
-            reason: "navigator recommendation missing typed next role"
-          };
-        }
-        const reason = typeof details.reason === "string" ? details.reason : "";
-        const route = Array.isArray(details.route) ? details.route.filter(isRecord5).map((target) => ({
-          role: String(target.role),
-          phase: navigatorPhaseValue(target.phase)
-        })) : void 0;
-        return recommendationNavigatorFact({
-          next: {
-            role: next.role,
-            phase: navigatorPhaseValue(next.phase)
-          },
-          reason,
-          ...route === void 0 ? {} : { route },
-          ...typeof details.command === "string" ? { modelCommand: details.command } : {}
-        });
-      }
-      if (disposition === "unavailable") {
+      if (!isRecord5(details)) {
         return {
           disposition: "unavailable",
-          source: typeof details.unavailableSource === "string" ? details.unavailableSource : "unknown",
-          reason: typeof details.unavailableReason === "string" ? details.unavailableReason : "Navigator unavailable"
+          source: "unknown",
+          reason: "Navigator attendance is unparseable"
         };
       }
-      if (disposition === "silence" || disposition === "arrival") {
-        return { disposition: "no-advice" };
+      if (!navigatorAttendanceCorrelatedWithBoundMarker(
+        details,
+        i,
+        { index: terminal.index, role: terminal.role },
+        marker
+      )) {
+        return {
+          disposition: "unavailable",
+          source: "unknown",
+          reason: "Navigator attendance is uncorrelated with session invocation facts"
+        };
       }
+      return parseNavigatorAttendanceDetails(details);
     }
   }
-  return { disposition: "no-advice" };
+  return {
+    disposition: "unavailable",
+    source: "unknown",
+    reason: "Navigator attendance is missing from the session"
+  };
+}
+async function extractNavigatorFactFromAdmittedSession(admitted) {
+  try {
+    const entries = await readBoundSessionEntries(admitted.sessionFile);
+    return extractNavigatorFact(entries, attendanceIdentityFromAdmitted(admitted));
+  } catch (error) {
+    if (isMissingPathError2(error)) {
+      return {
+        disposition: "unavailable",
+        source: "unknown",
+        reason: "Navigator attendance is missing from the session"
+      };
+    }
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is unavailable because the session could not be read"
+    };
+  }
 }
 async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
@@ -14216,13 +14572,14 @@ async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, op
   ];
 }
 function extractCoderRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const output = validateAcceptedCoderDetails(message.details);
       const outcome = {
@@ -14266,7 +14623,10 @@ async function settleLawfulJudgeTerminalResult(admitted) {
   if (roleOutcome === void 0) {
     return void 0;
   }
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const artifacts = await publishJudgeArtifacts(
     admitted,
     roleOutcome,
@@ -14287,7 +14647,10 @@ async function settleLawfulCoderTerminalResult(admitted, options = {}) {
   if (entries === void 0) return void 0;
   const extracted = extractCoderRoleOutcome(entries);
   if (extracted === void 0) return void 0;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const artifacts = await publishCoderArtifacts(
     admitted,
     extracted.outcome,
@@ -14388,13 +14751,14 @@ async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, op
   ];
 }
 function extractFixerRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     const escalation = boundAuditEscalationForResult(
       entries,
@@ -14433,7 +14797,10 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
   if (entries === void 0) return void 0;
   const extracted = extractFixerRoleOutcome(entries);
   if (extracted === void 0) return void 0;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const methodInvocations = extractFixerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -14508,13 +14875,14 @@ async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory
   ];
 }
 function extractCollectorRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== COLLECTOR_OUTPUT_TOOL) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const receipt = validateAcceptedCollectorReceipt(message.details);
       const outcome = {
@@ -14546,7 +14914,10 @@ async function settleLawfulCollectorTerminalResult(admitted) {
     admitted,
     admittedManifest.legs.map((leg) => leg.id)
   );
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const artifacts = await publishCollectorArtifacts(
     admitted,
     extracted.outcome,
@@ -14613,13 +14984,14 @@ async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, o
   ];
 }
 function extractDoctorRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     const escalation = boundAuditEscalationForResult(
       entries,
@@ -14668,7 +15040,10 @@ async function settleLawfulDoctorTerminalResult(admitted) {
       throw error;
     }
   }
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const artifacts = await publishDoctorArtifacts(
     admitted,
     extracted.outcome,
@@ -14782,13 +15157,14 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
   ];
 }
 function extractReviewerRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const escalation = boundAuditEscalationForResult(
       entries,
       i,
@@ -14826,7 +15202,10 @@ async function settleLawfulReviewerTerminalResult(admitted, options) {
   if (entries === void 0) return void 0;
   const extracted = extractReviewerRoleOutcome(entries);
   if (extracted === void 0) return void 0;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const methodInvocations = extractReviewerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -14945,13 +15324,14 @@ async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, o
   ];
 }
 function extractMergerRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== MERGER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const output = validateMergerOutput(message.details);
       const outcome = {
@@ -14979,7 +15359,10 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
     ]
   });
   if (methodInvocations.length === 0) return void 0;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const artifacts = await publishMergerArtifacts(
     admitted,
     extracted.outcome,
@@ -15185,7 +15568,8 @@ function redactNavigatorFactForPublicTerminal(navigator, runId) {
   }
   return navigator;
 }
-async function settleFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }, options = {}) {
+async function settleFailureTerminalResult(admitted, failure, options = {}) {
+  const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
   const artifacts = await publishFailureArtifacts(admitted, failure);
   const decisiveFacts = {
     cause: failure.cause,
@@ -15231,8 +15615,8 @@ async function settleFailureTerminalResult(admitted, failure, navigator = { disp
     runId: admitted.runId
   };
 }
-async function settleJudgeFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }, options = {}) {
-  return settleFailureTerminalResult(admitted, failure, navigator, options);
+async function settleJudgeFailureTerminalResult(admitted, failure, options = {}) {
+  return settleFailureTerminalResult(admitted, failure, options);
 }
 function presentFailureTerminal(terminal, io) {
   if (terminal.roleOutcome.kind !== "failure") {
@@ -15344,7 +15728,6 @@ async function presentControlledFailure(admitted, failureInput, io) {
   const terminal = await settleJudgeFailureTerminalResult(
     admitted,
     failure,
-    { disposition: "no-advice" },
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -15655,7 +16038,6 @@ async function presentControlledFailure2(admitted, failureInput, io) {
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
-    { disposition: "no-advice" },
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -15958,11 +16340,7 @@ async function presentControlledFailure3(admitted, failureInput, io) {
     ...session === void 0 ? {} : { session }
   });
   await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    { disposition: "no-advice" }
-  );
+  const terminal = await settleFailureTerminalResult(admitted, failure);
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
@@ -16167,11 +16545,7 @@ async function presentControlledFailure4(admitted, failureInput, io) {
     ...session === void 0 ? {} : { session }
   });
   await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    { disposition: "no-advice" }
-  );
+  const terminal = await settleFailureTerminalResult(admitted, failure);
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
@@ -16445,7 +16819,6 @@ async function presentControlledFailure5(admitted, failureInput, io) {
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
-    { disposition: "no-advice" },
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -16707,7 +17080,7 @@ async function runPublicFixerResume(argv, env, io) {
 
 // src/public-cli/merger-run.ts
 import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
-import { join as join13, resolve as resolve5 } from "node:path";
+import { join as join13, resolve as resolve6 } from "node:path";
 function buildModelArgs6(model) {
   if (model === void 0) return [];
   return [
@@ -16804,7 +17177,6 @@ async function presentControlledFailure6(admitted, failureInput, io) {
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
-    { disposition: "no-advice" },
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -16922,7 +17294,7 @@ async function loadMergerMethodMaterial(packageRoot2) {
   );
 }
 async function admitMergerShellForActivationFailure(options) {
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve6(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
@@ -17244,7 +17616,6 @@ async function presentControlledFailure7(admitted, failureInput, io) {
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
-    { disposition: "no-advice" },
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);

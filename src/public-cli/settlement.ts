@@ -63,7 +63,20 @@ import {
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
+import {
+  bindCurrentDurableTerminalToMarker,
+  isAcceptedPackagedRoleTerminalResult,
+  isReceiptSettlementBindingClear,
+  markerMatchesExpectedIdentity,
+  type ExpectedInvocationIdentity,
+  type InvocationMarkerIdentity,
+} from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
+import { packagedRoleMetadata } from "../packaged-role-registry.ts";
+import {
+  workSubjectKeyFromProjectRoot,
+  workSubjectKeysEqual,
+} from "../work-subject-identity.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
@@ -418,8 +431,19 @@ type SessionEntry = {
   type?: string;
   customType?: string;
   message?: SessionMessage;
+  /** Custom entry payload (e.g. ak-navigator-invocation principal). */
   data?: unknown;
   timestamp?: string;
+  /** Session principal id from the durable header entry. */
+  id?: string;
+  /** Session cwd from the durable header entry. */
+  cwd?: string;
+};
+
+/** Optional independent identity from admitted/shared lifecycle (not attendance self-fields). */
+export type NavigatorAttendanceIdentity = {
+  readonly phase?: NavigatorPhase;
+  readonly subjectKey?: string;
 };
 
 function isMissingPathError(error: unknown): boolean {
@@ -1242,13 +1266,16 @@ export type LawfulJudgeRoleOutcome = Extract<
 export function extractJudgeRoleOutcome(
   entries: readonly SessionEntry[],
 ): LawfulJudgeRoleOutcome | undefined {
+  // Singleton marker↔terminal cardinality — ambiguous multi-terminal fails closed.
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== JUDGE_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    // Shared classifier owns accepted/human vs non-Receipt terminal discriminant.
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     const escalation = boundAuditEscalationForResult(
       entries,
@@ -1286,66 +1313,261 @@ function navigatorPhaseValue(value: unknown): NavigatorPhase {
   return null;
 }
 
+function attendanceIdentityFromAdmitted(
+  admitted: AdmittedRoleInvocation,
+): NavigatorAttendanceIdentity {
+  // Public CLI sessions live under the machine ledger; Navigator derives subject from
+  // the project/cwd work identity, not the per-run session directory spelling.
+  const subjectKey = workSubjectKeyFromProjectRoot(admitted.projectRoot);
+  if (admitted.role === "coder" || admitted.role === "fixer") {
+    return { phase: admitted.phase, subjectKey };
+  }
+  return { phase: null, subjectKey };
+}
+
+/**
+ * Independent expected role/phase/subject for marker correlation.
+ * Role comes from the durable packaged terminal tool; phase/subject from admitted
+ * lifecycle, Developer session cwd, or registry — never attendance self-fields.
+ */
+function independentExpectedIdentity(
+  entries: readonly SessionEntry[],
+  terminalRole: string,
+  supplied?: NavigatorAttendanceIdentity,
+): ExpectedInvocationIdentity {
+  let subjectKey: string | undefined;
+  for (const entry of entries) {
+    if (entry?.type !== "session") continue;
+    if (typeof entry.cwd === "string" && entry.cwd.trim() !== "") {
+      subjectKey = workSubjectKeyFromProjectRoot(entry.cwd);
+    }
+    break;
+  }
+  if (typeof supplied?.subjectKey === "string") {
+    subjectKey = supplied.subjectKey;
+  }
+
+  let phase: NavigatorPhase | undefined;
+  let allowedPhases: readonly NavigatorPhase[] | undefined;
+  // null is a real phase fact (Judge/Reviewer/…); only omit when not independently known.
+  if (supplied !== undefined && Object.hasOwn(supplied, "phase")) {
+    phase = supplied.phase ?? null;
+  } else {
+    const meta = packagedRoleMetadata(terminalRole);
+    if (meta !== undefined) {
+      if (meta.phases.length === 1) {
+        phase = meta.phases[0] as NavigatorPhase;
+      } else {
+        allowedPhases = meta.phases as readonly NavigatorPhase[];
+      }
+    }
+  }
+
+  return {
+    role: terminalRole,
+    ...(phase !== undefined ? { phase } : {}),
+    ...(allowedPhases !== undefined ? { allowedPhases } : {}),
+    ...(subjectKey !== undefined ? { subjectKey } : {}),
+  };
+}
+
+/**
+ * Attendance must match the bound marker identity and current durable terminal role.
+ * Self-shape of attendance fields is not correlation. Marker already matched the
+ * independent expected identity before this check runs.
+ */
+function navigatorAttendanceCorrelatedWithBoundMarker(
+  details: Record<string, unknown>,
+  attendanceIndex: number,
+  terminal: { index: number; role: string },
+  marker: InvocationMarkerIdentity,
+): boolean {
+  if (attendanceIndex <= terminal.index) return false;
+  if (details.version !== 1) return false;
+
+  // Role comes from the packaged terminal tool — compare, do not self-validate.
+  if (details.role !== terminal.role) return false;
+  // Marker role must already equal terminal role (checked by caller); attendance follows marker.
+  if (details.role !== marker.role) return false;
+
+  // Exact current invocation token is the bound marker principal.
+  if (details.invocationId !== marker.invocationId) return false;
+
+  // Phase and subject ride the same marker identity truth table.
+  if (details.phase !== marker.phase) return false;
+  if (typeof details.subjectKey !== "string") return false;
+  if (!workSubjectKeysEqual(details.subjectKey, marker.subjectKey)) return false;
+
+  return true;
+}
+
+function parseNavigatorAttendanceDetails(
+  details: Record<string, unknown>,
+): TerminalNavigatorFact {
+  const disposition = details.disposition;
+  if (disposition === "recommendation") {
+    const next = details.next;
+    if (!isRecord(next) || typeof next.role !== "string") {
+      return {
+        disposition: "unavailable",
+        source: "unknown",
+        reason: "navigator recommendation missing typed next role",
+      };
+    }
+    const reason = typeof details.reason === "string" ? details.reason : "";
+    const route = Array.isArray(details.route)
+      ? details.route
+          .filter(isRecord)
+          .map((target) => ({
+            role: String(target.role),
+            phase: navigatorPhaseValue(target.phase),
+          }))
+      : undefined;
+    return recommendationNavigatorFact({
+      next: {
+        role: next.role,
+        phase: navigatorPhaseValue(next.phase),
+      },
+      reason,
+      ...(route === undefined ? {} : { route }),
+      ...(typeof details.command === "string"
+        ? { modelCommand: details.command }
+        : {}),
+    });
+  }
+  if (disposition === "unavailable") {
+    return {
+      disposition: "unavailable",
+      source:
+        typeof details.unavailableSource === "string"
+          ? details.unavailableSource
+          : "unknown",
+      reason:
+        typeof details.unavailableReason === "string"
+          ? details.unavailableReason
+          : "Navigator unavailable",
+    };
+  }
+  // arrival and legacy silence both mean affirmative lawful no next-role advice.
+  if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
+    return { disposition: "no-advice" };
+  }
+  return {
+    disposition: "unavailable",
+    source: "unknown",
+    reason: "Navigator attendance disposition is unparseable",
+  };
+}
+
 export function extractNavigatorFact(
   entries: readonly SessionEntry[],
+  identity?: NavigatorAttendanceIdentity,
 ): TerminalNavigatorFact {
-  // Prefer the visible attendance custom_message; fall back to decorated silence.
+  // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
+  // One truth table: durable classifier + singleton marker binding + marker identity match.
+  const binding = bindCurrentDurableTerminalToMarker(entries);
+  if (binding.kind === "absent") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance has no durable packaged role terminal",
+    };
+  }
+  if (binding.kind === "ambiguous") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is ambiguous across multiple durable role terminals",
+    };
+  }
+  if (binding.kind === "unbound") {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts",
+    };
+  }
+
+  const { terminal, marker } = binding;
+  // Marker role must match the durable terminal tool's role.
+  if (marker.role !== terminal.role) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts",
+    };
+  }
+  // Marker phase/subject (and role) must match independently admitted expected identity.
+  const expected = independentExpectedIdentity(entries, terminal.role, identity);
+  if (!markerMatchesExpectedIdentity(marker, expected)) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts",
+    };
+  }
+
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? (entry as { details?: unknown }).details;
-      if (!isRecord(details)) continue;
-      const disposition = details.disposition;
-      if (disposition === "recommendation") {
-        const next = details.next;
-        if (!isRecord(next) || typeof next.role !== "string") {
-          return {
-            disposition: "unavailable",
-            source: "unknown",
-            reason: "navigator recommendation missing typed next role",
-          };
-        }
-        const reason = typeof details.reason === "string" ? details.reason : "";
-        const route = Array.isArray(details.route)
-          ? details.route
-              .filter(isRecord)
-              .map((target) => ({
-                role: String(target.role),
-                phase: navigatorPhaseValue(target.phase),
-              }))
-          : undefined;
-        return recommendationNavigatorFact({
-          next: {
-            role: next.role,
-            phase: navigatorPhaseValue(next.phase),
-          },
-          reason,
-          ...(route === undefined ? {} : { route }),
-          ...(typeof details.command === "string"
-            ? { modelCommand: details.command }
-            : {}),
-        });
-      }
-      if (disposition === "unavailable") {
+      if (!isRecord(details)) {
         return {
           disposition: "unavailable",
-          source:
-            typeof details.unavailableSource === "string"
-              ? details.unavailableSource
-              : "unknown",
-          reason:
-            typeof details.unavailableReason === "string"
-              ? details.unavailableReason
-              : "Navigator unavailable",
+          source: "unknown",
+          reason: "Navigator attendance is unparseable",
         };
       }
-      if (disposition === "silence" || disposition === "arrival") {
-        return { disposition: "no-advice" };
+      if (
+        !navigatorAttendanceCorrelatedWithBoundMarker(
+          details,
+          i,
+          { index: terminal.index, role: terminal.role },
+          marker,
+        )
+      ) {
+        return {
+          disposition: "unavailable",
+          source: "unknown",
+          reason: "Navigator attendance is uncorrelated with session invocation facts",
+        };
       }
+      return parseNavigatorAttendanceDetails(details);
     }
   }
-  // No attendance event → intentional silence / no-advice (not unavailable).
-  return { disposition: "no-advice" };
+  // Absence is not successful no-advice — require affirmative typed attendance.
+  return {
+    disposition: "unavailable",
+    source: "unknown",
+    reason: "Navigator attendance is missing from the session",
+  };
+}
+
+/**
+ * Exact-session Navigator fact for failure Terminal settlement.
+ * Never infers no-advice from omission; session read failures stay typed unavailable
+ * so the controlled-failure Terminal itself still settles.
+ */
+async function extractNavigatorFactFromAdmittedSession(
+  admitted: AdmittedRoleInvocation,
+): Promise<TerminalNavigatorFact> {
+  try {
+    const entries = await readBoundSessionEntries(admitted.sessionFile);
+    return extractNavigatorFact(entries, attendanceIdentityFromAdmitted(admitted));
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return {
+        disposition: "unavailable",
+        source: "unknown",
+        reason: "Navigator attendance is missing from the session",
+      };
+    }
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is unavailable because the session could not be read",
+    };
+  }
 }
 
 export async function publishJudgeArtifacts(
@@ -1471,13 +1693,14 @@ export type LawfulCoderRoleOutcome = {
 export function extractCoderRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulCoderRoleOutcome; output: CoderOutput } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const output = validateAcceptedCoderDetails(message.details);
       const outcome: LawfulCoderRoleOutcome = {
@@ -1563,7 +1786,10 @@ async function settleLawfulJudgeTerminalResult(
   if (roleOutcome === undefined) {
     return undefined;
   }
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   // Lawful outcome exists — artifact publication keeps original errno/name.
   const artifacts = await publishJudgeArtifacts(
     admitted,
@@ -1616,7 +1842,10 @@ async function settleLawfulCoderTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractCoderRoleOutcome(entries);
   if (extracted === undefined) return undefined;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const artifacts = await publishCoderArtifacts(
     admitted,
     extracted.outcome,
@@ -1786,13 +2015,14 @@ export type LawfulFixerRoleOutcome =
 export function extractFixerRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulFixerRoleOutcome; output?: FixerOutput } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     const escalation = boundAuditEscalationForResult(
       entries,
@@ -1840,7 +2070,10 @@ async function settleLawfulFixerTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractFixerRoleOutcome(entries);
   if (extracted === undefined) return undefined;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const methodInvocations = extractFixerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -1953,13 +2186,14 @@ export type LawfulCollectorRoleOutcome = {
 export function extractCollectorRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulCollectorRoleOutcome; receipt: CollectorReceipt } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== COLLECTOR_OUTPUT_TOOL) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const receipt = validateAcceptedCollectorReceipt(message.details);
       const outcome: LawfulCollectorRoleOutcome = {
@@ -1996,7 +2230,10 @@ async function settleLawfulCollectorTerminalResult(
     admitted,
     admittedManifest.legs.map((leg) => leg.id),
   );
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const artifacts = await publishCollectorArtifacts(
     admitted,
     extracted.outcome,
@@ -2106,13 +2343,14 @@ export type LawfulDoctorRoleOutcome =
 export function extractDoctorRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulDoctorRoleOutcome; output?: DoctorOutput } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     const escalation = boundAuditEscalationForResult(
       entries,
@@ -2171,7 +2409,10 @@ async function settleLawfulDoctorTerminalResult(
       throw error;
     }
   }
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const artifacts = await publishDoctorArtifacts(
     admitted,
     extracted.outcome,
@@ -2368,14 +2609,15 @@ export type LawfulReviewerRoleOutcome =
 
 export function extractReviewerRoleOutcome(
   entries: readonly SessionEntry[],
- ): { outcome: LawfulReviewerRoleOutcome; receipt?: RuntimeReviewerReceiptV2 } | undefined {
+): { outcome: LawfulReviewerRoleOutcome; receipt?: RuntimeReviewerReceiptV2 } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const escalation = boundAuditEscalationForResult(
       entries,
       i,
@@ -2421,7 +2663,10 @@ async function settleLawfulReviewerTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractReviewerRoleOutcome(entries);
   if (extracted === undefined) return undefined;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const methodInvocations = extractReviewerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -2607,13 +2852,14 @@ export type LawfulMergerRoleOutcome = {
 export function extractMergerRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulMergerRoleOutcome; output: MergerOutput } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== MERGER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const output = validateMergerOutput(message.details);
       const outcome: LawfulMergerRoleOutcome = {
@@ -2650,7 +2896,10 @@ async function settleLawfulMergerTerminalResult(
   });
   // Every invocation must expand the merge-only method before conflict work.
   if (methodInvocations.length === 0) return undefined;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const artifacts = await publishMergerArtifacts(
     admitted,
     extracted.outcome,
@@ -2978,9 +3227,10 @@ function redactNavigatorFactForPublicTerminal(
 export async function settleFailureTerminalResult(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
-  navigator: TerminalNavigatorFact = { disposition: "no-advice" },
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
+  // Exact-session attendance only — never infer no-advice from caller omission.
+  const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
   const artifacts = await publishFailureArtifacts(admitted, failure);
   const decisiveFacts: Record<string, unknown> = {
@@ -3036,10 +3286,9 @@ export async function settleFailureTerminalResult(
 export async function settleJudgeFailureTerminalResult(
   admitted: AdmittedJudgeInvocation,
   failure: ControlledFailure,
-  navigator: TerminalNavigatorFact = { disposition: "no-advice" },
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
-  return settleFailureTerminalResult(admitted, failure, navigator, options);
+  return settleFailureTerminalResult(admitted, failure, options);
 }
 
 /**
