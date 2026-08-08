@@ -337,6 +337,80 @@ test("Terminal free-text encoding preserves newlines/tabs and rejects forged art
   );
 });
 
+test("extractNavigatorFact keeps three-state attendance: affirmative no-advice vs missing/uncorrelated/unparseable", () => {
+  const correlated = {
+    version: 1,
+    invocationId: "inv-no-advice",
+    role: "judge",
+    phase: null,
+    subjectKey: "/repo/.ak/work",
+  };
+
+  const noAdvice = extractNavigatorFact([
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: { details: { ...correlated, disposition: "no-advice" } },
+    },
+  ]);
+  assert.equal(noAdvice.disposition, "no-advice");
+
+  const missing = extractNavigatorFact([
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: { judgeStatus: "converged" },
+      },
+    },
+  ]);
+  assert.equal(missing.disposition, "unavailable");
+  if (missing.disposition === "unavailable") {
+    assert.equal(missing.source, "unknown");
+    assert.equal(typeof missing.reason, "string");
+  }
+
+  const uncorrelated = extractNavigatorFact([
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: {
+        details: {
+          disposition: "no-advice",
+          // missing invocation/role/phase/subject correlation facts
+        },
+      },
+    },
+  ]);
+  assert.equal(uncorrelated.disposition, "unavailable");
+  if (uncorrelated.disposition === "unavailable") {
+    assert.equal(uncorrelated.source, "unknown");
+  }
+
+  const unparseable = extractNavigatorFact([
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: { details: "not-an-object" },
+    },
+  ]);
+  assert.equal(unparseable.disposition, "unavailable");
+  if (unparseable.disposition === "unavailable") {
+    assert.equal(unparseable.source, "unknown");
+  }
+
+  const badDisposition = extractNavigatorFact([
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: { details: { ...correlated, disposition: "mystery" } },
+    },
+  ]);
+  assert.equal(badDisposition.disposition, "unavailable");
+});
+
 test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {
   const entries = [
     {
@@ -357,7 +431,12 @@ test("settlement extracts Judge outcome and Navigator recommendation without mod
       customType: "ak-navigator-attendance",
       message: {
         details: {
+          version: 1,
           disposition: "recommendation",
+          invocationId: "inv-1",
+          role: "judge",
+          phase: null,
+          subjectKey: "/repo/.ak/work",
           next: { role: "fixer", phase: "apply" },
           reason: "typed next",
           command: "Usage: pi --ak-role fixer --help",
@@ -407,7 +486,12 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
       customType: "ak-navigator-attendance",
       message: {
         details: {
+          version: 1,
           disposition: "recommendation",
+          invocationId: "inv-continue",
+          role: "judge",
+          phase: null,
+          subjectKey: "/repo/.ak/work",
           next: { role: "reviewer", phase: null },
           reason,
           command: "Usage: pi --ak-role reviewer --help",
@@ -593,7 +677,12 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
               customType: "ak-navigator-attendance",
               message: {
                 details: {
+                  version: 1,
                   disposition: "recommendation",
+                  invocationId: "inv-cli",
+                  role: "judge",
+                  phase: null,
+                  subjectKey: "/repo/.ak/work",
                   next: { role: "reviewer", phase: null },
                   reason: "review next",
                   command: "Usage: pi --ak-role reviewer --help",
@@ -772,7 +861,12 @@ test("runAkRole judge empty request does not invent semantic task content on the
       attachments: [],
       admittedRequestPath: join(runDir, "admitted-request.json"),
     });
-    assert.equal(terminal.navigator.disposition, "no-advice");
+    // Missing attendance is not successful no-advice — require affirmative typed fact.
+    assert.equal(terminal.navigator.disposition, "unavailable");
+    if (terminal.navigator.disposition === "unavailable") {
+      assert.equal(terminal.navigator.source, "unknown");
+      assert.equal(typeof terminal.navigator.reason, "string");
+    }
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(terminal.roleOutcome.status, "converged");
   });

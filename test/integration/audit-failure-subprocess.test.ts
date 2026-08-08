@@ -617,13 +617,14 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     ),
     true,
   );
+  const attendance = events.filter(
+    (event) =>
+      event.type === "custom_message" && event.customType === "ak-navigator-attendance",
+  );
+  assert.equal(attendance.length, 1, "infrastructure failure emits affirmative typed no-advice");
   assert.equal(
-    events.some(
-      (event) =>
-        event.type === "custom_message" && event.customType === "ak-navigator-attendance",
-    ),
-    false,
-    "infrastructure failure must remain typed silence",
+    attendance[0]?.message?.details?.disposition ?? attendance[0]?.details?.disposition,
+    "no-advice",
   );
 });
 

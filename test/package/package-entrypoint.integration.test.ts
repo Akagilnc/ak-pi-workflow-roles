@@ -1229,7 +1229,8 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
               assert.equal(attendance.length, 1);
               assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "recommendation");
             } else {
-              assert.equal(attendance.length, 0, `${outcome} must remain typed silence`);
+              assert.equal(attendance.length, 1, `${outcome} must emit affirmative typed no-advice`);
+              assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "no-advice");
             }
             assert.equal(navigatorCalls, 1, "no late or overlapping Navigator call may occur after release");
           });

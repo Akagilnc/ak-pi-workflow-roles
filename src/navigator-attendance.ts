@@ -13,6 +13,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
+import { renderPublicAkRoleCommand } from "./public-cli/command-renderer.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
@@ -142,7 +143,8 @@ export type NavigatorCandidate = {
 };
 
 export type NavigatorReport = {
-  disposition: "recommendation" | "silence" | "unavailable" | "arrival";
+  /** Affirmative attendance only. Lawful no-advice is typed, never inferred from absence. */
+  disposition: "recommendation" | "no-advice" | "unavailable" | "arrival";
   route?: NavigatorRouteTarget[];
   next?: NavigatorRouteTarget;
   reason?: string;
@@ -181,16 +183,10 @@ export type NavigatorContextProjection = {
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
 
-// Provider schema is object-root + direction hint only (ADR 0060). Ancillary
-// route/matches/reason/command/id types are NOT admission gates — malformed or
-// missing values reach the unique execute/normalize path and are dropped there.
-const prepareSchema = Type.Object({
-  candidates: Type.Optional(Type.Array(Type.Object({
-    next: Type.Optional(Type.Object({
-      role: Type.Optional(Type.String()),
-    }, { additionalProperties: true })),
-  }, { additionalProperties: true }))),
-}, { additionalProperties: true });
+// Provider admission is ADR 0060 object root only. Nested advisory shape
+// (candidates/next/route/matches/reason/command) is never a gate — every object
+// root reaches the unique execute/normalize path exactly once.
+const prepareSchema = Type.Object({}, { additionalProperties: true });
 type PrepareOutput = Static<typeof prepareSchema>;
 
 export type NavigatorPreparationSession = {
@@ -319,15 +315,6 @@ function normalizePrepareOutput(value: unknown): NavigatorCandidate[] {
     .filter((candidate): candidate is NavigatorCandidate => candidate !== undefined);
 }
 
-/** Registry-shaped display command from recognized next — never model prose or role-name lists. */
-function renderAdviceCommand(next: NavigatorRouteTarget): string | undefined {
-  const metadata = packagedRoleMetadata(next.role);
-  if (metadata === undefined) return undefined;
-  // next.phase is already normalized against registry phase ownership.
-  return next.phase === null
-    ? `ak-role ${next.role}`
-    : `ak-role ${next.role} ${next.phase}`;
-}
 function routeEqual(a: readonly NavigatorRouteTarget[] | undefined, b: readonly NavigatorRouteTarget[]): boolean {
   return a !== undefined && a.length === b.length && a.every((target, index) => target.role === b[index]!.role && target.phase === b[index]!.phase);
 }
@@ -504,7 +491,7 @@ export function selectNavigatorCandidate(candidates: readonly NavigatorCandidate
 }
 
 export function formatNavigatorReport(report: NavigatorReport): string {
-  if (report.disposition === "silence") return "";
+  if (report.disposition === "no-advice") return "";
   if (report.disposition === "unavailable") return `导航不可用：${oneLine(report.unavailableReason ?? "未能完成导航准备")}`;
   if (report.disposition === "arrival") return oneLine(report.arrivalMessage ?? "已到达目的地");
   return [
@@ -558,7 +545,7 @@ function appendNavigatorReportToContent<T extends { type: string }>(
  * Decorate an accepted role-output tool result so the one mandatory settlement
  * extraction (last ak_*_output toolResult) carries recommendation essentials in
  * content text. Receipt details stay byte-identical to the terminating-tool
- * contract — unavailable and intentional silence leave the settlement untouched.
+ * contract — unavailable and affirmative no-advice leave the settlement untouched.
  */
 export function decorateSettlementWithNavigation<T extends { type: string }>(
   event: { content: readonly T[]; details: unknown },
@@ -837,9 +824,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   async function settleOnce(settlement: NavigatorSettlement): Promise<void> {
       const invocationId = activeInvocationId ?? `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
       let report: NavigatorReport;
-      let suppressEvent = false;
       if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
-        // Contract: README.md#Navigator-attendance — human/role outcomes are silent only when preparation completed; a rejected preparation is reported as typed unavailable with its cause.
+        // Contract: lawful human/role outcomes emit affirmative typed no-advice when
+        // preparation completed; rejected preparation remains typed unavailable.
         // Drain the in-flight work so the next driver input cannot start a second prompt on the same native session.
         if (sessionReady !== undefined) {
           try { await sessionReady; } catch (error) { preparationFailure ??= error; }
@@ -849,11 +836,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         }
         session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.kind === "human_decision" ? { status: settlement.status } : {}) });
         if (preparationFailure !== undefined) {
-          // Keep the typed unavailable disposition for the failed attendance, but preserve the documented silence of role/human settlement events.
           report = unavailable(invocationId, preparationFailure);
-          suppressEvent = true;
         } else {
-          report = { disposition: "silence" };
+          // Affirmative no-advice attendance — never inferred later from absence.
+          report = { disposition: "no-advice" };
         }
       } else if (settlement.kind === "arrival") {
         // Contract: README.md#Navigator-attendance — failed attendance is reported as typed unavailable rather than silently discarded.
@@ -880,7 +866,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           }
           const selectedRoute = selected.route;
           const routeChanged = selectedRoute !== undefined && !routeEqual(previousRoute, selectedRoute);
-          const command = renderAdviceCommand(selected.next);
+          // Single owner: public registry renderer (ADR 0052). Model command prose is never authority.
+          const command = renderPublicAkRoleCommand(selected.next);
           report = {
             disposition: "recommendation",
             ...(routeChanged ? { route: selectedRoute } : {}),
@@ -914,7 +901,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         ...(report.arrivalMessage === undefined ? {} : { arrivalMessage: report.arrivalMessage }),
       };
       // Dispose during post-role grace must ignore late completion (ADR 0052 / #106).
-      if (!disposed && report.disposition !== "silence" && !suppressEvent) {
+      // Every settled disposition (recommendation | no-advice | unavailable | arrival) is affirmative.
+      if (!disposed) {
         await options.onEvent(event, report);
       }
       preparation = undefined;

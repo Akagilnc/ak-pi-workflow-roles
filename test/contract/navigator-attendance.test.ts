@@ -233,8 +233,8 @@ test("unchanged routes are omitted after a native-session route entry, while cha
   await cleanupTempDir(root);
 });
 
-test("typed owner-decision and role-infrastructure outcomes remain silent", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-silence-"));
+test("typed owner-decision and role-infrastructure outcomes emit affirmative no-advice", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-no-advice-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -244,16 +244,23 @@ test("typed owner-decision and role-infrastructure outcomes remain silent", asyn
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
     const owner = nav.settle({ kind: "human_decision", role: "coder", phase: "apply", status: "escalate" });
-    await harness.tool().execute("silent-owner", candidate(), undefined, undefined, {} as never);
+    await harness.tool().execute("no-advice-owner", candidate(), undefined, undefined, {} as never);
     harness.release();
     await owner;
     nav.prepare();
     while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
     const infra = nav.settle({ kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
-    await harness.tool().execute("silent-infra", candidate(), undefined, undefined, {} as never);
+    await harness.tool().execute("no-advice-infra", candidate(), undefined, undefined, {} as never);
     harness.release();
     await infra;
-    assert.deepEqual(events, []);
+    assert.equal(events.length, 2);
+    assert.equal(events[0]?.disposition, "no-advice");
+    assert.equal(events[0]?.invocationId, "invocation:1");
+    assert.equal(events[0]?.role, "coder");
+    assert.equal(events[0]?.phase, "apply");
+    assert.equal(typeof events[0]?.subjectKey, "string");
+    assert.equal(events[1]?.disposition, "no-advice");
+    assert.equal(events[1]?.invocationId, "invocation:2");
     assert.equal(harness.prompts(), 2);
   } catch (error) {
     await cleanupTempDir(root, error);
@@ -594,7 +601,7 @@ test("future arrival is typed and presentation-only", async () => {
   await cleanupTempDir(root);
 });
 
-test("settlement decoration carries recommendation only; unavailable and silence stay absent", () => {
+test("settlement decoration carries recommendation only; unavailable and no-advice stay absent", () => {
   const base = {
     content: [{ type: "text" as const, text: "Judge verdict accepted" }],
     details: { judgeStatus: "converged" },
@@ -661,8 +668,8 @@ test("settlement decoration carries recommendation only; unavailable and silence
   assert.equal(decorateSettlementWithNavigation(base, undefined), undefined);
   assert.equal(
     decorateSettlementWithNavigation(base, {
-      event: { ...recommendationEvent, disposition: "silence" },
-      report: { disposition: "silence" },
+      event: { ...recommendationEvent, disposition: "no-advice" },
+      report: { disposition: "no-advice" },
     }),
     undefined,
   );
@@ -1055,15 +1062,19 @@ test("prepare tool accepts direction-only and broken ancillary shape once withou
   assert.equal((second as { details?: { error?: string } }).details?.error, undefined);
 });
 
-test("prepare provider schema admits malformed ancillary through real Tool validation", async () => {
+test("prepare provider schema admits object-root nested malformation through real Tool validation", async () => {
   const accepted: unknown[] = [];
   const tool = createNavigatorPrepareTool((value) => { accepted.push(value); });
   // Production gate is pi-ai validateToolArguments against tool.parameters — not direct execute.
+  // Nested advisory shape must never reject before the unique execute/normalize path.
   const payloads = [
     { name: "route:string", args: { candidates: [{ next: { role: "judge" }, route: "coder→judge" }] } },
     { name: "reason:number", args: { candidates: [{ next: { role: "judge" }, reason: 42 }] } },
     { name: "matches:string", args: { candidates: [{ next: { role: "judge" }, matches: "fixer" }] } },
     { name: "missing candidates", args: {} },
+    { name: "candidates:string", args: { candidates: "malformed" } },
+    { name: "candidates:[42]", args: { candidates: [42] } },
+    { name: "next:string", args: { candidates: [{ next: "malformed" }] } },
   ] as const;
   for (const payload of payloads) {
     const validated = validateToolArguments(tool as never, {
@@ -1074,34 +1085,64 @@ test("prepare provider schema admits malformed ancillary through real Tool valid
     const result = await tool.execute(payload.name, validated as never, undefined, undefined, {} as never);
     assert.equal((result as { terminate?: boolean }).terminate, true, `${payload.name} must terminate once`);
   }
-  assert.equal(accepted.length, payloads.length, "every validated payload reaches the unique execute sink");
-  // Usable next survives route/matches/reason malformation after normalize path.
+  assert.equal(accepted.length, payloads.length, "every object-root payload reaches the unique execute sink exactly once");
+
+  // Usable next survives nested malformation after real validate→execute→settle.
   const root = await mkdtemp(join(tmpdir(), "navigator-schema-gate-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
-    const harness = sessionHarness();
-    const events: any[] = [];
-    const nav = await attendance(setting, harness, events);
-    nav.prepare();
-    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    const malformed = validateToolArguments(harness.tool() as never, {
-      id: "live",
-      name: NAVIGATOR_PREPARE_TOOL_NAME,
-      arguments: {
-        candidates: [{
-          next: { role: "fixer", phase: "apply" },
-          route: "not-an-array",
-          matches: "not-an-object",
-          reason: 7,
-        }],
-      },
-    } as never);
-    await harness.tool().execute("live", malformed as never, undefined, undefined, {} as never);
-    harness.release();
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.equal(events[0]?.disposition, "recommendation");
-    assert.deepEqual(events[0]?.next, { role: "fixer", phase: "apply" });
+
+    {
+      const harness = sessionHarness();
+      const events: any[] = [];
+      const nav = await attendance(setting, harness, events);
+      nav.prepare();
+      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+      const malformed = validateToolArguments(harness.tool() as never, {
+        id: "live-usable",
+        name: NAVIGATOR_PREPARE_TOOL_NAME,
+        arguments: {
+          candidates: [{
+            next: { role: "fixer", phase: "apply" },
+            route: "not-an-array",
+            matches: "not-an-object",
+            reason: 7,
+          }],
+        },
+      } as never);
+      await harness.tool().execute("live-usable", malformed as never, undefined, undefined, {} as never);
+      harness.release();
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      assert.equal(events[0]?.disposition, "recommendation");
+      assert.deepEqual(events[0]?.next, { role: "fixer", phase: "apply" });
+      assert.equal(events[0]?.command, "ak-role fixer apply");
+    }
+
+    // Nested malformation without usable next → honest typed unavailable (no retry loop).
+    for (const [name, args] of [
+      ["candidates-string", { candidates: "malformed" }],
+      ["candidates-number-items", { candidates: [42] }],
+      ["next-string", { candidates: [{ next: "malformed" }] }],
+    ] as const) {
+      const harness = sessionHarness();
+      const events: any[] = [];
+      const nav = await attendance(setting, harness, events);
+      nav.prepare();
+      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+      const validated = validateToolArguments(harness.tool() as never, {
+        id: name,
+        name: NAVIGATOR_PREPARE_TOOL_NAME,
+        arguments: structuredClone(args),
+      } as never);
+      await harness.tool().execute(name, validated as never, undefined, undefined, {} as never);
+      harness.release();
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      assert.equal(events.length, 1, `${name} settles once`);
+      assert.equal(events[0]?.disposition, "unavailable", `${name} has no usable next`);
+      assert.equal(events[0]?.unavailableSource, "unknown");
+      assert.equal(typeof events[0]?.unavailableReason, "string");
+    }
   } catch (error) {
     await cleanupTempDir(root, error);
     throw error;
