@@ -492,7 +492,7 @@ export function createRoleRuntimeExtension(
       // Recommendation rides the accepted settlement record's content so the one
       // mandatory last-ak_*_output extraction surfaces route/next/reason without
       // a second file, grep, or nesting step. Receipt details stay contract-pure;
-      // unavailable/silence leave the settlement untouched.
+      // unavailable/no-advice leave the settlement untouched.
       if (event.isError) return;
       const decorated = decorateSettlementWithNavigation(event, pendingNavigatorPresentation);
       if (decorated === undefined) return;

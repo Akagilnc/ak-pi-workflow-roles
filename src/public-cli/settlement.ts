@@ -835,15 +835,41 @@ function navigatorPhaseValue(value: unknown): NavigatorPhase {
   return null;
 }
 
+function navigatorAttendanceCorrelated(details: Record<string, unknown>): boolean {
+  // Reuse existing session attendance correlation facts only — no caller flag or new reader.
+  return (
+    details.version === 1
+    && typeof details.invocationId === "string"
+    && details.invocationId.trim() !== ""
+    && typeof details.role === "string"
+    && details.role.trim() !== ""
+    && (details.phase === null || details.phase === "plan" || details.phase === "apply")
+    && typeof details.subjectKey === "string"
+  );
+}
+
 export function extractNavigatorFact(
   entries: readonly SessionEntry[],
 ): TerminalNavigatorFact {
-  // Prefer the visible attendance custom_message; fall back to decorated silence.
+  // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? (entry as { details?: unknown }).details;
-      if (!isRecord(details)) continue;
+      if (!isRecord(details)) {
+        return {
+          disposition: "unavailable",
+          source: "unknown",
+          reason: "Navigator attendance is unparseable",
+        };
+      }
+      if (!navigatorAttendanceCorrelated(details)) {
+        return {
+          disposition: "unavailable",
+          source: "unknown",
+          reason: "Navigator attendance is uncorrelated with session invocation facts",
+        };
+      }
       const disposition = details.disposition;
       if (disposition === "recommendation") {
         const next = details.next;
@@ -888,13 +914,23 @@ export function extractNavigatorFact(
               : "Navigator unavailable",
         };
       }
-      if (disposition === "silence" || disposition === "arrival") {
+      // arrival and legacy silence both mean affirmative lawful no next-role advice.
+      if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
         return { disposition: "no-advice" };
       }
+      return {
+        disposition: "unavailable",
+        source: "unknown",
+        reason: "Navigator attendance disposition is unparseable",
+      };
     }
   }
-  // No attendance event → intentional silence / no-advice (not unavailable).
-  return { disposition: "no-advice" };
+  // Absence is not successful no-advice — require affirmative typed attendance.
+  return {
+    disposition: "unavailable",
+    source: "unknown",
+    reason: "Navigator attendance is missing from the session",
+  };
 }
 
 export async function publishJudgeArtifacts(
