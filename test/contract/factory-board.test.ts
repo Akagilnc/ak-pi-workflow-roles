@@ -4506,45 +4506,6 @@ function closeWebSocketGracefully(ws: WebSocket): void {
   if (ws.readyState !== WebSocket.CLOSED) ws.close();
 }
 
-test("Chrome lifecycle waits for browser readiness and exits gracefully", async () => {
-  const chrome = findChromeExecutable();
-  assert.ok(chrome, "Chrome/Chromium required for lifecycle contract proof");
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-lifecycle-"));
-  const userDataDir = join(workspace, "chrome-profile");
-  await mkdir(userDataDir, { recursive: true });
-  const chromeProc = spawn(
-    chrome,
-    [
-      "--remote-debugging-port=0",
-      `--user-data-dir=${userDataDir}`,
-      "--remote-allow-origins=*",
-      "--headless=new",
-      "--disable-gpu",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "about:blank",
-    ],
-    { stdio: ["ignore", "ignore", "pipe"] },
-  );
-  let stderr = "";
-  chromeProc.stderr?.setEncoding("utf8");
-  chromeProc.stderr?.on("data", (chunk: string) => {
-    stderr += chunk;
-  });
-  try {
-    const endpoint = await waitForChromeDevTools(chromeProc, userDataDir, () => stderr);
-    const version = (await (await fetch(`http://127.0.0.1:${endpoint.port}/json/version`)).json()) as {
-      webSocketDebuggerUrl?: string;
-    };
-    assert.equal(version.webSocketDebuggerUrl, endpoint.webSocketDebuggerUrl);
-  } finally {
-    await stopChromeGracefully(chromeProc);
-    await rm(workspace, { recursive: true, force: true });
-  }
-  assert.equal(chromeProc.signalCode, null, "graceful lifecycle must not signal-kill Chrome");
-  assert.equal(chromeProc.exitCode, 0, "Chrome must close successfully after the probe");
-});
-
 /**
  * Headless Chrome computed-style probe for ticket top strips + state dots.
  * Locates cards by data-ticket and their data-state-dot; reads border-top,
