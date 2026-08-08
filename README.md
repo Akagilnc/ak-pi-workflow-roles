@@ -27,13 +27,17 @@ A run interrupted by a typed Codex/xAI HTTP 429 with no lawful result prints a c
 
 Global overrides work before or after the role: `ak-role --model xai/grok-4.5:high resume <runId>`.
 
-Every run also prepares Navigator advice in the same Terminal—one next step, a reason, and a rendered command. It never enforces anything, and an unavailable outcome never invalidates the role result. Configure with `ak-role config set navigator openai-codex/gpt-5.6-luna:medium`.
+Every run also prepares Navigator advice in the same Terminal. Configure it like any other seat:
+
+```bash
+ak-role config set navigator openai-codex/gpt-5.6-luna:medium
+```
 
 Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned. Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
 
 ## Call the roles
 
-Common flags: `--attach <file>` (repeatable, frozen at admission), `--project <path>`, then an optional instruction.
+Common flags: `--attach <file>` (repeatable, frozen at admission) and `--project <path>`. An instruction is optional for judge, collector, and doctor, and required nonblank for coder, fixer, reviewer, and merger.
 
 ```bash
 # judge — adjudicate the supplied materials; infers its burden, no burden flag
@@ -52,7 +56,7 @@ ak-role reviewer --base main --attach ./issue.md "Review the branch."
 ak-role collector --pr 42 --leg codex:CodexBot --leg cursor:cursor-bot,cursor-bot-2
 # legs are id:author[,author...]; repo defaults from origin, --repo owner/repo overrides
 
-# fixer — repair the assigned findings; phase defaults to apply
+# fixer — repair the assigned findings; phase defaults to apply, or pass plan
 ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
 # --prerequisites is a JSON array of {id, requirement}; malformed grammar exits 2
 
@@ -67,7 +71,7 @@ ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
 ## Names
 
-Roles are named after Tang/Song offices (judge = 大理寺, fixer = 修内司, …). The Chinese names are presentation-only—identifiers, tools, and schema fields always use the English seat names. Full roster: [README.zh-CN.md](README.zh-CN.md); rationale: [ADR 0051](docs/adr/0051-roles-are-named-after-tang-song-offices.md).
+Roles are named after Tang/Song offices; the full roster and naming rule live in [README.zh-CN.md](README.zh-CN.md).
 
 ## Developer seam: raw session invocation (advanced)
 
