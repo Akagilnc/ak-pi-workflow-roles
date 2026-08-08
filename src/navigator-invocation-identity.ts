@@ -12,9 +12,11 @@
  * malformed nearest. Non-UUIDv7 principals are never accepted.
  *
  * Durable completion of a packaged role terminal is registry-driven and shared
- * with publicNavigatorSettlement: accepted/human (isError:false) and genuine
- * infrastructure-failure facts complete the invocation; ordinary correctable
- * tool-output isError rejections do not.
+ * with publicNavigatorSettlement. Exact typed discriminants only:
+ *   - accepted/human: isError === false and no infrastructure-failure fact
+ *   - infrastructure: isError === true plus valid typed infrastructure fact
+ * Missing/non-boolean isError, ordinary retryable isError === true, and
+ * contradictory isError === false + infrastructure fact fail closed (non-terminal).
  */
 
 import { PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
@@ -83,7 +85,7 @@ function invocationIdFromData(data: unknown): string | undefined {
 /**
  * Shared durable-completion gate for packaged role output toolResults.
  * Mirrors publicNavigatorSettlement's terminal/non-terminal split without role/phase
- * projection: registry output tool + (accepted/human isError:false | infra fact).
+ * projection. Fail closed on missing/non-boolean isError and contradictory shapes.
  */
 export function isDurablePackagedRoleTerminalResult(message: {
   readonly toolName?: unknown;
@@ -92,12 +94,13 @@ export function isDurablePackagedRoleTerminalResult(message: {
 }): boolean {
   if (typeof message.toolName !== "string") return false;
   if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return false;
-  // Genuine host infrastructure failure that terminated the role run.
-  if (isNavigatorInfrastructureFailureFact(message.details)) return true;
-  // Ordinary correctable tool-output rejection remains open for retry.
-  if (message.isError === true) return false;
-  // Accepted role terminal or human_decision (isError:false).
-  return true;
+  const hasInfraFact = isNavigatorInfrastructureFailureFact(message.details);
+  // Infrastructure completion: exact isError === true + valid typed infra fact.
+  if (message.isError === true) return hasInfraFact;
+  // Accepted/human completion: exact isError === false and must not carry infra fact.
+  if (message.isError === false) return !hasInfraFact;
+  // Missing or non-boolean isError is non-terminal.
+  return false;
 }
 
 function isPackagedRoleTerminalEntry(entry: NavigatorInvocationEntryLike | undefined): boolean {

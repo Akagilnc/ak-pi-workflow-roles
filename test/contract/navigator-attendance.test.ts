@@ -1688,6 +1688,26 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       assert.equal(isDurablePackagedRoleTerminalResult(acceptedMsg), true, `${entry.role}:${String(phase)}:accepted`);
       assert.equal(isDurablePackagedRoleTerminalResult(retryableMsg), false, `${entry.role}:${String(phase)}:retryable`);
       assert.equal(isDurablePackagedRoleTerminalResult(infraMsg), true, `${entry.role}:${String(phase)}:infra`);
+
+      // Typed negative regressions: missing / non-boolean isError / contradictory accepted+infra fail closed.
+      const missingIsErrorMsg = {
+        toolName: entry.outputTool,
+        details: acceptedDetails,
+      };
+      const stringFalseIsErrorMsg = {
+        toolName: entry.outputTool,
+        isError: "false" as unknown as boolean,
+        details: acceptedDetails,
+      };
+      const contradictoryAcceptedInfraMsg = {
+        toolName: entry.outputTool,
+        isError: false,
+        details: infraFact,
+      };
+      assert.equal(isDurablePackagedRoleTerminalResult(missingIsErrorMsg), false, `${entry.role}:${String(phase)}:missing-isError`);
+      assert.equal(isDurablePackagedRoleTerminalResult(stringFalseIsErrorMsg), false, `${entry.role}:${String(phase)}:string-false-isError`);
+      assert.equal(isDurablePackagedRoleTerminalResult(contradictoryAcceptedInfraMsg), false, `${entry.role}:${String(phase)}:contradictory-accepted-infra`);
+
       assert.notEqual(
         publicNavigatorSettlement(entry.role, phase, acceptedMsg)?.kind,
         undefined,
@@ -1702,6 +1722,21 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         publicNavigatorSettlement(entry.role, phase, infraMsg),
         { kind: "role_infrastructure_failure", role: entry.role, phase },
         `${entry.role}:${String(phase)}:settlement-infra`,
+      );
+      assert.equal(
+        publicNavigatorSettlement(entry.role, phase, missingIsErrorMsg as { toolName: string; isError: boolean; details: unknown }),
+        undefined,
+        `${entry.role}:${String(phase)}:settlement-missing-isError`,
+      );
+      assert.equal(
+        publicNavigatorSettlement(entry.role, phase, stringFalseIsErrorMsg),
+        undefined,
+        `${entry.role}:${String(phase)}:settlement-string-false-isError`,
+      );
+      assert.equal(
+        publicNavigatorSettlement(entry.role, phase, contradictoryAcceptedInfraMsg),
+        undefined,
+        `${entry.role}:${String(phase)}:settlement-contradictory-accepted-infra`,
       );
 
       const roleMarker = marker(validA, entry.role, phase);
@@ -1728,6 +1763,43 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       ]);
       assert.equal(afterInfra.resume, false, `${entry.role}:${String(phase)}:after-infra-resume`);
       assert.notEqual(afterInfra.invocationId, validA, `${entry.role}:${String(phase)}:after-infra-id`);
+
+      // Fail-closed negatives resume the current principal (do not mint next).
+      const afterMissingIsError = resolveLifecycleInvocationPrincipal([
+        roleMarker,
+        {
+          type: "message" as const,
+          message: {
+            role: "toolResult" as const,
+            toolName: entry.outputTool,
+            details: acceptedDetails,
+          },
+        },
+      ]);
+      assert.equal(afterMissingIsError.resume, true, `${entry.role}:${String(phase)}:after-missing-isError-resume`);
+      assert.equal(afterMissingIsError.invocationId, validA, `${entry.role}:${String(phase)}:after-missing-isError-id`);
+
+      const afterStringFalseIsError = resolveLifecycleInvocationPrincipal([
+        roleMarker,
+        {
+          type: "message" as const,
+          message: {
+            role: "toolResult" as const,
+            toolName: entry.outputTool,
+            isError: "false",
+            details: acceptedDetails,
+          },
+        },
+      ]);
+      assert.equal(afterStringFalseIsError.resume, true, `${entry.role}:${String(phase)}:after-string-false-resume`);
+      assert.equal(afterStringFalseIsError.invocationId, validA, `${entry.role}:${String(phase)}:after-string-false-id`);
+
+      const afterContradictoryAcceptedInfra = resolveLifecycleInvocationPrincipal([
+        roleMarker,
+        toolResult(entry.outputTool, { isError: false, details: infraFact }),
+      ]);
+      assert.equal(afterContradictoryAcceptedInfra.resume, true, `${entry.role}:${String(phase)}:after-contradictory-resume`);
+      assert.equal(afterContradictoryAcceptedInfra.invocationId, validA, `${entry.role}:${String(phase)}:after-contradictory-id`);
 
       // human_decision (isError:false escalate-shaped) completes.
       if (entry.role === "judge") {
