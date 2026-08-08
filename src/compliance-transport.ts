@@ -329,13 +329,15 @@ export function readComplianceDecision(
     arguments_ === null ||
     Array.isArray(arguments_)
   ) {
-    throw malformedComplianceDecision(
-      response,
-      toolName,
-      invalidLabel,
-      "arguments must be an object",
-      calls,
-    );
+    // The response and candidate have already been retained. A successful
+    // single named call with a non-object candidate is an observable audit
+    // residual, not transport failure; the existing revise path keeps it out
+    // of accepted receipts for #182 to settle publicly.
+    return {
+      status: "revise",
+      violations: ["compliance decision arguments were not an object"],
+      usage: response.usage,
+    };
   }
   const args = arguments_ as Record<string, unknown>;
   switch (args.status) {
