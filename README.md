@@ -1,438 +1,96 @@
 # @akagilnc/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, and `merger`.
+Packaged workflow roles for [Pi](https://pi.dev): `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`. 中文说明见 [README.zh-CN.md](README.zh-CN.md)。
 
-## Public CLI (`ak-role`)
+## Install
 
-`ak-role` is the only supported way to call the package (ADR 0052). Install it through Pi so the executable and runtime always come from the same package copy, then add Pi’s private npm bin directory to `PATH` once:
+Install through Pi so the CLI and runtime come from the same package copy, and add Pi’s private npm bin to `PATH` once:
 
 ```bash
 pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ```
 
-Update CLI and runtime together from that same Pi-managed copy (do not add a second global `npm install -g`):
+Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat defaults with `ak-role config set judge openai-codex/gpt-5.6-sol:high`.
+
+## Reading results
+
+`ak-role` is the only supported way to call the package. Every run writes its complete Terminal result to stdout—read or redirect it there, never scrape Pi session files:
 
 ```bash
-pi update npm:@akagilnc/pi-workflow-roles
-# or refresh every installed Pi package:
-pi update --extensions
+ak-role judge --attach ./plan.md "Review this plan." > result.txt
 ```
 
-Inspect the installed capabilities and choose persistent defaults:
+Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
+
+A run interrupted by a typed Codex/xAI HTTP 429 with no lawful result prints a complete `ak-role resume <runId>` command in its failure Terminal. Resume reopens the exact session; override the model for one run with the global flags. The package never auto-switches providers, only a typed 429 makes a run resumable, and unknown, terminal, or concurrently-resumed run IDs are rejected. Collector and Doctor are one-shot.
+
+Global overrides work before or after the role: `ak-role --model xai/grok-4.5:high resume <runId>`.
+
+Every run also prepares Navigator advice in the same Terminal—one next step, a reason, and a rendered command. It never enforces anything, and an unavailable outcome never invalidates the role result. Configure with `ak-role config set navigator openai-codex/gpt-5.6-luna:medium`.
+
+Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned. Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
+
+## Call the roles
+
+Common flags: `--attach <file>` (repeatable, frozen at admission), `--project <path>`, then an optional instruction.
 
 ```bash
-ak-role roles
-ak-role help
-ak-role help judge
-ak-role config set judge openai-codex/gpt-5.6-sol:high
-ak-role config set navigator openai-codex/gpt-5.6-luna:medium
+# judge — adjudicate the supplied materials; infers its burden, no burden flag
+ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."
+
+# coder — first implementation; phase defaults to apply, or pass plan
+ak-role coder plan "Propose the first implementation plan."
+ak-role coder apply --attach ./plan.md "Implement the approved slice."
+# apply binds the package-owned TDD method; do not bind a home Skill as a substitute
+
+# reviewer — fixed-target two-axis review (Standards + Spec)
+ak-role reviewer --base main --attach ./issue.md "Review the branch."
+# --base is a hint; completed ≠ approved — read the findings in the Terminal
+
+# collector — GitHub PR review evidence; github.com only, needs gh auth; one-shot
+ak-role collector --pr 42 --leg codex:CodexBot --leg cursor:cursor-bot,cursor-bot-2
+# legs are id:author[,author...]; repo defaults from origin, --repo owner/repo overrides
+
+# fixer — repair the assigned findings; phase defaults to apply
+ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
+# --prerequisites is a JSON array of {id, requirement}; malformed grammar exits 2
+
+# doctor — diagnose one retained case; one-shot
+ak-role doctor --issue 115 "Diagnose this retained case."
+# --runs must stay project-relative: .ak-roles/books/<book>/issues/<n>/runs matching --issue
+
+# merger — resolve one merge already in conflict (start it first with Git’s ort)
+ak-role merger --project /path/to/worktree "Reconcile the active merge."
+# hands new intent/authority questions back instead of inventing authority
 ```
 
-### Call Judge
+## Names
 
-Pass an optional instruction directly after the role. Use repeatable `--attach` options for local regular files and `--project` when the target is not the current project:
+Roles are named after Tang/Song offices (judge = 大理寺, fixer = 修内司, …). The Chinese names are presentation-only—identifiers, tools, and schema fields always use the English seat names. Full roster: [README.zh-CN.md](README.zh-CN.md); rationale: [ADR 0051](docs/adr/0051-roles-are-named-after-tang-song-offices.md).
+
+## Developer seam: raw session invocation (advanced)
+
+Most callers never need this. The source tree retains an explicitly loadable raw-Pi seam for package development and low-level diagnosis; it is not a supported invocation recipe—external callers use `ak-role`.
+
+A raw run loads the role runtime explicitly and selects the role through the internal flag. This is the real argv shape, taken from the CLI’s own builders and recorded runs under the ledger book:
 
 ```bash
-ak-role judge \
-  --attach ./review-findings.md \
-  --attach ./governing-adr.md \
-  "Adjudicate every finding against the supplied authority."
-
-ak-role judge \
-  --project /path/to/project \
-  --attach /path/to/plan.md \
-  "Decide whether this plan is ready for construction."
+run=~/.ak-roles/books/<book>/issues/<issue>/runs/<invocation>@<source-tree>
+pi --no-extensions \
+  -e <packageRoot>/extensions/role-runtime.ts \
+  --no-skills --no-prompt-templates --no-themes --no-context-files \
+  --session "$run/session/session.jsonl" \
+  --session-dir "$run/session" \
+  --ak-role judge --mode json \
+  "Adjudicate the attached materials." \
+  </dev/null >/dev/null 2>"$run/stderr.log"
 ```
 
-The complete Terminal result is written to stdout. Read it there or redirect that same result normally; do not discard stdout or scrape Pi session files. Exit status reports whether the CLI lifecycle completed honestly, not business success: every lawful typed terminal result—including `audit_escalation`—exits zero; structural or infrastructure failure without a lawful typed terminal result exits nonzero. On controlled post-admission failure the same Terminal carries the durable Error Artifact ref and original cause identity rather than a fabricated role Receipt:
+`--session` names the exact session file principal (never directory-latest); `--session-dir` is its directory. Judge takes the instruction as the prompt; other roles pass durable payload files through their own internal flags (`--ak-coder-task`, `--ak-fix-packet`, and siblings), assembled by each role’s builder in `src/public-cli/*-run.ts` through the load boundary in `src/public-cli/explicit-internal.ts`. Derive flags from that source—and from recorded runs under the ledger book—never from prose.
 
-```bash
-ak-role judge --attach ./plan.md "Review this plan." > judge-result.txt
-```
+Discipline:
 
-Judge deliberately has no public burden flag: it infers Authority, Plan, Apply, or Review from the request. Global one-run overrides may appear before or after the role command:
-
-```bash
-ak-role --model openai-codex/gpt-5.6-sol --thinking high \
-  judge --attach ./decision.md "Adjudicate this decision."
-```
-
-When a Role run is interrupted by an observed typed Codex/xAI HTTP 429 and has no lawful terminal result, the failure Terminal includes a complete `ak-role resume <runId>` command (the run ID appears only there). Resume reopens the exact Pi session with the admitted instruction, frozen Attachments, and typed role values; choose a temporary model with the usual global flags without changing persistent configuration. The package never auto-switches providers or models after a quota interruption, and concurrent resume of one run is rejected before a second dispatch. Quota-like prose alone never makes a run resumable — only a typed HTTP 429 observation does. Unknown, terminal, and non-resumable run IDs reject without replay.
-
-```bash
-ak-role --model xai/grok-4.5:high resume <runId>
-```
-
-Judge, Coder, Fixer, Collector, Doctor, Reviewer, and Merger are the completed public run paths. `roles` lists the full callable registry plus automatic Navigator. Ordinary Pi startup does not expose the package’s internal activation flag.
-
-### Call Coder
-
-Coder accepts the common Invocation request (optional attachments, project override, nonblank task instruction). Phase defaults to `apply`; pass an explicit `plan` token to preserve plan through admission and any continuation:
-
-```bash
-ak-role coder \
-  --attach ./approved-plan.md \
-  "Implement the approved vertical slice."
-
-ak-role coder plan \
-  --project /path/to/project \
-  "Propose the first implementation plan for this task."
-
-ak-role coder apply \
-  --attach ./notes.md \
-  "Execute the approved plan and verify with package-owned TDD."
-```
-
-Apply binds the package-owned Matt TDD method from the installed package (including `tests.md` and `mocking.md`) without ambient home Skill discovery or network fetch. Lawful Terminal results and Artifact refs use the same success interface as Judge.
-
-### Call Reviewer
-
-Reviewer accepts the common Invocation request plus an optional `--base` revision hint for the fixed review target. Capabilities are adapter-derived from exact task bytes; callers never submit capability packets:
-
-```bash
-ak-role reviewer \
-  --base main \
-  --attach ./originating-issue.md \
-  "Review the branch on Standards and Spec."
-
-ak-role reviewer \
-  --project /path/to/project \
-  "Review the latest commits; pin the base through proposal/preflight."
-```
-
-The package-owned adapted code-review method is forced from the installed package without ambient home Skill discovery, Matt setup files, or project-governance mutation. Lawful Terminal results and Artifact refs use the same success interface as Judge.
-
-### Call Collector
-
-Collector accepts an explicit positive PR number and repeatable leg declarations (`id:author[,author...]`). Repository defaults from the project’s `origin` GitHub remote; pass `--repo owner/repo` to override. Optional instruction and `--attach` / `--project` follow the common Invocation request. The adapter assembles the retained leg manifest — callers do not author internal JSON or invent expected authors from prose:
-
-```bash
-ak-role collector \
-  --pr 42 \
-  --leg codex:CodexBot \
-  --leg cursor:cursor-bot,cursor-bot-2
-
-ak-role collector \
-  --project /path/to/project \
-  --repo OtherOrg/OtherRepo \
-  --pr 7 \
-  --leg codex:CodexBot
-```
-
-Well-formed but nonexistent PRs or authors are not rejected by CLI preflight; Collector reports them through its existing typed receipt. Collector is one-shot (no `ak-role resume`). Lawful Terminal results and Artifact refs use the same success interface as Judge and Coder.
-
-### Call Fixer
-
-```bash
-ak-role fixer \
-  --attach ./findings.md \
-  --prerequisites ./prereqs.json \
-  "Repair the caller-assigned findings."
-
-ak-role fixer plan \
-  --project /path/to/project \
-  "Propose the first repair plan."
-```
-
-Phase defaults to `apply`. Optional `--prerequisites` is a JSON array of `{id,requirement}` objects. Package-owned diagnosis is available from the install; do not bind a home Skill.
-
-### Call Doctor
-
-```bash
-ak-role doctor \
-  --issue 115 \
-  --project /path/to/project \
-  "Diagnose this retained case."
-```
-
-`--issue` is required. Optional `--runs` must stay project-relative and match the Issue’s retained runs grammar. Doctor is one-shot (no `ak-role resume`).
-
-### Call Merger
-
-```bash
-ak-role merger \
-  --project /path/to/conflicted-worktree \
-  --attach ./authority-notes.md \
-  "Reconcile the active merge without inventing new authority."
-```
-
-There is no phase token. The adapter derives the active merge envelope; callers do not author internal merger-input JSON. Package-owned merge-only method is forced from the install.
-
-Read every Terminal result from `ak-role` stdout (or a normal redirect of that same stream). Do not scrape Pi event streams, session JSONL, or status-only `grep`/`jq` recipes for role outcomes or Navigator advice.
-
-## 班子（唐宋官署命名）
-
-角色按唐宋官署／官职命名，判据与被否方案见 [ADR 0051](docs/adr/0051-roles-are-named-after-tang-song-offices.md)。**朝廷对应：皇帝＝陛下，宰相＝调用者，百官＝各角色。** 工厂没有政事堂——中枢是陛下。百官各司其职，彼此制衡，共同完成从谋划、建设、审查到收敛的完整流程。
-
-**只是名字。** `ak-role <name>` 的角色标识符以及工具名与 schema 字段一律使用下表席位列的英文名；中文名只是呈现层称谓。
-
-| 名号 | 席位 | 职掌 |
-| --- | --- | --- |
-| **将作监** | coder | **营造新作。** 承接新的谋划与需求，从一片空白开始设计、建造，直到形成可供使用的新成果。讲究先明其意，再定其形，不妄增枝节，只做当下所需之事。 |
-| **修内司** | fixer | **缮修旧物。** 面对已有问题，不急于表面修补，而是追寻问题根源，找到真正需要修整之处。既要修复眼前缺漏，也要防止同类问题再次出现。 |
-| **御史台** | reviewer | **察举百弊。** 置身事外，以旁观之眼审视成果，寻找其中的不妥、遗漏与隐患。只负责指出问题、陈明依据，不参与修改，也不替人作最终判断。 |
-| **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
-| **审刑院** | judge-auditor／reviewer-auditor（无 CLI，共享内部接缝） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。 |
-| **门下省** | collector | **承接百议。** 位于决策之前，收集各方反馈与意见，确认事情是否已经具备继续推进的条件。它不替人裁决，只负责让信息完整、状态清楚。 |
-| **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；遇到无法自行决定之处，则留待重新裁量。 |
-| **游奕使** | navigator（无 CLI，自动出席） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
-
-其余席位：
-
-| 席位 | 名 | 职掌 | 状态 |
-| --- | --- | --- | --- |
-| doctor | **太医署** | 单案诊断工厂机制，开 `keep｜thin｜delete` 方 | 已建 |
-| — | **司天台** | 记候簿——只打点、只指针，不分析不执法 | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；席位形态属 [#67](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/67) 素材，未定 |
-| — | **兰台** | 读档议制——耗时／缺口／冗余三条，上奏不执法 | 未建（[#67](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/67) 两席之一） |
-| — | **考功司** | 考具体效率——角色与档位的升档率、一次通过率、每票成本 | 留档，不属 #67，需要时另立票 |
-| — | **主簿** | 合并后勾稽销案：核实确已合上、清理残留、报到达 | 未建 |
-
-**merge 按钮归调用者**，没有任何角色握不可逆权限：门下省把收证这件苦活做完并报收集终态，人（或 AI）自己判断、自己点，点完想调主簿就调、不调也可以。
-
-上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；审刑院也并非只跟在大理寺之后，Judge、Fixer、Reviewer、Doctor 各自都有一次。
-
-`拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
-
-## Internal development seam
-
-The source tree retains an explicitly loadable raw-Pi seam for package development and low-level diagnosis. It is intentionally absent from public installation help and is not a supported invocation recipe. External callers use `ak-role`; they do not pass internal activation flags, manage Pi session directories, consume event streams, or extract receipts from JSONL.
-
-### Reviewer
-
-Every public role run prepares Navigator advice concurrently. Callers still invoke only `ak-role <role> ...`; Navigator never invokes or enforces another role.
-
-The same stdout Terminal result contains the role outcome and Navigator's typed recommendation, no-advice, or unavailable outcome. A recommendation includes one next step, a short reason, and a command rendered from registered role/phase/subject facts—not executable model prose. Do not open a sibling session or parse Pi events to obtain it.
-
-After the role settles, Navigator receives at most three seconds to finish; healthy preparation returns immediately. Timeout or preparation failure remains honestly unavailable, never invalidates the role result, and triggers no retry or fallback model.
-
-Navigator's startup default is `openai-codex/gpt-5.6-luna:medium` when matching credentials are available. Configure it like any other seat:
-
-```bash
-ak-role config set navigator openai-codex/gpt-5.6-luna:medium
-```
-
-## Judge
-
-The judge role:
-
-1. loads the bundled [`souls/judge.md`](souls/judge.md) into the system prompt;
-2. lets the active Pi model adjudicate with normal tools;
-3. accepts a final verdict only through `ak_judge_output`;
-4. runs a separate Soul-compliance model call before accepting the verdict;
-5. returns a terminating structured tool result only after the audit passes.
-
-The compliance call uses the active Pi model and credentials. It checks demonstrated procedural compliance with the Soul; it does not replace the judge's substantive finding decisions. A successful compliance `audit_escalation` is a typed human-decision terminal result, not an accepted Judge Receipt; it remains distinct from a passed `ak_judge_output` receipt.
-
-Judge infers its burden of proof from the supplied materials alone (authority completeness, plan construction-readiness, apply executable proof, or review finding adjudication).
-
-On activation, Judge narrows active tools to the registered members of this exact whitelist: `read`, `grep`, `find`, `ls`, `bash`, and `ak_judge_output`. In particular, `write`, `edit`, and arbitrary sibling tools are inactive. This is role gating to prevent accidental role drift, not a security boundary; callers that need isolation must provide a sandbox or container.
-
-## Fixer
-
-The fixer role loads `souls/fixer.md` plus caller-supplied opaque prose instructions. Optional typed prerequisites travel as a separate JSON-array attachment:
-
-```markdown
-Repair the caller-assigned findings and preserve all unrelated behavior.
-```
-
-```json
-[{"id":"owner.choice","requirement":"The controlling owner decision exists."}]
-```
-
-Instruction prose is rejected at activation when empty or trim-blank, is not machine-parsed, and admitted instruction bytes are preserved exactly. Prerequisite declarations are exported as `fixerPrerequisitesSchema`, `parseFixerPrerequisites`, and `validateFixerPrerequisites`; IDs are case-sensitive, attachment-unique, and match `^[A-Za-z0-9][A-Za-z0-9._-]*$`. The admitted prose and declarations are frozen together for the invocation. There is no frontmatter parser or automatic carry-forward.
-
-Fixer has this phase vocabulary:
-
-| Phase | Meaning | Legal success status |
-| --- | --- | --- |
-| `plan` | Inspect and propose a repair plan; do not edit or commit | `planned` or assignment-level `refused` |
-| `apply` | Settle finding classes lawfully, or hand over honestly when this call remains unsettled | `completed`, `refused`, `partially_completed`, or `unfinished` |
-
-There is no third phase. Apply `partially_completed` means a mixture of completed and lawfully refused findings, never unfinished work. `unfinished` is an apply-only, non-failure handover stating only that this call did not settle all assigned work; it carries a nonblank typed `remainingScope` and does not diagnose a cause, prescribe the caller's next step, or waive any acceptance.
-
-Public callers invoke Fixer only through `ak-role fixer`:
-
-```bash
-ak-role fixer [plan|apply] [--project <path>] [--attach <file>]... [--prerequisites <json-array-file>] <instruction...>
-```
-
-Phase defaults to `apply` when omitted. `--prerequisites` is optional; when supplied it must be a structurally valid JSON array of `{id,requirement}` objects (same grammar as `parseFixerPrerequisites`). Malformed prerequisite grammar is a structural reject (exit 2). Whether a declared prerequisite is unmet or insufficient remains a Fixer judgment inside the role receipt, not a CLI classification. Common attachments use `--attach` and are frozen at admission. The package-owned evidence-driven diagnosis method (`resources/methods/diagnosing-bugs/`, adapted from Matt `diagnosing-bugs` with MIT attribution) is available only to Fixer from the installed package and is recorded in Terminal evidence when invoked; it is not forced into every repair prompt and cannot automatically launch architecture Grill or other role-external Skill chains.
-
-Fixer terminates through `ak_fixer_output`. Its legal status-dependent shapes are:
-
-```json
-{"status":"planned","report":"Markdown report"}
-{"status":"refused","report":"Markdown report","remainingScope":"assignment scope","blocker":{"cause":"authority_violation","evidence":"concrete evidence"}}
-{"status":"completed","report":"Markdown report","classResults":[{"name":"Class name","disposition":"completed","searchScope":"complete census scope","exceptions":[{"where":"inspected location","reason":"why no repair was required"}],"commitSha":"committed revision identity"}]}
-{"status":"partially_completed","report":"Markdown report","classResults":[{"name":"Done","disposition":"completed","searchScope":"all locations","exceptions":[],"commitSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"Blocked","disposition":"refused","remainingScope":"exact remaining assignment scope","blocker":{"cause":"prerequisite_unmet","prerequisiteId":"owner.choice","evidence":"concrete absent prerequisite"}}]}
-{"status":"unfinished","report":"This call did not settle all assigned work.","remainingScope":"unsettled assignment scope","classResults":[{"name":"Done","disposition":"completed","searchScope":"all locations","exceptions":[],"commitSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}
-```
-
-Every receipt requires `status` and a nonblank `report`. In `plan`, the semantic branches are `planned` or an assignment-level `refused`: a planned receipt has no other required semantic fields, while a plan-level refusal additionally requires nonblank `remainingScope` and a blocker. For apply, ordinary settlement `classResults` is non-empty with unique nonblank `name` values; `unfinished` instead requires nonblank top-level `remainingScope` and may omit `classResults`, but any supplied results are non-empty completed results with commit identities only. Each completed result requires `disposition: "completed"`, nonblank `searchScope` and `commitSha`, and an `exceptions` array whose entries require nonblank `where` and `reason`; a nonblank `commitSha` pointer may be shared by differently named class results. Each refused result requires `disposition: "refused"`, nonblank `remainingScope`, and a blocker. `completed` contains only completed results, `refused` only refused results, and `partially_completed` at least one of each. Authority blockers require `cause: "authority_violation"` and nonblank `evidence`; prerequisite blockers require `cause: "prerequisite_unmet"`, a pattern-valid `prerequisiteId`, and nonblank `evidence`.
-
-These are required semantic fields, not exact object shapes: presentation-only extras such as labels, notes, and decorations are ignored and projected out of the accepted receipt. Contradictory semantic fields are rejected, including top-level `commitSha` or `classesRepaired`, fields from the opposite class-result disposition, and `prerequisiteId` on an authority blocker. A `prerequisite_unmet` blocker may name only an ID in the admitted prerequisite declarations; opaque instructions do not declare IDs. An undeclared reference is rejected before audit and may be corrected. Empty declarations therefore forbid only `prerequisite_unmet`, not authority refusals or completed settlements.
-
-Typed admission guarantees declaration/reference integrity only. Whether the declared predecessor is actually absent, controlling, and causally blocks lawful work remains an explicitly nondeterministic auditor judgment. The semantic auditor rejects retrospective method/history laundering, but tests and callers must not treat prompt prose as deterministic proof. Completed work remains completed; its report must disclose any method breach, claim only current verification, and not claim test-first execution that did not occur. Provider, authentication, auditor, tool, or transport failure aborts without a receipt. Boundary admission projects each candidate to a typed receipt; that projected receipt and the frozen packet instructions/prerequisites values enter the fresh same-active-model compliance audit without further semantic rewriting. Presentation extras discarded by the existing projection are not promised to survive. Revise permits corrected resubmission, while audit infrastructure failure is nonzero.
-
-Fixer-only bash seatbelt (both `plan` and `apply`): before a `bash` tool executes, the package inspects only the string `command` and blocks when it case-sensitively contains any one of these exact ASCII literals — `rm -rf`, `git reset --hard`, `git clean`, `git checkout --`. The block is an ordinary nonterminating tool error that names the matched literal; bash does not run, the Fixer session stays alive, and the model may retry a different spelling/operation or submit `refused`. This is accidental-destruction drift prevention only — not hostile-code defense, shell sandboxing, filesystem isolation, or bypass resistance. Callers that need isolation must supply a container or sandbox.
-
-## Coder
-
-Coder handles first implementation in two explicit phases:
-
-| Phase | Meaning | Legal success status |
-| --- | --- | --- |
-| `plan` | Inspect the task and propose an implementation plan; do not edit or commit | `planned` |
-| `apply` | Execute the approved plan and verify the first implementation | `completed` or `unfinished` |
-
-Either phase may return `refused` with authority and current-code evidence. During `apply`, Coder may also return `unfinished` with a nonblank typed `remainingScope` when this invocation has not settled the task; this is a resumable handoff, not a failure, and it does not waive any acceptance. A refusal does not require a commit and returns to the caller for disposition; Coder never emits `escalate`.
-
-Call Coder only through `ak-role coder` (ADR 0052). Do not bind a home-directory TDD Skill as a substitute for the package-owned method.
-
-Coder terminates through `ak_coder_output` with the same thin worker envelope:
-
-```json
-{"status":"planned|completed|refused","report":"Markdown report"}
-{"status":"unfinished","report":"Markdown report","remainingScope":"nonblank typed remaining scope"}
-```
-
-During `apply`, the runtime transforms the first input through Pi's native `/skill:tdd` bound to the package-owned canonical Matt TDD Skill (`resources/methods/tdd/`, with companion testing and mocking material and exact upstream provenance). A `completed` receipt is rejected unless the immediately following prompt proves Pi's exact native expansion of the complete canonical TDD Skill and original request; an evidence-bearing `refused` receipt does not require that proof or a commit.
-
-The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the caller. These are report/audit requirements, not a second bundled Skill. Coder output has no `commitSha` field — the typed contract rejects it (ADR 0024). An unfinished receipt carries only its nonblank typed `remainingScope`; it does not carry commit identity or waive acceptance.
-
-## Reviewer
-
-Reviewer performs a fixed-target, two-axis code review. Call Reviewer only through `ak-role reviewer` (ADR 0052). The public adapter binds the package-owned adapted review method and derives task-bound capabilities from exact task bytes; callers do not supply home-Skill paths or capability packets.
-
-```bash
-ak-role reviewer \
-  --base main \
-  --attach ./originating-issue.md \
-  "Review the branch on Standards and Spec."
-
-ak-role reviewer \
-  --project /path/to/project \
-  "Review the latest commits since the optional base."
-```
-
-Common Invocation flags: `--attach` / `--project`. Role-specific optional `--base <revision>` is a semantic base hint for the fixed review target; pinning remains Reviewer proposal/preflight authority after activation. Apply binds package-owned Matt `code-review` (`resources/methods/code-review/`, adaptation `reviewer-no-setup-fixed-target-two-axis`) without ambient home Skill discovery, Matt setup files, or project-governance mutation. Lawful Terminal results and Artifact refs use the same success interface as Judge; evidence records package method provenance and typed expansion observation.
-
-The authoritative capability contract and validation live in the exported TypeScript API in [`src/reviewer-dispatch.ts`](src/reviewer-dispatch.ts). A static capability names tools and prerequisite operations; it never supplies a Git range command:
-
-```json
-{"version":1,"taskSha256":"<SHA-256 of exact task bytes>","tools":["read","bash"],"prerequisiteOperations":["preflight.git.pin-target","preflight.git.resolve-base","preflight.git.derive-range","preflight.git.list-ordered-commits","preflight.git.read-material","runner.git.materialize-mirror","runner.git.materialize-workspace","runner.git.verify-snapshot"]}
-```
-
-The authoritative `Agent` input contract is the exported runtime `reviewerProposalSchema` in [`src/reviewer-role.ts`](src/reviewer-role.ts), with its corresponding TypeScript proposal type in `reviewer-dispatch.ts`. Proposals name a semantic base and materials, not a resolved commit or shell command; the runtime derives and pins those facts. Callers should derive validation and proposal construction from those exports rather than this invocation guide.
-
-Reviewer terminates in two layers. The model submits only a **thin intent** through `ak_reviewer_output`:
-
-```json
-{"status":"completed"}
-{"status":"refused","diagnostic":"non-empty reason"}
-```
-
-The authoritative receipt is the **runtime-assembled V2 receipt returned in that tool call's result** (`details`), validated by `validateRuntimeReviewerReceipt` in [`src/package-contracts/reviewer-output.ts`](src/package-contracts/reviewer-output.ts): it carries `reports.standards` / `reports.spec` as byte-identified Markdown (`{text, utf8Length, sha256}`) plus outcomes and content identities. **Findings live in those reports — read the runtime-assembled receipt details (and, once the public adapter lands, the Terminal/artifact surface), not the thin intent.** A caller that reads only the intent sees `{"status":"completed"}` and no findings; that is the intent by design, not the receipt.
-
-`completed` means the requested review was completed; it says nothing about approval, routing, mergeability, or the next role — consult the reports for findings. `refused` is an evidenced inability to establish the review target, authority, or factual premise. Infrastructure failures instead abort the action and exit nonzero. Both statuses undergo a separate active-model, no-operational-tool method-compliance audit; `revise` permits corrected resubmission.
-
-`reviewer-cmr` is reserved terminology for a possible future AK CMR cross-model-panel role. It is not implemented and Reviewer exposes no panel or model-selection machinery.
-
-## Collector
-
-Collector is a standalone external-GitHub PR evidence collection role. It observes explicitly configured reviewer legs, optionally requests them, classifies collection terminality (`valid` | `unavailable` | `missing`), preserves evidence across HEAD moves, and submits one self-contained receipt through `ak_collector_output`. It is not Reviewer or Judge and never reviews code, repairs, writes code, pushes, merges, approves, or routes.
-
-v1 supports `github.com` only. There is no default leg/bot: callers must supply an explicit non-empty leg manifest. Owner/repo uses a conservative ASCII grammar (owner 1–39, repo 1–100). Enterprise hosts, interactive/RPC mode, resume/continue, and later prompts are unsupported.
-
-**Collector forbids every Skill**, including command-only Skills (`disable-model-invocation: true` / prompt-excluded but command-present). Skills are not part of the supported Collector surface.
-
-The public adapter accepts a PR, repository identity, and explicit leg/expected-author declarations, then assembles Collector's retained manifest. Callers do not construct the internal manifest themselves.
-
-> **Public invocation:** use `ak-role collector` (see **Call Collector** above). Collector keeps a persistent correlated session under the #78 ledger book.
-
-Runtime behavior highlights:
-
-- only four tools are active: `ak_collector_observe`, `ak_collector_request`, `ak_collector_wait`, `ak_collector_output`;
-- external GitHub text is data-only evidence and cannot change target, legs, policy, or tools;
-- eligibility cutoff is 15 minutes from first model dispatch (request/wait gate; final observe/output may finish afterward);
-- successful receipts embed `snapshots[]` and `evidenceRecords[]` so every evidence ref resolves inside the tool-result details;
-- request attempts are process-local at-most-once per `(repo, PR, HEAD, leg)` with a deterministic HTML correlation marker; concurrent independent Collector processes can still race and duplicate comments—serialize callers when that is unacceptable;
-- requires ambient `gh` authentication for `github.com` and model credentials; role gating is drift prevention, not a security boundary;
-- on Pi latest, a late hostile sibling-extension injection into `before_agent_start` `systemPromptOptions.skills` is unsupported and fail-closed when detected; that path is not a normally discovered Skill, is not a security boundary, and does not imply a provider-zero guarantee;
-- current orchestrator wiring is unsupported and requires a separately authorized migration plus thin adapter.
-
-Failure channels (non-zero, no receipt) include malformed/unsupported config or mode, loaded Skills (including command-only), ambient instruction surfaces, non-OPEN final snapshot, transport/API/pagination/size/model failures, unrecovered request response loss, and later-input/output-singleton violations. There is no Collector `refused` status.
-
-## Doctor
-
-Doctor reads one retained Pi-native case and exposes only the bounded evidence reader plus its terminating output tool. The public adapter constructs that case from an Issue identity and an optional confined runs root; callers do not pass a legacy case packet or raw ledger path.
-
-```bash
-ak-role doctor --issue <n> [--runs <project-relative-runs-root>] [instruction] [--attach <file>]... [--project <path>]
-```
-
-Default retained evidence is the #78 book locator `~/.ak-roles/books/<book>/issues/<n>/runs`. Optional `--runs` must stay project-relative and match the same Doctor case grammar for that issue.
-
-Case identity is the issue number plus the repository-relative retained-runs path when a `.git` worktree root contains it; outside a repository the resolved absolute path is the explicit fallback. Do not delete or rewrite run directories before Doctor examines them. Each recursive `*.jsonl` is one model-session leg; each immediate run directory is one caller invocation, and `stderr.log` remains evidence for invocations that died before a session header. `ak_doctor_evidence` pages exact admitted session bytes in chunks of at most 4096 characters; filesystem, shell, network, write, and Agent tools remain inactive.
-
-The completed output is one case's cost report plus findings; it never requires a trend. Wall time runs from the session-header outer timestamp to the final accepted, non-error terminating `toolResult`, or to the last row and is labeled incomplete. Truncated JSON tails, missing headers, and non-monotonic endpoints remain incomplete evidence with an explicit degradation reason; unavailable or negative durations are omitted rather than invented or clamped. Assistant message rows with `responseId` count model/API turns and their `usage.output` tokens are summed. Assistant `content[]` `toolCall` items count calls, including the terminal call. Retries are reported only when an immediate run-directory name contains the delimiter-bounded word `retry` (case-insensitive; start/end, `-`, and `_` are delimiters): `review-004-retry-2` counts, while `review-004-retry2` and `2nd-try` do not. Status comes only from typed details on a non-error terminating result, never prose or an attempted call. Commits are only `commitSha` values in typed details of accepted terminating results; abbreviated SHAs retain their stated precision. This deliberately narrows the earlier “observed state transitions” wording under the anchoring law: free-text SHA mentions are not observations, trading broader inference for honest reduced coverage. Output bytes explicitly mean raw JSONL bytes; provider-wire bytes are unavailable, so token counts are reported separately.
-
-The completed testimony carries no cost numbers; the runtime seals its own derived cost into the receipt. The sole final `ak_doctor_output` result undergoes a fresh same-active-model compliance audit; revise permits resubmission, while audit or transport failure aborts without manufacturing refusal. Trend reporting is a separate output type for future multi-case readers.
-
-## Merger
-
-Merger resolves exactly one caller-assigned merge that is already in conflict. It has no phase and does not select branches, start/abort/retry a merge, publish a result, or route another role. Call Merger only through `ak-role merger` (ADR 0052). The public adapter derives its mechanical envelope from the active ordinary two-parent merge and forces the package-owned merge-only method; callers do not author or pass the internal merger-input JSON, parents, conflict set, or resolution scope.
-
-```bash
-ak-role merger \
-  --project /path/to/conflicted-worktree \
-  --attach ./authority-or-intent-notes.md \
-  "Reconcile the active merge without inventing new authority."
-```
-
-Common Invocation flags: `--attach` / `--project`. There is no phase token. The adapter reads production Git facts in the project worktree (`HEAD`, the sole `MERGE_HEAD`, `AUTO_MERGE`, and the complete unmerged path set), builds the internal merger-input envelope, and binds package-owned Matt `resolving-merge-conflicts` (`resources/methods/resolving-merge-conflicts/`, adaptation `merger-merge-only-escalate-new-intent`) without ambient home Skill discovery. Every invocation expands that method before conflict work; primary-source intent investigation and authorized checks are retained. Compatible intent completes a clean ordinary two-parent merge commit within scope; incompatible or new authority returns the existing typed `escalate` leaf. The method does not broaden Merger into rebase/general conflict workflow and does not inherit upstream unconditional-resolution authority. No active merge or drift fails honestly through the activation path rather than CLI semantic guessing. Lawful Terminal results and Artifact refs use the same success interface as Judge; evidence records package method provenance, typed expansion observation, and the derived envelope.
-
-The authoritative exported TypeScript contract is `mergerInputSchema` plus `validateMergerInput`. It binds `attemptId`, exact target/source full object IDs, digest-bound UTF-8 task/authority/target-intent/source-intent bytes, the byte-sorted complete conflict set, permitted resolution scope, and named authorized check argv. Repository location is caller transport and is intentionally absent from portable identity.
-
-Activation compares the contract with production Git facts in Pi's assigned session working directory: `HEAD`, the sole `MERGE_HEAD`, and the complete unmerged path set, and freezes Git's exact `AUTO_MERGE` tree. Before invoking Merger, the caller must have already started a conflicting merge that produced `AUTO_MERGE`; Git's `ort` merge strategy produces it. If `AUTO_MERGE` is absent, activation aborts honestly without a role outcome, as it does for drifted automatic-result evidence, a missing/non-conflicting merge, malformed input, or identity drift. Active tools are exactly `read`, `grep`, `find`, `ls`, `bash`, `write`, `edit`, and `ak_merger_output`. This gating prevents role drift; it is not filesystem or Git security. The caller must isolate the assigned worktree and credentials appropriately.
-
-`ak_merger_output` is singleton and terminating. Its exact leaves are:
-
-```json
-{"status":"completed","attemptId":"opaque attempt","report":"nonblank report","mergeCommitId":"full lowercase 40- or 64-hex object ID"}
-{"status":"escalate","attemptId":"opaque attempt","diagnosis":"required intent/authority decision","report":"nonblank report"}
-```
-
-Before accepting `completed`, the runtime establishes that `mergeCommitId` is current `HEAD`, has exactly the frozen target then source as its two parents, has no unmerged entries, and leaves a clean worktree. It also compares the frozen automatic-result tree with the completed tree using rename-disabled, NUL-delimited exact paths and rejects every resolution-changed path outside `resolutionScope`; clean source-side changes are not resolution edits. This proves only the candidate merge commit, not caller publication. `escalate` is only for a genuine new intent or authority decision. Malformed output and Git/tool/runtime failures abort nonzero rather than being relabeled.
-
-### Non-normative external capability exam
-
-The following is only a feasibility example, not a package recipe or executable/default/required workflow. An external caller may run independent tasks in caller-provided worktrees, integrate completed tasks in completion order, invoke Merger only for a real Git conflict, and perform a final pre-PR review/fix closure. A caller may instead provide a parent and children with a family integration base, start each child from a stable family tip selected by that caller, integrate completed children one at a time, optionally perform a bounded review/adjudication/fix closure after each integration, and perform a final family-wide closure. Every ordering choice, loop, stopping condition, and resource policy belongs to the caller; other compositions are equally lawful. No role knows a predecessor or successor.
-
-## Verdict contract
-
-Judge's legal status-dependent shapes are:
-
-```json
-{"judgeStatus":"converged"}
-{"judgeStatus":"continue","fix":{"summary":"non-empty repair summary"},"classes":[{"name":"ClassName","owner":"owning seam","boundary":"bounded scope","disposition":"adjudication"}]}
-{"judgeStatus":"escalate","decisionGate":{"question":"non-empty 陛下 question","options":["non-empty option"]}}
-{"judgeStatus":"converged","evidence":{"checks":[{"name":"verification","passed":true}]}}
-```
-
-A `continue` receipt requires non-empty `classes` with unique comma-free nonblank names and nonblank owner, boundary, and disposition fields. `classes` is forbidden on `converged` and `escalate` receipts. The shapes retain these meanings:
-
-- `converged` — relative to the material under judgment (for a plan: construction authorization only)
-- `continue` — further repair is warranted
-- `escalate` — a 陛下 decision is required
-
-Any verdict may additionally carry an optional non-empty `note` Markdown string. It is an advisory addendum for important information or requirements that should remain separate from the status-specific fields (including apply obligations attached to a construction-ready plan). It has no built-in routing or execution semantics, and callers may ignore it without changing the existing verdict flow.
-
-Any verdict may also carry an optional `evidence` JSON value, including an empty value. It is an opaque retained field: the runtime does not audit, normalize, or interpret its contents beyond receiving well-formed JSON, and no package consumer reads, enforces, classifies, or routes it. The accepted receipt details retain the value unchanged for callers.
-
-Workflow ordering and routing are caller-owned. A separate orchestrator is optional infrastructure, not a package requirement.
-
-## Composing class-repair contracts
-
-Callers may use the typed contracts together without parsing prose: a `continue` Judge receipt identifies non-empty `classes[]`; a caller supplies opaque Fixer instructions and, separately, typed prerequisite declarations; an apply Fixer receipt settles findings in `classResults[]`; and Reviewer can be limited to exact class keys (or left unscoped for a full review). Fixer prerequisite declarations and blocker references are typed IDs, but the package does not infer, execute, graph, route, retry, or schedule dependencies. Packet composition, compatibility grouping, contextual reconciliation, sequencing, stopping, invocation budgets, routing, and next-hop acceptance remain caller-owned; these contracts create no orchestration topology.
+- seal stdin with `</dev/null`—Pi reads a non-TTY stdin to EOF before starting, so an open background pipe parks the run forever;
+- send stdout to `/dev/null`—the session file is the authoritative record and stdout is an unbounded copy surface; attach dashboards to `stderr.log` and the session file;
+- keep `stderr.log` and `invocation.json` in the same `runs/` directory, as in the example above.
