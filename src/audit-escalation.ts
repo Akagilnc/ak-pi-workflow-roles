@@ -1,6 +1,9 @@
 import type { Usage } from "@earendil-works/pi-ai";
 
-import type { ComplianceDecision } from "./compliance-transport.ts";
+import type {
+  ComplianceAuditIncomplete,
+  ComplianceDecision,
+} from "./compliance-transport.ts";
 
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
@@ -16,6 +19,13 @@ export type AuditEscalationResult = {
 export type AuditEscalationToolResult = {
   content: [{ type: "text"; text: string }];
   details: AuditEscalationResult;
+  terminate: true;
+  usage?: Usage;
+};
+
+export type AuditIncompleteToolResult = {
+  content: [{ type: "text"; text: string }];
+  details: ComplianceAuditIncomplete;
   terminate: true;
   usage?: Usage;
 };
@@ -51,6 +61,17 @@ export function projectAuditEscalation(
   return {
     content: [{ type: "text", text: humanDecisionText(details) }],
     details,
+    terminate: true,
+    ...(decision.usage === undefined ? {} : { usage: decision.usage }),
+  };
+}
+
+export function projectAuditIncomplete(
+  decision: ComplianceAuditIncomplete,
+): AuditIncompleteToolResult {
+  return {
+    content: [{ type: "text", text: "Compliance audit incomplete; no role receipt was formed." }],
+    details: decision,
     terminate: true,
     ...(decision.usage === undefined ? {} : { usage: decision.usage }),
   };
@@ -94,6 +115,7 @@ export type ComplianceDecisionHandlers<T> = {
   pass: (usage: Usage | undefined) => T | PromiseLike<T>;
   revise: (violations: readonly string[]) => T | PromiseLike<T>;
   escalate: (result: AuditEscalationToolResult) => T | PromiseLike<T>;
+  auditIncomplete: (result: AuditIncompleteToolResult) => T | PromiseLike<T>;
 };
 
 /** Dispose a parsed audit decision without repeating status handling in roles. */
@@ -108,5 +130,7 @@ export async function disposeComplianceDecision<T>(
       return await handlers.revise(decision.violations);
     case "escalate":
       return await handlers.escalate(projectAuditEscalation(decision));
+    case "audit-incomplete":
+      return await handlers.auditIncomplete(projectAuditIncomplete(decision));
   }
 }
