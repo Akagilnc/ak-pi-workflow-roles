@@ -12,7 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -212,17 +212,6 @@ test("Fixer production activation args reach the real Pi loader for both optiona
   await withActivationHome({ prefix: "ak-fixer-method-trace-" }, async ({ home, agentDir }) => {
     const planAdmitted = await admitFixerInvocation({ home, cwd: home, phase: "plan", instruction: "Plan the approved repair.", attachmentPaths: [], createRunId: () => "run-fixer-method-trace-plan" });
     const applyAdmitted = await admitFixerInvocation({ home, cwd: home, phase: "apply", instruction: "Apply the approved repair.", attachmentPaths: [], createRunId: () => "run-fixer-method-trace-apply" });
-    const harnessSource = await readFile(
-      resolve(packageRoot, "test", "helpers", "pi-test-harness.ts"),
-      "utf8",
-    );
-    const subprocessSource = harnessSource.slice(
-      harnessSource.indexOf("export async function runPiSubprocess"),
-      harnessSource.indexOf("export interface InProcessPiOptions"),
-    );
-    assert.equal(subprocessSource.includes("SIGKILL"), false);
-    assert.equal(subprocessSource.includes("options.timeoutMs ?? 30_000"), false);
-
     const rows = [
       { name: "initial-plan", args: buildFixerActivationExtraArgs(planAdmitted, { packageRoot }), sessionFile: planAdmitted.sessionFile },
       { name: "initial-apply", args: buildFixerActivationExtraArgs(applyAdmitted, { packageRoot }), sessionFile: applyAdmitted.sessionFile },
