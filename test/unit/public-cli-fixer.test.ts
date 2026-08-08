@@ -393,6 +393,9 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(terminal.roleOutcome.status, "completed");
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
+    const report = terminal.artifacts.find((a) => a.kind === "report");
+    assert.ok(report);
+    assert.ok((await readFile(report.path, "utf8")).includes(receipt.report));
 
     const evidence = JSON.parse(
       await readFile(
