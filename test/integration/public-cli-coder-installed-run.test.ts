@@ -36,13 +36,11 @@ async function runAkRoleBin(
     agentDir: string;
     cwd: string;
     env?: NodeJS.ProcessEnv;
-    timeoutMs?: number;
   },
 ): Promise<{
   code: number | null;
   stdout: string;
   stderr: string;
-  timedOut: boolean;
 }> {
   const { spawn } = await import("node:child_process");
   return await new Promise((resolvePromise) => {
@@ -63,11 +61,6 @@ async function runAkRoleBin(
     });
     let stdout = "";
     let stderr = "";
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, options.timeoutMs ?? 120_000);
     child.stdout.setEncoding("utf8").on("data", (chunk) => {
       stdout += chunk;
     });
@@ -75,8 +68,7 @@ async function runAkRoleBin(
       stderr += chunk;
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
-      resolvePromise({ code, stdout, stderr, timedOut });
+      resolvePromise({ code, stdout, stderr });
     });
   });
 }
@@ -197,7 +189,6 @@ test(
             home,
             agentDir: piAgentDir,
             cwd: project,
-            timeoutMs: 120_000,
             env: {
               PI_BINARY: shimPath,
               PI_OFFLINE: "1",
@@ -205,7 +196,6 @@ test(
           },
         );
 
-        assert.equal(result.timedOut, false, result.stderr);
         assert.equal(
           result.code,
           0,

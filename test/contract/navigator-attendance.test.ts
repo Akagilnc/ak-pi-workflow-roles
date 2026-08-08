@@ -347,8 +347,8 @@ test("Navigator accepts only the audit-owned in-memory projection across all fou
       { ...projected, status: "pass" },
       { ...projected, kind: "audit_escalation", auditDecisionGate: undefined },
       { ...projected, conflicts: ["wrong"] },
-      { ...projected, conflicts: [...projected.conflicts, "duplicate"] },
-      { ...projected, conflicts: [...projected.conflicts].reverse() },
+      { ...projected, conflicts: [...(projected.conflicts as readonly unknown[]), "duplicate"] },
+      { ...projected, conflicts: [...(projected.conflicts as readonly unknown[])].reverse() },
     ]) {
       assert.notEqual(
         publicNavigatorSettlement(seat.role, seat.phase, {

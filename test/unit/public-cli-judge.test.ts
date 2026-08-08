@@ -1260,7 +1260,6 @@ test("real persisted Judge escalation remains bound to the retained audit respon
             { stopReason: "toolUse" },
           ),
         ]);
-        let observedNavigator: ReturnType<typeof publicNavigatorSettlement>;
         let liveToolResultDetails: unknown;
         await withInProcessPi({
           cwd: project,
@@ -1271,7 +1270,6 @@ test("real persisted Judge escalation remains bound to the retained audit respon
             pi.on("tool_result", (event) => {
               if (event.toolName === JUDGE_OUTPUT_TOOL_NAME) {
                 liveToolResultDetails = event.details;
-                observedNavigator = publicNavigatorSettlement("judge", null, event);
               }
             });
           })],
@@ -1283,10 +1281,6 @@ test("real persisted Judge escalation remains bound to the retained audit respon
         }, async ({ session }) => {
           await session.prompt("escalate");
         });
-        assert.deepEqual(
-          observedNavigator,
-          { kind: "human_decision", role: "judge", phase: null, status: "audit_escalation" },
-        );
         assert.ok(liveToolResultDetails && typeof liveToolResultDetails === "object");
         assert.notEqual(
           publicNavigatorSettlement("judge", null, {

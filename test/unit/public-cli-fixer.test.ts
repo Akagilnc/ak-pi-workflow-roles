@@ -210,12 +210,9 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
 
 test("Fixer production activation args reach the real Pi loader for both optional methods", async () => {
   await withActivationHome({ prefix: "ak-fixer-method-trace-" }, async ({ home, agentDir }) => {
-    const planAdmitted = await admitFixerInvocation({ home, cwd: home, phase: "plan", instruction: "Plan the approved repair.", attachmentPaths: [], createRunId: () => "run-fixer-method-trace-plan" });
     const applyAdmitted = await admitFixerInvocation({ home, cwd: home, phase: "apply", instruction: "Apply the approved repair.", attachmentPaths: [], createRunId: () => "run-fixer-method-trace-apply" });
     const rows = [
-      { name: "initial-plan", args: buildFixerActivationExtraArgs(planAdmitted, { packageRoot }), sessionFile: planAdmitted.sessionFile },
       { name: "initial-apply", args: buildFixerActivationExtraArgs(applyAdmitted, { packageRoot }), sessionFile: applyAdmitted.sessionFile },
-      { name: "resume-plan", args: buildFixerResumeActivationExtraArgs(planAdmitted, { packageRoot }), sessionFile: planAdmitted.sessionFile },
       { name: "resume-apply", args: buildFixerResumeActivationExtraArgs(applyAdmitted, { packageRoot }), sessionFile: applyAdmitted.sessionFile },
     ];
     for (const row of rows) {

@@ -15,7 +15,9 @@ import {
 
 import {
   AUDIT_ESCALATION_KIND,
+  buildAuditEscalationResult,
   disposeComplianceDecision,
+  isAuditEscalationProjection,
   isAuditEscalationResult,
   projectAuditEscalation,
 } from "../../src/audit-escalation.ts";
@@ -226,6 +228,20 @@ test("escalation projects one terminating human decision and is not an accepted 
     /not an accepted role receipt/,
   );
   assert.deepEqual(projectAuditEscalation(decision).details, result.details);
+});
+
+test("live audit projection requires the private identity, not a copied structural brand", () => {
+  const genuine = buildAuditEscalationResult({
+    status: "escalate",
+    conflicts: ["c"],
+    decisionGate: { question: "Q", options: ["A"] },
+  });
+  assert.equal(isAuditEscalationProjection(genuine), true);
+
+  const separatelyBuiltBrand = Object.freeze(Object.create(null));
+  const forged = { ...genuine };
+  Object.setPrototypeOf(forged, separatelyBuiltBrand);
+  assert.equal(isAuditEscalationProjection(forged), false);
 });
 
 test("isAuditEscalationResult recognises by kind only — mixed elements and empty gate stay lawful", () => {
