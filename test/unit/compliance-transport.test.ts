@@ -8,6 +8,7 @@ import {
   fauxAssistantMessage,
   fauxToolCall,
   type AssistantMessage,
+  type Context,
 } from "@earendil-works/pi-ai";
 import {
   SessionManager,
@@ -170,6 +171,7 @@ test("default compliance completion sends the production timeout and merges pare
       signal: parent.signal,
     });
     assert.equal(decision.status, "pass");
+    assert.equal("constrainedSampling" in decisionTool, false);
     assert.equal(seen.options?.timeoutMs, 183000);
     assert.ok(seen.options?.signal instanceof AbortSignal);
     assert.notStrictEqual(seen.options?.signal, parent.signal);
@@ -290,48 +292,43 @@ test("shared compliance transport retains valid nested decisions verbatim", asyn
   }
 });
 
-test("Codex decision schema is an object with every property required", () => {
+test("Codex decision schema is an open zero-required object with declared fields", () => {
   assert.equal(complianceDecisionSchema.type, "object");
   assert.equal((complianceDecisionSchema as { anyOf?: unknown }).anyOf, undefined);
-  assert.deepEqual(
-    complianceDecisionSchema.required,
-    Object.keys(complianceDecisionSchema.properties),
-  );
+  assert.deepEqual(complianceDecisionSchema.required, []);
+  assert.equal((complianceDecisionSchema as unknown as { additionalProperties?: unknown }).additionalProperties, true);
   assert.deepEqual(Object.keys(complianceDecisionSchema.properties), [
     "status",
     "violations",
     "conflicts",
     "decisionGate",
   ]);
+  for (const property of Object.values(complianceDecisionSchema.properties)) {
+    assert.equal(typeof (property as { description?: unknown }).description, "string");
+  }
 });
 
-test("status-dependent decision combinations are validated at the shared parser seam", async () => {
-  const invalidArguments = [
-    { status: "pass", violations: [], conflicts: ["unexpected"], decisionGate: null },
-    { status: "pass", violations: [], conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
-    { status: "pass", violations: ["unexpected"], conflicts: [], decisionGate: null },
-    { status: "revise", violations: [], conflicts: [], decisionGate: null },
-    { status: "revise", violations: ["real"], conflicts: ["unexpected"], decisionGate: null },
-    { status: "revise", violations: ["real"], conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
-    { status: "escalate", violations: [], conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
-    { status: "escalate", violations: ["unexpected"], conflicts: ["conflict"], decisionGate: { question: "Choose", options: ["A"] } },
-    { status: "escalate", violations: [], conflicts: ["conflict"], decisionGate: null },
-    { status: "pass" },
+test("transport accepts known statuses without shape rejection and rejects unknown status", async () => {
+  const acceptedArguments = [
+    { status: "pass", conflicts: ["non-neutral bookkeeping"], auditCost: 3 },
+    { status: "revise" },
+    { status: "escalate", decisionGate: "provider-shaped bookkeeping" },
   ];
-
-  for (const [index, arguments_] of invalidArguments.entries()) {
+  for (const [index, arguments_] of acceptedArguments.entries()) {
     await withPersistedSession(async (sessionManager) => {
-      await assert.rejects(
-        audit(
-          response(`invalid-status-${index}`, [
-            fauxToolCall(decisionToolName, arguments_),
-          ]),
-          sessionManager,
-        ),
-        (error: unknown) => error instanceof Error && error.name === "ComplianceDecisionContractError",
+      const result = await audit(
+        response(`open-status-${index}`, [fauxToolCall(decisionToolName, arguments_)]),
+        sessionManager,
       );
+      assert.equal(result.status, arguments_.status);
     });
   }
+  await withPersistedSession(async (sessionManager) => {
+    await assert.rejects(
+      audit(response("unknown-status", [fauxToolCall(decisionToolName, { status: "unknown", auditCost: 3 })]), sessionManager),
+      (error: unknown) => error instanceof Error && error.name === "ComplianceDecisionContractError" && /unknown decision status/.test(error.message),
+    );
+  });
 });
 
 test("malformed nested decisions retain raw responses and report typed facts", async () => {
@@ -586,6 +583,57 @@ test("silent compliance completion exhausts idle retries as typed infrastructure
       false,
     );
   });
+});
+
+test("compliance dispatch keeps one object-root tool across every supported API", async () => {
+  const expectedToolChoices: Record<string, unknown> = {
+    "anthropic-messages": undefined,
+    "bedrock-converse-stream": undefined,
+    "mistral-conversations": { type: "function", function: { name: decisionToolName } },
+    "openai-completions": { type: "function", function: { name: decisionToolName } },
+    "pi-messages": { type: "function", function: { name: decisionToolName } },
+    "azure-openai-responses": { type: "function", name: decisionToolName },
+    "openai-responses": { type: "function", name: decisionToolName },
+    "google-generative-ai": "any",
+    "google-vertex": "any",
+    "openai-codex-responses": "required",
+    default: "required",
+  };
+  for (const api of Object.keys(expectedToolChoices)) {
+    await withPersistedSession(async (sessionManager) => {
+      const base = context(sessionManager);
+      const seen: { model?: string; request?: Record<string, unknown>; context?: Context } = {};
+      const auditContext = {
+        ...base,
+        model: { ...(base.model as object), api: api === "default" ? "future-api" : api },
+      };
+      const result = await runComplianceAudit({
+        tool: decisionTool,
+        systemPrompt: "audit system",
+        serializedInput: "audit input",
+        roleLabel: "Compliance",
+        invalidDecisionLabel: "invalid compliance decision",
+        context: {
+          ...auditContext,
+          modelRegistry: {
+            ...(base.modelRegistry as object),
+            getProviderAuth: async () => ({ auth: { apiKey: "test-secret" } }),
+            getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-secret" }),
+          },
+        } as unknown as ExtensionContext,
+        runCompletion: async (model, requestContext, request) => {
+          seen.model = model.api;
+          seen.context = requestContext;
+          seen.request = request;
+          return response(`dispatch-${api}`, [fauxToolCall(decisionToolName, { status: "pass" })]);
+        },
+      });
+      assert.equal(result.status, "pass");
+      assert.equal((seen.context?.tools?.[0]?.parameters as { type?: unknown } | undefined)?.type, "object");
+      assert.deepEqual(seen.request?.toolChoice, expectedToolChoices[api]);
+      assert.equal(api !== "default" && api.includes("openai"), typeof seen.request?.onPayload === "function");
+    });
+  }
 });
 
 test("payload and response-header hooks do not extend the first body-event silence budget", async (t) => {

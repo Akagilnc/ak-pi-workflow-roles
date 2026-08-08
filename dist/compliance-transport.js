@@ -1,6 +1,5 @@
 import { uuidv7, } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError, createStreamIdleGuard, isStreamIdleTimeoutError, } from "./stream-idle-guard.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_CODE, StreamIdleTimeoutError, createStreamIdleGuard, isStreamIdleTimeoutError, } from "./stream-idle-guard.js";
 const COMPLIANCE_REQUEST_TIMEOUT_MS = 183000;
@@ -16,27 +15,23 @@ const decisionGateSchema = Type.Object({
     options: Type.Array(nonblank, { minItems: 1 }),
 }, { additionalProperties: false });
 /**
- * Codex requires the registered function parameters to be an object at the
- * root. Status-dependent field combinations are checked by the shared parser
- * below because JSON Schema cannot express this contract without a root union.
+ * The one provider-facing compliance schema. It deliberately remains an open,
+ * zero-required object: the auditor owns decision meaning, while transport
+ * retains the provider response and only enforces dispatch facts.
  */
 export const complianceDecisionSchema = Type.Object({
     status: Type.Union([
         Type.Literal("pass"),
         Type.Literal("revise"),
         Type.Literal("escalate"),
-    ]),
-    violations: Type.Array(nonblank),
-    conflicts: Type.Array(nonblank),
-    decisionGate: Type.Union([decisionGateSchema, Type.Null()]),
-}, { additionalProperties: false });
-const complianceDecisionArgumentInstructions = [
-    "Call the supplied decision tool exactly once with all four required fields.",
-    'pass: {"status":"pass","violations":[],"conflicts":[],"decisionGate":null}',
-    'revise: {"status":"revise","violations":["non-blank violation"],"conflicts":[],"decisionGate":null}',
-    'escalate: {"status":"escalate","violations":[],"conflicts":["non-blank conflict"],"decisionGate":{"question":"non-blank question","options":["non-blank option"]}}',
-    "Use the neutral values shown for fields not used by the selected status.",
-].join("\n");
+    ], { description: "Auditor decision status." }),
+    violations: Type.Array(nonblank, { description: "Observed compliance violations." }),
+    conflicts: Type.Array(nonblank, { description: "Unresolved authority or execution conflicts." }),
+    decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "Escalation question and available options." }),
+}, {
+    additionalProperties: true,
+    required: [],
+});
 function complianceToolChoice(model, toolName) {
     switch (model.api) {
         case "anthropic-messages":
@@ -83,10 +78,6 @@ export function createComplianceDecisionTool(name, description) {
         name,
         description,
         parameters: complianceDecisionSchema,
-        constrainedSampling: {
-            type: "json_schema",
-            strict: "prefer",
-        },
     };
 }
 export async function prepareComplianceDispatch(model, context, label) {
@@ -147,50 +138,6 @@ function complianceDecisionFacts(response, toolName, calls) {
 function malformedComplianceDecision(response, toolName, invalidLabel, reason, calls) {
     return new ComplianceDecisionContractError(`${invalidLabel}: ${reason}`, complianceDecisionFacts(response, toolName, calls));
 }
-function isArrayOfStrings(value) {
-    return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-function validateStatusDependentDecision(decision, response, toolName, invalidLabel, calls) {
-    const reject = (reason) => {
-        throw malformedComplianceDecision(response, toolName, invalidLabel, reason, calls);
-    };
-    switch (decision.status) {
-        case "pass": {
-            const { violations, conflicts, decisionGate } = decision;
-            if (!isArrayOfStrings(violations) ||
-                !isArrayOfStrings(conflicts) ||
-                violations.length !== 0 ||
-                conflicts.length !== 0 ||
-                decisionGate !== null) {
-                reject("arguments do not match the pass decision contract");
-            }
-            return { status: "pass", violations };
-        }
-        case "revise": {
-            const { violations, conflicts, decisionGate } = decision;
-            if (!isArrayOfStrings(violations) ||
-                !isArrayOfStrings(conflicts) ||
-                violations.length === 0 ||
-                conflicts.length !== 0 ||
-                decisionGate !== null) {
-                reject("arguments do not match the revise decision contract");
-            }
-            return { status: "revise", violations };
-        }
-        case "escalate": {
-            const { violations, conflicts, decisionGate } = decision;
-            if (!isArrayOfStrings(violations) ||
-                !isArrayOfStrings(conflicts) ||
-                violations.length !== 0 ||
-                conflicts.length === 0 ||
-                decisionGate === null) {
-                reject("arguments do not match the escalate decision contract");
-            }
-            const validDecisionGate = decisionGate ?? reject("arguments do not match the escalate decision contract");
-            return { status: "escalate", conflicts, decisionGate: validDecisionGate };
-        }
-    }
-}
 /**
  * Retain the provider's structured response as extension state, not a
  * conversational message. A missing or failed append is an infrastructure
@@ -228,26 +175,25 @@ export function readComplianceDecision(response, toolName, invalidLabel) {
         Array.isArray(arguments_)) {
         throw malformedComplianceDecision(response, toolName, invalidLabel, "arguments must be an object", calls);
     }
-    if (!Value.Check(complianceDecisionSchema, arguments_)) {
-        throw malformedComplianceDecision(response, toolName, invalidLabel, "arguments do not match the decision schema", calls);
-    }
-    const decision = validateStatusDependentDecision(arguments_, response, toolName, invalidLabel, calls);
-    switch (decision.status) {
+    const args = arguments_;
+    switch (args.status) {
         case "pass":
             return { status: "pass", usage: response.usage };
         case "revise":
             return {
                 status: "revise",
-                violations: decision.violations,
+                violations: args.violations,
                 usage: response.usage,
             };
         case "escalate":
             return {
                 status: "escalate",
-                conflicts: decision.conflicts,
-                decisionGate: decision.decisionGate,
+                conflicts: args.conflicts,
+                decisionGate: args.decisionGate,
                 usage: response.usage,
             };
+        default:
+            throw malformedComplianceDecision(response, toolName, invalidLabel, `unknown decision status ${String(args.status)}`, calls);
     }
 }
 function throwIfStreamIdleTimedOut(reason) {
@@ -280,7 +226,7 @@ export async function runComplianceAudit(options) {
                 role: "user",
                 content: [{
                         type: "text",
-                        text: `${options.serializedInput}\n<decision_tool_contract>\n${complianceDecisionArgumentInstructions}\n</decision_tool_contract>`,
+                        text: options.serializedInput,
                     }],
                 timestamp: Date.now(),
             },
