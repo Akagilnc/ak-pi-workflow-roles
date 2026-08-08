@@ -4,7 +4,7 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
@@ -81,6 +81,7 @@ import {
   recommendationNavigatorFact,
   buildAuditIncompleteTerminalOutcome,
   redactExactRunId,
+  type AuditIncompleteResidual,
   type ControlledFailureCause,
   type TerminalArtifactRef,
   type TerminalNavigatorFact,
@@ -877,25 +878,40 @@ function boundRoleToolCallForResult(
 ): BoundRoleToolCall | undefined {
   const callId = message.toolCallId;
   if (typeof callId !== "string" || callId.trim() === "") return undefined;
-  const matches: BoundRoleToolCall[] = [];
-  for (let index = resultIndex - 1; index >= 0; index -= 1) {
+
+  const calls: BoundRoleToolCall[] = [];
+  let resultCount = 0;
+  let matchingResultIndex = -1;
+  for (let index = 0; index < entries.length; index += 1) {
     const candidateMessage = entries[index]?.message;
-    if (candidateMessage?.role !== "assistant" || !Array.isArray(candidateMessage.content)) {
-      continue;
-    }
-    for (const part of candidateMessage.content) {
-      if (
-        !isRecord(part) ||
-        part.type !== "toolCall" ||
-        part.name !== outputToolName ||
-        part.id !== callId
-      ) {
-        continue;
+    if (
+      candidateMessage?.role === "assistant" &&
+      Array.isArray(candidateMessage.content)
+    ) {
+      for (const part of candidateMessage.content) {
+        if (!isRecord(part) || part.type !== "toolCall" || part.id !== callId) {
+          continue;
+        }
+        if (part.name !== outputToolName) return undefined;
+        calls.push({ callIndex: index, candidate: part.arguments });
       }
-      matches.push({ callIndex: index, candidate: part.arguments });
+    }
+    if (
+      candidateMessage?.role === "toolResult" &&
+      candidateMessage.toolCallId === callId
+    ) {
+      resultCount += 1;
+      if (candidateMessage.toolName !== outputToolName) return undefined;
+      matchingResultIndex = index;
     }
   }
-  return matches.length === 1 ? matches[0] : undefined;
+
+  // A binding is an event-bound one-to-one relation, not a reverse lookup of
+  // whichever result happens to be last in the session.
+  return calls.length === 1 && resultCount === 1 && matchingResultIndex === resultIndex
+    && calls[0]!.callIndex < resultIndex
+    ? calls[0]
+    : undefined;
 }
 
 type BoundRetainedAuditResponse = {
@@ -979,6 +995,119 @@ export function extractComplianceAuditIncompleteRoleOutcome(
   return undefined;
 }
 
+function auditArtifactPublicationError(message: string, code: string): Error & {
+  code: string;
+} {
+  const error = new Error(message) as Error & { code: string };
+  error.name = "ArtifactPublicationError";
+  error.code = code;
+  return error;
+}
+
+async function ensureAuditEvidenceDirectory(runDirectory: string): Promise<string> {
+  const artifactsDir = join(runDirectory, "artifacts");
+  const runStat = await lstat(runDirectory);
+  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
+    throw auditArtifactPublicationError(
+      "audit evidence run directory is not a real directory",
+      "ELOOP",
+    );
+  }
+  try {
+    const existing = await lstat(artifactsDir);
+    if (existing.isSymbolicLink()) {
+      throw auditArtifactPublicationError(
+        "audit evidence artifacts directory is a symlink",
+        "ELOOP",
+      );
+    }
+    if (!existing.isDirectory()) {
+      throw auditArtifactPublicationError(
+        "audit evidence artifacts path is not a directory",
+        "EEXIST",
+      );
+    }
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    await mkdir(artifactsDir, { recursive: true });
+    const created = await lstat(artifactsDir);
+    if (created.isSymbolicLink() || !created.isDirectory()) {
+      throw auditArtifactPublicationError(
+        "audit evidence artifacts directory is not a real directory",
+        "ELOOP",
+      );
+    }
+  }
+  return artifactsDir;
+}
+
+/** Publish the retained residual with exclusive, complete-write semantics. */
+export async function publishComplianceAuditIncompleteEvidence(
+  admitted: AdmittedRoleInvocation,
+  outcome: ReturnType<typeof buildAuditIncompleteTerminalOutcome>,
+): Promise<TerminalArtifactRef> {
+  const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
+  const evidencePath = join(artifactsDir, "audit-incomplete.json");
+  try {
+    const existing = await lstat(evidencePath);
+    throw auditArtifactPublicationError(
+      existing.isSymbolicLink()
+        ? "audit evidence destination is a symlink"
+        : "audit evidence destination collision",
+      existing.isSymbolicLink() ? "ELOOP" : "EEXIST",
+    );
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+  }
+  const handle = await open(evidencePath, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(outcome, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  return { kind: "evidence", path: evidencePath };
+}
+
+function auditPublicationFailureTerminal(
+  admitted: AdmittedRoleInvocation,
+  entries: readonly SessionEntry[],
+  outcome: ReturnType<typeof buildAuditIncompleteTerminalOutcome>,
+  error: unknown,
+): TerminalResult {
+  const attempt = publicationAttemptFromError(
+    join(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
+    error,
+  );
+  const diagnostic = `audit-incomplete evidence publication failed: ${attempt.diagnostic}`;
+  const decisiveFacts: Record<string, unknown> = {
+    ...outcome.decisiveFacts,
+    cause: "unrecognized",
+    diagnostic,
+    publicationFailure: attempt,
+  };
+  if (attempt.identity?.name !== undefined) decisiveFacts.errorName = attempt.identity.name;
+  if (attempt.identity?.code !== undefined) decisiveFacts.errorCode = attempt.identity.code;
+  const auditResidual: AuditIncompleteResidual = {
+    roleCandidate: outcome.roleCandidate,
+    audit: outcome.audit,
+    acceptedReceipt: false,
+  };
+  return {
+    roleOutcome: {
+      kind: "failure",
+      role: admitted.role,
+      cause: "unrecognized",
+      diagnostic,
+      decisiveFacts,
+      auditResidual,
+    },
+    navigator: extractNavigatorFact(entries),
+    artifacts: [],
+    runId: admitted.runId,
+  };
+}
+
 /**
  * Settle the shared audit-incomplete Terminal for Judge/Fixer/Reviewer/Doctor.
  * Callers invoke this only after their ordinary lawful extractor found no result,
@@ -1006,19 +1135,21 @@ export async function trySettleComplianceAuditIncompleteTerminalResult(
     outputToolName,
   );
   if (extracted === undefined) return undefined;
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const evidencePath = join(artifactsDir, "audit-incomplete.json");
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(extracted.outcome, null, 2)}\n`,
-    "utf8",
-  );
-  return {
-    roleOutcome: extracted.outcome,
-    navigator: extractNavigatorFact(entries),
-    artifacts: [{ kind: "evidence", path: evidencePath }],
-    runId: admitted.runId,
-  };
+  try {
+    const evidence = await publishComplianceAuditIncompleteEvidence(
+      admitted,
+      extracted.outcome,
+    );
+    return {
+      roleOutcome: extracted.outcome,
+      navigator: extractNavigatorFact(entries),
+      artifacts: [evidence],
+      runId: admitted.runId,
+    };
+  } catch (error) {
+    // Publication failure is a non-lawful terminal, never an accepted audit result.
+    return auditPublicationFailureTerminal(admitted, entries, extracted.outcome, error);
+  }
 }
 
 /** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */

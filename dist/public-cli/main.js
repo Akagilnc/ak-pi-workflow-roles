@@ -12953,7 +12953,7 @@ async function peekRoleRunRole(home, runId) {
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
+import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname5, join as join7 } from "node:path";
 
 // src/auditor-soul.ts
@@ -13120,6 +13120,13 @@ function renderPublicAkRoleCommand(target) {
 function encodeTerminalField(value) {
   return JSON.stringify(value);
 }
+var JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
+  kind: "json-safe-sentinel",
+  type: "undefined"
+});
+function jsonSafeComplianceCandidate(value) {
+  return value === void 0 ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
+}
 function isLawfulTypedTerminalOutcome(outcome) {
   return outcome.kind === "accepted" || outcome.kind === "audit_escalation";
 }
@@ -13127,21 +13134,26 @@ function exitCodeForTerminalOutcome(outcome) {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
 }
 function buildAuditIncompleteTerminalOutcome(input) {
+  const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
+  const audit = {
+    ...input.audit,
+    candidate: jsonSafeComplianceCandidate(input.audit.candidate)
+  };
   return {
     kind: "audit_incomplete",
     role: input.role,
     status: "audit-incomplete",
     decision: "no-usable-decision",
-    roleCandidate: input.roleCandidate,
-    audit: input.audit,
+    roleCandidate,
+    audit,
     acceptedReceipt: false,
     decisiveFacts: {
       decision: "no-usable-decision",
-      roleCandidate: input.roleCandidate,
-      auditCandidate: input.audit.candidate,
-      auditObservation: input.audit.observation,
-      observationKind: input.audit.observation.kind,
-      observationType: input.audit.observation.type,
+      roleCandidate,
+      auditCandidate: audit.candidate,
+      auditObservation: audit.observation,
+      observationKind: audit.observation.kind,
+      observationType: audit.observation.type,
       acceptedReceipt: false
     }
   };
@@ -13655,20 +13667,27 @@ function nonObjectComplianceArgumentType(value) {
 function boundRoleToolCallForResult(entries, resultIndex, message, outputToolName) {
   const callId = message.toolCallId;
   if (typeof callId !== "string" || callId.trim() === "") return void 0;
-  const matches = [];
-  for (let index = resultIndex - 1; index >= 0; index -= 1) {
+  const calls = [];
+  let resultCount = 0;
+  let matchingResultIndex = -1;
+  for (let index = 0; index < entries.length; index += 1) {
     const candidateMessage = entries[index]?.message;
-    if (candidateMessage?.role !== "assistant" || !Array.isArray(candidateMessage.content)) {
-      continue;
-    }
-    for (const part of candidateMessage.content) {
-      if (!isRecord5(part) || part.type !== "toolCall" || part.name !== outputToolName || part.id !== callId) {
-        continue;
+    if (candidateMessage?.role === "assistant" && Array.isArray(candidateMessage.content)) {
+      for (const part of candidateMessage.content) {
+        if (!isRecord5(part) || part.type !== "toolCall" || part.id !== callId) {
+          continue;
+        }
+        if (part.name !== outputToolName) return void 0;
+        calls.push({ callIndex: index, candidate: part.arguments });
       }
-      matches.push({ callIndex: index, candidate: part.arguments });
+    }
+    if (candidateMessage?.role === "toolResult" && candidateMessage.toolCallId === callId) {
+      resultCount += 1;
+      if (candidateMessage.toolName !== outputToolName) return void 0;
+      matchingResultIndex = index;
     }
   }
-  return matches.length === 1 ? matches[0] : void 0;
+  return calls.length === 1 && resultCount === 1 && matchingResultIndex === resultIndex && calls[0].callIndex < resultIndex ? calls[0] : void 0;
 }
 function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolName) {
   const matches = [];
@@ -13729,6 +13748,103 @@ function extractComplianceAuditIncompleteRoleOutcome(entries, role, outputToolNa
   }
   return void 0;
 }
+function auditArtifactPublicationError(message, code) {
+  const error = new Error(message);
+  error.name = "ArtifactPublicationError";
+  error.code = code;
+  return error;
+}
+async function ensureAuditEvidenceDirectory(runDirectory) {
+  const artifactsDir = join7(runDirectory, "artifacts");
+  const runStat = await lstat3(runDirectory);
+  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
+    throw auditArtifactPublicationError(
+      "audit evidence run directory is not a real directory",
+      "ELOOP"
+    );
+  }
+  try {
+    const existing = await lstat3(artifactsDir);
+    if (existing.isSymbolicLink()) {
+      throw auditArtifactPublicationError(
+        "audit evidence artifacts directory is a symlink",
+        "ELOOP"
+      );
+    }
+    if (!existing.isDirectory()) {
+      throw auditArtifactPublicationError(
+        "audit evidence artifacts path is not a directory",
+        "EEXIST"
+      );
+    }
+  } catch (error) {
+    if (!isMissingPathError2(error)) throw error;
+    await mkdir3(artifactsDir, { recursive: true });
+    const created = await lstat3(artifactsDir);
+    if (created.isSymbolicLink() || !created.isDirectory()) {
+      throw auditArtifactPublicationError(
+        "audit evidence artifacts directory is not a real directory",
+        "ELOOP"
+      );
+    }
+  }
+  return artifactsDir;
+}
+async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
+  const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
+  const evidencePath = join7(artifactsDir, "audit-incomplete.json");
+  try {
+    const existing = await lstat3(evidencePath);
+    throw auditArtifactPublicationError(
+      existing.isSymbolicLink() ? "audit evidence destination is a symlink" : "audit evidence destination collision",
+      existing.isSymbolicLink() ? "ELOOP" : "EEXIST"
+    );
+  } catch (error) {
+    if (!isMissingPathError2(error)) throw error;
+  }
+  const handle = await open2(evidencePath, "wx", 384);
+  try {
+    await handle.writeFile(`${JSON.stringify(outcome, null, 2)}
+`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  return { kind: "evidence", path: evidencePath };
+}
+function auditPublicationFailureTerminal(admitted, entries, outcome, error) {
+  const attempt = publicationAttemptFromError(
+    join7(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
+    error
+  );
+  const diagnostic = `audit-incomplete evidence publication failed: ${attempt.diagnostic}`;
+  const decisiveFacts = {
+    ...outcome.decisiveFacts,
+    cause: "unrecognized",
+    diagnostic,
+    publicationFailure: attempt
+  };
+  if (attempt.identity?.name !== void 0) decisiveFacts.errorName = attempt.identity.name;
+  if (attempt.identity?.code !== void 0) decisiveFacts.errorCode = attempt.identity.code;
+  const auditResidual = {
+    roleCandidate: outcome.roleCandidate,
+    audit: outcome.audit,
+    acceptedReceipt: false
+  };
+  return {
+    roleOutcome: {
+      kind: "failure",
+      role: admitted.role,
+      cause: "unrecognized",
+      diagnostic,
+      decisiveFacts,
+      auditResidual
+    },
+    navigator: extractNavigatorFact(entries),
+    artifacts: [],
+    runId: admitted.runId
+  };
+}
 async function trySettleComplianceAuditIncompleteTerminalResult(admitted) {
   if (!AUDITOR_SOUL_ROLES.includes(admitted.role)) {
     return void 0;
@@ -13742,20 +13858,20 @@ async function trySettleComplianceAuditIncompleteTerminalResult(admitted) {
     outputToolName
   );
   if (extracted === void 0) return void 0;
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const evidencePath = join7(artifactsDir, "audit-incomplete.json");
-  await writeFile4(
-    evidencePath,
-    `${JSON.stringify(extracted.outcome, null, 2)}
-`,
-    "utf8"
-  );
-  return {
-    roleOutcome: extracted.outcome,
-    navigator: extractNavigatorFact(entries),
-    artifacts: [{ kind: "evidence", path: evidencePath }],
-    runId: admitted.runId
-  };
+  try {
+    const evidence = await publishComplianceAuditIncompleteEvidence(
+      admitted,
+      extracted.outcome
+    );
+    return {
+      roleOutcome: extracted.outcome,
+      navigator: extractNavigatorFact(entries),
+      artifacts: [evidence],
+      runId: admitted.runId
+    };
+  } catch (error) {
+    return auditPublicationFailureTerminal(admitted, entries, extracted.outcome, error);
+  }
 }
 function extractJudgeRoleOutcome(entries) {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -15100,7 +15216,11 @@ async function dispatchAdmittedJudge(input) {
     const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
     if (auditIncomplete !== void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(auditIncomplete));
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
       return {
         exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
         admitted,
@@ -15919,7 +16039,11 @@ async function dispatchAdmittedDoctor(input) {
     const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
     if (auditIncomplete !== void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(auditIncomplete));
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
       return {
         exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
         admitted,
@@ -16192,7 +16316,11 @@ async function dispatchAdmittedFixer(input) {
     const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
     if (auditIncomplete !== void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(auditIncomplete));
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
       return {
         exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
         admitted,
@@ -16359,7 +16487,7 @@ async function runPublicFixerResume(argv, env, io) {
 }
 
 // src/public-cli/merger-run.ts
-import { mkdir as mkdir3, writeFile as writeFile10 } from "node:fs/promises";
+import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
 import { join as join13, resolve as resolve5 } from "node:path";
 function buildModelArgs6(model) {
   if (model === void 0) return [];
@@ -16587,7 +16715,7 @@ async function admitMergerShellForActivationFailure(options) {
   const sessionDirectory = join13(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  await mkdir3(runDirectory, { recursive: true });
+  await mkdir4(runDirectory, { recursive: true });
   const emptyDerived = {
     targetObjectId: "",
     sourceObjectId: "",
@@ -16987,7 +17115,11 @@ async function dispatchAdmittedReviewer(input) {
     const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
     if (auditIncomplete !== void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(auditIncomplete));
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
       return {
         exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
         admitted,

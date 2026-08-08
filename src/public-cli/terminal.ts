@@ -66,6 +66,22 @@ export type AuditIncompleteTerminalOutcome = {
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
 
+/** JSON-safe public stand-in for an omitted tool-call `arguments` member. */
+export const JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
+  kind: "json-safe-sentinel",
+  type: "undefined",
+} as const);
+
+export type AuditIncompleteResidual = {
+  readonly roleCandidate: unknown;
+  readonly audit: ComplianceAuditIncomplete;
+  readonly acceptedReceipt: false;
+};
+
+export function jsonSafeComplianceCandidate(value: unknown): unknown {
+  return value === undefined ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
+}
+
 export type TerminalRoleOutcome =
   | {
       kind: "accepted";
@@ -89,6 +105,8 @@ export type TerminalRoleOutcome =
       /** Original diagnostic identity retained for the caller. */
       diagnostic: string;
       decisiveFacts: Readonly<Record<string, unknown>>;
+      /** Retained audit residual when publication itself failed. */
+      auditResidual?: AuditIncompleteResidual;
     };
 
 /** Lawful typed terminal results exit zero (including audit_escalation). */
@@ -109,21 +127,26 @@ export function buildAuditIncompleteTerminalOutcome(input: {
   roleCandidate: unknown;
   audit: ComplianceAuditIncomplete;
 }): AuditIncompleteTerminalOutcome {
+  const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
+  const audit = {
+    ...input.audit,
+    candidate: jsonSafeComplianceCandidate(input.audit.candidate),
+  };
   return {
     kind: "audit_incomplete",
     role: input.role,
     status: "audit-incomplete",
     decision: "no-usable-decision",
-    roleCandidate: input.roleCandidate,
-    audit: input.audit,
+    roleCandidate,
+    audit,
     acceptedReceipt: false,
     decisiveFacts: {
       decision: "no-usable-decision",
-      roleCandidate: input.roleCandidate,
-      auditCandidate: input.audit.candidate,
-      auditObservation: input.audit.observation,
-      observationKind: input.audit.observation.kind,
-      observationType: input.audit.observation.type,
+      roleCandidate,
+      auditCandidate: audit.candidate,
+      auditObservation: audit.observation,
+      observationKind: audit.observation.kind,
+      observationType: audit.observation.type,
       acceptedReceipt: false,
     },
   };
