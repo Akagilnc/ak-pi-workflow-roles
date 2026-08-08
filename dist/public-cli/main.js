@@ -9417,6 +9417,9 @@ var PACKAGED_ROLE_REGISTRY = [
   { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: void 0, activationStage: "load-and-install" },
   { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: void 0, activationStage: "prepare-git-and-install" }
 ];
+function packagedRoleMetadata(role) {
+  return PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === role);
+}
 
 // src/public-cli/registry.ts
 var INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -12954,7 +12957,7 @@ async function peekRoleRunRole(home, runId) {
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
 import { readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname5, join as join7 } from "node:path";
+import { dirname as dirname5, join as join7, resolve as resolve5 } from "node:path";
 
 // src/collector-evidence.ts
 var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
@@ -13275,6 +13278,20 @@ function classifyPostAdmissionFailure(input) {
     details: { code: input.code }
   };
 }
+function workSubjectKeyFromProjectRoot(projectRoot) {
+  const resolved = resolve5(projectRoot, ".");
+  const normalized = resolved.replaceAll("\\", "/");
+  const marker = ".ak/work/issues/";
+  const index = normalized.indexOf(marker);
+  if (index >= 0) {
+    const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
+    if (issue !== void 0 && issue !== "") {
+      return normalized.slice(0, index + marker.length) + issue;
+    }
+  }
+  if (normalized.includes("/.ak/work/")) return resolved;
+  return resolve5(projectRoot, ".ak/work");
+}
 function isMissingPathError2(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -13572,19 +13589,63 @@ function findCurrentRoleTerminal(entries) {
   }
   return void 0;
 }
-function navigatorAttendanceCorrelatedWithTerminal(details, attendanceIndex, terminal) {
+function independentAttendanceIdentity(entries, terminalRole, supplied) {
+  const identity = {};
+  for (const entry of entries) {
+    if (entry?.type !== "session") continue;
+    if (typeof entry.id === "string" && entry.id.trim() !== "") {
+      identity.sessionId = entry.id;
+    }
+    if (typeof entry.cwd === "string" && entry.cwd.trim() !== "") {
+      identity.subjectKey = workSubjectKeyFromProjectRoot(entry.cwd);
+    }
+    break;
+  }
+  if (typeof supplied?.subjectKey === "string") {
+    identity.subjectKey = supplied.subjectKey;
+  }
+  if (supplied !== void 0 && Object.hasOwn(supplied, "phase")) {
+    identity.phase = supplied.phase ?? null;
+  } else {
+    const meta = packagedRoleMetadata(terminalRole);
+    if (meta !== void 0) {
+      if (meta.phases.length === 1) {
+        identity.phase = meta.phases[0];
+      } else {
+        identity.allowedPhases = meta.phases;
+      }
+    }
+  }
+  return identity;
+}
+function attendanceIdentityFromAdmitted(admitted) {
+  const subjectKey = workSubjectKeyFromProjectRoot(admitted.projectRoot);
+  if (admitted.role === "coder" || admitted.role === "fixer") {
+    return { phase: admitted.phase, subjectKey };
+  }
+  return { phase: null, subjectKey };
+}
+function navigatorAttendanceCorrelatedWithTerminal(details, attendanceIndex, terminal, identity) {
   if (terminal === void 0) return false;
   if (attendanceIndex <= terminal.index) return false;
   if (details.version !== 1) return false;
-  if (typeof details.invocationId !== "string" || details.invocationId.trim() === "") {
-    return false;
-  }
-  if (typeof details.role !== "string" || details.role.trim() === "") return false;
   if (details.role !== terminal.role) return false;
-  if (details.phase !== null && details.phase !== "plan" && details.phase !== "apply") {
-    return false;
+  if (identity.sessionId !== void 0) {
+    if (typeof details.invocationId !== "string") return false;
+    const prefix = `${identity.sessionId}:`;
+    if (!details.invocationId.startsWith(prefix)) return false;
+    if (details.invocationId.slice(prefix.length).trim() === "") return false;
   }
-  if (typeof details.subjectKey !== "string") return false;
+  if (identity.phase !== void 0) {
+    if (details.phase !== identity.phase) return false;
+  } else if (identity.allowedPhases !== void 0) {
+    if (!identity.allowedPhases.includes(details.phase)) {
+      return false;
+    }
+  }
+  if (identity.subjectKey !== void 0) {
+    if (details.subjectKey !== identity.subjectKey) return false;
+  }
   return true;
 }
 function parseNavigatorAttendanceDetails(details) {
@@ -13629,8 +13690,9 @@ function parseNavigatorAttendanceDetails(details) {
     reason: "Navigator attendance disposition is unparseable"
   };
 }
-function extractNavigatorFact(entries) {
+function extractNavigatorFact(entries, identity) {
   const terminal = findCurrentRoleTerminal(entries);
+  const independent = terminal === void 0 ? {} : independentAttendanceIdentity(entries, terminal.role, identity);
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
@@ -13642,7 +13704,7 @@ function extractNavigatorFact(entries) {
           reason: "Navigator attendance is unparseable"
         };
       }
-      if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal)) {
+      if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal, independent)) {
         return {
           disposition: "unavailable",
           source: "unknown",
@@ -13661,7 +13723,7 @@ function extractNavigatorFact(entries) {
 async function extractNavigatorFactFromAdmittedSession(admitted) {
   try {
     const entries = await readBoundSessionEntries(admitted.sessionFile);
-    return extractNavigatorFact(entries);
+    return extractNavigatorFact(entries, attendanceIdentityFromAdmitted(admitted));
   } catch (error) {
     if (isMissingPathError2(error)) {
       return {
@@ -13822,7 +13884,10 @@ async function settleLawfulJudgeTerminalResult(admitted) {
   if (roleOutcome === void 0) {
     return void 0;
   }
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const artifacts = await publishJudgeArtifacts(
     admitted,
     roleOutcome,
@@ -13843,7 +13908,10 @@ async function settleLawfulCoderTerminalResult(admitted, options = {}) {
   if (entries === void 0) return void 0;
   const extracted = extractCoderRoleOutcome(entries);
   if (extracted === void 0) return void 0;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const artifacts = await publishCoderArtifacts(
     admitted,
     extracted.outcome,
@@ -13982,7 +14050,10 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
   if (entries === void 0) return void 0;
   const extracted = extractFixerRoleOutcome(entries);
   if (extracted === void 0) return void 0;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const methodInvocations = extractFixerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -14095,7 +14166,10 @@ async function settleLawfulCollectorTerminalResult(admitted) {
     admitted,
     admittedManifest.legs.map((leg) => leg.id)
   );
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const artifacts = await publishCollectorArtifacts(
     admitted,
     extracted.outcome,
@@ -14210,7 +14284,10 @@ async function settleLawfulDoctorTerminalResult(admitted) {
       throw error;
     }
   }
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const artifacts = await publishDoctorArtifacts(
     admitted,
     extracted.outcome,
@@ -14351,7 +14428,10 @@ async function settleLawfulReviewerTerminalResult(admitted, options) {
   if (entries === void 0) return void 0;
   const extracted = extractReviewerRoleOutcome(entries);
   if (extracted === void 0) return void 0;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const methodInvocations = extractReviewerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -14504,7 +14584,10 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
     ]
   });
   if (methodInvocations.length === 0) return void 0;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted)
+  );
   const artifacts = await publishMergerArtifacts(
     admitted,
     extracted.outcome,
@@ -16160,7 +16243,7 @@ async function runPublicFixerResume(argv, env, io) {
 
 // src/public-cli/merger-run.ts
 import { mkdir as mkdir3, writeFile as writeFile10 } from "node:fs/promises";
-import { join as join13, resolve as resolve5 } from "node:path";
+import { join as join13, resolve as resolve6 } from "node:path";
 function buildModelArgs6(model) {
   if (model === void 0) return [];
   return [
@@ -16374,7 +16457,7 @@ async function loadMergerMethodMaterial(packageRoot2) {
   );
 }
 async function admitMergerShellForActivationFailure(options) {
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve6(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
