@@ -13632,6 +13632,18 @@ function sameAuditValue(left, right) {
   }
   return false;
 }
+function snapshotAuditDetails(details) {
+  const snapshot = /* @__PURE__ */ Object.create(null);
+  for (const key of Object.keys(details)) {
+    Object.defineProperty(snapshot, key, {
+      value: details[key],
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  }
+  return snapshot;
+}
 function boundAuditEscalationForResult(entries, resultIndex, message, role, outputToolName) {
   const roleCall = boundRoleToolCallForResult(
     entries,
@@ -13647,23 +13659,24 @@ function boundAuditEscalationForResult(entries, resultIndex, message, role, outp
     auditToolNameForRole(role)
   );
   if (retained === void 0) return void 0;
-  const decision = readComplianceCandidate(retained.candidate);
-  if (decision.status !== "escalate") return void 0;
-  const details = message.details;
   try {
+    const decision = readComplianceCandidate(retained.candidate);
+    if (decision.status !== "escalate") return void 0;
+    const details = message.details;
     if (!isAuditEscalationResult(details) || !isRecord4(details)) return void 0;
+    const projectedDetails = snapshotAuditDetails(details);
+    const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
+    const hasDetailsConflicts = Object.hasOwn(projectedDetails, "conflicts");
+    if (hasDecisionConflicts !== hasDetailsConflicts) return void 0;
+    if (hasDecisionConflicts && !sameAuditValue(projectedDetails.conflicts, decision.conflicts)) return void 0;
+    const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
+    const hasDetailsGate = Object.hasOwn(projectedDetails, "auditDecisionGate");
+    if (hasDecisionGate !== hasDetailsGate) return void 0;
+    if (hasDecisionGate && !sameAuditValue(projectedDetails.auditDecisionGate, decision.decisionGate)) return void 0;
+    return { decision, details: projectedDetails };
   } catch {
     return void 0;
   }
-  const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
-  const hasDetailsConflicts = Object.hasOwn(details, "conflicts");
-  if (hasDecisionConflicts !== hasDetailsConflicts) return void 0;
-  if (hasDecisionConflicts && !sameAuditValue(details.conflicts, decision.conflicts)) return void 0;
-  const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
-  const hasDetailsGate = Object.hasOwn(details, "auditDecisionGate");
-  if (hasDecisionGate !== hasDetailsGate) return void 0;
-  if (hasDecisionGate && !sameAuditValue(details.auditDecisionGate, decision.decisionGate)) return void 0;
-  return { decision, details };
 }
 function isUnboundAuditEscalationFace(details) {
   try {
