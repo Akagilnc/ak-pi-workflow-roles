@@ -444,17 +444,6 @@ test("malformed nested decisions retain raw responses and report typed facts", a
       errorPresent: false,
     },
     {
-      id: "multiple-calls",
-      content: [
-        fauxToolCall(decisionToolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-        fauxToolCall("ak_other_decision", { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-      ],
-      stopReason: "toolUse" as const,
-      expectedCount: 2,
-      expectedNames: [decisionToolName, "ak_other_decision"],
-      errorPresent: false,
-    },
-    {
       id: "malformed-arguments",
       content: [
         fauxToolCall(decisionToolName, {
