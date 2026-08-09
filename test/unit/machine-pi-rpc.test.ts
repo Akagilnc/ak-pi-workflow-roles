@@ -46,12 +46,22 @@ test("RPC rejects early-exit write failure without an uncaught process error", a
   await rm(f.root, { recursive: true, force: true });
 });
 
-test("RPC rejects invalid JSON and duplicate matching decisions", async () => {
-  for (const output of ["not-json", JSON.stringify({type:'tool_execution_end',toolName:'ak_decide',result:{details:{status:'pass'}}})+'\\n'+JSON.stringify({type:'tool_execution_end',toolName:'ak_decide',result:{details:{status:'revise'}}})]) {
-    const f = await fixture(`if(process.argv.includes('--version')) { console.log('dev'); process.exit(); } process.stdin.on('data',()=>{console.log(${JSON.stringify(output)}); setTimeout(()=>process.exit(0),20)});`);
-    await assert.rejects(runMachinePiRpc({ env: { PATH: f.root }, cwd: f.root, sessionDir: join(f.root, "sessions"), args: [], commands: [{ type: "prompt", message: "x" }], decisionToolName: "ak_decide" }), /invalid JSONL|more than once/);
-    await rm(f.root, { recursive: true, force: true });
-  }
+test("RPC rejects invalid JSON and keeps the first accepted matching decision", async () => {
+  const invalid = await fixture(`if(process.argv.includes('--version')) { console.log('dev'); process.exit(); } process.stdin.on('data',()=>{console.log('not-json'); setTimeout(()=>process.exit(0),20)});`);
+  await assert.rejects(runMachinePiRpc({ env: { PATH: invalid.root }, cwd: invalid.root, sessionDir: join(invalid.root, "sessions"), args: [], commands: [{ type: "prompt", message: "x" }], decisionToolName: "ak_decide" }), /invalid JSONL/);
+  await rm(invalid.root, { recursive: true, force: true });
+
+  const duplicate = await fixture(`if(process.argv.includes('--version')) { console.log('dev'); process.exit(); } process.stdin.on('data',()=>{console.log(JSON.stringify({type:'tool_execution_end',toolName:'ak_decide',result:{details:{status:'pass'}}}));console.log(JSON.stringify({type:'tool_execution_end',toolName:'ak_decide',result:{details:{status:'revise'}}}));console.log(JSON.stringify({type:'message_end',message:{role:'assistant'}}));console.log(JSON.stringify({type:'agent_settled'}));setTimeout(()=>process.exit(0),20)});`);
+  const result = await runMachinePiRpc({ env: { PATH: duplicate.root }, cwd: duplicate.root, sessionDir: join(duplicate.root, "sessions"), args: [], commands: [{ type: "prompt", message: "x" }], decisionToolName: "ak_decide" });
+  assert.deepEqual(result.decision, { status: "pass" });
+  await rm(duplicate.root, { recursive: true, force: true });
+});
+
+test("pre-aborted caller with a nonempty command retains abort identity", async () => {
+  const f = await fixture(`if(process.argv.includes('--version')) { console.log('dev'); process.exit(); } process.stdin.resume();`);
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(runMachinePiRpc({ env: { PATH: f.root }, cwd: f.root, sessionDir: join(f.root, "sessions"), args: [], commands: [{ type: "prompt", message: "x".repeat(1024 * 1024) }], signal: controller.signal }), /abort/i);
+  await rm(f.root, { recursive: true, force: true });
 });
 
 test("caller abort terminates the machine Pi child with SIGTERM", async () => {

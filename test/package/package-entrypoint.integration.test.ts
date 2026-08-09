@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import test from "node:test";
+import test, { after, before } from "node:test";
 
 import {
   type Context,
@@ -47,7 +47,6 @@ import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
-import type { ComplianceCompletion } from "../../src/compliance-transport.ts";
 import {
   getSharedIsolatedPack,
   loadRawPackageManifest,
@@ -238,7 +237,35 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
   assert.equal(paths.has("packets/fixer-repair.json"), false, "removed closed packet shell must not be packed");
 });
 
-test("cold-installed package audits all four roles from editable Souls", async () => {
+let suiteAuditRoot = "";
+const suiteAuditSaved = { executable: process.env.AK_MACHINE_PI_EXECUTABLE_REALPATH, version: process.env.AK_MACHINE_PI_VERSION, log: process.env.AK_TEST_AUDIT_LOG, decision: process.env.AK_TEST_AUDIT_DECISION };
+before(async () => {
+  suiteAuditRoot = await mkdtemp(join(packageRoot, ".tmp-suite-audit-rpc-"));
+  const executable = join(suiteAuditRoot, "pi");
+  const log = join(suiteAuditRoot, "calls.jsonl");
+  await writeFile(executable, `#!${process.execPath}\nimport fs from "node:fs";if(process.argv.includes("--version")){console.log("suite-fixture");process.exit(0)}const arg=process.argv.find(x=>x.startsWith("--ak-auditor-rpc-config="));const config=JSON.parse(fs.readFileSync(arg.split("=").slice(1).join("="),"utf8"));process.stdin.once("data",()=>{fs.appendFileSync(process.env.AK_TEST_AUDIT_LOG,JSON.stringify(config)+"\\n");const d=JSON.parse(process.env.AK_TEST_AUDIT_DECISION||"{\\"status\\":\\"pass\\"}");console.log(JSON.stringify({type:"tool_execution_end",toolName:config.tool.name,result:{details:d}}));console.log(JSON.stringify({type:"message_end",message:{role:"assistant",content:[],stopReason:"toolUse",usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}}}));console.log(JSON.stringify({type:"agent_settled"}));setTimeout(()=>process.exit(0),5)})`);
+  await chmod(executable, 0o755);
+  process.env.AK_MACHINE_PI_EXECUTABLE_REALPATH = await realpath(executable); process.env.AK_MACHINE_PI_VERSION = "suite-fixture"; process.env.AK_TEST_AUDIT_LOG = log;
+});
+after(async () => { for (const [key,value] of Object.entries({AK_MACHINE_PI_EXECUTABLE_REALPATH:suiteAuditSaved.executable,AK_MACHINE_PI_VERSION:suiteAuditSaved.version,AK_TEST_AUDIT_LOG:suiteAuditSaved.log,AK_TEST_AUDIT_DECISION:suiteAuditSaved.decision})) value===undefined?delete process.env[key]:process.env[key]=value; await rm(suiteAuditRoot,{recursive:true,force:true}); });
+
+async function withMachineAuditFixture<T>(run: (logPath: string) => Promise<T>): Promise<T> {
+  const root = await mkdtemp(join(packageRoot, ".tmp-audit-rpc-"));
+  const executable = join(root, "pi");
+  const logPath = join(root, "calls.jsonl");
+  await writeFile(executable, `#!${process.execPath}\nimport fs from "node:fs";\nif(process.argv.includes("--version")){console.log("package-fixture");process.exit(0)}\nconst arg=process.argv.find(x=>x.startsWith("--ak-auditor-rpc-config="));\nconst config=JSON.parse(fs.readFileSync(arg.split("=").slice(1).join("="),"utf8"));\nprocess.stdin.once("data",()=>{fs.appendFileSync(process.env.AK_TEST_AUDIT_LOG,JSON.stringify(config)+"\\n");const decision=JSON.parse(process.env.AK_TEST_AUDIT_DECISION||"{\\"status\\":\\"pass\\"}");console.log(JSON.stringify({type:"tool_execution_end",toolName:config.tool.name,result:{details:decision}}));console.log(JSON.stringify({type:"message_end",message:{role:"assistant",content:[],stopReason:"toolUse",usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}}}));console.log(JSON.stringify({type:"agent_settled"}));setTimeout(()=>process.exit(0),5)});\n`);
+  await chmod(executable, 0o755);
+  const saved = { executable: process.env.AK_MACHINE_PI_EXECUTABLE_REALPATH, version: process.env.AK_MACHINE_PI_VERSION, log: process.env.AK_TEST_AUDIT_LOG, decision: process.env.AK_TEST_AUDIT_DECISION };
+  process.env.AK_MACHINE_PI_EXECUTABLE_REALPATH = await realpath(executable);
+  process.env.AK_MACHINE_PI_VERSION = "package-fixture";
+  process.env.AK_TEST_AUDIT_LOG = logPath;
+  try { return await run(logPath); } finally {
+    for (const [key, value] of Object.entries({ AK_MACHINE_PI_EXECUTABLE_REALPATH: saved.executable, AK_MACHINE_PI_VERSION: saved.version, AK_TEST_AUDIT_LOG: saved.log, AK_TEST_AUDIT_DECISION: saved.decision })) value === undefined ? delete process.env[key] : process.env[key] = value;
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("cold-installed package audits all four roles from editable Souls", async () => withMachineAuditFixture(async (logPath) => {
   await withActivationHome(
     { prefix: "ak-auditor-package-" },
     async ({ home }) => {
@@ -256,7 +283,7 @@ test("cold-installed package audits all four roles from editable Souls", async (
           async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
           async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
         },
-        sessionManager: SessionManager.inMemory(),
+        sessionManager: { getSessionFile: () => join(home, "parent.jsonl"), getSessionDir: () => home, appendCustomEntry() { return "entry"; } },
       } as any;
       const inputs = {
         judge: { soul: "caller judge soul", transcript: "judge record", verdict: { judgeStatus: "converged" } },
@@ -265,21 +292,17 @@ test("cold-installed package audits all four roles from editable Souls", async (
         doctor: { soul: "caller doctor soul", patient: { version: 1, identity: { issueNumber: 58, runsPath: ".ak/work/issues/58/runs" }, evidence: [], cost: { invocations: { total: 0, sources: [] }, bytes: 0 } }, readRecord: [], testimony: { status: "refused", reason: "missing", missingEvidence: [] } },
       } as const;
       const roles = [
-        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: (completion: ComplianceCompletion) => judge.createPiJudgeAuditor(completion)(inputs.judge as never, { context }) },
-        { name: "fixer", toolName: fixer.FIXER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/fixer-auditor.md"), run: (completion: ComplianceCompletion) => fixer.createPiFixerAuditor(completion)(inputs.fixer as never, { context }) },
-        { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: (completion: ComplianceCompletion) => reviewer.createPiReviewerAuditor(completion)(inputs.reviewer as never, { context }) },
-        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)(inputs.doctor as never, { context }) },
+        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: () => judge.createPiJudgeAuditor()(inputs.judge as never, { context }) },
+        { name: "fixer", toolName: fixer.FIXER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/fixer-auditor.md"), run: () => fixer.createPiFixerAuditor()(inputs.fixer as never, { context }) },
+        { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: () => reviewer.createPiReviewerAuditor()(inputs.reviewer as never, { context }) },
+        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: () => doctor.createPiDoctorAuditor()(inputs.doctor as never, { context }) },
       ] as const;
       const run = async (role: (typeof roles)[number]) => {
-        let calls = 0;
-        let prompt = "";
-        const completion: ComplianceCompletion = async (_model, request) => {
-          calls += 1;
-          prompt = request.systemPrompt ?? "";
-          return fauxAssistantMessage(fauxToolCall(role.toolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
-        };
-        await role.run(completion);
-        assert.equal(calls, 1, `${role.name} audit must make one decision call`);
+        const before = await readFile(logPath, "utf8").catch(() => "");
+        await role.run();
+        const calls = (await readFile(logPath, "utf8")).slice(before.length).trim().split("\n");
+        assert.equal(calls.length, 1, `${role.name} audit must make one RPC decision call`);
+        const prompt = JSON.parse(calls[0]!).systemPrompt as string;
         assert.equal(prompt, await readFile(role.soulPath, "utf8"), `${role.name} must load its installed Soul on this call`);
         return prompt;
       };
@@ -306,18 +329,18 @@ test("cold-installed package audits all four roles from editable Souls", async (
         const original = await readFile(role.soulPath, "utf8");
         await rm(role.soulPath, { force: true });
         try {
-          await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", `${role.name} missing Soul must preserve ENOENT`);
+          await assert.rejects(role.run(), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", `${role.name} missing Soul must preserve ENOENT`);
         } finally {
           await writeFile(role.soulPath, original, "utf8");
         }
 
         await writeFile(role.soulPath, " \n", "utf8");
-        await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), new RegExp(`${role.name} auditor Soul is blank`));
+        await assert.rejects(role.run(), new RegExp(`${role.name} auditor Soul is blank`));
 
         await rm(role.soulPath, { force: true });
         await mkdir(role.soulPath);
         try {
-          await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), (error: unknown) => (error as NodeJS.ErrnoException).code === "EISDIR", `${role.name} unreadable Soul must preserve EISDIR`);
+          await assert.rejects(role.run(), (error: unknown) => (error as NodeJS.ErrnoException).code === "EISDIR", `${role.name} unreadable Soul must preserve EISDIR`);
         } finally {
           await rm(role.soulPath, { recursive: true, force: true });
           await writeFile(role.soulPath, original, "utf8");
@@ -326,9 +349,9 @@ test("cold-installed package audits all four roles from editable Souls", async (
       });
     },
   );
-});
+}));
 
-test("role outputs run nested audits through pass, revise, and escalation", async () => {
+test("role outputs run nested audits through pass, revise, and escalation", async () => withMachineAuditFixture(async () => {
   // Source-tree imports: cold-install boundary is owned by neighbouring install tests;
   // this carrier owns revise→errored / pass→terminate / escalate per role output tool.
   const root = packageRoot;
@@ -421,6 +444,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
       };
       const outputContext = (name: string, id: string) => {
         const sessionManager = SessionManager.inMemory();
+        Object.assign(sessionManager, { getSessionFile: () => join(packageRoot, ".package-parent.jsonl"), getSessionDir: () => packageRoot });
         sessionManager.appendMessage({
           role: "assistant",
           content: [{ type: "toolCall", id, name, arguments: {} }],
@@ -451,15 +475,13 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
               : makeHarness();
         let auditCalls = 0;
         let selectedDecision = decision;
-        const complete = async (_model: unknown, _request: Context) => {
-          auditCalls += 1;
-          return fauxAssistantMessage(fauxToolCall(toolNames[role], selectedDecision), { stopReason: "toolUse" });
-        };
         const auditCompliance = (input: any, options: any) => {
-          if (role === "judge") return judge.createPiJudgeAuditor(complete)(input, options);
-          if (role === "fixer") return fixer.createPiFixerAuditor(complete)(input, options);
-          if (role === "reviewer") return reviewer.createPiReviewerAuditor(complete)(input, options);
-          return doctor.createPiDoctorAuditor(complete)(input, options);
+          auditCalls += 1;
+          process.env.AK_TEST_AUDIT_DECISION = JSON.stringify(selectedDecision);
+          if (role === "judge") return judge.createPiJudgeAuditor()(input, options);
+          if (role === "fixer") return fixer.createPiFixerAuditor()(input, options);
+          if (role === "reviewer") return reviewer.createPiReviewerAuditor()(input, options);
+          return doctor.createPiDoctorAuditor()(input, options);
         };
         let runtime: any;
         if (role === "judge") {
@@ -547,7 +569,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         assert.equal(escalated.auditCalls, 1);
       }
   }
-});
+}));
 
 test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {
   const manifest = await loadRawPackageManifest();
@@ -697,32 +719,12 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           ),
           "the provider receives the complete bundled judge Soul",
         );
-        const seenAuditContext = auditContext as Context | undefined;
-        assert.ok(seenAuditContext);
-        assert.notEqual(activeModel.baseUrl, resolvedBaseUrl);
-        assert.deepEqual(auditDispatch, {
-          baseUrl: resolvedBaseUrl,
-          apiKey: "resolved-secret",
-          headers: {
-            "x-resolved-auth": "yes",
-            "x-model-route": "audit-tenant",
-          },
-          env: { RESOLVED_TENANT: "integration" },
-        });
-        const auditInput = seenAuditContext.messages.find(
-          (message) => message.role === "user",
-        );
-        assert.ok(auditInput?.role === "user");
-        const auditContent = typeof auditInput.content === "string"
-          ? [{ type: "text" as const, text: auditInput.content }]
-          : auditInput.content;
-        const auditText = auditContent
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("\n");
-        assert.ok(
-          auditText.includes(`<judge_soul>\n${judgeSoul}\n</judge_soul>`),
-        );
+        assert.equal(auditContext, undefined, "Auditor authority must not use the in-process provider");
+        assert.equal(auditDispatch, undefined);
+        const auditCalls = (await readFile(process.env.AK_TEST_AUDIT_LOG!, "utf8")).trim().split("\n");
+        const auditConfig = JSON.parse(auditCalls.at(-1)!) as { systemPrompt: string; tool: { name: string } };
+        assert.equal(auditConfig.systemPrompt, await readFile(resolve(packageRoot, "souls/judge-auditor.md"), "utf8"));
+        assert.equal(auditConfig.tool.name, SOUL_AUDIT_TOOL_NAME);
 
         const acceptedResult = sessionManager
           .getEntries()
@@ -1214,6 +1216,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
       try {
         const outcomes = ["recommendation", "human_decision", "infrastructure"] as const;
         for (const outcome of outcomes) {
+          process.env.AK_TEST_AUDIT_DECISION = JSON.stringify(outcome === "infrastructure" ? { status: "escalate", conflicts: ["provider quota exhausted"], decisionGate: { question: "Retry audit?", options: ["retry"] } } : { status: "pass" });
           let navigatorCalls = 0;
           let roleOutputReturned = false;
           let releasePreparation!: () => void;
@@ -1282,6 +1285,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
         }
       } finally {
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+        delete process.env.AK_TEST_AUDIT_DECISION;
         process.exitCode = oldExitCode;
       }
     },
@@ -1832,6 +1836,7 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
 });
 
 test("packaged judge escalation emits one typed human decision", async () => {
+  process.env.AK_TEST_AUDIT_DECISION = JSON.stringify({ status: "escalate", conflicts: ["Soul authority conflicts with controlling authority"], decisionGate: { question: "Which authority governs this verdict?", options: ["Soul", "Controlling authority"] } });
   const manifest = await loadRawPackageManifest();
   await withActivationHome(
     { prefix: "ak-judge-escalation-integration-" },
@@ -1914,6 +1919,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
       });
     },
   );
+  delete process.env.AK_TEST_AUDIT_DECISION;
 });
 
 test("packaged coder apply proves canonical native tdd expansion including colliding prefix", async () => {

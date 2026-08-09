@@ -85,6 +85,7 @@ process.on("SIGTERM", () => {
     const resultPromise = defaultExplicitInternalPiRunner(["--help"], {
       cwd: home,
       env: { ...process.env, PI_BINARY: stub },
+      runtime: { executableRealpath: stub, version: "test-pi" },
     });
     await waitForFile(ready, resultPromise);
     await writeFile(release, "release", "utf8");
@@ -137,6 +138,7 @@ setInterval(() => {}, 1000);
       agentDir: join(home, ".pi", "agent"),
       timeoutMs: 750,
       env: { PI_BINARY: stub },
+      runtime: { executableRealpath: stub, version: "test-pi" },
     });
     await waitForFile(ready, resultPromise);
     t.mock.timers.tick(750);
@@ -166,6 +168,7 @@ process.exit(0);
     const result = await defaultExplicitInternalPiRunner(["x"], {
       cwd: home,
       env: { ...process.env, PI_BINARY: stub },
+      runtime: { executableRealpath: stub, version: "test-pi" },
     });
 
     assert.equal(result.code, 0);

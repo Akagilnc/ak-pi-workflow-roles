@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
 import type { ControlledFailureCause } from "./terminal.ts";
-import { resolveMachinePi } from "../machine-pi-rpc.ts";
+import type { MachinePiRuntimeIdentity } from "../machine-pi-rpc.ts";
 
 export function resolveInternalRoleEntrypoint(packageRoot: string): string {
   return join(packageRoot, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
@@ -124,6 +124,7 @@ export type ExplicitInternalPiRunner = (
     cwd: string;
     env: NodeJS.ProcessEnv;
     timeoutMs?: number;
+    runtime?: MachinePiRuntimeIdentity;
   },
 ) => Promise<ExplicitInternalPiResult>;
 
@@ -132,7 +133,8 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
   args,
   options,
 ) => {
-  const command = (await resolveMachinePi(options.env)).executableRealpath;
+  if (options.runtime === undefined) throw new Error("machine Pi runtime identity is required by the explicit runner");
+  const command = options.runtime.executableRealpath;
   return await new Promise((resolveResult, reject) => {
     // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
     // evidence). Do not pipe or accumulate it. stderr stays piped for diagnostics.
@@ -187,6 +189,7 @@ export async function runExplicitInternalActivation(options: {
   agentDir: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number | undefined;
+  runtime?: MachinePiRuntimeIdentity;
   runner?: ExplicitInternalPiRunner;
 }): Promise<ExplicitInternalPiResult> {
   const args = buildExplicitInternalActivationArgs(
@@ -194,14 +197,20 @@ export async function runExplicitInternalActivation(options: {
     options.extraArgs ?? [],
   );
   const runner = options.runner ?? defaultExplicitInternalPiRunner;
+  if (options.runtime === undefined && options.runner === undefined) throw new Error("machine Pi runtime identity is required by explicit activation");
   return await runner(args, {
     cwd: options.cwd,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
     env: {
       ...process.env,
       ...options.env,
       HOME: options.home,
       PI_CODING_AGENT_DIR: options.agentDir,
+      ...(options.runtime === undefined ? {} : {
+        AK_MACHINE_PI_EXECUTABLE_REALPATH: options.runtime.executableRealpath,
+        AK_MACHINE_PI_VERSION: options.runtime.version,
+      }),
     },
   });
 }

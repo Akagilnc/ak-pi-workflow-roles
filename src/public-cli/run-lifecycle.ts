@@ -14,6 +14,7 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
+import type { MachinePiRuntimeIdentity } from "../machine-pi-rpc.ts";
 import {
   roleRunSessionFile,
   type AdmittedCoderInvocation,
@@ -26,6 +27,14 @@ import {
   type DerivedMergerEnvelope,
   type FrozenAttachment,
 } from "./invocation.ts";
+
+async function loadAdmittedMachinePiRuntime(runDirectory: string): Promise<MachinePiRuntimeIdentity> {
+  const value = JSON.parse(await readFile(join(runDirectory, "invocation.json"), "utf8")) as Record<string, unknown>;
+  if (typeof value.piExecutableRealpath !== "string" || typeof value.piVersion !== "string" || value.piVersion.length === 0) {
+    throw new CliUsageError("role invocation has no retained machine Pi runtime identity");
+  }
+  return { executableRealpath: value.piExecutableRealpath, version: value.piVersion };
+}
 
 /** Providers eligible for v1 typed-429 resume (Codex / xAI only). */
 export const V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"] as const;
@@ -648,6 +657,7 @@ export async function loadResumableJudgeRun(
     );
   }
   const admitted: AdmittedJudgeInvocation = {
+    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
     role: "judge",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,
@@ -699,6 +709,7 @@ export async function loadResumableCoderRun(
     );
   }
   const admitted: AdmittedCoderInvocation = {
+    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
     role: "coder",
     phase,
     runId: loaded.run.runId,
@@ -753,6 +764,7 @@ export async function loadResumableFixerRun(
   }
   const prerequisites = loaded.admittedFields.prerequisites ?? Object.freeze([]);
   const admitted: AdmittedFixerInvocation = {
+    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
     role: "fixer",
     phase,
     runId: loaded.run.runId,
@@ -820,6 +832,7 @@ export async function loadResumableReviewerRun(
     );
   }
   const admitted: AdmittedReviewerInvocation = {
+    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
     role: "reviewer",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,
@@ -883,6 +896,7 @@ export async function loadResumableMergerRun(
     );
   }
   const admitted: AdmittedMergerInvocation = {
+    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
     role: "merger",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,

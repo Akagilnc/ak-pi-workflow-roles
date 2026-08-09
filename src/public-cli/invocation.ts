@@ -50,7 +50,7 @@ import {
 import { sha256Hex } from "../sha256.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import { CliUsageError } from "./cli-errors.ts";
-import { resolveMachinePi } from "../machine-pi-rpc.ts";
+import { resolveMachinePi, type MachinePiRuntimeIdentity } from "../machine-pi-rpc.ts";
 
 export type FrozenAttachment = {
   /** Original caller path retained only as provenance. */
@@ -85,6 +85,8 @@ export type AdmittedRoleInvocationBase = {
   /** Exact Pi session file principal (bound at admission; reopened on resume). */
   readonly sessionFile: string;
   readonly admittedRequestPath: string;
+  /** One machine-Pi identity resolved for this public invocation. */
+  readonly runtime?: MachinePiRuntimeIdentity;
 };
 
 export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
@@ -177,7 +179,7 @@ export type AdmittedRoleInvocation =
 
 type RoleInvocationLedgerSource = Pick<
   AdmittedRoleInvocationBase,
-  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "sessionDirectory" | "sessionFile"
+  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "sessionDirectory" | "sessionFile" | "runtime"
 >;
 
 /**
@@ -189,7 +191,8 @@ async function writeRoleInvocationLedger(
   source: RoleInvocationLedgerSource,
   role: AdmittedRoleInvocation["role"],
 ): Promise<void> {
-  const runtime = await resolveMachinePi(process.env);
+  const runtime = source.runtime;
+  if (runtime === undefined) throw new Error("machine Pi runtime identity is missing from invocation admission");
   const identity = {
     role,
     piExecutableRealpath: runtime.executableRealpath,
@@ -551,7 +554,9 @@ export async function admitJudgeInvocation(
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "judge" as const,
     runId,
     bookKey,
@@ -585,6 +590,7 @@ export async function admitJudgeInvocation(
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
   };
 }
 
@@ -697,7 +703,9 @@ export async function admitCoderInvocation(
   const taskPath = join(runDirectory, "task.md");
   await writeFile(taskPath, instruction, "utf8");
 
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "coder" as const,
     phase: options.phase,
     runId,
@@ -734,6 +742,7 @@ export async function admitCoderInvocation(
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     taskPath,
   };
 }
@@ -850,7 +859,9 @@ export async function admitFixerInvocation(
   const packetPath = join(runDirectory, "fix-packet.md");
   await writeFile(packetPath, instruction, "utf8");
 
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "fixer" as const,
     phase: options.phase,
     runId,
@@ -892,6 +903,7 @@ export async function admitFixerInvocation(
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     packetPath,
     ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
     prerequisites,
@@ -1246,7 +1258,9 @@ export async function admitCollectorInvocation(
 
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "collector" as const,
     runId,
     bookKey,
@@ -1289,6 +1303,7 @@ export async function admitCollectorInvocation(
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     prNumber,
     repository,
     legsPath,
@@ -1592,7 +1607,9 @@ export async function admitDoctorInvocation(
 
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "doctor" as const,
     runId,
     bookKey,
@@ -1633,6 +1650,7 @@ export async function admitDoctorInvocation(
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     issueNumber: options.issueNumber,
     caseRunsPath,
     caseIdentity,
@@ -1826,7 +1844,9 @@ export async function admitReviewerInvocation(
   const capabilitiesPath = join(runDirectory, "capabilities.json");
   await writeFile(capabilitiesPath, derived.text, "utf8");
 
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "reviewer" as const,
     runId,
     bookKey,
@@ -1870,6 +1890,7 @@ export async function admitReviewerInvocation(
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     taskPath,
     capabilitiesPath,
     taskSha256: derived.taskSha256,
@@ -2107,7 +2128,9 @@ export async function admitMergerInvocation(
     "utf8",
   );
 
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "merger" as const,
     runId,
     bookKey,
@@ -2153,6 +2176,7 @@ export async function admitMergerInvocation(
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     mergerInputPath,
     derived: admitted.derived,
   };

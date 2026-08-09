@@ -47,8 +47,6 @@ test("Reviewer auditor rejects a current-shaped receipt when a materialized leg 
   currentRecord.accepted.materials = [{ id: "rules", repositoryPath: "RULES.md", source: "pinned-git", sourcePath: "RULES.md", text: "rules", utf8Length: 5, sha256: "rules" }];
   currentRecord.accepted.bundle = { manifestSha256: "manifest", entries: [{ id: "canonical-skill", relativeClonePath: ".ak-reviewer/materials/canonical-skill.md", utf8Length: 1, sha256: "skill" }] };
   currentRecord.results.standards.runtimeConstructionEvidence = { leg: "standards", workspaceIdentity: "workspace", manifestSha256: "manifest", entries: [{ id: "canonical-skill", relativeClonePath: ".ak-reviewer/materials/canonical-skill.md", utf8Length: 1, sha256: "skill", verified: true }] };
-  const audit = createPiReviewerAuditor(async () => {
-    throw new Error("provider must not run");
-  });
+  const audit = createPiReviewerAuditor();
   await assert.rejects(audit({ ...input, record: currentRecord }, { context }), ReviewerAuditEvidenceError);
 });

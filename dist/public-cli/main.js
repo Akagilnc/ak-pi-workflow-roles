@@ -9241,41 +9241,10 @@ var CliUsageError = class extends Error {
 };
 
 // src/public-cli/explicit-internal.ts
-import { spawn as spawn2 } from "node:child_process";
-import { join as join3 } from "node:path";
-
-// src/machine-pi-rpc.ts
-import { spawn, spawnSync } from "node:child_process";
-import { constants } from "node:fs";
-import { access, appendFile, mkdir as mkdir2, realpath } from "node:fs/promises";
-import { delimiter, isAbsolute, join as join2, resolve, sep } from "node:path";
-async function executableFrom(env) {
-  const selected = env.PI_BINARY;
-  const explicitPath = selected !== void 0 && (isAbsolute(selected) || selected.includes("/") || selected.includes("\\"));
-  const candidates = selected !== void 0 ? explicitPath ? [isAbsolute(selected) ? selected : resolve(selected)] : (env.PATH ?? "").split(delimiter).filter(Boolean).map((part) => join2(part, selected)) : (env.PATH ?? "").split(delimiter).filter(Boolean).map((part) => join2(part, "pi"));
-  for (const candidate of candidates) {
-    const packageLocal = candidate.split(sep).slice(-3).join("/") === "node_modules/.bin/pi";
-    if (selected === void 0 && packageLocal) continue;
-    try {
-      await access(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-    }
-  }
-  throw new Error(selected === void 0 ? "machine Pi executable was not found on PATH" : `PI_BINARY is not executable: ${selected}`);
-}
-async function resolveMachinePi(env = process.env) {
-  const executableRealpath = await realpath(await executableFrom(env));
-  const versionResult = spawnSync(executableRealpath, ["--version"], { env, encoding: "utf8", timeout: 1e4 });
-  if (versionResult.error !== void 0 || versionResult.status !== 0) throw new Error(`machine Pi version probe failed: ${versionResult.stderr || versionResult.error}`);
-  const version = versionResult.stdout.replace(/\r?\n$/, "");
-  if (version.length === 0) throw new Error("machine Pi version probe returned no version");
-  return { executableRealpath, version };
-}
-
-// src/public-cli/explicit-internal.ts
+import { spawn } from "node:child_process";
+import { join as join2 } from "node:path";
 function resolveInternalRoleEntrypoint(packageRoot2) {
-  return join3(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
+  return join2(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
 }
 function buildExplicitInternalActivationArgs(packageRoot2, extraArgs = []) {
   return [
@@ -9303,9 +9272,10 @@ function knownFailureFromProviderStop(input) {
   };
 }
 var defaultExplicitInternalPiRunner = async (args, options) => {
-  const command = (await resolveMachinePi(options.env)).executableRealpath;
+  if (options.runtime === void 0) throw new Error("machine Pi runtime identity is required by the explicit runner");
+  const command = options.runtime.executableRealpath;
   return await new Promise((resolveResult, reject) => {
-    const child = spawn2(command, [...args], {
+    const child = spawn(command, [...args], {
       cwd: options.cwd,
       env: options.env,
       stdio: ["ignore", "ignore", "pipe"]
@@ -9345,14 +9315,20 @@ async function runExplicitInternalActivation(options) {
     options.extraArgs ?? []
   );
   const runner = options.runner ?? defaultExplicitInternalPiRunner;
+  if (options.runtime === void 0 && options.runner === void 0) throw new Error("machine Pi runtime identity is required by explicit activation");
   return await runner(args, {
     cwd: options.cwd,
     ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs },
+    ...options.runtime === void 0 ? {} : { runtime: options.runtime },
     env: {
       ...process.env,
       ...options.env,
       HOME: options.home,
-      PI_CODING_AGENT_DIR: options.agentDir
+      PI_CODING_AGENT_DIR: options.agentDir,
+      ...options.runtime === void 0 ? {} : {
+        AK_MACHINE_PI_EXECUTABLE_REALPATH: options.runtime.executableRealpath,
+        AK_MACHINE_PI_VERSION: options.runtime.version
+      }
     }
   });
 }
@@ -9376,7 +9352,7 @@ import {
   statSync
 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { basename, dirname as dirname2, isAbsolute as isAbsolute2, join as join4, relative, resolve as resolve2, sep as sep2 } from "node:path";
+import { basename, dirname as dirname2, isAbsolute, join as join3, relative, resolve, sep } from "node:path";
 var ActivationLedgerError = class extends Error {
   code = "AK_ACTIVATION_LEDGER";
   constructor(message, options) {
@@ -9389,28 +9365,28 @@ var ActivationLedgerError = class extends Error {
 };
 function resolveActivationLedgerHome(home = homedir2) {
   const processHome = home();
-  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute2(processHome)) {
+  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
     throw new ActivationLedgerError(
       `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
     );
   }
-  return resolve2(processHome, ".ak-roles");
+  return resolve(processHome, ".ak-roles");
 }
 function activationBookDirectory(ledgerHome, bookKey) {
-  return join4(ledgerHome, "books", bookKey);
+  return join3(ledgerHome, "books", bookKey);
 }
 function pathContainedIn(root, candidate) {
   const rel = relative(root, candidate);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep2}`) && !isAbsolute2(rel);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 function physicalPathIdentity(path) {
-  const absolute = resolve2(path);
+  const absolute = resolve(path);
   const missing = [];
   let cursor = absolute;
   while (true) {
     try {
       const real = realpathSync(cursor);
-      return missing.length === 0 ? real : join4(real, ...missing);
+      return missing.length === 0 ? real : join3(real, ...missing);
     } catch (error) {
       if (errnoCode(error) !== "ENOENT") {
         return absolute;
@@ -9472,11 +9448,11 @@ function assertPhysicalLedgerRoot(absoluteRoot) {
   }
 }
 function ensureRealDirectoryTree(root, targetDir) {
-  if (!isAbsolute2(root)) {
+  if (!isAbsolute(root)) {
     throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
   }
-  const absoluteRoot = resolve2(root);
-  const absoluteTarget = resolve2(targetDir);
+  const absoluteRoot = resolve(root);
+  const absoluteTarget = resolve(targetDir);
   if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
     throw new ActivationLedgerError(
       `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
@@ -9497,18 +9473,18 @@ function ensureRealDirectoryTree(root, targetDir) {
   }
   const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
   if (rel === "") return realRoot;
-  if (isAbsolute2(rel) || rel === ".." || rel.startsWith(`..${sep2}`)) {
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
     throw new ActivationLedgerError(
       `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
     );
   }
   let lexicalCursor = absoluteRoot;
-  for (const part of rel.split(sep2)) {
+  for (const part of rel.split(sep)) {
     if (part === "" || part === ".") continue;
     if (part === "..") {
       throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
     }
-    lexicalCursor = join4(lexicalCursor, part);
+    lexicalCursor = join3(lexicalCursor, part);
     let st;
     try {
       st = lstatSync(lexicalCursor);
@@ -9573,7 +9549,7 @@ function ensureRealDirectoryTree(root, targetDir) {
 
 // src/activation-ledger-git.ts
 import { execFileSync } from "node:child_process";
-import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute3, resolve as resolve3 } from "node:path";
+import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
 var GIT_DISCOVERY_ENV_KEYS = [
   "GIT_DIR",
   "GIT_COMMON_DIR",
@@ -9628,7 +9604,7 @@ function resolveBookKeyFromGit(cwd) {
   if (commonDir.length === 0) {
     throw new Error("git rev-parse --git-common-dir returned an empty path");
   }
-  const absoluteCommon = isAbsolute3(commonDir) ? commonDir : resolve3(cwd, commonDir);
+  const absoluteCommon = isAbsolute2(commonDir) ? commonDir : resolve2(cwd, commonDir);
   const hostDirectory = basename2(absoluteCommon) === ".git" ? dirname3(absoluteCommon) : absoluteCommon;
   const bookKey = basename2(hostDirectory);
   if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
@@ -9638,8 +9614,8 @@ function resolveBookKeyFromGit(cwd) {
 }
 
 // src/doctor-evidence.ts
-import { readdir, readFile as readFile2, realpath as realpath2, stat } from "node:fs/promises";
-import { dirname as dirname4, relative as relative2, resolve as resolve4, sep as sep3 } from "node:path";
+import { readdir, readFile as readFile2, realpath, stat } from "node:fs/promises";
+import { dirname as dirname4, relative as relative2, resolve as resolve3, sep as sep2 } from "node:path";
 
 // src/audit-escalation.ts
 var AUDIT_ESCALATION_KIND = "audit_escalation";
@@ -9762,7 +9738,7 @@ async function discoverCaseFiles(root) {
   const found = [];
   async function walk(dir, depth) {
     for (const item of await readdir(dir, { withFileTypes: true })) {
-      const path = resolve4(dir, item.name);
+      const path = resolve3(dir, item.name);
       if (item.isDirectory()) await walk(path, depth + 1);
       else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log" && depth === 1)) found.push(path);
     }
@@ -9787,8 +9763,8 @@ async function stableRunsIdentity(root) {
   let cursor = root;
   while (true) {
     try {
-      const git2 = await stat(resolve4(cursor, ".git"));
-      if (git2.isDirectory() || git2.isFile()) return relative2(cursor, root).split(sep3).join("/");
+      const git2 = await stat(resolve3(cursor, ".git"));
+      if (git2.isDirectory() || git2.isFile()) return relative2(cursor, root).split(sep2).join("/");
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
     }
@@ -9866,13 +9842,13 @@ function deriveSession(content, id) {
   return { session, turns, calls, tokens, statuses, commits };
 }
 async function loadDoctorCase(runsPath) {
-  const root = await realpath2(runsPath);
-  const match = root.split(sep3).join("/").match(/\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/);
+  const root = await realpath(runsPath);
+  const match = root.split(sep2).join("/").match(/\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/);
   if (!match) throw new Error("Doctor case must be an .ak-roles/books/<book>/issues/<n>/runs directory");
   const evidence = [], sessions = [], statuses = [], commits = [];
   const turns = { count: 0, sources: [] }, calls = { count: 0, sources: [] }, tokens = { count: 0, sources: [] };
   for (const path of await discoverCaseFiles(root)) {
-    const id = relative2(root, path).split(sep3).join("/");
+    const id = relative2(root, path).split(sep2).join("/");
     const bytes = await readFile2(path);
     const content = bytes.toString("utf8");
     const kind = id.endsWith(".jsonl") ? "session" : "stderr";
@@ -10212,13 +10188,43 @@ function uuidv7(now = Date.now()) {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
+// src/machine-pi-rpc.ts
+import { spawn as spawn2, spawnSync } from "node:child_process";
+import { constants } from "node:fs";
+import { access, appendFile, mkdir as mkdir2, realpath as realpath2 } from "node:fs/promises";
+import { delimiter, isAbsolute as isAbsolute3, join as join4, resolve as resolve4, sep as sep3 } from "node:path";
+async function executableFrom(env) {
+  const selected = env.PI_BINARY;
+  const explicitPath = selected !== void 0 && (isAbsolute3(selected) || selected.includes("/") || selected.includes("\\"));
+  const candidates = selected !== void 0 ? explicitPath ? [isAbsolute3(selected) ? selected : resolve4(selected)] : (env.PATH ?? "").split(delimiter).filter(Boolean).map((part) => join4(part, selected)) : (env.PATH ?? "").split(delimiter).filter(Boolean).map((part) => join4(part, "pi"));
+  for (const candidate of candidates) {
+    const packageLocal = candidate.split(sep3).slice(-3).join("/") === "node_modules/.bin/pi";
+    if (selected === void 0 && packageLocal) continue;
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+    }
+  }
+  throw new Error(selected === void 0 ? "machine Pi executable was not found on PATH" : `PI_BINARY is not executable: ${selected}`);
+}
+async function resolveMachinePi(env = process.env) {
+  const executableRealpath = await realpath2(await executableFrom(env));
+  const versionResult = spawnSync(executableRealpath, ["--version"], { env, encoding: "utf8", timeout: 1e4 });
+  if (versionResult.error !== void 0 || versionResult.status !== 0) throw new Error(`machine Pi version probe failed: ${versionResult.stderr || versionResult.error}`);
+  const version = versionResult.stdout.replace(/\r?\n$/, "");
+  if (version.length === 0) throw new Error("machine Pi version probe returned no version");
+  return { executableRealpath, version };
+}
+
 // src/public-cli/invocation.ts
 var ROLE_RUN_SESSION_FILE_NAME = "session.jsonl";
 function roleRunSessionFile(sessionDirectory) {
   return join5(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
 }
 async function writeRoleInvocationLedger(source, role) {
-  const runtime = await resolveMachinePi(process.env);
+  const runtime = source.runtime;
+  if (runtime === void 0) throw new Error("machine Pi runtime identity is missing from invocation admission");
   const identity = {
     role,
     piExecutableRealpath: runtime.executableRealpath,
@@ -10460,7 +10466,9 @@ async function admitJudgeInvocation(options) {
   }
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "judge",
     runId,
     bookKey,
@@ -10493,7 +10501,8 @@ async function admitJudgeInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
-    admittedRequestPath
+    admittedRequestPath,
+    runtime
   };
 }
 function buildJudgeTransportPrompt(admitted) {
@@ -10551,7 +10560,9 @@ async function admitCoderInvocation(options) {
   }
   const taskPath = join5(runDirectory, "task.md");
   await writeFile2(taskPath, instruction, "utf8");
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "coder",
     phase: options.phase,
     runId,
@@ -10588,6 +10599,7 @@ async function admitCoderInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     taskPath
   };
 }
@@ -10670,7 +10682,9 @@ async function admitFixerInvocation(options) {
   }
   const packetPath = join5(runDirectory, "fix-packet.md");
   await writeFile2(packetPath, instruction, "utf8");
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "fixer",
     phase: options.phase,
     runId,
@@ -10712,6 +10726,7 @@ async function admitFixerInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     packetPath,
     ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
     prerequisites
@@ -10996,7 +11011,9 @@ async function admitCollectorInvocation(options) {
   }
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "collector",
     runId,
     bookKey,
@@ -11039,6 +11056,7 @@ async function admitCollectorInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     prNumber,
     repository,
     legsPath,
@@ -11262,7 +11280,9 @@ async function admitDoctorInvocation(options) {
   }
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "doctor",
     runId,
     bookKey,
@@ -11303,6 +11323,7 @@ async function admitDoctorInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     issueNumber: options.issueNumber,
     caseRunsPath,
     caseIdentity: caseIdentity2
@@ -11442,7 +11463,9 @@ async function admitReviewerInvocation(options) {
   const derived = deriveReviewerCapabilitiesFromTask(taskBytes);
   const capabilitiesPath = join5(runDirectory, "capabilities.json");
   await writeFile2(capabilitiesPath, derived.text, "utf8");
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "reviewer",
     runId,
     bookKey,
@@ -11484,6 +11507,7 @@ async function admitReviewerInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     taskPath,
     capabilitiesPath,
     taskSha256: derived.taskSha256,
@@ -11649,7 +11673,9 @@ async function admitMergerInvocation(options) {
 `,
     "utf8"
   );
+  const runtime = await resolveMachinePi(process.env);
   const admitted = {
+    runtime,
     role: "merger",
     runId,
     bookKey,
@@ -11695,6 +11721,7 @@ async function admitMergerInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    runtime,
     mergerInputPath,
     derived: admitted.derived
   };
@@ -12010,6 +12037,13 @@ function observePackagedMethodSkillInvocation(text, expected) {
 // src/public-cli/run-lifecycle.ts
 import { lstat as lstat2, open, readdir as readdir2, readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join7 } from "node:path";
+async function loadAdmittedMachinePiRuntime(runDirectory) {
+  const value = JSON.parse(await readFile6(join7(runDirectory, "invocation.json"), "utf8"));
+  if (typeof value.piExecutableRealpath !== "string" || typeof value.piVersion !== "string" || value.piVersion.length === 0) {
+    throw new CliUsageError("role invocation has no retained machine Pi runtime identity");
+  }
+  return { executableRealpath: value.piExecutableRealpath, version: value.piVersion };
+}
 var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
 var RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
 var RUN_STATE_FILE = "run-state.json";
@@ -12365,6 +12399,7 @@ async function loadResumableJudgeRun(home, runId) {
     );
   }
   const admitted = {
+    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
     role: "judge",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,
@@ -12408,6 +12443,7 @@ async function loadResumableCoderRun(home, runId) {
     );
   }
   const admitted = {
+    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
     role: "coder",
     phase,
     runId: loaded.run.runId,
@@ -12454,6 +12490,7 @@ async function loadResumableFixerRun(home, runId) {
   }
   const prerequisites = loaded.admittedFields.prerequisites ?? Object.freeze([]);
   const admitted = {
+    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
     role: "fixer",
     phase,
     runId: loaded.run.runId,
@@ -12507,6 +12544,7 @@ async function loadResumableReviewerRun(home, runId) {
     );
   }
   const admitted = {
+    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
     role: "reviewer",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,
@@ -12554,6 +12592,7 @@ async function loadResumableMergerRun(home, runId) {
     );
   }
   const admitted = {
+    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
     role: "merger",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,
@@ -15438,6 +15477,7 @@ async function dispatchAdmittedJudge(input) {
     let result2;
     try {
       result2 = await runExplicitInternalActivation({
+        runtime: admitted.runtime,
         packageRoot: env.packageRoot,
         extraArgs,
         cwd: admitted.projectRoot,
@@ -15746,6 +15786,7 @@ async function dispatchAdmittedCoder(input) {
     let result2;
     try {
       result2 = await runExplicitInternalActivation({
+        runtime: admitted.runtime,
         packageRoot: env.packageRoot,
         extraArgs,
         cwd: admitted.projectRoot,
@@ -16047,6 +16088,7 @@ async function dispatchAdmittedCollector(input) {
     let result2;
     try {
       result2 = await runExplicitInternalActivation({
+        runtime: admitted.runtime,
         packageRoot: env.packageRoot,
         extraArgs,
         cwd: admitted.projectRoot,
@@ -16252,6 +16294,7 @@ async function dispatchAdmittedDoctor(input) {
     let result2;
     try {
       result2 = await runExplicitInternalActivation({
+        runtime: admitted.runtime,
         packageRoot: env.packageRoot,
         extraArgs,
         cwd: admitted.projectRoot,
@@ -16527,6 +16570,7 @@ async function dispatchAdmittedFixer(input) {
     let result2;
     try {
       result2 = await runExplicitInternalActivation({
+        runtime: admitted.runtime,
         packageRoot: env.packageRoot,
         extraArgs,
         cwd: admitted.projectRoot,
@@ -16885,6 +16929,7 @@ async function dispatchAdmittedMerger(input) {
     let result2;
     try {
       result2 = await runExplicitInternalActivation({
+        runtime: admitted.runtime,
         packageRoot: env.packageRoot,
         extraArgs,
         cwd: admitted.projectRoot,
@@ -17324,6 +17369,7 @@ async function dispatchAdmittedReviewer(input) {
     let result2;
     try {
       result2 = await runExplicitInternalActivation({
+        runtime: admitted.runtime,
         packageRoot: env.packageRoot,
         extraArgs,
         cwd: admitted.projectRoot,

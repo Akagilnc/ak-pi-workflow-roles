@@ -3,6 +3,15 @@ import { constants } from "node:fs";
 import { access, appendFile, mkdir, realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+/** Read the typed identity transported by the public invocation envelope. */
+export function machinePiRuntimeFromActivation(env = process.env) {
+    const executableRealpath = env.AK_MACHINE_PI_EXECUTABLE_REALPATH;
+    const version = env.AK_MACHINE_PI_VERSION;
+    if (executableRealpath === undefined || !isAbsolute(executableRealpath) || version === undefined || version.length === 0) {
+        throw new Error("machine Pi runtime identity is absent from the activation envelope");
+    }
+    return { executableRealpath, version };
+}
 async function executableFrom(env) {
     const selected = env.PI_BINARY;
     const explicitPath = selected !== undefined && (isAbsolute(selected) || selected.includes("/") || selected.includes("\\"));
@@ -70,10 +79,10 @@ export async function runMachinePiRpc(options) {
             if (event.type === "message_end" && typeof event.message === "object" && event.message !== null)
                 response = event.message;
             if (event.type === "tool_execution_end" && event.toolName === options.decisionToolName) {
-                if (decision !== undefined) {
-                    fail(new Error("machine Pi RPC decision was submitted more than once"));
+                // The terminating decision tool accepts the first submission. A stale
+                // duplicate event can neither reopen the lifecycle nor overwrite it.
+                if (decision !== undefined)
                     return;
-                }
                 decision = event.result?.details;
             }
             if (event.type === "agent_settled") {
@@ -116,10 +125,10 @@ export async function runMachinePiRpc(options) {
                 if (failure === undefined)
                     failure = cause;
             }
-            if (failure !== undefined)
-                return reject(failure);
             if (aborted)
                 return reject(new Error("machine Pi RPC aborted after SIGTERM"));
+            if (failure !== undefined)
+                return reject(failure);
             if (code !== 0)
                 return reject(new Error(`machine Pi RPC terminated unsuccessfully (code ${code}, signal ${signal ?? "none"})${stderr === "" ? "" : `: ${stderr}`}`));
             if (!settled)

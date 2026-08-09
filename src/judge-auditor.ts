@@ -3,7 +3,6 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   createComplianceDecisionTool,
   runComplianceAudit,
-  type ComplianceCompletion,
   type ComplianceDecision,
 } from "./compliance-transport.ts";
 import { loadAuditorSoul } from "./auditor-soul.ts";
@@ -23,7 +22,6 @@ const auditDecisionTool = createComplianceDecisionTool(
 );
 
 export function createPiJudgeAuditor(
-  runCompletion?: ComplianceCompletion,
 ): (input: SoulAuditInput, options: JudgeAuditOptions) => Promise<ComplianceDecision> {
   return async (input, options) =>
     runComplianceAudit({
@@ -42,7 +40,6 @@ export function createPiJudgeAuditor(
       ].join("\n"),
       roleLabel: "Soul compliance audit",
       invalidDecisionLabel: "invalid soul audit decision",
-      ...(runCompletion === undefined ? {} : { runCompletion }),
       context: options.context,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });

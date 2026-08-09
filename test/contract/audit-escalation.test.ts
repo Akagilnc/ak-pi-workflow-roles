@@ -104,22 +104,22 @@ const auditorCases = [
   {
     role: "judge" as const,
     toolName: JUDGE_AUDIT_TOOL_NAME,
-    run: (complete: any, auditContext: ExtensionContext = context) => createPiJudgeAuditor(complete)(judgeInput, { context: auditContext }),
+    run: (complete: any, auditContext: ExtensionContext = context) => createPiJudgeAuditor()(judgeInput, { context: auditContext }),
   },
   {
     role: "fixer" as const,
     toolName: FIXER_AUDIT_TOOL_NAME,
-    run: (complete: any, auditContext: ExtensionContext = context) => createPiFixerAuditor(complete)(fixerInput, { context: auditContext }),
+    run: (complete: any, auditContext: ExtensionContext = context) => createPiFixerAuditor()(fixerInput, { context: auditContext }),
   },
   {
     role: "reviewer" as const,
     toolName: REVIEWER_AUDIT_TOOL_NAME,
-    run: (complete: any, auditContext: ExtensionContext = context) => createPiReviewerAuditor(complete)(reviewerInput, { context: auditContext }),
+    run: (complete: any, auditContext: ExtensionContext = context) => createPiReviewerAuditor()(reviewerInput, { context: auditContext }),
   },
   {
     role: "doctor" as const,
     toolName: DOCTOR_AUDIT_TOOL_NAME,
-    run: (complete: any, auditContext: ExtensionContext = context) => createPiDoctorAuditor(complete)(doctorInput, { context: auditContext }),
+    run: (complete: any, auditContext: ExtensionContext = context) => createPiDoctorAuditor()(doctorInput, { context: auditContext }),
   },
 ] as const;
 

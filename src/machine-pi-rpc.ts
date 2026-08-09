@@ -6,6 +6,16 @@ import { StringDecoder } from "node:string_decoder";
 
 export type MachinePiRuntimeIdentity = { readonly executableRealpath: string; readonly version: string };
 
+/** Read the typed identity transported by the public invocation envelope. */
+export function machinePiRuntimeFromActivation(env: NodeJS.ProcessEnv = process.env): MachinePiRuntimeIdentity {
+  const executableRealpath = env.AK_MACHINE_PI_EXECUTABLE_REALPATH;
+  const version = env.AK_MACHINE_PI_VERSION;
+  if (executableRealpath === undefined || !isAbsolute(executableRealpath) || version === undefined || version.length === 0) {
+    throw new Error("machine Pi runtime identity is absent from the activation envelope");
+  }
+  return { executableRealpath, version };
+}
+
 async function executableFrom(env: NodeJS.ProcessEnv): Promise<string> {
   const selected = env.PI_BINARY;
   const explicitPath = selected !== undefined && (isAbsolute(selected) || selected.includes("/") || selected.includes("\\"));
@@ -57,7 +67,9 @@ export async function runMachinePiRpc(options: RpcOptions): Promise<MachinePiRpc
       if (event.type === "response" && event.success === false) { fail(new Error(`machine Pi RPC command failed: ${String(event.error)}`)); return; }
       if (event.type === "message_end" && typeof event.message === "object" && event.message !== null) response = event.message as Record<string, unknown>;
       if (event.type === "tool_execution_end" && event.toolName === options.decisionToolName) {
-        if (decision !== undefined) { fail(new Error("machine Pi RPC decision was submitted more than once")); return; }
+        // The terminating decision tool accepts the first submission. A stale
+        // duplicate event can neither reopen the lifecycle nor overwrite it.
+        if (decision !== undefined) return;
         decision = (event.result as { details?: unknown } | undefined)?.details;
       }
       if (event.type === "agent_settled") { settled = true; child.stdin.end(); }
@@ -72,8 +84,8 @@ export async function runMachinePiRpc(options: RpcOptions): Promise<MachinePiRpc
       if (closed) return; closed = true; options.signal?.removeEventListener("abort", abort);
       buffer += decoder.end(); if (buffer !== "") consume(buffer);
       try { if (stderr !== "") await appendFile(join(options.sessionDir, "child-stderr.log"), stderr, "utf8"); } catch (cause) { if (failure === undefined) failure = cause; }
-      if (failure !== undefined) return reject(failure);
       if (aborted) return reject(new Error("machine Pi RPC aborted after SIGTERM"));
+      if (failure !== undefined) return reject(failure);
       if (code !== 0) return reject(new Error(`machine Pi RPC terminated unsuccessfully (code ${code}, signal ${signal ?? "none"})${stderr === "" ? "" : `: ${stderr}`}`));
       if (!settled) return reject(new Error("machine Pi RPC exited without agent_settled"));
       resolveResult({ runtime, stderr, ...(decision === undefined ? {} : { decision }), ...(response === undefined ? {} : { response }), settled: true });

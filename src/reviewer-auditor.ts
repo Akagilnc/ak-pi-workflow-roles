@@ -4,7 +4,6 @@ import { loadAuditorSoul } from "./auditor-soul.ts";
 import {
   createComplianceDecisionTool,
   runComplianceAudit,
-  type ComplianceCompletion,
   type ComplianceDecision,
 } from "./compliance-transport.ts";
 import type { ReviewerAuditInput } from "./reviewer-role.ts";
@@ -31,7 +30,6 @@ const reviewerDecisionTool = createComplianceDecisionTool(
 );
 
 export function createPiReviewerAuditor(
-  runCompletion?: ComplianceCompletion,
 ): (
   input: ReviewerAuditInput,
   options: ReviewerAuditOptions,
@@ -56,7 +54,6 @@ export function createPiReviewerAuditor(
       ].join("\n"),
       roleLabel: "Reviewer compliance audit",
       invalidDecisionLabel: "invalid reviewer audit decision",
-      ...(runCompletion === undefined ? {} : { runCompletion }),
       context: options.context,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });

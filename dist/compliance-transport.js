@@ -45,7 +45,7 @@ export function readComplianceCandidate(arguments_, usage) {
     return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === undefined ? "missing" : "unknown" }, candidate: arguments_, ...(usage === undefined ? {} : { usage }) };
 }
 export async function runComplianceAudit(options) {
-    const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, ...(options.signal === undefined ? {} : { signal: options.signal }), ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }) });
+    const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, ...(options.signal === undefined ? {} : { signal: options.signal }) });
     retainComplianceResponse(options.context, receipt.response);
     return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }

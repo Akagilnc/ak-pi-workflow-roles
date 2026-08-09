@@ -284,6 +284,7 @@ async function dispatchAdmittedReviewer(input: {
     let result: ExplicitInternalPiResult;
     try {
       result = await runExplicitInternalActivation({
+        runtime: admitted.runtime!,
         packageRoot: env.packageRoot,
         extraArgs,
         cwd: admitted.projectRoot,

@@ -1,30 +1,21 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
-import { runMachinePiRpc } from "./machine-pi-rpc.js";
-export class AuditorTurnLimitError extends Error {
-    limit;
-    constructor(limit) {
-        super(`Auditor exceeded ${limit} turns`);
-        this.limit = limit;
-        this.name = "AuditorTurnLimitError";
-    }
-}
+import { join, resolve } from "node:path";
+import { machinePiRuntimeFromActivation, runMachinePiRpc } from "./machine-pi-rpc.js";
 export async function runAuditorRole(options) {
-    if (options.runCompletion !== undefined)
-        throw new Error("in-process Auditor completion is no longer a production runtime authority");
     const model = options.context.model;
     if (model === undefined)
         throw new Error(`${options.roleLabel} requires an active model`);
     const parentFile = options.context.sessionManager?.getSessionFile();
     if (parentFile === undefined)
         throw new Error(`${options.roleLabel} requires a durable parent session`);
-    const sessionDir = join(options.context.sessionManager.getSessionDir(), "auditor-roles");
+    const sessionDir = resolve(options.context.sessionManager.getSessionDir(), "auditor-roles");
     const configPath = join(sessionDir, `config-${Date.now()}-${process.pid}.json`);
     await mkdir(sessionDir, { recursive: true });
     await writeFile(configPath, `${JSON.stringify({ systemPrompt: options.systemPrompt, tool: { name: options.tool.name, description: options.tool.description, parameters: options.tool.parameters } })}\n`, "utf8");
     const extensionPath = fileURLToPath(new URL("../extensions/auditor-rpc.ts", import.meta.url));
     const result = await runMachinePiRpc({
+        runtime: machinePiRuntimeFromActivation(),
         cwd: options.context.cwd ?? process.cwd(),
         sessionDir,
         args: ["--no-extensions", "-e", extensionPath, "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--provider", model.provider, "--model", model.id, "--thinking", options.context.thinkingLevel ?? "off", "--tools", `read,grep,find,ls,bash,write,edit,${options.tool.name}`, `--ak-auditor-rpc-config=${configPath}`],
