@@ -45,7 +45,6 @@ function addUsage(total: Usage, next: Usage): void {
 
 async function createChildRuntime(
   context: ExtensionContext,
-  providerStream?: Provider["stream"],
 ): Promise<{ runtime: ModelRuntime; model: Model<Api> }> {
   const activeModel = context.model;
   if (activeModel === undefined) {
@@ -98,15 +97,12 @@ async function createChildRuntime(
     },
     getModels() { return [dispatch.model]; },
     stream(model, childContext, options) {
-      try { return (providerStream ?? parentProvider.stream)(model, childContext, options); }
+      try { return parentProvider.stream(model, childContext, options); }
       catch (error) { throw classifiedError(error, "provider"); }
     },
     streamSimple(model, childContext, options) {
-      try {
-        return providerStream === undefined
-          ? parentProvider.streamSimple(model, childContext, options)
-          : providerStream(model, childContext, options);
-      } catch (error) { throw classifiedError(error, "provider"); }
+      try { return parentProvider.streamSimple(model, childContext, options); }
+      catch (error) { throw classifiedError(error, "provider"); }
     },
   };
   runtime.registerNativeProvider(provider);
@@ -118,7 +114,6 @@ export type ReviewerChildExecuteOptions = Readonly<{
   fault?(operation: ReviewerExecutorFaultPoint): void;
   /** Parent directory for credential/config scratch. Defaults to os.tmpdir(). */
   credentialScratchParent?: string;
-  providerStream?: Provider["stream"];
 }>;
 
 export async function executeReviewerChild(
@@ -160,7 +155,7 @@ export async function executeReviewerChild(
   let runtime: ModelRuntime;
   let model: Model<Api>;
   try {
-    ({ runtime, model } = await createChildRuntime(context, options.providerStream));
+    ({ runtime, model } = await createChildRuntime(context));
   } catch (error) {
     throw classifiedError(error, "provider");
   }

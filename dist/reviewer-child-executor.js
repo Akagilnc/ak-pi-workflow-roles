@@ -36,7 +36,7 @@ function addUsage(total, next) {
     total.cost.cacheWrite += next.cost.cacheWrite;
     total.cost.total += next.cost.total;
 }
-async function createChildRuntime(context, providerStream) {
+async function createChildRuntime(context) {
     const activeModel = context.model;
     if (activeModel === undefined) {
         throw new Error("Reviewer Agent requires an active model");
@@ -85,7 +85,7 @@ async function createChildRuntime(context, providerStream) {
         getModels() { return [dispatch.model]; },
         stream(model, childContext, options) {
             try {
-                return (providerStream ?? parentProvider.stream)(model, childContext, options);
+                return parentProvider.stream(model, childContext, options);
             }
             catch (error) {
                 throw classifiedError(error, "provider");
@@ -93,9 +93,7 @@ async function createChildRuntime(context, providerStream) {
         },
         streamSimple(model, childContext, options) {
             try {
-                return providerStream === undefined
-                    ? parentProvider.streamSimple(model, childContext, options)
-                    : providerStream(model, childContext, options);
+                return parentProvider.streamSimple(model, childContext, options);
             }
             catch (error) {
                 throw classifiedError(error, "provider");
@@ -137,7 +135,7 @@ export async function executeReviewerChild(workspace, leg, context, options = {}
         let runtime;
         let model;
         try {
-            ({ runtime, model } = await createChildRuntime(context, options.providerStream));
+            ({ runtime, model } = await createChildRuntime(context));
         }
         catch (error) {
             throw classifiedError(error, "provider");
