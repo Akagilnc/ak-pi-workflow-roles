@@ -43,6 +43,7 @@ import {
 } from "../../src/public-cli/settlement.ts";
 import {
   COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_WAIT_TOOL,
 } from "../../src/collector-ledger.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -1017,5 +1018,34 @@ test("runAkRole resume rejects collector runs as one-shot", async () => {
     });
     assert.equal(result.exitCode, 2);
     assert.match(stderr.join(""), /one-shot|cannot be resumed/i);
+  });
+});
+
+test("public Collector retains malformed wait candidate as typed incomplete", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project, "https://github.com/acme/widgets.git");
+    const candidate = { durationMs: "later" };
+    const result = await runAkRole(["collector", "--pr", "12", "--leg", "codex:bot", "--project", project], {
+      packageRoot, home, cwd: project,
+      credentials: { "openai-codex": true, xai: false },
+      createRunId: () => "run-collector-wait-182",
+      io: captureIo().io,
+      piRunner: async (args) => {
+        const sessionFile = args[args.indexOf("--session") + 1]!;
+        await mkdir(join(sessionFile, ".."), { recursive: true });
+        await writeFile(sessionFile, [
+          { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "wait", name: COLLECTOR_WAIT_TOOL, arguments: candidate }] } },
+          { type: "message", message: { role: "toolResult", toolCallId: "wait", toolName: COLLECTOR_WAIT_TOOL, isError: true, content: [{ type: "text", text: "durationMs must be a positive safe integer" }] } },
+        ].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+        return { code: 1, stderr: "aborted", timedOut: false, args: [...args] };
+      },
+    });
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminal?.roleOutcome.kind, "incomplete");
+    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.candidate, candidate);
+    assert.equal(result.terminal?.roleOutcome.decisiveFacts.acceptedReceipt, false);
+    assert.match(String(result.terminal?.roleOutcome.decisiveFacts.diagnostic), /positive safe integer/);
   });
 });
