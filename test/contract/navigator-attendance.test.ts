@@ -82,10 +82,12 @@ function sessionHarness() {
   const modelSettings: Array<{ model: string; thinkingLevel: string }> = [];
   let tool: any;
   let prompts = 0;
+  let promptText = "";
   let releasePrompt: (() => void) | undefined;
   const session: NavigatorPreparationSession = {
-    async prompt(_text) {
+    async prompt(text) {
       prompts += 1;
+      promptText = text;
       await new Promise<void>((resolve) => { releasePrompt = resolve; });
     },
     appendEntry(_type, data) { entries.push({ type: "custom", customType: _type, data }); },
@@ -98,6 +100,7 @@ function sessionHarness() {
     tool: () => tool,
     release: () => releasePrompt?.(),
     prompts: () => prompts,
+    promptText: () => promptText,
     /** Production-retained typed context fact (ak-navigator-context), not a prompt metadata channel. */
     retainedContext: () => {
       const entry = [...entries].reverse().find((item: any) => item?.customType === "ak-navigator-context");
@@ -113,12 +116,64 @@ async function attendance(path: string, harness: ReturnType<typeof sessionHarnes
     context: context(), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28", sessionDir: "/repo/.ak/work/issues/28/runs/navigator/session",
     subject: "Fix issue 28", authority: "owner decision",
     loadSoul: async () => "route judgment",
+    loadRoutePlaybook: async () => "arbitrary advisory prose",
     loadRoleHelp,
     createSession: harness.factory,
     modelSettingPath: path,
     onEvent: async (event) => { events.push(event); },
   });
 }
+
+test("Navigator receives the package route playbook as advisory material", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-route-playbook-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const nav = await attendance(setting, harness, []);
+    nav.prepare();
+    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.match(harness.promptText(), /<route_playbook>\narbitrary advisory prose\n<\/route_playbook>/);
+    assert.match(harness.promptText(), /advisory|ignore|deviate/i);
+    await harness.tool().execute("prepare", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+  } finally {
+    await cleanupTempDir(root);
+  }
+});
+
+test("route playbook read failure remains visible while advice succeeds and Receipt decoration excludes it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-route-playbook-failure-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const reports: any[] = [];
+    const cause = new Error("EACCES routebook fixture");
+    const nav = createNavigatorAttendance({
+      context: context(), role: "coder", phase: "apply", subjectKey: "subject", sessionDir: "session",
+      subject: "work", authority: "authority", loadSoul: async () => "soul",
+      loadRoutePlaybook: async () => { throw cause; }, loadRoleHelp: async () => "help",
+      createSession: harness.factory, modelSettingPath: setting,
+      onEvent: (_event, report) => { reports.push(report); },
+    });
+    nav.prepare();
+    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(harness.promptText().includes("EACCES routebook fixture"), false);
+    await harness.tool().execute("prepare", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(reports[0].disposition, "recommendation");
+    assert.match(formatNavigatorReport(reports[0]), /EACCES routebook fixture/);
+    const event = { content: [{ type: "text", text: "Role receipt" }], details: { status: "completed" } };
+    const decorated = decorateSettlementWithNavigation(event, { event: { ...reports[0], version: 1, invocationId: "id", role: "coder", phase: "apply", subjectKey: "subject" }, report: reports[0] });
+    assert.equal(JSON.stringify(decorated).includes("EACCES routebook fixture"), false);
+    assert.deepEqual(decorated?.details, event.details);
+  } finally {
+    await cleanupTempDir(root);
+  }
+});
 
 test("Navigator preparation overlaps settlement, waits for the same call, and presents one typed event", async () => {
   const root = await mkdtemp(join(tmpdir(), "navigator-attendance-"));
