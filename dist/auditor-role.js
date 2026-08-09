@@ -72,11 +72,9 @@ export async function runAuditorRole(options) {
                 if (response.stopReason !== "error")
                     throw retentionFailure;
                 const failure = new Error(response.errorMessage?.trim() || "provider failure", { cause: retentionFailure });
-                failure.name = "ProviderStopError";
+                failure.name = response.model || response.provider || "Error";
                 failure.knownCause = "provider";
-                failure.failureCode = response.provider && response.model
-                    ? `${response.provider}/${response.model}`
-                    : response.provider || response.model;
+                failure.failureCode = response.provider || response.model;
                 const retentionError = retentionFailure instanceof Error ? retentionFailure : undefined;
                 const retentionCause = retentionError?.cause;
                 failure.details = {
