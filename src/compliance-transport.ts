@@ -88,7 +88,7 @@ export type ComplianceDispatch = {
   model: Model<Api>;
   auth: {
     apiKey?: string;
-    headers?: Record<string, string>;
+    headers?: Record<string, string | null>;
     env?: Record<string, string>;
   };
 };

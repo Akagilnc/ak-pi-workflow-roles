@@ -1,5 +1,5 @@
 diff --git a/dist/api/openai-codex-responses.js b/dist/api/openai-codex-responses.js
-index bb9fa794ee6cb9f73149dda5733b286941bbb550..23bfb98c1ac5a50c28de5a1bbca55a310b0977c5 100644
+index 603ab2e3..ff811f9a 100644
 --- a/dist/api/openai-codex-responses.js
 +++ b/dist/api/openai-codex-responses.js
 @@ -6,6 +6,34 @@ function loadNodeOs() {
@@ -37,7 +37,7 @@ index bb9fa794ee6cb9f73149dda5733b286941bbb550..23bfb98c1ac5a50c28de5a1bbca55a31
  import { clampThinkingLevel } from "../models.js";
  import { registerSessionResourceCleanup } from "../session-resources.js";
  import { combineAbortSignals } from "../utils/abort-signals.js";
-@@ -148,6 +177,17 @@ function compressRequestBodyZstd(bodyJson) {
+@@ -148,6 +176,17 @@ function compressRequestBodyZstd(bodyJson) {
  // ============================================================================
  export const stream = (model, context, options) => {
      const stream = new AssistantMessageEventStream();

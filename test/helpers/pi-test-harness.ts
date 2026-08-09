@@ -325,13 +325,27 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
       const packDestination = cacheDir;
       const materialRoot = await mkdtemp(resolve(cacheDir, "mat-"));
       try {
-        await materializePackageTree(materialRoot, { nodeModules: "symlink" });
+        await materializePackageTree(materialRoot, { nodeModules: "copy" });
+        const modulesState = JSON.parse(
+          readFileSync(resolve(packageRoot, "node_modules/.modules.yaml"), "utf8"),
+        ) as { storeDir: string };
         const { stdout } = await execFileAsync(
           "npm",
           ["pack", "--json", "--pack-destination", packDestination],
-          { cwd: materialRoot, maxBuffer: 10 * 1024 * 1024 },
+          {
+            cwd: materialRoot,
+            env: {
+              ...process.env,
+              CI: "true",
+              npm_config_store_dir: modulesState.storeDir,
+            },
+            maxBuffer: 10 * 1024 * 1024,
+          },
         );
-        const pack = JSON.parse(stdout) as Array<{
+        const jsonStart = stdout.lastIndexOf("\n[");
+        const pack = JSON.parse(
+          jsonStart === -1 ? stdout : stdout.slice(jsonStart + 1),
+        ) as Array<{
           filename: string;
           files: Array<{ path: string }>;
         }>;

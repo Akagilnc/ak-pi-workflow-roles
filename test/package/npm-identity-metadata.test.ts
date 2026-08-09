@@ -29,9 +29,9 @@ const UPSTREAM_MATT_MIT = await readFile(
 );
 
 const EXPECTED_PEERS = {
-  "@earendil-works/pi-ai": ">=0.83.0 <=0.83.0",
-  "@earendil-works/pi-coding-agent": ">=0.83.0 <=0.83.0",
-  typebox: ">=1.3.7 <=1.3.8",
+  "@earendil-works/pi-ai": "*",
+  "@earendil-works/pi-coding-agent": "*",
+  typebox: "*",
 } as const;
 
 /** Declared TypeBox endpoints that must execute this packed package (docs/npm-identity.md). */
@@ -43,6 +43,7 @@ interface ExtractedPack {
     name: string;
     license?: string;
     peerDependencies?: Record<string, string>;
+    peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   };
   licenseText: string;
   thirdPartyNoticeText: string;
@@ -339,31 +340,65 @@ test("packed artifact name is the registry-settled identity", async () => {
   });
 });
 
-test("packed peerDependencies use explicit evidence-bounded ranges, not wildcards", async () => {
+test("packed Pi core peers follow the host-supplied wildcard optional contract", async () => {
   await withExtractedPack(async (extracted) => {
     const peers = extracted.packageJson.peerDependencies;
+    const meta = extracted.packageJson.peerDependenciesMeta;
     assert.ok(peers, "packed package.json must declare peerDependencies");
+    assert.ok(meta, "packed package.json must declare peerDependenciesMeta");
     for (const [name, range] of Object.entries(EXPECTED_PEERS)) {
-      assert.equal(typeof peers[name], "string", `${name} peer must be a string`);
-      assert.notEqual(peers[name], "*", `${name} peer must not be wildcard`);
-      assert.equal(
-        peers[name],
-        range,
-        `${name} peer must match the evidence-bounded range`,
-      );
+      assert.equal(peers[name], range, `${name} must use the official host range`);
+      assert.equal(meta[name]?.optional, true, `${name} must be optional`);
     }
 
     const sourceManifest = JSON.parse(
       await readFile(resolve(packageRoot, "package.json"), "utf8"),
-    ) as {
-      name: string;
-      peerDependencies: Record<string, string>;
-    };
+    ) as ExtractedPack["packageJson"];
     for (const [name, range] of Object.entries(EXPECTED_PEERS)) {
-      assert.equal(sourceManifest.peerDependencies[name], range);
+      assert.equal(sourceManifest.peerDependencies?.[name], range);
+      assert.equal(sourceManifest.peerDependenciesMeta?.[name]?.optional, true);
       assert.equal(extracted.packageJson.peerDependencies?.[name], range);
     }
   });
+});
+
+test("fresh packed install does not install private Pi core", async () => {
+  const pack = await getSharedIsolatedPack();
+  const root = await mkdtemp(resolve(tmpdir(), "ak-host-only-install-"));
+  await withPrimaryAwareCleanup(
+    async () => {
+      const home = resolve(root, "home");
+      const npmRoot = resolve(root, "consumer");
+      await writeFile(
+        resolve(root, "package.json"),
+        JSON.stringify({ private: true }),
+      );
+      await execFileAsync(
+        "npm",
+        ["install", "--ignore-scripts", "--no-audit", "--no-fund", pack.tarball],
+        {
+          cwd: root,
+          env: { ...process.env, HOME: home, npm_config_cache: resolve(npmRoot, "cache") },
+          maxBuffer: 10 * 1024 * 1024,
+          timeout: 120_000,
+        },
+      );
+      const packageInstallRoot = resolve(
+        root,
+        "node_modules/@akagilnc/pi-workflow-roles",
+      );
+      for (const coreName of Object.keys(EXPECTED_PEERS)) {
+        for (const modulesRoot of [resolve(root, "node_modules"), resolve(packageInstallRoot, "node_modules")]) {
+          await assert.rejects(
+            access(resolve(modulesRoot, coreName)),
+            { code: "ENOENT" },
+            `${coreName} must be supplied only by the host`,
+          );
+        }
+      }
+    },
+    async () => rm(root, { recursive: true, force: true }),
+  );
 });
 
 /**
