@@ -536,6 +536,24 @@ export function extractSessionProviderStop(
   provider?: string;
   model?: string;
 } | undefined {
+  // The shared auditor is a nested model turn. Its retained typed response is
+  // authoritative when failInfrastructure subsequently aborts the parent turn.
+  // Only the latest retained audit response participates, so a later successful
+  // resubmission still supersedes an earlier provider stop.
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
+    const response = isRecord(entry.data) && isRecord(entry.data.response) ? entry.data.response : undefined;
+    if (response?.role === "assistant" && response.stopReason === "error") {
+      return {
+        stopReason: "error",
+        ...(typeof response.errorMessage === "string" && response.errorMessage.trim() !== "" ? { errorMessage: response.errorMessage } : {}),
+        ...(typeof response.provider === "string" && response.provider.trim() !== "" ? { provider: response.provider } : {}),
+        ...(typeof response.model === "string" && response.model.trim() !== "" ? { model: response.model } : {}),
+      };
+    }
+    break;
+  }
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
