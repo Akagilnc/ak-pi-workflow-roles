@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -79,6 +79,8 @@ test("production extension observes session repository B, not ambient repository
     const tree = execFileSync("git", ["write-tree"], { cwd: repositoryB, env: { ...process.env, GIT_INDEX_FILE: temporaryIndex }, encoding: "utf8" }).trim();
     const mergeCommitId = execFileSync("git", ["commit-tree", tree, "-p", target, "-p", source, "-m", "resolve"], { cwd: repositoryB, env, encoding: "utf8" }).trim();
     const realInput = { ...input, targetObjectId: target, sourceObjectId: source };
+    await mkdir(resolve(repositoryB, ".ak/work"), { recursive: true });
+    await writeFile(resolve(repositoryB, ".ak/work/pre-existing.jsonl"), "opening role evidence\n");
     const inputPath = resolve(repositoryB, "input.json"); await writeFile(inputPath, JSON.stringify(realInput));
     await writeFile(resolve(repositoryB, ".git/info/exclude"), "input.json\nexpected-index\n");
     await withHermeticHome({ prefix: "ak-merger-production-extension-" }, async ({ agentDir }) => {
