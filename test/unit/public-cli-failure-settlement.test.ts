@@ -58,6 +58,7 @@ import {
   isChildDiagnosticHelpFooterLine,
   isLawfulTypedTerminalOutcome,
   readBoundAuditorKnownFailure,
+  resolveAuditedRunnerKnownFailure,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import type {
@@ -2521,6 +2522,21 @@ test("bound auditor assistant supplies primary when secondary enrichment is abse
       diagnostic: "WebSocket error",
       details: { provider: "xai", model: "audit-model", secondaryEvidence: "unavailable" },
     });
+  });
+});
+
+test("bound auditor ENOTDIR evidence outranks credential in shared settlement", async () => {
+  await withTempHome(async (home) => {
+    const pathComponent = join(home, "not-a-directory");
+    await writeFile(pathComponent, "file");
+    const failure = await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile: join(pathComponent, "parent.jsonl"),
+      credential: { cause: "activation", diagnostic: "credential fallback" },
+    });
+    assert.equal(failure?.cause, "session");
+    assert.deepEqual(failure?.identity, { name: "Error", code: "ENOTDIR" });
+    assert.ok(failure?.diagnostic);
   });
 });
 
