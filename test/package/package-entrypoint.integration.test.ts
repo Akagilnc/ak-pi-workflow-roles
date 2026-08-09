@@ -94,7 +94,7 @@ function packageEntrypoint(manifest: RawPackageManifest): string {
 }
 
 
-type PersistedEntry = { type?: string; timestamp?: string; customType?: string; message?: Record<string, any> };
+type PersistedEntry = { type?: string; timestamp?: string; customType?: string; data?: Record<string, any>; message?: Record<string, any> };
 
 async function readLatestSession(directory: string): Promise<PersistedEntry[]> {
   const files = (await readdir(directory)).filter((file) => file.endsWith(".jsonl")).sort();
@@ -104,6 +104,12 @@ async function readLatestSession(directory: string): Promise<PersistedEntry[]> {
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as PersistedEntry);
+}
+
+function navigatorSubjectFromRole(entries: PersistedEntry[]): string {
+  const invocation = [...entries].reverse().find((entry) => entry.customType === "ak-navigator-invocation");
+  if (typeof invocation?.data?.subjectKey !== "string") throw new Error("role session is missing Navigator subject identity");
+  return invocation.data.subjectKey;
 }
 
 
@@ -144,7 +150,7 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
         },
       });
       const roleEntries = await readLatestSession(sessionDirectory);
-      const navigatorDirectory = resolve(issueRoot, "runs/navigator");
+      const navigatorDirectory = navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, navigatorSubjectFromRole(roleEntries));
       const navigatorEntries = await readLatestSession(navigatorDirectory);
       return { result, roleEntries, navigatorEntries };
     },
@@ -1432,8 +1438,9 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               await mkdir(resolve(issueRoot, "authority.md"), { recursive: true });
             }
             if (scenario.name === "session") {
-              await mkdir(resolve(issueRoot, "runs"), { recursive: true });
-              await writeFile(resolve(issueRoot, "runs/navigator"), "not a session directory", "utf8");
+              const navigatorDirectory = navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot);
+              await mkdir(resolve(navigatorDirectory, ".."), { recursive: true });
+              await writeFile(navigatorDirectory, "not a session directory", "utf8");
             }
             const faux = fauxProvider({ api: `ak-navigator-${scenario.name}-${diagnosticIndex}`, provider: `ak-navigator-${scenario.name}-${diagnosticIndex}`, tokenSize: { min: 1000, max: 1000 } });
             const model = faux.getModel();
@@ -1748,7 +1755,11 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
   await withActivationHome(
     { prefix: "ak-navigator-fresh-process-integration-" },
     async ({ home, agentDir }) => {
-      const root = resolve(home, ".ak/work/fresh-ad-hoc");
+      const root = resolve(home, "workspace/fresh-ad-hoc");
+      await mkdir(root, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: root });
+      execFileSync("git", ["config", "user.name", "Navigator Boundary Test"], { cwd: root });
+      execFileSync("git", ["config", "user.email", "navigator-boundary@test.local"], { cwd: root });
       await mkdir(resolve(root, "runs/coder"), { recursive: true });
       await mkdir(resolve(root, "runs/fixer"), { recursive: true });
       await writeFile(resolve(root, "authority.md"), "fresh-process owner authority\n", "utf8");
@@ -1756,6 +1767,8 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
       const fixerPacket = resolve(root, "runs/fixer/fix-packet.json");
       await writeFile(coderTask, "Fresh-process concrete task.\n", "utf8");
       await writeFile(fixerPacket, "Fresh-process fixer packet.\n", "utf8");
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["commit", "-m", "fixture inputs"], { cwd: root });
       const child = String.raw`
         import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
         import { writeNavigatorModelSetting } from "./src/role-runtime.ts";
@@ -1808,6 +1821,11 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
       assert.equal(first.subjectKey, second.subjectKey);
       assert.deepEqual(first.next, { role: "fixer", phase: "plan" });
       assert.deepEqual(second.next, { role: "reviewer", phase: null });
+      assert.equal(
+        execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: root }).byteLength,
+        0,
+        "role/Navigator session transport must leave the consumer repository byte-empty",
+      );
       const navigatorSession = SessionManager.continueRecent(root, navigatorSessionDirectory({ cwd: root, sessionManager: { getSessionDir: () => "" } } as never, first.subjectKey));
       const persisted = (await readFile(navigatorSession.getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: { role?: string; phase?: string | null } });
       assert.deepEqual(persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation").slice(0, 2).map((entry) => ({ role: entry.data?.role, phase: entry.data?.phase })), [
@@ -2315,7 +2333,8 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
       `non-empty bash child output must produce at least one throttled update heartbeat after skipping the empty entry callback; got ${JSON.stringify(bashRecords)}`,
     );
 
-    const navigatorDirectory = resolve(issueRoot, "runs/navigator");
+    const roleEntries = await readLatestSession(sessionDirectory);
+    const navigatorDirectory = navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, navigatorSubjectFromRole(roleEntries));
     const navigatorEntries = await readLatestSession(navigatorDirectory);
     const navigatorPrepare = navigatorEntries.find(
       (entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === NAVIGATOR_PREPARE_TOOL_NAME,
@@ -2327,7 +2346,6 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
       "private Navigator session tool calls must not emit on the outer observation face",
     );
 
-    const roleEntries = await readLatestSession(sessionDirectory);
     const bashResult = roleEntries.find(
       (entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolCallId === "obs-bash-1",
     );
