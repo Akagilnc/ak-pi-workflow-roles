@@ -19,7 +19,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 import { AUDIT_ESCALATION_KIND, buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
@@ -2296,22 +2299,49 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
   });
 });
 
-test("shared auditor provider-stop outranks the later aborted parent turn", () => {
-  const response = {
-    role: "assistant",
-    stopReason: "error",
-    errorMessage: "WebSocket error",
-    provider: "openai-codex",
-    model: "gpt-5",
-  };
-  assert.deepEqual(extractSessionProviderStop([
-    { type: "custom", customType: "ak_compliance_response", data: { version: 1, response } },
-    { type: "message", message: { role: "assistant", stopReason: "aborted" } },
-  ]), {
-    stopReason: "error",
-    errorMessage: "WebSocket error",
-    provider: "openai-codex",
-    model: "gpt-5",
+test("audited roles publicly settle a production provider stop without promoting the normal banner", async () => {
+  const argv = {
+    judge: (project: string) => ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "audit provider stop"],
+    fixer: (project: string) => ["--model", "openai-codex/faux-1:off", "fixer", "--project", project, "audit provider stop"],
+    reviewer: (project: string) => ["--model", "openai-codex/faux-1:off", "reviewer", "--project", project, "audit provider stop"],
+    doctor: (project: string) => ["--model", "openai-codex/faux-1:off", "doctor", "--issue", "212", "--project", project, "audit provider stop"],
+  } as const;
+  for (const role of AUDITOR_SOUL_ROLES) await withTempHome(async (home) => {
+    const project = join(home, `proj-${role}`);
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(argv[role](project), {
+      packageRoot, home, cwd: project, io,
+      credentials: { "openai-codex": true, xai: true },
+      createRunId: () => `run-${role}-auditor-provider-stop`,
+      piRunner: async (args) => {
+        const entries: unknown[] = [];
+        const faux = fauxProvider({ provider: "openai-codex" });
+        faux.setResponses([fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" })]);
+        await assert.rejects(runComplianceAudit({
+          tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
+          systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
+          context: {
+            cwd: project, model: faux.getModel(), thinkingLevel: "off",
+            modelRegistry: {
+              getProvider() { return faux.provider; },
+              async getProviderAuth() { return { auth: { apiKey: "test" } }; },
+              async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
+            },
+            sessionManager: { getSessionFile() { return undefined; }, getSessionDir() { return project; }, appendCustomEntry(customType: string, data: unknown) { entries.push({ type: "custom", customType, data }); return "entry"; } },
+          } as unknown as ExtensionContext,
+        }));
+        entries.push({ type: "message", message: { role: "assistant", stopReason: "aborted" } });
+        assert.equal(extractSessionProviderStop(entries as never)?.errorMessage, "WebSocket error");
+        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+        await mkdir(sessionDir, { recursive: true });
+        await writeFile(join(sessionDir, "session.jsonl"), entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+        return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
+      },
+    });
+    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "provider", diagnosticEquals: "WebSocket error", identityName: "ProviderStopError", identityCode: "openai-codex" });
+    assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
 

@@ -84,7 +84,7 @@ export function projectReviewerDispatchOutcome(
     const actual = result.legs[leg.axis];
     if (actual === undefined) throw new Error(`Reviewer runner omitted ${leg.axis} result`);
     ledger.append(actual.status === "failed"
-      ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, diagnostic: actual.diagnostic ?? (actual.cause instanceof Error && actual.cause.message.trim() !== "" ? actual.cause.message : actual.failure === "provider" ? "Reviewer Agent provider supplied no diagnostic details" : "Reviewer Agent failed without diagnostic details"), ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition }
+      ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, diagnostic: actual.diagnostic, ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition }
       : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, runtimeConstructionEvidence: actual.runtimeConstructionEvidence, workspaceDisposition: actual.workspaceDisposition });
   }
 }
