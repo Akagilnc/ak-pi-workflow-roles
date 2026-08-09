@@ -59,7 +59,14 @@ export async function runAuditorRole(options) {
         else
             options.signal?.addEventListener("abort", abort, { once: true });
         try {
-            await session.prompt(options.serializedInput);
+            try {
+                await session.prompt(options.serializedInput);
+            }
+            catch (error) {
+                if (options.signal?.aborted)
+                    throw options.signal.reason;
+                throw error;
+            }
             if (options.signal?.aborted)
                 throw options.signal.reason;
             if (boundaryResponse !== undefined && decision === undefined) {

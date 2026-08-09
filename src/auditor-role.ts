@@ -47,7 +47,12 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
     const abort = () => { void session.abort(); };
     if (options.signal?.aborted) abort(); else options.signal?.addEventListener("abort", abort, { once: true });
     try {
-      await session.prompt(options.serializedInput);
+      try {
+        await session.prompt(options.serializedInput);
+      } catch (error) {
+        if (options.signal?.aborted) throw options.signal.reason;
+        throw error;
+      }
       if (options.signal?.aborted) throw options.signal.reason;
       if (boundaryResponse !== undefined && decision === undefined) {
         const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
