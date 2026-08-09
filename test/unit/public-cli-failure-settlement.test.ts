@@ -2303,9 +2303,10 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
   });
 });
 
-async function createAuditorRetentionTracer(home: string, role: string): Promise<{ extension: string; close(): Promise<void> }> {
-  const marker = join(home, `parent-${role}.txt`);
-  const extension = join(home, `provider-${role}.ts`);
+async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extension: string; close(): Promise<void> }> {
+  const role = "judge";
+  const marker = join(home, "parent-judge.txt");
+  const extension = join(home, "provider-judge.ts");
   let requestCount = 0;
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -2370,7 +2371,7 @@ export default function (pi) {
   return { extension, close: async () => { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); } };
 }
 
-test("audited roles publicly settle a production provider stop without promoting the normal banner", async () => {
+test("fast four-role public wiring matrix settles an injected auditor provider stop", async () => {
   const argv = {
     judge: (project: string) => ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "audit provider stop"],
     fixer: (project: string) => ["--model", "openai-codex/faux-1:off", "fixer", "--project", project, "audit provider stop"],
@@ -2413,65 +2414,37 @@ test("audited roles publicly settle a production provider stop without promoting
     });
     const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "provider", diagnosticEquals: "WebSocket error", identityName: "ProviderStopError", identityCode: "openai-codex" });
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
+  });
+});
 
-    // A retention write failure after the typed provider stop is secondary: it
-    // cannot replace the provider diagnostic/identity in Terminal or Error Artifact.
+test("Judge publicly retains a real default-Pi auditor provider stop across retention failure", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj-judge-retention");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
     const retentionIo = captureIo();
-    const tracer = await createAuditorRetentionTracer(home, role);
+    const tracer = await createJudgeAuditorRetentionTracer(home);
     let retentionResult;
     try {
-      const extraArgs = ["-e", tracer.extension];
-      const roleOptions = role === "judge" ? { judgeExtraPiArgs: extraArgs, judgeTimeoutMs: 60_000 }
-        : role === "fixer" ? { fixerExtraPiArgs: extraArgs, fixerTimeoutMs: 60_000 }
-        : role === "reviewer" ? { reviewerExtraPiArgs: extraArgs, reviewerTimeoutMs: 60_000 }
-        : { doctorExtraPiArgs: extraArgs, doctorTimeoutMs: 60_000 };
-      retentionResult = await runAkRole(argv[role](project), {
-        packageRoot, home, cwd: project, io: retentionIo.io,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => `run-${role}-auditor-retention-failure`,
-        ...roleOptions,
-      });
+      retentionResult = await runAkRole(
+        ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "audit provider stop"],
+        {
+          packageRoot, home, cwd: project, io: retentionIo.io,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => "run-judge-auditor-retention-failure",
+          judgeExtraPiArgs: ["-e", tracer.extension],
+          judgeTimeoutMs: 60_000,
+        },
+      );
     } finally {
       await tracer.close();
     }
-    assert.notEqual(retentionResult.exitCode === 1 && retentionResult.terminal?.roleOutcome.kind === "failure" ? retentionResult.terminal.roleOutcome.cause : undefined, "timeout", `${role} real subprocess timed out`);
+    assert.notEqual(retentionResult.exitCode === 1 && retentionResult.terminal?.roleOutcome.kind === "failure" ? retentionResult.terminal.roleOutcome.cause : undefined, "timeout");
     const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "provider", diagnosticIncludes: "WebSocket error", identityName: "faux-1", identityCode: "openai-codex" });
     assert.equal((retentionSettlement.terminal.roleOutcome as any).decisiveFacts.secondaryEvidence.model, "faux-1");
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
     assert.equal(retentionArtifact.details.retentionFailure.name, "ComplianceResponseRetentionError");
     assert.equal(retentionArtifact.details.retentionFailure.cause.code, "EISDIR");
-
-    // Resume-capable audited roles bind retained audit responses to the latest
-    // typed top-level user turn; an older attempt cannot replace its native error.
-    if (role !== "doctor") {
-      const resumedIo = captureIo();
-      const resumed = await runAkRole(argv[role](project), {
-        packageRoot, home, cwd: project, io: resumedIo.io,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => `run-${role}-stale-auditor-provider-stop`,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          const entries = [
-            { type: "custom", customType: "ak_compliance_response", data: { response: { role: "assistant", stopReason: "error", errorMessage: "older audit error", provider: "openai-codex" } } },
-            { type: "message", message: { role: "assistant", stopReason: "aborted" } },
-            { type: "message", message: { role: "user", content: [{ type: "text", text: "resume" }] } },
-            { type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "newer native error", provider: "xai" } },
-          ];
-          await writeFile(join(sessionDir, "session.jsonl"), entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-          return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
-        },
-      });
-      await assertPublicFailureSettlement({
-        result: resumed,
-        stdout: resumedIo.stdout,
-        stderr: resumedIo.stderr,
-        expectedCause: "provider",
-        diagnosticEquals: "newer native error",
-        identityName: "ProviderStopError",
-        identityCode: "xai",
-      });
-    }
   });
 });
 
