@@ -1,4 +1,3 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -8,6 +7,7 @@ import { Type, type Static } from "typebox";
 
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
+import { stringEnum } from "./typebox-string-enum.ts";
 
 import {
   JUDGE_OUTPUT_TOOL_NAME,
@@ -34,7 +34,7 @@ export type JudgeAdjudicativeVerdict =
 
 const judgeVerdictSchema = Type.Object(
   {
-    judgeStatus: StringEnum(["converged", "continue", "escalate"] as const, { description: "Judge adjudication outcome discriminator." }),
+    judgeStatus: stringEnum(["converged", "continue", "escalate"] as const, { description: "Judge adjudication outcome discriminator." }),
     fix: Type.Optional(
       Type.Object(
         { summary: Type.String({ minLength: 1, description: "Required remediation summary." }) },

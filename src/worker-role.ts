@@ -1,4 +1,3 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -6,6 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
+import { stringEnum } from "./typebox-string-enum.ts";
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 
@@ -54,15 +54,15 @@ function matchFixerBashForbiddenLiteral(
 
 const coderOutputVariants = Type.Union([
   Type.Object({
-    status: StringEnum(["planned"] as const, { description: "Plan-phase proposal outcome." }),
+    status: stringEnum(["planned"] as const, { description: "Plan-phase proposal outcome." }),
     report: Type.String({ minLength: 1, description: "Truthful Coder outcome report." }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: StringEnum(["completed", "refused"] as const, { description: "Completed or lawfully refused apply outcome." }),
+    status: stringEnum(["completed", "refused"] as const, { description: "Completed or lawfully refused apply outcome." }),
     report: Type.String({ minLength: 1, description: "Truthful Coder outcome report." }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: StringEnum(["unfinished"] as const, { description: "Honest unfinished apply outcome." }),
+    status: stringEnum(["unfinished"] as const, { description: "Honest unfinished apply outcome." }),
     report: Type.String({ minLength: 1, description: "Truthful Coder outcome report." }),
     remainingScope: Type.String({ minLength: 1, description: "Work remaining after this invocation." }),
   }, { additionalProperties: false }),

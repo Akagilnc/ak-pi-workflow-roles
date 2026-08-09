@@ -423,6 +423,8 @@ export async function loadPackagedMethodSkillMaterial(
 export type ObservedPackagedMethodSkillInvocation = Readonly<{
   name: PackagedMethodSkillName;
   location: string;
+  content?: string | undefined;
+  userMessage?: string | undefined;
 }>;
 
 /**
@@ -435,28 +437,24 @@ export function observePackagedMethodSkillInvocation(
   expected: {
     readonly name: PackagedMethodSkillName;
     readonly allowedLocations: readonly string[];
+    readonly includeExpansionIdentity?: boolean;
   },
 ): ObservedPackagedMethodSkillInvocation | undefined {
-  // Structured skill-block grammar (same shape Pi expands); not free-text classification.
-  if (!text.startsWith("<skill name=\"")) return undefined;
-  const nameStart = "<skill name=\"".length;
-  const nameEnd = text.indexOf("\"", nameStart);
-  if (nameEnd <= nameStart) return undefined;
-  const name = text.slice(nameStart, nameEnd);
-  if (name !== expected.name) return undefined;
-  const locationMarker = "\" location=\"";
-  if (!text.startsWith(locationMarker, nameEnd)) return undefined;
-  const locationStart = nameEnd + locationMarker.length;
-  const locationEnd = text.indexOf("\"", locationStart);
-  if (locationEnd <= locationStart) return undefined;
-  const location = text.slice(locationStart, locationEnd);
-  const openTail = ">\n";
-  if (!text.startsWith(openTail, locationEnd + 1)) return undefined;
-  const closeTag = "\n</skill>";
-  const closeAt = text.indexOf(closeTag, locationEnd + 1 + openTail.length);
-  if (closeAt === -1) return undefined;
-  const afterClose = text.slice(closeAt + closeTag.length);
-  if (afterClose.length > 0 && !afterClose.startsWith("\n")) return undefined;
+  // Keep this package-owned grammar aligned with Pi's complete native expansion.
+  const match = text.match(
+    /^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/,
+  );
+  if (match === null || match[1] !== expected.name) return undefined;
+  const location = match[2]!;
   if (!expected.allowedLocations.includes(location)) return undefined;
-  return Object.freeze({ name: expected.name, location });
+  return Object.freeze({
+    name: expected.name,
+    location,
+    ...(expected.includeExpansionIdentity === true
+      ? {
+          content: match[3]!,
+          userMessage: match[4]?.trim() || undefined,
+        }
+      : {}),
+  });
 }

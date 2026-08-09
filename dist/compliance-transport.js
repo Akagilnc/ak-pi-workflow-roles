@@ -1,5 +1,6 @@
-import { uuidv7, } from "@earendil-works/pi-ai";
+import {} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { uuidv7 } from "./uuidv7.js";
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError, createStreamIdleGuard, isStreamIdleTimeoutError, } from "./stream-idle-guard.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_CODE, StreamIdleTimeoutError, createStreamIdleGuard, isStreamIdleTimeoutError, } from "./stream-idle-guard.js";
 const COMPLIANCE_REQUEST_TIMEOUT_MS = 183000;

@@ -1,11 +1,8 @@
 /**
  * Canonical Skill binding built from package-owned method material.
- * Lives beside the method seam but may import Pi skill parsers — used by the
- * Internal role runtime, not the public ak-role bin bundle.
+ * Lives beside and reuses the package-owned method Skill observation seam.
  */
 import { dirname } from "node:path";
-
-import { parseSkillBlock } from "@earendil-works/pi-coding-agent";
 
 import {
   type CanonicalSkillBinding,
@@ -15,6 +12,7 @@ import {
 import { reviewerPromptIdentity } from "../reviewer-prompt-identity.ts";
 import {
   loadPackagedMethodSkillMaterial,
+  observePackagedMethodSkillInvocation,
   resolvePackagedMethodSkillPath,
   type PackagedMethodSkillName,
 } from "./method-skill.ts";
@@ -56,13 +54,12 @@ export async function loadPackagedCanonicalSkillBinding<
       prompt,
       originalRequest,
     ): CanonicalSkillEvidence<Name> | undefined {
-      const parsed = parseSkillBlock(prompt);
-      const matchedPath =
-        parsed?.location === configuredPath
-          ? configuredPath
-          : parsed?.location === snapshot.path
-            ? snapshot.path
-            : undefined;
+      const parsed = observePackagedMethodSkillInvocation(prompt, {
+        name,
+        allowedLocations: [configuredPath, snapshot.path],
+        includeExpansionIdentity: true,
+      });
+      const matchedPath = parsed?.location;
       const expectedContent =
         matchedPath === undefined
           ? undefined
@@ -79,7 +76,7 @@ export async function loadPackagedCanonicalSkillBinding<
       return Object.freeze({
         name,
         location: parsed.location,
-        content: parsed.content,
+        content: parsed.content!,
         userMessage,
       });
     },

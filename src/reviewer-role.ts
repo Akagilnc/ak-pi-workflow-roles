@@ -1,7 +1,7 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
+import { stringEnum } from "./typebox-string-enum.ts";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import { disposeComplianceDecision } from "./audit-escalation.ts";
@@ -31,16 +31,16 @@ export type { ReviewerIntent };
 export const AGENT_TOOL_NAME = "Agent";
 
 const requestSchema = Type.Object({
-  tools: Type.Array(StringEnum(REVIEWER_CHILD_TOOLS), { uniqueItems: true }),
-  prerequisiteOperations: Type.Array(StringEnum(REVIEWER_PREREQUISITES), { uniqueItems: true }),
+  tools: Type.Array(stringEnum(REVIEWER_CHILD_TOOLS), { uniqueItems: true }),
+  prerequisiteOperations: Type.Array(stringEnum(REVIEWER_PREREQUISITES), { uniqueItems: true }),
 }, { additionalProperties: true });
-const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }), source: Type.Optional(StringEnum(["pinned-git", "host-input"] as const)), sourcePath: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: true });
+const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }), source: Type.Optional(stringEnum(["pinned-git", "host-input"] as const)), sourcePath: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: true });
 export const reviewerProposalSchema = Type.Object({
   version: Type.Literal(1, { description: "Reviewer proposal contract version." }),
   base: Type.Object({ revision: Type.String({ minLength: 1 }) }, { additionalProperties: true, description: "Pinned base revision for the review range." }),
   materials: Type.Array(materialSchema, { description: "Pinned materials admitted to the review." }),
   relevanceHints: Type.Optional(Type.Object({ standards: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })), spec: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })) }, { additionalProperties: true, description: "Optional hints identifying relevant standards and specification material." })),
-  spec: Type.Object({ state: StringEnum(["established", "not-established"] as const) }, { additionalProperties: true, description: "Whether an established specification governs the review." }),
+  spec: Type.Object({ state: stringEnum(["established", "not-established"] as const) }, { additionalProperties: true, description: "Whether an established specification governs the review." }),
   required: Type.Object({ standards: requestSchema, spec: Type.Optional(requestSchema) }, { additionalProperties: true, description: "Tools and prerequisite operations required for each review axis." }),
 }, { additionalProperties: true });
 const reviewerOutputVariants = Type.Union([

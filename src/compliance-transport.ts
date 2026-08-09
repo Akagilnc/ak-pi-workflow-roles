@@ -1,5 +1,4 @@
 import {
-  uuidv7,
   type Api,
   type AssistantMessage,
   type Context,
@@ -10,6 +9,7 @@ import {
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { uuidv7 } from "./uuidv7.ts";
 import {
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   StreamIdleTimeoutError,

@@ -11956,27 +11956,20 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   });
 }
 function observePackagedMethodSkillInvocation(text, expected) {
-  if (!text.startsWith('<skill name="')) return void 0;
-  const nameStart = '<skill name="'.length;
-  const nameEnd = text.indexOf('"', nameStart);
-  if (nameEnd <= nameStart) return void 0;
-  const name = text.slice(nameStart, nameEnd);
-  if (name !== expected.name) return void 0;
-  const locationMarker = '" location="';
-  if (!text.startsWith(locationMarker, nameEnd)) return void 0;
-  const locationStart = nameEnd + locationMarker.length;
-  const locationEnd = text.indexOf('"', locationStart);
-  if (locationEnd <= locationStart) return void 0;
-  const location = text.slice(locationStart, locationEnd);
-  const openTail = ">\n";
-  if (!text.startsWith(openTail, locationEnd + 1)) return void 0;
-  const closeTag = "\n</skill>";
-  const closeAt = text.indexOf(closeTag, locationEnd + 1 + openTail.length);
-  if (closeAt === -1) return void 0;
-  const afterClose = text.slice(closeAt + closeTag.length);
-  if (afterClose.length > 0 && !afterClose.startsWith("\n")) return void 0;
+  const match = text.match(
+    /^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/
+  );
+  if (match === null || match[1] !== expected.name) return void 0;
+  const location = match[2];
   if (!expected.allowedLocations.includes(location)) return void 0;
-  return Object.freeze({ name: expected.name, location });
+  return Object.freeze({
+    name: expected.name,
+    location,
+    ...expected.includeExpansionIdentity === true ? {
+      content: match[3],
+      userMessage: match[4]?.trim() || void 0
+    } : {}
+  });
 }
 
 // src/public-cli/run-lifecycle.ts

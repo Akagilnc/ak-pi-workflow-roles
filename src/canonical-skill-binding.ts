@@ -2,8 +2,11 @@ import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
-import { parseSkillBlock, stripFrontmatter } from "@earendil-works/pi-coding-agent";
 import { reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+import {
+  observePackagedMethodSkillInvocation,
+  stripSkillFrontmatter,
+} from "./package-resources/method-skill.ts";
 
 export type CanonicalSkillName = "tdd" | "code-review";
 
@@ -59,7 +62,7 @@ export async function loadCanonicalSkillBinding(
   } catch (error) {
     throw new CanonicalSkillUnavailableError(name, configuredPath, error);
   }
-  const body = stripFrontmatter(raw).trim();
+  const body = stripSkillFrontmatter(raw).trim();
   if (body.length === 0) {
     throw new Error(`Canonical ${name} Skill is empty at ${path}`);
   }
@@ -77,13 +80,12 @@ export async function loadCanonicalSkillBinding(
       return `/skill:${name} ${originalRequest}`;
     },
     captureExpansion(prompt, originalRequest) {
-      const parsed = parseSkillBlock(prompt);
-      const matchedPath =
-        parsed?.location === configuredPath
-          ? configuredPath
-          : parsed?.location === snapshot.path
-            ? snapshot.path
-            : undefined;
+      const parsed = observePackagedMethodSkillInvocation(prompt, {
+        name,
+        allowedLocations: [configuredPath, snapshot.path],
+        includeExpansionIdentity: true,
+      });
+      const matchedPath = parsed?.location;
       const expectedContent = matchedPath === undefined
         ? undefined
         : `References are relative to ${dirname(matchedPath)}.\n\n${snapshot.body}`;
@@ -99,7 +101,7 @@ export async function loadCanonicalSkillBinding(
       return Object.freeze({
         name,
         location: parsed.location,
-        content: parsed.content,
+        content: parsed.content!,
         userMessage,
       });
     },
