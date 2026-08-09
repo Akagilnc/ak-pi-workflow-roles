@@ -157,6 +157,20 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
   );
 }
 
+let suiteAuditRoot = "";
+const suiteAuditCwd = process.cwd();
+const suiteAuditSaved = { executable: process.env.AK_MACHINE_PI_EXECUTABLE_REALPATH, version: process.env.AK_MACHINE_PI_VERSION, log: process.env.AK_TEST_AUDIT_LOG, decision: process.env.AK_TEST_AUDIT_DECISION };
+before(async () => {
+  suiteAuditRoot = await mkdtemp(join(tmpdir(), "ak-suite-audit-rpc-"));
+  const executable = join(suiteAuditRoot, "pi");
+  const log = join(suiteAuditRoot, "calls.jsonl");
+  await writeFile(executable, `#!${process.execPath}\nimport fs from "node:fs";if(process.argv.includes("--version")){console.log("suite-fixture");process.exit(0)}const arg=process.argv.find(x=>x.startsWith("--ak-auditor-rpc-config="));const config=JSON.parse(fs.readFileSync(arg.split("=").slice(1).join("="),"utf8"));process.stdin.once("data",()=>{fs.appendFileSync(process.env.AK_TEST_AUDIT_LOG,JSON.stringify(config)+"\\n");const d=JSON.parse(process.env.AK_TEST_AUDIT_DECISION||"{\\"status\\":\\"pass\\"}");console.log(JSON.stringify({type:"tool_execution_end",toolName:config.tool.name,result:{details:d}}));console.log(JSON.stringify({type:"message_end",message:{role:"assistant",content:[],stopReason:"toolUse",usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}}}));console.log(JSON.stringify({type:"agent_settled"}));setTimeout(()=>process.exit(0),5)})`);
+  await chmod(executable, 0o755);
+  process.env.AK_MACHINE_PI_EXECUTABLE_REALPATH = await realpath(executable); process.env.AK_MACHINE_PI_VERSION = "suite-fixture"; process.env.AK_TEST_AUDIT_LOG = log;
+  process.chdir(suiteAuditRoot);
+});
+after(async () => { process.chdir(suiteAuditCwd); for (const [key,value] of Object.entries({AK_MACHINE_PI_EXECUTABLE_REALPATH:suiteAuditSaved.executable,AK_MACHINE_PI_VERSION:suiteAuditSaved.version,AK_TEST_AUDIT_LOG:suiteAuditSaved.log,AK_TEST_AUDIT_DECISION:suiteAuditSaved.decision})) value===undefined?delete process.env[key]:process.env[key]=value; await rm(suiteAuditRoot,{recursive:true,force:true}); });
+
 test("ordinary Navigator attendance persists preparation, settlement, and visible ordering", async () => {
   const manifest = await loadRawPackageManifest();
   const current = await runOrdinaryNavigatorObservation(packageEntrypoint(manifest));
@@ -237,18 +251,6 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
   }
   assert.equal(paths.has("packets/fixer-repair.json"), false, "removed closed packet shell must not be packed");
 });
-
-let suiteAuditRoot = "";
-const suiteAuditSaved = { executable: process.env.AK_MACHINE_PI_EXECUTABLE_REALPATH, version: process.env.AK_MACHINE_PI_VERSION, log: process.env.AK_TEST_AUDIT_LOG, decision: process.env.AK_TEST_AUDIT_DECISION };
-before(async () => {
-  suiteAuditRoot = await mkdtemp(join(tmpdir(), "ak-suite-audit-rpc-"));
-  const executable = join(suiteAuditRoot, "pi");
-  const log = join(suiteAuditRoot, "calls.jsonl");
-  await writeFile(executable, `#!${process.execPath}\nimport fs from "node:fs";if(process.argv.includes("--version")){console.log("suite-fixture");process.exit(0)}const arg=process.argv.find(x=>x.startsWith("--ak-auditor-rpc-config="));const config=JSON.parse(fs.readFileSync(arg.split("=").slice(1).join("="),"utf8"));process.stdin.once("data",()=>{fs.appendFileSync(process.env.AK_TEST_AUDIT_LOG,JSON.stringify(config)+"\\n");const d=JSON.parse(process.env.AK_TEST_AUDIT_DECISION||"{\\"status\\":\\"pass\\"}");console.log(JSON.stringify({type:"tool_execution_end",toolName:config.tool.name,result:{details:d}}));console.log(JSON.stringify({type:"message_end",message:{role:"assistant",content:[],stopReason:"toolUse",usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}}}));console.log(JSON.stringify({type:"agent_settled"}));setTimeout(()=>process.exit(0),5)})`);
-  await chmod(executable, 0o755);
-  process.env.AK_MACHINE_PI_EXECUTABLE_REALPATH = await realpath(executable); process.env.AK_MACHINE_PI_VERSION = "suite-fixture"; process.env.AK_TEST_AUDIT_LOG = log;
-});
-after(async () => { for (const [key,value] of Object.entries({AK_MACHINE_PI_EXECUTABLE_REALPATH:suiteAuditSaved.executable,AK_MACHINE_PI_VERSION:suiteAuditSaved.version,AK_TEST_AUDIT_LOG:suiteAuditSaved.log,AK_TEST_AUDIT_DECISION:suiteAuditSaved.decision})) value===undefined?delete process.env[key]:process.env[key]=value; await rm(suiteAuditRoot,{recursive:true,force:true}); });
 
 async function withMachineAuditFixture<T>(run: (logPath: string) => Promise<T>): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), "ak-package-audit-rpc-"));
@@ -445,7 +447,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
       };
       const outputContext = (name: string, id: string) => {
         const sessionManager = SessionManager.inMemory();
-        Object.assign(sessionManager, { getSessionFile: () => join(packageRoot, ".package-parent.jsonl"), getSessionDir: () => packageRoot });
+        Object.assign(sessionManager, { getSessionFile: () => join(suiteAuditRoot, ".package-parent.jsonl"), getSessionDir: () => suiteAuditRoot });
         sessionManager.appendMessage({
           role: "assistant",
           content: [{ type: "toolCall", id, name, arguments: {} }],
@@ -710,7 +712,13 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           );
         };
         faux.setResponses([response, response, response, response, response]);
-        await session.prompt(developerPrompt);
+        const promptCwd = process.cwd();
+        process.chdir(suiteAuditRoot);
+        try {
+          await session.prompt(developerPrompt);
+        } finally {
+          process.chdir(promptCwd);
+        }
 
         const seenJudgeContext = judgeContext as Context | undefined;
         assert.ok(seenJudgeContext);
@@ -1778,6 +1786,7 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
         const root = process.env.AK_ROOT;
         const input = process.env.AK_INPUT;
         const agentDir = process.env.AK_AGENT;
+        const auditRoot = process.env.AK_AUDIT_ROOT;
         const faux = fauxProvider({ api: "ak-navigator-fresh-process", provider: "ak-navigator-fresh-process", tokenSize: { min: 1000, max: 1000 } });
         const model = faux.getModel();
         process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -1798,6 +1807,7 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
         faux.setResponses([response, response, response]);
         let result;
         await withInProcessPi({ activationLedgerSession: true, cwd: root, agentDir, faux, additionalExtensionPaths: [resolvePackageEntrypoint(manifest)], systemPrompt: "FRESH PROCESS NAVIGATOR", mode: "json", flags: role === "fixer" ? { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": input } : { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": input }, noTools: "builtin" }, async ({ session, sessionManager }) => {
+          process.chdir(auditRoot);
           await session.prompt("fresh process role invocation");
           const messages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
           result = messages[0]?.type === "custom_message" ? messages[0].details : undefined;
@@ -1807,7 +1817,7 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
       const run = async (role: "coder" | "fixer", cwd: string, input: string) => {
         const result = await runNodeSubprocess(["--import", "tsx", "--input-type=module", "-e", child], {
           cwd: packageRoot,
-          env: { ...process.env, AK_ROLE: role, AK_ROOT: cwd, AK_INPUT: input, AK_AGENT: agentDir },
+          env: { ...process.env, AK_ROLE: role, AK_ROOT: cwd, AK_INPUT: input, AK_AGENT: agentDir, AK_AUDIT_ROOT: suiteAuditRoot },
           timeoutMs: 60_000,
         });
         assert.equal(result.code, 0, result.stderr);
