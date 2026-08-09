@@ -21,514 +21,108 @@ import { dirname, join } from "node:path";
 
 // src/package-contracts/collector-output.ts
 var COLLECTOR_OUTPUT_TOOL = "ak_collector_output";
-var COLLECTOR_HOST = "github.com";
-function fail(message) {
-  throw new Error(message);
-}
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function requireNonEmptyString(value, label) {
-  if (typeof value !== "string" || value.length === 0) {
-    fail(`${label} is invalid`);
-  }
-  return value;
-}
-function requireStringArray(value, label) {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item.length > 0)) {
-    fail(`${label} is invalid`);
-  }
-  return value;
-}
-function assertClosedKeys(value, required, optional, label) {
-  const allowed = /* @__PURE__ */ new Set([...required, ...optional]);
-  for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) fail(`${label} has unknown key ${key}`);
-  }
-  for (const key of required) {
-    if (!Object.hasOwn(value, key)) fail(`${label} missing key ${key}`);
+function safeGet(value, key) {
+  if (typeof value !== "object" && typeof value !== "function" || value === null) return void 0;
+  try {
+    return value[key];
+  } catch {
+    return void 0;
   }
 }
-function validatePageDiagnostics(value, label) {
-  if (!isRecord(value)) fail(`${label} is invalid`);
-  assertClosedKeys(value, ["path", "page", "status", "itemCount"], ["linkHeader"], label);
-  if (typeof value.page !== "number" || !Number.isInteger(value.page)) {
-    fail(`${label}.page is invalid`);
-  }
-  if (typeof value.status !== "number" || !Number.isInteger(value.status)) {
-    fail(`${label}.status is invalid`);
-  }
-  if (typeof value.itemCount !== "number" || !Number.isInteger(value.itemCount)) {
-    fail(`${label}.itemCount is invalid`);
-  }
-  const out = {
-    path: requireNonEmptyString(value.path, `${label}.path`),
-    page: value.page,
-    status: value.status,
-    itemCount: value.itemCount
+function records(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item) => item !== null && typeof item === "object"
+  );
+}
+function strings(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+}
+function projectReport(value) {
+  const common = {
+    legId: safeGet(value, "legId"),
+    report: safeGet(value, "report"),
+    windowRelation: safeGet(value, "windowRelation"),
+    evidenceRefs: strings(safeGet(value, "evidenceRefs"))
   };
-  if (value.linkHeader !== void 0) {
-    out.linkHeader = requireNonEmptyString(value.linkHeader, `${label}.linkHeader`);
-  }
-  return out;
-}
-function validateReport(value, index) {
-  if (!isRecord(value)) fail(`Collector receipt reports[${index}] is invalid`);
-  if (value.kind === "review") {
-    assertClosedKeys(
-      value,
-      [
-        "kind",
-        "legId",
-        "report",
-        "reviewedHead",
-        "headRelation",
-        "windowRelation",
-        "evidenceRefs"
-      ],
-      [],
-      `reports[${index}]`
-    );
+  if (safeGet(value, "kind") === "review") {
     return {
       kind: "review",
-      legId: requireNonEmptyString(value.legId, `reports[${index}].legId`),
-      report: requireNonEmptyString(value.report, `reports[${index}].report`),
-      reviewedHead: requireNonEmptyString(
-        value.reviewedHead,
-        `reports[${index}].reviewedHead`
-      ),
-      headRelation: requireNonEmptyString(
-        value.headRelation,
-        `reports[${index}].headRelation`
-      ),
-      windowRelation: requireNonEmptyString(
-        value.windowRelation,
-        `reports[${index}].windowRelation`
-      ),
-      evidenceRefs: requireStringArray(
-        value.evidenceRefs,
-        `reports[${index}].evidenceRefs`
-      )
+      ...common,
+      reviewedHead: safeGet(value, "reviewedHead"),
+      headRelation: safeGet(value, "headRelation")
     };
   }
-  if (value.kind === "terminal-fact") {
-    assertClosedKeys(
-      value,
-      ["kind", "legId", "terminalStatus", "report", "windowRelation", "evidenceRefs"],
-      ["targetSnapshotHead", "scope"],
-      `reports[${index}]`
-    );
-    if (value.terminalStatus !== "unavailable" && value.terminalStatus !== "missing") {
-      fail(`reports[${index}].terminalStatus is invalid`);
-    }
-    const out = {
-      kind: "terminal-fact",
-      legId: requireNonEmptyString(value.legId, `reports[${index}].legId`),
-      terminalStatus: value.terminalStatus,
-      report: requireNonEmptyString(value.report, `reports[${index}].report`),
-      windowRelation: requireNonEmptyString(
-        value.windowRelation,
-        `reports[${index}].windowRelation`
-      ),
-      evidenceRefs: requireStringArray(
-        value.evidenceRefs,
-        `reports[${index}].evidenceRefs`
-      )
-    };
-    if (value.targetSnapshotHead !== void 0) {
-      out.targetSnapshotHead = requireNonEmptyString(
-        value.targetSnapshotHead,
-        `reports[${index}].targetSnapshotHead`
-      );
-    }
-    if (value.scope !== void 0) {
-      if (value.scope !== "global") fail(`reports[${index}].scope is invalid`);
-      out.scope = "global";
-    }
-    return out;
-  }
-  fail(`reports[${index}].kind is invalid`);
-}
-function validateLeg(value, index) {
-  if (!isRecord(value)) fail(`Collector receipt legs[${index}] is invalid`);
-  assertClosedKeys(
-    value,
-    ["legId", "status", "rationale", "evidenceRefs"],
-    [],
-    `legs[${index}]`
-  );
-  if (value.status !== "valid" && value.status !== "unavailable" && value.status !== "missing") {
-    fail(`legs[${index}].status is invalid`);
-  }
-  return {
-    legId: requireNonEmptyString(value.legId, `legs[${index}].legId`),
-    status: value.status,
-    rationale: requireNonEmptyString(value.rationale, `legs[${index}].rationale`),
-    evidenceRefs: requireStringArray(value.evidenceRefs, `legs[${index}].evidenceRefs`)
+  const terminal = {
+    kind: "terminal-fact",
+    ...common,
+    terminalStatus: safeGet(value, "terminalStatus")
   };
-}
-function validateAttempt(value, index) {
-  if (!isRecord(value)) fail(`requestAttempts[${index}] is invalid`);
-  assertClosedKeys(
-    value,
-    [
-      "attemptId",
-      "legId",
-      "observedHead",
-      "snapshotId",
-      "marker",
-      "body",
-      "startedAt",
-      "status"
-    ],
-    ["responseDiagnostics", "commentEvidenceId", "recoverySnapshotId"],
-    `requestAttempts[${index}]`
-  );
-  const statuses = [
-    "started",
-    "succeeded",
-    "rejected",
-    "ambiguous_loss",
-    "recovered"
-  ];
-  if (!statuses.includes(value.status)) {
-    fail(`requestAttempts[${index}].status is invalid`);
-  }
-  const out = {
-    attemptId: requireNonEmptyString(value.attemptId, `requestAttempts[${index}].attemptId`),
-    legId: requireNonEmptyString(value.legId, `requestAttempts[${index}].legId`),
-    observedHead: requireNonEmptyString(
-      value.observedHead,
-      `requestAttempts[${index}].observedHead`
-    ),
-    snapshotId: requireNonEmptyString(
-      value.snapshotId,
-      `requestAttempts[${index}].snapshotId`
-    ),
-    marker: requireNonEmptyString(value.marker, `requestAttempts[${index}].marker`),
-    body: requireNonEmptyString(value.body, `requestAttempts[${index}].body`),
-    startedAt: requireNonEmptyString(
-      value.startedAt,
-      `requestAttempts[${index}].startedAt`
-    ),
-    status: value.status
-  };
-  if (value.responseDiagnostics !== void 0) {
-    out.responseDiagnostics = requireNonEmptyString(
-      value.responseDiagnostics,
-      `requestAttempts[${index}].responseDiagnostics`
-    );
-  }
-  if (value.commentEvidenceId !== void 0) {
-    out.commentEvidenceId = requireNonEmptyString(
-      value.commentEvidenceId,
-      `requestAttempts[${index}].commentEvidenceId`
-    );
-  }
-  if (value.recoverySnapshotId !== void 0) {
-    out.recoverySnapshotId = requireNonEmptyString(
-      value.recoverySnapshotId,
-      `requestAttempts[${index}].recoverySnapshotId`
-    );
-  }
-  return out;
-}
-function validateSnapshot(value, index) {
-  if (!isRecord(value)) fail(`snapshots[${index}] is invalid`);
-  assertClosedKeys(
-    value,
-    [
-      "snapshotId",
-      "observedAt",
-      "completedAt",
-      "completedMono",
-      "host",
-      "repository",
-      "prNumber",
-      "prState",
-      "headOid",
-      "complete",
-      "evidenceIds",
-      "pageDiagnostics",
-      "normalizedByteLength"
-    ],
-    [],
-    `snapshots[${index}]`
-  );
-  if (value.host !== COLLECTOR_HOST) fail(`snapshots[${index}].host is invalid`);
-  if (typeof value.prNumber !== "number" || !Number.isInteger(value.prNumber)) {
-    fail(`snapshots[${index}].prNumber is invalid`);
-  }
-  if (typeof value.completedMono !== "number" || !Number.isFinite(value.completedMono)) {
-    fail(`snapshots[${index}].completedMono is invalid`);
-  }
-  if (typeof value.complete !== "boolean") {
-    fail(`snapshots[${index}].complete is invalid`);
-  }
-  if (typeof value.normalizedByteLength !== "number") {
-    fail(`snapshots[${index}].normalizedByteLength is invalid`);
-  }
-  if (!Array.isArray(value.pageDiagnostics)) {
-    fail(`snapshots[${index}].pageDiagnostics is invalid`);
-  }
-  return {
-    snapshotId: requireNonEmptyString(value.snapshotId, `snapshots[${index}].snapshotId`),
-    observedAt: requireNonEmptyString(value.observedAt, `snapshots[${index}].observedAt`),
-    completedAt: requireNonEmptyString(value.completedAt, `snapshots[${index}].completedAt`),
-    completedMono: value.completedMono,
-    host: COLLECTOR_HOST,
-    repository: requireNonEmptyString(value.repository, `snapshots[${index}].repository`),
-    prNumber: value.prNumber,
-    prState: requireNonEmptyString(value.prState, `snapshots[${index}].prState`),
-    headOid: requireNonEmptyString(value.headOid, `snapshots[${index}].headOid`),
-    complete: value.complete,
-    evidenceIds: requireStringArray(value.evidenceIds, `snapshots[${index}].evidenceIds`),
-    pageDiagnostics: value.pageDiagnostics.map(
-      (item, pageIndex) => validatePageDiagnostics(item, `snapshots[${index}].pageDiagnostics[${pageIndex}]`)
-    ),
-    normalizedByteLength: value.normalizedByteLength
-  };
-}
-var COLLECTOR_EVIDENCE_OPTIONAL_KEYS = [
-  "stableGitHubId",
-  "authorLogin",
-  "state",
-  "body",
-  "commitOid",
-  "htmlUrl",
-  "path",
-  "line",
-  "originalLine",
-  "side",
-  "position",
-  "pullRequestReviewId",
-  "submittedAt",
-  "authoritativeTime",
-  "windowRelation",
-  "pagination"
-];
-function validateEvidence(value, index) {
-  if (!isRecord(value)) fail(`evidenceRecords[${index}] is invalid`);
-  assertClosedKeys(
-    value,
-    ["evidenceId", "kind", "versionId", "contentDigest", "firstObservedAt", "raw"],
-    COLLECTOR_EVIDENCE_OPTIONAL_KEYS,
-    `evidenceRecords[${index}]`
-  );
-  const out = {
-    evidenceId: requireNonEmptyString(
-      value.evidenceId,
-      `evidenceRecords[${index}].evidenceId`
-    ),
-    kind: requireNonEmptyString(value.kind, `evidenceRecords[${index}].kind`),
-    versionId: requireNonEmptyString(
-      value.versionId,
-      `evidenceRecords[${index}].versionId`
-    ),
-    contentDigest: requireNonEmptyString(
-      value.contentDigest,
-      `evidenceRecords[${index}].contentDigest`
-    ),
-    firstObservedAt: requireNonEmptyString(
-      value.firstObservedAt,
-      `evidenceRecords[${index}].firstObservedAt`
-    ),
-    raw: value.raw
-  };
-  for (const key of COLLECTOR_EVIDENCE_OPTIONAL_KEYS) {
-    if (Object.hasOwn(value, key)) {
-      out[key] = value[key];
-    }
-  }
-  return out;
+  const targetSnapshotHead = safeGet(value, "targetSnapshotHead");
+  const scope = safeGet(value, "scope");
+  if (targetSnapshotHead !== void 0) terminal.targetSnapshotHead = targetSnapshotHead;
+  if (scope !== void 0) terminal.scope = scope;
+  return terminal;
 }
 function validateAcceptedCollectorReceipt(value) {
-  if (!isRecord(value)) fail("Collector receipt must be an object");
-  if (Object.hasOwn(value, "legs") && !Object.hasOwn(value, "host") && !Object.hasOwn(value, "reports")) {
-    fail("Collector generated legs-only output is not an accepted receipt");
-  }
-  assertClosedKeys(
-    value,
-    [
-      "host",
-      "repository",
-      "prNumber",
-      "manifestDigest",
-      "activationTime",
-      "deadlineTime",
-      "finalObservationTime",
-      "finalSnapshotId",
-      "targetHead",
-      "reports",
-      "legs",
-      "requestAttempts",
-      "snapshots",
-      "evidenceRecords"
-    ],
-    [],
-    "Collector receipt"
-  );
-  if (value.host !== COLLECTOR_HOST) fail("Collector receipt host is invalid");
-  if (typeof value.repository !== "string" || value.repository.trim() === "") {
-    fail("Collector receipt repository is invalid");
-  }
-  if (typeof value.prNumber !== "number" || !Number.isInteger(value.prNumber)) {
-    fail("Collector receipt prNumber is invalid");
-  }
-  if (typeof value.manifestDigest !== "string" || value.manifestDigest === "") {
-    fail("Collector receipt manifestDigest is invalid");
-  }
-  if (typeof value.activationTime !== "string" || value.activationTime === "") {
-    fail("Collector receipt activationTime is invalid");
-  }
-  if (typeof value.deadlineTime !== "string" || value.deadlineTime === "") {
-    fail("Collector receipt deadlineTime is invalid");
-  }
-  if (typeof value.finalObservationTime !== "string" || value.finalObservationTime === "") {
-    fail("Collector receipt finalObservationTime is invalid");
-  }
-  if (typeof value.finalSnapshotId !== "string" || value.finalSnapshotId === "") {
-    fail("Collector receipt finalSnapshotId is invalid");
-  }
-  if (typeof value.targetHead !== "string" || value.targetHead === "") {
-    fail("Collector receipt targetHead is invalid");
-  }
-  if (!Array.isArray(value.reports) || value.reports.length === 0) {
-    fail("Collector receipt reports are invalid");
-  }
-  if (!Array.isArray(value.legs) || value.legs.length === 0) {
-    fail("Collector receipt legs are invalid");
-  }
-  if (!Array.isArray(value.requestAttempts)) {
-    fail("Collector receipt requestAttempts are invalid");
-  }
-  if (!Array.isArray(value.snapshots) || value.snapshots.length === 0) {
-    fail("Collector receipt snapshots are invalid");
-  }
-  if (!Array.isArray(value.evidenceRecords)) {
-    fail("Collector receipt evidenceRecords are invalid");
-  }
-  if (value.reports.some((item) => item === null || typeof item !== "object" || Array.isArray(item))) {
-    fail("Collector receipt reports contain invalid entries");
-  }
-  if (value.legs.some((item) => item === null || typeof item !== "object" || Array.isArray(item))) {
-    fail("Collector receipt legs contain invalid entries");
-  }
-  if (value.snapshots.some(
-    (item) => item === null || typeof item !== "object" || Array.isArray(item)
-  )) {
-    fail("Collector receipt snapshots contain invalid entries");
-  }
-  if (value.evidenceRecords.some(
-    (item) => item === null || typeof item !== "object" || Array.isArray(item)
-  )) {
-    fail("Collector receipt evidenceRecords contain invalid entries");
-  }
-  if (value.requestAttempts.some(
-    (item) => item === null || typeof item !== "object" || Array.isArray(item)
-  )) {
-    fail("Collector receipt requestAttempts contain invalid entries");
-  }
+  const snapshots = records(safeGet(value, "snapshots")).map((snapshot) => ({
+    snapshotId: safeGet(snapshot, "snapshotId"),
+    observedAt: safeGet(snapshot, "observedAt"),
+    completedAt: safeGet(snapshot, "completedAt"),
+    completedMono: safeGet(snapshot, "completedMono"),
+    host: safeGet(snapshot, "host"),
+    repository: safeGet(snapshot, "repository"),
+    prNumber: safeGet(snapshot, "prNumber"),
+    prState: safeGet(snapshot, "prState"),
+    headOid: safeGet(snapshot, "headOid"),
+    complete: safeGet(snapshot, "complete"),
+    evidenceIds: strings(safeGet(snapshot, "evidenceIds")),
+    pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")),
+    normalizedByteLength: safeGet(snapshot, "normalizedByteLength")
+  }));
+  const evidenceRecords = records(safeGet(value, "evidenceRecords")).map((record3) => ({
+    evidenceId: safeGet(record3, "evidenceId"),
+    kind: safeGet(record3, "kind"),
+    versionId: safeGet(record3, "versionId"),
+    contentDigest: safeGet(record3, "contentDigest"),
+    firstObservedAt: safeGet(record3, "firstObservedAt"),
+    raw: safeGet(record3, "raw")
+  }));
   return {
-    host: COLLECTOR_HOST,
-    repository: value.repository,
-    prNumber: value.prNumber,
-    manifestDigest: value.manifestDigest,
-    activationTime: value.activationTime,
-    deadlineTime: value.deadlineTime,
-    finalObservationTime: value.finalObservationTime,
-    finalSnapshotId: value.finalSnapshotId,
-    targetHead: value.targetHead,
-    reports: value.reports.map(validateReport),
-    legs: value.legs.map(validateLeg),
-    requestAttempts: value.requestAttempts.map(validateAttempt),
-    snapshots: value.snapshots.map(validateSnapshot),
-    evidenceRecords: value.evidenceRecords.map(validateEvidence)
+    host: safeGet(value, "host"),
+    repository: safeGet(value, "repository"),
+    prNumber: safeGet(value, "prNumber"),
+    manifestDigest: safeGet(value, "manifestDigest"),
+    activationTime: safeGet(value, "activationTime"),
+    deadlineTime: safeGet(value, "deadlineTime"),
+    finalObservationTime: safeGet(value, "finalObservationTime"),
+    finalSnapshotId: safeGet(value, "finalSnapshotId"),
+    targetHead: safeGet(value, "targetHead"),
+    reports: records(safeGet(value, "reports")).map(projectReport),
+    legs: records(safeGet(value, "legs")).map((leg) => ({
+      legId: safeGet(leg, "legId"),
+      status: safeGet(leg, "status"),
+      rationale: safeGet(leg, "rationale"),
+      evidenceRefs: strings(safeGet(leg, "evidenceRefs"))
+    })),
+    requestAttempts: records(safeGet(value, "requestAttempts")),
+    snapshots,
+    evidenceRecords
   };
 }
 
 // src/package-contracts/judge-output.ts
 var JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
-function isRecord2(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function hasExactKeys(value, expected) {
-  const keys = Object.keys(value);
-  return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
-}
 function validateAcceptedJudgeDetails(verdict) {
-  if (!isRecord2(verdict)) throw new Error("Judge verdict must be an object");
-  if (verdict.note !== void 0 && (typeof verdict.note !== "string" || verdict.note.trim().length === 0)) {
-    throw new Error("Judge note must be a non-blank string when provided");
+  if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) throw new Error("Judge verdict has no execution discriminator");
+  let judgeStatus;
+  try {
+    judgeStatus = verdict.judgeStatus;
+  } catch {
+    throw new Error("Judge verdict has no execution discriminator");
   }
-  const withOptionalFields = (keys) => [
-    ...keys,
-    ...verdict.note === void 0 ? [] : ["note"],
-    ...verdict.evidence === void 0 ? [] : ["evidence"]
-  ];
-  const note = verdict.note === void 0 ? {} : { note: verdict.note };
-  const evidence = verdict.evidence === void 0 ? {} : { evidence: verdict.evidence };
-  const validClasses = (value) => {
-    if (!Array.isArray(value) || value.length === 0) return false;
-    const names = /* @__PURE__ */ new Set();
-    return value.every((entry) => {
-      if (!isRecord2(entry) || !hasExactKeys(entry, ["name", "owner", "boundary", "disposition"])) {
-        return false;
-      }
-      for (const key of ["name", "owner", "boundary", "disposition"]) {
-        if (typeof entry[key] !== "string" || entry[key].trim().length === 0) {
-          return false;
-        }
-      }
-      if (entry.name.includes(",") || names.has(entry.name)) {
-        return false;
-      }
-      names.add(entry.name);
-      return true;
-    });
-  };
-  if (verdict.judgeStatus === "converged") {
-    const expectedKeys = withOptionalFields(["judgeStatus"]);
-    if (!hasExactKeys(verdict, expectedKeys)) {
-      const extraKeys = Object.keys(verdict).filter(
-        (key) => !expectedKeys.includes(key)
-      );
-      throw new Error(`Judge converged forbids extra keys: ${extraKeys.join(", ")}`);
-    }
-    return { judgeStatus: "converged", ...note, ...evidence };
-  }
-  if (verdict.judgeStatus === "continue") {
-    if (!hasExactKeys(verdict, withOptionalFields(["judgeStatus", "fix", "classes"])) || !isRecord2(verdict.fix) || !hasExactKeys(verdict.fix, ["summary"]) || typeof verdict.fix.summary !== "string" || verdict.fix.summary.trim().length === 0 || !validClasses(verdict.classes)) {
-      throw new Error("Judge continue requires fix.summary and nonempty unique comma-free classes");
-    }
-    return {
-      judgeStatus: "continue",
-      fix: { summary: verdict.fix.summary },
-      classes: verdict.classes.map((entry) => ({ ...entry })),
-      ...note,
-      ...evidence
-    };
-  }
-  if (verdict.judgeStatus === "escalate") {
-    const gate = verdict.decisionGate;
-    if (!hasExactKeys(
-      verdict,
-      withOptionalFields(["judgeStatus", "decisionGate"])
-    ) || !isRecord2(gate) || !hasExactKeys(gate, ["question", "options"]) || typeof gate.question !== "string" || gate.question.trim().length === 0 || !Array.isArray(gate.options) || gate.options.length === 0 || !gate.options.every(
-      (option) => typeof option === "string" && option.trim().length > 0
-    )) {
-      throw new Error(
-        "Judge escalate requires only a non-blank decisionGate question and options"
-      );
-    }
-    return {
-      judgeStatus: "escalate",
-      decisionGate: { question: gate.question, options: [...gate.options] },
-      ...note,
-      ...evidence
-    };
-  }
-  throw new Error("Judge verdict has an invalid status");
+  if (["converged", "continue", "escalate"].includes(String(judgeStatus))) return verdict;
+  throw new Error("Judge verdict has no execution discriminator");
 }
 
 // src/exact-utf8.ts
@@ -589,73 +183,66 @@ function verifyBundleIdentity(bundle) {
 
 // src/package-contracts/reviewer-output.ts
 var REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
-function isRecord3(value) {
+function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function exactKeys(value, required, optional = []) {
-  const keys = Object.keys(value);
-  return required.every((key) => Object.hasOwn(value, key)) && keys.every((key) => required.includes(key) || optional.includes(key));
+function read(value, key) {
+  if (!isRecord(value)) return void 0;
+  try {
+    return value[key];
+  } catch {
+    return void 0;
+  }
 }
-function validWorkspace(value) {
-  return value === "deleted" || value === "not-created" || isRecord3(value) && exactKeys(value, ["retained"]) && typeof value.retained === "string" && value.retained.length > 0;
-}
-function isReceiptText(value) {
-  return isRecord3(value) && exactKeys(value, ["text"]) && typeof value.text === "string";
-}
-var failures = /* @__PURE__ */ new Set(["cancelled", "provider", "snapshot", "workspace", "child", "unknown"]);
 function validateRuntimeReviewerReceipt(output) {
-  if (!isRecord3(output) || !exactKeys(output, ["version", "status", "reports", "outcomes", "identities"], ["diagnostic", "acceptedBatch"]) || output.version !== 2 || output.status !== "completed" && output.status !== "refused" || !isRecord3(output.reports) || !isRecord3(output.outcomes) || !isRecord3(output.identities)) throw new Error("Invalid Reviewer V2 receipt");
-  if (output.status === "completed" ? Object.hasOwn(output, "diagnostic") : typeof output.diagnostic !== "string" || output.diagnostic.trim().length === 0) throw new Error("Reviewer receipt diagnostic disagrees with status");
-  if (!exactKeys(output.reports, [], ["standards", "spec"]) || !exactKeys(output.outcomes, [], ["standards", "spec"]) || !exactKeys(output.identities, ["canonicalSkill"], ["construction", "target"])) throw new Error("Invalid Reviewer receipt projection keys");
-  const skill = output.identities.canonicalSkill;
-  if (!isReceiptText(skill)) throw new Error("Invalid canonical Skill content");
-  const hasBatch = Object.hasOwn(output, "acceptedBatch");
-  if (hasBatch !== Object.hasOwn(output.identities, "construction") || hasBatch !== Object.hasOwn(output.identities, "target") || hasBatch && (!isRecord3(output.acceptedBatch) || !isRecord3(output.identities.construction) || !isRecord3(output.identities.target))) throw new Error("Incomplete Reviewer accepted-batch identity");
-  let expectedLegs = [];
-  if (hasBatch) {
-    const acceptedBatch = output.acceptedBatch;
-    const construction = output.identities.construction;
-    const target = output.identities.target;
-    if (!exactKeys(acceptedBatch, ["identity", "legs"]) || typeof acceptedBatch.identity !== "string" || acceptedBatch.identity.length === 0 || !Array.isArray(acceptedBatch.legs) || acceptedBatch.legs.length !== 1 && acceptedBatch.legs.length !== 2) throw new Error("Invalid Reviewer accepted-batch projection");
-    expectedLegs = acceptedBatch.legs;
-    const expectedAxes2 = expectedLegs.map((leg) => leg.axis);
-    if (expectedAxes2[0] !== "standards" || expectedAxes2.length === 2 && expectedAxes2[1] !== "spec" || expectedLegs.some((leg) => !isRecord3(leg) || !exactKeys(leg, ["axis", "prompt"]) || !isReceiptText(leg.prompt)))
+  const acceptedBatch = read(output, "acceptedBatch");
+  const identities = read(output, "identities");
+  const construction = read(identities, "construction");
+  const target = read(identities, "target");
+  const reports = read(output, "reports");
+  const outcomes = read(output, "outcomes");
+  const legs = read(acceptedBatch, "legs");
+  if (acceptedBatch !== void 0 || construction !== void 0 || target !== void 0) {
+    if (!isRecord(acceptedBatch) || !isRecord(construction) || !isRecord(target) || !Array.isArray(legs))
+      throw new Error("Incomplete Reviewer accepted-batch identity");
+    const bundle = read(construction, "bundle");
+    const entries = read(bundle, "entries");
+    const objectFormat = read(target, "objectFormat");
+    const objectId = (value) => typeof value === "string" && new RegExp(objectFormat === "sha1" ? "^[0-9a-f]{40}$" : "^[0-9a-f]{64}$").test(value);
+    const refs = read(target, "refs");
+    const skillText = read(read(identities, "canonicalSkill"), "text");
+    const skillEntry = Array.isArray(entries) ? entries.find((entry) => read(entry, "origin") === "canonical-skill") : void 0;
+    if (typeof skillText !== "string" || !isRecord(skillEntry) || read(skillEntry, "sha256") !== sha256Hex(skillText) || read(skillEntry, "utf8Length") !== Buffer.byteLength(skillText, "utf8") || read(construction, "recipe") !== "reviewer-common-bundle-v1" || !isRecord(bundle) || !Array.isArray(entries) || !verifyBundleIdentity(bundle) || objectFormat !== "sha1" && objectFormat !== "sha256" || !objectId(read(target, "targetHead")) || !isRecord(refs) || Object.values(refs).some((ref) => !isRecord(ref) || !objectId(read(ref, "objectId")) || read(ref, "peeledCommitId") !== null && !objectId(read(ref, "peeledCommitId"))))
+      throw new Error("Invalid Reviewer construction or target identity");
+    const expectedAxes = legs.map((leg) => read(leg, "axis"));
+    if (expectedAxes[0] !== "standards" || expectedAxes.length === 2 && expectedAxes[1] !== "spec" || expectedAxes.length < 1 || expectedAxes.length > 2)
       throw new Error("Invalid Reviewer accepted-leg projection");
-    const objectId = (value) => typeof value === "string" && new RegExp(target.objectFormat === "sha1" ? "^[0-9a-f]{40}$" : "^[0-9a-f]{64}$").test(value);
-    if (!exactKeys(construction, ["recipe", "bundle"]) || construction.recipe !== "reviewer-common-bundle-v1" || !isRecord3(construction.bundle) || !exactKeys(construction.bundle, ["recipeIdentity", "manifestSha256", "entries"]) || !Array.isArray(construction.bundle.entries) || construction.bundle.entries.some((entry) => !isRecord3(entry) || !exactKeys(entry, ["id", "relativeClonePath", "origin", "sourceIdentity", "utf8Length", "sha256"]) || Object.hasOwn(entry, "bytes")) || !verifyBundleIdentity(construction.bundle) || !exactKeys(target, ["repositoryRoot", "objectFormat", "targetHead", "refs"]) || typeof target.repositoryRoot !== "string" || target.repositoryRoot.length === 0 || target.objectFormat !== "sha1" && target.objectFormat !== "sha256" || !objectId(target.targetHead) || !isRecord3(target.refs) || Object.values(target.refs).some((ref) => !isRecord3(ref) || !exactKeys(ref, ["objectId", "peeledCommitId"]) || !objectId(ref.objectId) || ref.peeledCommitId !== null && !objectId(ref.peeledCommitId))) throw new Error("Invalid Reviewer construction or target identity");
-  }
-  for (const axis of ["standards", "spec"]) {
-    const report = output.reports[axis];
-    const outcome = output.outcomes[axis];
-    if (report !== void 0 && !isReceiptText(report)) throw new Error("Invalid Reviewer report text");
-    if (outcome === void 0) {
-      if (report !== void 0) throw new Error("Reviewer report lacks outcome");
-      continue;
+    if (!isRecord(outcomes) || !isRecord(reports)) throw new Error("Accepted Reviewer batch lacks outcomes or reports");
+    const outcomeAxes = Object.keys(outcomes).filter((axis) => axis === "standards" || axis === "spec");
+    if (outcomeAxes.length !== expectedAxes.length || outcomeAxes.some((axis, index) => axis !== expectedAxes[index]))
+      throw new Error("Reviewer outcomes must exactly cover accepted legs in canonical order");
+    for (const [index, axisValue] of expectedAxes.entries()) {
+      const axis = axisValue;
+      const outcome = read(outcomes, axis);
+      if (!isRecord(outcome)) throw new Error("Reviewer accepted leg lacks outcome");
+      const expectedPrompt = read(read(legs[index], "prompt"), "text");
+      const actualPrompt = read(read(outcome, "prompt"), "text");
+      if (expectedPrompt !== actualPrompt) throw new Error("Reviewer outcome prompt disagrees with accepted leg");
+      const materialized = read(outcome, "runtimeConstructionEvidence");
+      const status = read(outcome, "status");
+      const report = read(reports, axis);
+      if (status === "successful" && (report === void 0 || materialized === void 0))
+        throw new Error("Successful Reviewer outcome lacks report or materialization evidence");
+      if (status === "failed" && report !== void 0) throw new Error("Failed Reviewer outcome cannot bind a report");
+      if (materialized !== void 0) {
+        const materialEntries = read(materialized, "entries");
+        if (!isRecord(materialized) || read(materialized, "leg") !== axis || typeof read(materialized, "workspaceIdentity") !== "string" || read(materialized, "workspaceIdentity") === "" || read(materialized, "manifestSha256") !== read(bundle, "manifestSha256") || !Array.isArray(materialEntries) || materialEntries.length !== entries.length || materialEntries.some((entry, entryIndex) => {
+          const expected = entries[entryIndex];
+          return !isRecord(entry) || read(entry, "verified") !== true || read(entry, "readable") !== true || read(entry, "id") !== read(expected, "id") || read(entry, "relativeClonePath") !== read(expected, "relativeClonePath") || read(entry, "utf8Length") !== read(expected, "utf8Length") || read(entry, "sha256") !== read(expected, "sha256");
+        })) throw new Error("Reviewer runtime construction evidence disagrees with accepted bundle or leg");
+      }
     }
-    if (!isRecord3(outcome) || !exactKeys(outcome, ["status", "prompt", "workspaceDisposition"], ["failure", "runtimeConstructionEvidence"]) || outcome.status !== "successful" && outcome.status !== "failed" || !isReceiptText(outcome.prompt) || !validWorkspace(outcome.workspaceDisposition)) throw new Error("Invalid Reviewer outcome");
-    const materialized = outcome.runtimeConstructionEvidence;
-    if (materialized !== void 0) {
-      const bundle = output.identities.construction.bundle;
-      const entries = bundle.entries;
-      if (!isRecord3(materialized) || !exactKeys(materialized, ["leg", "workspaceIdentity", "manifestSha256", "entries"]) || materialized.leg !== axis || typeof materialized.workspaceIdentity !== "string" || materialized.workspaceIdentity.length === 0 || materialized.manifestSha256 !== bundle.manifestSha256 || !Array.isArray(materialized.entries) || materialized.entries.length !== entries.length || materialized.entries.some((entry, index) => {
-        const expected = entries[index];
-        return !isRecord3(entry) || !exactKeys(entry, ["id", "relativeClonePath", "utf8Length", "sha256", "verified", "readable"]) || entry.verified !== true || entry.readable !== true || entry.id !== expected.id || entry.relativeClonePath !== expected.relativeClonePath || entry.utf8Length !== expected.utf8Length || entry.sha256 !== expected.sha256;
-      })) throw new Error("Reviewer runtime construction evidence disagrees with accepted bundle or leg");
-    }
-    if (outcome.status === "successful") {
-      if (Object.hasOwn(outcome, "failure") || report === void 0 || materialized === void 0) throw new Error("Successful Reviewer outcome requires exactly one report and materialization evidence");
-    } else if (!failures.has(outcome.failure) || report !== void 0) throw new Error("Failed Reviewer outcome requires a classification and no report");
   }
-  const expectedAxes = expectedLegs.map((leg) => leg.axis);
-  const outcomeAxes = Object.keys(output.outcomes);
-  if (hasBatch && (outcomeAxes.length !== expectedAxes.length || outcomeAxes.some((axis, index) => axis !== expectedAxes[index]))) throw new Error("Reviewer outcomes must exactly cover accepted legs in canonical order");
-  for (const [index, axis] of expectedAxes.entries()) {
-    const outcome = output.outcomes[axis];
-    const expectedPrompt = expectedLegs[index].prompt;
-    if (outcome.prompt.text !== expectedPrompt.text) throw new Error("Reviewer outcome prompt disagrees with accepted leg");
-  }
-  if (output.status === "completed" && (!hasBatch || Object.values(output.outcomes).some((item) => item.status !== "successful"))) throw new Error("Completed Reviewer receipt requires a successful accepted batch");
-  if (!hasBatch && (Object.keys(output.outcomes).length !== 0 || Object.keys(output.reports).length !== 0)) throw new Error("Pre-acceptance Reviewer refusal cannot contain outcomes or reports");
   return output;
 }
 
@@ -2274,8 +1861,8 @@ function CreateObject(types, value) {
 }
 function FromUnionKey(types, value) {
   const flattened = Flatten(types);
-  const record5 = TryBuildRecord(flattened, value);
-  return IsSchema(record5) ? record5 : CreateObject(flattened, value);
+  const record3 = TryBuildRecord(flattened, value);
+  return IsSchema(record3) ? record3 : CreateObject(flattened, value);
 }
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key.mjs
@@ -2801,8 +2388,8 @@ function ScriptMapping(input) {
 function IsMatch(value) {
   return IsEqual(value.length, 2);
 }
-function Match2(input, ok, fail6) {
-  return IsMatch(input) ? ok(input[0], input[1]) : fail6();
+function Match2(input, ok, fail4) {
+  return IsMatch(input) ? ok(input[0], input[1]) : fail4();
 }
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/take.mjs
@@ -9066,27 +8653,27 @@ var FixerPacketValidationError = class extends Error {
     this.name = "FixerPacketValidationError";
   }
 };
-function fail2(cause) {
+function fail(cause) {
   throw new FixerPacketValidationError(cause);
 }
 function parseFailure(value) {
-  if (!Array.isArray(value)) fail2(new Error("Fixer prerequisites must be a JSON array"));
+  if (!Array.isArray(value)) fail(new Error("Fixer prerequisites must be a JSON array"));
   for (const entry of value) {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      fail2(new Error("Fixer prerequisite entry must be an object with id and requirement fields"));
+      fail(new Error("Fixer prerequisite entry must be an object with id and requirement fields"));
     }
     const keys = Object.keys(entry);
     if (keys.length !== 2 || !keys.includes("id") || !keys.includes("requirement")) {
-      fail2(new Error("Fixer prerequisite entry fields must be exactly id and requirement"));
+      fail(new Error("Fixer prerequisite entry fields must be exactly id and requirement"));
     }
     if (typeof entry.id !== "string" || !new RegExp(FIXER_PREREQUISITE_ID_PATTERN).test(entry.id)) {
-      fail2(new Error(`Fixer prerequisite id violates pattern ${FIXER_PREREQUISITE_ID_PATTERN}`));
+      fail(new Error(`Fixer prerequisite id violates pattern ${FIXER_PREREQUISITE_ID_PATTERN}`));
     }
     if (typeof entry.requirement !== "string" || !/\S/.test(entry.requirement)) {
-      fail2(new Error("Fixer prerequisite requirement must be nonblank"));
+      fail(new Error("Fixer prerequisite requirement must be nonblank"));
     }
   }
-  fail2(new Error("Fixer prerequisites violate the attachment schema"));
+  fail(new Error("Fixer prerequisites violate the attachment schema"));
 }
 function validateFixerPrerequisites(value) {
   if (!value_exports.Check(fixerPrerequisitesSchema, value)) parseFailure(value);
@@ -9094,7 +8681,7 @@ function validateFixerPrerequisites(value) {
   const ids = /* @__PURE__ */ new Set();
   const prerequisites = entries.map((entry) => {
     if (ids.has(entry.id)) {
-      fail2(new Error(`Fixer prerequisites contain duplicate id: ${entry.id}`));
+      fail(new Error(`Fixer prerequisites contain duplicate id: ${entry.id}`));
     }
     ids.add(entry.id);
     return Object.freeze({ id: entry.id, requirement: entry.requirement });
@@ -9106,9 +8693,38 @@ function parseFixerPrerequisites(source) {
   try {
     decoded = JSON.parse(source);
   } catch (error) {
-    fail2(error);
+    fail(error);
   }
   return validateFixerPrerequisites(decoded);
+}
+
+// src/open-tool-schema.ts
+function described(name, schema) {
+  if (typeof schema.description === "string") return schema;
+  throw new Error(`Tool field ${name} has no semantic description at its schema owner`);
+}
+function declarationIdentity(schema) {
+  const { description: _description, ...semantic } = schema;
+  return JSON.stringify(semantic);
+}
+function openToolObjectFromUnion(schema) {
+  const declarations = /* @__PURE__ */ new Map();
+  for (const variant of schema.anyOf) {
+    for (const [name, declaration] of Object.entries(variant.properties ?? {})) {
+      const entries = declarations.get(name) ?? [];
+      const identity = declarationIdentity(declaration);
+      if (!entries.some((entry) => declarationIdentity(entry) === identity)) entries.push(declaration);
+      declarations.set(name, entries);
+    }
+  }
+  const properties = Object.fromEntries([...declarations].map(([name, entries]) => {
+    const descriptions = [...new Set(entries.map((entry) => entry.description).filter((value) => typeof value === "string"))].join(" ");
+    const declaration = entries.length === 1 ? entries[0] : typebox_exports.Union(entries, descriptions === "" ? {} : { description: descriptions });
+    return [name, typebox_exports.Optional(described(name, declaration))];
+  }));
+  const object = typebox_exports.Object(properties, { additionalProperties: true });
+  object.required = [];
+  return object;
 }
 
 // src/package-contracts/fixer-output.ts
@@ -9133,130 +8749,23 @@ var refusedClassResultSchema = typebox_exports.Object({
 });
 var classResultSchema = typebox_exports.Union([completedClassResultSchema, refusedClassResultSchema]);
 var completedClassResultsSchema = typebox_exports.Array(completedClassResultSchema, { minItems: 1 });
-var fixerOutputSchema = typebox_exports.Union([
-  typebox_exports.Object({ status: typebox_exports.Literal("planned"), report: nonblankTransportString }),
-  typebox_exports.Object({ status: typebox_exports.Literal("refused"), report: nonblankTransportString, remainingScope: nonblankTransportString, blocker: blockerSchema }),
-  typebox_exports.Object({ status: typebox_exports.Literal("unfinished"), report: nonblankTransportString, remainingScope: nonblankTransportString, classResults: typebox_exports.Optional(completedClassResultsSchema) }),
-  typebox_exports.Object({ status: typebox_exports.Literal("completed"), report: nonblankTransportString, classResults: typebox_exports.Array(classResultSchema, { minItems: 1 }) }),
-  typebox_exports.Object({ status: typebox_exports.Literal("refused"), report: nonblankTransportString, classResults: typebox_exports.Array(classResultSchema, { minItems: 1 }) }),
-  typebox_exports.Object({ status: typebox_exports.Literal("partially_completed"), report: nonblankTransportString, classResults: typebox_exports.Array(classResultSchema, { minItems: 1 }) })
+var fixerOutputVariants = typebox_exports.Union([
+  typebox_exports.Object({ status: typebox_exports.Literal("planned", { description: "Plan-phase proposal outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }) }),
+  typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "Lawfully refused outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work that cannot lawfully be performed." }), blocker: typebox_exports.Unsafe({ ...blockerSchema, description: "Lawful blocker preventing completion." }) }),
+  typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "Honest unfinished apply outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work remaining after this invocation." }), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })) }),
+  typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "All assigned classes completed." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }) }),
+  typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "All assigned classes lawfully refused." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class refusal settlements." }) }),
+  typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }) })
 ]);
-var record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-var nonblank = (value) => typeof value === "string" && value.trim().length > 0;
-function fail3(constraint) {
-  throw new Error(`Fixer output violates ${constraint}`);
-}
-function blocker(value, path) {
-  if (!record(value)) fail3(`${path} object constraint`);
-  if (!nonblank(value.evidence)) fail3(`${path}.evidence nonblank constraint`);
-  if (value.cause === "authority_violation") {
-    if (Object.hasOwn(value, "prerequisiteId")) fail3(`${path} authority_violation prerequisiteId semantic-field constraint`);
-    return { cause: "authority_violation", evidence: value.evidence };
-  }
-  if (value.cause === "prerequisite_unmet") {
-    if (typeof value.prerequisiteId !== "string" || !new RegExp(FIXER_PREREQUISITE_ID_PATTERN).test(value.prerequisiteId)) fail3(`${path}.prerequisiteId pattern constraint`);
-    return { cause: "prerequisite_unmet", prerequisiteId: value.prerequisiteId, evidence: value.evidence };
-  }
-  fail3(`${path}.cause allowed-values constraint`);
-}
-function validateFixerOutput(value, phase) {
-  if (!record(value)) fail3("root object constraint");
-  if (!nonblank(value.report)) fail3("report nonblank constraint");
-  if (Object.hasOwn(value, "commitSha") || Object.hasOwn(value, "classesRepaired")) fail3("removed top-level commit semantic-field constraint");
-  if (value.status === "planned") {
-    if (phase === "apply") fail3("status phase constraint: apply forbids planned");
-    if (Object.hasOwn(value, "classResults") || Object.hasOwn(value, "remainingScope") || Object.hasOwn(value, "blocker") || Object.hasOwn(value, "commitSha")) fail3("status planned semantic-field combination constraint");
-    return { status: "planned", report: value.report };
-  }
-  if (value.status === "unfinished") {
-    if (phase === "plan") fail3("status phase constraint: plan forbids unfinished");
-    if (!nonblank(value.remainingScope)) fail3("remainingScope nonblank constraint");
-    if (Object.hasOwn(value, "blocker") || Object.hasOwn(value, "commitSha")) fail3("status unfinished semantic-field combination constraint");
-    if (!Object.hasOwn(value, "classResults")) return { status: "unfinished", report: value.report, remainingScope: value.remainingScope };
-    if (!Array.isArray(value.classResults) || value.classResults.length === 0) fail3("unfinished classResults nonempty array constraint");
-    const names2 = /* @__PURE__ */ new Set();
-    const classResults2 = value.classResults.map((item, index) => {
-      const path = `classResults[${index}]`;
-      if (!record(item) || item.disposition !== "completed") fail3(`${path} unfinished completed-only constraint`);
-      if (!nonblank(item.name)) fail3(`${path}.name nonblank constraint`);
-      if (names2.has(item.name)) fail3("classResults name unique constraint");
-      names2.add(item.name);
-      if (Object.hasOwn(item, "remainingScope") || Object.hasOwn(item, "blocker")) fail3(`${path} completed/refused semantic-field combination constraint`);
-      if (!nonblank(item.searchScope)) fail3(`${path}.searchScope nonblank constraint`);
-      if (!Array.isArray(item.exceptions)) fail3(`${path}.exceptions array constraint`);
-      const exceptions = item.exceptions.map((entry, exceptionIndex) => {
-        const exceptionPath = `${path}.exceptions[${exceptionIndex}]`;
-        if (!record(entry) || !nonblank(entry.where) || !nonblank(entry.reason)) fail3(`${exceptionPath} nonblank constraint`);
-        return { where: entry.where, reason: entry.reason };
-      });
-      if (!nonblank(item.commitSha)) fail3(`${path}.commitSha nonblank constraint`);
-      return { name: item.name, disposition: "completed", searchScope: item.searchScope, exceptions, commitSha: item.commitSha };
-    });
-    return { status: "unfinished", report: value.report, remainingScope: value.remainingScope, classResults: classResults2 };
-  }
-  if (value.status === "refused" && Object.hasOwn(value, "remainingScope")) {
-    if (Object.hasOwn(value, "classResults")) fail3("status refused plan/apply semantic-field combination constraint");
-    if (phase === "apply") fail3("status phase constraint: apply refusal requires classResults");
-    if (!nonblank(value.remainingScope)) fail3("remainingScope nonblank constraint");
-    return { status: "refused", report: value.report, remainingScope: value.remainingScope, blocker: blocker(value.blocker, "blocker") };
-  }
-  if (phase === "plan") fail3("status phase constraint: plan permits planned or refused");
-  if (value.status !== "completed" && value.status !== "refused" && value.status !== "partially_completed") fail3("status allowed-values constraint");
-  if (!Array.isArray(value.classResults) || value.classResults.length === 0) fail3("classResults nonempty array constraint");
-  const names = /* @__PURE__ */ new Set();
-  let completed = 0, refused = 0;
-  const classResults = value.classResults.map((item, index) => {
-    const path = `classResults[${index}]`;
-    if (!record(item)) fail3(`${path} object constraint`);
-    if (!nonblank(item.name)) fail3(`${path}.name nonblank constraint`);
-    if (names.has(item.name)) fail3("classResults name unique constraint");
-    names.add(item.name);
-    if (item.disposition === "completed") {
-      if (Object.hasOwn(item, "remainingScope") || Object.hasOwn(item, "blocker")) fail3(`${path} completed/refused semantic-field combination constraint`);
-      if (!nonblank(item.searchScope)) fail3(`${path}.searchScope nonblank constraint`);
-      if (!Array.isArray(item.exceptions)) fail3(`${path}.exceptions array constraint`);
-      const exceptions = item.exceptions.map((entry, exceptionIndex) => {
-        const exceptionPath = `${path}.exceptions[${exceptionIndex}]`;
-        if (!record(entry)) fail3(`${exceptionPath} object constraint`);
-        if (!nonblank(entry.where)) fail3(`${exceptionPath}.where nonblank constraint`);
-        if (!nonblank(entry.reason)) fail3(`${exceptionPath}.reason nonblank constraint`);
-        return { where: entry.where, reason: entry.reason };
-      });
-      if (!nonblank(item.commitSha)) fail3(`${path}.commitSha nonblank constraint`);
-      completed++;
-      return { name: item.name, disposition: "completed", searchScope: item.searchScope, exceptions, commitSha: item.commitSha };
-    }
-    if (item.disposition === "refused") {
-      if (Object.hasOwn(item, "searchScope") || Object.hasOwn(item, "exceptions") || Object.hasOwn(item, "commitSha")) fail3(`${path} refused/completed semantic-field combination constraint`);
-      if (!nonblank(item.remainingScope)) fail3(`${path}.remainingScope nonblank constraint`);
-      refused++;
-      return { name: item.name, disposition: "refused", remainingScope: item.remainingScope, blocker: blocker(item.blocker, `${path}.blocker`) };
-    }
-    fail3(`${path}.disposition allowed-values constraint`);
-  });
-  if (value.status === "completed" && (refused !== 0 || completed === 0)) fail3("status completed disposition combination constraint");
-  if (value.status === "refused" && (completed !== 0 || refused === 0)) fail3("status refused disposition combination constraint");
-  if (value.status === "partially_completed" && (completed === 0 || refused === 0)) fail3("status partially_completed disposition combination constraint");
-  return { status: value.status, report: value.report, classResults };
+var fixerOutputSchema = openToolObjectFromUnion(fixerOutputVariants);
+function validateFixerOutput(value, _phase) {
+  return value;
 }
 
 // src/package-contracts/worker-output.ts
 var CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
-var record2 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-var exact = (value, keys) => Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 function validateAcceptedCoderDetails(output) {
-  if (!record2(output)) throw new Error("Coder output must be an object");
-  const status = output.status;
-  if (status === "unfinished") {
-    if (!exact(output, ["status", "report", "remainingScope"]) || typeof output.report !== "string" || output.report.trim().length === 0 || typeof output.remainingScope !== "string" || output.remainingScope.trim().length === 0) {
-      throw new Error("Coder unfinished output requires a non-blank report and remainingScope");
-    }
-    return { status, report: output.report, remainingScope: output.remainingScope };
-  }
-  if (!exact(output, ["status", "report"]) || status !== "planned" && status !== "completed" && status !== "refused" || typeof output.report !== "string" || output.report.trim().length === 0) {
-    throw new Error("Coder output requires planned|completed|refused and a non-blank report");
-  }
-  return { status, report: output.report };
+  return output;
 }
 function validateAcceptedWorkerDetails(output, roleLabel = "Coder") {
   return roleLabel === "Fixer" ? validateFixerOutput(output) : validateAcceptedCoderDetails(output);
@@ -9265,62 +8774,83 @@ function validateAcceptedWorkerDetails(output, roleLabel = "Coder") {
 // src/doctor-contracts.ts
 var DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 var DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
-var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
-var count = typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank2) }, { additionalProperties: false });
-var evidenceIds = typebox_exports.Array(nonblank2, { minItems: 1 });
-var guardrail = typebox_exports.Object({ answer: typebox_exports.Boolean(), evidenceIds, explanation: nonblank2 }, { additionalProperties: false });
+var nonblank = typebox_exports.String({ minLength: 1, pattern: "\\S" });
+var count = typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank) }, { additionalProperties: false });
+var evidenceIds = typebox_exports.Array(nonblank, { minItems: 1 });
+var guardrail = typebox_exports.Object({ answer: typebox_exports.Boolean(), evidenceIds, explanation: nonblank }, { additionalProperties: false });
 var lastRealBite = typebox_exports.Union([
-  typebox_exports.Object({ kind: typebox_exports.Literal("actual"), targetKey: nonblank2, evidenceId: nonblank2 }, { additionalProperties: false }),
-  typebox_exports.Object({ kind: typebox_exports.Literal("noRealBite"), targetKey: nonblank2, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false })
+  typebox_exports.Object({ kind: typebox_exports.Literal("actual"), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: false }),
+  typebox_exports.Object({ kind: typebox_exports.Literal("noRealBite"), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false })
 ]);
 var assetKinds = DOCTOR_TARGET_KINDS;
 var findingBody = {
   evidenceIds,
   disposition: typebox_exports.Union([typebox_exports.Literal("keep"), typebox_exports.Literal("thin"), typebox_exports.Literal("delete")]),
   guardrails: typebox_exports.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: true }),
-  prescription: typebox_exports.Object({ kind: typebox_exports.Union([typebox_exports.Literal("retain"), typebox_exports.Literal("delete"), typebox_exports.Literal("simplify"), typebox_exports.Literal("patch"), typebox_exports.Literal("addMechanism")]), recommendation: nonblank2, necessityExplanation: typebox_exports.Optional(nonblank2) }, { additionalProperties: false }),
+  prescription: typebox_exports.Object({ kind: typebox_exports.Union([typebox_exports.Literal("retain"), typebox_exports.Literal("delete"), typebox_exports.Literal("simplify"), typebox_exports.Literal("patch"), typebox_exports.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: typebox_exports.Optional(nonblank) }, { additionalProperties: false }),
   lastRealBite
 };
 var finding = typebox_exports.Union([
-  typebox_exports.Object({ targetKey: nonblank2, observation: nonblank2, evidenceIds }, { additionalProperties: false }),
-  typebox_exports.Object({ targetKey: nonblank2, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), assetEvidence: typebox_exports.Object({ targetKey: nonblank2, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), evidenceId: nonblank2 }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false })
+  typebox_exports.Object({ targetKey: nonblank, observation: nonblank, evidenceIds }, { additionalProperties: false }),
+  typebox_exports.Object({ targetKey: nonblank, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), assetEvidence: typebox_exports.Object({ targetKey: nonblank, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false })
 ]);
-var caseIdentity = typebox_exports.Object({ issueNumber: typebox_exports.Integer({ minimum: 1 }), runsPath: nonblank2 }, { additionalProperties: false });
+var caseIdentity = typebox_exports.Object({ issueNumber: typebox_exports.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
 var cost = typebox_exports.Object({
   invocations: count,
   legs: count,
   modelApiTurns: count,
   outputTokens: count,
   toolCalls: count,
-  retries: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank2), evidence: typebox_exports.Literal("literal run-dir naming") }, { additionalProperties: false }),
-  statuses: typebox_exports.Array(typebox_exports.Object({ source: nonblank2, status: nonblank2 }, { additionalProperties: false })),
-  commits: typebox_exports.Array(typebox_exports.Object({ source: nonblank2, commit: nonblank2 }, { additionalProperties: false })),
+  retries: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank), evidence: typebox_exports.Literal("literal run-dir naming") }, { additionalProperties: false }),
+  statuses: typebox_exports.Array(typebox_exports.Object({ source: nonblank, status: nonblank }, { additionalProperties: false })),
+  commits: typebox_exports.Array(typebox_exports.Object({ source: nonblank, commit: nonblank }, { additionalProperties: false })),
   sessions: typebox_exports.Array(typebox_exports.Union([
-    typebox_exports.Object({ source: nonblank2, startedAt: nonblank2, endedAt: nonblank2, wallMilliseconds: typebox_exports.Number({ minimum: 0 }), completion: typebox_exports.Literal("accepted") }, { additionalProperties: false }),
-    typebox_exports.Object({ source: nonblank2, startedAt: typebox_exports.Optional(nonblank2), endedAt: typebox_exports.Optional(nonblank2), wallMilliseconds: typebox_exports.Optional(typebox_exports.Number({ minimum: 0 })), completion: typebox_exports.Literal("incomplete"), degradationReason: typebox_exports.Optional(nonblank2) }, { additionalProperties: false })
+    typebox_exports.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: typebox_exports.Number({ minimum: 0 }), completion: typebox_exports.Literal("accepted") }, { additionalProperties: false }),
+    typebox_exports.Object({ source: nonblank, startedAt: typebox_exports.Optional(nonblank), endedAt: typebox_exports.Optional(nonblank), wallMilliseconds: typebox_exports.Optional(typebox_exports.Number({ minimum: 0 })), completion: typebox_exports.Literal("incomplete"), degradationReason: typebox_exports.Optional(nonblank) }, { additionalProperties: false })
   ])),
-  outputBytes: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank2), payload: typebox_exports.Literal("raw JSONL bytes"), providerWireBytes: typebox_exports.Literal("unavailable") }, { additionalProperties: false })
+  outputBytes: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank), payload: typebox_exports.Literal("raw JSONL bytes"), providerWireBytes: typebox_exports.Literal("unavailable") }, { additionalProperties: false })
 }, { additionalProperties: false });
-var doctorSubmissionSchema = typebox_exports.Union([
+var doctorSubmissionVariants = typebox_exports.Union([
   typebox_exports.Object({
     status: typebox_exports.Literal("completed", { description: "Truthful single-case testimony was completed; the runtime adds derived cost to the receipt." }),
-    case: caseIdentity,
+    case: typebox_exports.Unsafe({ ...caseIdentity, description: "Identity of the retained Doctor case." }),
     findings: typebox_exports.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." })
   }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
   typebox_exports.Object({
     status: typebox_exports.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
-    reason: nonblank2,
-    missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank2, targetKeys: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1 })
+    reason: typebox_exports.String({ minLength: 1, description: "Reason evidence is insufficient for truthful testimony." }),
+    missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank, targetKeys: typebox_exports.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "Evidence required before truthful testimony is possible." })
   }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." })
 ]);
+var doctorSubmissionSchema = openToolObjectFromUnion(doctorSubmissionVariants);
 var doctorOutputSchema = typebox_exports.Union([
   typebox_exports.Object({ status: typebox_exports.Literal("completed"), case: caseIdentity, findings: typebox_exports.Array(finding), cost }, { additionalProperties: false }),
-  doctorSubmissionSchema.anyOf[1]
+  doctorSubmissionVariants.anyOf[1]
 ]);
-var doctorEvidenceReadSchema = typebox_exports.Object({ evidenceId: nonblank2, offset: typebox_exports.Optional(typebox_exports.Integer({ minimum: 0 })), limit: typebox_exports.Optional(typebox_exports.Integer({ minimum: 1, maximum: 4096 })) }, { additionalProperties: false });
-function validateRecordedDoctorOutput(value) {
-  if (!value_exports.Check(doctorOutputSchema, value)) throw new Error("Doctor output does not match its contract");
+var doctorEvidenceReadSchema = typebox_exports.Object({ evidenceId: typebox_exports.String({ minLength: 1, description: "Identifier of the retained evidence to read." }), offset: typebox_exports.Optional(typebox_exports.Integer({ minimum: 0, description: "Zero-based byte offset at which to begin reading." })), limit: typebox_exports.Optional(typebox_exports.Integer({ minimum: 1, maximum: 4096, description: "Maximum number of bytes to return." })) }, { additionalProperties: false });
+var DoctorSubmissionContractError = class extends Error {
+  name = "DoctorSubmissionContractError";
+};
+function isRecord2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function read2(value, key) {
+  if (!isRecord2(value)) return void 0;
+  try {
+    return value[key];
+  } catch {
+    return void 0;
+  }
+}
+function validateDoctorSubmissionShape(value) {
+  const status = read2(value, "status");
+  if (status !== "completed" && status !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
   return value;
+}
+function validateRecordedDoctorOutput(value) {
+  const output = validateDoctorSubmissionShape(value);
+  if (read2(output, "status") === "completed" && read2(output, "cost") === void 0) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
+  return output;
 }
 
 // src/git-object-id.ts
@@ -9330,9 +8860,8 @@ function isFullGitObjectId(value) {
 }
 
 // src/merger-contracts.ts
-var digestPattern = "^[0-9a-f]{64}$";
 var oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
-var materialSchema = typebox_exports.Object({ bytesBase64: typebox_exports.String(), sha256: typebox_exports.String({ pattern: digestPattern }) }, { additionalProperties: false });
+var materialSchema = typebox_exports.Object({ bytesBase64: typebox_exports.String(), sha256: typebox_exports.String() }, { additionalProperties: false });
 var checkSchema = typebox_exports.Object({ name: typebox_exports.String({ minLength: 1 }), argv: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), { minItems: 1 }) }, { additionalProperties: false });
 var mergerInputSchema = typebox_exports.Object({
   version: typebox_exports.Literal(1),
@@ -9344,13 +8873,13 @@ var mergerInputSchema = typebox_exports.Object({
   resolutionScope: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), { minItems: 1 }),
   authorizedChecks: typebox_exports.Array(checkSchema)
 }, { additionalProperties: false });
-var mergerOutputSchema = typebox_exports.Union([
-  typebox_exports.Object({ status: typebox_exports.Literal("completed"), attemptId: typebox_exports.String({ minLength: 1 }), report: typebox_exports.String({ minLength: 1 }), mergeCommitId: typebox_exports.String({ pattern: oidPattern }) }, { additionalProperties: false }),
-  typebox_exports.Object({ status: typebox_exports.Literal("escalate"), attemptId: typebox_exports.String({ minLength: 1 }), diagnosis: typebox_exports.String({ minLength: 1 }), report: typebox_exports.String({ minLength: 1 }) }, { additionalProperties: false })
+var mergerOutputVariants = typebox_exports.Union([
+  typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "Merge attempt completed." }), attemptId: typebox_exports.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), report: typebox_exports.String({ minLength: 1, description: "Truthful merge outcome report." }), mergeCommitId: typebox_exports.String({ pattern: oidPattern, description: "Verified completed merge commit object ID." }) }, { additionalProperties: false }),
+  typebox_exports.Object({ status: typebox_exports.Literal("escalate", { description: "Merge attempt requires human authority." }), attemptId: typebox_exports.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), diagnosis: typebox_exports.String({ minLength: 1, description: "Reason merge completion requires escalation." }), report: typebox_exports.String({ minLength: 1, description: "Truthful merge outcome report." }) }, { additionalProperties: false })
 ]);
+var mergerOutputSchema = openToolObjectFromUnion(mergerOutputVariants);
 var MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
-var record3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
-var exact2 = (v, keys) => Object.keys(v).length === keys.length && keys.every((k) => Object.hasOwn(v, k));
+var record = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
 var blank = (v) => typeof v !== "string" || v.trim().length === 0;
 var MergerInputContractError = class extends Error {
   constructor(message = "Merger input violates its exact contract") {
@@ -9358,25 +8887,21 @@ var MergerInputContractError = class extends Error {
     this.name = "MergerInputContractError";
   }
 };
-function fail4(message = "Merger input violates its exact contract") {
+function fail2(message = "Merger input violates its exact contract") {
   throw new MergerInputContractError(message);
 }
 function canonicalPath(path) {
   return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.includes("\0") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 }
 function validatePathSet(value, label) {
-  if (!Array.isArray(value) || value.length === 0 || !value.every(canonicalPath)) fail4(`Merger ${label} must be a non-empty canonical path set`);
-  const paths = value;
-  const sorted = [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-  if (new Set(paths).size !== paths.length || paths.some((path, i) => path !== sorted[i])) fail4(`Merger ${label} must be unique and canonical byte-sorted`);
-  return paths;
+  if (!Array.isArray(value) || value.length === 0 || !value.every(canonicalPath)) fail2(`Merger ${label} must be a non-empty canonical path set`);
+  return value;
 }
 function validateMaterial(value, label) {
-  if (!record3(value) || !exact2(value, ["bytesBase64", "sha256"]) || typeof value.bytesBase64 !== "string" || typeof value.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(value.sha256)) fail4(`Merger ${label} material is malformed`);
+  if (!record(value) || typeof value.bytesBase64 !== "string" || typeof value.sha256 !== "string") fail2(`Merger ${label} material is malformed`);
   const bytes = Buffer.from(value.bytesBase64, "base64");
-  if (bytes.toString("base64") !== value.bytesBase64) fail4(`Merger ${label} bytes are not canonical base64`);
   exactUtf8(bytes, `Merger ${label} material`);
-  if (sha256Hex(bytes) !== value.sha256) fail4(`Merger ${label} material digest mismatch`);
+  if (sha256Hex(bytes) !== value.sha256) fail2(`Merger ${label} material digest mismatch`);
 }
 function deepFreeze(value) {
   if (value && typeof value === "object") {
@@ -9386,25 +8911,23 @@ function deepFreeze(value) {
   return value;
 }
 function validateMergerInput(value) {
-  if (!record3(value) || !exact2(value, ["version", "attemptId", "targetObjectId", "sourceObjectId", "materials", "expectedConflictPaths", "resolutionScope", "authorizedChecks"]) || value.version !== 1 || blank(value.attemptId) || !isFullGitObjectId(value.targetObjectId) || !isFullGitObjectId(value.sourceObjectId) || value.targetObjectId.length !== value.sourceObjectId.length) fail4("Merger input has invalid identity or object ID");
-  if (!record3(value.materials) || !exact2(value.materials, ["task", "authority", "targetIntent", "sourceIntent"])) fail4();
+  if (!record(value) || blank(value.attemptId) || !isFullGitObjectId(value.targetObjectId) || !isFullGitObjectId(value.sourceObjectId) || value.targetObjectId.length !== value.sourceObjectId.length) fail2("Merger input has invalid identity or object ID");
+  if (!record(value.materials)) fail2();
   for (const key of ["task", "authority", "targetIntent", "sourceIntent"]) validateMaterial(value.materials[key], key);
   const conflicts = validatePathSet(value.expectedConflictPaths, "expected conflict paths");
   const scope = validatePathSet(value.resolutionScope, "resolution scope");
-  if (!conflicts.every((path) => scope.includes(path))) fail4("Merger resolution scope must contain the complete conflict set");
-  if (!Array.isArray(value.authorizedChecks)) fail4("Merger authorized checks are malformed");
-  const names = /* @__PURE__ */ new Set();
+  if (!conflicts.every((path) => scope.includes(path))) fail2("Merger resolution scope must contain the complete conflict set");
+  if (!Array.isArray(value.authorizedChecks)) fail2("Merger authorized checks are malformed");
   for (const check of value.authorizedChecks) {
-    if (!record3(check) || !exact2(check, ["name", "argv"]) || blank(check.name) || !Array.isArray(check.argv) || check.argv.length === 0 || check.argv.some(blank) || names.has(check.name)) fail4("Merger authorized check is malformed or duplicated");
-    names.add(check.name);
+    if (!record(check) || !Array.isArray(check.argv) || check.argv.length === 0 || check.argv.some(blank)) fail2("Merger authorized check is malformed");
   }
   return deepFreeze(structuredClone(value));
 }
 function validateMergerOutput(value, expectedAttemptId) {
-  if (!record3(value) || blank(value.attemptId) || blank(value.report) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("Merger output attempt mismatch or blank report");
-  if (value.status === "completed" && exact2(value, ["status", "attemptId", "report", "mergeCommitId"]) && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
-  if (value.status === "escalate" && exact2(value, ["status", "attemptId", "diagnosis", "report"]) && !blank(value.diagnosis)) return structuredClone(value);
-  throw new Error("Merger output violates the exact completed|escalate contract");
+  if (!record(value) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("Merger output attempt mismatch");
+  if (value.status === "completed" && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
+  if (value.status === "escalate") return structuredClone(value);
+  throw new Error("Merger output has no recognized execution discriminator");
 }
 
 // src/packaged-role-registry.ts
@@ -9575,16 +9098,16 @@ function parsePublicCliConfig(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("public CLI config must be an object");
   }
-  const record5 = value;
-  if (record5.seats === void 0) {
+  const record3 = value;
+  if (record3.seats === void 0) {
     return { seats: {} };
   }
-  if (record5.seats === null || typeof record5.seats !== "object" || Array.isArray(record5.seats)) {
+  if (record3.seats === null || typeof record3.seats !== "object" || Array.isArray(record3.seats)) {
     throw new Error("public CLI config.seats must be an object");
   }
   const seats = {};
   for (const [key, raw] of Object.entries(
-    record5.seats
+    record3.seats
   )) {
     if (!PUBLIC_CONFIGURABLE_SEATS.includes(key)) {
       throw new Error(`unknown configurable seat in config: ${key}`);
@@ -9687,10 +9210,10 @@ function credentialProvidersFromAuthData(data) {
   if (data === null || typeof data !== "object" || Array.isArray(data)) {
     return { "openai-codex": false, xai: false };
   }
-  const record5 = data;
+  const record3 = data;
   return {
-    "openai-codex": Object.prototype.hasOwnProperty.call(record5, "openai-codex"),
-    xai: Object.prototype.hasOwnProperty.call(record5, "xai")
+    "openai-codex": Object.prototype.hasOwnProperty.call(record3, "openai-codex"),
+    xai: Object.prototype.hasOwnProperty.call(record3, "xai")
   };
 }
 async function loadCredentialProviders(agentDir) {
@@ -10115,11 +9638,39 @@ var AcceptedDetailsContractError = class extends Error {
     this.name = "AcceptedDetailsContractError";
   }
 };
+function safeProperty(candidate, property) {
+  try {
+    return candidate?.[property];
+  } catch {
+    return void 0;
+  }
+}
 function validateAcceptedDetails(toolName, details) {
-  if (isAuditEscalationResult(details)) {
+  const candidate = details !== null && typeof details === "object" && !Array.isArray(details) ? details : void 0;
+  let auditEscalation = false;
+  try {
+    auditEscalation = isAuditEscalationResult(details);
+  } catch {
+  }
+  if (auditEscalation || safeProperty(candidate, "kind") === "audit_escalation") {
     throw new AcceptedDetailsContractError(
       "audit escalation is not an accepted role receipt"
     );
+  }
+  const discriminator = safeProperty(candidate, toolName === JUDGE_OUTPUT_TOOL_NAME ? "judgeStatus" : "status");
+  const lawfulStatuses = {
+    [CODER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "unfinished"],
+    [FIXER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "partially_completed", "unfinished"],
+    [REVIEWER_OUTPUT_TOOL_NAME]: ["completed", "refused"],
+    [JUDGE_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
+    [COLLECTOR_OUTPUT_TOOL]: [],
+    [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
+    [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"]
+  };
+  const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.legs) && candidate.legs.length > 0 && candidate.legs.every((leg) => leg !== null && typeof leg === "object" && ["valid", "unavailable", "missing"].includes(String(leg.status)));
+  const runtimeBindingMissing = toolName === DOCTOR_OUTPUT_TOOL_NAME && discriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object") || toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2;
+  if (runtimeBindingMissing || !collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(discriminator))) {
+    throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
   }
   try {
     switch (toolName) {
@@ -10152,19 +9703,20 @@ function acceptedFacts(toolName, details) {
   switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME:
     case FIXER_OUTPUT_TOOL_NAME:
-      return { status: details.status };
     case REVIEWER_OUTPUT_TOOL_NAME:
+    case DOCTOR_OUTPUT_TOOL_NAME:
       return { status: details.status };
     case JUDGE_OUTPUT_TOOL_NAME:
       return { status: details.judgeStatus };
-    case DOCTOR_OUTPUT_TOOL_NAME:
-      return { status: details.status };
     case MERGER_OUTPUT_TOOL_NAME: {
       const output = details;
-      return { status: output.status, ...output.status === "completed" ? { commit: output.mergeCommitId } : {} };
+      return { status: output.status, ...output.status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {} };
     }
     case COLLECTOR_OUTPUT_TOOL: {
-      const unique = [...new Set(details.legs.map((leg) => leg.status))];
+      const legs = details.legs;
+      const unique = [...new Set((Array.isArray(legs) ? legs : []).flatMap(
+        (leg) => leg !== null && typeof leg === "object" && ["valid", "unavailable", "missing"].includes(String(leg.status)) ? [leg.status] : []
+      ))];
       unique.sort((a, b) => COLLECTOR_LEG_STATUS_RANK[a] - COLLECTOR_LEG_STATUS_RANK[b]);
       return { legStatuses: unique };
     }
@@ -10172,7 +9724,7 @@ function acceptedFacts(toolName, details) {
 }
 
 // src/doctor-evidence.ts
-function record4(value) {
+function record2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function discoverCaseFiles(root) {
@@ -10220,7 +9772,7 @@ function deriveSession(content, id) {
   for (const line2 of content.split("\n")) if (line2.trim()) {
     try {
       const row = JSON.parse(line2);
-      if (!record4(row)) {
+      if (!record2(row)) {
         degradationReasons.push(`non-object session row in ${id}`);
         break;
       }
@@ -10239,16 +9791,16 @@ function deriveSession(content, id) {
   let accepted, observedCommit, turns = 0, calls = 0, tokens = 0;
   const statuses = [], commits = [];
   for (const row of rows) {
-    const message = record4(row.message) ? row.message : void 0;
+    const message = record2(row.message) ? row.message : void 0;
     if (message?.role === "assistant") {
-      for (const part of Array.isArray(message.content) ? message.content : []) if (record4(part) && part.type === "toolCall") calls++;
+      for (const part of Array.isArray(message.content) ? message.content : []) if (record2(part) && part.type === "toolCall") calls++;
       if (typeof message.responseId === "string") {
         turns++;
-        const usage = record4(message.usage) ? message.usage : void 0;
+        const usage = record2(message.usage) ? message.usage : void 0;
         if (usage && typeof usage.output === "number") tokens += usage.output;
       }
     }
-    if (message?.role === "toolResult" && message.isError !== true && typeof message.toolName === "string" && isTerminatingToolName(message.toolName) && record4(message.details)) {
+    if (message?.role === "toolResult" && message.isError !== true && typeof message.toolName === "string" && isTerminatingToolName(message.toolName) && record2(message.details)) {
       let details;
       try {
         details = validateAcceptedDetails(message.toolName, message.details);
@@ -10318,7 +9870,7 @@ var COLLECTOR_LEG_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 var COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 var COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
 var COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target and leg manifest. Use only Collector tools. Classify from cited ledger evidence. Submit exactly one ak_collector_output when terminal.";
-function fail5(message, cause) {
+function fail3(message, cause) {
   throw new Error(message, cause === void 0 ? void 0 : { cause });
 }
 function isAsciiControlOrNonAscii(input) {
@@ -10330,37 +9882,37 @@ function isAsciiControlOrNonAscii(input) {
 }
 function parseCollectorRepository(raw) {
   if (typeof raw !== "string") {
-    fail5("Collector repository must be a string owner/repo");
+    fail3("Collector repository must be a string owner/repo");
   }
   const display = raw.trim();
   if (display !== raw) {
-    fail5("Collector repository must not include surrounding whitespace");
+    fail3("Collector repository must not include surrounding whitespace");
   }
   if (display.length === 0) {
-    fail5("Collector repository is required");
+    fail3("Collector repository is required");
   }
   if (isAsciiControlOrNonAscii(display)) {
-    fail5("Collector repository must be conservative ASCII without control bytes");
+    fail3("Collector repository must be conservative ASCII without control bytes");
   }
   if (display.includes("://") || display.includes("?") || display.includes("#") || display.includes("@") || display.includes("%") || display.includes("\\") || display.includes(" ")) {
-    fail5("Collector repository rejects URL syntax, credentials, query, fragment, and percent encoding");
+    fail3("Collector repository rejects URL syntax, credentials, query, fragment, and percent encoding");
   }
   const parts = display.split("/");
   if (parts.length !== 2) {
-    fail5("Collector repository must contain exactly one '/' separating owner and repo");
+    fail3("Collector repository must contain exactly one '/' separating owner and repo");
   }
   const [ownerDisplay, repoDisplay] = parts;
   if (ownerDisplay === void 0 || repoDisplay === void 0) {
-    fail5("Collector repository must contain exactly one '/' separating owner and repo");
+    fail3("Collector repository must contain exactly one '/' separating owner and repo");
   }
   if (ownerDisplay.length === 0 || repoDisplay.length === 0 || ownerDisplay === "." || ownerDisplay === ".." || repoDisplay === "." || repoDisplay === "..") {
-    fail5("Collector repository rejects empty, '.', or '..' segments");
+    fail3("Collector repository rejects empty, '.', or '..' segments");
   }
   if (!COLLECTOR_OWNER_PATTERN.test(ownerDisplay)) {
-    fail5("Collector repository owner must match the v1 conservative grammar (1-39 alphanumeric/hyphen)");
+    fail3("Collector repository owner must match the v1 conservative grammar (1-39 alphanumeric/hyphen)");
   }
   if (!COLLECTOR_REPO_PATTERN.test(repoDisplay)) {
-    fail5("Collector repository name must match the v1 conservative grammar (1-100 alphanumeric/._-)");
+    fail3("Collector repository name must match the v1 conservative grammar (1-100 alphanumeric/._-)");
   }
   const owner = ownerDisplay.toLowerCase();
   const repo = repoDisplay.toLowerCase();
@@ -10373,24 +9925,24 @@ function parseCollectorRepository(raw) {
 }
 function parseCollectorPrNumber(raw) {
   if (typeof raw !== "string" && typeof raw !== "number") {
-    fail5("Collector pull request number is required");
+    fail3("Collector pull request number is required");
   }
   const text = String(raw).trim();
   if (text !== String(raw).trim() || text !== String(raw)) {
   }
   if (typeof raw === "string") {
     if (!/^[1-9][0-9]*$/.test(raw)) {
-      fail5("Collector pull request number must be a positive safe integer string");
+      fail3("Collector pull request number must be a positive safe integer string");
     }
   } else if (typeof raw === "number") {
     if (!Number.isSafeInteger(raw) || raw < 1) {
-      fail5("Collector pull request number must be a positive safe integer");
+      fail3("Collector pull request number must be a positive safe integer");
     }
     return raw;
   }
   const value = Number(text);
   if (!Number.isSafeInteger(value) || value < 1) {
-    fail5("Collector pull request number must be a positive safe integer");
+    fail3("Collector pull request number must be a positive safe integer");
   }
   return value;
 }
@@ -10402,11 +9954,11 @@ function hasRequiredKeys(value, required) {
 }
 function canonicalizeAuthor(raw, legId) {
   if (typeof raw !== "string") {
-    fail5(`Collector leg "${legId}" expectedAuthors entries must be strings`);
+    fail3(`Collector leg "${legId}" expectedAuthors entries must be strings`);
   }
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
-    fail5(`Collector leg "${legId}" expectedAuthors entries must be non-blank`);
+    fail3(`Collector leg "${legId}" expectedAuthors entries must be non-blank`);
   }
   if (trimmed !== raw.trim()) {
   }
@@ -10414,26 +9966,26 @@ function canonicalizeAuthor(raw, legId) {
 }
 function canonicalizeLeg(raw, index) {
   if (!isPlainObject(raw)) {
-    fail5(`Collector manifest legs[${index}] must be an object`);
+    fail3(`Collector manifest legs[${index}] must be an object`);
   }
   const hasRequest = Object.hasOwn(raw, "request");
   if (!hasRequiredKeys(raw, ["id", "expectedAuthors"])) {
-    fail5(`Collector manifest legs[${index}] is missing required keys`);
+    fail3(`Collector manifest legs[${index}] is missing required keys`);
   }
   const id = raw["id"];
   if (typeof id !== "string" || !COLLECTOR_LEG_ID_PATTERN.test(id)) {
-    fail5(`Collector leg id at legs[${index}] must match ^[a-z][a-z0-9._-]{0,63}$`);
+    fail3(`Collector leg id at legs[${index}] must match ^[a-z][a-z0-9._-]{0,63}$`);
   }
   const authorsRaw = raw["expectedAuthors"];
   if (!Array.isArray(authorsRaw) || authorsRaw.length < 1) {
-    fail5(`Collector leg "${id}" expectedAuthors must be a non-empty array`);
+    fail3(`Collector leg "${id}" expectedAuthors must be a non-empty array`);
   }
   const expectedAuthors = [];
   const seenAuthors = /* @__PURE__ */ new Set();
   for (const entry of authorsRaw) {
     const author = canonicalizeAuthor(entry, id);
     if (seenAuthors.has(author)) {
-      fail5(`Collector leg "${id}" has duplicate expected author "${author}"`);
+      fail3(`Collector leg "${id}" has duplicate expected author "${author}"`);
     }
     seenAuthors.add(author);
     expectedAuthors.push(author);
@@ -10442,14 +9994,14 @@ function canonicalizeLeg(raw, index) {
   if (hasRequest) {
     const request = raw["request"];
     if (!isPlainObject(request) || !hasRequiredKeys(request, ["body"])) {
-      fail5(`Collector leg "${id}" request must be an object with body`);
+      fail3(`Collector leg "${id}" request must be an object with body`);
     }
     const body = request["body"];
     if (typeof body !== "string") {
-      fail5(`Collector leg "${id}" request body must be a string`);
+      fail3(`Collector leg "${id}" request body must be a string`);
     }
     if (body.trim().length === 0) {
-      fail5(`Collector leg "${id}" request body must be trim-non-empty`);
+      fail3(`Collector leg "${id}" request body must be trim-non-empty`);
     }
     requestBody = body;
   }
@@ -10475,13 +10027,13 @@ async function loadCollectorManifest(path) {
     bytes = await readFile3(path);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    fail5(`Collector leg manifest is unreadable at ${path}: ${detail}`, error);
+    fail3(`Collector leg manifest is unreadable at ${path}: ${detail}`, error);
   }
   let text;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    fail5("Collector leg manifest must be UTF-8 JSON");
+    fail3("Collector leg manifest must be UTF-8 JSON");
   }
   if (text.charCodeAt(0) === 65279) {
     text = text.slice(1);
@@ -10491,14 +10043,14 @@ async function loadCollectorManifest(path) {
     parsed = JSON.parse(text);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    fail5(`Collector leg manifest is not valid JSON: ${detail}`, error);
+    fail3(`Collector leg manifest is not valid JSON: ${detail}`, error);
   }
   if (!isPlainObject(parsed) || !hasRequiredKeys(parsed, ["legs"])) {
-    fail5("Collector manifest must be an object with legs");
+    fail3("Collector manifest must be an object with legs");
   }
   const legsRaw = parsed["legs"];
   if (!Array.isArray(legsRaw) || legsRaw.length < 1) {
-    fail5("Collector manifest legs must be a non-empty array");
+    fail3("Collector manifest legs must be a non-empty array");
   }
   const legs = [];
   const seenIds = /* @__PURE__ */ new Set();
@@ -10506,13 +10058,13 @@ async function loadCollectorManifest(path) {
   for (let index = 0; index < legsRaw.length; index += 1) {
     const leg = canonicalizeLeg(legsRaw[index], index);
     if (seenIds.has(leg.id)) {
-      fail5(`Collector manifest has duplicate leg id "${leg.id}"`);
+      fail3(`Collector manifest has duplicate leg id "${leg.id}"`);
     }
     seenIds.add(leg.id);
     for (const author of leg.expectedAuthors) {
       const owner = authorOwners.get(author);
       if (owner !== void 0) {
-        fail5(
+        fail3(
           `Collector expected author "${author}" overlaps across legs "${owner}" and "${leg.id}"`
         );
       }
@@ -12205,11 +11757,11 @@ function resolvePackagedMethodSkillRoot(packageRoot2, name) {
 function resolvePackagedMethodSkillPath(packageRoot2, name) {
   return join5(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
 }
-function isRecord4(value) {
+function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseProvenance(raw, expectedName) {
-  if (!isRecord4(raw)) {
+  if (!isRecord3(raw)) {
     throw new Error(`Packaged method provenance must be an object for ${expectedName}`);
   }
   if (raw.name !== expectedName) {
@@ -12223,7 +11775,7 @@ function parseProvenance(raw, expectedName) {
   if (typeof raw.packageAdaptation !== "string" || raw.packageAdaptation.trim() === "") {
     throw new Error(`Packaged method provenance packageAdaptation must be nonblank`);
   }
-  if (!isRecord4(raw.upstream)) {
+  if (!isRecord3(raw.upstream)) {
     throw new Error(`Packaged method provenance upstream must be an object`);
   }
   const upstream = raw.upstream;
@@ -12250,12 +11802,12 @@ function parseProvenance(raw, expectedName) {
       `Packaged method provenance upstream must include nonblank tag or version`
     );
   }
-  if (!isRecord4(raw.files)) {
+  if (!isRecord3(raw.files)) {
     throw new Error(`Packaged method provenance files must be an object`);
   }
   const files = {};
   for (const [rel, entry] of Object.entries(raw.files)) {
-    if (!isRecord4(entry)) {
+    if (!isRecord3(entry)) {
       throw new Error(`Packaged method provenance file entry must be an object: ${rel}`);
     }
     if (typeof entry.sha256 !== "string" || !SHA256_RE.test(entry.sha256)) {
@@ -12459,11 +12011,11 @@ async function readTypedHttp429Observation(runDirectory) {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
     }
-    const record5 = raw;
-    if (record5.httpStatus !== 429) return void 0;
-    if (typeof record5.provider !== "string") return void 0;
-    if (!isV1ResumableProvider(record5.provider)) return void 0;
-    return { httpStatus: 429, provider: record5.provider };
+    const record3 = raw;
+    if (record3.httpStatus !== 429) return void 0;
+    if (typeof record3.provider !== "string") return void 0;
+    if (!isV1ResumableProvider(record3.provider)) return void 0;
+    return { httpStatus: 429, provider: record3.provider };
   } catch {
     return void 0;
   }
@@ -12475,8 +12027,8 @@ function isV1ResumableFailure(input) {
 function renderResumeCommand(runId) {
   return `ak-role resume ${runId}`;
 }
-async function writeRoleRunState(runDirectory, record5) {
-  const payload = { ...record5, runDirectory };
+async function writeRoleRunState(runDirectory, record3) {
+  const payload = { ...record3, runDirectory };
   await writeFile3(
     join6(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
@@ -12492,42 +12044,42 @@ async function readRoleRunState(runDirectory) {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
     }
-    const record5 = raw;
-    if (typeof record5.runId !== "string" || record5.runId.trim() === "") {
+    const record3 = raw;
+    if (typeof record3.runId !== "string" || record3.runId.trim() === "") {
       return void 0;
     }
-    if (record5.role !== "judge" && record5.role !== "coder" && record5.role !== "fixer" && record5.role !== "collector" && record5.role !== "doctor" && record5.role !== "reviewer" && record5.role !== "merger") {
+    if (record3.role !== "judge" && record3.role !== "coder" && record3.role !== "fixer" && record3.role !== "collector" && record3.role !== "doctor" && record3.role !== "reviewer" && record3.role !== "merger") {
       return void 0;
     }
-    if (record5.state !== "admitted" && record5.state !== "running" && record5.state !== "resumable" && record5.state !== "terminal") {
+    if (record3.state !== "admitted" && record3.state !== "running" && record3.state !== "resumable" && record3.state !== "terminal") {
       return void 0;
     }
-    if (typeof record5.bookKey !== "string") return void 0;
-    if (typeof record5.projectRoot !== "string") return void 0;
-    if (typeof record5.sessionDirectory !== "string") return void 0;
-    if (typeof record5.admittedRequestPath !== "string") return void 0;
-    const runDir = typeof record5.runDirectory === "string" && record5.runDirectory.trim() !== "" ? record5.runDirectory : runDirectory;
-    const sessionFile = typeof record5.sessionFile === "string" && record5.sessionFile.trim() !== "" ? record5.sessionFile : roleRunSessionFile(record5.sessionDirectory);
+    if (typeof record3.bookKey !== "string") return void 0;
+    if (typeof record3.projectRoot !== "string") return void 0;
+    if (typeof record3.sessionDirectory !== "string") return void 0;
+    if (typeof record3.admittedRequestPath !== "string") return void 0;
+    const runDir = typeof record3.runDirectory === "string" && record3.runDirectory.trim() !== "" ? record3.runDirectory : runDirectory;
+    const sessionFile = typeof record3.sessionFile === "string" && record3.sessionFile.trim() !== "" ? record3.sessionFile : roleRunSessionFile(record3.sessionDirectory);
     let resumable;
-    if (record5.resumable !== void 0 && record5.resumable !== null) {
-      if (typeof record5.resumable === "object" && !Array.isArray(record5.resumable)) {
-        const r = record5.resumable;
+    if (record3.resumable !== void 0 && record3.resumable !== null) {
+      if (typeof record3.resumable === "object" && !Array.isArray(record3.resumable)) {
+        const r = record3.resumable;
         if (r.httpStatus === 429 && typeof r.provider === "string" && isV1ResumableProvider(r.provider)) {
           resumable = { httpStatus: 429, provider: r.provider };
         }
       }
     }
-    const phase = record5.phase === "plan" || record5.phase === "apply" ? record5.phase : void 0;
+    const phase = record3.phase === "plan" || record3.phase === "apply" ? record3.phase : void 0;
     return {
-      runId: record5.runId,
-      role: record5.role,
-      state: record5.state,
-      bookKey: record5.bookKey,
-      projectRoot: record5.projectRoot,
-      sessionDirectory: record5.sessionDirectory,
+      runId: record3.runId,
+      role: record3.role,
+      state: record3.state,
+      bookKey: record3.bookKey,
+      projectRoot: record3.projectRoot,
+      sessionDirectory: record3.sessionDirectory,
       sessionFile,
       runDirectory: runDir,
-      admittedRequestPath: record5.admittedRequestPath,
+      admittedRequestPath: record3.admittedRequestPath,
       ...phase === void 0 ? {} : { phase },
       ...resumable === void 0 ? {} : { resumable }
     };
@@ -12702,45 +12254,45 @@ async function loadResumableRunRecord(home, runId) {
       await readFile6(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-      const record5 = raw;
-      if (typeof record5.instruction === "string") {
-        instruction = record5.instruction;
+      const record3 = raw;
+      if (typeof record3.instruction === "string") {
+        instruction = record3.instruction;
       }
-      if (typeof record5.instructionEmpty === "boolean") {
-        instructionEmpty = record5.instructionEmpty;
+      if (typeof record3.instructionEmpty === "boolean") {
+        instructionEmpty = record3.instructionEmpty;
       }
-      if (Array.isArray(record5.attachments)) {
-        attachments = record5.attachments;
+      if (Array.isArray(record3.attachments)) {
+        attachments = record3.attachments;
       }
-      if (record5.phase === "plan" || record5.phase === "apply") {
-        phase = record5.phase;
+      if (record3.phase === "plan" || record3.phase === "apply") {
+        phase = record3.phase;
       }
-      if (typeof record5.taskPath === "string" && record5.taskPath.trim() !== "") {
-        taskPath = record5.taskPath;
+      if (typeof record3.taskPath === "string" && record3.taskPath.trim() !== "") {
+        taskPath = record3.taskPath;
       }
-      if (typeof record5.packetPath === "string" && record5.packetPath.trim() !== "") {
-        packetPath = record5.packetPath;
+      if (typeof record3.packetPath === "string" && record3.packetPath.trim() !== "") {
+        packetPath = record3.packetPath;
       }
-      if (typeof record5.prerequisitesPath === "string" && record5.prerequisitesPath.trim() !== "") {
-        prerequisitesPath = record5.prerequisitesPath;
+      if (typeof record3.prerequisitesPath === "string" && record3.prerequisitesPath.trim() !== "") {
+        prerequisitesPath = record3.prerequisitesPath;
       }
-      if (Array.isArray(record5.prerequisites)) {
-        prerequisites = record5.prerequisites;
+      if (Array.isArray(record3.prerequisites)) {
+        prerequisites = record3.prerequisites;
       }
-      if (typeof record5.capabilitiesPath === "string" && record5.capabilitiesPath.trim() !== "") {
-        capabilitiesPath = record5.capabilitiesPath;
+      if (typeof record3.capabilitiesPath === "string" && record3.capabilitiesPath.trim() !== "") {
+        capabilitiesPath = record3.capabilitiesPath;
       }
-      if (typeof record5.taskSha256 === "string" && record5.taskSha256.trim() !== "") {
-        taskSha256 = record5.taskSha256;
+      if (typeof record3.taskSha256 === "string" && record3.taskSha256.trim() !== "") {
+        taskSha256 = record3.taskSha256;
       }
-      if (typeof record5.baseRevision === "string" && record5.baseRevision.trim() !== "") {
-        baseRevision = record5.baseRevision;
+      if (typeof record3.baseRevision === "string" && record3.baseRevision.trim() !== "") {
+        baseRevision = record3.baseRevision;
       }
-      if (typeof record5.mergerInputPath === "string" && record5.mergerInputPath.trim() !== "") {
-        mergerInputPath = record5.mergerInputPath;
+      if (typeof record3.mergerInputPath === "string" && record3.mergerInputPath.trim() !== "") {
+        mergerInputPath = record3.mergerInputPath;
       }
-      if (record5.derived !== null && typeof record5.derived === "object" && !Array.isArray(record5.derived)) {
-        const d = record5.derived;
+      if (record3.derived !== null && typeof record3.derived === "object" && !Array.isArray(record3.derived)) {
+        const d = record3.derived;
         if (typeof d.targetObjectId === "string" && typeof d.sourceObjectId === "string" && typeof d.automaticMergeTreeId === "string" && Array.isArray(d.expectedConflictPaths) && Array.isArray(d.resolutionScope) && d.expectedConflictPaths.every((p) => typeof p === "string") && d.resolutionScope.every((p) => typeof p === "string")) {
           derived = {
             targetObjectId: d.targetObjectId,
@@ -13024,11 +12576,11 @@ var auditorSoulPaths = Object.freeze({
 });
 
 // src/compliance-transport.ts
-var nonblank3 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
+var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
 var decisionGateSchema = typebox_exports.Object(
   {
-    question: nonblank3,
-    options: typebox_exports.Array(nonblank3, { minItems: 1 })
+    question: nonblank2,
+    options: typebox_exports.Array(nonblank2, { minItems: 1 })
   },
   { additionalProperties: false }
 );
@@ -13039,8 +12591,8 @@ var complianceDecisionSchema = typebox_exports.Object(
       typebox_exports.Literal("revise"),
       typebox_exports.Literal("escalate")
     ], { description: "Auditor decision status." }),
-    violations: typebox_exports.Array(nonblank3, { description: "Observed compliance violations." }),
-    conflicts: typebox_exports.Array(nonblank3, { description: "Unresolved authority or execution conflicts." }),
+    violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }),
+    conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }),
     decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." })
   },
   {
@@ -13136,8 +12688,8 @@ var collectorObserveArgsSchema = typebox_exports.Object(
 );
 var collectorRequestArgsSchema = typebox_exports.Object(
   {
-    legId: nonEmptyString,
-    snapshotId: nonEmptyString
+    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg to request." }),
+    snapshotId: typebox_exports.String({ minLength: 1, description: "Latest retained observation snapshot supporting the request." })
   },
   { additionalProperties: false }
 );
@@ -13145,39 +12697,40 @@ var collectorWaitArgsSchema = typebox_exports.Object(
   {
     durationMs: typebox_exports.Integer({
       minimum: 1,
-      maximum: COLLECTOR_ELIGIBILITY_MS
+      maximum: COLLECTOR_ELIGIBILITY_MS,
+      description: "Bounded wait duration before Collector reassesses current evidence."
     })
   },
   { additionalProperties: false }
 );
 var collectorValidLegSchema = typebox_exports.Object(
   {
-    legId: nonEmptyString,
-    status: typebox_exports.Literal("valid"),
-    rationale: nonBlankString,
-    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1 })
+    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg being settled." }),
+    status: typebox_exports.Literal("valid", { description: "Leg has qualifying current-target evidence." }),
+    rationale: typebox_exports.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
+    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." })
   },
   { additionalProperties: false }
 );
 var collectorUnavailableLegSchema = typebox_exports.Object(
   {
-    legId: nonEmptyString,
-    status: typebox_exports.Literal("unavailable"),
-    rationale: nonBlankString,
-    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1 }),
+    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg being settled." }),
+    status: typebox_exports.Literal("unavailable", { description: "Leg cannot be obtained within an identified scope." }),
+    rationale: typebox_exports.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
+    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." }),
     unavailableScope: typebox_exports.Union([
       typebox_exports.Literal("target"),
       typebox_exports.Literal("global")
-    ])
+    ], { description: "Whether unavailability applies only to this target or globally." })
   },
   { additionalProperties: false }
 );
 var collectorMissingLegSchema = typebox_exports.Object(
   {
-    legId: nonEmptyString,
-    status: typebox_exports.Literal("missing"),
-    rationale: nonBlankString,
-    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1 })
+    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg being settled." }),
+    status: typebox_exports.Literal("missing", { description: "Leg lacks qualifying current-target evidence at cutoff." }),
+    rationale: typebox_exports.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
+    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." })
   },
   { additionalProperties: false }
 );
@@ -13188,10 +12741,11 @@ var collectorOutputLegSchema = typebox_exports.Union([
 ]);
 var collectorOutputArgsSchema = typebox_exports.Object(
   {
-    legs: typebox_exports.Array(collectorOutputLegSchema, { minItems: 1 })
+    legs: typebox_exports.Optional(typebox_exports.Array(collectorOutputLegSchema, { minItems: 1, description: "One truthful result for each admitted Collector leg." }))
   },
-  { additionalProperties: false }
+  { additionalProperties: true }
 );
+collectorOutputArgsSchema.required = [];
 
 // src/collector-ledger.ts
 var COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
@@ -13252,13 +12806,13 @@ var NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
 ];
 function isNavigatorInfrastructureFailureFact(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record5 = value;
-  const keys = Object.keys(record5);
+  const record3 = value;
+  const keys = Object.keys(record3);
   if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
   for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
-    if (!Object.hasOwn(record5, key)) return false;
+    if (!Object.hasOwn(record3, key)) return false;
   }
-  return record5.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record5.source === "shared-role-lifecycle" && record5.reasonCode === "host_failure";
+  return record3.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record3.source === "shared-role-lifecycle" && record3.reasonCode === "host_failure";
 }
 var PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
   PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
@@ -13269,20 +12823,20 @@ function invocationPhaseFromUnknown(value) {
 }
 function parseInvocationMarkerIdentity(data) {
   if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
-  const record5 = data;
-  const invocationId = record5.invocationId;
+  const record3 = data;
+  const invocationId = record3.invocationId;
   if (typeof invocationId !== "string") return void 0;
   const trimmedId = invocationId.trim();
   if (!isUuidV7(trimmedId)) return void 0;
-  if (typeof record5.role !== "string" || record5.role.trim() === "") return void 0;
-  const phase = invocationPhaseFromUnknown(record5.phase);
+  if (typeof record3.role !== "string" || record3.role.trim() === "") return void 0;
+  const phase = invocationPhaseFromUnknown(record3.phase);
   if (phase === void 0) return void 0;
-  if (typeof record5.subjectKey !== "string" || record5.subjectKey.trim() === "") return void 0;
+  if (typeof record3.subjectKey !== "string" || record3.subjectKey.trim() === "") return void 0;
   return {
     invocationId: trimmedId,
-    role: record5.role,
+    role: record3.role,
     phase,
-    subjectKey: record5.subjectKey
+    subjectKey: record3.subjectKey
   };
 }
 function markerMatchesExpectedIdentity(marker, expected) {
@@ -13730,114 +13284,190 @@ async function readSessionProviderStop(sessionFile) {
     return void 0;
   }
 }
-function isRecord5(value) {
+function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function judgeDecisiveFacts(verdict) {
-  const facts = {
-    judgeStatus: verdict.judgeStatus
-  };
-  if (verdict.judgeStatus === "continue") {
-    facts.fixSummary = verdict.fix.summary;
-    facts.classCount = verdict.classes.length;
-    facts.classNames = verdict.classes.map((entry) => entry.name).join(",");
-    facts.classes = verdict.classes.map((entry) => ({
-      name: entry.name,
-      owner: entry.owner,
-      boundary: entry.boundary,
-      disposition: entry.disposition
-    }));
+function safelyRead(object, key) {
+  try {
+    return { readable: true, value: object[key] };
+  } catch {
+    return { readable: false };
   }
-  if (verdict.judgeStatus === "escalate") {
-    facts.decisionQuestion = verdict.decisionGate.question;
-    facts.decisionOptions = [...verdict.decisionGate.options];
-  }
-  if (verdict.note !== void 0) facts.note = verdict.note;
-  if (verdict.evidence !== void 0) facts.evidence = verdict.evidence;
-  return facts;
 }
-function coderDecisiveFacts(output) {
-  const facts = {
-    coderStatus: output.status
-  };
-  if (output.status === "unfinished") {
-    facts.remainingScope = output.remainingScope;
-  }
-  facts.reportPresent = output.report.trim().length > 0;
-  return facts;
-}
-function fixerDecisiveFacts(output) {
-  const facts = {
-    fixerStatus: output.status
-  };
-  if (output.status === "unfinished") {
-    facts.remainingScope = output.remainingScope;
-  }
-  if (output.status === "refused" && "blocker" in output) {
-    facts.remainingScope = output.remainingScope;
-    facts.blockerCause = output.blocker.cause;
-    if (output.blocker.cause === "prerequisite_unmet") {
-      facts.prerequisiteId = output.blocker.prerequisiteId;
+function judgeDecisiveFacts(verdict, judgeStatus) {
+  const facts = { judgeStatus };
+  if (judgeStatus === "continue") {
+    const fix = safelyRead(verdict, "fix");
+    if (fix.readable && isRecord4(fix.value)) {
+      const summary = safelyRead(fix.value, "summary");
+      if (summary.readable && typeof summary.value === "string") {
+        facts.fixSummary = summary.value;
+      }
     }
-  }
-  if ("classResults" in output && Array.isArray(output.classResults)) {
-    facts.classResultCount = output.classResults.length;
-    facts.classDispositions = output.classResults.map((entry) => `${entry.name}:${entry.disposition}`).join(",");
-    const refusedBlockers = output.classResults.flatMap(
-      (entry) => entry.disposition === "refused" ? [entry.blocker] : []
-    );
-    if (refusedBlockers.length > 0) {
-      facts.blockerCauses = refusedBlockers.map((blocker2) => blocker2.cause).join(",");
-      const prerequisiteIds = refusedBlockers.flatMap(
-        (blocker2) => blocker2.cause === "prerequisite_unmet" ? [blocker2.prerequisiteId] : []
-      );
-      if (prerequisiteIds.length > 0) {
-        facts.prerequisiteIds = prerequisiteIds.join(",");
+    const classes = safelyRead(verdict, "classes");
+    if (classes.readable && Array.isArray(classes.value)) {
+      try {
+        facts.classes = classes.value.map((entry) => {
+          if (!isRecord4(entry)) throw new Error("unreadable Judge class");
+          return {
+            name: entry.name,
+            owner: entry.owner,
+            boundary: entry.boundary,
+            disposition: entry.disposition
+          };
+        });
+        facts.classCount = classes.value.length;
+      } catch {
       }
     }
   }
-  facts.reportPresent = output.report.trim().length > 0;
+  if (judgeStatus === "escalate") {
+    const gate = safelyRead(verdict, "decisionGate");
+    if (gate.readable && isRecord4(gate.value)) {
+      const question = safelyRead(gate.value, "question");
+      const options = safelyRead(gate.value, "options");
+      if (question.readable && typeof question.value === "string") {
+        facts.decisionQuestion = question.value;
+      }
+      if (options.readable && Array.isArray(options.value)) {
+        facts.decisionOptions = [...options.value];
+      }
+    }
+  }
+  const note = safelyRead(verdict, "note");
+  if (note.readable && note.value !== void 0) facts.note = note.value;
+  const evidence = safelyRead(verdict, "evidence");
+  if (evidence.readable && evidence.value !== void 0) facts.evidence = evidence.value;
+  return facts;
+}
+function coderDecisiveFacts(output) {
+  const candidate = output;
+  const status = safelyRead(candidate, "status");
+  const facts = {};
+  if (status.readable && typeof status.value === "string") facts.coderStatus = status.value;
+  const remainingScope = safelyRead(candidate, "remainingScope");
+  if (status.readable && status.value === "unfinished" && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  const report = safelyRead(candidate, "report");
+  if (report.readable && typeof report.value === "string") facts.reportPresent = report.value.trim().length > 0;
+  return facts;
+}
+function fixerDecisiveFacts(output) {
+  const candidate = output;
+  const status = safelyRead(candidate, "status");
+  const facts = {};
+  if (status.readable && typeof status.value === "string") facts.fixerStatus = status.value;
+  const remainingScope = safelyRead(candidate, "remainingScope");
+  if (status.readable && (status.value === "unfinished" || status.value === "refused") && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  const blockerRead = safelyRead(candidate, "blocker");
+  if (status.readable && status.value === "refused" && blockerRead.readable && isRecord4(blockerRead.value)) {
+    const cause = safelyRead(blockerRead.value, "cause");
+    if (cause.readable && typeof cause.value === "string") facts.blockerCause = cause.value;
+    const prerequisiteId = safelyRead(blockerRead.value, "prerequisiteId");
+    if (cause.readable && cause.value === "prerequisite_unmet" && prerequisiteId.readable && typeof prerequisiteId.value === "string") facts.prerequisiteId = prerequisiteId.value;
+  }
+  const classResults = safelyRead(candidate, "classResults");
+  if (classResults.readable && Array.isArray(classResults.value)) {
+    const rows = [];
+    const blockers = [];
+    try {
+      for (const entry of classResults.value) {
+        if (!isRecord4(entry)) throw new Error("unreadable class result");
+        const name = safelyRead(entry, "name");
+        const disposition = safelyRead(entry, "disposition");
+        if (!name.readable || !disposition.readable) throw new Error("unreadable class result");
+        rows.push({ name: name.value, disposition: disposition.value });
+        const blocker = safelyRead(entry, "blocker");
+        if (disposition.value === "refused" && blocker.readable && isRecord4(blocker.value)) blockers.push(blocker.value);
+      }
+      facts.classResultCount = rows.length;
+      facts.classDispositions = rows;
+      const causes = blockers.flatMap((blocker) => {
+        const cause = safelyRead(blocker, "cause");
+        return cause.readable && typeof cause.value === "string" ? [cause.value] : [];
+      });
+      if (causes.length > 0) facts.blockerCauses = causes;
+      const prerequisiteIds = blockers.flatMap((blocker) => {
+        const cause = safelyRead(blocker, "cause");
+        const id = safelyRead(blocker, "prerequisiteId");
+        return cause.readable && cause.value === "prerequisite_unmet" && id.readable && typeof id.value === "string" ? [id.value] : [];
+      });
+      if (prerequisiteIds.length > 0) facts.prerequisiteIds = prerequisiteIds;
+    } catch {
+    }
+  }
+  const report = safelyRead(candidate, "report");
+  if (report.readable && typeof report.value === "string") facts.reportPresent = report.value.trim().length > 0;
   return facts;
 }
 function collectorDecisiveFacts(receipt) {
-  return {
-    repository: receipt.repository,
-    prNumber: receipt.prNumber,
-    targetHead: receipt.targetHead,
-    manifestDigest: receipt.manifestDigest,
-    legStatuses: receipt.legs.map((leg) => `${leg.legId}:${leg.status}`).join(",")
-  };
+  const candidate = receipt;
+  const facts = {};
+  for (const key of ["repository", "prNumber", "targetHead", "manifestDigest"]) {
+    const value = safelyRead(candidate, key);
+    if (value.readable && value.value !== void 0) facts[key] = value.value;
+  }
+  const legs = safelyRead(candidate, "legs");
+  if (legs.readable && Array.isArray(legs.value)) {
+    try {
+      facts.legStatuses = legs.value.map((leg) => {
+        if (!isRecord4(leg)) throw new Error("unreadable Collector leg");
+        const legId = safelyRead(leg, "legId");
+        const status = safelyRead(leg, "status");
+        if (!legId.readable || !status.readable) throw new Error("unreadable Collector leg");
+        return { legId: legId.value, status: status.value };
+      });
+    } catch {
+    }
+  }
+  return facts;
 }
 function doctorDecisiveFacts(output) {
-  if (output.status === "refused") {
-    return {
-      doctorStatus: output.status,
-      reason: output.reason,
-      missingEvidenceCount: output.missingEvidence.length
-    };
+  const candidate = output;
+  const status = safelyRead(candidate, "status");
+  const facts = {};
+  if (status.readable && typeof status.value === "string") facts.doctorStatus = status.value;
+  if (status.readable && status.value === "refused") {
+    const reason = safelyRead(candidate, "reason");
+    if (reason.readable && reason.value !== void 0) facts.reason = reason.value;
+    const missing = safelyRead(candidate, "missingEvidence");
+    if (missing.readable && Array.isArray(missing.value)) facts.missingEvidenceCount = missing.value.length;
+    return facts;
   }
-  return {
-    doctorStatus: output.status,
-    issueNumber: output.case.issueNumber,
-    runsPath: output.case.runsPath,
-    findingsCount: output.findings.length
-  };
+  const caseValue = safelyRead(candidate, "case");
+  if (caseValue.readable && isRecord4(caseValue.value)) {
+    const issueNumber = safelyRead(caseValue.value, "issueNumber");
+    const runsPath = safelyRead(caseValue.value, "runsPath");
+    if (issueNumber.readable && issueNumber.value !== void 0) facts.issueNumber = issueNumber.value;
+    if (runsPath.readable && runsPath.value !== void 0) facts.runsPath = runsPath.value;
+  }
+  const findings = safelyRead(candidate, "findings");
+  if (findings.readable && Array.isArray(findings.value)) facts.findingsCount = findings.value.length;
+  return facts;
+}
+function reviewerAxes(value) {
+  if (!isRecord4(value)) return [];
+  return ["standards", "spec"].filter((axis) => {
+    const projected = safelyRead(value, axis);
+    return projected.readable && projected.value !== void 0;
+  });
 }
 function reviewerDecisiveFacts(output) {
-  const axes = ["standards", "spec"].filter(
-    (axis) => output.outcomes[axis] !== void 0
-  );
-  const reportAxes = ["standards", "spec"].filter(
-    (axis) => output.reports[axis] !== void 0
-  );
+  const candidate = output;
+  const status = safelyRead(candidate, "status");
+  const outcomes = safelyRead(candidate, "outcomes");
+  const reports = safelyRead(candidate, "reports");
+  const axes = reviewerAxes(outcomes.readable ? outcomes.value : void 0);
+  const reportAxes = reviewerAxes(reports.readable ? reports.value : void 0);
+  const acceptedBatch = safelyRead(candidate, "acceptedBatch");
   const facts = {
-    reviewerStatus: output.status,
-    axes: axes.join(","),
-    reportAxes: reportAxes.join(","),
-    acceptedBatchPresent: output.acceptedBatch !== void 0
+    axes,
+    reportAxes,
+    acceptedBatchPresent: acceptedBatch.readable && acceptedBatch.value !== void 0
   };
-  if (output.status === "refused") {
-    facts.diagnosticPresent = typeof output.diagnostic === "string" && output.diagnostic.trim().length > 0;
+  if (status.readable && typeof status.value === "string") facts.reviewerStatus = status.value;
+  const diagnostic = safelyRead(candidate, "diagnostic");
+  if (status.readable && status.value === "refused" && diagnostic.readable) {
+    facts.diagnosticPresent = typeof diagnostic.value === "string" && diagnostic.value.trim().length > 0;
   }
   return facts;
 }
@@ -13921,9 +13551,9 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds
   }
 }
 function isComplianceAuditIncomplete(value) {
-  if (!isRecord5(value) || value.status !== "audit-incomplete") return false;
+  if (!isRecord4(value) || value.status !== "audit-incomplete") return false;
   const observation = value.observation;
-  if (!isRecord5(observation)) return false;
+  if (!isRecord4(observation)) return false;
   if (observation.kind === "object-status-unreadable") {
     return observation.status === "missing" || observation.status === "unknown";
   }
@@ -13973,7 +13603,7 @@ function boundRoleToolCallForResult(entries, resultIndex, message, outputToolNam
     const candidateMessage = entries[index]?.message;
     if (candidateMessage?.role === "assistant" && Array.isArray(candidateMessage.content)) {
       for (const part of candidateMessage.content) {
-        if (!isRecord5(part) || part.type !== "toolCall" || part.id !== callId) {
+        if (!isRecord4(part) || part.type !== "toolCall" || part.id !== callId) {
           continue;
         }
         if (part.name !== outputToolName) return void 0;
@@ -13995,12 +13625,24 @@ function sameAuditValue(left, right) {
       (value, index) => sameAuditValue(value, right[index])
     );
   }
-  if (isRecord5(left) && isRecord5(right)) {
+  if (isRecord4(left) && isRecord4(right)) {
     const leftKeys = Object.keys(left);
     const rightKeys = Object.keys(right);
     return leftKeys.length === rightKeys.length && leftKeys.every((key) => Object.hasOwn(right, key) && sameAuditValue(left[key], right[key]));
   }
   return false;
+}
+function snapshotAuditDetails(details) {
+  const snapshot = /* @__PURE__ */ Object.create(null);
+  for (const key of Object.keys(details)) {
+    Object.defineProperty(snapshot, key, {
+      value: details[key],
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  }
+  return snapshot;
 }
 function boundAuditEscalationForResult(entries, resultIndex, message, role, outputToolName) {
   const roleCall = boundRoleToolCallForResult(
@@ -14017,19 +13659,33 @@ function boundAuditEscalationForResult(entries, resultIndex, message, role, outp
     auditToolNameForRole(role)
   );
   if (retained === void 0) return void 0;
-  const decision = readComplianceCandidate(retained.candidate);
-  if (decision.status !== "escalate") return void 0;
-  const details = message.details;
-  if (!isAuditEscalationResult(details) || !isRecord5(details)) return void 0;
-  const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
-  const hasDetailsConflicts = Object.hasOwn(details, "conflicts");
-  if (hasDecisionConflicts !== hasDetailsConflicts) return void 0;
-  if (hasDecisionConflicts && !sameAuditValue(details.conflicts, decision.conflicts)) return void 0;
-  const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
-  const hasDetailsGate = Object.hasOwn(details, "auditDecisionGate");
-  if (hasDecisionGate !== hasDetailsGate) return void 0;
-  if (hasDecisionGate && !sameAuditValue(details.auditDecisionGate, decision.decisionGate)) return void 0;
-  return { decision, details };
+  try {
+    const decision = readComplianceCandidate(retained.candidate);
+    if (decision.status !== "escalate") return void 0;
+    const details = message.details;
+    if (!isAuditEscalationResult(details) || !isRecord4(details)) return void 0;
+    const projectedDetails = snapshotAuditDetails(details);
+    const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
+    const hasDetailsConflicts = Object.hasOwn(projectedDetails, "conflicts");
+    if (hasDecisionConflicts !== hasDetailsConflicts) return void 0;
+    if (hasDecisionConflicts && !sameAuditValue(projectedDetails.conflicts, decision.conflicts)) return void 0;
+    const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
+    const hasDetailsGate = Object.hasOwn(projectedDetails, "auditDecisionGate");
+    if (hasDecisionGate !== hasDetailsGate) return void 0;
+    if (hasDecisionGate && !sameAuditValue(projectedDetails.auditDecisionGate, decision.decisionGate)) return void 0;
+    return { decision, details: projectedDetails };
+  } catch {
+    return void 0;
+  }
+}
+function isUnboundAuditEscalationFace(details) {
+  try {
+    if (isAuditEscalationResult(details)) return true;
+  } catch {
+  }
+  if (!isRecord4(details)) return false;
+  const kind = safelyRead(details, "kind");
+  return kind.readable && kind.value === "audit_escalation";
 }
 function auditIncompleteFromCandidate(candidate) {
   const decision = readComplianceCandidate(candidate);
@@ -14044,11 +13700,11 @@ function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolNa
       continue;
     }
     retainedResponseCount += 1;
-    if (!isRecord5(entry.data) || !isRecord5(entry.data.response)) continue;
+    if (!isRecord4(entry.data) || !isRecord4(entry.data.response)) continue;
     const response = entry.data.response;
     if (!Array.isArray(response.content)) continue;
     const calls = response.content.filter(
-      (part) => isRecord5(part) && part.type === "toolCall"
+      (part) => isRecord4(part) && part.type === "toolCall"
     );
     if (calls.length !== 1 || calls[0]?.name !== auditToolName) continue;
     matches.push({ candidate: calls[0]?.arguments });
@@ -14239,17 +13895,18 @@ function extractJudgeRoleOutcome(entries) {
         decisiveFacts: { ...escalation.details }
       };
     }
-    try {
-      const verdict = validateAcceptedJudgeDetails(details);
-      return {
-        kind: "accepted",
-        role: "judge",
-        status: verdict.judgeStatus,
-        decisiveFacts: judgeDecisiveFacts(verdict)
-      };
-    } catch {
-      continue;
-    }
+    if (isUnboundAuditEscalationFace(details)) continue;
+    if (!isRecord4(details)) continue;
+    const statusRead = safelyRead(details, "judgeStatus");
+    if (!statusRead.readable) continue;
+    const judgeStatus = statusRead.value;
+    if (judgeStatus !== "converged" && judgeStatus !== "continue" && judgeStatus !== "escalate") continue;
+    return {
+      kind: "accepted",
+      role: "judge",
+      status: judgeStatus,
+      decisiveFacts: judgeDecisiveFacts(details, judgeStatus)
+    };
   }
   return void 0;
 }
@@ -14312,7 +13969,7 @@ function parseNavigatorAttendanceDetails(details) {
   const disposition = details.disposition;
   if (disposition === "recommendation") {
     const next = details.next;
-    if (!isRecord5(next) || typeof next.role !== "string") {
+    if (!isRecord4(next) || typeof next.role !== "string") {
       return {
         disposition: "unavailable",
         source: "unknown",
@@ -14320,7 +13977,7 @@ function parseNavigatorAttendanceDetails(details) {
       };
     }
     const reason = typeof details.reason === "string" ? details.reason : "";
-    const route = Array.isArray(details.route) ? details.route.filter(isRecord5).map((target) => ({
+    const route = Array.isArray(details.route) ? details.route.filter(isRecord4).map((target) => ({
       role: String(target.role),
       phase: navigatorPhaseValue(target.phase)
     })) : void 0;
@@ -14393,7 +14050,7 @@ function extractNavigatorFact(entries, identity) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord5(details)) {
+      if (!isRecord4(details)) {
         return {
           disposition: "unavailable",
           source: "unknown",
@@ -14544,6 +14201,7 @@ function extractCoderRoleOutcome(entries) {
     if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
+      validateAcceptedDetails(CODER_OUTPUT_TOOL_NAME, message.details);
       const output = validateAcceptedCoderDetails(message.details);
       const outcome = {
         kind: "accepted",
@@ -14740,7 +14398,9 @@ function extractFixerRoleOutcome(entries) {
         }
       };
     }
+    if (isUnboundAuditEscalationFace(details)) continue;
     try {
+      validateAcceptedDetails(FIXER_OUTPUT_TOOL_NAME, details);
       const output = validateFixerOutput(details);
       const outcome = {
         kind: "accepted",
@@ -14973,6 +14633,7 @@ function extractDoctorRoleOutcome(entries) {
         }
       };
     }
+    if (isUnboundAuditEscalationFace(details)) continue;
     try {
       const output = validateRecordedDoctorOutput(details);
       const outcome = {
@@ -15145,6 +14806,7 @@ function extractReviewerRoleOutcome(entries) {
         }
       };
     }
+    if (isUnboundAuditEscalationFace(message.details)) continue;
     try {
       const receipt = validateRuntimeReviewerReceipt(message.details);
       const outcome = {
@@ -15206,18 +14868,16 @@ async function hasLawfulReviewerTerminalResult(admitted) {
   }
 }
 function mergerDecisiveFacts(output) {
-  if (output.status === "completed") {
-    return {
-      mergerStatus: output.status,
-      attemptId: output.attemptId,
-      mergeCommitId: output.mergeCommitId
-    };
-  }
-  return {
-    mergerStatus: output.status,
-    attemptId: output.attemptId,
-    diagnosis: output.diagnosis
-  };
+  const candidate = output;
+  const facts = {};
+  const status = safelyRead(candidate, "status");
+  const attemptId = safelyRead(candidate, "attemptId");
+  if (status.readable && typeof status.value === "string") facts.mergerStatus = status.value;
+  if (attemptId.readable && attemptId.value !== void 0) facts.attemptId = attemptId.value;
+  const decisiveKey = status.readable && status.value === "completed" ? "mergeCommitId" : "diagnosis";
+  const decisive = safelyRead(candidate, decisiveKey);
+  if (decisive.readable && decisive.value !== void 0) facts[decisiveKey] = decisive.value;
+  return facts;
 }
 function extractMergerMethodInvocations(entries, options) {
   const observed = [];
