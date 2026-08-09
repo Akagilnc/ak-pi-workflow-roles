@@ -42,6 +42,7 @@ import {
   type CoderOutput,
   type FixerOutput,
 } from "../package-contracts/worker-output.ts";
+import { validateAcceptedDetails } from "../package-contracts/terminating-tools.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
   validateRecordedDoctorOutput,
@@ -1800,6 +1801,7 @@ export function extractCoderRoleOutcome(
     if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
+      validateAcceptedDetails(CODER_OUTPUT_TOOL_NAME, message.details);
       const output = validateAcceptedCoderDetails(message.details);
       const outcome: LawfulCoderRoleOutcome = {
         kind: "accepted",
@@ -2142,6 +2144,7 @@ export function extractFixerRoleOutcome(
     }
     if (isUnboundAuditEscalationFace(details)) continue;
     try {
+      validateAcceptedDetails(FIXER_OUTPUT_TOOL_NAME, details);
       const output = validateFixerOutput(details);
       const outcome: LawfulFixerRoleOutcome = {
         kind: "accepted",

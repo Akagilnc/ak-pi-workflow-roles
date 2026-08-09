@@ -27,7 +27,10 @@ import { FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import {
+  CODER_OUTPUT_TOOL_NAME,
+  FIXER_OUTPUT_TOOL_NAME,
+} from "../../src/package-contracts/worker-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -2639,6 +2642,65 @@ test("timedOut with session provider-stop retains provider identity (AC2)", asyn
     assert.equal(errorBody.identity?.name, "ProviderStopError");
     assert.equal(errorBody.identity?.code, "xai");
     assert.equal(errorBody.details?.timedOut, true);
+  });
+});
+
+test("real Coder/Fixer runs require a legal execution status before accepted settlement", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const rows = [
+      { role: "coder", phase: "plan", tool: CODER_OUTPUT_TOOL_NAME, statuses: ["planned", "completed", "refused", "unfinished"] },
+      { role: "fixer", phase: "plan", tool: FIXER_OUTPUT_TOOL_NAME, statuses: ["planned", "completed", "refused", "partially_completed", "unfinished"] },
+    ] as const;
+
+    for (const row of rows) {
+      for (const details of [{}, ...row.statuses.map((status) => ({ status }))]) {
+        const status = "status" in details ? details.status : "missing";
+        const { io } = captureIo();
+        const result = await runAkRole(
+          [row.role, row.phase, "--project", project, `${row.role} ${status} discriminator`],
+          {
+            packageRoot,
+            home,
+            cwd: project,
+            createRunId: () => `run-${row.role}-discriminator-${status}`,
+            io,
+            piRunner: async (args) => {
+              const sessionFile = args[args.indexOf("--session") + 1]!;
+              await mkdir(join(sessionFile, ".."), { recursive: true });
+              await writeFile(sessionFile, `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: `${row.role}-terminal`,
+                  toolName: row.tool,
+                  isError: false,
+                  details,
+                },
+              })}\n`, "utf8");
+              return { code: 0, stderr: "", timedOut: false, args: [...args] };
+            },
+          },
+        );
+
+        assert.ok(result.terminal, `${row.role}:${status} terminal`);
+        if (status === "missing") {
+          assert.notEqual(result.exitCode, 0, `${row.role}: missing status`);
+          assert.notEqual(result.terminal!.roleOutcome.kind, "accepted", row.role);
+          assert.equal(result.terminal!.roleOutcome.kind, "failure", row.role);
+          if (result.terminal!.roleOutcome.kind === "failure") {
+            assert.equal(result.terminal!.roleOutcome.cause, "output", row.role);
+          }
+        } else {
+          assert.equal(result.exitCode, 0, `${row.role}:${status}`);
+          assert.equal(result.terminal!.roleOutcome.kind, "accepted", `${row.role}:${status}`);
+          assert.equal(result.terminal!.roleOutcome.status, status, `${row.role}:${status}`);
+        }
+      }
+    }
   });
 });
 
