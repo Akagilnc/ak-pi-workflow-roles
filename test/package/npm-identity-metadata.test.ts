@@ -56,6 +56,14 @@ const EXPECTED_PEERS = {
   typebox: "*",
 } as const;
 
+interface PiNpmRootManifest {
+  dependencies?: Record<string, string>;
+}
+
+interface PiNpmRootLockfile {
+  packages: Record<string, object>;
+}
+
 interface ExtractedPack {
   root: string;
   packageJson: {
@@ -387,6 +395,31 @@ test("real Pi fresh install leaves optional host peers uninstalled", async () =>
     async ({ home, agentDir }) => {
       const installation = await installPackedArtifactIntoPiNpm(agentDir, home);
       await access(installation.installedRoot);
+
+      const npmRootManifest = JSON.parse(
+        await readFile(resolve(installation.npmRoot, "package.json"), "utf8"),
+      ) as PiNpmRootManifest;
+      assert.deepEqual(
+        Object.keys(npmRootManifest.dependencies ?? {}).sort(),
+        [SETTLED_PACKAGE_NAME],
+        "Pi's npm root must directly depend on only the installed role package",
+      );
+
+      const npmRootLockfile = JSON.parse(
+        await readFile(resolve(installation.npmRoot, "package-lock.json"), "utf8"),
+      ) as PiNpmRootLockfile;
+      const installedPackageKeys = Object.keys(npmRootLockfile.packages)
+        .filter((key) => key !== "");
+      assert.equal(
+        installedPackageKeys.length,
+        1,
+        "Pi's lockfile must contain exactly one installed package",
+      );
+      assert.equal(
+        installedPackageKeys[0]!.endsWith(`node_modules/${SETTLED_PACKAGE_NAME}`),
+        true,
+        "Pi's sole locked package must be the installed role package",
+      );
 
       for (const hostPeer of Object.keys(EXPECTED_PEERS)) {
         await assert.rejects(
