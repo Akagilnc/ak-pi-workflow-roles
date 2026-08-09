@@ -85,11 +85,7 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
         };
         auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, {
           version: 1,
-          parent: {
-            sessionId: parentHeader?.id,
-            sessionFile: parentSessionFile,
-            ...(parentAttemptEntryId === null || parentAttemptEntryId === undefined ? {} : { attemptEntryId: parentAttemptEntryId }),
-          },
+          parent: binding.parent,
           failure: {
             cause: failure.knownCause,
             identity: { name: failure.name, code: failure.failureCode },
