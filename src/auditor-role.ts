@@ -14,17 +14,28 @@ export class AuditorTurnLimitError extends Error {
     this.name = "AuditorTurnLimitError";
   }
 }
-export type AuditorCompletion = (model: Model<Api>, context: Context, options: ProviderStreamOptions) => Promise<AssistantMessage>;
+export type AuditorCompletion = (model: Model<Api>, options: ProviderStreamOptions) => Promise<AssistantMessage>;
 export type AuditorDecisionTool = { name: string; description: string; parameters: object; execute(...args: any[]): Promise<AgentToolResult<unknown>> };
 
 export async function runAuditorRole(options: { systemPrompt: string; serializedInput: string; tool: AuditorDecisionTool; roleLabel: string; context: ExtensionContext; signal?: AbortSignal; runCompletion?: AuditorCompletion }): Promise<{ decision: unknown; response: AssistantMessage }> {
   const activeModel = options.context.model;
   if (activeModel === undefined) throw new Error(`${options.roleLabel} requires an active model`);
   const dispatch = await prepareComplianceDispatch(activeModel, options.context, options.roleLabel);
+  if (options.runCompletion !== undefined) {
+    const response = await options.runCompletion(dispatch.model, {
+      ...dispatch.auth,
+      systemPrompt: options.systemPrompt,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    const call = response.content.flatMap((part) => part.type === "toolCall" && part.name === options.tool.name ? [part] : [])[0];
+    if (call === undefined) throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
+    await options.tool.execute(call.id, call.arguments, options.signal);
+    return { decision: call.arguments, response };
+  }
   const parentProvider = options.context.modelRegistry.getProvider(activeModel.provider);
-  if (parentProvider === undefined && options.runCompletion === undefined) throw new Error(`${options.roleLabel} provider not found: ${activeModel.provider}`);
+  if (parentProvider === undefined) throw new Error(`${options.roleLabel} provider not found: ${activeModel.provider}`);
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null });
-  const provider: Provider = { id: parentProvider?.id ?? activeModel.provider, name: parentProvider?.name ?? options.roleLabel, auth: { apiKey: { name: "Inherited auditor authentication", async resolve() { return { auth: { ...dispatch.auth, ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }) } }; } } }, getModels() { return [dispatch.model]; }, stream(model, context, request) { if (options.runCompletion !== undefined) { const promise = options.runCompletion(model, context, (request ?? {}) as ProviderStreamOptions); return { async *[Symbol.asyncIterator]() {}, result: () => promise } as any; } return parentProvider!.stream(model, context, request); }, streamSimple(model, context, request) { return parentProvider!.streamSimple(model, context, request); } };
+  const provider: Provider = { id: parentProvider?.id ?? activeModel.provider, name: parentProvider?.name ?? options.roleLabel, auth: { apiKey: { name: "Inherited auditor authentication", async resolve() { return { auth: { ...dispatch.auth, ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }) } }; } } }, getModels() { return [dispatch.model]; }, stream(model, context, request) { const inheritedRequest = { ...(request ?? {}), ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }) } as ProviderStreamOptions; if (options.runCompletion !== undefined) { const promise = options.runCompletion(model, inheritedRequest); return { async *[Symbol.asyncIterator]() {}, result: () => promise } as any; } return parentProvider!.stream(model, context, inheritedRequest as any); }, streamSimple(model, context, request) { if (options.runCompletion !== undefined) return this.stream(model, context, request); const inheritedRequest = { ...(request ?? {}), ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }) } as ProviderStreamOptions; return parentProvider!.streamSimple(model, context, inheritedRequest as any); } };
   runtime.registerNativeProvider(provider);
   const scratch = await mkdtemp(join(tmpdir(), "ak-auditor-role-"));
   let decision: unknown;
