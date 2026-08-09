@@ -1,13 +1,12 @@
-import type { Api, AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { runAuditorRole, type AuditorCompletion } from "./auditor-role.ts";
+import { COMPLIANCE_RESPONSE_ENTRY_TYPE, readComplianceCandidate, type ComplianceDecision } from "./compliance-decision.ts";
+export { COMPLIANCE_RESPONSE_ENTRY_TYPE, readComplianceCandidate } from "./compliance-decision.ts";
+export type { ComplianceArgumentRootType, ComplianceAuditIncomplete, ComplianceAuditObservation, ComplianceDecision } from "./compliance-decision.ts";
 
 export type ComplianceCompletion = AuditorCompletion;
-export type ComplianceArgumentRootType = "null" | "array" | "undefined" | "string" | "number" | "boolean" | "bigint" | "symbol" | "function";
-export type ComplianceAuditObservation = { kind: "non-object-arguments"; type: ComplianceArgumentRootType } | { kind: "object-status-unreadable"; status: "missing" | "unknown" };
-export type ComplianceAuditIncomplete = { status: "audit-incomplete"; observation: ComplianceAuditObservation; candidate: unknown; usage?: Usage };
-export type ComplianceDecision = { status: "pass"; usage?: Usage } | { status: "revise"; violations: readonly unknown[]; usage?: Usage } | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage } | ComplianceAuditIncomplete;
 export type ComplianceDispatch = { model: Model<Api>; auth: { apiKey?: string; headers?: Record<string, string>; env?: Record<string, string> } };
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
@@ -26,7 +25,6 @@ export async function prepareComplianceDispatch(model: Model<Api>, context: Exte
   return { model: resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model, auth: { ...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }), ...(auth.headers === undefined ? {} : { headers: auth.headers }), ...(auth.env === undefined ? {} : { env: auth.env }) } };
 }
 
-export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
 export class ComplianceResponseRetentionError extends Error {
   constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
 }
@@ -36,16 +34,6 @@ function retainComplianceResponse(context: ExtensionContext, response: Assistant
   if (typeof manager?.appendCustomEntry !== "function") throw new ComplianceResponseRetentionError("compliance response retention is unavailable");
   try { manager.appendCustomEntry(COMPLIANCE_RESPONSE_ENTRY_TYPE, { version: 1, response }); } catch (error) { throw new ComplianceResponseRetentionError("compliance response retention failed", { cause: error }); }
 }
-function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
-export function readComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision {
-  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) return { status: "audit-incomplete", observation: { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ as ComplianceArgumentRootType }, candidate: arguments_, ...(usage === undefined ? {} : { usage }) };
-  const args = arguments_ as Record<string, unknown>; const status = args.status;
-  if (status === "pass") return { status, ...(usage === undefined ? {} : { usage }) };
-  if (status === "revise") return { status, violations: readListField(args.violations), ...(usage === undefined ? {} : { usage }) };
-  if (status === "escalate") return { status, ...(Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}), ...(Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}), ...(usage === undefined ? {} : { usage }) };
-  return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === undefined ? "missing" : "unknown" }, candidate: arguments_, ...(usage === undefined ? {} : { usage }) };
-}
-
 export async function runComplianceAudit(options: { tool: ReturnType<typeof createComplianceDecisionTool>; systemPrompt: string; serializedInput: string; roleLabel: string; invalidDecisionLabel: string; runCompletion?: ComplianceCompletion; context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision> {
   const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, ...(options.signal === undefined ? {} : { signal: options.signal }), ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }) });
   retainComplianceResponse(options.context, receipt.response);

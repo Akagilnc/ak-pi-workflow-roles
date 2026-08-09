@@ -42,7 +42,9 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
         turns += 1;
         if (turns >= AUDITOR_TURN_LIMIT) boundaryResponse = event.message;
       }
-      if (event.type === "tool_execution_end" && boundaryResponse !== undefined && decision === undefined) void session.abort();
+      // Let every tool in the boundary turn settle before stopping. In particular,
+      // a decision may share that turn with evidence tools executing in parallel.
+      if (event.type === "turn_end" && boundaryResponse !== undefined && decision === undefined) void session.abort();
     });
     const abort = () => { void session.abort(); };
     if (options.signal?.aborted) abort(); else options.signal?.addEventListener("abort", abort, { once: true });
@@ -58,7 +60,7 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
         const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
         throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, { stopReason: boundaryResponse.stopReason, toolNames });
       }
-      const response = [...session.messages].reverse().find((message): message is AssistantMessage => message.role === "assistant");
+      const response = [...session.messages].reverse().find((message): message is AssistantMessage => message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
       if (response === undefined || response.stopReason === "error" || response.stopReason === "aborted" || decision === undefined) throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
       return { decision, response };
     } finally {

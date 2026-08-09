@@ -52,6 +52,40 @@ test("constant unknown tools receive error results and exhaust at a finite typed
   }
 });
 
+test("evidence and decision calls in the same assistant turn succeed", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-same-turn-"));
+  try {
+    await writeFile(join(cwd, "evidence.txt"), "same-turn evidence\n");
+    const faux = fauxProvider({ provider: "audit-same-turn" });
+    const tool = createComplianceDecisionTool("ak_test_auditor_decision", "Submit the decision.");
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall("read", { path: "evidence.txt" }),
+        fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+      ], { stopReason: "toolUse" }),
+    ]);
+    const result = await runAuditorRole({
+      systemPrompt: "Inspect and decide.",
+      serializedInput: "Inspect evidence.txt and decide.",
+      tool,
+      roleLabel: "Test auditor",
+      context: {
+        cwd,
+        model: faux.getModel(),
+        modelRegistry: {
+          getProvider() { return faux.provider; },
+          async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
+          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
+        },
+        sessionManager: SessionManager.inMemory(cwd),
+      } as unknown as ExtensionContext,
+    });
+    assert.deepEqual(result.decision, { status: "pass", violations: [], conflicts: [], decisionGate: null });
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("independent auditor gathers evidence and submits one decision", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-behavior-"));
   try {
