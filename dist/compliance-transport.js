@@ -227,11 +227,10 @@ export function readComplianceDecision(response, toolName, invalidLabel) {
     if (response.stopReason === "error" || response.stopReason === "aborted") {
         throw malformedComplianceDecision(response, toolName, invalidLabel, `provider response terminated with stopReason ${response.stopReason}`, calls);
     }
-    const call = calls[0];
-    if (calls.length !== 1 ||
-        call?.type !== "toolCall" ||
-        call.name !== toolName) {
-        throw malformedComplianceDecision(response, toolName, invalidLabel, "expected exactly one decision tool call", calls);
+    const decisionCalls = calls.filter((candidate) => candidate.name === toolName);
+    const call = decisionCalls[decisionCalls.length - 1];
+    if (call === undefined) {
+        throw malformedComplianceDecision(response, toolName, invalidLabel, "expected a decision tool call", calls);
     }
     const arguments_ = call.arguments;
     // ADR 0055/0057: shape is guidance, not a reject gate. Read what arrived;

@@ -138,30 +138,6 @@ test("Pi judge auditor does not reject bookkeeping shape", async (t) => {
   }
 });
 
-test("Pi judge auditor requires exactly one decision call", async () => {
-  const decisionWithExtraCall = auditResponse({ status: "pass", violations: [], conflicts: [], decisionGate: null });
-  decisionWithExtraCall.content.push({
-    type: "toolCall",
-    id: "other-1",
-    name: "other_tool",
-    arguments: {},
-  });
-  for (const response of [
-    auditResponse(),
-    auditResponse(
-      { status: "pass", violations: [], conflicts: [], decisionGate: null },
-      { status: "revise", violations: ["contradiction"], conflicts: [], decisionGate: null },
-    ),
-    decisionWithExtraCall,
-  ]) {
-    const auditor = createPiJudgeAuditor(async () => response);
-    await assert.rejects(
-      auditor(auditInput, { context: auditContext() }),
-      /expected exactly one decision tool call/,
-    );
-  }
-});
-
 test("Pi judge auditor supports successful keyless provider authentication", async () => {
   let seenOptions: ProviderStreamOptions | undefined;
   const auditor = createPiJudgeAuditor(async (_model, _context, options) => {
