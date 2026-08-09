@@ -14201,6 +14201,7 @@ function extractCoderRoleOutcome(entries) {
     if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
+      validateAcceptedDetails(CODER_OUTPUT_TOOL_NAME, message.details);
       const output = validateAcceptedCoderDetails(message.details);
       const outcome = {
         kind: "accepted",
@@ -14399,6 +14400,7 @@ function extractFixerRoleOutcome(entries) {
     }
     if (isUnboundAuditEscalationFace(details)) continue;
     try {
+      validateAcceptedDetails(FIXER_OUTPUT_TOOL_NAME, details);
       const output = validateFixerOutput(details);
       const outcome = {
         kind: "accepted",
