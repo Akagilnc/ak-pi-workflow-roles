@@ -126,9 +126,10 @@ export async function runAuditorRole(options) {
                 const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
                 throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, { stopReason: boundaryResponse.stopReason, toolNames });
             }
+            const latestAssistant = [...session.messages].reverse().find((message) => message.role === "assistant");
+            if (decision === undefined && (latestAssistant?.stopReason === "error" || latestAssistant?.stopReason === "aborted"))
+                throw latestAssistant;
             const response = [...session.messages].reverse().find((message) => message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
-            if (response?.stopReason === "error" || response?.stopReason === "aborted")
-                throw response;
             if (response === undefined || decision === undefined)
                 throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
             return { decision, response };
