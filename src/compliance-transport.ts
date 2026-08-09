@@ -30,7 +30,17 @@ export async function prepareComplianceDispatch(model: Model<Api>, context: Exte
 }
 
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
+export const AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding" as const;
 export const AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure" as const;
+
+export type AuditorParentAttemptBinding = {
+  readonly version: 1;
+  readonly parent: {
+    readonly sessionId?: string;
+    readonly sessionFile?: string;
+    readonly attemptEntryId?: string;
+  };
+};
 export class ComplianceResponseRetentionError extends Error {
   constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
 }

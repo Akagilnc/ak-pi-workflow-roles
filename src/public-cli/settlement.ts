@@ -13,9 +13,10 @@ import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { FIXER_AUDIT_TOOL_NAME } from "../fixer-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
-import type { ExplicitInternalKnownFailure } from "./explicit-internal.ts";
+import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure } from "./explicit-internal.ts";
 import {
   AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
+  AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
   readComplianceCandidate,
   type ComplianceAuditIncomplete,
@@ -630,58 +631,99 @@ export async function readSessionProviderStop(
   }
 }
 
-/** Recover the typed retention failure from the child session bound to this parent. */
+/** Recover a provider stop from the auditor child bound to the current parent attempt. */
 export async function readBoundAuditorKnownFailure(
   sessionFile: string,
 ): Promise<ExplicitInternalKnownFailure | undefined> {
+  let parentEntries: SessionEntry[];
   try {
-    const parentEntries = await readBoundSessionEntries(sessionFile);
-    const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
-    if (parentId === undefined) return undefined;
-    let latestParentUserIndex = -1;
-    for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
-      if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
-        latestParentUserIndex = i;
-        break;
-      }
+    parentEntries = await readBoundSessionEntries(sessionFile);
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw sessionReadFailure(error, "failed to read parent session for auditor binding");
+  }
+  const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
+  if (parentId === undefined) return undefined;
+  let latestParentUserIndex = -1;
+  for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
+    if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
+      latestParentUserIndex = i;
+      break;
     }
-    const childDirectory = join(dirname(sessionFile), "auditor-roles");
-    const files = (await readdir(childDirectory))
-      .filter((file) => file.endsWith(".jsonl"))
-      .sort()
-      .reverse();
-    for (const file of files) {
-      const entries = await readBoundSessionEntries(join(childDirectory, file));
-      const header = entries.find((entry) => entry.type === "session");
-      if (!isRecord(header) || header.parentSession !== sessionFile) continue;
-      for (let i = entries.length - 1; i >= 0; i -= 1) {
-        const entry = entries[i];
-        if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord(entry.data)) continue;
-        const parent = isRecord(entry.data.parent) ? entry.data.parent : undefined;
-        const failure = isRecord(entry.data.failure) ? entry.data.failure : undefined;
-        if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || failure?.cause !== "provider") continue;
-        const attemptEntryId = typeof parent.attemptEntryId === "string" ? parent.attemptEntryId : undefined;
-        const attemptEntryIndex = attemptEntryId === undefined
-          ? -1
-          : parentEntries.findIndex((parentEntry) => parentEntry.id === attemptEntryId);
-        // The recorded leaf must exist in the latest typed parent user turn. A
-        // child failure from an earlier resume attempt is not current evidence.
-        if (attemptEntryIndex < 0 || attemptEntryIndex < latestParentUserIndex) continue;
-        const identity = isRecord(failure.identity) ? failure.identity : undefined;
-        return {
-          cause: "provider",
-          ...(identity === undefined ? {} : { identity: {
-            ...(typeof identity.name === "string" ? { name: identity.name } : {}),
-            ...(typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}),
-          } }),
-          ...(typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {}),
-          ...(isRecord(failure.details) ? { details: failure.details } : {}),
-        };
-      }
+  }
+  const childDirectory = join(dirname(sessionFile), "auditor-roles");
+  let names: string[];
+  try {
+    names = await readdir(childDirectory);
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw sessionReadFailure(error, "failed to read bound auditor session directory");
+  }
+  for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
+    let entries: SessionEntry[];
+    try {
+      entries = await readBoundSessionEntries(join(childDirectory, file));
+    } catch (error) {
+      throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
-    return undefined;
-  } catch {
-    return undefined;
+    const header = entries.find((entry) => entry.type === "session");
+    if (!isRecord(header) || header.parentSession !== sessionFile) continue;
+    const bindingEntry = entries.find((entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE);
+    const bindingParent = isRecord(bindingEntry?.data) && isRecord(bindingEntry.data.parent) ? bindingEntry.data.parent : undefined;
+    const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : undefined;
+    const attemptEntryIndex = attemptEntryId === undefined ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
+    if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
+
+    const stop = extractSessionProviderStop(entries);
+    if (stop === undefined) continue;
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const entry = entries[i];
+      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord(entry.data)) continue;
+      const parent = isRecord(entry.data.parent) ? entry.data.parent : undefined;
+      const failure = isRecord(entry.data.failure) ? entry.data.failure : undefined;
+      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider") continue;
+      const identity = isRecord(failure.identity) ? failure.identity : undefined;
+      return {
+        cause: "provider",
+        ...(identity === undefined ? {} : { identity: {
+          ...(typeof identity.name === "string" ? { name: identity.name } : {}),
+          ...(typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}),
+        } }),
+        ...(typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {}),
+        ...(isRecord(failure.details) ? { details: failure.details } : {}),
+      };
+    }
+    const primary = knownFailureFromProviderStop(stop)!;
+    return {
+      ...primary,
+      details: {
+        ...(stop.provider === undefined ? {} : { provider: stop.provider }),
+        ...(stop.model === undefined ? {} : { model: stop.model }),
+        secondaryEvidence: "unavailable",
+      },
+    };
+  }
+  return undefined;
+}
+
+/** Sole evidence-priority owner for public runners with Soul auditors. */
+export async function resolveAuditedRunnerKnownFailure(input: {
+  runner: ExplicitInternalKnownFailure | undefined;
+  sessionFile: string;
+  credential: ExplicitInternalKnownFailure | undefined;
+}): Promise<ExplicitInternalKnownFailure | undefined> {
+  if (input.runner !== undefined) return input.runner;
+  const parentStop = await readSessionProviderStop(input.sessionFile);
+  if (parentStop !== undefined) return knownFailureFromProviderStop(parentStop);
+  try {
+    return (await readBoundAuditorKnownFailure(input.sessionFile)) ?? input.credential;
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
+    return {
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name,
+    };
   }
 }
 

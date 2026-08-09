@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, prepareComplianceDispatch } from "./compliance-transport.js";
+import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch } from "./compliance-transport.js";
 export class AuditorTurnLimitError extends Error {
     limit;
     constructor(limit) {
@@ -46,6 +46,17 @@ export async function runAuditorRole(options) {
         const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
         const auditorSessionManager = childSessionManager(parentSessionManager, cwd, "auditor-roles");
         const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash", "write", "edit", tool.name], customTools: [tool], sessionManager: auditorSessionManager, settingsManager: settings });
+        const binding = {
+            version: 1,
+            parent: {
+                ...(parentHeader?.id === undefined ? {} : { sessionId: parentHeader.id }),
+                ...(parentSessionFile === undefined ? {} : { sessionFile: parentSessionFile }),
+                ...(parentAttemptEntryId === null || parentAttemptEntryId === undefined ? {} : { attemptEntryId: parentAttemptEntryId }),
+            },
+        };
+        // This durable binding is a prerequisite: never observe the provider when
+        // its response could not later be tied to the current parent attempt.
+        auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
         const turnLimit = 32;
         let turns = 0;
         let turnError;
@@ -97,7 +108,7 @@ export async function runAuditorRole(options) {
                     parent: {
                         sessionId: parentHeader?.id,
                         sessionFile: parentSessionFile,
-                        attemptEntryId: parentAttemptEntryId,
+                        ...(parentAttemptEntryId === null || parentAttemptEntryId === undefined ? {} : { attemptEntryId: parentAttemptEntryId }),
                     },
                     failure: {
                         cause: failure.knownCause,
