@@ -10,6 +10,8 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { activationBookDirectory, resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { JUDGE_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
@@ -169,7 +171,14 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     console.error(`AUDIT_FAILURE_PROVIDER_CALLS=${faux.state.callCount}`);
     if (!healthyNavigator || observation) return;
     const root = process.env.AK_NAVIGATOR_ROOT;
-    const directory = root === undefined ? undefined : join(root, "runs", "navigator");
+    const navigatorRoot = root === undefined ? undefined : join(
+      activationBookDirectory(resolveActivationLedgerHome(), resolveBookKeyFromGit(root)),
+      "navigator",
+    );
+    const subjectDirectories = navigatorRoot === undefined ? [] : (await readdir(navigatorRoot)).sort();
+    const directory = navigatorRoot === undefined || subjectDirectories.length === 0
+      ? undefined
+      : join(navigatorRoot, subjectDirectories.at(-1)!);
     const files = directory === undefined ? [] : (await readdir(directory)).filter((file) => file.endsWith(".jsonl")).sort();
     const persisted = files.length === 0 || directory === undefined
       ? []
