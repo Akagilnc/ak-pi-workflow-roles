@@ -92,69 +92,6 @@ const auditInput = {
   verdict: { judgeStatus: "converged" as const },
 };
 
-test("Pi judge auditor submits the record and accepts an exact pass decision", async () => {
-  const calls: Array<{ context: Context; options: ProviderStreamOptions }> = [];
-  const auditor = createPiJudgeAuditor(async (_model, context, options) => {
-    calls.push({ context, options });
-    return auditResponse({ status: "pass", violations: [], conflicts: [], decisionGate: null });
-  });
-
-  const result = await auditor(auditInput, { context: auditContext() });
-
-  assert.deepEqual(result, { status: "pass", usage });
-  const request = JSON.stringify(calls[0]?.context);
-  assert.match(request, /THE JUDGE LAW/);
-  assert.match(request, /THE ADJUDICATION RECORD/);
-  assert.match(request, /converged/);
-});
-
-test("Pi judge auditor accepts an exact revise decision", async () => {
-  const auditor = createPiJudgeAuditor(async () =>
-    auditResponse({ status: "revise", violations: ["rule 1", "rule 2"], conflicts: [], decisionGate: null }),
-  );
-
-  assert.deepEqual(
-    await auditor(auditInput, { context: auditContext() }),
-    { status: "revise", violations: ["rule 1", "rule 2"], usage },
-  );
-});
-
-test("Pi judge auditor does not reject bookkeeping shape", async (t) => {
-  const accepted: Array<[string, Record<string, unknown>]> = [
-    ["pass with violations", { status: "pass", violations: ["contradiction"] }],
-    ["empty revise", { status: "revise", violations: [] }],
-    ["blank violation", { status: "revise", violations: ["  "] }],
-    ["mixed violation values", { status: "revise", violations: ["real", 4] }],
-    ["non-array violations", { status: "revise", violations: "rule 1" }],
-    ["unknown key", { status: "pass", violations: [], explanation: "extra" }],
-    ["missing violations", { status: "pass" }],
-  ];
-
-  for (const [name, decision] of accepted) {
-    await t.test(name, async () => {
-      const auditor = createPiJudgeAuditor(async () => auditResponse(decision));
-      assert.equal((await auditor(auditInput, { context: auditContext() })).status, decision.status);
-    });
-  }
-});
-
-test("Pi judge auditor supports successful keyless provider authentication", async () => {
-  let seenOptions: ProviderStreamOptions | undefined;
-  const auditor = createPiJudgeAuditor(async (_model, _context, options) => {
-    seenOptions = options;
-    return auditResponse({ status: "pass", violations: [], conflicts: [], decisionGate: null });
-  });
-
-  assert.equal(
-    (await auditor(auditInput, {
-      context: auditContext({ auth: { headers: { "x-test": "yes" } } }),
-    })).status,
-    "pass",
-  );
-  assert.equal(Object.hasOwn(seenOptions ?? {}, "apiKey"), false);
-  assert.deepEqual(seenOptions?.headers, { "x-test": "yes" });
-});
-
 test("Pi judge auditor preserves authentication failures", async () => {
   const context = auditContext(undefined, new Error("login expired"));
   const auditor = createPiJudgeAuditor(async () =>

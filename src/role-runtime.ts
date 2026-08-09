@@ -132,6 +132,8 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
+export { runAuditorRole } from "./auditor-role.ts";
+export type { AuditorCompletion, AuditorDecisionTool } from "./auditor-role.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,

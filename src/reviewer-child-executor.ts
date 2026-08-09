@@ -2,7 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore, type Api, type Model, type Provider, type Usage } from "@earendil-works/pi-ai";
-import { createAgentSession, createBashTool, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, createBashTool, DefaultResourceLoader, ModelRuntime, SettingsManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { childSessionManager } from "./activation-ledger-session.ts";
 import { prepareComplianceDispatch } from "./compliance-transport.ts";
 import type { AcceptedReviewerLeg } from "./reviewer-dispatch.ts";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts";
@@ -171,12 +172,7 @@ export async function executeReviewerChild(
     resourceLoader: loader,
     tools: [...leg.grant.tools],
     customTools,
-    sessionManager: context.sessionManager?.getSessionFile?.() === undefined
-      ? SessionManager.inMemory(workspace)
-      : SessionManager.create(
-          workspace,
-          join(context.sessionManager.getSessionDir(), "reviewer-legs"),
-        ),
+    sessionManager: childSessionManager(context.sessionManager, workspace, "reviewer-legs"),
     settingsManager: settings,
   });
   const usage = emptyUsage();
