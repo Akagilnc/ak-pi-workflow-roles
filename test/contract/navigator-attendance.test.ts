@@ -1036,6 +1036,8 @@ test("registry output tools are the contract-owned constants", () => {
 });
 
 test("role-input authority wins verbatim; files fall back; neither is honestly unavailable", async () => {
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  delete process.env.AK_ROLE_RUN_DIR;
   assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", "file authority\n"), "packet authority\n");
   assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", undefined), "packet authority\n");
   assert.equal(resolveNavigatorAuthorityMaterial(undefined, "file authority\n"), "file authority\n");
@@ -1094,6 +1096,8 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
     assert.equal(neither.authority, "");
     assert.equal("contextError" in neither, false);
   } finally {
+    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
     await rm(root, { recursive: true, force: true });
   }
 });

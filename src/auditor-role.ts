@@ -5,6 +5,7 @@ import { InMemoryCredentialStore, type Api, type AssistantMessage, type Context,
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager, type AgentToolResult, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { childSessionManager } from "./activation-ledger-session.ts";
 import { prepareComplianceDispatch } from "./compliance-transport.ts";
+import { createStreamIdleGuard } from "./stream-idle-guard.ts";
 
 export const AUDITOR_TURN_LIMIT = 8;
 export type AuditorLastResponseFacts = { stopReason: AssistantMessage["stopReason"]; toolNames: readonly string[] };
@@ -35,16 +36,28 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
   const parentProvider = options.context.modelRegistry.getProvider(activeModel.provider);
   if (parentProvider === undefined) throw new Error(`${options.roleLabel} provider not found: ${activeModel.provider}`);
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null });
-  const provider: Provider = { id: parentProvider?.id ?? activeModel.provider, name: parentProvider?.name ?? options.roleLabel, auth: { apiKey: { name: "Inherited auditor authentication", async resolve() { return { auth: { ...dispatch.auth, ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }) } }; } } }, getModels() { return [dispatch.model]; }, stream(model, context, request) { const inheritedRequest = { ...(request ?? {}), ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }) } as ProviderStreamOptions; if (options.runCompletion !== undefined) { const promise = options.runCompletion(model, inheritedRequest); return { async *[Symbol.asyncIterator]() {}, result: () => promise } as any; } return parentProvider!.stream(model, context, inheritedRequest as any); }, streamSimple(model, context, request) { if (options.runCompletion !== undefined) return this.stream(model, context, request); const inheritedRequest = { ...(request ?? {}), ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }) } as ProviderStreamOptions; return parentProvider!.streamSimple(model, context, inheritedRequest as any); } };
+  const idle = createStreamIdleGuard({ ...(options.signal === undefined ? {} : { parentSignal: options.signal }) });
+  const provider: Provider = { id: parentProvider?.id ?? activeModel.provider, name: parentProvider?.name ?? options.roleLabel, auth: { apiKey: { name: "Inherited auditor authentication", async resolve() { return { auth: { ...dispatch.auth, ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }) } }; } } }, getModels() { return [dispatch.model]; }, stream(model, context, request) { const inheritedRequest = { ...(request ?? {}), ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }), signal: idle.signal } as ProviderStreamOptions; const upstream = parentProvider!.stream(model, context, inheritedRequest as any); return { async *[Symbol.asyncIterator]() { for await (const event of upstream) { idle.poke(); yield event; } }, result: () => upstream.result() } as any; }, streamSimple(model, context, request) { return this.stream(model, context, request); } };
   runtime.registerNativeProvider(provider);
   const scratch = await mkdtemp(join(tmpdir(), "ak-auditor-role-"));
   let decision: unknown;
+  let decisionToolFailure: unknown;
   try {
     const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
     const cwd = options.context.cwd ?? process.cwd();
     const loader = new DefaultResourceLoader({ cwd, agentDir: scratch, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt });
     await loader.reload();
-    const tool = { ...options.tool, label: options.roleLabel, async execute(...args: any[]) { if (decision !== undefined) throw new Error("Auditor decision was submitted more than once"); decision = args[1]; return options.tool.execute(...args); } };
+    const tool = { ...options.tool, label: options.roleLabel, async execute(...args: any[]) {
+      if (decision !== undefined) throw new Error("Auditor decision was submitted more than once");
+      try {
+        const result = await options.tool.execute(...args);
+        decision = args[1];
+        return result;
+      } catch (error) {
+        decisionToolFailure = error;
+        throw error;
+      }
+    } };
     const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash", "write", "edit", tool.name], customTools: [tool], sessionManager: childSessionManager(options.context.sessionManager, cwd, "auditor-roles"), settingsManager: settings });
     let turns = 0;
     let boundaryResponse: AssistantMessage | undefined;
@@ -67,17 +80,24 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
         throw error;
       }
       if (options.signal?.aborted) throw options.signal.reason;
+      if (idle.signal.aborted) throw idle.signal.reason;
+      if (decisionToolFailure !== undefined) throw decisionToolFailure;
       if (boundaryResponse !== undefined && decision === undefined) {
+        if (boundaryResponse.stopReason === "error" || boundaryResponse.stopReason === "aborted") throw boundaryResponse;
         const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
         throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, { stopReason: boundaryResponse.stopReason, toolNames });
       }
       const response = [...session.messages].reverse().find((message): message is AssistantMessage => message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
-      if (response === undefined || response.stopReason === "error" || response.stopReason === "aborted" || decision === undefined) throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
+      if (response?.stopReason === "error" || response?.stopReason === "aborted") throw response;
+      if (response === undefined || decision === undefined) throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
       return { decision, response };
     } finally {
       options.signal?.removeEventListener("abort", abort);
       unsubscribe();
       session.dispose();
     }
-  } finally { await rm(scratch, { recursive: true, force: true }); }
+  } finally {
+    idle.dispose();
+    await rm(scratch, { recursive: true, force: true });
+  }
 }
