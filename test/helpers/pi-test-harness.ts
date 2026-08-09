@@ -607,6 +607,7 @@ export async function installPackedArtifactIntoPiNpm(
   const pack = await getSharedIsolatedPack();
   const source = `npm:@akagilnc/pi-workflow-roles@file:${pack.tarball}`;
   const result = await runPiSubprocess(["install", source], {
+    command: process.env.PI_BINARY ?? "pi",
     cwd: home,
     timeoutMs: 120_000,
     env: {
@@ -870,13 +871,14 @@ export async function runNodeSubprocess(
 export async function runPiSubprocess(
   args: string[],
   options: {
+    command?: string;
     cwd: string;
     env?: NodeJS.ProcessEnv;
     timeoutMs?: number;
   },
 ): Promise<PiSubprocessResult> {
   return await new Promise((resolveResult, reject) => {
-    const child = spawn(piCli, args, {
+    const child = spawn(options.command ?? piCli, args, {
       cwd: options.cwd,
       env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
