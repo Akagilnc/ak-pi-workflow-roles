@@ -671,6 +671,8 @@ ${helpContext}
     sessionReady = void 0;
     candidates = void 0;
     preparationFailure = void 0;
+    routePlaybookSettlement = void 0;
+    routePlaybookReadFailure = void 0;
   }
 }
 function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()) {
