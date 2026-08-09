@@ -29,10 +29,6 @@ import {
 } from "../../src/collector-ledger.ts";
 import { buildCollectorReceipt } from "../../src/collector-receipt.ts";
 import {
-  collectorObserveArgsSchema,
-  collectorOutputArgsSchema,
-  collectorRequestArgsSchema,
-  collectorWaitArgsSchema,
 } from "../../src/collector-tool-schemas.ts";
 import {
   createRoleRuntimeExtension,
@@ -972,7 +968,7 @@ test("collector rejects invalid manifest before provider or GitHub side effects"
 // F1 registered schema inspection + real-Pi invalid output rows
 // ---------------------------------------------------------------------------
 
-test("F1 registered collector tool schemas are the singular TypeBox owner", async () => {
+test("F1 provider-facing collector registrations retain semantic declarations", async () => {
   await withHermeticHome({ prefix: "ak-collector-schema-owner-" }, async ({ home }) => {
     const legs = await writeLegs(home);
     const tools = new Map<string, { name: string; parameters: unknown }>();
@@ -987,7 +983,7 @@ test("F1 registered collector tool schemas are the singular TypeBox owner", asyn
       getFlag: (name: string) => flags.get(name),
       getCommands: () => [],
       registerTool(tool: { name: string; parameters: unknown }) { tools.set(tool.name, tool); },
-      getAllTools() { return [...tools.keys()].map((name) => ({ name })); },
+      getAllTools() { return [...tools.values()]; },
       setActiveTools(names: string[]) { active = names; },
       getActiveTools() { return active; },
       on() {},
@@ -1008,14 +1004,43 @@ test("F1 registered collector tool schemas are the singular TypeBox owner", asyn
       { failInfrastructure(error: unknown): never { throw error; } },
     );
     await runtime.activate({ mode: "print" } as never, { reason: "new" });
-    assert.equal(tools.get(COLLECTOR_OBSERVE_TOOL)?.parameters, collectorObserveArgsSchema);
-    assert.equal(tools.get(COLLECTOR_REQUEST_TOOL)?.parameters, collectorRequestArgsSchema);
-    assert.equal(tools.get(COLLECTOR_WAIT_TOOL)?.parameters, collectorWaitArgsSchema);
-    assert.equal(tools.get(COLLECTOR_OUTPUT_TOOL)?.parameters, collectorOutputArgsSchema);
+    type RegisteredSchema = {
+      type?: string;
+      required?: unknown;
+      additionalProperties?: unknown;
+      properties?: Record<string, { description?: string }>;
+    };
+    const registered = pi.getAllTools() as Array<{ name: string; parameters: RegisteredSchema }>;
+    const expectedFields = new Map<string, readonly string[]>([
+      [COLLECTOR_OBSERVE_TOOL, []],
+      [COLLECTOR_REQUEST_TOOL, ["legId", "snapshotId"]],
+      [COLLECTOR_WAIT_TOOL, ["durationMs"]],
+      [COLLECTOR_OUTPUT_TOOL, ["legs"]],
+    ]);
+    assert.deepEqual(registered.map(({ name }) => name).sort(), [...expectedFields.keys()].sort());
+    for (const { name, parameters } of registered) {
+      assert.equal(parameters.type, "object", `${name} Object root`);
+      assert.deepEqual(Object.keys(parameters.properties ?? {}).sort(), [...expectedFields.get(name)!].sort(), `${name} declared fields`);
+      for (const [field, declaration] of Object.entries(parameters.properties ?? {})) {
+        assert.ok(declaration.description?.trim(), `${name}.${field} semantic description`);
+      }
+    }
+
+    const output = registered.find(({ name }) => name === COLLECTOR_OUTPUT_TOOL)!.parameters as RegisteredSchema & {
+      properties: { legs: { description?: string; items?: { anyOf?: Array<{ properties?: { status?: { const?: string } } }> } } };
+    };
+    assert.deepEqual(output.required, [], `${COLLECTOR_OUTPUT_TOOL} has no provider-level required fields`);
+    assert.equal(output.additionalProperties, true, `${COLLECTOR_OUTPUT_TOOL} remains provider-open`);
+    assert.ok(output.properties.legs.description?.trim(), `${COLLECTOR_OUTPUT_TOOL}.legs semantic description`);
+    assert.deepEqual(
+      new Set(output.properties.legs.items?.anyOf?.map((branch) => branch.properties?.status?.const)),
+      new Set(["valid", "unavailable", "missing"]),
+      `${COLLECTOR_OUTPUT_TOOL}.legs retains its semantic valid/unavailable/missing branches`,
+    );
   });
 });
 
-test("F1 real-Pi invalid sole output denies at execute with zero GitHub", async () => {
+test("F1 real-Pi malformed sole output executes then remains non-accepted with zero GitHub", async () => {
   await withActivationHome({ prefix: "ak-collector-f1-out-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const neverTouched = createFakeGitHubTransport({
@@ -1026,8 +1051,8 @@ test("F1 real-Pi invalid sole output denies at execute with zero GitHub", async 
       reviewComments: [],
     });
 
-    // Shape space owned by collector-receipt schema matrix; keep one real-Pi tracer
-    // (discriminated-union clause most likely to rot). Batch-law sibling poison is gone (ADR 0041).
+    // Keep one real-Pi tracer proving malformed sole output reaches execute, remains
+    // observable as an error toolResult, and does not produce an accepted receipt.
     const tracer = {
       name: "unavailable missing scope",
       args: {
@@ -1061,21 +1086,8 @@ test("F1 real-Pi invalid sole output denies at execute with zero GitHub", async 
       assert.equal(result.exitCode, 1, tracer.name);
       assert.ok(
         result.toolResultIsError.some((isError) => isError),
-        "invalid sole output fails at the output execution seam",
+        "malformed sole output executes and remains an error toolResult",
       );
-    }
-
-    // Remaining shapes: exported schema / parse path (no Pi boot).
-    for (const row of [
-      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: ["s"], extra: true }] },
-      { legs: [{ legId: "codex", status: "unavailable", rationale: "x", evidenceRefs: ["s"], unavailableScope: "galaxy" }] },
-      { legs: [{ legId: "codex", status: "valid", rationale: "x", evidenceRefs: ["s"], unavailableScope: "global" }] },
-      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: ["s"], unavailableScope: "target" }] },
-      { legs: [{ legId: "codex", status: "missing", rationale: "   ", evidenceRefs: ["s"] }] },
-      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: [] }] },
-      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: ["s"] }], extra: 1 },
-    ] as const) {
-      assert.equal(collectorToolArgumentsValid(COLLECTOR_OUTPUT_TOOL, row), false);
     }
   });
 });

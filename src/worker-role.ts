@@ -5,6 +5,7 @@ import type {
   AgentToolResult,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 
@@ -51,22 +52,23 @@ function matchFixerBashForbiddenLiteral(
   );
 }
 
-const coderOutputSchema = Type.Union([
+const coderOutputVariants = Type.Union([
   Type.Object({
-    status: StringEnum(["planned"] as const),
-    report: Type.String({ minLength: 1 }),
+    status: StringEnum(["planned"] as const, { description: "Plan-phase proposal outcome." }),
+    report: Type.String({ minLength: 1, description: "Truthful Coder outcome report." }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: StringEnum(["completed", "refused"] as const),
-    report: Type.String({ minLength: 1 }),
+    status: StringEnum(["completed", "refused"] as const, { description: "Completed or lawfully refused apply outcome." }),
+    report: Type.String({ minLength: 1, description: "Truthful Coder outcome report." }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: StringEnum(["unfinished"] as const),
-    report: Type.String({ minLength: 1 }),
-    remainingScope: Type.String({ minLength: 1 }),
+    status: StringEnum(["unfinished"] as const, { description: "Honest unfinished apply outcome." }),
+    report: Type.String({ minLength: 1, description: "Truthful Coder outcome report." }),
+    remainingScope: Type.String({ minLength: 1, description: "Work remaining after this invocation." }),
   }, { additionalProperties: false }),
 ]);
-type WorkerOutputParameters = Static<typeof coderOutputSchema> | FixerOutput;
+const coderOutputSchema = openToolObjectFromUnion(coderOutputVariants);
+type WorkerOutputParameters = CoderOutput | FixerOutput;
 export type { FixerOutput, CoderOutput };
 export const FIXER_FLAG_DEFINITIONS = {
   packet: {
@@ -130,29 +132,13 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value);
 }
 
-function hasExactKeys(
-  value: Record<string, unknown>,
-  expected: readonly string[],
-): boolean {
-  const keys = Object.keys(value);
-  return keys.length === expected.length &&
-    expected.every((key) => Object.hasOwn(value, key));
-}
-
 export function validateWorkerOutput(
-  output: WorkerOutputParameters,
+  output: unknown,
   phase: WorkerPhase,
   roleLabel: WorkerRoleLabel,
 ): WorkerOutput {
   if (roleLabel === "Fixer") return validateFixerOutput(output, phase);
-  const accepted = validateAcceptedWorkerDetails(output, "Coder") as CoderOutput;
-  if (phase === "plan" && accepted.status !== "planned" && accepted.status !== "refused") {
-    throw new Error("Coder plan phase permits only planned or refused");
-  }
-  if (phase === "apply" && accepted.status === "planned") {
-    throw new Error("Coder apply phase permits only completed, unfinished, or refused");
-  }
-  return accepted;
+  return validateAcceptedWorkerDetails(output, "Coder") as CoderOutput;
 }
 
 function requireSingletonSubmissionCall(

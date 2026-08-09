@@ -124,14 +124,50 @@ export class AcceptedDetailsContractError extends Error {
   }
 }
 
+function safeProperty(candidate: Record<string, unknown> | undefined, property: string): unknown {
+  try {
+    return candidate?.[property];
+  } catch {
+    return undefined;
+  }
+}
+
 export function validateAcceptedDetails(
   toolName: TerminatingToolName,
   details: unknown,
 ): AcceptedDetails {
-  if (isAuditEscalationResult(details)) {
+  const candidate = details !== null && typeof details === "object" && !Array.isArray(details)
+    ? details as Record<string, unknown>
+    : undefined;
+  let auditEscalation = false;
+  try {
+    auditEscalation = isAuditEscalationResult(details);
+  } catch {
+    // Hostile getters are not recognizable audit escalation evidence.
+  }
+  if (auditEscalation || safeProperty(candidate, "kind") === "audit_escalation") {
     throw new AcceptedDetailsContractError(
       "audit escalation is not an accepted role receipt",
     );
+  }
+  const discriminator = safeProperty(candidate, toolName === JUDGE_OUTPUT_TOOL_NAME ? "judgeStatus" : "status");
+  const lawfulStatuses: Readonly<Record<TerminatingToolName, readonly string[]>> = {
+    [CODER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "unfinished"],
+    [FIXER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "partially_completed", "unfinished"],
+    [REVIEWER_OUTPUT_TOOL_NAME]: ["completed", "refused"],
+    [JUDGE_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
+    [COLLECTOR_OUTPUT_TOOL]: [],
+    [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
+    [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
+  };
+  const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.legs) && candidate.legs.length > 0 &&
+    candidate.legs.every((leg) => leg !== null && typeof leg === "object" &&
+      ["valid", "unavailable", "missing"].includes(String((leg as Record<string, unknown>).status)));
+  const runtimeBindingMissing =
+    (toolName === DOCTOR_OUTPUT_TOOL_NAME && discriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
+    (toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2);
+  if (runtimeBindingMissing || (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(discriminator)))) {
+    throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
   }
   try {
     switch (toolName) {
@@ -196,15 +232,21 @@ const COLLECTOR_LEG_STATUS_RANK: Record<CollectorLegStatus, number> = {
 export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): AcceptedFacts {
   switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME:
-    case FIXER_OUTPUT_TOOL_NAME: return { status: (details as WorkerOutput).status };
-    case REVIEWER_OUTPUT_TOOL_NAME: return { status: (details as RuntimeReviewerReceiptV2).status };
-    case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as JudgeVerdict).judgeStatus };
-    case DOCTOR_OUTPUT_TOOL_NAME: return { status: (details as DoctorOutput).status };
-    case MERGER_OUTPUT_TOOL_NAME: { const output = details as MergerOutput; return { status: output.status, ...(output.status === "completed" ? { commit: output.mergeCommitId } : {}) }; }
+    case FIXER_OUTPUT_TOOL_NAME:
+    case REVIEWER_OUTPUT_TOOL_NAME:
+    case DOCTOR_OUTPUT_TOOL_NAME: return { status: (details as { status: string }).status };
+    case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as { judgeStatus: string }).judgeStatus };
+    case MERGER_OUTPUT_TOOL_NAME: {
+      const output = details as unknown as Record<string, unknown>;
+      return { status: output.status as string, ...(output.status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {}) };
+    }
     case COLLECTOR_OUTPUT_TOOL: {
-      // Collector has no receipt-level status; legs carry typed terminal states.
-      // Keep the distinct set as a typed field — never join into a display string here.
-      const unique = [...new Set((details as CollectorReceipt).legs.map((leg) => leg.status))];
+      const legs = (details as unknown as { legs?: unknown }).legs;
+      const unique = [...new Set((Array.isArray(legs) ? legs : []).flatMap((leg) =>
+        leg !== null && typeof leg === "object" && ["valid", "unavailable", "missing"].includes(String((leg as { status?: unknown }).status))
+          ? [(leg as { status: CollectorLegStatus }).status]
+          : []
+      ))];
       unique.sort((a, b) => COLLECTOR_LEG_STATUS_RANK[a] - COLLECTOR_LEG_STATUS_RANK[b]);
       return { legStatuses: unique };
     }

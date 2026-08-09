@@ -17,7 +17,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import test, { afterEach } from "node:test";
 import { pathToFileURL } from "node:url";
 import { fauxProvider } from "@earendil-works/pi-ai";
-import type { ExtensionError } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionError } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import {
   ACCEPTED_ACTIVATION_EVENT,
@@ -49,6 +49,7 @@ import {
   reconcileInvocation,
 } from "../../src/activation-reconciliation.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
+import { TERMINATING_TOOL_NAMES } from "../../src/package-contracts/terminating-tools.ts";
 import {
   createFakeGitHubTransport,
   samplePull,
@@ -66,6 +67,9 @@ import {
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
+import { AGENT_TOOL_NAME } from "../../src/reviewer-role.ts";
+import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
+import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
 
 function sha256Hex(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -262,6 +266,163 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
       return {};
   }
 }
+
+test("seven packaged terminating tools expose the provider-open registration inventory", async () => {
+  assert.deepEqual(
+    new Set(PACKAGED_ROLE_REGISTRY.map(({ outputTool }) => outputTool)),
+    new Set(TERMINATING_TOOL_NAMES),
+    "packaged roles and canonical terminating tools must describe the same inventory",
+  );
+
+  const declaredFields = (role: string): readonly string[] => {
+    switch (role) {
+      case "coder": return ["status", "report", "remainingScope"];
+      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults"];
+      case "reviewer": return ["status", "diagnostic"];
+      case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"];
+      case "collector": return ["legs"];
+      case "doctor": return ["status", "case", "findings", "reason", "missingEvidence"];
+      case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis"];
+      default: throw new Error(`unexpected packaged role ${role}`);
+    }
+  };
+  type Schema = {
+    type?: unknown;
+    anyOf?: Schema[];
+    oneOf?: unknown;
+    required?: unknown;
+    additionalProperties?: unknown;
+    properties?: Record<string, Schema & { description?: unknown; items?: Schema }>;
+    items?: Schema;
+  };
+
+  await withActivationHome({ prefix: "ak-terminating-inventory-" }, async ({ home, agentDir }) => {
+    const fixtureRoot = join(home, "inventory-fixtures");
+    mkdirSync(fixtureRoot, { recursive: true });
+    const faux = fauxProvider({ api: "ak-terminating-inventory", provider: "ak-terminating-inventory" });
+
+    for (const entry of PACKAGED_ROLE_REGISTRY) {
+      process.exitCode = undefined;
+      const flags = Object.fromEntries(Object.entries({
+        "ak-role": entry.role,
+        ...admissionFlagsForRole(entry.role, fixtureRoot),
+      }).map(([name, value]) => [name, String(value)]));
+      let registrationApi: ExtensionAPI | undefined;
+      const productionFactory = createRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot));
+      await withInProcessPi({
+        activationLedgerSession: true,
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        noExtensions: true,
+        systemPrompt: `INVENTORY ${entry.role}`,
+        mode: "print",
+        flags,
+        extensionFactories: [(pi) => {
+          registrationApi = pi;
+          productionFactory(pi);
+        }],
+      }, async () => {
+        assert.ok(registrationApi, `${entry.role} production factory API`);
+        const registrations = registrationApi.getAllTools().filter(({ name }) => name === entry.outputTool);
+        assert.equal(registrations.length, 1, `${entry.role}/${entry.outputTool} registration count`);
+        const parameters = registrations[0]!.parameters as Schema;
+        const label = `${entry.role}/${entry.outputTool}`;
+        assert.equal(parameters.type, "object", `${label} Object root`);
+        assert.equal(parameters.anyOf, undefined, `${label} has no root anyOf`);
+        assert.equal(parameters.oneOf, undefined, `${label} has no root oneOf`);
+        assert.deepEqual(parameters.required, [], `${label} provider required fields`);
+        assert.equal(parameters.additionalProperties, true, `${label} provider-open root`);
+        assert.deepEqual(Object.keys(parameters.properties ?? {}).sort(), [...declaredFields(entry.role)].sort(), `${label} top-level fields`);
+        for (const [field, declaration] of Object.entries(parameters.properties ?? {})) {
+          assert.ok(typeof declaration.description === "string" && declaration.description.trim().length > 0, `${label}.${field} semantic description`);
+        }
+
+        if (entry.role === "fixer") {
+          assert.ok(parameters.properties?.blocker?.anyOf, `${label}.blocker retains its legal union`);
+          const classResultsBranches = parameters.properties?.classResults?.anyOf;
+          assert.ok(classResultsBranches, `${label}.classResults retains its property-level legal union`);
+          assert.ok(
+            classResultsBranches.some((branch) => branch.items?.anyOf),
+            `${label}.classResults mixed branch items retain their legal union`,
+          );
+        } else if (entry.role === "collector") {
+          assert.ok(parameters.properties?.legs?.items?.anyOf, `${label}.legs item retains its legal union`);
+        } else if (entry.role === "doctor") {
+          assert.ok(parameters.properties?.findings?.items?.anyOf, `${label}.findings item retains its legal union`);
+        }
+      });
+    }
+  });
+});
+
+test("remaining support tools expose their actual registration inventory", async () => {
+  const cases = [
+    { role: "reviewer", name: AGENT_TOOL_NAME, fields: ["version", "base", "materials", "relevanceHints", "spec", "required"] },
+    { role: "doctor", name: DOCTOR_EVIDENCE_TOOL_NAME, fields: ["evidenceId", "offset", "limit"] },
+    { role: "navigator", name: NAVIGATOR_PREPARE_TOOL_NAME, fields: [] },
+  ] as const;
+  type Schema = {
+    type?: unknown;
+    anyOf?: unknown;
+    oneOf?: unknown;
+    properties?: Record<string, { description?: unknown }>;
+  };
+
+  await withActivationHome({ prefix: "ak-support-inventory-" }, async ({ home, agentDir }) => {
+    const fixtureRoot = join(home, "support-inventory-fixtures");
+    mkdirSync(fixtureRoot, { recursive: true });
+    const faux = fauxProvider({ api: "ak-support-inventory", provider: "ak-support-inventory" });
+
+    for (const entry of cases) {
+      process.exitCode = undefined;
+      let registrationApi: ExtensionAPI | undefined;
+      const flags = entry.role === "navigator" ? {} : Object.fromEntries(Object.entries({
+        "ak-role": entry.role,
+        ...admissionFlagsForRole(entry.role, fixtureRoot),
+      }).map(([name, value]) => [name, String(value)]));
+      const extensionFactories = entry.role === "navigator"
+        ? []
+        : [(pi: ExtensionAPI) => {
+            registrationApi = pi;
+            createRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))(pi);
+          }];
+
+      await withInProcessPi({
+        activationLedgerSession: entry.role !== "navigator",
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        noExtensions: true,
+        ...(entry.role === "navigator" ? {
+          noTools: "builtin" as const,
+          customTools: [createNavigatorPrepareTool(() => {})],
+        } : {}),
+        systemPrompt: `SUPPORT INVENTORY ${entry.role}`,
+        mode: "print",
+        flags,
+        extensionFactories,
+      }, async ({ session }) => {
+        const registrations = entry.role === "navigator"
+          ? session.agent.state.tools.filter(({ name }) => name === entry.name)
+          : (assert.ok(registrationApi, `${entry.role} actual session API`), registrationApi.getAllTools().filter(({ name }) => name === entry.name));
+        assert.equal(registrations.length, 1, `${entry.role}/${entry.name} registration count`);
+        const parameters = registrations[0]!.parameters as Schema;
+        const label = `${entry.role}/${entry.name}`;
+        assert.equal(parameters.type, "object", `${label} Object root`);
+        assert.equal(parameters.anyOf, undefined, `${label} has no root anyOf`);
+        assert.equal(parameters.oneOf, undefined, `${label} has no root oneOf`);
+        assert.deepEqual(Object.keys(parameters.properties ?? {}).sort(), [...entry.fields].sort(), `${label} semantic fields`);
+        for (const [field, declaration] of Object.entries(parameters.properties ?? {})) {
+          assert.ok(typeof declaration.description === "string" && declaration.description.trim().length > 0, `${label}.${field} semantic description`);
+        }
+        if (entry.role === "navigator") assert.equal(faux.state.callCount, 0, `${label} model calls`);
+      });
+    }
+  });
+});
 
 test("every registered role writes exactly one accepted-activation fact after admission", async () => {
   assert.ok(PACKAGED_ROLE_REGISTRY.some((entry) => entry.role === "collector"), "Collector must remain in the #52 registry gate");

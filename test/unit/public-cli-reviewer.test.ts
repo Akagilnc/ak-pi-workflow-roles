@@ -397,8 +397,8 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal(extracted?.outcome.role, "reviewer");
     assert.equal(extracted?.outcome.kind, "accepted");
     assert.equal(extracted?.outcome.status, "completed");
-    assert.equal(extracted?.outcome.decisiveFacts.axes, "standards,spec");
-    assert.equal(extracted?.outcome.decisiveFacts.reportAxes, "standards,spec");
+    assert.deepEqual(extracted?.outcome.decisiveFacts.axes, ["standards", "spec"]);
+    assert.deepEqual(extracted?.outcome.decisiveFacts.reportAxes, ["standards", "spec"]);
 
     const invocations = extractReviewerMethodInvocations(entries, {
       allowedLocations: [material.skillPath, skillPath],
@@ -618,11 +618,11 @@ test("ak-role reviewer admits base/task, derives capabilities, and rejects blank
           : undefined,
         "completed",
       );
-      assert.equal(
+      assert.deepEqual(
         result.terminal?.roleOutcome.kind === "accepted"
           ? result.terminal.roleOutcome.decisiveFacts.axes
           : undefined,
-        "standards,spec",
+        ["standards", "spec"],
       );
 
       const bookKey = resolveBookKeyFromGit(project);

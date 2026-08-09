@@ -2,19 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { validateAcceptedWorkerDetails } from "../../src/package-contracts/worker-output.ts";
-import { completed } from "../helpers/fixer-fixtures.ts";
 
-// Judge class grammar/uniqueness negatives live in judge-output-contract.test.ts
-// ("mixed and blank verdict shapes reject with named status diagnostics").
-
-test("current Fixer settlement is independent while Coder has no self-reported commit field", () => {
-  const fixer = { status: "completed", report: "done", classResults: [completed()] };
-  assert.deepEqual(validateAcceptedWorkerDetails(fixer, "Fixer"), fixer);
-  assert.deepEqual(validateAcceptedWorkerDetails({ status: "completed", report: "done" }, "Coder"), { status: "completed", report: "done" });
-  assert.throws(() => validateAcceptedWorkerDetails({ status: "completed", report: "done", commitSha: "advisory" }, "Coder"), /Coder output/);
-  assert.throws(() => validateAcceptedWorkerDetails(fixer, "Coder"), /Coder output/);
-  assert.throws(
-    () => validateAcceptedWorkerDetails({ status: "completed", report: "old", classesRepaired: [] }, "Fixer"),
-    /Fixer output/,
-  );
+test("current Fixer and Coder settlements use open runtime projection", () => {
+  const fixer = { status: "completed", report: "done", presentation: "opaque" };
+  const coder = { status: "completed", report: "done", presentation: "opaque" };
+  assert.equal(validateAcceptedWorkerDetails(fixer, "Fixer"), fixer);
+  assert.equal(validateAcceptedWorkerDetails(coder, "Coder"), coder);
 });

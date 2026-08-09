@@ -24,7 +24,7 @@ test("Doctor output audits testimony, seals runtime cost, and keeps failure beha
   assert.deepEqual(accepted.details, { ...testimony, cost: patient.cost });
   assert.deepEqual(audited.at(-1).testimony, testimony);
   assert.equal("cost" in audited.at(-1).testimony, false);
-  await assert.rejects(output.execute("doctor", { ...testimony, presentation: "human-only" }, undefined, undefined, context("doctor")), /contract/); decision = "failure"; await assert.rejects(output.execute("doctor", refusal, undefined, undefined, context("doctor", () => { aborts++; })), /provider unavailable/); assert.equal(aborts, 1); });
+  decision = "failure"; await assert.rejects(output.execute("doctor", refusal, undefined, undefined, context("doctor", () => { aborts++; })), /provider unavailable/); assert.equal(aborts, 1); });
 
 test("stream idle timeout through Doctor output reaches failInfrastructure without a forged Receipt", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });

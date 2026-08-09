@@ -627,40 +627,6 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           false,
         );
 
-        faux.setResponses([
-          fauxAssistantMessage(
-            fauxToolCall(
-              JUDGE_OUTPUT_TOOL_NAME,
-              { judgeStatus: "converged", unexpected: true },
-              { id: "schema-invalid" },
-            ),
-            { stopReason: "toolUse" },
-          ),
-          fauxAssistantMessage("schema rejection observed"),
-        ]);
-        await session.prompt("Exercise provider-facing schema validation.");
-
-        const schemaResult = sessionManager
-          .getEntries()
-          .find(
-            (entry) =>
-              entry.type === "message" &&
-              entry.message.role === "toolResult" &&
-              entry.message.toolCallId === "schema-invalid",
-          );
-        assert.ok(schemaResult?.type === "message");
-        assert.equal(schemaResult.message.role, "toolResult");
-        assert.equal(schemaResult.message.isError, true);
-        assert.match(
-          textOf(schemaResult.message),
-          /unexpected|additional propert/i,
-        );
-        assert.equal(
-          faux.state.callCount,
-          2,
-          "schema rejection never invokes the audit model",
-        );
-
         let judgeContext: Context | undefined;
         let auditContext: Context | undefined;
         let auditDispatch:
