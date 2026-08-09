@@ -6,7 +6,14 @@ import { createAgentSession, createBashTool, DefaultResourceLoader, ModelRuntime
 import { childSessionManager } from "./activation-ledger-session.js";
 import { prepareComplianceDispatch } from "./compliance-transport.js";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.js";
-function classifiedError(error, reviewerFailure) { const wrapped = error instanceof Error ? error : new Error(String(error), { cause: error }); const classification = "reviewerFailure" in wrapped ? wrapped.reviewerFailure : reviewerFailure; return Object.assign(wrapped, { reviewerFailure: classification }); }
+function classifiedError(error, reviewerFailure) {
+    const diagnostic = typeof error === "object" && error !== null && typeof error.errorMessage === "string"
+        ? error.errorMessage
+        : error === undefined ? "" : String(error);
+    const wrapped = error instanceof Error ? error : Object.assign(new Error(diagnostic, { cause: error }), { reviewerOriginal: error });
+    const classification = "reviewerFailure" in wrapped ? wrapped.reviewerFailure : reviewerFailure;
+    return Object.assign(wrapped, { reviewerFailure: classification });
+}
 function emptyUsage() {
     return {
         input: 0,
@@ -29,7 +36,7 @@ function addUsage(total, next) {
     total.cost.cacheWrite += next.cost.cacheWrite;
     total.cost.total += next.cost.total;
 }
-async function createChildRuntime(context) {
+async function createChildRuntime(context, providerStream) {
     const activeModel = context.model;
     if (activeModel === undefined) {
         throw new Error("Reviewer Agent requires an active model");
@@ -77,10 +84,22 @@ async function createChildRuntime(context) {
         },
         getModels() { return [dispatch.model]; },
         stream(model, childContext, options) {
-            return parentProvider.stream(model, childContext, options);
+            try {
+                return (providerStream ?? parentProvider.stream)(model, childContext, options);
+            }
+            catch (error) {
+                throw classifiedError(error, "provider");
+            }
         },
         streamSimple(model, childContext, options) {
-            return parentProvider.streamSimple(model, childContext, options);
+            try {
+                return providerStream === undefined
+                    ? parentProvider.streamSimple(model, childContext, options)
+                    : providerStream(model, childContext, options);
+            }
+            catch (error) {
+                throw classifiedError(error, "provider");
+            }
         },
     };
     runtime.registerNativeProvider(provider);
@@ -118,7 +137,7 @@ export async function executeReviewerChild(workspace, leg, context, options = {}
         let runtime;
         let model;
         try {
-            ({ runtime, model } = await createChildRuntime(context));
+            ({ runtime, model } = await createChildRuntime(context, options.providerStream));
         }
         catch (error) {
             throw classifiedError(error, "provider");
