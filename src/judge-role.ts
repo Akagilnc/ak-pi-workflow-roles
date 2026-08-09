@@ -208,7 +208,6 @@ export function createJudgeRoleRuntime(
           };
         });
       }
-
     },
   };
 }
