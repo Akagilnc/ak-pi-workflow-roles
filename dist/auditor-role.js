@@ -127,12 +127,17 @@ export async function runAuditorRole(options) {
                 throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, { stopReason: boundaryResponse.stopReason, toolNames });
             }
             const latestAssistant = [...session.messages].reverse().find((message) => message.role === "assistant");
-            if (decision === undefined && (latestAssistant?.stopReason === "error" || latestAssistant?.stopReason === "aborted"))
-                throw latestAssistant;
             const response = [...session.messages].reverse().find((message) => message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
-            if (response === undefined || decision === undefined)
+            const responseCall = response?.content.flatMap((part) => part.type === "toolCall" && part.name === tool.name ? [part] : [])[0];
+            const observedDecision = decision ?? responseCall?.arguments;
+            if (observedDecision === undefined && (latestAssistant?.stopReason === "error" || latestAssistant?.stopReason === "aborted"))
+                throw latestAssistant;
+            if (response === undefined || observedDecision === undefined) {
+                if (latestAssistant !== undefined)
+                    return { decision: undefined, response: latestAssistant };
                 throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
-            return { decision, response };
+            }
+            return { decision: observedDecision, response };
         }
         finally {
             options.signal?.removeEventListener("abort", abort);
