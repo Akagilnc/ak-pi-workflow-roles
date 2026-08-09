@@ -144,7 +144,7 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
         },
       });
       const roleEntries = await readLatestSession(sessionDirectory);
-      const navigatorDirectory = resolve(issueRoot, "runs/navigator");
+      const navigatorDirectory = navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot);
       const navigatorEntries = await readLatestSession(navigatorDirectory);
       return { result, roleEntries, navigatorEntries };
     },
@@ -1388,8 +1388,9 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               await mkdir(resolve(issueRoot, "authority.md"), { recursive: true });
             }
             if (scenario.name === "session") {
-              await mkdir(resolve(issueRoot, "runs"), { recursive: true });
-              await writeFile(resolve(issueRoot, "runs/navigator"), "not a session directory", "utf8");
+              const navigatorDirectory = navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot);
+              await mkdir(resolve(navigatorDirectory, ".."), { recursive: true });
+              await writeFile(navigatorDirectory, "not a session directory", "utf8");
             }
             const faux = fauxProvider({ api: `ak-navigator-${scenario.name}-${diagnosticIndex}`, provider: `ak-navigator-${scenario.name}-${diagnosticIndex}`, tokenSize: { min: 1000, max: 1000 } });
             const model = faux.getModel();
@@ -1764,6 +1765,11 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
       assert.equal(first.subjectKey, second.subjectKey);
       assert.deepEqual(first.next, { role: "fixer", phase: "plan" });
       assert.deepEqual(second.next, { role: "reviewer", phase: null });
+      assert.equal(
+        execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: root }).byteLength,
+        0,
+        "role/Navigator session transport must leave the consumer repository byte-empty",
+      );
       const navigatorSession = SessionManager.continueRecent(root, navigatorSessionDirectory({ cwd: root, sessionManager: { getSessionDir: () => "" } } as never, first.subjectKey));
       const persisted = (await readFile(navigatorSession.getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: { role?: string; phase?: string | null } });
       assert.deepEqual(persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation").slice(0, 2).map((entry) => ({ role: entry.data?.role, phase: entry.data?.phase })), [
@@ -2271,7 +2277,7 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
       `non-empty bash child output must produce at least one throttled update heartbeat after skipping the empty entry callback; got ${JSON.stringify(bashRecords)}`,
     );
 
-    const navigatorDirectory = resolve(issueRoot, "runs/navigator");
+    const navigatorDirectory = navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot);
     const navigatorEntries = await readLatestSession(navigatorDirectory);
     const navigatorPrepare = navigatorEntries.find(
       (entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === NAVIGATOR_PREPARE_TOOL_NAME,
