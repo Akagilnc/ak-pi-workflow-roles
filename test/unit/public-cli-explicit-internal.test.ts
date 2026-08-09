@@ -114,8 +114,6 @@ const index = args.indexOf("--session-dir");
 const sessionDir = index >= 0 ? args[index + 1] : ${JSON.stringify(sessionDir)};
 mkdirSync(sessionDir, { recursive: true });
 writeFileSync(join(sessionDir, "session.jsonl"), ${JSON.stringify(sessionLine)}, "utf8");
-writeFileSync(${JSON.stringify(ready)}, "ready");
-setInterval(() => {}, 1000);
 process.on("SIGTERM", () => {
   writeFileSync(${JSON.stringify(signalFile)}, "SIGTERM");
   process.exit(143);
@@ -124,6 +122,8 @@ process.on("SIGINT", () => {
   writeFileSync(${JSON.stringify(signalFile)}, "SIGINT");
   process.exit(130);
 });
+writeFileSync(${JSON.stringify(ready)}, "ready");
+setInterval(() => {}, 1000);
 `,
     );
 
