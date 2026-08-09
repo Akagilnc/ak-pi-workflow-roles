@@ -293,7 +293,7 @@ async function dispatchAdmittedMerger(input: {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        timeoutMs: env.timeoutMs,
         ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
       });
     } catch (error) {
