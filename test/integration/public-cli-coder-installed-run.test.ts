@@ -301,9 +301,6 @@ test(
         );
 
         const roleReport = reportText;
-        const roleReceiptBytes = JSON.stringify(
-          (JSON.parse(roleReport) as { receipt: unknown }).receipt,
-        );
         assert.equal(roleReport.includes("COLD_INSTALLED_ROUTEBOOK_MARKER"), false);
 
         await chmod(installedRoutebook, 0o000);
@@ -352,10 +349,7 @@ test(
             join(runsRoot, name, "artifacts", "report.json"),
             "utf8",
           );
-          assert.equal(
-            JSON.stringify((JSON.parse(receipt) as { receipt: unknown }).receipt),
-            roleReceiptBytes,
-          );
+          assert.equal(receipt, roleReport);
           assert.equal(receipt.includes("EACCES"), false);
         }
       },
