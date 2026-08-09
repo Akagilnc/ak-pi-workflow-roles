@@ -98,14 +98,10 @@ Read-only probes only; no `npm publish`.
 - Project license: **Apache-2.0** (`package.json` `"license": "Apache-2.0"` + root `LICENSE` = complete Apache License 2.0 text).
 - Matt Pocock skills attribution: **separate** third-party notice in `THIRD_PARTY_NOTICES.md` (MIT). Not project license authority; not a dual-license expression.
 
-## Peer dependency ranges
+## Host peers and verified development snapshot
 
-Explicit ranges replace upstream Pi docs' `"*"` recommendation for bundled peers. Ticket #104 / #11 Finding 4 require upper-bound discipline because Pi/TypeBox minor bumps have broken extension APIs.
+Pi host core packages (`@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`, and `typebox`) are declared as optional `"*"` peers. They describe host ownership, not a runtime version gate: the package uses the machine Pi selected by the caller and lets real API/protocol failures remain visible.
 
-| peer | range | executable matrix |
-| --- | --- | --- |
-| `@earendil-works/pi-coding-agent` | `>=0.83.0 <=0.83.0` | `0.83.0` |
-| `@earendil-works/pi-ai` | `>=0.83.0 <=0.83.0` | `0.83.0` |
-| `typebox` | `>=1.3.7 <=1.3.8` | `1.3.7`, `1.3.8` |
+Development, typecheck, and lockfile dependencies record the version snapshot verified by the current upgrade ticket. For Issue #200 that snapshot is Pi `0.84.1` and TypeBox `1.3.8`. Each machine-Pi upgrade gets its own ticket, capability audit, adaptation, and full regression run; after acceptance the development snapshot and lockfile roll forward together. Historical-version tracks are not maintained.
 
-Distribution remains one Pi-managed npm copy (`pi install npm:<package>`), not a second global install. Packed metadata is verified via the repository `npm pack` seam (`getSharedIsolatedPack`). TypeBox matrix endpoints are executed by cold-installing that packed tarball with each pin as the consumer’s top-level `typebox` peer (`test/package/npm-identity-metadata.test.ts`), not by inspecting Pi’s nested dependency copies.
+Distribution remains one Pi-managed npm copy (`pi install npm:<package>`), not a second global install. Packed metadata and the optional-host-peer fresh-install behavior are verified through the repository pack and real Pi package-manager seams (`test/package/npm-identity-metadata.test.ts`).

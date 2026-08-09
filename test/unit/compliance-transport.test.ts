@@ -182,6 +182,48 @@ test("default compliance completion sends the production timeout and merges pare
   });
 });
 
+test("nullable provider auth headers reach the real dispatch seam without coercion", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    const seen: { options?: Record<string, unknown> } = {};
+    const base = defaultCompletionContext(
+      sessionManager,
+      async () => response("nullable-headers", [
+        fauxToolCall(decisionToolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+      ]),
+      seen,
+    );
+    const headers = { "x-provider-route": null, "x-provider-value": "kept" };
+    const auditContext = {
+      ...base,
+      modelRegistry: {
+        ...(base.modelRegistry as object),
+        getProviderAuth: async () => ({ auth: { apiKey: "test-secret" } }),
+        getApiKeyAndHeaders: async () => ({
+          ok: true as const,
+          apiKey: "test-secret",
+          headers,
+        }),
+      },
+    } as unknown as ExtensionContext;
+
+    const decision = await runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: auditContext,
+    });
+
+    assert.equal(decision.status, "pass");
+    assert.strictEqual(seen.options?.headers, headers);
+    assert.deepEqual(seen.options?.headers, {
+      "x-provider-route": null,
+      "x-provider-value": "kept",
+    });
+  });
+});
+
 test("a timeout-honoring provider terminates the real default seam with typed cause and no receipt", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   await withPersistedSession(async (sessionManager) => {

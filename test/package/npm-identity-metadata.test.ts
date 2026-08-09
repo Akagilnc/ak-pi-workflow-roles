@@ -11,10 +11,34 @@ import { promisify } from "node:util";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import {
   getSharedIsolatedPack,
+  installPackedArtifactIntoPiNpm,
   packageRoot,
+  withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 
 const execFileAsync = promisify(execFile);
+
+async function npmTreeJson(root: string, home: string, packageName: string): Promise<{ dependencies?: Record<string, unknown> }> {
+  const stdout = await new Promise<string>((resolveOutput, reject) => {
+    execFile(
+      "npm",
+      ["ls", packageName, "--all", "--json"],
+      {
+        cwd: root,
+        env: { ...process.env, HOME: home },
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: 120_000,
+      },
+      (error, output) => {
+        // npm may report an unrelated file-spec root as ELSPROBLEMS while still
+        // returning its complete machine tree. Only that documented status is parseable here.
+        if (error && error.code !== 1) reject(error);
+        else resolveOutput(output);
+      },
+    );
+  });
+  return JSON.parse(stdout) as { dependencies?: Record<string, unknown> };
+}
 
 /** Registry-settled package identity (docs/npm-identity.md). */
 const SETTLED_PACKAGE_NAME = "@akagilnc/pi-workflow-roles";
@@ -362,42 +386,26 @@ test("packed Pi core peers follow the host-supplied wildcard optional contract",
   });
 });
 
-test("fresh packed install does not install private Pi core", async () => {
-  const pack = await getSharedIsolatedPack();
-  const root = await mkdtemp(resolve(tmpdir(), "ak-host-only-install-"));
-  await withPrimaryAwareCleanup(
-    async () => {
-      const home = resolve(root, "home");
-      const npmRoot = resolve(root, "consumer");
-      await writeFile(
-        resolve(root, "package.json"),
-        JSON.stringify({ private: true }),
-      );
-      await execFileAsync(
-        "npm",
-        ["install", "--ignore-scripts", "--no-audit", "--no-fund", pack.tarball],
-        {
-          cwd: root,
-          env: { ...process.env, HOME: home, npm_config_cache: resolve(npmRoot, "cache") },
-          maxBuffer: 10 * 1024 * 1024,
-          timeout: 120_000,
-        },
-      );
-      const packageInstallRoot = resolve(
-        root,
-        "node_modules/@akagilnc/pi-workflow-roles",
-      );
-      for (const coreName of Object.keys(EXPECTED_PEERS)) {
-        for (const modulesRoot of [resolve(root, "node_modules"), resolve(packageInstallRoot, "node_modules")]) {
-          await assert.rejects(
-            access(resolve(modulesRoot, coreName)),
-            { code: "ENOENT" },
-            `${coreName} must be supplied only by the host`,
-          );
-        }
+test("real Pi fresh install leaves optional host peers uninstalled", async () => {
+  await withHermeticHome(
+    { prefix: "ak-optional-host-peers-" },
+    async ({ home, agentDir }) => {
+      const installation = await installPackedArtifactIntoPiNpm(agentDir, home);
+      await access(installation.installedRoot);
+
+      for (const hostPeer of Object.keys(EXPECTED_PEERS)) {
+        await assert.rejects(
+          access(resolve(installation.installedRoot, "node_modules", hostPeer)),
+          { code: "ENOENT" },
+          `${hostPeer} must not be role-owned`,
+        );
+      }
+
+      for (const hostPeer of Object.keys(EXPECTED_PEERS)) {
+        const tree = await npmTreeJson(installation.npmRoot, home, hostPeer);
+        assert.deepEqual(tree.dependencies ?? {}, {}, `${hostPeer} must be absent from Pi's npm tree`);
       }
     },
-    async () => rm(root, { recursive: true, force: true }),
   );
 });
 

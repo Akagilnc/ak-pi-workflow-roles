@@ -153,9 +153,13 @@ export async function packIsolatedPackage(
     await materializePackageTree(root, {
       nodeModules: options.nodeModules ?? "symlink",
     });
+    await execFileAsync("pnpm", ["run", "build"], {
+      cwd: root,
+      maxBuffer: 10 * 1024 * 1024,
+    });
     const { stdout } = await execFileAsync(
       "npm",
-      ["pack", "--json", "--pack-destination", packDestination],
+      ["pack", "--ignore-scripts", "--json", "--pack-destination", packDestination],
       { cwd: root, maxBuffer: 10 * 1024 * 1024 },
     );
     const pack = JSON.parse(stdout) as Array<{
@@ -329,23 +333,26 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
         const modulesState = JSON.parse(
           readFileSync(resolve(packageRoot, "node_modules/.modules.yaml"), "utf8"),
         ) as { storeDir: string };
+        const commandEnv = {
+          ...process.env,
+          CI: "true",
+          npm_config_store_dir: modulesState.storeDir,
+        };
+        await execFileAsync("pnpm", ["run", "build"], {
+          cwd: materialRoot,
+          env: commandEnv,
+          maxBuffer: 10 * 1024 * 1024,
+        });
         const { stdout } = await execFileAsync(
           "npm",
-          ["pack", "--json", "--pack-destination", packDestination],
+          ["pack", "--ignore-scripts", "--json", "--pack-destination", packDestination],
           {
             cwd: materialRoot,
-            env: {
-              ...process.env,
-              CI: "true",
-              npm_config_store_dir: modulesState.storeDir,
-            },
+            env: commandEnv,
             maxBuffer: 10 * 1024 * 1024,
           },
         );
-        const jsonStart = stdout.lastIndexOf("\n[");
-        const pack = JSON.parse(
-          jsonStart === -1 ? stdout : stdout.slice(jsonStart + 1),
-        ) as Array<{
+        const pack = JSON.parse(stdout) as Array<{
           filename: string;
           files: Array<{ path: string }>;
         }>;
