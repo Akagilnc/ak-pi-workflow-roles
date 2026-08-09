@@ -301,6 +301,7 @@ test(
         );
 
         const roleReport = reportText;
+        const roleReceipt = (JSON.parse(reportText) as { receipt: unknown }).receipt;
         assert.equal(roleReport.includes("COLD_INSTALLED_ROUTEBOOK_MARKER"), false);
 
         await chmod(installedRoutebook, 0o000);
@@ -345,12 +346,12 @@ test(
         const coderRuns = allRuns.filter((name) => name.endsWith("@coder"));
         assert.equal(coderRuns.length, 3);
         for (const name of coderRuns) {
-          const receipt = await readFile(
+          const runReport = JSON.parse(await readFile(
             join(runsRoot, name, "artifacts", "report.json"),
             "utf8",
-          );
-          assert.equal(receipt, roleReport);
-          assert.equal(receipt.includes("EACCES"), false);
+          )) as { receipt: unknown };
+          assert.deepEqual(runReport.receipt, roleReceipt);
+          assert.equal(JSON.stringify(runReport.receipt).includes("EACCES"), false);
         }
       },
     );
