@@ -127,3 +127,5 @@ pi --no-extensions \
 - stdin 须以 `</dev/null` 封死——Pi 会将非 TTY stdin 读到 EOF 才开工，未封死的后台管道＝永久停车；
 - stdout 丢 `/dev/null`——session 文件才是正本，stdout 是无上限副本面；仪表挂 `stderr.log` 与 session 文件；
 - `stderr.log` 与 `invocation.json` 落在同次 `runs/` 目录，如上例。
+
+Codex fast 档：本仓经 pnpm patch 改造 pi-ai（`patches/`，每次 `pnpm install` 自动应用）——`PI_TEMP_FAST_MODE` 键存在即生效（空值亦然），codex 请求默认走 `service_tier: "priority"`；不设置则为官方原样。npm 装的既有副本（全局 Pi、旧 worktree）不受影响。

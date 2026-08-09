@@ -1,0 +1,18 @@
+diff --git a/dist/api/openai-codex-responses.js b/dist/api/openai-codex-responses.js
+index bb9fa794ee6cb9f73149dda5733b286941bbb550..001f2c36ac53aeace636a6b9d6728f40a4ffe3d5 100644
+--- a/dist/api/openai-codex-responses.js
++++ b/dist/api/openai-codex-responses.js
+@@ -148,6 +148,13 @@ function compressRequestBodyZstd(bodyJson) {
+ // ============================================================================
+ export const stream = (model, context, options) => {
+     const stream = new AssistantMessageEventStream();
++    // [ak-patch] PI_TEMP_FAST_MODE: default codex service_tier to "priority" when
++    // the env var is set and no explicit serviceTier was supplied. pi-ai exposes no
++    // official switch; pricing and resolveCodexServiceTier read options.serviceTier
++    // downstream, so cost accounting stays honest. Env-gated: unset = stock behavior.
++    if (options?.serviceTier === undefined && typeof process !== "undefined" && "PI_TEMP_FAST_MODE" in (process.env ?? {})) {
++        options = { ...options, serviceTier: "priority" };
++    }
+     (async () => {
+         const output = {
+             role: "assistant",
