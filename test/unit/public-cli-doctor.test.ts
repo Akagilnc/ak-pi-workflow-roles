@@ -139,14 +139,17 @@ async function seedIssueRuns(
   return runs;
 }
 
-function sampleCompletedDoctorOutput(identity: {
-  issueNumber: number;
-  runsPath: string;
-}): DoctorOutput {
+function sampleCompletedDoctorOutput(
+  identity: { issueNumber: number; runsPath: string },
+  findingObservation?: string,
+): DoctorOutput {
   return {
     status: "completed",
     case: identity,
-    findings: [],
+    findings:
+      findingObservation === undefined
+        ? []
+        : [{ targetKey: "law/unique-s2", observation: findingObservation, evidenceIds: ["ev-1"] }],
     cost: {
       invocations: { count: 1, sources: ["review-001"] },
       legs: { count: 1, sources: ["review-001/session/leg.jsonl"] },
@@ -515,6 +518,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     seedGitProject(project);
     const bookKey = resolveBookKeyFromGit(project);
     await seedIssueRuns(home, bookKey, 40);
+    const findingObservation = "UNIQUE-DOCTOR-FINDING-OBSERVATION-S2";
 
     const completedIo = captureIo();
     const completed = await runAkRole(
@@ -541,7 +545,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
                 role: "toolResult",
                 toolName: DOCTOR_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: sampleCompletedDoctorOutput(patient.identity),
+                details: sampleCompletedDoctorOutput(patient.identity, findingObservation),
               },
             })}\n`,
             "utf8",
@@ -549,7 +553,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
           return {
             code: 0,
             timedOut: false,
-            stdout: "",
             stderr: "",
             args: [...args],
           };
@@ -562,6 +565,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(completed.terminal!.roleOutcome.kind, "accepted");
     assert.equal(completed.terminal!.roleOutcome.status, "completed");
     assert.equal(completed.terminal!.roleOutcome.decisiveFacts.issueNumber, 40);
+    assert.equal(completed.terminal!.roleOutcome.decisiveFacts.findingsCount, 1);
     assert.match(completedIo.stdout.join(""), /doctor/);
 
     const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")
@@ -574,6 +578,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(report.role, "doctor");
     assert.equal(report.receipt.status, "completed");
     assert.equal(report.receipt.case.issueNumber, 40);
+    assert.ok((await readFile(reportPath!, "utf8")).includes(findingObservation));
 
     // Refused path reuses the same Terminal settlement owner.
     const refusedIo = captureIo();
@@ -611,7 +616,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
           return {
             code: 0,
             timedOut: false,
-            stdout: "",
             stderr: "",
             args: [...args],
           };

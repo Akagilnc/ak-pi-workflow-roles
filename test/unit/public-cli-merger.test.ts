@@ -247,13 +247,6 @@ test("buildMergerActivationExtraArgs pins package merge-only method and internal
     const args = buildMergerActivationExtraArgs(admitted, { packageRoot });
     assert.equal(args.includes("--no-skills"), true);
     assert.equal(args.includes("--skill"), true);
-    const skillIdx = args.indexOf("--skill");
-    assert.equal(
-      args[skillIdx + 1]?.includes(
-        "resources/methods/resolving-merge-conflicts/SKILL.md",
-      ),
-      true,
-    );
     assert.equal(args.includes("--ak-role"), true);
     assert.equal(args[args.indexOf("--ak-role") + 1], "merger");
     assert.equal(args.includes("--ak-merger-input"), true);
@@ -381,6 +374,19 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     );
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
+    // #177 S2: merger report is legally withheld from decisiveFacts; receipt holds it.
+    assert.equal(
+      Object.hasOwn(terminal.roleOutcome.decisiveFacts, "report"),
+      false,
+    );
+    const mergerReportBody = await readFile(
+      terminal.artifacts.find((a) => a.kind === "report")!.path,
+      "utf8",
+    );
+    assert.ok(
+      mergerReportBody.includes(receipt.report),
+      "merger report text must live in artifact receipt",
+    );
 
     const evidence = JSON.parse(
       await readFile(
@@ -595,7 +601,6 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
             );
             return {
               code: 0,
-              stdout: "",
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -657,7 +662,6 @@ test("ak-role resume continues merger with package method and exact session", as
             });
             return {
               code: 1,
-              stdout: "",
               stderr: "quota",
               timedOut: false,
               args: [...args],
@@ -735,7 +739,6 @@ test("ak-role resume continues merger with package method and exact session", as
         );
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],

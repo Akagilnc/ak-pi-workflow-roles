@@ -14,20 +14,6 @@ export function encodeTerminalField(value: string): string {
   return JSON.stringify(value);
 }
 
-/** Decode one free-text Terminal cell produced by encodeTerminalField. */
-export function decodeTerminalField(encoded: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(encoded);
-  } catch (error) {
-    throw new TypeError("terminal free-text field is not valid JSON", { cause: error });
-  }
-  if (typeof parsed !== "string") {
-    throw new TypeError("terminal free-text field must decode to a string");
-  }
-  return parsed;
-}
-
 export type TerminalArtifactRef = {
   kind: "report" | "evidence" | "error";
   /** Openable local reference (path). Layout is private; the ref value is the contract. */
@@ -146,7 +132,9 @@ export function buildAuditIncompleteTerminalOutcome(input: {
       auditCandidate: audit.candidate,
       auditObservation: audit.observation,
       observationKind: audit.observation.kind,
-      observationType: audit.observation.type,
+      observationType: audit.observation.kind === "non-object-arguments"
+        ? audit.observation.type
+        : audit.observation.status,
       acceptedReceipt: false,
     },
   };

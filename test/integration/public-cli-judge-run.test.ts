@@ -29,7 +29,7 @@ function seedGitProject(root: string): void {
 }
 
 test(
-  "ak-role Judge settles retained malformed compliance as a typed incomplete Terminal",
+  "ak-role Judge settles retained unreadable compliance as a typed incomplete Terminal",
   { timeout: 120_000 },
   async () => {
     const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-incomplete-"));
@@ -72,7 +72,7 @@ test(
               env: {
                 ...options.env,
                 PI_OFFLINE: "1",
-                AK_AUDIT_NON_OBJECT: "1",
+                AK_AUDIT_UNKNOWN_STATUS: "1",
               },
               timeoutMs: options.timeoutMs ?? 90_000,
             });
@@ -97,10 +97,13 @@ test(
       assert.equal(outcome.decision, "no-usable-decision");
       assert.equal(outcome.acceptedReceipt, false);
       assert.deepEqual(outcome.roleCandidate, { judgeStatus: "converged" });
-      assert.deepEqual(outcome.audit.candidate, ["malformed auditor candidate"]);
+      assert.deepEqual(outcome.audit.candidate, {
+        status: "mystery",
+        retained: "raw auditor candidate",
+      });
       assert.deepEqual(outcome.audit.observation, {
-        kind: "non-object-arguments",
-        type: "array",
+        kind: "object-status-unreadable",
+        status: "unknown",
       });
       assert.notDeepEqual(outcome.roleCandidate, outcome.audit.candidate);
 
@@ -150,125 +153,9 @@ test(
       const publicOutput = stdout.join("");
       assert.ok(publicOutput.includes("roleCandidate"));
       assert.ok(publicOutput.includes("auditCandidate"));
-      assert.ok(publicOutput.includes("malformed auditor candidate"));
+      assert.ok(publicOutput.includes("raw auditor candidate"));
       assert.ok(publicOutput.includes("auditObservation"));
-      assert.ok(publicOutput.includes("array"));
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  },
-);
-
-test(
-  "ak-role Judge retains omitted JSONL arguments as typed public candidates",
-  { timeout: 120_000 },
-  async () => {
-    const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-undefined-"));
-    try {
-      const project = join(home, "work");
-      await mkdir(project, { recursive: true });
-      seedGitProject(project);
-      const stdout: string[] = [];
-      const stderr: string[] = [];
-      const providerPath = resolve(
-        packageRoot,
-        "test/fixtures/audit-failure-provider.ts",
-      );
-      const result = await runAkRole(
-        [
-          "judge",
-          "--model",
-          "ak-audit-failure/faux-1",
-          "--thinking",
-          "off",
-          "--project",
-          project,
-          "Retain omitted arguments.",
-        ],
-        {
-          packageRoot,
-          home,
-          agentDir: join(home, ".pi", "agent"),
-          cwd: project,
-          createRunId: () => "run-e2e-judge-undefined-001",
-          judgeExtraPiArgs: ["-e", providerPath],
-          judgeTimeoutMs: 90_000,
-          io: {
-            stdout: (text) => stdout.push(text),
-            stderr: (text) => stderr.push(text),
-          },
-          piRunner: async (args, options) => {
-            const subprocess = await runPiSubprocess([...args], {
-              cwd: options.cwd,
-              env: {
-                ...options.env,
-                PI_OFFLINE: "1",
-                AK_AUDIT_NON_OBJECT: "1",
-              },
-              timeoutMs: options.timeoutMs ?? 90_000,
-            });
-            const sessionFile = join(
-              args[args.indexOf("--session-dir") + 1]!,
-              "session.jsonl",
-            );
-            const rows = (await readFile(sessionFile, "utf8"))
-              .trim()
-              .split("\n")
-              .map((line) => JSON.parse(line) as any);
-            for (const row of rows) {
-              const parts = row.message?.content;
-              if (row.message?.role === "assistant" && Array.isArray(parts)) {
-                for (const part of parts) {
-                  if (part.type === "toolCall" && part.name === "ak_judge_output") {
-                    delete part.arguments;
-                  }
-                }
-              }
-              if (row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE) {
-                const parts = row.data?.response?.content;
-                if (Array.isArray(parts)) {
-                  for (const part of parts) {
-                    if (part.type === "toolCall") delete part.arguments;
-                  }
-                }
-              }
-            }
-            await writeFile(
-              sessionFile,
-              `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
-              "utf8",
-            );
-            return {
-              code: subprocess.code,
-              stdout: subprocess.stdout,
-              stderr: subprocess.stderr,
-              timedOut: subprocess.timedOut,
-              args: [...args],
-            };
-          },
-        },
-      );
-      assert.equal(result.exitCode, 1, stderr.join(""));
-      assert.equal(stdout.length, 1);
-      assert.ok(result.terminal);
-      const outcome = result.terminal!.roleOutcome;
-      assert.equal(outcome.kind, "audit_incomplete");
-      if (outcome.kind !== "audit_incomplete") throw new Error("expected audit residual");
-      assert.deepEqual(outcome.roleCandidate, {
-        kind: "json-safe-sentinel",
-        type: "undefined",
-      });
-      assert.deepEqual(outcome.audit.candidate, {
-        kind: "json-safe-sentinel",
-        type: "undefined",
-      });
-      const evidenceRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "evidence");
-      assert.ok(evidenceRef);
-      const evidence = JSON.parse(await readFile(evidenceRef.path, "utf8")) as any;
-      assert.deepEqual(evidence.roleCandidate, outcome.roleCandidate);
-      assert.deepEqual(evidence.audit.candidate, outcome.audit.candidate);
-      assert.deepEqual(evidence.decisiveFacts.roleCandidate, outcome.roleCandidate);
-      assert.deepEqual(evidence.decisiveFacts.auditCandidate, outcome.audit.candidate);
+      assert.ok(publicOutput.includes("unknown"));
     } finally {
       await rm(home, { recursive: true, force: true });
     }

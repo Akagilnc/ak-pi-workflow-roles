@@ -1,6 +1,6 @@
 /**
- * #110 public Fixer path — common Invocation, structural prerequisites,
- * optional package diagnosing-bugs (available, not forced), shared Terminal.
+ * #110/#177 public Fixer path — common Invocation, structural prerequisites,
+ * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
  */
 import assert from "node:assert/strict";
 import {
@@ -24,6 +24,7 @@ import {
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { runExplicitInternalActivation } from "../../src/public-cli/explicit-internal.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   buildFixerActivationExtraArgs,
@@ -44,7 +45,11 @@ import {
   exitCodeForTerminalOutcome,
   isLawfulTypedTerminalOutcome,
 } from "../../src/public-cli/terminal.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import {
+  packageRoot,
+  runPiSubprocess,
+  withActivationHome,
+} from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
@@ -203,69 +208,55 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
   });
 });
 
-test("buildFixerActivationExtraArgs pins package diagnosing-bugs without forcing skill text in prompt", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    const apply = await admitFixerInvocation({
-      home,
-      cwd: project,
-      phase: "apply",
-      instruction: "Apply the approved repair.",
-      attachmentPaths: [],
-      createRunId: () => "run-fixer-apply-args",
-    });
-    const applyArgs = buildFixerActivationExtraArgs(apply, { packageRoot });
-    assert.equal(applyArgs.includes("--no-skills"), true);
-    assert.equal(applyArgs.includes("--skill"), true);
-    const skillIdx = applyArgs.indexOf("--skill");
-    assert.equal(
-      applyArgs[skillIdx + 1]?.includes("resources/methods/diagnosing-bugs/SKILL.md"),
-      true,
-    );
-    assert.equal(applyArgs.includes("--ak-fixer-phase"), true);
-    assert.equal(applyArgs[applyArgs.indexOf("--ak-fixer-phase") + 1], "apply");
-    assert.equal(applyArgs[applyArgs.indexOf("--ak-fix-packet") + 1], apply.packetPath);
-    // Diagnosis is available but not forced into the first prompt transport.
-    const prompt = applyArgs[applyArgs.length - 1]!;
-    assert.equal(prompt.includes("/skill:diagnosing-bugs"), false);
-    assert.equal(prompt.includes("Apply the approved repair."), true);
-    assert.equal(
-      applyArgs.some((a) => a.includes(".agents/skills")),
-      false,
-    );
-
-    const prereq = join(home, "prereq.json");
-    await writeFile(
-      prereq,
-      JSON.stringify([{ id: "repo.ready", requirement: "Repository is ready." }]),
-      "utf8",
-    );
-    const plan = await admitFixerInvocation({
-      home,
-      cwd: project,
-      phase: "plan",
-      instruction: "Plan only.",
-      attachmentPaths: [],
-      prerequisitesPath: prereq,
-      createRunId: () => "run-fixer-plan-args",
-    });
-    const planArgs = buildFixerActivationExtraArgs(plan, { packageRoot });
-    assert.equal(planArgs.includes("--skill"), true);
-    assert.equal(planArgs[planArgs.indexOf("--ak-fixer-phase") + 1], "plan");
-    assert.equal(planArgs.includes("--ak-fixer-prerequisites"), true);
-    assert.equal(
-      planArgs[planArgs.indexOf("--ak-fixer-prerequisites") + 1],
-      plan.prerequisitesPath,
-    );
-
-    const resume = buildFixerResumeActivationExtraArgs(apply, { packageRoot });
-    assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
-    assert.equal(resume.includes(apply.instruction), false);
-    assert.equal(resume.includes("--skill"), true);
-    assert.equal(resume[resume.indexOf("--ak-fixer-phase") + 1], "apply");
+test("Fixer production activation args reach the real Pi loader for both optional methods", async () => {
+  await withActivationHome({ prefix: "ak-fixer-method-trace-" }, async ({ home, agentDir }) => {
+    const applyAdmitted = await admitFixerInvocation({ home, cwd: home, phase: "apply", instruction: "Apply the approved repair.", attachmentPaths: [], createRunId: () => "run-fixer-method-trace-apply" });
+    const rows = [
+      { name: "initial-apply", args: buildFixerActivationExtraArgs(applyAdmitted, { packageRoot }), sessionFile: applyAdmitted.sessionFile },
+      { name: "resume-apply", args: buildFixerResumeActivationExtraArgs(applyAdmitted, { packageRoot }), sessionFile: applyAdmitted.sessionFile },
+    ];
+    for (const row of rows) {
+      const result = await runExplicitInternalActivation({
+        packageRoot,
+        cwd: home,
+        home,
+        agentDir,
+        extraArgs: [
+          "-e",
+          join(packageRoot, "test", "fixtures", "fixer-dual-skill-availability-provider.ts"),
+          "--provider",
+          "ak-fixer-dual-skill-availability",
+          "--model",
+          "faux-1",
+          ...row.args,
+        ],
+        runner: async (args, options) => {
+          const subprocess = await runPiSubprocess([
+            ...args,
+            "--mode",
+            "print",
+            "--print",
+            "/skill:diagnosing-bugs inspect the root cause",
+            "--print",
+            "/skill:tdd verify the repair",
+          ], {
+            cwd: options.cwd,
+            env: options.env,
+          });
+          return { ...subprocess, args: [...args] };
+        },
+      });
+      assert.equal(result.code, 0, `${row.name}: ${result.stderr}`);
+      const sessionText = await readFile(row.sessionFile, "utf8");
+      const userTexts = sessionText.split("\n")
+        .filter((line) => line.trim() !== "")
+        .map((line) => JSON.parse(line) as { message?: { role?: string; content?: Array<{ type?: string; text?: string }> } })
+        .filter((entry) => entry.message?.role === "user")
+        .map((entry) => entry.message?.content?.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n") ?? "");
+      assert.equal(userTexts.some((text) => text.includes('<skill name="diagnosing-bugs"')), true, row.name);
+      assert.equal(userTexts.some((text) => text.includes('<skill name="tdd"')), true, row.name);
+      assert.equal(userTexts[0]?.includes("<skill name="), false, row.name);
+    }
   });
 });
 
@@ -362,6 +353,9 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(terminal.roleOutcome.status, "completed");
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
+    const report = terminal.artifacts.find((a) => a.kind === "report");
+    assert.ok(report);
+    assert.ok((await readFile(report.path, "utf8")).includes(receipt.report));
 
     const evidence = JSON.parse(
       await readFile(
@@ -509,7 +503,6 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
             );
             return {
               code: 0,
-              stdout: "",
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -520,18 +513,9 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       assert.equal(result.exitCode, 0, stdout.join("") || "fixer plan failed");
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-fixer-phase") + 1], "plan");
-      assert.equal(captured!.includes("--skill"), true);
-      assert.equal(
-        captured![captured!.indexOf("--skill") + 1]?.includes(
-          "resources/methods/diagnosing-bugs/SKILL.md",
-        ),
-        true,
-      );
-      // Not forced: first prompt must not auto-inject skill invocation.
-      assert.equal(
-        captured![captured!.length - 1]?.includes("/skill:diagnosing-bugs"),
-        false,
-      );
+      // Real Pi loader/invocation coverage is table-driven above; this CLI
+      // row only keeps the public plan phase and settlement regression.
+
       assert.equal(result.terminal?.roleOutcome.role, "fixer");
       assert.equal(
         result.terminal?.roleOutcome.kind === "accepted"
@@ -567,7 +551,6 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
             captured = [...args];
             return {
               code: 1,
-              stdout: "",
               stderr: "forced stop before model",
               timedOut: false,
               args: [...args],
@@ -577,13 +560,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       );
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-fixer-phase") + 1], "apply");
-      assert.equal(captured!.includes("--skill"), true);
-      assert.equal(
-        captured![captured!.indexOf("--skill") + 1]?.includes(
-          "resources/methods/diagnosing-bugs/SKILL.md",
-        ),
-        true,
-      );
+      // Real Pi loader/invocation coverage is table-driven above.
     }
   });
 });
@@ -617,7 +594,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
             });
             return {
               code: 1,
-              stdout: "",
               stderr: "quota",
               timedOut: false,
               args: [...args],
@@ -681,7 +657,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         );
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -829,7 +804,6 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
           await writeFile(sessionFile, fixerSessionLine(receipt), "utf8");
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -992,14 +966,9 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         },
       },
     ]);
-    assert.ok(escalationExtracted);
-    assert.equal(escalationExtracted.outcome.kind, "audit_escalation");
-    assert.equal(escalationExtracted.outcome.status, "audit_escalation");
-    assert.equal(
-      escalationExtracted.outcome.decisiveFacts.kind,
-      AUDIT_ESCALATION_KIND,
-    );
-    assert.equal(escalationExtracted.output, undefined);
+    // A role-authored kind is not an audit identity without the retained,
+    // seat-bound compliance response.
+    assert.equal(escalationExtracted, undefined);
 
     // settle + runAkRole production path for each lawful status → exit 0.
     const cases: Array<{
@@ -1037,15 +1006,6 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         status: "partially_completed",
         factKey: "fixerStatus",
         factValue: "partially_completed",
-      },
-      {
-        runId: "run-fixer-status-escalate",
-        phase: "apply",
-        details: escalation,
-        kind: "audit_escalation",
-        status: "audit_escalation",
-        factKey: "kind",
-        factValue: AUDIT_ESCALATION_KIND,
       },
     ];
 
@@ -1093,7 +1053,6 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
           await writeFile(sessionFile, fixerSessionLine(row.details), "utf8");
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],

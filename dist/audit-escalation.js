@@ -1,26 +1,67 @@
 export const AUDIT_ESCALATION_KIND = "audit_escalation";
-export function buildAuditEscalationResult(decision) {
-    return {
+// Live Navigator settlement may consume only the projection produced by this
+// owner. Its private WeakSet cannot be authored by role output; persisted/
+// replayed records are re-authenticated by the retained audit evidence binder.
+const AUDIT_ESCALATION_LIVE_REGISTRY = new WeakSet();
+/**
+ * Build the escalation delivery face.
+ * Role-delivered fields ride under the escalation discriminator (ADR 0055).
+ * `kind` always wins so the discriminator cannot be laundered.
+ * `conflicts` and `auditDecisionGate`, when present, always come from the
+ * audit (why we escalated and its gate). Raw ancillary values are not repaired.
+ * A role `decisionGate`, when present, stays at its own key via spread and is
+ * never overwritten (not folded, not dropped, not swapped into the audit home).
+ */
+export function buildAuditEscalationResult(decision, deliveredOutput) {
+    const auditOwned = {
         kind: AUDIT_ESCALATION_KIND,
-        conflicts: [...decision.conflicts],
-        decisionGate: {
-            question: decision.decisionGate.question,
-            options: [...decision.decisionGate.options],
-        },
     };
+    if (Object.hasOwn(decision, "conflicts")) {
+        auditOwned.conflicts = decision.conflicts;
+    }
+    if (Object.hasOwn(decision, "decisionGate")) {
+        auditOwned.auditDecisionGate = decision.decisionGate;
+    }
+    const deliveredFields = deliveredOutput !== undefined &&
+        deliveredOutput !== null &&
+        typeof deliveredOutput === "object" &&
+        !Array.isArray(deliveredOutput)
+        ? { ...deliveredOutput }
+        : {};
+    // Role output cannot fill an absent audit-owned field.
+    delete deliveredFields.conflicts;
+    delete deliveredFields.auditDecisionGate;
+    const result = {
+        ...deliveredFields,
+        ...auditOwned,
+    };
+    AUDIT_ESCALATION_LIVE_REGISTRY.add(result);
+    return result;
+}
+/** True only for the audit-owned live projection, never for role-shaped data. */
+export function isAuditEscalationProjection(value) {
+    if (!isAuditEscalationResult(value))
+        return false;
+    return AUDIT_ESCALATION_LIVE_REGISTRY.has(value);
 }
 function humanDecisionText(result) {
-    return [
-        "Human decision required: compliance audit escalation.",
-        "Conflicts:",
-        ...result.conflicts.map((conflict) => `- ${conflict}`),
-        `Question: ${result.decisionGate.question}`,
-        "Options:",
-        ...result.decisionGate.options.map((option) => `- ${option}`),
-    ].join("\n");
+    const lines = ["Human decision required: compliance audit escalation."];
+    if (Array.isArray(result.conflicts)) {
+        lines.push("Conflicts:", ...result.conflicts.map((conflict) => `- ${conflict}`));
+    }
+    const gate = result.auditDecisionGate;
+    if (gate !== null && typeof gate === "object" && !Array.isArray(gate)) {
+        const record = gate;
+        if (typeof record.question === "string")
+            lines.push(`Question: ${record.question}`);
+        if (Array.isArray(record.options)) {
+            lines.push("Options:", ...record.options.map((option) => `- ${option}`));
+        }
+    }
+    return lines.join("\n");
 }
-export function projectAuditEscalation(decision) {
-    const details = buildAuditEscalationResult(decision);
+export function projectAuditEscalation(decision, deliveredOutput) {
+    const details = buildAuditEscalationResult(decision, deliveredOutput);
     return {
         content: [{ type: "text", text: humanDecisionText(details) }],
         details,
@@ -36,38 +77,32 @@ export function projectAuditIncomplete(decision) {
         ...(decision.usage === undefined ? {} : { usage: decision.usage }),
     };
 }
+/**
+ * Discriminator-only recognition (ADR 0040). Shape of conflicts/options/gate
+ * is not a reject gate — element types and cardinality are delivery content.
+ */
 export function isAuditEscalationResult(value) {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
         return false;
     }
-    const result = value;
-    const gate = result.decisionGate;
-    if (result.kind !== AUDIT_ESCALATION_KIND ||
-        !Array.isArray(result.conflicts) ||
-        result.conflicts.length === 0 ||
-        !result.conflicts.every((conflict) => typeof conflict === "string" && conflict.trim().length > 0) ||
-        typeof gate !== "object" ||
-        gate === null ||
-        Array.isArray(gate)) {
-        return false;
-    }
-    const gateRecord = gate;
-    return (typeof gateRecord.question === "string" &&
-        gateRecord.question.trim().length > 0 &&
-        Array.isArray(gateRecord.options) &&
-        gateRecord.options.length > 0 &&
-        gateRecord.options.every((option) => typeof option === "string" && option.trim().length > 0));
+    return value.kind === AUDIT_ESCALATION_KIND;
 }
-/** Dispose a parsed audit decision without repeating status handling in roles. */
-export async function disposeComplianceDecision(decision, handlers) {
+/**
+ * Dispose a parsed audit decision without repeating status handling in roles.
+ * Role output already delivered is preserved on the escalate face (ADR 0055).
+ */
+export async function disposeComplianceDecision(decision, handlers, deliveredOutput) {
     switch (decision.status) {
         case "pass":
             return await handlers.pass(decision.usage);
         case "revise":
             return await handlers.revise(decision.violations);
         case "escalate":
-            return await handlers.escalate(projectAuditEscalation(decision));
+            return await handlers.escalate(projectAuditEscalation(decision, deliveredOutput));
         case "audit-incomplete":
+            if (handlers.auditIncomplete === undefined) {
+                throw new Error("Compliance audit-incomplete handler is unavailable");
+            }
             return await handlers.auditIncomplete(projectAuditIncomplete(decision));
     }
 }

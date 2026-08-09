@@ -9754,30 +9754,30 @@ var defaultExplicitInternalPiRunner = async (args, options) => {
     const child = spawn(command, [...args], {
       cwd: options.cwd,
       env: options.env,
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "ignore", "pipe"]
     });
-    let stdout = "";
     let stderr = "";
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, options.timeoutMs ?? 3e4);
-    child.stdout.setEncoding("utf8").on("data", (chunk) => {
-      stdout += chunk;
-    });
+    let timer;
+    const armTimeoutAfterChildReady = () => {
+      if (options.timeoutMs === void 0) return;
+      timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, options.timeoutMs);
+    };
+    child.once("spawn", armTimeoutAfterChildReady);
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
+      if (timer !== void 0) clearTimeout(timer);
       reject(error);
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      if (timer !== void 0) clearTimeout(timer);
       resolveResult({
         code,
-        stdout,
         stderr,
         timedOut,
         args: [...args]
@@ -10093,17 +10093,7 @@ function isAuditEscalationResult(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  const result2 = value;
-  const gate = result2.decisionGate;
-  if (result2.kind !== AUDIT_ESCALATION_KIND || !Array.isArray(result2.conflicts) || result2.conflicts.length === 0 || !result2.conflicts.every(
-    (conflict) => typeof conflict === "string" && conflict.trim().length > 0
-  ) || typeof gate !== "object" || gate === null || Array.isArray(gate)) {
-    return false;
-  }
-  const gateRecord = gate;
-  return typeof gateRecord.question === "string" && gateRecord.question.trim().length > 0 && Array.isArray(gateRecord.options) && gateRecord.options.length > 0 && gateRecord.options.every(
-    (option) => typeof option === "string" && option.trim().length > 0
-  );
+  return value.kind === AUDIT_ESCALATION_KIND;
 }
 
 // src/package-contracts/terminating-tools.ts
@@ -10640,10 +10630,26 @@ function uuidv7(now = Date.now()) {
 }
 
 // src/public-cli/invocation.ts
-var EMPTY_INVOCATION_TRANSPORT_ENVELOPE = "[ak-role:structurally-empty-request]";
 var ROLE_RUN_SESSION_FILE_NAME = "session.jsonl";
 function roleRunSessionFile(sessionDirectory) {
   return join4(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
+}
+async function writeRoleInvocationLedger(source, role) {
+  const identity = {
+    role,
+    runId: source.runId,
+    bookKey: source.bookKey,
+    projectRoot: source.projectRoot,
+    runDirectory: source.runDirectory,
+    sessionDirectory: source.sessionDirectory,
+    sessionFile: source.sessionFile
+  };
+  await writeFile2(
+    join4(source.runDirectory, "invocation.json"),
+    `${JSON.stringify(identity, null, 2)}
+`,
+    "utf8"
+  );
 }
 var MergerEnvelopeDerivationError = class extends Error {
   code = "merger-envelope-derivation";
@@ -10873,6 +10879,9 @@ async function admitJudgeInvocation(options) {
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -10886,6 +10895,7 @@ async function admitJudgeInvocation(options) {
   const admittedRequestPath = join4(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
+  await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "judge",
     runId,
@@ -10901,12 +10911,7 @@ async function admitJudgeInvocation(options) {
   };
 }
 function buildJudgeTransportPrompt(admitted) {
-  const lines = [];
-  if (admitted.instructionEmpty) {
-    lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
-  } else {
-    lines.push(admitted.instruction);
-  }
+  const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
     lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
@@ -10966,6 +10971,9 @@ async function admitCoderInvocation(options) {
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -10980,6 +10988,7 @@ async function admitCoderInvocation(options) {
   const admittedRequestPath = join4(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
+  await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "coder",
     phase: options.phase,
@@ -11081,6 +11090,9 @@ async function admitFixerInvocation(options) {
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     packetPath,
@@ -11100,6 +11112,7 @@ async function admitFixerInvocation(options) {
   const admittedRequestPath = join4(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
+  await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "fixer",
     phase: options.phase,
@@ -11402,6 +11415,9 @@ async function admitCollectorInvocation(options) {
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty,
     prNumber,
@@ -11424,6 +11440,7 @@ async function admitCollectorInvocation(options) {
 `,
     "utf8"
   );
+  await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "collector",
     runId,
@@ -11664,6 +11681,9 @@ async function admitDoctorInvocation(options) {
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty,
     issueNumber: options.issueNumber,
@@ -11684,6 +11704,7 @@ async function admitDoctorInvocation(options) {
 `,
     "utf8"
   );
+  await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "doctor",
     runId,
@@ -11702,12 +11723,7 @@ async function admitDoctorInvocation(options) {
   };
 }
 function buildDoctorTransportPrompt(admitted) {
-  const lines = [];
-  if (admitted.instructionEmpty) {
-    lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
-  } else {
-    lines.push(admitted.instruction);
-  }
+  const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
     lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
@@ -11845,6 +11861,9 @@ async function admitReviewerInvocation(options) {
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -11866,6 +11885,7 @@ async function admitReviewerInvocation(options) {
 `,
     "utf8"
   );
+  await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "reviewer",
     runId,
@@ -12048,6 +12068,9 @@ async function admitMergerInvocation(options) {
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     mergerInputPath,
@@ -12073,6 +12096,7 @@ async function admitMergerInvocation(options) {
 `,
     "utf8"
   );
+  await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "merger",
     runId,
@@ -13032,6 +13056,51 @@ function createComplianceDecisionTool(name, description) {
   };
 }
 var COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+function readListField(value) {
+  if (Array.isArray(value)) return value;
+  if (value === void 0) return [];
+  return [value];
+}
+function readComplianceCandidate(arguments_, usage) {
+  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
+    const type = arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_;
+    return {
+      status: "audit-incomplete",
+      observation: { kind: "non-object-arguments", type },
+      candidate: arguments_,
+      ...usage === void 0 ? {} : { usage }
+    };
+  }
+  const args = arguments_;
+  const status = args.status;
+  if (status === "pass") {
+    return { status: "pass", ...usage === void 0 ? {} : { usage } };
+  }
+  if (status === "revise") {
+    return {
+      status: "revise",
+      violations: readListField(args.violations),
+      ...usage === void 0 ? {} : { usage }
+    };
+  }
+  if (status === "escalate") {
+    return {
+      status: "escalate",
+      ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {},
+      ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {},
+      ...usage === void 0 ? {} : { usage }
+    };
+  }
+  return {
+    status: "audit-incomplete",
+    observation: {
+      kind: "object-status-unreadable",
+      status: status === void 0 ? "missing" : "unknown"
+    },
+    candidate: arguments_,
+    ...usage === void 0 ? {} : { usage }
+  };
+}
 
 // src/doctor-auditor.ts
 var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
@@ -13370,7 +13439,7 @@ function buildAuditIncompleteTerminalOutcome(input) {
       auditCandidate: audit.candidate,
       auditObservation: audit.observation,
       observationKind: audit.observation.kind,
-      observationType: audit.observation.type,
+      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.status,
       acceptedReceipt: false
     }
   };
@@ -13672,11 +13741,19 @@ function judgeDecisiveFacts(verdict) {
     facts.fixSummary = verdict.fix.summary;
     facts.classCount = verdict.classes.length;
     facts.classNames = verdict.classes.map((entry) => entry.name).join(",");
+    facts.classes = verdict.classes.map((entry) => ({
+      name: entry.name,
+      owner: entry.owner,
+      boundary: entry.boundary,
+      disposition: entry.disposition
+    }));
   }
   if (verdict.judgeStatus === "escalate") {
     facts.decisionQuestion = verdict.decisionGate.question;
+    facts.decisionOptions = [...verdict.decisionGate.options];
   }
   if (verdict.note !== void 0) facts.note = verdict.note;
+  if (verdict.evidence !== void 0) facts.evidence = verdict.evidence;
   return facts;
 }
 function coderDecisiveFacts(output) {
@@ -13846,10 +13923,21 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds
 function isComplianceAuditIncomplete(value) {
   if (!isRecord5(value) || value.status !== "audit-incomplete") return false;
   const observation = value.observation;
-  if (!isRecord5(observation) || observation.kind !== "non-object-arguments") {
-    return false;
+  if (!isRecord5(observation)) return false;
+  if (observation.kind === "object-status-unreadable") {
+    return observation.status === "missing" || observation.status === "unknown";
   }
-  return ["null", "array", "undefined", "string", "number", "boolean", "bigint", "symbol", "function"].includes(observation.type);
+  return observation.kind === "non-object-arguments" && [
+    "null",
+    "array",
+    "undefined",
+    "string",
+    "number",
+    "boolean",
+    "bigint",
+    "symbol",
+    "function"
+  ].includes(observation.type);
 }
 function auditToolNameForRole(role) {
   switch (role) {
@@ -13875,12 +13963,6 @@ function outputToolNameForAuditedRole(role) {
       return DOCTOR_OUTPUT_TOOL_NAME;
   }
 }
-function nonObjectComplianceArgumentType(value) {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "array";
-  const type = typeof value;
-  return type === "undefined" || type === "string" || type === "number" || type === "boolean" || type === "bigint" || type === "symbol" || type === "function" ? type : void 0;
-}
 function boundRoleToolCallForResult(entries, resultIndex, message, outputToolName) {
   const callId = message.toolCallId;
   if (typeof callId !== "string" || callId.trim() === "") return void 0;
@@ -13905,6 +13987,53 @@ function boundRoleToolCallForResult(entries, resultIndex, message, outputToolNam
     }
   }
   return calls.length === 1 && resultCount === 1 && matchingResultIndex === resultIndex && calls[0].callIndex < resultIndex ? calls[0] : void 0;
+}
+function sameAuditValue(left, right) {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every(
+      (value, index) => sameAuditValue(value, right[index])
+    );
+  }
+  if (isRecord5(left) && isRecord5(right)) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return leftKeys.length === rightKeys.length && leftKeys.every((key) => Object.hasOwn(right, key) && sameAuditValue(left[key], right[key]));
+  }
+  return false;
+}
+function boundAuditEscalationForResult(entries, resultIndex, message, role, outputToolName) {
+  const roleCall = boundRoleToolCallForResult(
+    entries,
+    resultIndex,
+    message,
+    outputToolName
+  );
+  if (roleCall === void 0) return void 0;
+  const retained = boundRetainedAuditResponse(
+    entries,
+    roleCall.callIndex,
+    resultIndex,
+    auditToolNameForRole(role)
+  );
+  if (retained === void 0) return void 0;
+  const decision = readComplianceCandidate(retained.candidate);
+  if (decision.status !== "escalate") return void 0;
+  const details = message.details;
+  if (!isAuditEscalationResult(details) || !isRecord5(details)) return void 0;
+  const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
+  const hasDetailsConflicts = Object.hasOwn(details, "conflicts");
+  if (hasDecisionConflicts !== hasDetailsConflicts) return void 0;
+  if (hasDecisionConflicts && !sameAuditValue(details.conflicts, decision.conflicts)) return void 0;
+  const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
+  const hasDetailsGate = Object.hasOwn(details, "auditDecisionGate");
+  if (hasDecisionGate !== hasDetailsGate) return void 0;
+  if (hasDecisionGate && !sameAuditValue(details.auditDecisionGate, decision.decisionGate)) return void 0;
+  return { decision, details };
+}
+function auditIncompleteFromCandidate(candidate) {
+  const decision = readComplianceCandidate(candidate);
+  return decision.status === "audit-incomplete" ? decision : void 0;
 }
 function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolName) {
   const matches = [];
@@ -13948,13 +14077,8 @@ function extractComplianceAuditIncompleteRoleOutcome(entries, role, outputToolNa
       auditToolName
     );
     if (retained === void 0) continue;
-    const observationType = nonObjectComplianceArgumentType(retained.candidate);
-    if (observationType === void 0) continue;
-    const audit = {
-      status: "audit-incomplete",
-      observation: { kind: "non-object-arguments", type: observationType },
-      candidate: retained.candidate
-    };
+    const audit = auditIncompleteFromCandidate(retained.candidate);
+    if (audit === void 0) continue;
     return {
       outcome: buildAuditIncompleteTerminalOutcome({
         role,
@@ -14100,12 +14224,19 @@ function extractJudgeRoleOutcome(entries) {
     if (message.toolName !== JUDGE_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
-    if (isAuditEscalationResult(details)) {
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "judge",
+      JUDGE_OUTPUT_TOOL_NAME
+    );
+    if (escalation !== void 0) {
       return {
         kind: "audit_escalation",
         role: "judge",
         status: "audit_escalation",
-        decisiveFacts: { ...details }
+        decisiveFacts: { ...escalation.details }
       };
     }
     try {
@@ -14592,13 +14723,20 @@ function extractFixerRoleOutcome(entries) {
     if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
-    if (isAuditEscalationResult(details)) {
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "fixer",
+      FIXER_OUTPUT_TOOL_NAME
+    );
+    if (escalation !== void 0) {
       return {
         outcome: {
           kind: "audit_escalation",
           role: "fixer",
           status: "audit_escalation",
-          decisiveFacts: { ...details }
+          decisiveFacts: { ...escalation.details }
         }
       };
     }
@@ -14818,13 +14956,20 @@ function extractDoctorRoleOutcome(entries) {
     if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
-    if (isAuditEscalationResult(details)) {
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "doctor",
+      DOCTOR_OUTPUT_TOOL_NAME
+    );
+    if (escalation !== void 0) {
       return {
         outcome: {
           kind: "audit_escalation",
           role: "doctor",
           status: "audit_escalation",
-          decisiveFacts: { ...details }
+          decisiveFacts: { ...escalation.details }
         }
       };
     }
@@ -14983,6 +15128,23 @@ function extractReviewerRoleOutcome(entries) {
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
+    const escalation = boundAuditEscalationForResult(
+      entries,
+      i,
+      message,
+      "reviewer",
+      REVIEWER_OUTPUT_TOOL_NAME
+    );
+    if (escalation !== void 0) {
+      return {
+        outcome: {
+          kind: "audit_escalation",
+          role: "reviewer",
+          status: "audit_escalation",
+          decisiveFacts: { ...escalation.details }
+        }
+      };
+    }
     try {
       const receipt = validateRuntimeReviewerReceipt(message.details);
       const outcome = {
@@ -15018,7 +15180,7 @@ async function settleLawfulReviewerTerminalResult(admitted, options) {
     extracted.outcome,
     admitted.sessionDirectory,
     {
-      reviewerReceipt: extracted.receipt,
+      ...extracted.receipt === void 0 ? {} : { reviewerReceipt: extracted.receipt },
       methodProvenance: options.methodProvenance,
       methodInvocations
     }
@@ -15333,10 +15495,24 @@ async function publishFailureArtifacts(admitted, failure) {
     { kind: "evidence", path: evidenceWrite.path }
   ];
 }
+function redactDecisiveFactValue(value, runId) {
+  if (typeof value === "string") return redactExactRunId(value, runId);
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactDecisiveFactValue(entry, runId));
+  }
+  if (typeof value === "object" && value !== null) {
+    const out = {};
+    for (const [key, child] of Object.entries(value)) {
+      out[key] = redactDecisiveFactValue(child, runId);
+    }
+    return out;
+  }
+  return value;
+}
 function redactDecisiveFactsForPublicTerminal(facts, runId) {
   const out = {};
   for (const [key, value] of Object.entries(facts)) {
-    out[key] = typeof value === "string" ? redactExactRunId(value, runId) : value;
+    out[key] = redactDecisiveFactValue(value, runId);
   }
   return out;
 }
@@ -15549,7 +15725,7 @@ async function dispatchAdmittedJudge(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -15857,7 +16033,7 @@ async function dispatchAdmittedCoder(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -16158,7 +16334,7 @@ async function dispatchAdmittedCollector(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -16363,7 +16539,7 @@ async function dispatchAdmittedDoctor(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -16509,15 +16685,18 @@ function buildModelArgs5(model) {
 }
 function buildFixerActivationExtraArgs(admitted, options) {
   const prompt = buildFixerTransportPrompt(admitted);
-  const skillPath = resolvePackagedMethodSkillPath(
+  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "diagnosing-bugs"
   );
+  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
   const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
   return [
     "--no-skills",
     "--skill",
-    skillPath,
+    diagnosisSkillPath,
+    "--skill",
+    tddSkillPath,
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
@@ -16540,15 +16719,18 @@ function buildFixerActivationExtraArgs(admitted, options) {
   ];
 }
 function buildFixerResumeActivationExtraArgs(admitted, options) {
-  const skillPath = resolvePackagedMethodSkillPath(
+  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "diagnosing-bugs"
   );
+  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
   const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
   return [
     "--no-skills",
     "--skill",
-    skillPath,
+    diagnosisSkillPath,
+    "--skill",
+    tddSkillPath,
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
@@ -16632,7 +16814,7 @@ async function dispatchAdmittedFixer(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -16990,7 +17172,7 @@ async function dispatchAdmittedMerger(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -17429,7 +17611,7 @@ async function dispatchAdmittedReviewer(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {

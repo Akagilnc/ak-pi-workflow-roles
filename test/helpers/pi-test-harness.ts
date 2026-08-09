@@ -869,13 +869,19 @@ export async function runPiSubprocess(
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, options.timeoutMs ?? 30_000);
-    child.on("error", (error) => { clearTimeout(timeout); reject(error); });
+    let timeout: NodeJS.Timeout | undefined;
+    if (options.timeoutMs !== undefined) {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, options.timeoutMs);
+    }
+    child.on("error", (error) => {
+      if (timeout !== undefined) clearTimeout(timeout);
+      reject(error);
+    });
     child.on("close", (code) => {
-      clearTimeout(timeout);
+      if (timeout !== undefined) clearTimeout(timeout);
       resolveResult({ code, stdout, stderr, timedOut });
     });
   });
@@ -891,6 +897,8 @@ export interface InProcessPiOptions {
   additionalExtensionPaths?: string[];
   extensionFactories?: InlineExtension[];
   additionalSkillPaths?: string[];
+  /** Optional caller-owned persisted SessionManager for same-session assertions. */
+  sessionManager?: SessionManager;
   /** When set, forwarded to DefaultResourceLoader; default remains true. */
   noSkills?: boolean;
   /** When set, forwarded to DefaultResourceLoader; default remains true. */
@@ -991,8 +999,8 @@ export async function withInProcessPi<T>(
   await loader.reload();
   // Default: plain in-memory session — no git discovery, no durable-session I/O.
   // Activation-owning tests opt in via activationLedgerSession.
-  let sessionManager: SessionManager = SessionManager.inMemory(options.cwd);
-  if (options.activationLedgerSession === true) {
+  let sessionManager: SessionManager = options.sessionManager ?? SessionManager.inMemory(options.cwd);
+  if (options.sessionManager === undefined && options.activationLedgerSession === true) {
     // Keep in-memory session-dir semantics (empty getSessionDir) so Navigator subject
     // derivation from cwd/.ak/work stays intact, while exposing a genuinely persisted
     // session file under the machine ledger book (ADR 0048).
