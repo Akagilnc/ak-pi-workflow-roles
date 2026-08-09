@@ -11742,10 +11742,11 @@ function gitBlobOid(bytes) {
   return createHash3("sha1").update(header).update(body).digest("hex");
 }
 function stripSkillFrontmatter(content) {
-  if (!content.startsWith("---")) return content;
-  const end = content.indexOf("\n---", 3);
-  if (end === -1) return content;
-  const after = content.slice(end + "\n---".length);
+  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!normalized.startsWith("---")) return normalized;
+  const end = normalized.indexOf("\n---", 3);
+  if (end === -1) return normalized;
+  const after = normalized.slice(end + "\n---".length);
   return after.replace(/^\r?\n/, "");
 }
 function packagedMethodSkillRelativeDirectory(name) {

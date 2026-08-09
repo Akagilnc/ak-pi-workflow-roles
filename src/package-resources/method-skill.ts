@@ -149,10 +149,11 @@ export function gitBlobOid(bytes: string | Uint8Array): string {
 
 /** Minimal frontmatter strip — body after closing `---` fence (or full text). */
 export function stripSkillFrontmatter(content: string): string {
-  if (!content.startsWith("---")) return content;
-  const end = content.indexOf("\n---", 3);
-  if (end === -1) return content;
-  const after = content.slice(end + "\n---".length);
+  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!normalized.startsWith("---")) return normalized;
+  const end = normalized.indexOf("\n---", 3);
+  if (end === -1) return normalized;
+  const after = normalized.slice(end + "\n---".length);
   return after.replace(/^\r?\n/, "");
 }
 

@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
+import { stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
 import {
   gitBlobOid,
   loadPackagedMethodSkillMaterial,
@@ -191,6 +192,11 @@ test("packaged diagnosing-bugs loads adapted boundary method without external sk
     assert.equal(material.skillPath.includes(packageRoot), true);
     assert.equal(material.skillPath.includes(".agents/skills"), false);
   });
+});
+
+test("package method frontmatter normalizes Pi newline forms", () => {
+  assert.equal(stripSkillFrontmatter("---\r\nname: tdd\r\n---\r\n# TDD\r\nBody"), "# TDD\nBody");
+  assert.equal(stripSkillFrontmatter("---\rname: tdd\r---\r# TDD\rBody"), "# TDD\nBody");
 });
 
 test("packaged tdd binding captures expansion against package skill path only", async () => {
