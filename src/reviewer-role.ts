@@ -1,6 +1,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import { disposeComplianceDecision } from "./audit-escalation.ts";
@@ -35,17 +36,18 @@ const requestSchema = Type.Object({
 }, { additionalProperties: true });
 const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }), source: Type.Optional(StringEnum(["pinned-git", "host-input"] as const)), sourcePath: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: true });
 export const reviewerProposalSchema = Type.Object({
-  version: Type.Literal(1),
-  base: Type.Object({ revision: Type.String({ minLength: 1 }) }, { additionalProperties: true }),
-  materials: Type.Array(materialSchema),
-  relevanceHints: Type.Optional(Type.Object({ standards: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })), spec: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })) }, { additionalProperties: true })),
-  spec: Type.Object({ state: StringEnum(["established", "not-established"] as const) }, { additionalProperties: true }),
-  required: Type.Object({ standards: requestSchema, spec: Type.Optional(requestSchema) }, { additionalProperties: true }),
+  version: Type.Literal(1, { description: "Reviewer proposal contract version." }),
+  base: Type.Object({ revision: Type.String({ minLength: 1 }) }, { additionalProperties: true, description: "Pinned base revision for the review range." }),
+  materials: Type.Array(materialSchema, { description: "Pinned materials admitted to the review." }),
+  relevanceHints: Type.Optional(Type.Object({ standards: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })), spec: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })) }, { additionalProperties: true, description: "Optional hints identifying relevant standards and specification material." })),
+  spec: Type.Object({ state: StringEnum(["established", "not-established"] as const) }, { additionalProperties: true, description: "Whether an established specification governs the review." }),
+  required: Type.Object({ standards: requestSchema, spec: Type.Optional(requestSchema) }, { additionalProperties: true, description: "Tools and prerequisite operations required for each review axis." }),
 }, { additionalProperties: true });
-const reviewerOutputSchema = Type.Union([
-  Type.Object({ status: Type.Literal("completed") }, { additionalProperties: false }),
-  Type.Object({ status: Type.Literal("refused"), diagnostic: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+const reviewerOutputVariants = Type.Union([
+  Type.Object({ status: Type.Literal("completed", { description: "Reviewer dispatch completed." }) }, { additionalProperties: false }),
+  Type.Object({ status: Type.Literal("refused", { description: "Reviewer dispatch was lawfully refused." }), diagnostic: Type.String({ minLength: 1, description: "Diagnostic explaining the refusal." }) }, { additionalProperties: false }),
 ]);
+const reviewerOutputSchema = openToolObjectFromUnion(reviewerOutputVariants);
 export type ReviewerAuditInput = { soul: string; canonicalSkill: string; task: string; record: ReviewerExecutionRecord; candidate: RuntimeReviewerReceiptV2 };
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;

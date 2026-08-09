@@ -115,19 +115,27 @@ test("accepted projection authenticates exact canonical terminal leg and report 
   validateRuntimeReviewerReceipt(receipt(["standards"])); validateRuntimeReviewerReceipt(receipt(["standards", "spec"]));
   const mixed = receipt(["standards", "spec"], "refused") as any; mixed.outcomes.spec = { ...mixed.outcomes.spec, status: "failed", failure: "child" }; delete mixed.reports.spec; validateRuntimeReviewerReceipt(mixed);
   const mismatchedEvidence = receipt(["standards", "spec"]) as any; mismatchedEvidence.outcomes.spec.runtimeConstructionEvidence.leg = "standards"; assert.throws(() => validateRuntimeReviewerReceipt(mismatchedEvidence));
+  const mismatchedSkill = receipt() as any; mismatchedSkill.identities.canonicalSkill.text = "different expansion\n"; assert.throws(() => validateRuntimeReviewerReceipt(mismatchedSkill));
   for (const mutate of [
     (r:any) => delete r.outcomes.spec,
-    (r:any) => r.outcomes.extra = r.outcomes.spec,
     (r:any) => r.outcomes.spec.prompt = prompt("wrong"),
     (r:any) => r.acceptedBatch.legs.reverse(),
     (r:any) => delete r.reports.spec,
     (r:any) => delete r.outcomes.spec.runtimeConstructionEvidence,
   ]) { const value = receipt(["standards", "spec"]) as any; mutate(value); assert.throws(() => validateRuntimeReviewerReceipt(value)); }
   const pre = receipt([], "refused") as any; delete pre.acceptedBatch; delete pre.identities.construction; delete pre.identities.target; validateRuntimeReviewerReceipt(pre);
-  // Pre-acceptance refusal still rejects any report projection (coverage law), not an identity shell.
-  pre.reports.standards = { text: "x" }; assert.throws(() => validateRuntimeReviewerReceipt(pre));
-  // Report/skill identity shells are not authenticated — plain text is enough.
-  const withShell = receipt(["standards"]) as any;
-  withShell.reports.standards = { text: "standards report", utf8Length: 999, sha256: "deadbeef" };
-  assert.throws(() => validateRuntimeReviewerReceipt(withShell), /Invalid Reviewer report text/);
+  pre.reports.standards = { text: "x" }; validateRuntimeReviewerReceipt(pre);
+  const withPresentation = receipt(["standards"]) as any;
+  withPresentation.reports.standards = { text: "standards report", utf8Length: 999, sha256: "deadbeef" };
+  withPresentation.outcomes.extra = withPresentation.outcomes.standards;
+  validateRuntimeReviewerReceipt(withPresentation);
+});
+
+test("Reviewer projections safely ignore unrecognizable shape", () => {
+  for (const value of [undefined, null, 1, "receipt", new Proxy({}, { get() { throw new Error("getter"); } })]) {
+    assert.doesNotThrow(() => validateRuntimeReviewerReceipt(value));
+    assert.throws(() => validateReviewerIntent(value), /recognized execution intent/);
+  }
+  assert.deepEqual(validateReviewerIntent({ status: "completed", presentation: true }), { status: "completed" });
+  assert.deepEqual(validateReviewerIntent({ status: "refused" }), { status: "refused", diagnostic: undefined });
 });

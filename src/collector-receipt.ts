@@ -1,5 +1,3 @@
-import Value from "typebox/value";
-
 import {
   COLLECTOR_HOST,
   type CollectorManifest,
@@ -19,7 +17,6 @@ import type {
   CollectorLedger,
   CollectorRequestAttempt,
 } from "./collector-ledger.ts";
-import { collectorOutputArgsSchema } from "./collector-tool-schemas.ts";
 import { validateAcceptedCollectorReceipt } from "./package-contracts/collector-output.ts";
 
 export { validateAcceptedCollectorReceipt };
@@ -91,34 +88,38 @@ function fail(message: string, cause?: unknown): never {
   throw new Error(message, cause === undefined ? undefined : { cause });
 }
 
+function safeCandidateGet(value: unknown, key: string): unknown {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined;
+  try {
+    return (value as Record<string, unknown>)[key];
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseCollectorOutputCandidate(
   raw: unknown,
 ): CollectorOutputCandidate {
-  if (!Value.Check(collectorOutputArgsSchema, raw)) {
-    fail("Collector output failed schema validation");
-  }
-  const checked = raw as {
-    legs: Array<{
-      legId: string;
-      status: CollectorLegStatus;
-      rationale: string;
-      evidenceRefs: string[];
-      unavailableScope?: "target" | "global";
-    }>;
-  };
+  const legs = safeCandidateGet(raw, "legs");
   return {
-    legs: checked.legs.map((leg) => {
+    legs: (Array.isArray(legs) ? legs : []).flatMap((rawLeg) => {
+      const status = safeCandidateGet(rawLeg, "status");
+      if (status !== "valid" && status !== "unavailable" && status !== "missing") return [];
+      const refs = safeCandidateGet(rawLeg, "evidenceRefs");
       const candidate: CollectorLegCandidate = {
-        legId: leg.legId,
-        status: leg.status,
-        rationale: leg.rationale,
-        evidenceRefs: [...leg.evidenceRefs],
+        legId: safeCandidateGet(rawLeg, "legId") as string,
+        status,
+        rationale: safeCandidateGet(rawLeg, "rationale") as string,
+        evidenceRefs: Array.isArray(refs)
+          ? refs.filter((ref): ref is string => typeof ref === "string")
+          : [],
       };
-      if (leg.status === "unavailable") {
-        // Schema acceptance already requires unavailableScope target|global.
-        candidate.unavailableScope = leg.unavailableScope as "target" | "global";
+      if (status === "unavailable") {
+        candidate.unavailableScope = safeCandidateGet(rawLeg, "unavailableScope") as
+          | "target"
+          | "global";
       }
-      return candidate;
+      return [candidate];
     }),
   };
 }

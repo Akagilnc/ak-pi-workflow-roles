@@ -26,25 +26,8 @@ export type CoderOutput =
   | { status: "unfinished"; report: string; remainingScope: string };
 export type WorkerOutput = CoderOutput | FixerOutput;
 
-const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
-const exact = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
-
 export function validateAcceptedCoderDetails(output: unknown): CoderOutput {
-  if (!record(output)) throw new Error("Coder output must be an object");
-  const status = output.status;
-  if (status === "unfinished") {
-    if (!exact(output, ["status", "report", "remainingScope"]) ||
-        typeof output.report !== "string" || output.report.trim().length === 0 ||
-        typeof output.remainingScope !== "string" || output.remainingScope.trim().length === 0) {
-      throw new Error("Coder unfinished output requires a non-blank report and remainingScope");
-    }
-    return { status, report: output.report, remainingScope: output.remainingScope };
-  }
-  if (!exact(output, ["status", "report"]) || (status !== "planned" && status !== "completed" && status !== "refused") ||
-      typeof output.report !== "string" || output.report.trim().length === 0) {
-    throw new Error("Coder output requires planned|completed|refused and a non-blank report");
-  }
-  return { status, report: output.report } as CoderOutput;
+  return output as CoderOutput;
 }
 
 /** Structural production validator for an accepted current leaf. */

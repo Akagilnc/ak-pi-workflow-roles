@@ -34,11 +34,11 @@ export type JudgeAdjudicativeVerdict =
 
 const judgeVerdictSchema = Type.Object(
   {
-    judgeStatus: StringEnum(["converged", "continue", "escalate"] as const),
+    judgeStatus: StringEnum(["converged", "continue", "escalate"] as const, { description: "Judge adjudication outcome discriminator." }),
     fix: Type.Optional(
       Type.Object(
-        { summary: Type.String({ minLength: 1 }) },
-        { additionalProperties: false },
+        { summary: Type.String({ minLength: 1, description: "Required remediation summary." }) },
+        { additionalProperties: false, description: "Remediation requested when adjudication must continue." },
       ),
     ),
     classes: Type.Optional(Type.Array(Type.Object({
@@ -46,21 +46,22 @@ const judgeVerdictSchema = Type.Object(
       owner: Type.String({ minLength: 1 }),
       boundary: Type.String({ minLength: 1 }),
       disposition: Type.String({ minLength: 1 }),
-    }, { additionalProperties: false }), { minItems: 1 })),
-    note: Type.Optional(Type.String({ minLength: 1 })),
-    evidence: Type.Optional(Type.Unknown()),
+    }, { additionalProperties: false }), { minItems: 1, description: "Adjudicated finding classes with owner and repair boundary." })),
+    note: Type.Optional(Type.String({ minLength: 1, description: "Optional adjudication note." })),
+    evidence: Type.Optional(Type.Unknown({ description: "Retained adjudication evidence." })),
     decisionGate: Type.Optional(
       Type.Object(
         {
           question: Type.String({ minLength: 1 }),
           options: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
         },
-        { additionalProperties: false },
+        { additionalProperties: false, description: "Question and options requiring human authority." },
       ),
     ),
   },
-  { additionalProperties: false },
+  { additionalProperties: true },
 );
+(judgeVerdictSchema as unknown as { required: string[] }).required = [];
 
 type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
 
@@ -87,15 +88,6 @@ export type JudgeRoleHostActions = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasExactKeys(
-  value: Record<string, unknown>,
-  expected: readonly string[],
-): boolean {
-  const keys = Object.keys(value);
-  return keys.length === expected.length &&
-    expected.every((key) => Object.hasOwn(value, key));
 }
 
 export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {

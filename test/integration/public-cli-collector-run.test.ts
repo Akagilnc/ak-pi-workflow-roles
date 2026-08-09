@@ -407,9 +407,9 @@ test(
       assert.equal(terminal.roleOutcome.role, "collector");
       assert.equal(terminal.roleOutcome.kind, "accepted");
       assert.equal(terminal.roleOutcome.status, "collected");
-      assert.equal(
+      assert.deepEqual(
         terminal.roleOutcome.decisiveFacts.legStatuses,
-        "codex:missing",
+        [{ legId: "codex", status: "missing" }],
         JSON.stringify(terminal.roleOutcome.decisiveFacts),
       );
       assert.equal(terminal.roleOutcome.decisiveFacts.prNumber, 42);
