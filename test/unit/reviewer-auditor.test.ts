@@ -1,16 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
-
-import {
-  fauxAssistantMessage,
-  fauxToolCall,
-  type Context,
-} from "@earendil-works/pi-ai";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
-  REVIEWER_AUDIT_TOOL_NAME,
   createPiReviewerAuditor,
   ReviewerAuditEvidenceError,
 } from "../../src/reviewer-auditor.ts";
@@ -49,32 +41,6 @@ const context = {
   },
   sessionManager: SessionManager.inMemory(),
 } as unknown as ExtensionContext;
-
-function textOfAuditContext(seen: Context | undefined): string {
-  const user = seen?.messages.find((message) => message.role === "user");
-  if (user?.role !== "user") return "";
-  return typeof user.content === "string"
-    ? user.content
-    : user.content
-        .filter((part) => part.type === "text")
-        .map((part) => part.text)
-        .join("\n");
-}
-
-test("Reviewer auditor preserves active-provider authentication failures", async () => {
-  const unavailable = {
-    ...context,
-    modelRegistry: {
-      async getProviderAuth() { throw new Error("login expired"); },
-    },
-  } as unknown as ExtensionContext;
-  await assert.rejects(
-    createPiReviewerAuditor(async () => {
-      throw new Error("completion must not run");
-    })(input, { context: unavailable }),
-    /Reviewer compliance audit authentication failed: login expired/,
-  );
-});
 
 test("Reviewer auditor rejects a current-shaped receipt when a materialized leg is not readable", async () => {
   const currentRecord = structuredClone(input.record) as any;

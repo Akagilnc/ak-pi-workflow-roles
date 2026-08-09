@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
 import type { ControlledFailureCause } from "./terminal.ts";
+import { resolveMachinePi } from "../machine-pi-rpc.ts";
 
 export function resolveInternalRoleEntrypoint(packageRoot: string): string {
   return join(packageRoot, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
@@ -131,7 +132,7 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
   args,
   options,
 ) => {
-  const command = options.env.PI_BINARY ?? "pi";
+  const command = (await resolveMachinePi(options.env)).executableRealpath;
   return await new Promise((resolveResult, reject) => {
     // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
     // evidence). Do not pipe or accumulate it. stderr stays piped for diagnostics.

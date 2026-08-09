@@ -8,7 +8,7 @@ export type ComplianceArgumentRootType = "null" | "array" | "undefined" | "strin
 export type ComplianceAuditObservation = { kind: "non-object-arguments"; type: ComplianceArgumentRootType } | { kind: "object-status-unreadable"; status: "missing" | "unknown" };
 export type ComplianceAuditIncomplete = { status: "audit-incomplete"; observation: ComplianceAuditObservation; candidate: unknown; usage?: Usage };
 export type ComplianceDecision = { status: "pass"; usage?: Usage } | { status: "revise"; violations: readonly unknown[]; usage?: Usage } | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage } | ComplianceAuditIncomplete;
-export type ComplianceDispatch = { model: Model<Api>; auth: { apiKey?: string; headers?: Record<string, string>; env?: Record<string, string> } };
+export type ComplianceDispatch = { model: Model<Api>; auth: { apiKey?: string; headers?: Record<string, string | null>; env?: Record<string, string> } };
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });

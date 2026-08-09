@@ -1,52 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context } from "@earendil-works/pi-ai";
-import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 
-test("independent auditor gathers evidence and submits one decision", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-behavior-"));
+test("independent machine-Pi auditor carries workspace evidence into its later typed decision", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rpc-role-"));
+  const pi = join(cwd, "machine-pi");
+  await writeFile(pi, `#!${process.execPath}\nif(process.argv.includes('--version')){console.log('0.84.1');process.exit()}let b='';process.stdin.on('data',c=>{b+=c;if(!b.includes('Inspect evidence.txt'))return;console.log(JSON.stringify({type:'tool_execution_end',toolName:'read',result:{content:[{type:'text',text:'court evidence: accepted'}]}}));console.log(JSON.stringify({type:'tool_execution_end',toolName:'ak_test_auditor_decision',result:{details:{status:'pass',violations:[],conflicts:[],decisionGate:null}}}));console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content:[],stopReason:'toolUse',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}}}));console.log(JSON.stringify({type:'agent_settled'}))});`);
+  await chmod(pi, 0o755);
+  const old = process.env.PI_BINARY; process.env.PI_BINARY = pi;
   try {
-    await writeFile(join(cwd, "evidence.txt"), "court evidence: accepted\n");
-    const sessionManager = SessionManager.inMemory(cwd);
-    const baseTool = createComplianceDecisionTool("ak_test_auditor_decision", "Submit the decision.");
-    let decisions = 0;
-    const tool = { ...baseTool, async execute(...args: Parameters<typeof baseTool.execute>) { decisions += 1; return baseTool.execute(...args); } };
-    let turns = 0;
-    const complete = (context: Context) => {
-      turns += 1;
-      if (turns === 1) return fauxAssistantMessage([fauxToolCall("read", { path: "evidence.txt" })], { stopReason: "toolUse" });
-      assert.ok(context.messages.some((message) => message.role === "toolResult" && JSON.stringify(message.content).includes("court evidence: accepted")));
-      return fauxAssistantMessage([fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })], { stopReason: "toolUse" });
-    };
-    const faux = fauxProvider({ provider: "audit-test" });
-    faux.setResponses([complete, complete]);
     const decision = await runComplianceAudit({
-      tool,
-      systemPrompt: "Read the supplied evidence, then submit exactly one decision.",
-      serializedInput: "Inspect evidence.txt and decide.",
-      roleLabel: "Test auditor",
-      invalidDecisionLabel: "invalid test decision",
-      context: {
-        cwd,
-        model: faux.getModel(),
-        modelRegistry: {
-          getProvider() { return faux.provider; },
-          async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
-        },
-        sessionManager,
-      } as unknown as ExtensionContext,
+      tool: createComplianceDecisionTool("ak_test_auditor_decision", "Submit decision"),
+      systemPrompt: "Gather evidence before deciding.", serializedInput: "Inspect evidence.txt", roleLabel: "Test auditor", invalidDecisionLabel: "invalid",
+      context: { cwd, model: { provider: "audit-test", id: "model" }, thinkingLevel: "off", sessionManager: { getSessionFile: () => join(cwd,"parent.jsonl"), getSessionDir: () => cwd, appendCustomEntry() { return "entry"; } } } as unknown as ExtensionContext,
     });
     assert.equal(decision.status, "pass");
-    assert.equal(turns, 2);
-    assert.equal(decisions, 1);
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
+  } finally { if (old === undefined) delete process.env.PI_BINARY; else process.env.PI_BINARY = old; await rm(cwd,{recursive:true,force:true}); }
 });

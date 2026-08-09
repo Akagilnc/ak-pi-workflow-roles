@@ -18,6 +18,7 @@ import {
 } from "../../src/public-cli/cli.ts";
 import { PUBLIC_CALLABLE_ROLES, PUBLIC_CONFIGURABLE_SEATS } from "../../src/public-cli/registry.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { resolveMachinePi } from "../../src/machine-pi-rpc.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-cli-"));
@@ -224,6 +225,7 @@ test("public runs write one identity-bound invocation ledger for every role", as
       { role: "merger", runId: "public-merger-001", args: ["merger", "--project", project, "merger task"] },
     ] as const;
 
+    const machinePi = await resolveMachinePi(process.env);
     for (const scenario of cases) {
       await runAkRole(scenario.args, {
         packageRoot,
@@ -244,6 +246,8 @@ test("public runs write one identity-bound invocation ledger for every role", as
       ) as Record<string, unknown>;
       assert.deepEqual(ledger, {
         role: scenario.role,
+        piExecutableRealpath: machinePi.executableRealpath,
+        piVersion: machinePi.version,
         runId: scenario.runId,
         bookKey,
         projectRoot: project,

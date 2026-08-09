@@ -66,6 +66,7 @@ test("default runner waits for child readiness without an implicit timeout", asy
       stub,
       `#!/usr/bin/env node
 import { existsSync, writeFileSync } from "node:fs";
+if (process.argv.includes("--version")) { console.log("test-pi"); process.exit(0); }
 writeFileSync(${JSON.stringify(ready)}, "ready");
 const timer = setInterval(() => {
   if (existsSync(${JSON.stringify(release)})) {
@@ -110,6 +111,7 @@ test("explicit short budget sends only SIGTERM after readiness and preserves pri
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const args = process.argv.slice(2);
+if (args.includes("--version")) { console.log("test-pi"); process.exit(0); }
 const index = args.indexOf("--session-dir");
 const sessionDir = index >= 0 ? args[index + 1] : ${JSON.stringify(sessionDir)};
 mkdirSync(sessionDir, { recursive: true });
@@ -153,6 +155,7 @@ test("parent discards child stdout while retaining stderr", async () => {
     await writeExecutableStub(
       stub,
       `#!/usr/bin/env node
+if (process.argv.includes("--version")) { console.log("test-pi"); process.exit(0); }
 const chunk = "X".repeat(64 * 1024);
 for (let i = 0; i < 200; i++) process.stdout.write(chunk);
 process.stderr.write("stderr-ok");

@@ -50,6 +50,7 @@ import {
 import { sha256Hex } from "../sha256.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import { CliUsageError } from "./cli-errors.ts";
+import { resolveMachinePi } from "../machine-pi-rpc.ts";
 
 export type FrozenAttachment = {
   /** Original caller path retained only as provenance. */
@@ -188,8 +189,11 @@ async function writeRoleInvocationLedger(
   source: RoleInvocationLedgerSource,
   role: AdmittedRoleInvocation["role"],
 ): Promise<void> {
+  const runtime = await resolveMachinePi(process.env);
   const identity = {
     role,
+    piExecutableRealpath: runtime.executableRealpath,
+    piVersion: runtime.version,
     runId: source.runId,
     bookKey: source.bookKey,
     projectRoot: source.projectRoot,
