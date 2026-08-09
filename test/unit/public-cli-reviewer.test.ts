@@ -300,12 +300,6 @@ test("buildReviewerActivationExtraArgs forces package code-review and derived ca
     const args = buildReviewerActivationExtraArgs(admitted, { packageRoot });
     assert.equal(args.includes("--no-skills"), true);
     assert.equal(args.includes("--skill"), true);
-    assert.equal(
-      args[args.indexOf("--skill") + 1]?.includes(
-        "resources/methods/code-review/SKILL.md",
-      ),
-      true,
-    );
     assert.equal(args.includes("--ak-role"), true);
     assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
     assert.equal(args[args.indexOf("--ak-review-task") + 1], admitted.taskPath);
@@ -444,6 +438,16 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal(terminal.runId, "run-reviewer-settle-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
+    // #177 S2: reviewer axis report text is legally withheld from decisiveFacts;
+    // the durable receipt on the report artifact carries the full reports map.
+    const reviewerReportBody = await readFile(
+      terminal.artifacts.find((a) => a.kind === "report")!.path,
+      "utf8",
+    );
+    assert.ok(
+      reviewerReportBody.includes("standards report"),
+      "reviewer standards report text must live in artifact receipt",
+    );
 
     const evidence = JSON.parse(
       await readFile(
@@ -596,7 +600,6 @@ test("ak-role reviewer admits base/task, derives capabilities, and rejects blank
             );
             return {
               code: 0,
-              stdout: "",
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -608,12 +611,6 @@ test("ak-role reviewer admits base/task, derives capabilities, and rejects blank
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "reviewer");
       assert.equal(captured!.includes("--skill"), true);
-      assert.equal(
-        captured![captured!.indexOf("--skill") + 1]?.includes(
-          "resources/methods/code-review/SKILL.md",
-        ),
-        true,
-      );
       assert.equal(result.terminal?.roleOutcome.role, "reviewer");
       assert.equal(
         result.terminal?.roleOutcome.kind === "accepted"
@@ -685,7 +682,6 @@ test("ak-role resume continues reviewer with derived capabilities and package sk
             });
             return {
               code: 1,
-              stdout: "",
               stderr: "quota",
               timedOut: false,
               args: [...args],
@@ -771,7 +767,6 @@ test("ak-role resume continues reviewer with derived capabilities and package sk
         );
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],

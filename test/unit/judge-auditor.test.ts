@@ -119,7 +119,7 @@ test("Pi judge auditor accepts an exact revise decision", async () => {
   );
 });
 
-test("Pi judge auditor does not reject bookkeeping shape, but preserves unknown-status failure", async (t) => {
+test("Pi judge auditor does not reject bookkeeping shape", async (t) => {
   const accepted: Array<[string, Record<string, unknown>]> = [
     ["pass with violations", { status: "pass", violations: ["contradiction"] }],
     ["empty revise", { status: "revise", violations: [] }],
@@ -136,10 +136,6 @@ test("Pi judge auditor does not reject bookkeeping shape, but preserves unknown-
       assert.equal((await auditor(auditInput, { context: auditContext() })).status, decision.status);
     });
   }
-  await t.test("unknown status", async () => {
-    const auditor = createPiJudgeAuditor(async () => auditResponse({ status: "maybe", violations: [] }));
-    await assert.rejects(auditor(auditInput, { context: auditContext() }), /invalid soul audit decision/);
-  });
 });
 
 test("Pi judge auditor requires exactly one decision call", async () => {

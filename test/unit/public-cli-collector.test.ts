@@ -51,6 +51,7 @@ function sampleCollectorReceipt(overrides: {
   prNumber?: number;
   manifestDigest?: string;
   legIds?: readonly string[];
+  rationale?: string;
 } = {}): Record<string, unknown> {
   const legIds = overrides.legIds ?? ["codex"];
   const repository = overrides.repository ?? "acme/widgets";
@@ -77,7 +78,7 @@ function sampleCollectorReceipt(overrides: {
     legs: legIds.map((legId) => ({
       legId,
       status: "missing",
-      rationale: "no review on head",
+      rationale: overrides.rationale ?? "no review on head",
       evidenceRefs: ["snap-1"],
     })),
     requestAttempts: [],
@@ -592,7 +593,6 @@ test("runAkRole collector rejects malformed grammar before admission and does no
           return {
             code: 0,
             timedOut: false,
-            stdout: "",
             stderr: "",
             args: [...args],
           };
@@ -620,6 +620,7 @@ test("runAkRole collector settles lawful receipt bound to admitted identity with
 
     let sawCorrelation: string | undefined;
     let boundManifestDigest: string | undefined;
+    const rationale = "UNIQUE-COLLECTOR-LEG-RATIONALE-S2";
     const { io, stdout } = captureIo();
     const result = await runAkRole(
       [
@@ -649,6 +650,7 @@ test("runAkRole collector settles lawful receipt bound to admitted identity with
             prNumber: 12,
             manifestDigest: manifest.digest,
             legIds: ["codex"],
+            rationale,
           });
           const sessionIdx = args.indexOf("--session");
           const sessionFile = args[sessionIdx + 1]!;
@@ -669,7 +671,6 @@ test("runAkRole collector settles lawful receipt bound to admitted identity with
           return {
             code: 0,
             timedOut: false,
-            stdout: "",
             stderr: "",
             args: [...args],
           };
@@ -704,6 +705,7 @@ test("runAkRole collector settles lawful receipt bound to admitted identity with
     assert.equal(report.role, "collector");
     assert.equal(report.receipt.prNumber, 12);
     assert.equal(report.receipt.manifestDigest, boundManifestDigest);
+    assert.ok((await readFile(reportPath!, "utf8")).includes(rationale));
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(

@@ -55,23 +55,31 @@ export type ComplianceArgumentRootType =
   | "symbol"
   | "function";
 
-export type ComplianceAuditIncomplete = {
-  status: "audit-incomplete";
-  observation: {
+export type ComplianceAuditObservation =
+  | {
     kind: "non-object-arguments";
     type: ComplianceArgumentRootType;
-  };
+  }
+  | {
+    kind: "object-status-unreadable";
+    status: "missing" | "unknown";
+  }
+
+export type ComplianceAuditIncomplete = {
+  status: "audit-incomplete";
+  observation: ComplianceAuditObservation;
   candidate: unknown;
   usage?: Usage;
 };
 
 export type ComplianceDecision =
   | { status: "pass"; usage?: Usage }
-  | { status: "revise"; violations: readonly string[]; usage?: Usage }
+  | { status: "revise"; violations: readonly unknown[]; usage?: Usage }
   | {
     status: "escalate";
-    conflicts: readonly string[];
-    decisionGate: { question: string; options: readonly string[] };
+    /** Ancillary auditor fields are retained exactly when present. */
+    conflicts?: unknown;
+    decisionGate?: unknown;
     usage?: Usage;
   }
   | ComplianceAuditIncomplete;
@@ -284,6 +292,75 @@ function malformedComplianceDecision(
 }
 
 /**
+ * Read a compliance list field without dropping or inventing entries.
+ * Array → as-is (including non-string elements). Otherwise present the whole
+ * value as one entry; no JSON.parse guess and no silent filter.
+ */
+function readListField(value: unknown): readonly unknown[] {
+  if (Array.isArray(value)) return value;
+  if (value === undefined) return [];
+  return [value];
+}
+
+/**
+ * Interpret one retained compliance candidate. This is the single owner for
+ * escalation material semantics; settlement reuses it rather than making a
+ * second, weaker kind/status recognizer.
+ */
+export function readComplianceCandidate(
+  arguments_: unknown,
+  usage?: Usage,
+): ComplianceDecision {
+  if (
+    typeof arguments_ !== "object" ||
+    arguments_ === null ||
+    Array.isArray(arguments_)
+  ) {
+    const type: ComplianceArgumentRootType = arguments_ === null
+      ? "null"
+      : Array.isArray(arguments_)
+        ? "array"
+        : typeof arguments_ as ComplianceArgumentRootType;
+    return {
+      status: "audit-incomplete",
+      observation: { kind: "non-object-arguments", type },
+      candidate: arguments_,
+      ...(usage === undefined ? {} : { usage }),
+    };
+  }
+
+  const args = arguments_ as Record<string, unknown>;
+  const status = args.status;
+  if (status === "pass") {
+    return { status: "pass", ...(usage === undefined ? {} : { usage }) };
+  }
+  if (status === "revise") {
+    return {
+      status: "revise",
+      violations: readListField(args.violations),
+      ...(usage === undefined ? {} : { usage }),
+    };
+  }
+  if (status === "escalate") {
+    return {
+      status: "escalate",
+      ...(Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}),
+      ...(Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}),
+      ...(usage === undefined ? {} : { usage }),
+    };
+  }
+  return {
+    status: "audit-incomplete",
+    observation: {
+      kind: "object-status-unreadable",
+      status: status === undefined ? "missing" : "unknown",
+    },
+    candidate: arguments_,
+    ...(usage === undefined ? {} : { usage }),
+  };
+}
+
+/**
  * Retain the provider's structured response as extension state, not a
  * conversational message. A missing or failed append is an infrastructure
  * failure because the nested response is mandatory audit evidence.
@@ -346,53 +423,9 @@ export function readComplianceDecision(
     );
   }
   const arguments_: unknown = call.arguments;
-  if (
-    typeof arguments_ !== "object" ||
-    arguments_ === null ||
-    Array.isArray(arguments_)
-  ) {
-    // The response and candidate have already been retained. This is an
-    // observable audit residual, not an auditor decision and not transport
-    // failure. Preserve the root observation and candidate for #182's public
-    // settlement; do not manufacture a revise reason here.
-    const type: ComplianceArgumentRootType = arguments_ === null
-      ? "null"
-      : Array.isArray(arguments_)
-        ? "array"
-        : typeof arguments_ as ComplianceArgumentRootType;
-    return {
-      status: "audit-incomplete",
-      observation: { kind: "non-object-arguments", type },
-      candidate: arguments_,
-      usage: response.usage,
-    };
-  }
-  const args = arguments_ as Record<string, unknown>;
-  switch (args.status) {
-    case "pass":
-      return { status: "pass", usage: response.usage };
-    case "revise":
-      return {
-        status: "revise",
-        violations: args.violations as readonly string[],
-        usage: response.usage,
-      };
-    case "escalate":
-      return {
-        status: "escalate",
-        conflicts: args.conflicts as readonly string[],
-        decisionGate: args.decisionGate as { question: string; options: readonly string[] },
-        usage: response.usage,
-      };
-    default:
-      throw malformedComplianceDecision(
-        response,
-        toolName,
-        invalidLabel,
-        `unknown decision status ${String(args.status)}`,
-        calls,
-      );
-  }
+  // ADR 0055/0057: shape is guidance, not a reject gate. Read what arrived;
+  // known status owns disposition even when ancillary fields are unusable.
+  return readComplianceCandidate(arguments_, response.usage);
 }
 
 function throwIfStreamIdleTimedOut(reason: unknown): void {

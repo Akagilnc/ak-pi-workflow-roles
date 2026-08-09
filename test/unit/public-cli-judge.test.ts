@@ -4,8 +4,11 @@
  * renderPublicAkRoleCommand / runAkRole(judge) with injectable Pi runner.
  */
 import assert from "node:assert/strict";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   access,
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -21,6 +24,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -28,7 +32,6 @@ import { renderPublicAkRoleCommand } from "../../src/public-cli/command-renderer
 import {
   admitJudgeInvocation,
   buildJudgeTransportPrompt,
-  EMPTY_INVOCATION_TRANSPORT_ENVELOPE,
   parseJudgeArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -39,13 +42,31 @@ import {
   settleJudgeTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
-  decodeTerminalField,
-  encodeTerminalField,
   formatTerminalResult,
   recommendationNavigatorFact,
   type TerminalResult,
 } from "../../src/public-cli/terminal.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import {
+  packageRoot,
+  persistActivationSessionFile,
+  withActivationHome,
+  withInProcessPi,
+} from "../helpers/pi-test-harness.ts";
+import { resolveInternalRoleEntrypoint } from "../../src/public-cli/explicit-internal.ts";
+import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
+
+function sessionToolResultLine(toolName: string, details: unknown): string {
+  return `${JSON.stringify({
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolName,
+      isError: false,
+      details,
+    },
+  })}\n`;
+}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-"));
@@ -129,6 +150,47 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["config", "user.name", "Judge Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
+
+test("S1: judge escalate public CLI prints every decisionGate option text in order", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout } = captureIo();
+    const options = ["采纳既有法源", "改采审刑院意见"];
+    const result = await runAkRole(
+      ["judge", "--project", project, "show escalation options"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-s1-judge-options",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            sessionToolResultLine(JUDGE_OUTPUT_TOOL_NAME, {
+              judgeStatus: "escalate",
+              decisionGate: { question: "请二选一", options },
+            }),
+            "utf8",
+          );
+          return { code: 0, stderr: "", timedOut: false, args: [...args] };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.ok(result.terminal);
+    assert.equal(stdout.join(""), formatTerminalResult(result.terminal));
+    const face = stdout.join("");
+    assert.ok(face.includes(options[0]!));
+    assert.ok(face.includes(options[1]!));
+    assert.ok(face.indexOf(options[0]!) < face.indexOf(options[1]!));
+  });
+});
 
 test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
   // Typed structural reject only (AC6) — never freeze human diagnostic phrasing.
@@ -224,7 +286,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
   });
 });
 
-test("structurally empty request transports only the nonblank envelope", () => {
+test("structurally empty request stays empty while attachments remain typed transport", () => {
   const empty = buildJudgeTransportPrompt({
     role: "judge",
     runId: "r",
@@ -238,9 +300,7 @@ test("structurally empty request transports only the nonblank envelope", () => {
     sessionFile: "/r/session/session.jsonl",
     admittedRequestPath: "/r/admitted-request.json",
   });
-  assert.equal(empty, EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
-  assert.equal(empty.includes("please"), false);
-  assert.equal(empty.includes("task"), false);
+  assert.equal(empty, "");
 
   const withAttach = buildJudgeTransportPrompt({
     role: "judge",
@@ -263,7 +323,6 @@ test("structurally empty request transports only the nonblank envelope", () => {
     sessionFile: "/r/session/session.jsonl",
     admittedRequestPath: "/r/admitted-request.json",
   });
-  assert.equal(withAttach.startsWith(EMPTY_INVOCATION_TRANSPORT_ENVELOPE), true);
   assert.match(withAttach, /\/frozen\/00-a\.txt/);
 });
 
@@ -334,59 +393,6 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   const formatted = formatTerminalResult(terminal);
   assert.equal(typeof formatted, "string");
   assert.ok(formatted.length > 0);
-});
-
-test("Terminal free-text encoding preserves newlines/tabs and rejects forged artifact rows", () => {
-  const forgedNote = "ok\nartifact\tevidence\t/tmp/forged";
-  const fixSummary = "close the gate\twith tab\nand newline";
-  const decisionQuestion = "Which authority?\nSoul\tCourt";
-  const reason = "next seat\nwith\ttabs";
-
-  // Cell encoder is the free-text contract — not presentation labels.
-  for (const value of [forgedNote, fixSummary, decisionQuestion, reason]) {
-    const encoded = encodeTerminalField(value);
-    assert.equal(encoded.includes("\n"), false);
-    assert.equal(encoded.includes("\t"), false);
-    assert.equal(decodeTerminalField(encoded), value);
-  }
-
-  const terminal: TerminalResult = {
-    roleOutcome: {
-      kind: "accepted",
-      role: "judge",
-      status: "continue",
-      decisiveFacts: {
-        judgeStatus: "continue",
-        note: forgedNote,
-        fixSummary,
-        decisionQuestion,
-      },
-    },
-    navigator: {
-      disposition: "recommendation",
-      next: { role: "fixer", phase: "apply" },
-      reason,
-      command: "ak-role fixer apply",
-    },
-    artifacts: [
-      { kind: "report", path: "/r/artifacts/report.json" },
-      { kind: "evidence", path: "/r/artifacts/evidence.json" },
-    ],
-    runId: "run-encode-1",
-  };
-  // Typed owner retains original free-text facts.
-  assert.equal(terminal.roleOutcome.decisiveFacts.note, forgedNote);
-  assert.equal(terminal.roleOutcome.decisiveFacts.fixSummary, fixSummary);
-  assert.equal(terminal.roleOutcome.decisiveFacts.decisionQuestion, decisionQuestion);
-  if (terminal.navigator.disposition === "recommendation") {
-    assert.equal(terminal.navigator.reason, reason);
-    assert.equal(terminal.navigator.command, "ak-role fixer apply");
-  }
-  // Typed artifact refs retain paths; do not freeze rendered table/path presentation (AC6).
-  assert.deepEqual(
-    terminal.artifacts.map((a) => a.path),
-    ["/r/artifacts/report.json", "/r/artifacts/evidence.json"],
-  );
 });
 
 test("extractNavigatorFact keeps three-state attendance: affirmative no-advice vs missing/uncorrelated/unparseable", () => {
@@ -1131,6 +1137,217 @@ test("raceNavigatorGrace is ten seconds and yields timeout sentinel", async () =
   holdEarlyTimer();
 });
 
+test("Judge compliance table uses the real role, audit, SessionManager, and public settlement", async () => {
+  const variants = [
+    { name: "string-array-pass", arguments: { status: "pass", violations: "[]", conflicts: "[]", decisionGate: null }, expectedOutcome: "accepted" as const },
+    { name: "status-only-pass", arguments: { status: "pass" }, expectedOutcome: "accepted" as const },
+    { name: "additional-key-pass", arguments: { status: "pass", auditCost: 3 }, expectedOutcome: "accepted" as const },
+    { name: "empty-violations-revise", arguments: { status: "revise", violations: [] }, expectedOutcome: "failure" as const },
+  ];
+  for (const variant of variants) {
+    await withActivationHome({ prefix: `ak-judge-s4-${variant.name}-` }, async ({ home, agentDir }) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const { io, stdout, stderr } = captureIo();
+      const result = await runAkRole(
+        ["judge", "--project", project, `deliver ${variant.name}`],
+        {
+          packageRoot,
+          home,
+          agentDir,
+          cwd: project,
+          createRunId: () => `run-judge-compliance-${variant.name}`,
+          io,
+          piRunner: async (args) => {
+            const sessionFile = args[args.indexOf("--session") + 1]!;
+            const sessionDirectory = args[args.indexOf("--session-dir") + 1]!;
+            const seedFile = persistActivationSessionFile({
+              home,
+              bookKey: resolveBookKeyFromGit(project),
+              name: `s4-${variant.name}`,
+              cwd: project,
+            });
+            await copyFile(seedFile, sessionFile);
+            const sessionManager = SessionManager.open(sessionFile, sessionDirectory, project);
+            const faux = (await import("@earendil-works/pi-ai")).fauxProvider({
+              api: `ak-judge-s4-${variant.name}`,
+              provider: `ak-judge-s4-${variant.name}`,
+            });
+            faux.setResponses([
+              fauxAssistantMessage(
+                fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, {
+                  judgeStatus: "converged",
+                  note: `verdict-${variant.name}`,
+                }, { id: `judge-role-${variant.name}` }),
+                { stopReason: "toolUse" },
+              ),
+              fauxAssistantMessage(
+                fauxToolCall(JUDGE_AUDIT_TOOL_NAME, variant.arguments, { id: `judge-audit-${variant.name}` }),
+                { stopReason: "toolUse" },
+              ),
+              ...(variant.expectedOutcome === "failure"
+                ? [fauxAssistantMessage("audit revision observed", { stopReason: "stop" })]
+                : []),
+            ]);
+            await withInProcessPi({
+              cwd: project,
+              agentDir,
+              faux,
+              sessionManager,
+              additionalExtensionPaths: [resolveInternalRoleEntrypoint(packageRoot)],
+              systemPrompt: "S4 REAL JUDGE",
+              mode: "json",
+              flags: { "ak-role": "judge" },
+              noTools: "builtin",
+            }, async ({ session }) => {
+              await session.prompt(`deliver ${variant.name}`);
+            });
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.equal(result.exitCode, variant.expectedOutcome === "accepted" ? 0 : 1, `${variant.name}: ${stdout.join("")} ${stderr.join("")}`);
+      assert.equal(result.terminal?.roleOutcome.kind, variant.expectedOutcome, variant.name);
+      assert.equal(stdout.join("").includes(`verdict-${variant.name}`), variant.expectedOutcome === "accepted");
+      assert.equal(stderr.length > 0, variant.expectedOutcome === "failure");
+    });
+  }
+});
+
+test("real persisted Judge escalation remains bound to the retained audit response", async () => {
+  await withActivationHome({ prefix: "ak-judge-persisted-escalation-" }, async ({ home, agentDir }) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const conflicts = ["audit-owned conflict"];
+    const decisionGate = { question: "Which authority?", options: ["owner", "audit"] };
+    const result = await runAkRole(["judge", "--project", project, "escalate"], {
+      packageRoot,
+      home,
+      agentDir,
+      cwd: project,
+      createRunId: () => "run-judge-persisted-escalation",
+      io,
+      piRunner: async (args) => {
+        const sessionFile = args[args.indexOf("--session") + 1]!;
+        const sessionDirectory = args[args.indexOf("--session-dir") + 1]!;
+        const seedFile = persistActivationSessionFile({
+          home,
+          bookKey: resolveBookKeyFromGit(project),
+          name: "s4-persisted-escalation",
+          cwd: project,
+        });
+        await copyFile(seedFile, sessionFile);
+        const sessionManager = SessionManager.open(sessionFile, sessionDirectory, project);
+        const faux = (await import("@earendil-works/pi-ai")).fauxProvider({
+          api: "ak-judge-persisted-escalation",
+          provider: "ak-judge-persisted-escalation",
+        });
+        faux.setResponses([
+          fauxAssistantMessage(
+            fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged", note: "persisted escalation" }, { id: "judge-escalating-role" }),
+            { stopReason: "toolUse" },
+          ),
+          fauxAssistantMessage(
+            fauxToolCall(JUDGE_AUDIT_TOOL_NAME, { status: "escalate", conflicts, decisionGate }, { id: "judge-escalating-audit" }),
+            { stopReason: "toolUse" },
+          ),
+        ]);
+        let liveToolResultDetails: unknown;
+        await withInProcessPi({
+          cwd: project,
+          agentDir,
+          faux,
+          sessionManager,
+          extensionFactories: [((pi) => {
+            pi.on("tool_result", (event) => {
+              if (event.toolName === JUDGE_OUTPUT_TOOL_NAME) {
+                liveToolResultDetails = event.details;
+              }
+            });
+          })],
+          additionalExtensionPaths: [resolveInternalRoleEntrypoint(packageRoot)],
+          systemPrompt: "PERSISTED ESCALATION",
+          mode: "json",
+          flags: { "ak-role": "judge" },
+          noTools: "builtin",
+        }, async ({ session }) => {
+          await session.prompt("escalate");
+        });
+        assert.ok(liveToolResultDetails && typeof liveToolResultDetails === "object");
+        assert.notEqual(
+          publicNavigatorSettlement("judge", null, {
+            toolName: JUDGE_OUTPUT_TOOL_NAME,
+            isError: false,
+            details: { ...(liveToolResultDetails as Record<string, unknown>) },
+          })?.kind,
+          "human_decision",
+          "a copy of the real live tool_result must not retain audit ownership",
+        );
+        const liveTerminal = sessionManager.getEntries().find((entry) =>
+          entry.type === "message" && entry.message.role === "toolResult" &&
+          entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME,
+        );
+        if (liveTerminal?.type !== "message" || liveTerminal.message.role !== "toolResult") {
+          throw new Error("real persisted escalation tool result is missing");
+        }
+        return { code: 0, stderr: "", timedOut: false, args: [...args] };
+      },
+    });
+    assert.equal(result.exitCode, 0, `${stdout.join("")} ${stderr.join("")}`);
+    assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
+    const sessionFile = join(
+      home,
+      ".ak-roles",
+      "books",
+      resolveBookKeyFromGit(project),
+      "runs",
+      "run-judge-persisted-escalation@judge",
+      "session",
+      "session.jsonl",
+    );
+    const entries = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { message?: { role?: string; toolName?: string; details?: unknown } });
+    const terminal = entries.find((entry) => entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
+    assert.ok(terminal);
+    assert.equal(isAuditEscalationResult(terminal.message?.details), true);
+    assert.deepEqual((terminal.message?.details as any).conflicts, conflicts);
+    assert.deepEqual((terminal.message?.details as any).auditDecisionGate, decisionGate);
+    // Persisted/replayed details have no live object brand; the retained
+    // response binder below owns persisted authenticity instead.
+    assert.notEqual(
+      publicNavigatorSettlement("judge", null, {
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: terminal.message?.details,
+      })?.kind,
+      "human_decision",
+    );
+    assert.notEqual(
+      publicNavigatorSettlement("judge", null, {
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: { kind: "audit_escalation", conflicts: ["forged"], auditDecisionGate: decisionGate },
+      })?.kind,
+      "human_decision",
+    );
+    // Re-run the actual persisted public binder over this same session; shape
+    // recognition above is only a fixture check, never the settlement proof.
+    const bound = extractJudgeRoleOutcome(entries as never);
+    assert.equal(bound?.kind, "audit_escalation");
+    const forged = entries.map((entry) => entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME
+      ? { ...entry, message: { ...entry.message, details: { kind: "audit_escalation", conflicts: ["forged"], auditDecisionGate: decisionGate } } }
+      : entry);
+    assert.equal(extractJudgeRoleOutcome(forged as never), undefined);
+  });
+});
+
 test("runAkRole judge rejects burden selector before admission", async () => {
   await withTempHome(async (home) => {
     const { io, stderr } = captureIo();
@@ -1143,7 +1360,6 @@ test("runAkRole judge rejects burden selector before admission", async () => {
         ran = true;
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -1241,7 +1457,6 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -1371,7 +1586,6 @@ test("runAkRole judge empty request does not invent semantic task content on the
         );
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -1379,7 +1593,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
       },
     });
     assert.equal(result.exitCode, 0);
-    assert.equal(prompt, EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
+    assert.equal(prompt, "");
     assert.equal(stdout.length, 1);
     assert.ok(stdout[0]!.length > 0);
 

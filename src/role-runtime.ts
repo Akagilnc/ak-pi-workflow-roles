@@ -41,11 +41,10 @@ import {
   NAVIGATOR_INVOCATION_ENTRY,
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
-import { EMPTY_INVOCATION_TRANSPORT_ENVELOPE } from "./public-cli/invocation.ts";
 import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
-import { isAuditEscalationResult } from "./audit-escalation.ts";
+import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
   type JudgeAdjudicativeVerdict,
@@ -377,7 +376,9 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
     ? event.details as Record<string, unknown>
     : {};
-  if (isAuditEscalationResult(event.details)) {
+  // Live Navigator consumes only the audit-owned projection; persisted/replayed
+  // records are re-authenticated by settlement against retained audit evidence.
+  if (isAuditEscalationProjection(event.details)) {
     return { kind: "human_decision", role, phase, status: "audit_escalation" };
   }
   const status = typeof details.status === "string"
@@ -422,8 +423,7 @@ export function createRoleRuntimeExtension(
         // contextError from true loader failures stays poisoned and honest.
         if (navigatorWorkContext.subjectProvenance === "placeholder") {
           const subject = event.prompt.trim();
-          // Public empty-request transport envelope is not semantic task content.
-          if (subject !== "" && subject !== EMPTY_INVOCATION_TRANSPORT_ENVELOPE) {
+          if (subject !== "") {
             const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
             const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
             const priorAuthority = navigatorWorkContext.authority;

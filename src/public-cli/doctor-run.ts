@@ -203,9 +203,7 @@ async function dispatchAdmittedDoctor(input: {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...(env.timeoutMs === undefined
-          ? { timeoutMs: 600_000 }
-          : { timeoutMs: env.timeoutMs }),
+        timeoutMs: env.timeoutMs,
         ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
       });
     } catch (error) {

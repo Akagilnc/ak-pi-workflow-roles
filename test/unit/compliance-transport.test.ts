@@ -308,11 +308,11 @@ test("Codex decision schema is an open zero-required object with declared fields
   }
 });
 
-test("transport accepts known statuses without shape rejection and rejects unknown status", async () => {
+test("transport accepts known statuses and retains unreadable object status as residual", async () => {
   const acceptedArguments = [
     { status: "pass", conflicts: ["non-neutral bookkeeping"], auditCost: 3 },
     { status: "revise" },
-    { status: "escalate", decisionGate: "provider-shaped bookkeeping" },
+    { status: "escalate", conflicts: ["provider conflict"], decisionGate: "provider-shaped bookkeeping" },
   ];
   for (const [index, arguments_] of acceptedArguments.entries()) {
     await withPersistedSession(async (sessionManager) => {
@@ -321,14 +321,59 @@ test("transport accepts known statuses without shape rejection and rejects unkno
         sessionManager,
       );
       assert.equal(result.status, arguments_.status);
+      if (arguments_.status === "escalate" && result.status === "escalate") {
+        assert.deepEqual(result.conflicts, arguments_.conflicts);
+        assert.equal(result.decisionGate, arguments_.decisionGate);
+      }
     });
   }
-  await withPersistedSession(async (sessionManager) => {
-    await assert.rejects(
-      audit(response("unknown-status", [fauxToolCall(decisionToolName, { status: "unknown", auditCost: 3 })]), sessionManager),
-      (error: unknown) => error instanceof Error && error.name === "ComplianceDecisionContractError" && /unknown decision status/.test(error.message),
-    );
-  });
+  for (const [id, arguments_] of [[
+    "unknown-status",
+    { status: "unknown", auditCost: 3 },
+  ], ["missing-status", {}]] as const) {
+    await withPersistedSession(async (sessionManager) => {
+      const result = await audit(
+        response(id, [fauxToolCall(decisionToolName, arguments_)]),
+        sessionManager,
+      );
+      assert.equal(result.status, "audit-incomplete");
+      if (result.status === "audit-incomplete") {
+        assert.deepEqual(result.candidate, arguments_);
+        assert.deepEqual(result.observation, {
+          kind: "object-status-unreadable",
+          status: id === "missing-status" ? "missing" : "unknown",
+        });
+      }
+    });
+  }
+});
+
+test("known escalate keeps disposition and raw ancillary fields", async () => {
+  const cases = [
+    { status: "escalate", decisionGate: { question: "Q", options: ["A"] } },
+    { status: "escalate", conflicts: ["c"] },
+    { status: "escalate", conflicts: ["c"], decisionGate: "not-a-gate" },
+    { status: "escalate", conflicts: "not-a-list", decisionGate: null },
+  ] as const;
+  for (const [index, candidate] of cases.entries()) {
+    await withPersistedSession(async (sessionManager) => {
+      const result = await audit(
+        response(`escalate-raw-${index}`, [fauxToolCall(decisionToolName, candidate)]),
+        sessionManager,
+      );
+      assert.equal(result.status, "escalate");
+      if (result.status !== "escalate") return;
+      assert.equal(Object.hasOwn(result, "conflicts"), Object.hasOwn(candidate, "conflicts"));
+      assert.equal(Object.hasOwn(result, "decisionGate"), Object.hasOwn(candidate, "decisionGate"));
+      const rawCandidate = candidate as Record<string, unknown>;
+      if (Object.hasOwn(rawCandidate, "conflicts")) assert.deepEqual(result.conflicts, rawCandidate.conflicts);
+      if (Object.hasOwn(rawCandidate, "decisionGate")) assert.deepEqual(result.decisionGate, rawCandidate.decisionGate);
+      assert.deepEqual(
+        (persistedResponse(sessionManager, `escalate-raw-${index}`).content[0] as { arguments?: unknown }).arguments,
+        candidate,
+      );
+    });
+  }
 });
 
 test("successful non-object decision arguments retain a typed residual without aborting", async () => {

@@ -51,10 +51,6 @@ import { sha256Hex } from "../sha256.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import { CliUsageError } from "./cli-errors.ts";
 
-/** Transport-only envelope for a structurally empty public request. Not a semantic task. */
-export const EMPTY_INVOCATION_TRANSPORT_ENVELOPE =
-  "[ak-role:structurally-empty-request]" as const;
-
 export type FrozenAttachment = {
   /** Original caller path retained only as provenance. */
   readonly provenancePath: string;
@@ -177,6 +173,36 @@ export type AdmittedRoleInvocation =
   | AdmittedDoctorInvocation
   | AdmittedReviewerInvocation
   | AdmittedMergerInvocation;
+
+type RoleInvocationLedgerSource = Pick<
+  AdmittedRoleInvocationBase,
+  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "sessionDirectory" | "sessionFile"
+>;
+
+/**
+ * Persist one `invocation.json` identity page for the public run.
+ * Admission is the sole source for every field; this is the only identity
+ * projection and callers never provide an independent ledger shape.
+ */
+async function writeRoleInvocationLedger(
+  source: RoleInvocationLedgerSource,
+  role: AdmittedRoleInvocation["role"],
+): Promise<void> {
+  const identity = {
+    role,
+    runId: source.runId,
+    bookKey: source.bookKey,
+    projectRoot: source.projectRoot,
+    runDirectory: source.runDirectory,
+    sessionDirectory: source.sessionDirectory,
+    sessionFile: source.sessionFile,
+  };
+  await writeFile(
+    join(source.runDirectory, "invocation.json"),
+    `${JSON.stringify(identity, null, 2)}\n`,
+    "utf8",
+  );
+}
 
 export type ParseJudgeArgvResult = {
   instruction: string;
@@ -526,6 +552,9 @@ export async function admitJudgeInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -538,6 +567,7 @@ export async function admitJudgeInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "judge",
@@ -554,20 +584,11 @@ export async function admitJudgeInvocation(
   };
 }
 
-/**
- * Build the Pi prompt transport for an admitted Judge request.
- * Empty public requests receive the canonical nonblank transport envelope only —
- * no invented semantic task content.
- */
+/** Build the Pi prompt transport for an admitted Judge request. */
 export function buildJudgeTransportPrompt(
   admitted: AdmittedJudgeInvocation,
 ): string {
-  const lines: string[] = [];
-  if (admitted.instructionEmpty) {
-    lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
-  } else {
-    lines.push(admitted.instruction);
-  }
+  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
     lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
@@ -678,6 +699,9 @@ export async function admitCoderInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -691,6 +715,7 @@ export async function admitCoderInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "coder",
@@ -827,6 +852,9 @@ export async function admitFixerInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     packetPath,
@@ -845,6 +873,7 @@ export async function admitFixerInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "fixer",
@@ -1218,6 +1247,9 @@ export async function admitCollectorInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty,
     prNumber,
@@ -1239,6 +1271,7 @@ export async function admitCollectorInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "collector",
@@ -1560,6 +1593,9 @@ export async function admitDoctorInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty,
     issueNumber: options.issueNumber,
@@ -1579,6 +1615,7 @@ export async function admitDoctorInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "doctor",
@@ -1598,19 +1635,11 @@ export async function admitDoctorInvocation(
   };
 }
 
-/**
- * Build the Pi prompt transport for an admitted Doctor request.
- * Empty public requests receive the canonical nonblank transport envelope only.
- */
+/** Build the Pi prompt transport for an admitted Doctor request. */
 export function buildDoctorTransportPrompt(
   admitted: AdmittedDoctorInvocation,
 ): string {
-  const lines: string[] = [];
-  if (admitted.instructionEmpty) {
-    lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
-  } else {
-    lines.push(admitted.instruction);
-  }
+  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
     lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
@@ -1798,6 +1827,9 @@ export async function admitReviewerInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -1820,6 +1852,7 @@ export async function admitReviewerInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "reviewer",
@@ -2075,6 +2108,9 @@ export async function admitMergerInvocation(
     runId,
     bookKey,
     projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
     instruction,
     instructionEmpty: false,
     mergerInputPath,
@@ -2099,6 +2135,7 @@ export async function admitMergerInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
+  await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
     role: "merger",

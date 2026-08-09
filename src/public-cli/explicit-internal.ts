@@ -76,7 +76,6 @@ export function knownFailureFromProviderStop(input: {
 
 export type ExplicitInternalPiResult = {
   code: number | null;
-  stdout: string;
   stderr: string;
   timedOut: boolean;
   /** Full argv passed to the Pi process (includes explicit -e load). */
@@ -134,33 +133,39 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
 ) => {
   const command = options.env.PI_BINARY ?? "pi";
   return await new Promise((resolveResult, reject) => {
+    // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
+    // evidence). Do not pipe or accumulate it. stderr stays piped for diagnostics.
     const child = spawn(command, [...args], {
       cwd: options.cwd,
       env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "ignore", "pipe"],
     });
-    let stdout = "";
     let stderr = "";
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, options.timeoutMs ?? 30_000);
-    child.stdout.setEncoding("utf8").on("data", (chunk) => {
-      stdout += chunk;
-    });
+    // No default wall clock. Only an explicit caller budget arms a timer (ADR 0010).
+    // SIGKILL is unconditionally forbidden (host constitution art. 9) — graceful SIGTERM only.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const armTimeoutAfterChildReady = (): void => {
+      if (options.timeoutMs === undefined) return;
+      timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, options.timeoutMs);
+    };
+    // The spawn event is the child-process readiness seam. Start the caller's
+    // budget only after the child is actually created, not while spawn is pending.
+    child.once("spawn", armTimeoutAfterChildReady);
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       reject(error);
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       resolveResult({
         code,
-        stdout,
         stderr,
         timedOut,
         args: [...args],
@@ -180,7 +185,7 @@ export async function runExplicitInternalActivation(options: {
   home: string;
   agentDir: string;
   env?: NodeJS.ProcessEnv;
-  timeoutMs?: number;
+  timeoutMs?: number | undefined;
   runner?: ExplicitInternalPiRunner;
 }): Promise<ExplicitInternalPiResult> {
   const args = buildExplicitInternalActivationArgs(

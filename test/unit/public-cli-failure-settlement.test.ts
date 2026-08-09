@@ -20,13 +20,16 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
+import { AUDIT_ESCALATION_KIND, buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
 import { FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   ExplicitInternalActivationError,
@@ -37,7 +40,10 @@ import {
   CONCISE_DIAGNOSTIC_MAX_CHARS,
   exitCodeForTerminalOutcome,
   extractComplianceAuditIncompleteRoleOutcome,
+  extractDoctorRoleOutcome,
+  extractFixerRoleOutcome,
   extractJudgeRoleOutcome,
+  extractReviewerRoleOutcome,
   extractSessionProviderStop,
   formatFailureStderrDiagnostic,
   isChildDiagnosticFloodLine,
@@ -51,6 +57,7 @@ import type {
   TerminalResult,
 } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fail-"));
@@ -212,7 +219,6 @@ test("malformed CLI structure rejects before admission with no model dispatch", 
           ran = true;
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -245,7 +251,6 @@ test("empty --project= rejects structurally before admission with no model dispa
         dispatched += 1;
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -299,7 +304,6 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -622,7 +626,6 @@ test("controlled failure emits one stdout Terminal and one concise stderr diagno
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "event flood\n".repeat(100),
             stderr: floodStderr(),
             timedOut: false,
             args: [...args],
@@ -673,7 +676,6 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
             return {
               code: 1,
-              stdout: "",
               stderr: realisticJsonlFloodStderr(),
               timedOut: false,
               args: [...args],
@@ -715,7 +717,6 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
             return {
               code: 1,
-              stdout: "",
               stderr: oversizedDiagnosticStderr(),
               timedOut: false,
               args: [...args],
@@ -753,13 +754,20 @@ test("audit_escalation is a lawful typed terminal result exiting zero without be
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
 
-    const escalation = {
-      kind: AUDIT_ESCALATION_KIND,
+    const auditCandidate = {
+      status: "escalate",
       conflicts: ["soul procedure conflict"],
       decisionGate: {
         question: "Which authority controls this gate?",
         options: ["owner", "caller"],
       },
+    };
+    const escalation = {
+      judgeStatus: "escalate",
+      decisionGate: { question: "role gate", options: ["role"] },
+      kind: AUDIT_ESCALATION_KIND,
+      conflicts: auditCandidate.conflicts,
+      auditDecisionGate: auditCandidate.decisionGate,
     };
 
     const result = await runAkRole(
@@ -775,20 +783,49 @@ test("audit_escalation is a lawful typed terminal result exiting zero without be
           await mkdir(sessionDir, { recursive: true });
           await writeFile(
             join(sessionDir, "session.jsonl"),
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolName: JUDGE_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: escalation,
+            `${[
+              {
+                type: "message",
+                message: {
+                  role: "assistant",
+                  content: [{
+                    type: "toolCall",
+                    id: "judge-role-call",
+                    name: JUDGE_OUTPUT_TOOL_NAME,
+                    arguments: { judgeStatus: "escalate" },
+                  }],
+                },
               },
-            })}\n`,
+              {
+                type: "custom",
+                customType: "ak_compliance_response",
+                data: {
+                  version: 1,
+                  response: {
+                    content: [{
+                      type: "toolCall",
+                      id: "judge-audit-call",
+                      name: JUDGE_AUDIT_TOOL_NAME,
+                      arguments: auditCandidate,
+                    }],
+                  },
+                },
+              },
+              {
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "judge-role-call",
+                  toolName: JUDGE_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: escalation,
+                },
+              },
+            ].map((entry) => JSON.stringify(entry)).join("\n")}\n`,
             "utf8",
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -858,7 +895,6 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -986,7 +1022,6 @@ test("artifact publication EISDIR retains unrecognized identity (not washed to o
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -1041,7 +1076,6 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: null,
-            stdout: "",
             stderr: "still running\n",
             timedOut: true,
             args: [...args],
@@ -1073,7 +1107,7 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
   });
 });
 
-test("shared audit-incomplete terminal extraction enumerates every audited seat", () => {
+test("shared audit-incomplete extraction binds every audited seat and rejects ambiguous evidence", () => {
   const outputTools = {
     judge: "ak_judge_output",
     fixer: "ak_fixer_output",
@@ -1086,154 +1120,228 @@ test("shared audit-incomplete terminal extraction enumerates every audited seat"
     reviewer: REVIEWER_AUDIT_TOOL_NAME,
     doctor: DOCTOR_AUDIT_TOOL_NAME,
   } as const;
+  const extract = (
+    entries: readonly unknown[],
+    role: (typeof AUDITOR_SOUL_ROLES)[number],
+    outputTool: string = outputTools[role],
+  ) => extractComplianceAuditIncompleteRoleOutcome(
+    entries as Parameters<typeof extractComplianceAuditIncompleteRoleOutcome>[0],
+    role,
+    outputTool,
+  );
+
   for (const role of AUDITOR_SOUL_ROLES) {
+    const roleCallId = `${role}-role-call`;
     const roleCandidate = { role, status: "candidate" };
     const auditCandidate = [`malformed-${role}`];
-    const result = extractComplianceAuditIncompleteRoleOutcome(
-      [
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            content: [{
-              type: "toolCall",
-              id: `${role}-role-call`,
-              name: outputTools[role],
-              arguments: roleCandidate,
-            }],
-          },
-        },
-        {
-          type: "custom",
-          customType: "ak_compliance_response",
-          data: {
-            version: 1,
-            response: {
-              content: [{
-                type: "toolCall",
-                id: `${role}-audit-call`,
-                name: auditTools[role],
-                arguments: auditCandidate,
-              }],
-            },
-          },
-        },
-        {
-          type: "message",
-          message: {
-            role: "toolResult",
-            toolCallId: `${role}-role-call`,
-            toolName: outputTools[role],
-            isError: false,
-            details: {
-              status: "audit-incomplete",
-              observation: { kind: "non-object-arguments", type: "array" },
-              candidate: auditCandidate,
-            },
-          },
-        },
-      ],
-      role,
-      outputTools[role],
-    );
-    assert.ok(result);
-    assert.equal(result.outcome.kind, "audit_incomplete");
-    assert.equal(result.outcome.status, "audit-incomplete");
-    assert.equal(result.outcome.decision, "no-usable-decision");
-    assert.deepEqual(result.outcome.roleCandidate, roleCandidate);
-    assert.deepEqual(result.outcome.audit.candidate, auditCandidate);
-    assert.notDeepEqual(result.outcome.roleCandidate, result.outcome.audit.candidate);
-    assert.equal(result.outcome.acceptedReceipt, false);
-    assert.deepEqual(result.outcome.decisiveFacts.roleCandidate, roleCandidate);
-    assert.deepEqual(result.outcome.decisiveFacts.auditCandidate, auditCandidate);
-    assert.deepEqual(result.outcome.decisiveFacts.auditObservation, {
-      kind: "non-object-arguments",
-      type: "array",
-    });
-  }
-});
-
-test("audit-incomplete binding rejects wrong seats, collisions, and missing role ids", () => {
-  const base = [
-    {
+    const roleCall = {
       type: "message",
       message: {
         role: "assistant",
         content: [{
           type: "toolCall",
-          id: "role-call-1",
-          name: "ak_judge_output",
-          arguments: { judgeStatus: "converged" },
+          id: roleCallId,
+          name: outputTools[role],
+          arguments: roleCandidate,
         }],
       },
-    },
-    {
+    } as const;
+    const retained = {
       type: "custom",
       customType: "ak_compliance_response",
       data: {
+        version: 1,
         response: {
           content: [{
             type: "toolCall",
-            id: "audit-call-1",
-            name: JUDGE_AUDIT_TOOL_NAME,
-            arguments: ["retained-candidate"],
+            id: `${role}-audit-call`,
+            name: auditTools[role],
+            arguments: auditCandidate,
           }],
         },
       },
-    },
-    {
+    } as const;
+    const roleResult = {
       type: "message",
       message: {
         role: "toolResult",
-        toolCallId: "role-call-1",
-        toolName: "ak_judge_output",
+        toolCallId: roleCallId,
+        toolName: outputTools[role],
         isError: false,
         details: {
           status: "audit-incomplete",
           observation: { kind: "non-object-arguments", type: "array" },
-          candidate: ["same-bytes"],
+          candidate: auditCandidate,
         },
       },
-    },
-  ] as const;
-  const extract = (entries: readonly unknown[]) =>
-    extractComplianceAuditIncompleteRoleOutcome(
-      entries as Parameters<typeof extractComplianceAuditIncompleteRoleOutcome>[0],
-      "judge",
-      "ak_judge_output",
+    } as const;
+    const base = [roleCall, retained, roleResult] as const;
+    const bound = extract(base, role);
+    assert.ok(bound);
+    assert.equal(bound.outcome.kind, "audit_incomplete");
+    assert.equal(bound.outcome.status, "audit-incomplete");
+    assert.equal(bound.outcome.decision, "no-usable-decision");
+    assert.deepEqual(bound.outcome.roleCandidate, roleCandidate);
+    assert.deepEqual(bound.outcome.audit.candidate, auditCandidate);
+    assert.deepEqual(bound.outcome.audit.observation, {
+      kind: "non-object-arguments",
+      type: "array",
+    });
+    assert.equal(bound.outcome.acceptedReceipt, false);
+    assert.deepEqual(bound.outcome.decisiveFacts.roleCandidate, roleCandidate);
+    assert.deepEqual(bound.outcome.decisiveFacts.auditCandidate, auditCandidate);
+
+    const replace = (index: number, entry: unknown): unknown[] =>
+      base.map((current, currentIndex) => currentIndex === index ? entry : current);
+    const wrongAudit = {
+      ...retained,
+      data: { response: { content: [{ type: "toolCall", name: "wrong_audit_tool", arguments: auditCandidate }] } },
+    };
+    assert.equal(extract(replace(1, wrongAudit), role), undefined);
+    assert.equal(extract(base, role, "wrong_output_tool"), undefined);
+    assert.equal(
+      extract(base, role === "judge" ? "fixer" : "judge"),
+      undefined,
     );
-  const bound = extract(base);
-  assert.ok(bound);
-  assert.deepEqual(bound.outcome.audit.candidate, ["retained-candidate"]);
-  assert.deepEqual(bound.outcome.audit.observation, {
-    kind: "non-object-arguments",
-    type: "array",
-  });
-  assert.equal(extract(base.map((entry, index) => index === 1
-    ? { ...entry, data: { response: { content: [{ type: "toolCall", name: "wrong_audit_tool", arguments: ["retained-candidate"] }] } } }
-    : entry)), undefined);
-  assert.equal(extract(base.map((entry, index) => index === 2
-    ? { ...entry, message: { ...(entry as any).message, toolCallId: "missing-role-call" } }
-    : entry)), undefined);
-  assert.equal(extract(base.map((entry, index) => index === 2
-    ? { ...entry, message: { ...(entry as any).message, toolCallId: undefined } }
-    : entry)), undefined);
-  // A same-value retained response outside this role call/result interval is unrelated.
-  assert.equal(extract([base[0], base[2], base[1]]), undefined);
-  // Two retained responses in one interval are not a unique binding.
-  assert.equal(extract([
-    base[0],
-    base[1],
-    { ...base[1], data: { response: { content: [{ type: "toolCall", name: JUDGE_AUDIT_TOOL_NAME, arguments: ["other"] }] } } },
-    base[2],
-  ]), undefined);
-  // A second result for the same non-empty call ID is not a second chance to settle.
-  assert.equal(extract([
-    base[0],
-    base[1],
-    base[2],
-    { ...base[2] },
-  ]), undefined);
+
+    // The retained response must be inside this role call/result interval;
+    // an unrelated same-value response before or after it cannot bind.
+    assert.equal(extract([retained, roleCall, roleResult], role), undefined);
+    assert.equal(extract([roleCall, roleResult, retained], role), undefined);
+    assert.equal(
+      extract(replace(2, { ...roleResult, message: { ...roleResult.message, toolCallId: `${roleCallId}-missing` } }), role),
+      undefined,
+    );
+    assert.equal(
+      extract(replace(2, { ...roleResult, message: { ...roleResult.message, toolCallId: undefined } }), role),
+      undefined,
+    );
+    assert.equal(
+      extract(replace(2, { ...roleResult, message: { ...roleResult.message, toolName: "wrong_output_tool" } }), role),
+      undefined,
+    );
+
+    // The one-to-one binding rejects duplicate role calls, results, and
+    // retained custom entries rather than choosing one by position or value.
+    assert.equal(extract([roleCall, roleCall, retained, roleResult], role), undefined);
+    assert.equal(extract([roleCall, retained, roleResult, roleResult], role), undefined);
+    assert.equal(
+      extract([
+        roleCall,
+        retained,
+        { ...retained, data: { response: { content: [{ type: "toolCall", name: auditTools[role], arguments: auditCandidate }] } } },
+        roleResult,
+      ], role),
+      undefined,
+    );
+  }
+});
+
+test("audit escalation requires the retained seat-bound response across all four seats", () => {
+  const seats = {
+    judge: { output: JUDGE_OUTPUT_TOOL_NAME, audit: JUDGE_AUDIT_TOOL_NAME },
+    fixer: { output: FIXER_OUTPUT_TOOL_NAME, audit: FIXER_AUDIT_TOOL_NAME },
+    reviewer: { output: REVIEWER_OUTPUT_TOOL_NAME, audit: REVIEWER_AUDIT_TOOL_NAME },
+    doctor: { output: DOCTOR_OUTPUT_TOOL_NAME, audit: DOCTOR_AUDIT_TOOL_NAME },
+  } as const;
+  const auditCandidate = {
+    status: "escalate",
+    conflicts: ["authority conflict"],
+    decisionGate: { question: "Who decides?", options: ["owner", "caller"] },
+  };
+  const extract = (role: (typeof AUDITOR_SOUL_ROLES)[number], entries: readonly unknown[]) => {
+    switch (role) {
+      case "judge": return extractJudgeRoleOutcome(entries as never);
+      case "fixer": return extractFixerRoleOutcome(entries as never);
+      case "reviewer": return extractReviewerRoleOutcome(entries as never);
+      case "doctor": return extractDoctorRoleOutcome(entries as never);
+    }
+  };
+  const outcomeKind = (value: unknown): unknown => {
+    if (!value || typeof value !== "object") return undefined;
+    return "outcome" in value
+      ? (value as { outcome?: { kind?: unknown } }).outcome?.kind
+      : (value as { kind?: unknown }).kind;
+  };
+  for (const role of AUDITOR_SOUL_ROLES) {
+    const seat = seats[role];
+    const roleCallId = `${role}-role-call`;
+    const roleCall = {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: roleCallId, name: seat.output, arguments: { role } }],
+      },
+    };
+    const retained = {
+      type: "custom",
+      customType: "ak_compliance_response",
+      data: {
+        version: 1,
+        response: { content: [{ type: "toolCall", name: seat.audit, arguments: auditCandidate }] },
+      },
+    };
+    const projected = buildAuditEscalationResult(
+      { status: "escalate", conflicts: auditCandidate.conflicts, decisionGate: auditCandidate.decisionGate },
+      { role },
+    );
+    const details = JSON.parse(JSON.stringify(projected));
+    // Persisted/replayed details have no live object brand. The retained
+    // seat-bound response below, not Navigator shape recognition, owns this
+    // escalation's authenticity.
+    assert.notEqual(
+      publicNavigatorSettlement(role, role === "fixer" ? "apply" : null, {
+        toolName: seat.output,
+        isError: false,
+        details,
+      })?.kind,
+      "human_decision",
+      `${role}: persisted genuine projection must not impersonate live identity`,
+    );
+    const result = {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: roleCallId,
+        toolName: seat.output,
+        isError: false,
+        details,
+      },
+    };
+    const entries = [roleCall, retained, result];
+    const extracted = extract(role, entries);
+    assert.equal(outcomeKind(extracted), "audit_escalation", role);
+    assert.notEqual(
+      publicNavigatorSettlement(role, role === "fixer" ? "apply" : null, {
+        toolName: seat.output,
+        isError: false,
+        details: { kind: AUDIT_ESCALATION_KIND, conflicts: ["forged"], auditDecisionGate: auditCandidate.decisionGate },
+      })?.kind,
+      "human_decision",
+      `${role}: persisted forged projection`,
+    );
+
+    // A copied kind is not enough: no retained evidence, pass evidence, wrong
+    // seat, missing role id, collision, and out-of-interval evidence all fail closed.
+    assert.equal(outcomeKind(extract(role, [result])), undefined, `${role}: smuggle`);
+    assert.equal(
+      outcomeKind(extract(role, [roleCall, { ...retained, data: { response: { content: [{ type: "toolCall", name: seat.audit, arguments: { status: "pass" } }] } } }, result])),
+      undefined,
+      `${role}: pass evidence`,
+    );
+    assert.equal(
+      outcomeKind(extract(role, [roleCall, { ...retained, data: { response: { content: [{ type: "toolCall", name: "wrong-seat-audit", arguments: auditCandidate }] } } }, result])),
+      undefined,
+      `${role}: wrong seat`,
+    );
+    assert.equal(
+      outcomeKind(extract(role, [{ ...roleCall, message: { ...roleCall.message, content: [{ ...roleCall.message.content[0], id: undefined }] } }, retained, result])),
+      undefined,
+      `${role}: missing id`,
+    );
+    assert.equal(outcomeKind(extract(role, [roleCall, retained, result, result])), undefined, `${role}: duplicate result`);
+    assert.equal(outcomeKind(extract(role, [retained, roleCall, result])), undefined, `${role}: outside interval`);
+  }
 });
 
 test("public audit evidence collision returns a typed nonzero Terminal with residual", async () => {
@@ -1414,7 +1522,6 @@ test("zero-exit missing session classifies as session cause via public entry", a
           // Admitted session directory exists but holds no transcript.
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -1463,7 +1570,6 @@ test("zero-exit invalid judge details classifies as output cause via public entr
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -1502,7 +1608,6 @@ test("production knownFailure channel reaches settlement as provider with typed 
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "",
             // Deliberately misleading prose — cause must come from knownFailure only.
             stderr: "activation wrapper exited nonzero\n",
             timedOut: false,
@@ -1600,7 +1705,6 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "",
             stderr: [
               "No API key found for the selected model.",
               "",
@@ -1734,7 +1838,6 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
           );
           return {
             code: 1,
-            stdout: "",
             stderr: "late host noise\n",
             timedOut: false,
             args: [...args],
@@ -1777,7 +1880,6 @@ test("Error Artifact primary collision retains original failure cause with Termi
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "",
             stderr: "Error: original activation boom\n",
             timedOut: false,
             args: [...args],
@@ -1846,7 +1948,6 @@ test("exhausted fixed Error Artifact names still settle original cause via uniqu
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "",
             stderr: "Error: original activation boom\n",
             timedOut: false,
             args: [...args],
@@ -1905,7 +2006,6 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
           await writeFile(join(sessionDir, "session.jsonl"), "{not-json\n", "utf8");
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -1971,7 +2071,6 @@ test("unwritable run directory retains activation cause with durable Error Artif
             await chmod(runDir, 0o555);
             return {
               code: 1,
-              stdout: "",
               stderr: "Error: boom\n",
               timedOut: false,
               args: [...args],
@@ -2045,7 +2144,6 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "",
             stderr: "Error: child failed after admission\n",
             timedOut: false,
             args: [...args],
@@ -2189,7 +2287,6 @@ test("session provider-stop produces provider cause without injected knownFailur
           );
           return {
             code: 1,
-            stdout: "",
             // Deliberately misleading prose — cause must come from session stop, not stderr.
             stderr: "activation wrapper exited nonzero\n",
             timedOut: false,
@@ -2371,7 +2468,6 @@ test("zero-exit session provider-stop retains provider cause (not washed to outp
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -2456,7 +2552,6 @@ test("timedOut with session provider-stop retains provider identity (AC2)", asyn
           );
           return {
             code: null,
-            stdout: "",
             stderr: "still running\n",
             timedOut: true,
             args: [...args],
@@ -2554,7 +2649,6 @@ test("older provider error then later end_turn settles as output not provider (A
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],

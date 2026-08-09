@@ -219,20 +219,24 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           let audit: ComplianceDecision;
           try { audit = await dependencies.auditCompliance({ soul, canonicalSkill: binding.snapshot.raw, task, record, candidate }, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
           catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-          return disposeComplianceDecision<AgentToolResult<unknown>>(audit, {
-            pass: async (usage) => {
-              try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-              return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
+          return disposeComplianceDecision<AgentToolResult<unknown>>(
+            audit,
+            {
+              pass: async (usage) => {
+                try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
+                return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
+              },
+              revise: (violations) => {
+                throw new AggregateError([], `Reviewer receipt rejected:\n${violations.join("\n")}`, { cause: Object.freeze([...violations]) });
+              },
+              escalate: async (result) => {
+                try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
+                return result;
+              },
+              auditIncomplete: (result) => result,
             },
-            revise: (violations) => {
-              throw new AggregateError([], `Reviewer receipt rejected:\n${violations.join("\n")}`, { cause: Object.freeze([...violations]) });
-            },
-            escalate: async (result) => {
-              try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-              return result;
-            },
-            auditIncomplete: (result) => result,
-          });
+            candidate,
+          );
         } });
       pi.on("tool_execution_start", (event) => {
         if (event.toolName !== AGENT_TOOL_NAME) return;
