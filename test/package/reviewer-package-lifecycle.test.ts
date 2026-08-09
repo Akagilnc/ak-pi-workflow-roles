@@ -127,7 +127,10 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
         (ctx) => { audits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); }
       ]);
 
-      await withProcessCwd(nestedCwd, async () => {
+      const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+      delete process.env.AK_ROLE_RUN_DIR;
+      try {
+        await withProcessCwd(nestedCwd, async () => {
         await withInProcessPi({ activationLedgerSession: true, cwd: nestedCwd, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
           assert.deepEqual(loader.getExtensions().errors, []);
           const before = await readFile(resolve(fixture, "consumer.txt"), "utf8");
@@ -217,7 +220,11 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           assert.deepEqual(output.message.details.outcomes, {});
           installedContracts.projectReviewerIntentToReceipt({ status: "refused", diagnostic: "No review can be started." }, output.message.details);
         });
-      });
+        });
+      } finally {
+        if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+        else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+      }
     });
   });
 });
