@@ -1,17 +1,56 @@
 diff --git a/dist/api/openai-codex-responses.js b/dist/api/openai-codex-responses.js
-index bb9fa794ee6cb9f73149dda5733b286941bbb550..001f2c36ac53aeace636a6b9d6728f40a4ffe3d5 100644
+index bb9fa794ee6cb9f73149dda5733b286941bbb550..23bfb98c1ac5a50c28de5a1bbca55a310b0977c5 100644
 --- a/dist/api/openai-codex-responses.js
 +++ b/dist/api/openai-codex-responses.js
-@@ -148,6 +148,13 @@ function compressRequestBodyZstd(bodyJson) {
+@@ -6,6 +6,34 @@ function loadNodeOs() {
+ }
+ // NEVER convert to top-level runtime imports - breaks browser/Vite builds
+ const _os = loadNodeOs();
++// [ak-patch] codex fast switch. Source of truth: the CONTENT of
++// ~/.pi-codex-fast. Enabled only when the ENTIRE file matches
++// /^\s*fast_mode\s*=\s*on\s*$/; anything else -- missing file, empty file,
++// `fast_mode = off`, extra/conflicting content, unreadable file -- keeps
++// stock behavior. No TOML parser, no second gate. Read once per request
++// (tiny readFileSync, microseconds) and never cached, so flipping the file
++// takes effect on the next codex request without restarting anything.
++// Loader mirrors loadNodeZlib()/loadNodeOs(): browser (no Node runtime)
++// -> off; Bun builtins work. Reuses the existing _os; no second os loader.
++// Unreadable = off, never fake on.
++function loadNodeFs() {
++    if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) {
++        return null;
++    }
++    return process.getBuiltinModule?.("node:fs") ?? null;
++}
++function codexFastSwitchEnabled() {
++    const fs = loadNodeFs();
++    if (!fs || !_os) {
++        return false;
++    }
++    try {
++        return /^\s*fast_mode\s*=\s*on\s*$/.test(fs.readFileSync(`${_os.homedir()}/.pi-codex-fast`, "utf8"));
++    }
++    catch {
++        return false;
++    }
++}
+ import { clampThinkingLevel } from "../models.js";
+ import { registerSessionResourceCleanup } from "../session-resources.js";
+ import { combineAbortSignals } from "../utils/abort-signals.js";
+@@ -148,6 +177,17 @@ function compressRequestBodyZstd(bodyJson) {
  // ============================================================================
  export const stream = (model, context, options) => {
      const stream = new AssistantMessageEventStream();
-+    // [ak-patch] PI_TEMP_FAST_MODE: default codex service_tier to "priority" when
-+    // the env var is set and no explicit serviceTier was supplied. pi-ai exposes no
-+    // official switch; pricing and resolveCodexServiceTier read options.serviceTier
-+    // downstream, so cost accounting stays honest. Env-gated: unset = stock behavior.
-+    if (options?.serviceTier === undefined && typeof process !== "undefined" && "PI_TEMP_FAST_MODE" in (process.env ?? {})) {
++    // [ak-patch] when the switch file enables fast mode and no explicit
++    // serviceTier was supplied, default codex requests to "priority".
++    // Explicit serviceTier always wins; pricing/resolveCodexServiceTier read
++    // options.serviceTier downstream, so cost accounting stays honest.
++    // Presentation-layer self-description: exactly one stderr line per
++    // request when the injection actually happens (stdout is the typed
++    // Terminal contract surface; this log is not a machine contract).
++    if (options?.serviceTier === undefined && codexFastSwitchEnabled()) {
 +        options = { ...options, serviceTier: "priority" };
++        console.error("[ak-patch] codex fast: service_tier=priority (switch enabled)");
 +    }
      (async () => {
          const output = {
