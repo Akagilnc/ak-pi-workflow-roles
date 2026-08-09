@@ -19,7 +19,7 @@ test("independent machine-Pi auditor carries workspace evidence into its later t
     const decision = await runComplianceAudit({
       tool: createComplianceDecisionTool("ak_test_auditor_decision", "Submit decision"),
       systemPrompt: "Gather evidence before deciding.", serializedInput: "Inspect evidence.txt", roleLabel: "Test auditor", invalidDecisionLabel: "invalid",
-      context: { cwd, model: { provider: "audit-test", id: "model" }, thinkingLevel: "off", sessionManager: { getSessionFile: () => join(cwd,"parent.jsonl"), getSessionDir: () => cwd, appendCustomEntry() { return "entry"; } } } as unknown as ExtensionContext,
+      context: { cwd, model: { provider: "audit-test", id: "model" }, thinkingLevel: "off", modelRegistry: { getProviderAuth: async () => ({ auth: {} }), getApiKeyAndHeaders: async () => ({ ok: true }), getProvider: () => ({ id: "audit-test", name: "Audit test", auth: { apiKey: { name: "test", resolve: async () => ({ auth: {} }) } }, getModels: () => [], stream() { throw new Error("unused"); }, streamSimple() { throw new Error("unused"); } }) }, sessionManager: { getSessionFile: () => join(cwd,"parent.jsonl"), getSessionDir: () => cwd, appendCustomEntry() { return "entry"; } } } as unknown as ExtensionContext,
     });
     assert.equal(decision.status, "pass");
   } finally {
