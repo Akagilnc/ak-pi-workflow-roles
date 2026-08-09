@@ -13,6 +13,8 @@ import {
   mintNavigatorInvocationId,
 } from "./navigator-invocation-identity.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
+import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
+import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 
@@ -363,15 +365,12 @@ export function navigatorSubjectKeyForInput(subjectRoot: string, reference: stri
 }
 
 function subjectDirectory(cwd: string, subjectKey: string): string {
-  const issue = issueRoot(subjectKey);
-  if (issue !== undefined) {
-    const base = join(issue, "runs", "navigator");
-    if (subjectKey === issue) return base;
-    const digest = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
-    return join(base, digest);
-  }
+  const book = activationBookDirectory(
+    resolveActivationLedgerHome(),
+    resolveBookKeyFromGit(cwd),
+  );
   const digest = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
-  return join(resolve(cwd, ".ak", "work", "navigator"), digest);
+  return join(book, "navigator", digest);
 }
 
 export function navigatorModelSettingPath(): string {

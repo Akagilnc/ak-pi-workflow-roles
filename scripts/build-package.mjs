@@ -9,6 +9,7 @@ const entries = [
   "work-subject-identity",
   "navigator-invocation-identity",
   "navigator-attendance",
+  "activation-ledger-git",
   "activation-ledger-topology",
   "activation-reconciliation",
 ];
