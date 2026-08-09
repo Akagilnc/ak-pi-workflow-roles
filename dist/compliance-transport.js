@@ -1,5 +1,4 @@
 import { uuidv7, } from "@earendil-works/pi-ai";
-import { createBashTool, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool, } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError, createStreamIdleGuard, isStreamIdleTimeoutError, } from "./stream-idle-guard.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_CODE, StreamIdleTimeoutError, createStreamIdleGuard, isStreamIdleTimeoutError, } from "./stream-idle-guard.js";
@@ -33,47 +32,6 @@ export const complianceDecisionSchema = Type.Object({
     additionalProperties: true,
     required: [],
 });
-function complianceToolChoice(model, toolName) {
-    switch (model.api) {
-        case "anthropic-messages":
-        case "bedrock-converse-stream":
-            return undefined;
-        case "mistral-conversations":
-        case "openai-completions":
-        case "pi-messages":
-            return { type: "function", function: { name: toolName } };
-        case "azure-openai-responses":
-        case "openai-responses":
-            return { type: "function", name: toolName };
-        case "google-generative-ai":
-        case "google-vertex":
-            return "any";
-        case "openai-codex-responses":
-            return "required";
-        default:
-            return "required";
-    }
-}
-function singleComplianceToolCallPayload(model, toolName) {
-    switch (model.api) {
-        case "azure-openai-responses":
-        case "openai-completions":
-        case "openai-codex-responses":
-        case "openai-responses":
-            return (payload) => {
-                if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-                    return payload;
-                }
-                return {
-                    ...payload,
-                    parallel_tool_calls: false,
-                    tool_choice: complianceToolChoice(model, toolName),
-                };
-            };
-        default:
-            return undefined;
-    }
-}
 export function createComplianceDecisionTool(name, description) {
     return {
         name,
@@ -258,8 +216,10 @@ export async function runComplianceAudit(options) {
     const idleMaxRetries = options.idleMaxRetries ?? DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES;
     // Silence clock starts with each attempt and resets only on real AssistantMessageEvent
     // yields from provider.stream — not on outbound payload transform or response headers.
-    const onPayload = singleComplianceToolCallPayload(dispatch.model, options.tool.name);
-    const toolChoice = complianceToolChoice(dispatch.model, options.tool.name);
+    // Keep Pi's workspace-tool implementation behind the audit execution seam.
+    // Eager value imports make the standalone public CLI bundle initialize Pi's
+    // CommonJS process helpers even for discovery-only commands such as --help.
+    const { createBashTool, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool, } = await import("@earendil-works/pi-coding-agent");
     const workspaceTools = [
         createReadTool(options.context.cwd),
         createWriteTool(options.context.cwd),
@@ -307,7 +267,7 @@ export async function runComplianceAudit(options) {
                 });
             let response;
             try {
-                response = await new Promise((resolve, reject) => {
+                const completeTurn = () => new Promise((resolve, reject) => {
                     const onAbort = () => {
                         reject(abortRejectionReason(idle.signal));
                     };
@@ -322,8 +282,6 @@ export async function runComplianceAudit(options) {
                         maxTokens: 2048,
                         cacheRetention: "none",
                         sessionId: uuidv7(),
-                        ...(toolChoice === undefined ? {} : { toolChoice }),
-                        ...(onPayload === undefined ? {} : { onPayload }),
                         signal: idle.signal,
                     }).then((value) => {
                         idle.signal.removeEventListener("abort", onAbort);
@@ -337,13 +295,55 @@ export async function runComplianceAudit(options) {
                         reject(error);
                     });
                 });
+                while (true) {
+                    response = await completeTurn();
+                    throwIfStreamIdleTimedOut(idle.signal.reason);
+                    retainComplianceResponse(options.context, response);
+                    const calls = response.content.filter((part) => part.type === "toolCall");
+                    if (calls.some((call) => call.name === options.tool.name))
+                        break;
+                    const evidenceCalls = calls.flatMap((call) => {
+                        const tool = workspaceTools.find((candidate) => candidate.name === call.name);
+                        return tool === undefined ? [] : [{ call, tool }];
+                    });
+                    if (evidenceCalls.length === 0) {
+                        return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
+                    }
+                    requestContext.messages.push(response);
+                    for (const { call, tool } of evidenceCalls) {
+                        try {
+                            const result = await tool.execute(call.id, call.arguments, idle.signal);
+                            requestContext.messages.push({
+                                role: "toolResult",
+                                toolCallId: call.id,
+                                toolName: call.name,
+                                content: result.content,
+                                details: result.details,
+                                isError: false,
+                                timestamp: Date.now(),
+                            });
+                        }
+                        catch (error) {
+                            requestContext.messages.push({
+                                role: "toolResult",
+                                toolCallId: call.id,
+                                toolName: call.name,
+                                content: [{
+                                        type: "text",
+                                        text: error instanceof Error ? error.message : String(error),
+                                    }],
+                                isError: true,
+                                timestamp: Date.now(),
+                            });
+                        }
+                    }
+                }
             }
             catch (error) {
                 throwIfStreamIdleTimedOut(idle.signal.reason);
                 throw error;
             }
             throwIfStreamIdleTimedOut(idle.signal.reason);
-            retainComplianceResponse(options.context, response);
             return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
         }
         catch (error) {
