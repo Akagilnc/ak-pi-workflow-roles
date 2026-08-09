@@ -1263,6 +1263,12 @@ test("audit escalation requires the retained seat-bound response across all four
       ? (value as { outcome?: { kind?: unknown } }).outcome?.kind
       : (value as { kind?: unknown }).kind;
   };
+  const hostileRows = {
+    judge: { source: "public", property: "conflicts" },
+    fixer: { source: "retained", property: "conflicts" },
+    reviewer: { source: "public", property: "auditDecisionGate" },
+    doctor: { source: "retained", property: "decisionGate" },
+  } as const;
   for (const role of AUDITOR_SOUL_ROLES) {
     const seat = seats[role];
     const roleCallId = `${role}-role-call`;
@@ -1311,6 +1317,33 @@ test("audit escalation requires the retained seat-bound response across all four
     const entries = [roleCall, retained, result];
     const extracted = extract(role, entries);
     assert.equal(outcomeKind(extracted), "audit_escalation", role);
+
+    // One real-extractor, four-seat negative table covers both retained and
+    // public audit-owned accessors. Raw toolResult evidence remains in entries,
+    // but a hostile read cannot escape or produce any Receipt-shaped outcome.
+    const hostile = hostileRows[role];
+    const hostileCandidate = { ...auditCandidate };
+    const hostileDetails = { ...details };
+    Object.defineProperty(
+      hostile.source === "retained" ? hostileCandidate : hostileDetails,
+      hostile.property,
+      { enumerable: true, get: () => { throw new Error(`${role} hostile ${hostile.property}`); } },
+    );
+    const hostileRetained = {
+      ...retained,
+      data: { response: { content: [{ type: "toolCall", name: seat.audit, arguments: hostileCandidate }] } },
+    };
+    const hostileResult = {
+      ...result,
+      message: { ...result.message, details: hostileDetails },
+    };
+    let hostileOutcome: unknown;
+    assert.doesNotThrow(() => {
+      hostileOutcome = extract(role, [roleCall, hostileRetained, hostileResult]);
+    }, `${role}: hostile ${hostile.source} ${hostile.property}`);
+    assert.equal(outcomeKind(hostileOutcome), undefined, `${role}: hostile evidence must not settle`);
+    assert.equal(hostileResult.message.details, hostileDetails, `${role}: raw terminal remains observable`);
+
     assert.notEqual(
       publicNavigatorSettlement(role, role === "fixer" ? "apply" : null, {
         toolName: seat.output,

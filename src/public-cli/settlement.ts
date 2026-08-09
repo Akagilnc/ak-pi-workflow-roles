@@ -1039,6 +1039,20 @@ function sameAuditValue(left: unknown, right: unknown): boolean {
   return false;
 }
 
+/** Snapshot the exact enumerable string face that final Terminal projection uses. */
+function snapshotAuditDetails(details: Record<string, unknown>): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = Object.create(null);
+  for (const key of Object.keys(details)) {
+    Object.defineProperty(snapshot, key, {
+      value: details[key],
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return snapshot;
+}
+
 /**
  * Bind the public escalation face to the one retained response that sits inside
  * the same role output call/result interval. A `kind` field alone is never a
@@ -1066,23 +1080,30 @@ function boundAuditEscalationForResult(
     auditToolNameForRole(role),
   );
   if (retained === undefined) return undefined;
-  const decision = readComplianceCandidate(retained.candidate);
-  if (decision.status !== "escalate") return undefined;
-  const details = message.details;
   try {
+    const decision = readComplianceCandidate(retained.candidate);
+    if (decision.status !== "escalate") return undefined;
+    const details = message.details;
     if (!isAuditEscalationResult(details) || !isRecord(details)) return undefined;
+
+    // Read the public face exactly once. Besides making key enumeration and
+    // getters fail closed, this prevents a stateful accessor from authenticating
+    // one value and yielding another during final Terminal projection.
+    const projectedDetails = snapshotAuditDetails(details);
+    const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
+    const hasDetailsConflicts = Object.hasOwn(projectedDetails, "conflicts");
+    if (hasDecisionConflicts !== hasDetailsConflicts) return undefined;
+    if (hasDecisionConflicts && !sameAuditValue(projectedDetails.conflicts, decision.conflicts)) return undefined;
+    const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
+    const hasDetailsGate = Object.hasOwn(projectedDetails, "auditDecisionGate");
+    if (hasDecisionGate !== hasDetailsGate) return undefined;
+    if (hasDecisionGate && !sameAuditValue(projectedDetails.auditDecisionGate, decision.decisionGate)) return undefined;
+    return { decision, details: projectedDetails };
   } catch {
+    // Retained/public own-key enumeration, property reads, recursive equality,
+    // and projection are all untrusted session evidence.
     return undefined;
   }
-  const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
-  const hasDetailsConflicts = Object.hasOwn(details, "conflicts");
-  if (hasDecisionConflicts !== hasDetailsConflicts) return undefined;
-  if (hasDecisionConflicts && !sameAuditValue(details.conflicts, decision.conflicts)) return undefined;
-  const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
-  const hasDetailsGate = Object.hasOwn(details, "auditDecisionGate");
-  if (hasDecisionGate !== hasDetailsGate) return undefined;
-  if (hasDecisionGate && !sameAuditValue(details.auditDecisionGate, decision.decisionGate)) return undefined;
-  return { decision, details };
 }
 
 function isUnboundAuditEscalationFace(details: unknown): boolean {
