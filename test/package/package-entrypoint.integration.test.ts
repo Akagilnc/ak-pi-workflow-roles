@@ -621,16 +621,11 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
       }, async ({ loader, session, sessionManager, extensions }) => {
         assert.deepEqual(loader.getExtensions().errors, []);
         assert.equal(extensions.extensions.length, 1);
-        assert.deepEqual(
-          session.agent.state.tools.map((tool) => tool.name),
-          ["read", "grep", "find", "ls", "bash", JUDGE_OUTPUT_TOOL_NAME],
-          "Judge activation keeps exactly the registered evidence tools and output",
-        );
-        assert.equal(
-          session.agent.state.tools.some((tool) =>
-            ["write", "edit", "integration_sibling"].includes(tool.name)
-          ),
-          false,
+        const activeToolNames = session.agent.state.tools.map((tool) => tool.name);
+        assert.ok(
+          activeToolNames.includes("integration_sibling") &&
+            activeToolNames.includes(JUDGE_OUTPUT_TOOL_NAME),
+          "Judge activation preserves host tools and activates its output",
         );
 
         let judgeContext: Context | undefined;
