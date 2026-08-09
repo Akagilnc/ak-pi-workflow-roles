@@ -51,11 +51,9 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
           failureCode?: string;
           details: Record<string, unknown>;
         };
-        failure.name = "ProviderStopError";
+        failure.name = response.model || response.provider || "Error";
         failure.knownCause = "provider";
-        failure.failureCode = response.provider && response.model
-          ? `${response.provider}/${response.model}`
-          : response.provider || response.model;
+        failure.failureCode = response.provider || response.model;
         const retentionError = retentionFailure instanceof Error ? retentionFailure : undefined;
         const retentionCause = retentionError?.cause;
         failure.details = {
