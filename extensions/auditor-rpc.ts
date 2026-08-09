@@ -8,6 +8,7 @@ type Config = { systemPrompt: string; tool: { name: string; description: string;
 export default function auditorRpcExtension(pi: ExtensionAPI) {
   pi.registerFlag(CONFIG_FLAG, { type: "string", description: "Internal auditor RPC configuration path" });
   let configured = false;
+  let decisionSubmitted = false;
   pi.on("session_start", async () => {
     if (configured) return;
     const path = pi.getFlag(CONFIG_FLAG);
@@ -19,6 +20,8 @@ export default function auditorRpcExtension(pi: ExtensionAPI) {
       description: config.tool.description,
       parameters: config.tool.parameters,
       async execute(_id, params) {
+        if (decisionSubmitted) throw new Error("Auditor decision was submitted more than once");
+        decisionSubmitted = true;
         return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true };
       },
     });

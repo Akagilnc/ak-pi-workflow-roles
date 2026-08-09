@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { realpath } from "node:fs/promises";
 import test from "node:test";
 
-import { runMachinePiRpc } from "../../src/machine-pi-rpc.ts";
+import { resolveMachinePi, runMachinePiRpc } from "../../src/machine-pi-rpc.ts";
 
 async function fixture(body: string) {
   const root = await mkdtemp(join(tmpdir(), "ak-machine-pi-rpc-"));
@@ -25,9 +25,33 @@ const input=[]; process.stdin.on('data', b => { input.push(b); const bytes=Buffe
   assert.equal(result.runtime.version, "0.84.1-test");
   assert.deepEqual(result.decision, { status: "pass" });
   assert.match(result.stderr, /retained diagnostic/);
+  assert.match(await readFile(join(sessionDir, "child-stderr.log"), "utf8"), /retained diagnostic/);
   assert.equal((await readFile(join(sessionDir, "wire.bin"), "utf8")), '{"id":"p","type":"prompt","message":"inspect"}\n');
   assert.equal(result.settled, true);
   await rm(f.root, { recursive: true, force: true });
+});
+
+test("PI_BINARY preserves bare PATH and explicit package-local overrides without caching", async () => {
+  const f = await fixture(`if(process.argv.includes('--version')) { console.log(process.env.VERSION); process.exit(); }`);
+  const first = await resolveMachinePi({ PATH: f.root, PI_BINARY: "pi", VERSION: "first" });
+  const second = await resolveMachinePi({ PATH: f.root, PI_BINARY: f.pi, VERSION: "second" });
+  assert.equal(first.version, "first");
+  assert.equal(second.version, "second");
+  await rm(f.root, { recursive: true, force: true });
+});
+
+test("RPC rejects early-exit write failure without an uncaught process error", async () => {
+  const f = await fixture(`if(process.argv.includes('--version')) { console.log('dev'); process.exit(); } process.stdin.destroy(); process.exit(0);`);
+  await assert.rejects(runMachinePiRpc({ env: { PATH: f.root }, cwd: f.root, sessionDir: join(f.root, "sessions"), args: [], commands: [{ type: "prompt", message: "x".repeat(8 * 1024 * 1024) }] }));
+  await rm(f.root, { recursive: true, force: true });
+});
+
+test("RPC rejects invalid JSON and duplicate matching decisions", async () => {
+  for (const output of ["not-json", JSON.stringify({type:'tool_execution_end',toolName:'ak_decide',result:{details:{status:'pass'}}})+'\\n'+JSON.stringify({type:'tool_execution_end',toolName:'ak_decide',result:{details:{status:'revise'}}})]) {
+    const f = await fixture(`if(process.argv.includes('--version')) { console.log('dev'); process.exit(); } process.stdin.on('data',()=>{console.log(${JSON.stringify(output)}); setTimeout(()=>process.exit(0),20)});`);
+    await assert.rejects(runMachinePiRpc({ env: { PATH: f.root }, cwd: f.root, sessionDir: join(f.root, "sessions"), args: [], commands: [{ type: "prompt", message: "x" }], decisionToolName: "ak_decide" }), /invalid JSONL|more than once/);
+    await rm(f.root, { recursive: true, force: true });
+  }
 });
 
 test("caller abort terminates the machine Pi child with SIGTERM", async () => {

@@ -9247,17 +9247,15 @@ import { join as join3 } from "node:path";
 // src/machine-pi-rpc.ts
 import { spawn, spawnSync } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir as mkdir2, realpath } from "node:fs/promises";
-import { delimiter, isAbsolute, join as join2, resolve } from "node:path";
-var resolutions = /* @__PURE__ */ new Map();
+import { access, appendFile, mkdir as mkdir2, realpath } from "node:fs/promises";
+import { delimiter, isAbsolute, join as join2, resolve, sep } from "node:path";
 async function executableFrom(env) {
   const selected = env.PI_BINARY;
-  const candidates = selected !== void 0 ? [isAbsolute(selected) ? selected : resolve(selected)] : (env.PATH ?? "").split(delimiter).filter(Boolean).map((part) => join2(part, "pi"));
+  const explicitPath = selected !== void 0 && (isAbsolute(selected) || selected.includes("/") || selected.includes("\\"));
+  const candidates = selected !== void 0 ? explicitPath ? [isAbsolute(selected) ? selected : resolve(selected)] : (env.PATH ?? "").split(delimiter).filter(Boolean).map((part) => join2(part, selected)) : (env.PATH ?? "").split(delimiter).filter(Boolean).map((part) => join2(part, "pi"));
   for (const candidate of candidates) {
-    if (candidate.includes("/node_modules/.bin/") || candidate.endsWith("/node_modules/.bin/pi")) {
-      if (selected !== void 0) throw new Error("package-local .bin/pi is not a machine Pi authority");
-      continue;
-    }
+    const packageLocal = candidate.split(sep).slice(-3).join("/") === "node_modules/.bin/pi";
+    if (selected === void 0 && packageLocal) continue;
     try {
       await access(candidate, constants.X_OK);
       return candidate;
@@ -9266,21 +9264,13 @@ async function executableFrom(env) {
   }
   throw new Error(selected === void 0 ? "machine Pi executable was not found on PATH" : `PI_BINARY is not executable: ${selected}`);
 }
-function resolveMachinePi(env = process.env) {
-  const key = `${env.PI_BINARY ?? ""}\0${env.PATH ?? ""}`;
-  let pending = resolutions.get(key);
-  if (pending === void 0) {
-    pending = (async () => {
-      const executableRealpath = await realpath(await executableFrom(env));
-      const versionResult = spawnSync(executableRealpath, ["--version"], { env, encoding: "utf8", timeout: 1e4 });
-      if (versionResult.error !== void 0 || versionResult.status !== 0) throw new Error(`machine Pi version probe failed: ${versionResult.stderr || versionResult.error}`);
-      const version = versionResult.stdout.replace(/\r?\n$/, "");
-      if (version.length === 0) throw new Error("machine Pi version probe returned no version");
-      return { executableRealpath, version };
-    })();
-    resolutions.set(key, pending);
-  }
-  return pending;
+async function resolveMachinePi(env = process.env) {
+  const executableRealpath = await realpath(await executableFrom(env));
+  const versionResult = spawnSync(executableRealpath, ["--version"], { env, encoding: "utf8", timeout: 1e4 });
+  if (versionResult.error !== void 0 || versionResult.status !== 0) throw new Error(`machine Pi version probe failed: ${versionResult.stderr || versionResult.error}`);
+  const version = versionResult.stdout.replace(/\r?\n$/, "");
+  if (version.length === 0) throw new Error("machine Pi version probe returned no version");
+  return { executableRealpath, version };
 }
 
 // src/public-cli/explicit-internal.ts
@@ -9376,7 +9366,7 @@ import {
   realpath as realpath3,
   writeFile as writeFile2
 } from "node:fs/promises";
-import { basename as basename3, isAbsolute as isAbsolute4, join as join5, resolve as resolve5, sep as sep3 } from "node:path";
+import { basename as basename3, isAbsolute as isAbsolute4, join as join5, resolve as resolve5, sep as sep4 } from "node:path";
 
 // src/activation-ledger-topology.ts
 import {
@@ -9386,7 +9376,7 @@ import {
   statSync
 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { basename, dirname as dirname2, isAbsolute as isAbsolute2, join as join4, relative, resolve as resolve2, sep } from "node:path";
+import { basename, dirname as dirname2, isAbsolute as isAbsolute2, join as join4, relative, resolve as resolve2, sep as sep2 } from "node:path";
 var ActivationLedgerError = class extends Error {
   code = "AK_ACTIVATION_LEDGER";
   constructor(message, options) {
@@ -9411,7 +9401,7 @@ function activationBookDirectory(ledgerHome, bookKey) {
 }
 function pathContainedIn(root, candidate) {
   const rel = relative(root, candidate);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute2(rel);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep2}`) && !isAbsolute2(rel);
 }
 function physicalPathIdentity(path) {
   const absolute = resolve2(path);
@@ -9507,13 +9497,13 @@ function ensureRealDirectoryTree(root, targetDir) {
   }
   const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
   if (rel === "") return realRoot;
-  if (isAbsolute2(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
+  if (isAbsolute2(rel) || rel === ".." || rel.startsWith(`..${sep2}`)) {
     throw new ActivationLedgerError(
       `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
     );
   }
   let lexicalCursor = absoluteRoot;
-  for (const part of rel.split(sep)) {
+  for (const part of rel.split(sep2)) {
     if (part === "" || part === ".") continue;
     if (part === "..") {
       throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
@@ -9649,7 +9639,7 @@ function resolveBookKeyFromGit(cwd) {
 
 // src/doctor-evidence.ts
 import { readdir, readFile as readFile2, realpath as realpath2, stat } from "node:fs/promises";
-import { dirname as dirname4, relative as relative2, resolve as resolve4, sep as sep2 } from "node:path";
+import { dirname as dirname4, relative as relative2, resolve as resolve4, sep as sep3 } from "node:path";
 
 // src/audit-escalation.ts
 var AUDIT_ESCALATION_KIND = "audit_escalation";
@@ -9798,7 +9788,7 @@ async function stableRunsIdentity(root) {
   while (true) {
     try {
       const git2 = await stat(resolve4(cursor, ".git"));
-      if (git2.isDirectory() || git2.isFile()) return relative2(cursor, root).split(sep2).join("/");
+      if (git2.isDirectory() || git2.isFile()) return relative2(cursor, root).split(sep3).join("/");
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
     }
@@ -9877,12 +9867,12 @@ function deriveSession(content, id) {
 }
 async function loadDoctorCase(runsPath) {
   const root = await realpath2(runsPath);
-  const match = root.split(sep2).join("/").match(/\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/);
+  const match = root.split(sep3).join("/").match(/\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/);
   if (!match) throw new Error("Doctor case must be an .ak-roles/books/<book>/issues/<n>/runs directory");
   const evidence = [], sessions = [], statuses = [], commits = [];
   const turns = { count: 0, sources: [] }, calls = { count: 0, sources: [] }, tokens = { count: 0, sources: [] };
   for (const path of await discoverCaseFiles(root)) {
-    const id = relative2(root, path).split(sep2).join("/");
+    const id = relative2(root, path).split(sep3).join("/");
     const bytes = await readFile2(path);
     const content = bytes.toString("utf8");
     const kind = id.endsWith(".jsonl") ? "session" : "stderr";
@@ -11187,7 +11177,7 @@ async function resolveDoctorCaseRunsPath(options) {
       { cause: error }
     );
   }
-  const normalized = real.split(sep3).join("/");
+  const normalized = real.split(sep4).join("/");
   const match = normalized.match(DOCTOR_CASE_RUNS_PATH_PATTERN);
   if (!match) {
     throw new CliUsageError(

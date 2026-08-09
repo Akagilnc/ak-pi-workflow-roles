@@ -1,88 +1,81 @@
 import { spawn, spawnSync } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir, realpath } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { access, appendFile, mkdir, realpath } from "node:fs/promises";
+import { delimiter, isAbsolute, join, resolve, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-const resolutions = new Map();
 async function executableFrom(env) {
     const selected = env.PI_BINARY;
+    const explicitPath = selected !== undefined && (isAbsolute(selected) || selected.includes("/") || selected.includes("\\"));
     const candidates = selected !== undefined
-        ? [isAbsolute(selected) ? selected : resolve(selected)]
+        ? explicitPath ? [isAbsolute(selected) ? selected : resolve(selected)] : (env.PATH ?? "").split(delimiter).filter(Boolean).map((part) => join(part, selected))
         : (env.PATH ?? "").split(delimiter).filter(Boolean).map((part) => join(part, "pi"));
     for (const candidate of candidates) {
-        if (candidate.includes("/node_modules/.bin/") || candidate.endsWith("/node_modules/.bin/pi")) {
-            if (selected !== undefined)
-                throw new Error("package-local .bin/pi is not a machine Pi authority");
+        const packageLocal = candidate.split(sep).slice(-3).join("/") === "node_modules/.bin/pi";
+        if (selected === undefined && packageLocal)
             continue;
-        }
         try {
             await access(candidate, constants.X_OK);
             return candidate;
         }
-        catch { /* try next PATH entry */ }
+        catch { /* try the next PATH entry */ }
     }
     throw new Error(selected === undefined ? "machine Pi executable was not found on PATH" : `PI_BINARY is not executable: ${selected}`);
 }
-export function resolveMachinePi(env = process.env) {
-    const key = `${env.PI_BINARY ?? ""}\0${env.PATH ?? ""}`;
-    let pending = resolutions.get(key);
-    if (pending === undefined) {
-        pending = (async () => {
-            const executableRealpath = await realpath(await executableFrom(env));
-            const versionResult = spawnSync(executableRealpath, ["--version"], { env, encoding: "utf8", timeout: 10_000 });
-            if (versionResult.error !== undefined || versionResult.status !== 0)
-                throw new Error(`machine Pi version probe failed: ${versionResult.stderr || versionResult.error}`);
-            const version = versionResult.stdout.replace(/\r?\n$/, "");
-            if (version.length === 0)
-                throw new Error("machine Pi version probe returned no version");
-            return { executableRealpath, version };
-        })();
-        resolutions.set(key, pending);
-    }
-    return pending;
+export async function resolveMachinePi(env = process.env) {
+    const executableRealpath = await realpath(await executableFrom(env));
+    const versionResult = spawnSync(executableRealpath, ["--version"], { env, encoding: "utf8", timeout: 10_000 });
+    if (versionResult.error !== undefined || versionResult.status !== 0)
+        throw new Error(`machine Pi version probe failed: ${versionResult.stderr || versionResult.error}`);
+    const version = versionResult.stdout.replace(/\r?\n$/, "");
+    if (version.length === 0)
+        throw new Error("machine Pi version probe returned no version");
+    return { executableRealpath, version };
 }
+/** The single child settlement seam: wire I/O, parsing, abort, diagnostics, and close. */
 export async function runMachinePiRpc(options) {
     const env = options.env ?? process.env;
-    const runtime = await resolveMachinePi(env);
+    const runtime = options.runtime ?? await resolveMachinePi(env);
     await mkdir(options.sessionDir, { recursive: true });
     return await new Promise((resolveResult, reject) => {
         const child = spawn(runtime.executableRealpath, ["--mode", "rpc", "--session-dir", options.sessionDir, ...options.args], { cwd: options.cwd, env, stdio: ["pipe", "pipe", "pipe"] });
-        const events = [];
         let stderr = "";
         let buffer = "";
         let response;
         let decision;
         let settled = false;
         let aborted = false;
-        let finished = false;
+        let closed = false;
+        let failure;
         const decoder = new StringDecoder("utf8");
-        const fail = (error) => { if (!finished) {
-            finished = true;
-            reject(error);
-        } };
+        const fail = (cause) => { if (failure === undefined)
+            failure = cause; if (!child.killed)
+            child.kill("SIGTERM"); };
         const consume = (line) => {
             if (line.endsWith("\r"))
                 line = line.slice(0, -1);
-            if (line === "")
+            if (line === "" || failure !== undefined)
                 return;
             let event;
             try {
                 event = JSON.parse(line);
             }
             catch (cause) {
-                child.kill("SIGTERM");
                 fail(new Error("machine Pi RPC emitted invalid JSONL", { cause }));
                 return;
             }
-            events.push(event);
             if (event.type === "response" && event.success === false) {
-                child.kill("SIGTERM");
                 fail(new Error(`machine Pi RPC command failed: ${String(event.error)}`));
+                return;
             }
             if (event.type === "message_end" && typeof event.message === "object" && event.message !== null)
                 response = event.message;
-            if (event.type === "tool_execution_end" && event.toolName === options.decisionToolName)
+            if (event.type === "tool_execution_end" && event.toolName === options.decisionToolName) {
+                if (decision !== undefined) {
+                    fail(new Error("machine Pi RPC decision was submitted more than once"));
+                    return;
+                }
                 decision = event.result?.details;
+            }
             if (event.type === "agent_settled") {
                 settled = true;
                 child.stdin.end();
@@ -96,27 +89,42 @@ export async function runMachinePiRpc(options) {
             buffer = buffer.slice(i + 1);
         } });
         child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+        child.stdin.on("error", (cause) => fail(cause));
         const abort = () => { aborted = true; child.kill("SIGTERM"); };
         if (options.signal?.aborted)
             abort();
         else
             options.signal?.addEventListener("abort", abort, { once: true });
-        child.on("error", (cause) => fail(new Error("machine Pi RPC spawn failed", { cause })));
-        child.on("close", (code, signal) => {
+        child.on("error", (cause) => { if (!closed) {
+            closed = true;
+            options.signal?.removeEventListener("abort", abort);
+            reject(cause);
+        } });
+        child.on("close", async (code, signal) => {
+            if (closed)
+                return;
+            closed = true;
             options.signal?.removeEventListener("abort", abort);
             buffer += decoder.end();
             if (buffer !== "")
                 consume(buffer);
-            if (finished)
-                return;
-            finished = true;
+            try {
+                if (stderr !== "")
+                    await appendFile(join(options.sessionDir, "child-stderr.log"), stderr, "utf8");
+            }
+            catch (cause) {
+                if (failure === undefined)
+                    failure = cause;
+            }
+            if (failure !== undefined)
+                return reject(failure);
             if (aborted)
                 return reject(new Error("machine Pi RPC aborted after SIGTERM"));
             if (code !== 0)
                 return reject(new Error(`machine Pi RPC terminated unsuccessfully (code ${code}, signal ${signal ?? "none"})${stderr === "" ? "" : `: ${stderr}`}`));
             if (!settled)
                 return reject(new Error("machine Pi RPC exited without agent_settled"));
-            resolveResult({ runtime, events, stderr, ...(decision === undefined ? {} : { decision }), ...(response === undefined ? {} : { response }), settled });
+            resolveResult({ runtime, stderr, ...(decision === undefined ? {} : { decision }), ...(response === undefined ? {} : { response }), settled: true });
         });
         child.once("spawn", () => { for (const command of options.commands)
             child.stdin.write(`${JSON.stringify(command)}\n`); });
