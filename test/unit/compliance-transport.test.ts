@@ -662,9 +662,10 @@ test("silent compliance completion exhausts idle retries as typed infrastructure
   });
 });
 
-test("shared compliance audit executes offered workspace evidence and carries its result into the deciding turn", async () => {
+test("workspace evidence may outlast provider idle budget and reaches a fresh deciding turn", async () => {
   await withPersistedSession(async (sessionManager) => {
     const base = context(sessionManager);
+    const providerSignals: AbortSignal[] = [];
     let turns = 0;
     let selectedEvidenceName: string | undefined;
     const result = await runComplianceAudit({
@@ -674,25 +675,32 @@ test("shared compliance audit executes offered workspace evidence and carries it
       roleLabel: "Compliance",
       invalidDecisionLabel: "invalid compliance decision",
       context: { ...base, cwd: process.cwd() } as unknown as ExtensionContext,
+      idleTimeoutMs: 10,
       runCompletion: async (_model, requestContext, request) => {
         turns += 1;
-        assert.equal(Object.hasOwn(request, "toolChoice"), false);
+        assert.ok(request.signal instanceof AbortSignal);
+        providerSignals.push(request.signal);
         if (turns === 1) {
           const evidence = requestContext.tools?.find((tool) =>
-            tool.name !== decisionToolName && Object.hasOwn((tool.parameters as any).properties ?? {}, "path")
+            tool.name !== decisionToolName
+            && Object.hasOwn((tool.parameters as any).properties ?? {}, "command")
           );
           assert.ok(evidence);
           selectedEvidenceName = evidence.name;
-          return response("evidence", [fauxToolCall(evidence.name, { path: "package.json" })]);
+          return response("evidence", [fauxToolCall(evidence.name, {
+            command: "node -e \"setTimeout(() => console.log('idle-boundary-complete'), 60)\"",
+          })]);
         }
         const resultMessage = requestContext.messages.find((message) => message.role === "toolResult");
         assert.equal(resultMessage?.toolName, selectedEvidenceName);
-        assert.match(JSON.stringify(resultMessage?.content), /pi-workflow-roles/);
+        assert.equal(resultMessage?.isError, false);
+        assert.match(JSON.stringify(resultMessage?.content), /idle-boundary-complete/);
         return response("decision", [fauxToolCall(decisionToolName, { status: "pass" })]);
       },
     });
     assert.equal(result.status, "pass");
     assert.equal(turns, 2);
+    assert.notStrictEqual(providerSignals[0], providerSignals[1]);
   });
 });
 

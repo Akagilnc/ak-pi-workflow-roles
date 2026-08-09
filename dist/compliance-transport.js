@@ -248,102 +248,108 @@ export async function runComplianceAudit(options) {
         if (options.signal?.aborted) {
             throw abortRejectionReason(options.signal);
         }
-        const idle = createStreamIdleGuard({
-            idleTimeoutMs,
-            ...(options.signal === undefined ? {} : { parentSignal: options.signal }),
-        });
         try {
-            const complete = options.runCompletion ??
-                (async (auditModel, context, request) => {
-                    const provider = options.context.modelRegistry.getProvider(auditModel.provider);
-                    if (provider === undefined) {
-                        throw new Error(`${options.roleLabel} provider not found: ${auditModel.provider}`);
-                    }
-                    const stream = provider.stream(auditModel, context, request);
-                    for await (const _event of stream) {
-                        idle.poke();
-                    }
-                    return stream.result();
-                });
             let response;
-            try {
-                const completeTurn = () => new Promise((resolve, reject) => {
-                    const onAbort = () => {
-                        reject(abortRejectionReason(idle.signal));
-                    };
-                    if (idle.signal.aborted) {
-                        onAbort();
-                        return;
-                    }
-                    idle.signal.addEventListener("abort", onAbort, { once: true });
-                    void complete(dispatch.model, requestContext, {
-                        ...dispatch.auth,
-                        timeoutMs: COMPLIANCE_REQUEST_TIMEOUT_MS,
-                        maxTokens: 2048,
-                        cacheRetention: "none",
-                        sessionId: uuidv7(),
-                        signal: idle.signal,
-                    }).then((value) => {
-                        idle.signal.removeEventListener("abort", onAbort);
-                        resolve(value);
-                    }, (error) => {
-                        idle.signal.removeEventListener("abort", onAbort);
-                        if (isStreamIdleTimeoutError(idle.signal.reason)) {
-                            reject(idle.signal.reason);
+            while (true) {
+                // Provider silence is scoped to one completion turn. Tool execution happens
+                // after this guard is disposed and the next turn receives a fresh signal.
+                const idle = createStreamIdleGuard({
+                    idleTimeoutMs,
+                    ...(options.signal === undefined ? {} : { parentSignal: options.signal }),
+                });
+                try {
+                    const complete = options.runCompletion ??
+                        (async (auditModel, context, request) => {
+                            const provider = options.context.modelRegistry.getProvider(auditModel.provider);
+                            if (provider === undefined) {
+                                throw new Error(`${options.roleLabel} provider not found: ${auditModel.provider}`);
+                            }
+                            const stream = provider.stream(auditModel, context, request);
+                            for await (const _event of stream) {
+                                idle.poke();
+                            }
+                            return stream.result();
+                        });
+                    response = await new Promise((resolve, reject) => {
+                        const onAbort = () => {
+                            reject(abortRejectionReason(idle.signal));
+                        };
+                        if (idle.signal.aborted) {
+                            onAbort();
                             return;
                         }
-                        reject(error);
+                        idle.signal.addEventListener("abort", onAbort, { once: true });
+                        void complete(dispatch.model, requestContext, {
+                            ...dispatch.auth,
+                            timeoutMs: COMPLIANCE_REQUEST_TIMEOUT_MS,
+                            maxTokens: 2048,
+                            cacheRetention: "none",
+                            sessionId: uuidv7(),
+                            signal: idle.signal,
+                        }).then((value) => {
+                            idle.signal.removeEventListener("abort", onAbort);
+                            resolve(value);
+                        }, (error) => {
+                            idle.signal.removeEventListener("abort", onAbort);
+                            if (isStreamIdleTimeoutError(idle.signal.reason)) {
+                                reject(idle.signal.reason);
+                                return;
+                            }
+                            reject(error);
+                        });
                     });
-                });
-                while (true) {
-                    response = await completeTurn();
                     throwIfStreamIdleTimedOut(idle.signal.reason);
-                    retainComplianceResponse(options.context, response);
-                    const calls = response.content.filter((part) => part.type === "toolCall");
-                    if (calls.some((call) => call.name === options.tool.name))
-                        break;
-                    const evidenceCalls = calls.flatMap((call) => {
-                        const tool = workspaceTools.find((candidate) => candidate.name === call.name);
-                        return tool === undefined ? [] : [{ call, tool }];
-                    });
-                    if (evidenceCalls.length === 0) {
-                        return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
+                }
+                catch (error) {
+                    throwIfStreamIdleTimedOut(idle.signal.reason);
+                    throw error;
+                }
+                finally {
+                    idle.dispose();
+                }
+                retainComplianceResponse(options.context, response);
+                const calls = response.content.filter((part) => part.type === "toolCall");
+                if (calls.some((call) => call.name === options.tool.name))
+                    break;
+                const evidenceCalls = calls.flatMap((call) => {
+                    const tool = workspaceTools.find((candidate) => candidate.name === call.name);
+                    return tool === undefined ? [] : [{ call, tool }];
+                });
+                if (evidenceCalls.length === 0) {
+                    return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
+                }
+                requestContext.messages.push(response);
+                for (const { call, tool } of evidenceCalls) {
+                    try {
+                        const result = await tool.execute(call.id, call.arguments, options.signal);
+                        requestContext.messages.push({
+                            role: "toolResult",
+                            toolCallId: call.id,
+                            toolName: call.name,
+                            content: result.content,
+                            details: result.details,
+                            isError: false,
+                            timestamp: Date.now(),
+                        });
                     }
-                    requestContext.messages.push(response);
-                    for (const { call, tool } of evidenceCalls) {
-                        try {
-                            const result = await tool.execute(call.id, call.arguments, idle.signal);
-                            requestContext.messages.push({
-                                role: "toolResult",
-                                toolCallId: call.id,
-                                toolName: call.name,
-                                content: result.content,
-                                details: result.details,
-                                isError: false,
-                                timestamp: Date.now(),
-                            });
+                    catch (error) {
+                        if (options.signal?.aborted) {
+                            throw abortRejectionReason(options.signal);
                         }
-                        catch (error) {
-                            requestContext.messages.push({
-                                role: "toolResult",
-                                toolCallId: call.id,
-                                toolName: call.name,
-                                content: [{
-                                        type: "text",
-                                        text: error instanceof Error ? error.message : String(error),
-                                    }],
-                                isError: true,
-                                timestamp: Date.now(),
-                            });
-                        }
+                        requestContext.messages.push({
+                            role: "toolResult",
+                            toolCallId: call.id,
+                            toolName: call.name,
+                            content: [{
+                                    type: "text",
+                                    text: error instanceof Error ? error.message : String(error),
+                                }],
+                            isError: true,
+                            timestamp: Date.now(),
+                        });
                     }
                 }
             }
-            catch (error) {
-                throwIfStreamIdleTimedOut(idle.signal.reason);
-                throw error;
-            }
-            throwIfStreamIdleTimedOut(idle.signal.reason);
             return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
         }
         catch (error) {
@@ -354,9 +360,6 @@ export async function runComplianceAudit(options) {
                 continue;
             }
             throw error;
-        }
-        finally {
-            idle.dispose();
         }
     }
     throw lastIdleError ?? new StreamIdleTimeoutError(idleTimeoutMs);
