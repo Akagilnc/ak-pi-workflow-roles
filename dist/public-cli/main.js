@@ -9420,10 +9420,12 @@ function assertPhysicalLedgerRoot(absoluteRoot) {
     try {
       mkdirSync(absoluteRoot, { recursive: true });
     } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
+      if (errnoCode(error) !== "EEXIST") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
     }
     try {
       st = lstatSync(absoluteRoot);
@@ -12622,7 +12624,7 @@ var auditorSoulPaths = Object.freeze({
 // src/compliance-transport.ts
 var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
 var decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
-var complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Union([typebox_exports.Literal("pass"), typebox_exports.Literal("revise"), typebox_exports.Literal("escalate")], { description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
+var complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
 function createComplianceDecisionTool(name, description) {
   return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) {
     return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true };
