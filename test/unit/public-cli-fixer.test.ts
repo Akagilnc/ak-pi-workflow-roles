@@ -221,6 +221,7 @@ test("Fixer production activation args reach the real Pi loader for both optiona
         cwd: home,
         home,
         agentDir,
+        runtime: { executableRealpath: process.execPath, version: "test" },
         extraArgs: [
           "-e",
           join(packageRoot, "test", "fixtures", "fixer-dual-skill-availability-provider.ts"),

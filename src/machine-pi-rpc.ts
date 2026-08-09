@@ -56,7 +56,7 @@ export async function runMachinePiRpc(options: RpcOptions): Promise<MachinePiRpc
   await mkdir(options.sessionDir, { recursive: true });
   return await new Promise((resolveResult, reject) => {
     const child = spawn(runtime.executableRealpath, ["--mode", "rpc", "--session-dir", options.sessionDir, ...options.args], { cwd: options.cwd, env, stdio: ["pipe", "pipe", "pipe"] });
-    let stderr = ""; let buffer = ""; let response: Record<string, unknown> | undefined; let decision: unknown; let settled = false; let aborted = false; let closed = false; let failure: unknown;
+    let stderr = ""; let buffer = ""; let response: Record<string, unknown> | undefined; let decision: unknown; let settled = false; let aborted = false; let spawned = false; let closed = false; let failure: unknown;
     const decoder = new StringDecoder("utf8");
     const fail = (cause: unknown) => { if (failure === undefined) failure = cause; if (!child.killed) child.kill("SIGTERM"); };
     const consume = (line: string) => {
@@ -77,19 +77,24 @@ export async function runMachinePiRpc(options: RpcOptions): Promise<MachinePiRpc
     child.stdout.on("data", (chunk: Buffer) => { buffer += decoder.write(chunk); for (;;) { const i = buffer.indexOf("\n"); if (i < 0) break; consume(buffer.slice(0, i)); buffer = buffer.slice(i + 1); } });
     child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
     child.stdin.on("error", (cause) => fail(cause));
-    const abort = () => { aborted = true; child.kill("SIGTERM"); };
+    const abortError = () => Object.assign(new Error("machine Pi RPC aborted by caller"), { name: "AbortError" });
+    const abort = () => { aborted = true; if (spawned && !child.killed) child.kill("SIGTERM"); };
     if (options.signal?.aborted) abort(); else options.signal?.addEventListener("abort", abort, { once: true });
-    child.on("error", (cause) => { if (!closed) { closed = true; options.signal?.removeEventListener("abort", abort); reject(cause); } });
+    child.on("error", (cause) => { if (!closed) { closed = true; options.signal?.removeEventListener("abort", abort); reject(aborted ? abortError() : cause); } });
     child.on("close", async (code, signal) => {
       if (closed) return; closed = true; options.signal?.removeEventListener("abort", abort);
       buffer += decoder.end(); if (buffer !== "") consume(buffer);
       try { if (stderr !== "") await appendFile(join(options.sessionDir, "child-stderr.log"), stderr, "utf8"); } catch (cause) { if (failure === undefined) failure = cause; }
-      if (aborted) return reject(new Error("machine Pi RPC aborted after SIGTERM"));
+      if (aborted) return reject(abortError());
       if (failure !== undefined) return reject(failure);
       if (code !== 0) return reject(new Error(`machine Pi RPC terminated unsuccessfully (code ${code}, signal ${signal ?? "none"})${stderr === "" ? "" : `: ${stderr}`}`));
       if (!settled) return reject(new Error("machine Pi RPC exited without agent_settled"));
       resolveResult({ runtime, stderr, ...(decision === undefined ? {} : { decision }), ...(response === undefined ? {} : { response }), settled: true });
     });
-    child.once("spawn", () => { for (const command of options.commands) child.stdin.write(`${JSON.stringify(command)}\n`); });
+    child.once("spawn", () => {
+      spawned = true;
+      if (aborted) { child.kill("SIGTERM"); return; }
+      for (const command of options.commands) child.stdin.write(`${JSON.stringify(command)}\n`);
+    });
   });
 }

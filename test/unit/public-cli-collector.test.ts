@@ -721,6 +721,7 @@ test("runAkRole collector settles lawful receipt bound to admitted identity with
     );
     const settled = await settleCollectorTerminalResult({
       role: "collector",
+      runtime: { executableRealpath: process.execPath, version: "test" },
       runId: "run-collector-settle",
       bookKey,
       projectRoot: project,

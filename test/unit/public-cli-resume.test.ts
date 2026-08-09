@@ -1175,6 +1175,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
     await writeFile(admittedRequestPath, "{}\n", "utf8");
     const admitted = {
       role: "judge" as const,
+      runtime: { executableRealpath: process.execPath, version: "test" },
       runId,
       bookKey,
       projectRoot: project,
@@ -1346,6 +1347,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     );
     await markRunAdmitted({
       role: "judge",
+      runtime: { executableRealpath: process.execPath, version: "test" },
       runId,
       bookKey,
       projectRoot: project,

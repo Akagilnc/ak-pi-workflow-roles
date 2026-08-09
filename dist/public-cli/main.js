@@ -9272,7 +9272,6 @@ function knownFailureFromProviderStop(input) {
   };
 }
 var defaultExplicitInternalPiRunner = async (args, options) => {
-  if (options.runtime === void 0) throw new Error("machine Pi runtime identity is required by the explicit runner");
   const command = options.runtime.executableRealpath;
   return await new Promise((resolveResult, reject) => {
     const child = spawn(command, [...args], {
@@ -9315,20 +9314,17 @@ async function runExplicitInternalActivation(options) {
     options.extraArgs ?? []
   );
   const runner = options.runner ?? defaultExplicitInternalPiRunner;
-  if (options.runtime === void 0 && options.runner === void 0) throw new Error("machine Pi runtime identity is required by explicit activation");
   return await runner(args, {
     cwd: options.cwd,
     ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs },
-    ...options.runtime === void 0 ? {} : { runtime: options.runtime },
+    runtime: options.runtime,
     env: {
       ...process.env,
       ...options.env,
       HOME: options.home,
       PI_CODING_AGENT_DIR: options.agentDir,
-      ...options.runtime === void 0 ? {} : {
-        AK_MACHINE_PI_EXECUTABLE_REALPATH: options.runtime.executableRealpath,
-        AK_MACHINE_PI_VERSION: options.runtime.version
-      }
+      AK_MACHINE_PI_EXECUTABLE_REALPATH: options.runtime.executableRealpath,
+      AK_MACHINE_PI_VERSION: options.runtime.version
     }
   });
 }
@@ -10224,7 +10220,6 @@ function roleRunSessionFile(sessionDirectory) {
 }
 async function writeRoleInvocationLedger(source, role) {
   const runtime = source.runtime;
-  if (runtime === void 0) throw new Error("machine Pi runtime identity is missing from invocation admission");
   const identity = {
     role,
     piExecutableRealpath: runtime.executableRealpath,
@@ -10242,6 +10237,11 @@ async function writeRoleInvocationLedger(source, role) {
 `,
     "utf8"
   );
+}
+async function writeAdmittedRequest(path, admitted) {
+  const { runtime: _runtime, ...request } = admitted;
+  await writeFile2(path, `${JSON.stringify(request, null, 2)}
+`, "utf8");
 }
 var MergerEnvelopeDerivationError = class extends Error {
   code = "merger-envelope-derivation";
@@ -10487,8 +10487,7 @@ async function admitJudgeInvocation(options) {
     }))
   };
   const admittedRequestPath = join5(runDirectory, "admitted-request.json");
-  await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
-`, "utf8");
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "judge",
@@ -10583,8 +10582,7 @@ async function admitCoderInvocation(options) {
     }))
   };
   const admittedRequestPath = join5(runDirectory, "admitted-request.json");
-  await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
-`, "utf8");
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "coder",
@@ -10710,8 +10708,7 @@ async function admitFixerInvocation(options) {
     }))
   };
   const admittedRequestPath = join5(runDirectory, "admitted-request.json");
-  await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
-`, "utf8");
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "fixer",
@@ -11037,12 +11034,7 @@ async function admitCollectorInvocation(options) {
     }))
   };
   const admittedRequestPath = join5(runDirectory, "admitted-request.json");
-  await writeFile2(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "collector",
@@ -11304,12 +11296,7 @@ async function admitDoctorInvocation(options) {
     }))
   };
   const admittedRequestPath = join5(runDirectory, "admitted-request.json");
-  await writeFile2(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "doctor",
@@ -11488,12 +11475,7 @@ async function admitReviewerInvocation(options) {
     }))
   };
   const admittedRequestPath = join5(runDirectory, "admitted-request.json");
-  await writeFile2(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "reviewer",
@@ -11702,12 +11684,7 @@ async function admitMergerInvocation(options) {
     }))
   };
   const admittedRequestPath = join5(runDirectory, "admitted-request.json");
-  await writeFile2(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
   return {
     role: "merger",
@@ -12036,11 +12013,11 @@ function observePackagedMethodSkillInvocation(text, expected) {
 
 // src/public-cli/run-lifecycle.ts
 import { lstat as lstat2, open, readdir as readdir2, readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join7 } from "node:path";
-async function loadAdmittedMachinePiRuntime(runDirectory) {
+import { isAbsolute as isAbsolute5, join as join7 } from "node:path";
+async function readInvocationMachinePiRuntime(runDirectory) {
   const value = JSON.parse(await readFile6(join7(runDirectory, "invocation.json"), "utf8"));
-  if (typeof value.piExecutableRealpath !== "string" || typeof value.piVersion !== "string" || value.piVersion.length === 0) {
-    throw new CliUsageError("role invocation has no retained machine Pi runtime identity");
+  if (typeof value.piExecutableRealpath !== "string" || !isAbsolute5(value.piExecutableRealpath) || typeof value.piVersion !== "string" || value.piVersion.length === 0) {
+    throw new CliUsageError("role invocation has no valid retained machine Pi runtime identity");
   }
   return { executableRealpath: value.piExecutableRealpath, version: value.piVersion };
 }
@@ -12399,7 +12376,7 @@ async function loadResumableJudgeRun(home, runId) {
     );
   }
   const admitted = {
-    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
+    runtime: await readInvocationMachinePiRuntime(loaded.run.runDirectory),
     role: "judge",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,
@@ -12443,7 +12420,7 @@ async function loadResumableCoderRun(home, runId) {
     );
   }
   const admitted = {
-    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
+    runtime: await readInvocationMachinePiRuntime(loaded.run.runDirectory),
     role: "coder",
     phase,
     runId: loaded.run.runId,
@@ -12490,7 +12467,7 @@ async function loadResumableFixerRun(home, runId) {
   }
   const prerequisites = loaded.admittedFields.prerequisites ?? Object.freeze([]);
   const admitted = {
-    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
+    runtime: await readInvocationMachinePiRuntime(loaded.run.runDirectory),
     role: "fixer",
     phase,
     runId: loaded.run.runId,
@@ -12544,7 +12521,7 @@ async function loadResumableReviewerRun(home, runId) {
     );
   }
   const admitted = {
-    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
+    runtime: await readInvocationMachinePiRuntime(loaded.run.runDirectory),
     role: "reviewer",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,
@@ -12592,7 +12569,7 @@ async function loadResumableMergerRun(home, runId) {
     );
   }
   const admitted = {
-    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
+    runtime: await readInvocationMachinePiRuntime(loaded.run.runDirectory),
     role: "merger",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,
@@ -17041,6 +17018,7 @@ async function admitMergerShellForActivationFailure(options) {
     expectedConflictPaths: [],
     resolutionScope: []
   };
+  const runtime = await resolveMachinePi(process.env);
   const admittedRequestPath = join14(runDirectory, "admitted-request.json");
   const mergerInputPath = join14(runDirectory, "merger-input.json");
   await writeFile10(
@@ -17065,6 +17043,7 @@ async function admitMergerShellForActivationFailure(options) {
   );
   return {
     role: "merger",
+    runtime,
     runId,
     bookKey,
     projectRoot,

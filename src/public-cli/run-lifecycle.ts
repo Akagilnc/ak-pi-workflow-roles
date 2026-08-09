@@ -5,7 +5,7 @@
  * lawful role terminal result. Prose is never regex-classified as quota evidence.
  */
 import { lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import {
   activationBookDirectory,
@@ -28,10 +28,10 @@ import {
   type FrozenAttachment,
 } from "./invocation.ts";
 
-async function loadAdmittedMachinePiRuntime(runDirectory: string): Promise<MachinePiRuntimeIdentity> {
+export async function readInvocationMachinePiRuntime(runDirectory: string): Promise<MachinePiRuntimeIdentity> {
   const value = JSON.parse(await readFile(join(runDirectory, "invocation.json"), "utf8")) as Record<string, unknown>;
-  if (typeof value.piExecutableRealpath !== "string" || typeof value.piVersion !== "string" || value.piVersion.length === 0) {
-    throw new CliUsageError("role invocation has no retained machine Pi runtime identity");
+  if (typeof value.piExecutableRealpath !== "string" || !isAbsolute(value.piExecutableRealpath) || typeof value.piVersion !== "string" || value.piVersion.length === 0) {
+    throw new CliUsageError("role invocation has no valid retained machine Pi runtime identity");
   }
   return { executableRealpath: value.piExecutableRealpath, version: value.piVersion };
 }
@@ -657,7 +657,7 @@ export async function loadResumableJudgeRun(
     );
   }
   const admitted: AdmittedJudgeInvocation = {
-    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
+    runtime: await readInvocationMachinePiRuntime(loaded.run.runDirectory),
     role: "judge",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,
@@ -709,7 +709,7 @@ export async function loadResumableCoderRun(
     );
   }
   const admitted: AdmittedCoderInvocation = {
-    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
+    runtime: await readInvocationMachinePiRuntime(loaded.run.runDirectory),
     role: "coder",
     phase,
     runId: loaded.run.runId,
@@ -764,7 +764,7 @@ export async function loadResumableFixerRun(
   }
   const prerequisites = loaded.admittedFields.prerequisites ?? Object.freeze([]);
   const admitted: AdmittedFixerInvocation = {
-    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
+    runtime: await readInvocationMachinePiRuntime(loaded.run.runDirectory),
     role: "fixer",
     phase,
     runId: loaded.run.runId,
@@ -832,7 +832,7 @@ export async function loadResumableReviewerRun(
     );
   }
   const admitted: AdmittedReviewerInvocation = {
-    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
+    runtime: await readInvocationMachinePiRuntime(loaded.run.runDirectory),
     role: "reviewer",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,
@@ -896,7 +896,7 @@ export async function loadResumableMergerRun(
     );
   }
   const admitted: AdmittedMergerInvocation = {
-    runtime: await loadAdmittedMachinePiRuntime(loaded.run.runDirectory),
+    runtime: await readInvocationMachinePiRuntime(loaded.run.runDirectory),
     role: "merger",
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,

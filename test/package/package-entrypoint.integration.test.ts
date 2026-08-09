@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import test, { after, before } from "node:test";
 
@@ -240,7 +241,7 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
 let suiteAuditRoot = "";
 const suiteAuditSaved = { executable: process.env.AK_MACHINE_PI_EXECUTABLE_REALPATH, version: process.env.AK_MACHINE_PI_VERSION, log: process.env.AK_TEST_AUDIT_LOG, decision: process.env.AK_TEST_AUDIT_DECISION };
 before(async () => {
-  suiteAuditRoot = await mkdtemp(join(packageRoot, ".tmp-suite-audit-rpc-"));
+  suiteAuditRoot = await mkdtemp(join(tmpdir(), "ak-suite-audit-rpc-"));
   const executable = join(suiteAuditRoot, "pi");
   const log = join(suiteAuditRoot, "calls.jsonl");
   await writeFile(executable, `#!${process.execPath}\nimport fs from "node:fs";if(process.argv.includes("--version")){console.log("suite-fixture");process.exit(0)}const arg=process.argv.find(x=>x.startsWith("--ak-auditor-rpc-config="));const config=JSON.parse(fs.readFileSync(arg.split("=").slice(1).join("="),"utf8"));process.stdin.once("data",()=>{fs.appendFileSync(process.env.AK_TEST_AUDIT_LOG,JSON.stringify(config)+"\\n");const d=JSON.parse(process.env.AK_TEST_AUDIT_DECISION||"{\\"status\\":\\"pass\\"}");console.log(JSON.stringify({type:"tool_execution_end",toolName:config.tool.name,result:{details:d}}));console.log(JSON.stringify({type:"message_end",message:{role:"assistant",content:[],stopReason:"toolUse",usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}}}));console.log(JSON.stringify({type:"agent_settled"}));setTimeout(()=>process.exit(0),5)})`);
@@ -250,7 +251,7 @@ before(async () => {
 after(async () => { for (const [key,value] of Object.entries({AK_MACHINE_PI_EXECUTABLE_REALPATH:suiteAuditSaved.executable,AK_MACHINE_PI_VERSION:suiteAuditSaved.version,AK_TEST_AUDIT_LOG:suiteAuditSaved.log,AK_TEST_AUDIT_DECISION:suiteAuditSaved.decision})) value===undefined?delete process.env[key]:process.env[key]=value; await rm(suiteAuditRoot,{recursive:true,force:true}); });
 
 async function withMachineAuditFixture<T>(run: (logPath: string) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(join(packageRoot, ".tmp-audit-rpc-"));
+  const root = await mkdtemp(join(tmpdir(), "ak-package-audit-rpc-"));
   const executable = join(root, "pi");
   const logPath = join(root, "calls.jsonl");
   await writeFile(executable, `#!${process.execPath}\nimport fs from "node:fs";\nif(process.argv.includes("--version")){console.log("package-fixture");process.exit(0)}\nconst arg=process.argv.find(x=>x.startsWith("--ak-auditor-rpc-config="));\nconst config=JSON.parse(fs.readFileSync(arg.split("=").slice(1).join("="),"utf8"));\nprocess.stdin.once("data",()=>{fs.appendFileSync(process.env.AK_TEST_AUDIT_LOG,JSON.stringify(config)+"\\n");const decision=JSON.parse(process.env.AK_TEST_AUDIT_DECISION||"{\\"status\\":\\"pass\\"}");console.log(JSON.stringify({type:"tool_execution_end",toolName:config.tool.name,result:{details:decision}}));console.log(JSON.stringify({type:"message_end",message:{role:"assistant",content:[],stopReason:"toolUse",usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}}}));console.log(JSON.stringify({type:"agent_settled"}));setTimeout(()=>process.exit(0),5)});\n`);

@@ -27,6 +27,7 @@ import {
   type ExplicitInternalPiResult,
 } from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
+import { resolveMachinePi } from "../machine-pi-rpc.ts";
 import {
   admitMergerInvocation,
   buildMergerTransportPrompt,
@@ -286,7 +287,7 @@ async function dispatchAdmittedMerger(input: {
     let result: ExplicitInternalPiResult;
     try {
       result = await runExplicitInternalActivation({
-        runtime: admitted.runtime!,
+        runtime: admitted.runtime,
         packageRoot: env.packageRoot,
         extraArgs,
         cwd: admitted.projectRoot,
@@ -430,6 +431,7 @@ async function admitMergerShellForActivationFailure(options: {
     expectedConflictPaths: [] as string[],
     resolutionScope: [] as string[],
   };
+  const runtime = await resolveMachinePi(process.env);
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   const mergerInputPath = join(runDirectory, "merger-input.json");
   await writeFile(
@@ -453,6 +455,7 @@ async function admitMergerShellForActivationFailure(options: {
   );
   return {
     role: "merger",
+    runtime,
     runId,
     bookKey,
     projectRoot,

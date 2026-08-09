@@ -86,7 +86,7 @@ export type AdmittedRoleInvocationBase = {
   readonly sessionFile: string;
   readonly admittedRequestPath: string;
   /** One machine-Pi identity resolved for this public invocation. */
-  readonly runtime?: MachinePiRuntimeIdentity;
+  readonly runtime: MachinePiRuntimeIdentity;
 };
 
 export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
@@ -192,7 +192,6 @@ async function writeRoleInvocationLedger(
   role: AdmittedRoleInvocation["role"],
 ): Promise<void> {
   const runtime = source.runtime;
-  if (runtime === undefined) throw new Error("machine Pi runtime identity is missing from invocation admission");
   const identity = {
     role,
     piExecutableRealpath: runtime.executableRealpath,
@@ -209,6 +208,11 @@ async function writeRoleInvocationLedger(
     `${JSON.stringify(identity, null, 2)}\n`,
     "utf8",
   );
+}
+
+async function writeAdmittedRequest(path: string, admitted: { readonly runtime: MachinePiRuntimeIdentity } & Record<string, unknown>): Promise<void> {
+  const { runtime: _runtime, ...request } = admitted;
+  await writeFile(path, `${JSON.stringify(request, null, 2)}\n`, "utf8");
 }
 
 export type ParseJudgeArgvResult = {
@@ -575,7 +579,7 @@ export async function admitJudgeInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
@@ -726,7 +730,7 @@ export async function admitCoderInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
@@ -887,7 +891,7 @@ export async function admitFixerInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
@@ -1284,11 +1288,7 @@ export async function admitCollectorInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}\n`,
-    "utf8",
-  );
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
@@ -1631,11 +1631,7 @@ export async function admitDoctorInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}\n`,
-    "utf8",
-  );
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
@@ -1871,11 +1867,7 @@ export async function admitReviewerInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}\n`,
-    "utf8",
-  );
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {
@@ -2157,11 +2149,7 @@ export async function admitMergerInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}\n`,
-    "utf8",
-  );
+  await writeAdmittedRequest(admittedRequestPath, admitted);
   await writeRoleInvocationLedger(admitted, admitted.role);
 
   return {

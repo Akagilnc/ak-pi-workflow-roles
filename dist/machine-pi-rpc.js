@@ -53,6 +53,7 @@ export async function runMachinePiRpc(options) {
         let decision;
         let settled = false;
         let aborted = false;
+        let spawned = false;
         let closed = false;
         let failure;
         const decoder = new StringDecoder("utf8");
@@ -99,7 +100,9 @@ export async function runMachinePiRpc(options) {
         } });
         child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
         child.stdin.on("error", (cause) => fail(cause));
-        const abort = () => { aborted = true; child.kill("SIGTERM"); };
+        const abortError = () => Object.assign(new Error("machine Pi RPC aborted by caller"), { name: "AbortError" });
+        const abort = () => { aborted = true; if (spawned && !child.killed)
+            child.kill("SIGTERM"); };
         if (options.signal?.aborted)
             abort();
         else
@@ -107,7 +110,7 @@ export async function runMachinePiRpc(options) {
         child.on("error", (cause) => { if (!closed) {
             closed = true;
             options.signal?.removeEventListener("abort", abort);
-            reject(cause);
+            reject(aborted ? abortError() : cause);
         } });
         child.on("close", async (code, signal) => {
             if (closed)
@@ -126,7 +129,7 @@ export async function runMachinePiRpc(options) {
                     failure = cause;
             }
             if (aborted)
-                return reject(new Error("machine Pi RPC aborted after SIGTERM"));
+                return reject(abortError());
             if (failure !== undefined)
                 return reject(failure);
             if (code !== 0)
@@ -135,7 +138,14 @@ export async function runMachinePiRpc(options) {
                 return reject(new Error("machine Pi RPC exited without agent_settled"));
             resolveResult({ runtime, stderr, ...(decision === undefined ? {} : { decision }), ...(response === undefined ? {} : { response }), settled: true });
         });
-        child.once("spawn", () => { for (const command of options.commands)
-            child.stdin.write(`${JSON.stringify(command)}\n`); });
+        child.once("spawn", () => {
+            spawned = true;
+            if (aborted) {
+                child.kill("SIGTERM");
+                return;
+            }
+            for (const command of options.commands)
+                child.stdin.write(`${JSON.stringify(command)}\n`);
+        });
     });
 }

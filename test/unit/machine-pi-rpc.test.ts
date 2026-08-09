@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,6 +63,24 @@ test("pre-aborted caller with a nonempty command retains abort identity", async 
   const controller = new AbortController(); controller.abort();
   await assert.rejects(runMachinePiRpc({ env: { PATH: f.root }, cwd: f.root, sessionDir: join(f.root, "sessions"), args: [], commands: [{ type: "prompt", message: "x".repeat(1024 * 1024) }], signal: controller.signal }), /abort/i);
   await rm(f.root, { recursive: true, force: true });
+});
+
+test("isolated pre-abort survives a disappeared retained executable with typed rejection", () => {
+  const missing = join(tmpdir(), `ak-machine-pi-missing-${process.pid}`);
+  const moduleUrl = new URL("../../src/machine-pi-rpc.ts", import.meta.url).href;
+  const probe = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
+    import { runMachinePiRpc } from ${JSON.stringify(moduleUrl)};
+    const controller = new AbortController(); controller.abort();
+    try {
+      await runMachinePiRpc({ runtime: { executableRealpath: ${JSON.stringify(missing)}, version: "retained" }, cwd: ${JSON.stringify(tmpdir())}, sessionDir: ${JSON.stringify(join(tmpdir(), `ak-machine-pi-probe-${process.pid}`))}, args: [], commands: [{ type: "prompt", message: "must-not-write" }], signal: controller.signal });
+      console.log("unexpected-resolution"); process.exitCode = 2;
+    } catch (error) {
+      console.log(JSON.stringify({ alive: true, name: error.name, message: error.message }));
+    }
+  `], { encoding: "utf8", timeout: 10_000 });
+  assert.equal(probe.signal, null, probe.stderr);
+  assert.equal(probe.status, 0, probe.stderr);
+  assert.deepEqual(JSON.parse(probe.stdout.trim()), { alive: true, name: "AbortError", message: "machine Pi RPC aborted by caller" });
 });
 
 test("caller abort terminates the machine Pi child with SIGTERM", async () => {

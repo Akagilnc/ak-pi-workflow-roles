@@ -259,6 +259,7 @@ test(
       );
       const terminal = await settleJudgeTerminalResult({
         role: "judge",
+      runtime: { executableRealpath: process.execPath, version: "test" },
         runId: "run-e2e-judge-001",
         runDirectory: runDir,
         sessionDirectory: join(runDir, "session"),

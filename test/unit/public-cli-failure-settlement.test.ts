@@ -472,6 +472,7 @@ test("failure settlement durably records Error Artifact before presentation retu
     await mkdir(join(runDirectory, "session"), { recursive: true });
     const admitted = {
       role: "judge" as const,
+      runtime: { executableRealpath: process.execPath, version: "test" },
       runId,
       bookKey,
       projectRoot: project,
@@ -585,6 +586,7 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
     );
     const admitted = {
       role: "judge" as const,
+      runtime: { executableRealpath: process.execPath, version: "test" },
       runId,
       bookKey,
       projectRoot: project,
@@ -1518,6 +1520,7 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
       await mkdir(join(runDirectory, "session"), { recursive: true });
       const admitted = {
         role: "judge" as const,
+      runtime: { executableRealpath: process.execPath, version: "test" },
         runId,
         bookKey,
         projectRoot: project,

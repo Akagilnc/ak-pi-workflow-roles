@@ -124,16 +124,15 @@ export type ExplicitInternalPiRunner = (
     cwd: string;
     env: NodeJS.ProcessEnv;
     timeoutMs?: number;
-    runtime?: MachinePiRuntimeIdentity;
+    runtime: MachinePiRuntimeIdentity;
   },
 ) => Promise<ExplicitInternalPiResult>;
 
-/** Default runner: resolve `pi` on PATH (or PI_BINARY) for one subprocess. */
+/** Default runner: execute the admitted machine-Pi principal. */
 export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
   args,
   options,
 ) => {
-  if (options.runtime === undefined) throw new Error("machine Pi runtime identity is required by the explicit runner");
   const command = options.runtime.executableRealpath;
   return await new Promise((resolveResult, reject) => {
     // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
@@ -189,7 +188,7 @@ export async function runExplicitInternalActivation(options: {
   agentDir: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number | undefined;
-  runtime?: MachinePiRuntimeIdentity;
+  runtime: MachinePiRuntimeIdentity;
   runner?: ExplicitInternalPiRunner;
 }): Promise<ExplicitInternalPiResult> {
   const args = buildExplicitInternalActivationArgs(
@@ -197,20 +196,17 @@ export async function runExplicitInternalActivation(options: {
     options.extraArgs ?? [],
   );
   const runner = options.runner ?? defaultExplicitInternalPiRunner;
-  if (options.runtime === undefined && options.runner === undefined) throw new Error("machine Pi runtime identity is required by explicit activation");
   return await runner(args, {
     cwd: options.cwd,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-    ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
+    runtime: options.runtime,
     env: {
       ...process.env,
       ...options.env,
       HOME: options.home,
       PI_CODING_AGENT_DIR: options.agentDir,
-      ...(options.runtime === undefined ? {} : {
-        AK_MACHINE_PI_EXECUTABLE_REALPATH: options.runtime.executableRealpath,
-        AK_MACHINE_PI_VERSION: options.runtime.version,
-      }),
+      AK_MACHINE_PI_EXECUTABLE_REALPATH: options.runtime.executableRealpath,
+      AK_MACHINE_PI_VERSION: options.runtime.version,
     },
   });
 }

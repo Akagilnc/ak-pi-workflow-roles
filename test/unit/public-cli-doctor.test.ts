@@ -653,6 +653,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     };
     const settled = await settleDoctorTerminalResult({
       role: "doctor",
+      runtime: { executableRealpath: process.execPath, version: "test" },
       runId: "run-doctor-settle",
       bookKey,
       projectRoot: project,
@@ -671,6 +672,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(
       await trySettleDoctorTerminalResult({
         role: "doctor",
+      runtime: { executableRealpath: process.execPath, version: "test" },
         runId: "missing",
         bookKey,
         projectRoot: project,

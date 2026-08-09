@@ -329,6 +329,7 @@ test("after_provider_response production handler writes typed 429 into resumable
     const terminal = await settleJudgeFailureTerminalResult(
       {
         role: "judge",
+        runtime: { executableRealpath: process.execPath, version: "test" },
         runId,
         bookKey: basename(home),
         projectRoot: home,

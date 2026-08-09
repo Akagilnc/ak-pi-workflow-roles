@@ -289,6 +289,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
 test("structurally empty request stays empty while attachments remain typed transport", () => {
   const empty = buildJudgeTransportPrompt({
     role: "judge",
+    runtime: { executableRealpath: process.execPath, version: "test" },
     runId: "r",
     bookKey: "b",
     projectRoot: "/p",
@@ -304,6 +305,7 @@ test("structurally empty request stays empty while attachments remain typed tran
 
   const withAttach = buildJudgeTransportPrompt({
     role: "judge",
+    runtime: { executableRealpath: process.execPath, version: "test" },
     runId: "r",
     bookKey: "b",
     projectRoot: "/p",
@@ -1296,6 +1298,7 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
     );
     const terminal = await settleJudgeTerminalResult({
       role: "judge",
+      runtime: { executableRealpath: process.execPath, version: "test" },
       runId: "run-cli-judge-001",
       runDirectory: runDir,
       sessionDirectory: join(runDir, "session"),
@@ -1397,6 +1400,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
     );
     const terminal = await settleJudgeTerminalResult({
       role: "judge",
+      runtime: { executableRealpath: process.execPath, version: "test" },
       runId: "run-empty-001",
       runDirectory: runDir,
       sessionDirectory: join(runDir, "session"),

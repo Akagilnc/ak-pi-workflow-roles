@@ -197,7 +197,7 @@ async function dispatchAdmittedDoctor(input: {
     let result: ExplicitInternalPiResult;
     try {
       result = await runExplicitInternalActivation({
-        runtime: admitted.runtime!,
+        runtime: admitted.runtime,
         packageRoot: env.packageRoot,
         extraArgs,
         cwd: admitted.projectRoot,
