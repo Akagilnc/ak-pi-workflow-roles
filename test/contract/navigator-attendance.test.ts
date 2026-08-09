@@ -1577,9 +1577,8 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
       }),
       "utf8",
     );
-    process.env.AK_ROLE_RUN_DIR = runDir;
-
     await withActivationHome({ prefix: "ak-nav-admitted-" }, async ({ home }) => {
+      process.env.AK_ROLE_RUN_DIR = runDir;
       let observed: { subject?: string; authority?: string; subjectKey?: string } | undefined;
       const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
       const appendedEntries: Array<{ customType: string; data?: unknown }> = [];

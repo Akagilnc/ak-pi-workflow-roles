@@ -907,14 +907,16 @@ appendAcceptedActivationToBook({
   }),
 });
 `);
-  const workerCount = 16;
+  // Two workers are sufficient to exercise first-creation; eight retain a
+  // broad race without making a focused contract test compete for 16 tsx VMs.
+  const workerCount = 8;
   const children = await Promise.all(Array.from({ length: workerCount }, (_, index) =>
     runNodeSubprocess(
       ["--import", "tsx", worker, String(index), ledgerHome],
       { cwd: packageRoot, timeoutMs: 15_000 },
     )));
   for (const child of children) {
-    assert.equal(child.code, 0, child.stderr);
+    assert.equal(child.code, 0, `${child.stderr}\ntimedOut=${child.timedOut}`);
   }
   for (let index = 0; index < workerCount; index += 1) {
     const bookKey = `book-${index}`;

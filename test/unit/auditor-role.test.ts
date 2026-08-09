@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type Provider } from "@earendil-works/pi-ai";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { AUDITOR_TURN_LIMIT, AuditorTurnLimitError, runAuditorRole } from "../../src/auditor-role.ts";
@@ -145,6 +145,50 @@ test("parent and typed idle cancellation win over exhaustion on the limit turn",
         (error: unknown) => error === reason,
       );
     }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("real provider stream idle signal retains its typed cause at the turn boundary", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-boundary-idle-"));
+  try {
+    const faux = fauxProvider({ provider: "audit-boundary-idle" });
+    const unknown = () => fauxAssistantMessage([fauxToolCall("ak_other_decision", {})], { stopReason: "toolUse" });
+    faux.setResponses(Array.from({ length: AUDITOR_TURN_LIMIT - 1 }, unknown));
+    let streams = 0;
+    const provider: Provider = {
+      ...faux.provider,
+      stream(model, context, options) {
+        streams += 1;
+        if (streams < AUDITOR_TURN_LIMIT) return faux.provider.stream(model, context, options);
+        const signal = options?.signal;
+        const waitForIdle = async (): Promise<never> => {
+          if (!signal?.aborted) await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
+          throw signal?.reason;
+        };
+        return {
+          async *[Symbol.asyncIterator]() { await waitForIdle(); },
+          result: waitForIdle,
+        } as ReturnType<Provider["stream"]>;
+      },
+      streamSimple(model, context, options) { return this.stream(model, context, options); },
+    };
+    const context = {
+      cwd,
+      model: faux.getModel(),
+      modelRegistry: {
+        getProvider() { return provider; },
+        async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
+        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
+      },
+      sessionManager: SessionManager.inMemory(cwd),
+    } as unknown as ExtensionContext;
+    await assert.rejects(
+      runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: createComplianceDecisionTool("ak_boundary_idle", "Submit."), roleLabel: "Test auditor", context, streamIdleTimeoutMs: 20 }),
+      (error: unknown) => error instanceof StreamIdleTimeoutError && error.idleTimeoutMs === 20,
+    );
+    assert.equal(streams, AUDITOR_TURN_LIMIT);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
