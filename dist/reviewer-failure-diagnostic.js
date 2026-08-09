@@ -1,5 +1,5 @@
 export function normalizeReviewerFailureDiagnostic(error, failure) {
-    const original = error instanceof Error && Object.hasOwn(error, "cause") && !(error.cause instanceof Error)
+    const original = error instanceof Error && "reviewerFailure" in error && Object.hasOwn(error, "cause") && !(error.cause instanceof Error)
         ? error.cause
         : error;
     const message = original instanceof Error
