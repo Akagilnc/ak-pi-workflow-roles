@@ -141,6 +141,11 @@ test(
       async ({ home }) => {
         const piAgentDir = resolve(home, ".pi", "agent");
         await mkdir(piAgentDir, { recursive: true });
+        await writeFile(
+          resolve(piAgentDir, "navigator-model.json"),
+          JSON.stringify({ model: "ak-coder-offline/faux-1" }) + "\n",
+          "utf8",
+        );
         const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
         const installedRoutebook = resolve(
           installed.installedRoot,
@@ -296,6 +301,9 @@ test(
         );
 
         const roleReport = reportText;
+        const roleReceiptBytes = JSON.stringify(
+          (JSON.parse(roleReport) as { receipt: unknown }).receipt,
+        );
         assert.equal(roleReport.includes("COLD_INSTALLED_ROUTEBOOK_MARKER"), false);
 
         await chmod(installedRoutebook, 0o000);
@@ -344,7 +352,10 @@ test(
             join(runsRoot, name, "artifacts", "report.json"),
             "utf8",
           );
-          assert.equal(receipt, roleReport);
+          assert.equal(
+            JSON.stringify((JSON.parse(receipt) as { receipt: unknown }).receipt),
+            roleReceiptBytes,
+          );
           assert.equal(receipt.includes("EACCES"), false);
         }
       },

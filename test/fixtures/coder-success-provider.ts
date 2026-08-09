@@ -19,7 +19,7 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
     provider: "ak-coder-offline",
     tokenSize: { min: 1000, max: 1000 },
   });
-  faux.setResponses([async (context: Context) => {
+  const respond = async (context: Context) => {
     const toolNames = context.tools?.map((tool) => tool.name) ?? [];
     if (toolNames.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
       const contextText = JSON.stringify(context.messages);
@@ -50,7 +50,9 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
       ),
       { stopReason: "toolUse" },
     );
-  }]);
+  };
+  // The public process uses this provider once for Coder and once for Navigator.
+  faux.setResponses([respond, respond]);
 
   const model = faux.getModel();
   const provider: Provider = {
