@@ -181,6 +181,16 @@ test("default compliance completion sends the production timeout and merges pare
   });
 });
 
+test("a valid decision is accepted by name alongside sibling tool calls", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    const decision = await audit(response("decision-with-sibling", [
+      fauxToolCall("read", { path: "evidence.txt" }),
+      fauxToolCall(decisionToolName, { status: "pass" }),
+    ]), sessionManager);
+    assert.equal(decision.status, "pass");
+  });
+});
+
 test("a timeout-honoring provider terminates the real default seam with typed cause and no receipt", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   await withPersistedSession(async (sessionManager) => {

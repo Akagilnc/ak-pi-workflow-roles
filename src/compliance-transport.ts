@@ -7,16 +7,7 @@ import {
   type ProviderStreamOptions,
   type Usage,
 } from "@earendil-works/pi-ai";
-import {
-  createBashTool,
-  createEditTool,
-  createFindTool,
-  createGrepTool,
-  createLsTool,
-  createReadTool,
-  createWriteTool,
-  type ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import {
@@ -479,6 +470,18 @@ export async function runComplianceAudit(options: {
     options.tool.name,
   );
   const toolChoice = complianceToolChoice(dispatch.model, options.tool.name);
+  // Keep Pi's workspace-tool implementation behind the audit execution seam.
+  // Eager value imports make the standalone public CLI bundle initialize Pi's
+  // CommonJS process helpers even for discovery-only commands such as --help.
+  const {
+    createBashTool,
+    createEditTool,
+    createFindTool,
+    createGrepTool,
+    createLsTool,
+    createReadTool,
+    createWriteTool,
+  } = await import("@earendil-works/pi-coding-agent");
   const workspaceTools = [
     createReadTool(options.context.cwd),
     createWriteTool(options.context.cwd),
