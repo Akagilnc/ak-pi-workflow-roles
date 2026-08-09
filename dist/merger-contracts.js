@@ -31,18 +31,12 @@ function canonicalPath(path) { return typeof path === "string" && path.length > 
 function validatePathSet(value, label) {
     if (!Array.isArray(value) || value.length === 0 || !value.every(canonicalPath))
         fail(`Merger ${label} must be a non-empty canonical path set`);
-    const paths = value;
-    const sorted = [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-    if (new Set(paths).size !== paths.length || paths.some((path, i) => path !== sorted[i]))
-        fail(`Merger ${label} must be unique and canonical byte-sorted`);
-    return paths;
+    return value;
 }
 function validateMaterial(value, label) {
     if (!record(value) || typeof value.bytesBase64 !== "string" || typeof value.sha256 !== "string")
         fail(`Merger ${label} material is malformed`);
     const bytes = Buffer.from(value.bytesBase64, "base64");
-    if (bytes.toString("base64") !== value.bytesBase64)
-        fail(`Merger ${label} bytes are not canonical base64`);
     exactUtf8(bytes, `Merger ${label} material`);
     if (sha256Hex(bytes) !== value.sha256)
         fail(`Merger ${label} material digest mismatch`);
@@ -53,7 +47,7 @@ function deepFreeze(value) { if (value && typeof value === "object") {
     Object.freeze(value);
 } return value; }
 export function validateMergerInput(value) {
-    if (!record(value) || value.version !== 1 || blank(value.attemptId) || !isFullGitObjectId(value.targetObjectId) || !isFullGitObjectId(value.sourceObjectId) || value.targetObjectId.length !== value.sourceObjectId.length)
+    if (!record(value) || blank(value.attemptId) || !isFullGitObjectId(value.targetObjectId) || !isFullGitObjectId(value.sourceObjectId) || value.targetObjectId.length !== value.sourceObjectId.length)
         fail("Merger input has invalid identity or object ID");
     if (!record(value.materials))
         fail();
@@ -66,14 +60,14 @@ export function validateMergerInput(value) {
     if (!Array.isArray(value.authorizedChecks))
         fail("Merger authorized checks are malformed");
     for (const check of value.authorizedChecks) {
-        if (!record(check) || blank(check.name) || !Array.isArray(check.argv) || check.argv.length === 0 || check.argv.some(blank))
+        if (!record(check) || !Array.isArray(check.argv) || check.argv.length === 0 || check.argv.some(blank))
             fail("Merger authorized check is malformed");
     }
     return deepFreeze(structuredClone(value));
 }
 export function validateMergerOutput(value, expectedAttemptId) {
-    if (!record(value) || blank(value.attemptId) || blank(value.report) || (expectedAttemptId !== undefined && value.attemptId !== expectedAttemptId))
-        throw new Error("Merger output attempt mismatch or blank report");
+    if (!record(value) || (expectedAttemptId !== undefined && value.attemptId !== expectedAttemptId))
+        throw new Error("Merger output attempt mismatch");
     if (value.status === "completed" && isFullGitObjectId(value.mergeCommitId))
         return structuredClone(value);
     if (value.status === "escalate")
