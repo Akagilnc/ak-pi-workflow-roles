@@ -120,10 +120,15 @@ function assertPhysicalLedgerRoot(absoluteRoot: string): void {
     try {
       mkdirSync(absoluteRoot, { recursive: true });
     } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error },
-      );
+      // The configured root has the same first-creator race as nested components:
+      // another process may win after our ENOENT observation. Admit only EEXIST,
+      // then type-check the winner below; every other native failure remains fatal.
+      if (errnoCode(error) !== "EEXIST") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
+          { cause: error },
+        );
+      }
     }
     try {
       st = lstatSync(absoluteRoot);

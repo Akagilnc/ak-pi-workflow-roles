@@ -1,10 +1,230 @@
 #!/usr/bin/env node
 
 var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
+};
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
+
+// src/activation-ledger-topology.ts
+import {
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  statSync
+} from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { basename, dirname as dirname2, isAbsolute, join as join3, relative, resolve, sep } from "node:path";
+function resolveActivationLedgerHome(home = homedir2) {
+  const processHome = home();
+  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
+    throw new ActivationLedgerError(
+      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
+    );
+  }
+  return resolve(processHome, ".ak-roles");
+}
+function activationBookDirectory(ledgerHome, bookKey) {
+  return join3(ledgerHome, "books", bookKey);
+}
+function pathContainedIn(root, candidate) {
+  const rel = relative(root, candidate);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+function physicalPathIdentity(path) {
+  const absolute = resolve(path);
+  const missing = [];
+  let cursor = absolute;
+  while (true) {
+    try {
+      const real = realpathSync(cursor);
+      return missing.length === 0 ? real : join3(real, ...missing);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        return absolute;
+      }
+      const parent = dirname2(cursor);
+      if (parent === cursor) return absolute;
+      missing.unshift(basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+function physicallyContainedIn(root, candidate) {
+  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
+}
+function errnoCode(error) {
+  return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
+}
+function errorText(error) {
+  if (!(error instanceof Error)) return String(error);
+  return error.message;
+}
+function assertPhysicalLedgerRoot(absoluteRoot) {
+  let st;
+  try {
+    st = lstatSync(absoluteRoot);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st === void 0) {
+    try {
+      mkdirSync(absoluteRoot, { recursive: true });
+    } catch (error) {
+      if (errnoCode(error) !== "EEXIST") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
+    }
+    try {
+      st = lstatSync(absoluteRoot);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st.isSymbolicLink()) {
+    throw new ActivationLedgerError(
+      `activation ledger home is a symbolic link: ${absoluteRoot}`
+    );
+  }
+  if (!st.isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
+  }
+}
+function ensureRealDirectoryTree(root, targetDir) {
+  if (!isAbsolute(root)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
+  }
+  const absoluteRoot = resolve(root);
+  const absoluteTarget = resolve(targetDir);
+  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  assertPhysicalLedgerRoot(absoluteRoot);
+  let realRoot;
+  try {
+    realRoot = realpathSync(absoluteRoot);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  if (!statSync(realRoot).isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
+  }
+  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
+  if (rel === "") return realRoot;
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  let lexicalCursor = absoluteRoot;
+  for (const part of rel.split(sep)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
+    }
+    lexicalCursor = join3(lexicalCursor, part);
+    let st;
+    try {
+      st = lstatSync(lexicalCursor);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
+      try {
+        mkdirSync(lexicalCursor);
+      } catch (mkdirError) {
+        if (errnoCode(mkdirError) !== "EEXIST") {
+          throw new ActivationLedgerError(
+            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
+            { cause: mkdirError }
+          );
+        }
+      }
+      try {
+        st = lstatSync(lexicalCursor);
+      } catch (statError) {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
+          { cause: statError }
+        );
+      }
+    }
+    if (st.isSymbolicLink()) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is a symbolic link: ${lexicalCursor}`
+      );
+    }
+    if (!st.isDirectory()) {
+      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
+    }
+    let realCursor;
+    try {
+      realCursor = realpathSync(lexicalCursor);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
+      throw new ActivationLedgerError(
+        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`
+      );
+    }
+  }
+  try {
+    return realpathSync(absoluteTarget);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+}
+var ActivationLedgerError;
+var init_activation_ledger_topology = __esm({
+  "src/activation-ledger-topology.ts"() {
+    "use strict";
+    ActivationLedgerError = class extends Error {
+      code = "AK_ACTIVATION_LEDGER";
+      constructor(message, options) {
+        super(
+          message,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "ActivationLedgerError";
+      }
+    };
+  }
+});
 
 // src/public-cli/main.ts
 import { dirname as dirname6, join as join16 } from "node:path";
@@ -233,7 +453,7 @@ function validateRuntimeReviewerReceipt(output) {
       const report = read(reports, axis);
       if (status === "successful" && (report === void 0 || materialized === void 0))
         throw new Error("Successful Reviewer outcome lacks report or materialization evidence");
-      if (status === "failed" && report !== void 0) throw new Error("Failed Reviewer outcome cannot bind a report");
+      if (status === "failed" && (report !== void 0 || typeof read(outcome, "diagnostic") !== "string" || read(outcome, "diagnostic").trim() === "")) throw new Error("Failed Reviewer outcome requires a diagnostic and cannot bind a report");
       if (materialized !== void 0) {
         const materialEntries = read(materialized, "entries");
         if (!isRecord(materialized) || read(materialized, "leg") !== axis || typeof read(materialized, "workspaceIdentity") !== "string" || read(materialized, "workspaceIdentity") === "" || read(materialized, "manifestSha256") !== read(bundle, "manifestSha256") || !Array.isArray(materialEntries) || materialEntries.length !== entries.length || materialEntries.some((entry, entryIndex) => {
@@ -9327,6 +9547,7 @@ async function runExplicitInternalActivation(options) {
 }
 
 // src/public-cli/invocation.ts
+init_activation_ledger_topology();
 import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat,
@@ -9336,209 +9557,6 @@ import {
   writeFile as writeFile2
 } from "node:fs/promises";
 import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve4, sep as sep3 } from "node:path";
-
-// src/activation-ledger-topology.ts
-import {
-  lstatSync,
-  mkdirSync,
-  realpathSync,
-  statSync
-} from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { basename, dirname as dirname2, isAbsolute, join as join3, relative, resolve, sep } from "node:path";
-var ActivationLedgerError = class extends Error {
-  code = "AK_ACTIVATION_LEDGER";
-  constructor(message, options) {
-    super(
-      message,
-      options?.cause === void 0 ? void 0 : { cause: options.cause }
-    );
-    this.name = "ActivationLedgerError";
-  }
-};
-function resolveActivationLedgerHome(home = homedir2) {
-  const processHome = home();
-  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
-    throw new ActivationLedgerError(
-      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
-    );
-  }
-  return resolve(processHome, ".ak-roles");
-}
-function activationBookDirectory(ledgerHome, bookKey) {
-  return join3(ledgerHome, "books", bookKey);
-}
-function pathContainedIn(root, candidate) {
-  const rel = relative(root, candidate);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-function physicalPathIdentity(path) {
-  const absolute = resolve(path);
-  const missing = [];
-  let cursor = absolute;
-  while (true) {
-    try {
-      const real = realpathSync(cursor);
-      return missing.length === 0 ? real : join3(real, ...missing);
-    } catch (error) {
-      if (errnoCode(error) !== "ENOENT") {
-        return absolute;
-      }
-      const parent = dirname2(cursor);
-      if (parent === cursor) return absolute;
-      missing.unshift(basename(cursor));
-      cursor = parent;
-    }
-  }
-}
-function physicallyContainedIn(root, candidate) {
-  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
-}
-function errnoCode(error) {
-  return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
-}
-function errorText(error) {
-  if (!(error instanceof Error)) return String(error);
-  return error.message;
-}
-function assertPhysicalLedgerRoot(absoluteRoot) {
-  let st;
-  try {
-    st = lstatSync(absoluteRoot);
-  } catch (error) {
-    if (errnoCode(error) !== "ENOENT") {
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-  if (st === void 0) {
-    try {
-      mkdirSync(absoluteRoot, { recursive: true });
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-    try {
-      st = lstatSync(absoluteRoot);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-  if (st.isSymbolicLink()) {
-    throw new ActivationLedgerError(
-      `activation ledger home is a symbolic link: ${absoluteRoot}`
-    );
-  }
-  if (!st.isDirectory()) {
-    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
-  }
-}
-function ensureRealDirectoryTree(root, targetDir) {
-  if (!isAbsolute(root)) {
-    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
-  }
-  const absoluteRoot = resolve(root);
-  const absoluteTarget = resolve(targetDir);
-  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
-    throw new ActivationLedgerError(
-      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
-    );
-  }
-  assertPhysicalLedgerRoot(absoluteRoot);
-  let realRoot;
-  try {
-    realRoot = realpathSync(absoluteRoot);
-  } catch (error) {
-    throw new ActivationLedgerError(
-      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
-      { cause: error }
-    );
-  }
-  if (!statSync(realRoot).isDirectory()) {
-    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
-  }
-  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
-  if (rel === "") return realRoot;
-  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
-    throw new ActivationLedgerError(
-      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
-    );
-  }
-  let lexicalCursor = absoluteRoot;
-  for (const part of rel.split(sep)) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") {
-      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
-    }
-    lexicalCursor = join3(lexicalCursor, part);
-    let st;
-    try {
-      st = lstatSync(lexicalCursor);
-    } catch (error) {
-      if (errnoCode(error) !== "ENOENT") {
-        throw new ActivationLedgerError(
-          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
-          { cause: error }
-        );
-      }
-      try {
-        mkdirSync(lexicalCursor);
-      } catch (mkdirError) {
-        if (errnoCode(mkdirError) !== "EEXIST") {
-          throw new ActivationLedgerError(
-            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
-            { cause: mkdirError }
-          );
-        }
-      }
-      try {
-        st = lstatSync(lexicalCursor);
-      } catch (statError) {
-        throw new ActivationLedgerError(
-          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
-          { cause: statError }
-        );
-      }
-    }
-    if (st.isSymbolicLink()) {
-      throw new ActivationLedgerError(
-        `activation ledger path component is a symbolic link: ${lexicalCursor}`
-      );
-    }
-    if (!st.isDirectory()) {
-      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
-    }
-    let realCursor;
-    try {
-      realCursor = realpathSync(lexicalCursor);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
-      throw new ActivationLedgerError(
-        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`
-      );
-    }
-  }
-  try {
-    return realpathSync(absoluteTarget);
-  } catch (error) {
-    throw new ActivationLedgerError(
-      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
-      { cause: error }
-    );
-  }
-}
 
 // src/activation-ledger-git.ts
 import { execFileSync } from "node:child_process";
@@ -11980,6 +11998,7 @@ function observePackagedMethodSkillInvocation(text, expected) {
 }
 
 // src/public-cli/run-lifecycle.ts
+init_activation_ledger_topology();
 import { lstat as lstat2, open, readdir as readdir2, readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
@@ -12577,81 +12596,25 @@ var auditorSoulPaths = Object.freeze({
 
 // src/compliance-transport.ts
 var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
-var decisionGateSchema = typebox_exports.Object(
-  {
-    question: nonblank2,
-    options: typebox_exports.Array(nonblank2, { minItems: 1 })
-  },
-  { additionalProperties: false }
-);
-var complianceDecisionSchema = typebox_exports.Object(
-  {
-    status: typebox_exports.Union([
-      typebox_exports.Literal("pass"),
-      typebox_exports.Literal("revise"),
-      typebox_exports.Literal("escalate")
-    ], { description: "Auditor decision status." }),
-    violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }),
-    conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }),
-    decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." })
-  },
-  {
-    additionalProperties: true,
-    required: []
-  }
-);
+var decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
+var complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
 function createComplianceDecisionTool(name, description) {
-  return {
-    name,
-    description,
-    parameters: complianceDecisionSchema
-  };
+  return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) {
+    return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true };
+  } };
 }
 var COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
 function readListField(value) {
-  if (Array.isArray(value)) return value;
-  if (value === void 0) return [];
-  return [value];
+  return Array.isArray(value) ? value : value === void 0 ? [] : [value];
 }
 function readComplianceCandidate(arguments_, usage) {
-  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
-    const type = arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_;
-    return {
-      status: "audit-incomplete",
-      observation: { kind: "non-object-arguments", type },
-      candidate: arguments_,
-      ...usage === void 0 ? {} : { usage }
-    };
-  }
+  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) return { status: "audit-incomplete", observation: { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ }, candidate: arguments_, ...usage === void 0 ? {} : { usage } };
   const args = arguments_;
   const status = args.status;
-  if (status === "pass") {
-    return { status: "pass", ...usage === void 0 ? {} : { usage } };
-  }
-  if (status === "revise") {
-    return {
-      status: "revise",
-      violations: readListField(args.violations),
-      ...usage === void 0 ? {} : { usage }
-    };
-  }
-  if (status === "escalate") {
-    return {
-      status: "escalate",
-      ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {},
-      ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {},
-      ...usage === void 0 ? {} : { usage }
-    };
-  }
-  return {
-    status: "audit-incomplete",
-    observation: {
-      kind: "object-status-unreadable",
-      status: status === void 0 ? "missing" : "unknown"
-    },
-    candidate: arguments_,
-    ...usage === void 0 ? {} : { usage }
-  };
+  if (status === "pass") return { status, ...usage === void 0 ? {} : { usage } };
+  if (status === "revise") return { status, violations: readListField(args.violations), ...usage === void 0 ? {} : { usage } };
+  if (status === "escalate") return { status, ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}, ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}, ...usage === void 0 ? {} : { usage } };
+  return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === void 0 ? "missing" : "unknown" }, candidate: arguments_, ...usage === void 0 ? {} : { usage } };
 }
 
 // src/doctor-auditor.ts
@@ -12753,6 +12716,7 @@ var COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 
 // src/work-subject-identity.ts
+init_activation_ledger_topology();
 import { resolve as resolve5 } from "node:path";
 function issueRoot(value) {
   const normalized = value.replaceAll("\\", "/");
@@ -13282,6 +13246,20 @@ async function readBoundSessionEntries(sessionFile) {
   return entries;
 }
 function extractSessionProviderStop(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
+    const response = isRecord4(entry.data) && isRecord4(entry.data.response) ? entry.data.response : void 0;
+    if (response?.role === "assistant" && response.stopReason === "error") {
+      return {
+        stopReason: "error",
+        ...typeof response.errorMessage === "string" && response.errorMessage.trim() !== "" ? { errorMessage: response.errorMessage } : {},
+        ...typeof response.provider === "string" && response.provider.trim() !== "" ? { provider: response.provider } : {},
+        ...typeof response.model === "string" && response.model.trim() !== "" ? { model: response.model } : {}
+      };
+    }
+    break;
+  }
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -16791,6 +16769,7 @@ async function runPublicFixerResume(argv, env, io) {
 // src/public-cli/merger-run.ts
 import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
 import { join as join13, resolve as resolve6 } from "node:path";
+init_activation_ledger_topology();
 function buildModelArgs6(model) {
   if (model === void 0) return [];
   return [

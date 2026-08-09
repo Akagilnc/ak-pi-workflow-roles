@@ -80,10 +80,12 @@ function assertPhysicalLedgerRoot(absoluteRoot) {
     try {
       mkdirSync(absoluteRoot, { recursive: true });
     } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
+      if (errnoCode(error) !== "EEXIST") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
     }
     try {
       st = lstatSync(absoluteRoot);
