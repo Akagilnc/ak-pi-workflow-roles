@@ -50,7 +50,7 @@ const code = Number.isFinite(exits[n]) ? exits[n] : exits[exits.length - 1] ?? 0
 process.exit(code);
 `;
   const source = `#!${process.execPath}
-import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+const { appendFileSync, readFileSync, writeFileSync, existsSync } = require("node:fs");
 const recordPath = process.env.AK_TEST_ALL_RECORD;
 if (!recordPath) {
   console.error("AK_TEST_ALL_RECORD missing");
@@ -156,7 +156,7 @@ async function runRunner(options: {
     });
   });
 
-  const raw = await readFile(options.recordPath, "utf8").catch(() => "");
+  const raw = await readFile(options.recordPath, "utf8");
   return { ...result, records: parseRecords(raw) };
 }
 
