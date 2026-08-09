@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore, type Api, type AssistantMessage, type Context, type Model, type Provider, type ProviderStreamOptions } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { prepareComplianceDispatch } from "./compliance-transport.ts";
+import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, prepareComplianceDispatch } from "./compliance-transport.ts";
 
 export class AuditorTurnLimitError extends Error { constructor(readonly limit: number) { super(`Auditor exceeded ${limit} turns`); this.name = "AuditorTurnLimitError"; } }
 export type AuditorCompletion = (model: Model<Api>, context: Context, options: ProviderStreamOptions) => Promise<AssistantMessage>;
 export type AuditorDecisionTool = { name: string; description: string; parameters: object; execute(...args: any[]): Promise<AgentToolResult<unknown>> };
+
 
 export async function runAuditorRole(options: { systemPrompt: string; serializedInput: string; tool: AuditorDecisionTool; roleLabel: string; context: ExtensionContext; signal?: AbortSignal; runCompletion?: AuditorCompletion; retainResponse?(response: AssistantMessage): void }): Promise<{ decision: unknown; response: AssistantMessage }> {
   const [{ createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager }, { childSessionManager }] = await Promise.all([
@@ -32,7 +33,12 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
     const loader = new DefaultResourceLoader({ cwd, agentDir: scratch, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt });
     await loader.reload();
     const tool = { ...options.tool, label: options.roleLabel, async execute(...args: any[]) { if (decision !== undefined) throw new Error("Auditor decision was submitted more than once"); decision = args[1]; return options.tool.execute(...args); } };
-    const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash", "write", "edit", tool.name], customTools: [tool], sessionManager: childSessionManager(options.context.sessionManager, cwd, "auditor-roles"), settingsManager: settings });
+    const parentSessionManager = options.context.sessionManager;
+    const parentHeader = parentSessionManager?.getHeader?.();
+    const parentSessionFile = parentSessionManager?.getSessionFile?.();
+    const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
+    const auditorSessionManager = childSessionManager(parentSessionManager, cwd, "auditor-roles");
+    const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash", "write", "edit", tool.name], customTools: [tool], sessionManager: auditorSessionManager, settingsManager: settings });
     const turnLimit = 32; let turns = 0; let turnError: AuditorTurnLimitError | undefined;
     const unsubscribe = session.subscribe((event) => { if (event.type === "message_end" && event.message.role === "assistant" && ++turns > turnLimit) { turnError = new AuditorTurnLimitError(turnLimit); void session.abort(); } });
     const abort = () => { void session.abort(); };
@@ -66,6 +72,20 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
             ...(retentionCause === undefined ? {} : { cause: retentionCause instanceof Error ? { name: retentionCause.name, message: retentionCause.message, ...((retentionCause as Error & { code?: unknown }).code === undefined ? {} : { code: (retentionCause as Error & { code?: unknown }).code }) } : retentionCause }),
           },
         };
+        auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, {
+          version: 1,
+          parent: {
+            sessionId: parentHeader?.id,
+            sessionFile: parentSessionFile,
+            attemptEntryId: parentAttemptEntryId,
+          },
+          failure: {
+            cause: failure.knownCause,
+            identity: { name: failure.name, code: failure.failureCode },
+            diagnostic: failure.message,
+            details: failure.details,
+          },
+        });
         throw failure;
       }
     }

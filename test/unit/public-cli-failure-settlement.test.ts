@@ -11,11 +11,13 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -55,6 +57,7 @@ import {
   isChildDiagnosticFloodLine,
   isChildDiagnosticHelpFooterLine,
   isLawfulTypedTerminalOutcome,
+  readBoundAuditorKnownFailure,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import type {
@@ -2299,6 +2302,73 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
   });
 });
 
+async function createAuditorRetentionTracer(home: string, role: string): Promise<{ extension: string; close(): Promise<void> }> {
+  const marker = join(home, `parent-${role}.txt`);
+  const extension = join(home, `provider-${role}.ts`);
+  let requestCount = 0;
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as any;
+    requestCount += 1;
+    const toolNames = (body.tools ?? []).map((tool: any) => tool.function?.name);
+    const auditTool = toolNames.find((name: string) => name?.endsWith("_audit_decision"));
+    if (auditTool !== undefined) {
+      const parentFile = (await readFile(marker, "utf8")).trim();
+      const backup = `${parentFile}.retention-test-backup`;
+      await rename(parentFile, backup);
+      await mkdir(parentFile);
+      let restored = false;
+      const restoreParent = async () => {
+        if (restored) return;
+        restored = true;
+        clearInterval(restore);
+        await rm(parentFile, { recursive: true, force: true });
+        await rename(backup, parentFile);
+      };
+      const restore = setInterval(async () => {
+        try {
+          const childDir = join(parentFile, "..", "auditor-roles");
+          const names = await (await import("node:fs/promises")).readdir(childDir);
+          for (const name of names) {
+            const text = await readFile(join(childDir, name), "utf8");
+            if (text.includes("ak_auditor_compliance_failure")) await restoreParent();
+          }
+        } catch {}
+      }, 5);
+      setTimeout(() => { void restoreParent(); }, 2_000);
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "WebSocket error" } }));
+      return;
+    }
+    const outputTool = toolNames.find((name: string) => name === `ak_${role}_output`);
+    const args = role === "judge" ? { judgeStatus: "converged", note: "test" }
+      : role === "fixer" ? { status: "unfinished", report: "test", remainingScope: "test" }
+      : role === "reviewer" ? { status: "refused", diagnostic: "test" }
+      : { status: "refused", reason: "test", missingEvidence: [{ need: "test", targetKeys: ["case"] }] };
+    const payload = { id: `chatcmpl-${requestCount}`, object: "chat.completion.chunk", created: 1, model: "faux-1", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: `call-${requestCount}`, type: "function", function: { name: outputTool, arguments: JSON.stringify(args) } }] }, finish_reason: null }] };
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write(`data: ${JSON.stringify(payload)}\n\n`);
+    response.write(`data: ${JSON.stringify({ ...payload, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`);
+    response.end("data: [DONE]\n\n");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("test provider did not listen");
+  await writeFile(extension, `
+import { writeFileSync } from "node:fs";
+export default function (pi) {
+  console.error("[ak-patch] normal activation banner");
+  pi.registerProvider("openai-codex", {
+    name: "Retention tracer", baseUrl: "http://127.0.0.1:${address.port}/v1", apiKey: "test", api: "openai-completions",
+    models: [{ id: "faux-1", name: "faux-1", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 4096 }]
+  });
+  pi.on("session_start", (_event, ctx) => writeFileSync(${JSON.stringify(marker)}, ctx.sessionManager.getSessionFile(), "utf8"));
+}
+`, "utf8");
+  return { extension, close: async () => { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); } };
+}
+
 test("audited roles publicly settle a production provider stop without promoting the normal banner", async () => {
   const argv = {
     judge: (project: string) => ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "audit provider stop"],
@@ -2346,44 +2416,29 @@ test("audited roles publicly settle a production provider stop without promoting
     // A retention write failure after the typed provider stop is secondary: it
     // cannot replace the provider diagnostic/identity in Terminal or Error Artifact.
     const retentionIo = captureIo();
-    const retentionResult = await runAkRole(argv[role](project), {
-      packageRoot, home, cwd: project, io: retentionIo.io,
-      credentials: { "openai-codex": true, xai: true },
-      createRunId: () => `run-${role}-auditor-retention-failure`,
-      piRunner: async (args) => {
-        const faux = fauxProvider({ provider: "openai-codex" });
-        faux.setResponses([fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" })]);
-        let typedFailure: any;
-        try {
-          await runComplianceAudit({
-            tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
-            systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
-            context: {
-              cwd: project, model: faux.getModel(), thinkingLevel: "off",
-              modelRegistry: {
-                getProvider() { return faux.provider; },
-                async getProviderAuth() { return { auth: { apiKey: "test" } }; },
-                async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
-              },
-              sessionManager: { getSessionFile() { return undefined; }, getSessionDir() { return project; }, appendCustomEntry() { throw Object.assign(new Error("disk full"), { code: "ENOSPC" }); } },
-            } as unknown as ExtensionContext,
-          });
-        } catch (error) { typedFailure = error; }
-        assert.equal(typedFailure?.knownCause, "provider");
-        assert.equal(typedFailure?.name, "faux-1");
-        assert.equal(typedFailure?.message, "WebSocket error");
-        assert.equal(typedFailure?.failureCode, "openai-codex");
-        assert.deepEqual(typedFailure?.details?.retentionFailure, { name: "ComplianceResponseRetentionError", message: "compliance response retention failed", cause: { name: "Error", message: "disk full", code: "ENOSPC" } });
-        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-        await mkdir(sessionDir, { recursive: true });
-        await writeFile(join(sessionDir, "session.jsonl"), "");
-        return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args], knownFailure: { cause: typedFailure.knownCause, diagnostic: typedFailure.message, identity: { name: typedFailure.name, code: typedFailure.failureCode }, details: typedFailure.details } };
-      },
-    });
-    const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "provider", diagnosticEquals: "WebSocket error", identityName: "faux-1", identityCode: "openai-codex" });
+    const tracer = await createAuditorRetentionTracer(home, role);
+    let retentionResult;
+    try {
+      const extraArgs = ["-e", tracer.extension];
+      const roleOptions = role === "judge" ? { judgeExtraPiArgs: extraArgs, judgeTimeoutMs: 60_000 }
+        : role === "fixer" ? { fixerExtraPiArgs: extraArgs, fixerTimeoutMs: 60_000 }
+        : role === "reviewer" ? { reviewerExtraPiArgs: extraArgs, reviewerTimeoutMs: 60_000 }
+        : { doctorExtraPiArgs: extraArgs, doctorTimeoutMs: 60_000 };
+      retentionResult = await runAkRole(argv[role](project), {
+        packageRoot, home, cwd: project, io: retentionIo.io,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => `run-${role}-auditor-retention-failure`,
+        ...roleOptions,
+      });
+    } finally {
+      await tracer.close();
+    }
+    assert.notEqual(retentionResult.exitCode === 1 && retentionResult.terminal?.roleOutcome.kind === "failure" ? retentionResult.terminal.roleOutcome.cause : undefined, "timeout", `${role} real subprocess timed out`);
+    const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "provider", diagnosticIncludes: "WebSocket error", identityName: "faux-1", identityCode: "openai-codex" });
     assert.equal((retentionSettlement.terminal.roleOutcome as any).decisiveFacts.secondaryEvidence.model, "faux-1");
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
-    assert.equal(retentionArtifact.details.retentionFailure.cause.code, "ENOSPC");
+    assert.equal(retentionArtifact.details.retentionFailure.name, "ComplianceResponseRetentionError");
+    assert.equal(retentionArtifact.details.retentionFailure.cause.code, "EISDIR");
 
     // Resume-capable audited roles bind retained audit responses to the latest
     // typed top-level user turn; an older attempt cannot replace its native error.
@@ -2416,6 +2471,29 @@ test("audited roles publicly settle a production provider stop without promoting
         identityCode: "xai",
       });
     }
+  });
+});
+
+test("retained auditor failure is bound to the latest parent resume attempt", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "parent.jsonl");
+    const childDir = join(sessionDir, "auditor-roles");
+    await mkdir(childDir, { recursive: true });
+    const parentEntries = [
+      { type: "session", id: "parent-session" },
+      { type: "message", id: "user-old", message: { role: "user" } },
+      { type: "message", id: "attempt-old", message: { role: "assistant" } },
+      { type: "message", id: "user-new", message: { role: "user" } },
+      { type: "message", id: "attempt-new", message: { role: "assistant", stopReason: "error", errorMessage: "new failure" } },
+    ];
+    await writeFile(sessionFile, parentEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    const childEntries = [
+      { type: "session", id: "child-session", parentSession: sessionFile },
+      { type: "custom", customType: "ak_auditor_compliance_failure", data: { parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-old" }, failure: { cause: "provider", diagnostic: "stale auditor failure" } } },
+    ];
+    await writeFile(join(childDir, "child.jsonl"), childEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    assert.equal(await readBoundAuditorKnownFailure(sessionFile), undefined);
   });
 });
 

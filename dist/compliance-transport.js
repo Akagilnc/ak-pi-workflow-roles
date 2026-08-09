@@ -19,6 +19,7 @@ export async function prepareComplianceDispatch(model, context, label) {
     return { model: resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model, auth: { ...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }), ...(auth.headers === undefined ? {} : { headers: auth.headers }), ...(env === undefined ? {} : { env }) } };
 }
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+export const AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
 export class ComplianceResponseRetentionError extends Error {
     constructor(message, options) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
 }

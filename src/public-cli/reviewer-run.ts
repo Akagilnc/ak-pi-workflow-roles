@@ -56,7 +56,9 @@ import {
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   presentStructuralRejection,
+  readBoundAuditorKnownFailure,
   readSessionProviderStop,
+  explicitInternalKnownFailureClassificationInput,
   settleFailureTerminalResult,
   trySettleReviewerTerminalResult,
   trySettleComplianceAuditIncompleteTerminalResult,
@@ -185,13 +187,7 @@ async function presentControlledFailure(
     code: number | null;
     stderr: string;
     thrown?: unknown;
-    knownCause?: ControlledFailureCause;
-    knownIdentity?: {
-      readonly name?: string;
-      readonly code?: string | number;
-    };
-    knownDiagnostic?: string;
-    knownDetails?: Readonly<Record<string, unknown>>;
+    knownFailure?: ExplicitInternalKnownFailure;
   },
   io: CliIo,
 ): Promise<{
@@ -203,7 +199,7 @@ async function presentControlledFailure(
   const session =
     !hasThrown &&
     !failureInput.timedOut &&
-    failureInput.knownCause === undefined
+    failureInput.knownFailure === undefined
       ? await inspectJudgeSession(admitted.sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
@@ -211,18 +207,7 @@ async function presentControlledFailure(
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...(failureInput.knownCause === undefined
-      ? {}
-      : { knownCause: failureInput.knownCause }),
-    ...(failureInput.knownIdentity === undefined
-      ? {}
-      : { knownIdentity: failureInput.knownIdentity }),
-    ...(failureInput.knownDiagnostic === undefined
-      ? {}
-      : { knownDiagnostic: failureInput.knownDiagnostic }),
-    ...(failureInput.knownDetails === undefined
-      ? {}
-      : { knownDetails: failureInput.knownDetails }),
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
     ...(session === undefined ? {} : { session }),
   });
 
@@ -378,28 +363,16 @@ async function dispatchAdmittedReviewer(input: {
       result.timedOut || result.code !== 0
         ? knownFailureForMissingProviderCredential(env.model, env.credentials)
         : undefined;
+    const auditorFailure = await readBoundAuditorKnownFailure(admitted.sessionFile);
     const knownFailure =
-      result.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+      result.knownFailure ?? sessionProviderFailure ?? auditorFailure ?? credentialFailure;
     return await presentControlledFailure(
       admitted,
       {
         timedOut: result.timedOut,
         code: result.code,
         stderr: result.stderr,
-        ...(knownFailure === undefined
-          ? {}
-          : {
-              knownCause: knownFailure.cause,
-              ...(knownFailure.identity === undefined
-                ? {}
-                : { knownIdentity: knownFailure.identity }),
-              ...(knownFailure.diagnostic === undefined
-                ? {}
-                : { knownDiagnostic: knownFailure.diagnostic }),
-              ...(knownFailure.details === undefined
-                ? {}
-                : { knownDetails: knownFailure.details }),
-            }),
+        ...(knownFailure === undefined ? {} : { knownFailure }),
       },
       io,
     );
@@ -476,7 +449,6 @@ export async function runPublicReviewer(
         code: null,
         stderr: "",
         thrown: error,
-        knownCause: "activation",
       },
       io,
     );
@@ -563,7 +535,6 @@ export async function runPublicReviewerResume(
         code: null,
         stderr: "",
         thrown: error,
-        knownCause: "activation",
       },
       io,
     );
