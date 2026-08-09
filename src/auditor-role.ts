@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore, type Api, type AssistantMessage, type Context, type Model, type Provider, type ProviderStreamOptions } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, prepareComplianceDispatch } from "./compliance-transport.ts";
+import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch, type AuditorParentAttemptBinding } from "./compliance-transport.ts";
 
 export class AuditorTurnLimitError extends Error { constructor(readonly limit: number) { super(`Auditor exceeded ${limit} turns`); this.name = "AuditorTurnLimitError"; } }
 export type AuditorCompletion = (model: Model<Api>, context: Context, options: ProviderStreamOptions) => Promise<AssistantMessage>;
@@ -39,6 +39,17 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
     const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
     const auditorSessionManager = childSessionManager(parentSessionManager, cwd, "auditor-roles");
     const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash", "write", "edit", tool.name], customTools: [tool], sessionManager: auditorSessionManager, settingsManager: settings });
+    const binding: AuditorParentAttemptBinding = {
+      version: 1,
+      parent: {
+        ...(parentHeader?.id === undefined ? {} : { sessionId: parentHeader.id }),
+        ...(parentSessionFile === undefined ? {} : { sessionFile: parentSessionFile }),
+        ...(parentAttemptEntryId === null || parentAttemptEntryId === undefined ? {} : { attemptEntryId: parentAttemptEntryId }),
+      },
+    };
+    // This durable binding is a prerequisite: never observe the provider when
+    // its response could not later be tied to the current parent attempt.
+    auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
     const turnLimit = 32; let turns = 0; let turnError: AuditorTurnLimitError | undefined;
     const unsubscribe = session.subscribe((event) => { if (event.type === "message_end" && event.message.role === "assistant" && ++turns > turnLimit) { turnError = new AuditorTurnLimitError(turnLimit); void session.abort(); } });
     const abort = () => { void session.abort(); };
@@ -77,7 +88,7 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
           parent: {
             sessionId: parentHeader?.id,
             sessionFile: parentSessionFile,
-            attemptEntryId: parentAttemptEntryId,
+            ...(parentAttemptEntryId === null || parentAttemptEntryId === undefined ? {} : { attemptEntryId: parentAttemptEntryId }),
           },
           failure: {
             cause: failure.knownCause,

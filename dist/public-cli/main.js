@@ -12604,6 +12604,7 @@ function createComplianceDecisionTool(name, description) {
   } };
 }
 var COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+var AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
 var AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
 function readListField(value) {
   return Array.isArray(value) ? value : value === void 0 ? [] : [value];
@@ -13304,47 +13305,88 @@ async function readSessionProviderStop(sessionFile) {
   }
 }
 async function readBoundAuditorKnownFailure(sessionFile) {
+  let parentEntries;
   try {
-    const parentEntries = await readBoundSessionEntries(sessionFile);
-    const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
-    if (parentId === void 0) return void 0;
-    let latestParentUserIndex = -1;
-    for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
-      if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
-        latestParentUserIndex = i;
-        break;
-      }
+    parentEntries = await readBoundSessionEntries(sessionFile);
+  } catch (error) {
+    if (isMissingPathError2(error)) return void 0;
+    throw sessionReadFailure(error, "failed to read parent session for auditor binding");
+  }
+  const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
+  if (parentId === void 0) return void 0;
+  let latestParentUserIndex = -1;
+  for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
+    if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
+      latestParentUserIndex = i;
+      break;
     }
-    const childDirectory = join7(dirname5(sessionFile), "auditor-roles");
-    const files = (await readdir3(childDirectory)).filter((file) => file.endsWith(".jsonl")).sort().reverse();
-    for (const file of files) {
-      const entries = await readBoundSessionEntries(join7(childDirectory, file));
-      const header = entries.find((entry) => entry.type === "session");
-      if (!isRecord4(header) || header.parentSession !== sessionFile) continue;
-      for (let i = entries.length - 1; i >= 0; i -= 1) {
-        const entry = entries[i];
-        if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord4(entry.data)) continue;
-        const parent = isRecord4(entry.data.parent) ? entry.data.parent : void 0;
-        const failure = isRecord4(entry.data.failure) ? entry.data.failure : void 0;
-        if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || failure?.cause !== "provider") continue;
-        const attemptEntryId = typeof parent.attemptEntryId === "string" ? parent.attemptEntryId : void 0;
-        const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((parentEntry) => parentEntry.id === attemptEntryId);
-        if (attemptEntryIndex < 0 || attemptEntryIndex < latestParentUserIndex) continue;
-        const identity = isRecord4(failure.identity) ? failure.identity : void 0;
-        return {
-          cause: "provider",
-          ...identity === void 0 ? {} : { identity: {
-            ...typeof identity.name === "string" ? { name: identity.name } : {},
-            ...typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}
-          } },
-          ...typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {},
-          ...isRecord4(failure.details) ? { details: failure.details } : {}
-        };
-      }
+  }
+  const childDirectory = join7(dirname5(sessionFile), "auditor-roles");
+  let names;
+  try {
+    names = await readdir3(childDirectory);
+  } catch (error) {
+    if (isMissingPathError2(error)) return void 0;
+    throw sessionReadFailure(error, "failed to read bound auditor session directory");
+  }
+  for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
+    let entries;
+    try {
+      entries = await readBoundSessionEntries(join7(childDirectory, file));
+    } catch (error) {
+      throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
-    return void 0;
-  } catch {
-    return void 0;
+    const header = entries.find((entry) => entry.type === "session");
+    if (!isRecord4(header) || header.parentSession !== sessionFile) continue;
+    const bindingEntry = entries.find((entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE);
+    const bindingParent = isRecord4(bindingEntry?.data) && isRecord4(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
+    const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
+    const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
+    if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
+    const stop = extractSessionProviderStop(entries);
+    if (stop === void 0) continue;
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const entry = entries[i];
+      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord4(entry.data)) continue;
+      const parent = isRecord4(entry.data.parent) ? entry.data.parent : void 0;
+      const failure = isRecord4(entry.data.failure) ? entry.data.failure : void 0;
+      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider") continue;
+      const identity = isRecord4(failure.identity) ? failure.identity : void 0;
+      return {
+        cause: "provider",
+        ...identity === void 0 ? {} : { identity: {
+          ...typeof identity.name === "string" ? { name: identity.name } : {},
+          ...typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}
+        } },
+        ...typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {},
+        ...isRecord4(failure.details) ? { details: failure.details } : {}
+      };
+    }
+    const primary = knownFailureFromProviderStop(stop);
+    return {
+      ...primary,
+      details: {
+        ...stop.provider === void 0 ? {} : { provider: stop.provider },
+        ...stop.model === void 0 ? {} : { model: stop.model },
+        secondaryEvidence: "unavailable"
+      }
+    };
+  }
+  return void 0;
+}
+async function resolveAuditedRunnerKnownFailure(input) {
+  if (input.runner !== void 0) return input.runner;
+  const parentStop = await readSessionProviderStop(input.sessionFile);
+  if (parentStop !== void 0) return knownFailureFromProviderStop(parentStop);
+  try {
+    return await readBoundAuditorKnownFailure(input.sessionFile) ?? input.credential;
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
+    return {
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name
+    };
   }
 }
 function isRecord4(value) {
@@ -15576,13 +15618,12 @@ async function dispatchAdmittedJudge(input) {
         terminal: auditIncomplete
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const auditorFailure = await readBoundAuditorKnownFailure(admitted.sessionFile);
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? auditorFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure(
       admitted,
       {
@@ -16385,13 +16426,12 @@ async function dispatchAdmittedDoctor(input) {
         terminal: auditIncomplete
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const auditorFailure = await readBoundAuditorKnownFailure(admitted.sessionFile);
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? auditorFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure4(
       admitted,
       {
@@ -16662,13 +16702,12 @@ async function dispatchAdmittedFixer(input) {
         terminal: auditIncomplete
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const auditorFailure = await readBoundAuditorKnownFailure(admitted.sessionFile);
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? auditorFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure5(
       admitted,
       {
@@ -17453,13 +17492,12 @@ async function dispatchAdmittedReviewer(input) {
         terminal: auditIncomplete
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const auditorFailure = await readBoundAuditorKnownFailure(admitted.sessionFile);
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? auditorFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure7(
       admitted,
       {

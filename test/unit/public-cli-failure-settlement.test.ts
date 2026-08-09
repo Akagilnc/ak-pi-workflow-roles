@@ -2490,10 +2490,50 @@ test("retained auditor failure is bound to the latest parent resume attempt", as
     await writeFile(sessionFile, parentEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
     const childEntries = [
       { type: "session", id: "child-session", parentSession: sessionFile },
+      { type: "custom", customType: "ak_auditor_parent_attempt_binding", data: { version: 1, parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-old" } } },
+      { type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "stale native failure", provider: "xai", model: "audit-model" } },
       { type: "custom", customType: "ak_auditor_compliance_failure", data: { parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-old" }, failure: { cause: "provider", diagnostic: "stale auditor failure" } } },
     ];
     await writeFile(join(childDir, "child.jsonl"), childEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
     assert.equal(await readBoundAuditorKnownFailure(sessionFile), undefined);
+  });
+});
+
+test("bound auditor assistant supplies primary when secondary enrichment is absent", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "parent.jsonl");
+    const childDir = join(sessionDir, "auditor-roles");
+    await mkdir(childDir, { recursive: true });
+    await writeFile(sessionFile, [
+      { type: "session", id: "parent-session" },
+      { type: "message", id: "user-current", message: { role: "user" } },
+      { type: "message", id: "attempt-current", message: { role: "assistant" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    await writeFile(join(childDir, "child.jsonl"), [
+      { type: "session", id: "child-session", parentSession: sessionFile },
+      { type: "custom", customType: "ak_auditor_parent_attempt_binding", data: { version: 1, parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-current" } } },
+      { type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "WebSocket error", provider: "xai", model: "audit-model" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    assert.deepEqual(await readBoundAuditorKnownFailure(sessionFile), {
+      cause: "provider",
+      identity: { name: "ProviderStopError", code: "xai" },
+      diagnostic: "WebSocket error",
+      details: { provider: "xai", model: "audit-model", secondaryEvidence: "unavailable" },
+    });
+  });
+});
+
+test("bound auditor reader propagates malformed discovered JSONL", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "parent.jsonl");
+    const childDir = join(sessionDir, "auditor-roles");
+    await mkdir(childDir, { recursive: true });
+    await writeFile(sessionFile, JSON.stringify({ type: "session", id: "parent-session" }) + "\n");
+    await writeFile(join(childDir, "child.jsonl"), "{malformed\n");
+    await assert.rejects(readBoundAuditorKnownFailure(sessionFile), (error: unknown) =>
+      error instanceof SyntaxError && (error as Error & { knownCause?: string }).knownCause === "session");
   });
 });
 
