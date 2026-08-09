@@ -26,7 +26,8 @@ import {
   selectNavigatorCandidate,
   subjectPath,
 } from "../../src/navigator-attendance.ts";
-import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { activationBookDirectory, resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
@@ -113,6 +114,7 @@ async function attendance(path: string, harness: ReturnType<typeof sessionHarnes
     context: context(), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28", sessionDir: "/repo/.ak/work/issues/28/runs/navigator/session",
     subject: "Fix issue 28", authority: "owner decision",
     loadSoul: async () => "route judgment",
+    loadRoutePlaybook: async () => "arbitrary advisory prose",
     loadRoleHelp,
     createSession: harness.factory,
     modelSettingPath: path,
@@ -734,14 +736,16 @@ test("settlement decoration carries recommendation only; unavailable and no-advi
 });
 
 test("session placement is stable, colocated, and isolates ad hoc subjects", async () => {
-  const base = { cwd: "/repo", sessionManager: { getSessionDir: () => "", getSessionId: () => "x" } } as never;
+  const repository = process.cwd();
+  const base = { cwd: repository, sessionManager: { getSessionDir: () => "", getSessionId: () => "x" } } as never;
+  const book = activationBookDirectory(resolveActivationLedgerHome(), resolveBookKeyFromGit(repository));
   const issue = subjectPath("/repo/.ak/work/issues/28/runs/one/session", "/repo");
   const relativeIssue = subjectPath(".ak/work/issues/28/runs/two/session", "/repo");
   assert.equal(issue, "/repo/.ak/work/issues/28");
   assert.equal(relativeIssue, issue);
-  assert.equal(navigatorSessionDirectory(base, issue), "/repo/.ak/work/issues/28/runs/navigator");
+  assert.equal(navigatorSessionDirectory(base, issue).startsWith(join(book, "navigator")), true);
   const issueVariant = navigatorSessionDirectory(base, `${issue}#ad-hoc-subject`);
-  assert.equal(issueVariant.startsWith("/repo/.ak/work/issues/28/runs/navigator/"), true);
+  assert.equal(issueVariant.startsWith(join(book, "navigator")), true);
   assert.notEqual(issueVariant, navigatorSessionDirectory(base, `${issue}#other-subject`));
   const first = navigatorSessionDirectory(base, "/repo/task-a.md");
   const firstRelative = navigatorSessionDirectory(base, subjectPath("task-a.md", "/repo"));
@@ -771,8 +775,8 @@ test("session placement is stable, colocated, and isolates ad hoc subjects", asy
     "distinct work roots remain isolated",
   );
   assert.equal(navigatorSubjectKey("/repo/task.md", "task text"), "/repo/task.md");
-  assert.equal(first.startsWith("/repo/.ak/work/navigator/"), true);
-  assert.equal(first.includes("/navigator/navigator"), false);
+  assert.equal(first.startsWith(join(book, "navigator")), true);
+  assert.equal(first.includes(join(".ak", "work", "navigator")), false);
   // Machine-ledger session transport is not work identity (ADR 0048).
   // Ordinary repo cwd with no explicit work root falls back to cwd/.ak/work,
   // same as empty/in-memory sessionDir — never the per-invocation ledger path.
@@ -823,12 +827,14 @@ test("session placement is stable, colocated, and isolates ad hoc subjects", asy
       // Mixed lexical/physical must still classify as ledger and keep issue subject.
       assert.equal(subjectPath(session, issue), issue);
       assert.equal(subjectPath(realSession, issue), issue);
-      assert.equal(
-        navigatorSessionDirectory(
-          { cwd: issue, sessionManager: { getSessionDir: () => realSession } } as never,
-        ),
-        join(issue, "runs", "navigator"),
+      const lexicalPlacement = navigatorSessionDirectory(
+        { cwd: repository, sessionManager: { getSessionDir: () => session } } as never,
       );
+      const physicalPlacement = navigatorSessionDirectory(
+        { cwd: repository, sessionManager: { getSessionDir: () => realSession } } as never,
+      );
+      assert.equal(physicalPlacement, lexicalPlacement);
+      assert.equal(physicalPlacement.startsWith(join(activationBookDirectory(resolveActivationLedgerHome(), resolveBookKeyFromGit(repository)), "navigator")), true);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -837,11 +843,11 @@ test("session placement is stable, colocated, and isolates ad hoc subjects", asy
   })();
   assert.equal(
     navigatorSessionDirectory(
-      { cwd: "/repo", sessionManager: { getSessionDir: () => ledgerSession } } as never,
+      { cwd: repository, sessionManager: { getSessionDir: () => ledgerSession } } as never,
     ),
     navigatorSessionDirectory(
-      { cwd: "/repo", sessionManager: { getSessionDir: () => "" } } as never,
-      "/repo/.ak/work",
+      { cwd: repository, sessionManager: { getSessionDir: () => "" } } as never,
+      subjectPath("", repository),
     ),
   );
   // Typed provenance (absorbed from standalone provenance carrier).

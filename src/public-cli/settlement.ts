@@ -1525,6 +1525,9 @@ function parseNavigatorAttendanceDetails(
   details: Record<string, unknown>,
 ): TerminalNavigatorFact {
   const disposition = details.disposition;
+  const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string"
+    ? { advisoryDiagnostic: details.routePlaybookReadFailure }
+    : {};
   if (disposition === "recommendation") {
     const next = details.next;
     if (!isRecord(next) || typeof next.role !== "string") {
@@ -1544,6 +1547,7 @@ function parseNavigatorAttendanceDetails(
           }))
       : undefined;
     return recommendationNavigatorFact({
+      ...advisoryDiagnostic,
       next: {
         role: next.role,
         phase: navigatorPhaseValue(next.phase),
@@ -1558,6 +1562,7 @@ function parseNavigatorAttendanceDetails(
   if (disposition === "unavailable") {
     return {
       disposition: "unavailable",
+      ...advisoryDiagnostic,
       source:
         typeof details.unavailableSource === "string"
           ? details.unavailableSource
@@ -1570,7 +1575,10 @@ function parseNavigatorAttendanceDetails(
   }
   // arrival and legacy silence both mean affirmative lawful no next-role advice.
   if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
-    return { disposition: "no-advice" };
+    return {
+      disposition: "no-advice",
+      ...advisoryDiagnostic,
+    };
   }
   return {
     disposition: "unavailable",
@@ -3386,19 +3394,24 @@ function redactNavigatorFactForPublicTerminal(
   navigator: TerminalNavigatorFact,
   runId: string,
 ): TerminalNavigatorFact {
+  const advisoryDiagnostic = navigator.advisoryDiagnostic === undefined
+    ? {}
+    : { advisoryDiagnostic: redactExactRunId(navigator.advisoryDiagnostic, runId) };
   if (navigator.disposition === "recommendation") {
     return {
       ...navigator,
+      ...advisoryDiagnostic,
       reason: redactExactRunId(navigator.reason, runId),
     };
   }
   if (navigator.disposition === "unavailable") {
     return {
       ...navigator,
+      ...advisoryDiagnostic,
       reason: redactExactRunId(navigator.reason, runId),
     };
   }
-  return navigator;
+  return { ...navigator, ...advisoryDiagnostic };
 }
 
 /**

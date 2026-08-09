@@ -17,7 +17,12 @@ import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { createNavigatorAttendance, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
+import {
+  createNavigatorAttendance,
+  type NavigatorEvent,
+  type NavigatorPreparationSession,
+} from "../../src/navigator-attendance.ts";
+import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
 import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
 import {
   createCoderRoleRuntime,
@@ -1488,6 +1493,7 @@ test(
     t.mock.timers.enable({ apis: ["setTimeout"] });
     assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
 
+    const routePlaybookCause = "ROUTEBOOK_FAILED_BEFORE_HELD_PROMPT";
     const modelRoot = await mkdtemp(join(tmpdir(), "ak-judge-grace-model-"));
     const modelSettingPath = join(modelRoot, "navigator-model.json");
     await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
@@ -1529,6 +1535,9 @@ test(
             sessionDir: join(modelRoot, "navigator-session"),
             modelSettingPath,
             loadSoul: async () => "route law",
+            loadRoutePlaybook: async () => {
+              throw new Error(routePlaybookCause);
+            },
             loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
             createSession: async () => ({
               async prompt() {
@@ -1577,17 +1586,14 @@ test(
 
         await harness.handlers.get("agent_settled")?.({}, ctx);
         assert.equal(sentMessages.length, 1);
-        const details = sentMessages[0]?.details as {
-          disposition?: string;
-          unavailableReason?: string;
-          unavailableSource?: string;
-          invocationId?: string;
-        };
+        const details = sentMessages[0]?.details as NavigatorEvent;
         assert.equal(details.disposition, "unavailable");
         assert.equal(details.invocationId, "post-role-grace-timeout");
         assert.equal(typeof details.unavailableReason, "string");
         assert.ok(String(details.unavailableReason).length > 0);
         assert.equal(details.unavailableSource, "unknown");
+        assert.equal(details.unavailableCause, "unknown");
+        assert.equal(details.routePlaybookReadFailure, routePlaybookCause);
 
         // Late preparation completion must not overwrite the grace unavailable fact.
         releasePreparation();
@@ -1606,18 +1612,39 @@ test(
         );
 
         // Session attendance fact → typed Terminal navigator (settlement owner, not presentation).
+        const terminalInvocationId = "019f8c2a-7b3e-7d11-8a4f-1c2d3e4f5a6b";
         const navigator = extractNavigatorFact([
+          {
+            type: "custom",
+            customType: NAVIGATOR_INVOCATION_ENTRY,
+            data: {
+              invocationId: terminalInvocationId,
+              role: "judge",
+              phase: null,
+              subjectKey: details.subjectKey,
+            },
+          },
+          {
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolName: JUDGE_OUTPUT_TOOL_NAME,
+              isError: false,
+              details: { judgeStatus: "converged" },
+            },
+          },
           {
             type: "custom_message",
             customType: "ak-navigator-attendance",
-            message: { details },
+            message: { details: { ...details, invocationId: terminalInvocationId } },
           },
-        ]);
+        ] as never);
         assert.equal(navigator.disposition, "unavailable");
         if (navigator.disposition === "unavailable") {
           assert.equal(navigator.source, "unknown");
           assert.equal(typeof navigator.reason, "string");
           assert.ok(navigator.reason.length > 0);
+          assert.equal(navigator.advisoryDiagnostic, routePlaybookCause);
         }
         const terminal = {
           roleOutcome: {

@@ -10,15 +10,7 @@ import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 
 export default function mergerBaselineProvider(pi: ExtensionAPI): void {
   const mergeCommitId = process.env.AK_MERGER_FIXTURE_COMMIT!;
-  const mutation = process.env.AK_MERGER_FIXTURE_MUTATION ?? "unchanged";
   const residual = process.env.AK_MERGER_FIXTURE_RESIDUAL;
-  const mutate = mutation === "new"
-    ? " && printf 'new\\n' > .ak/work/new.jsonl"
-    : mutation === "changed"
-      ? " && printf 'changed\\n' > .ak/work/opening.jsonl"
-      : mutation === "deleted"
-        ? " && rm .ak/work/opening.jsonl"
-        : "";
   const faux = fauxProvider({
     api: "ak-merger-baseline",
     provider: "ak-merger-baseline",
@@ -32,7 +24,7 @@ export default function mergerBaselineProvider(pi: ExtensionAPI): void {
   };
   faux.setResponses([
     fauxAssistantMessage(
-      fauxToolCall("bash", { command: `git reset --hard ${mergeCommitId}${mutate}` }, { id: "resolve" }),
+      fauxToolCall("bash", { command: `git reset --hard ${mergeCommitId}` }, { id: "resolve" }),
       { stopReason: "toolUse" },
     ),
     fauxAssistantMessage(
