@@ -453,7 +453,7 @@ function validateRuntimeReviewerReceipt(output) {
       const report = read(reports, axis);
       if (status === "successful" && (report === void 0 || materialized === void 0))
         throw new Error("Successful Reviewer outcome lacks report or materialization evidence");
-      if (status === "failed" && (report !== void 0 || typeof read(outcome, "diagnostic") !== "string" || read(outcome, "diagnostic").trim() === "")) throw new Error("Failed Reviewer outcome requires a diagnostic and cannot bind a report");
+      if (status === "failed" && report !== void 0) throw new Error("Failed Reviewer outcome cannot bind a report");
       if (materialized !== void 0) {
         const materialEntries = read(materialized, "entries");
         if (!isRecord(materialized) || read(materialized, "leg") !== axis || typeof read(materialized, "workspaceIdentity") !== "string" || read(materialized, "workspaceIdentity") === "" || read(materialized, "manifestSha256") !== read(bundle, "manifestSha256") || !Array.isArray(materialEntries) || materialEntries.length !== entries.length || materialEntries.some((entry, entryIndex) => {
