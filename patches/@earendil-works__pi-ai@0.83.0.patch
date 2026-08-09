@@ -1,13 +1,12 @@
 diff --git a/dist/api/openai-codex-responses.js b/dist/api/openai-codex-responses.js
-index bb9fa794ee6cb9f73149dda5733b286941bbb550..f7217da1b379b9503a279bfbd4c6199adddf8264 100644
+index bb9fa794ee6cb9f73149dda5733b286941bbb550..23bfb98c1ac5a50c28de5a1bbca55a310b0977c5 100644
 --- a/dist/api/openai-codex-responses.js
 +++ b/dist/api/openai-codex-responses.js
-@@ -6,6 +6,35 @@ function loadNodeOs() {
+@@ -6,6 +6,34 @@ function loadNodeOs() {
  }
  // NEVER convert to top-level runtime imports - breaks browser/Vite builds
  const _os = loadNodeOs();
-+// [ak-patch] codex fast switch (file-content gated, replaces the old
-+// PI_TEMP_FAST_MODE env gate). Switch source of truth: the CONTENT of
++// [ak-patch] codex fast switch. Source of truth: the CONTENT of
 +// ~/.pi-codex-fast. Enabled only when the ENTIRE file matches
 +// /^\s*fast_mode\s*=\s*on\s*$/; anything else -- missing file, empty file,
 +// `fast_mode = off`, extra/conflicting content, unreadable file -- keeps
