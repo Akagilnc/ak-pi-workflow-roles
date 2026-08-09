@@ -13561,7 +13561,7 @@ function boundErroredToolCandidate(entries, resultIndex, message, toolName) {
   if (message.toolName !== toolName || message.isError !== true) return void 0;
   const bound = boundRoleToolCallForResult(entries, resultIndex, message, toolName);
   const diagnostic = toolResultText(message);
-  return bound === void 0 || diagnostic === "" ? void 0 : { candidate: bound.candidate, diagnostic };
+  return bound === void 0 || diagnostic === "" ? void 0 : { candidate: bound.candidate, diagnostic, callIndex: bound.callIndex };
 }
 var COLLECTOR_INFRASTRUCTURE_TOOLS = /* @__PURE__ */ new Set([
   COLLECTOR_OBSERVE_TOOL,
@@ -15075,8 +15075,14 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
       if (message?.role !== "toolResult") continue;
       const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
       if (residual === void 0) continue;
+      const callMessage = entries[residual.callIndex]?.message;
+      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content) ? callMessage.content.filter((part) => isRecord4(part) && part.type === "toolCall") : [];
+      const attemptId = isRecord4(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
+      if (calls.length !== 1 || calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME || !attemptId.readable || attemptId.value !== admitted.runId) {
+        continue;
+      }
       try {
-        validateMergerOutput(residual.candidate);
+        validateMergerOutput(residual.candidate, admitted.runId);
       } catch {
         return {
           roleOutcome: buildResidualIncompleteTerminalOutcome({

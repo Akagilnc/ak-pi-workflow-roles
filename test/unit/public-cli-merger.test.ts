@@ -762,7 +762,7 @@ test("public Merger retains malformed output candidate as typed incomplete", asy
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     await materializeConflictedRepo(project);
-    const candidate = { status: "unknown-shape", report: 7 };
+    const candidate = { status: "unknown-shape", attemptId: "run-merger-residual-182", report: 7 };
     const result = await runAkRole(["merger", "--project", project, "merge"], {
       packageRoot, home, cwd: project,
       credentials: { "openai-codex": true, xai: true },

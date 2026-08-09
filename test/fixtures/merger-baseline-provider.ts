@@ -11,6 +11,7 @@ import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 export default function mergerBaselineProvider(pi: ExtensionAPI): void {
   const mergeCommitId = process.env.AK_MERGER_FIXTURE_COMMIT!;
   const mutation = process.env.AK_MERGER_FIXTURE_MUTATION ?? "unchanged";
+  const residual = process.env.AK_MERGER_FIXTURE_RESIDUAL;
   const mutate = mutation === "new"
     ? " && printf 'new\\n' > .ak/work/new.jsonl"
     : mutation === "changed"
@@ -23,18 +24,24 @@ export default function mergerBaselineProvider(pi: ExtensionAPI): void {
     provider: "ak-merger-baseline",
     tokenSize: { min: 1000, max: 1000 },
   });
+  const output = {
+    status: "completed",
+    attemptId: residual === "wrong-attempt" ? "other-attempt" : "run-merger-baseline-public",
+    report: "Resolved the ordinary conflict.",
+    mergeCommitId: residual === undefined ? mergeCommitId : "malformed",
+  };
   faux.setResponses([
     fauxAssistantMessage(
       fauxToolCall("bash", { command: `git reset --hard ${mergeCommitId}${mutate}` }, { id: "resolve" }),
       { stopReason: "toolUse" },
     ),
     fauxAssistantMessage(
-      fauxToolCall(MERGER_OUTPUT_TOOL_NAME, {
-        status: "completed",
-        attemptId: "run-merger-baseline-public",
-        report: "Resolved the ordinary conflict.",
-        mergeCommitId,
-      }, { id: "settle" }),
+      [
+        fauxToolCall(MERGER_OUTPUT_TOOL_NAME, output, { id: "settle" }),
+        ...(residual === "sibling"
+          ? [fauxToolCall("read", { path: "same.txt" }, { id: "sibling" })]
+          : []),
+      ],
       { stopReason: "toolUse" },
     ),
     fauxAssistantMessage("Unable to settle the rejected completion.", { stopReason: "stop" }),
