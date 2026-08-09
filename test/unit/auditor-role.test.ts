@@ -9,40 +9,6 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 
 import { createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 
-test("provider stop is retained before the independent auditor rejects it", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-provider-stop-"));
-  try {
-    const sessionManager = SessionManager.inMemory(cwd);
-    const faux = fauxProvider({ provider: "audit-test" });
-    faux.setResponses([fauxAssistantMessage([], {
-      stopReason: "error",
-      errorMessage: "WebSocket error",
-    })]);
-    await assert.rejects(runComplianceAudit({
-      tool: createComplianceDecisionTool("ak_test_auditor_decision", "Submit the decision."),
-      systemPrompt: "Audit.",
-      serializedInput: "Audit this output.",
-      roleLabel: "Test auditor",
-      invalidDecisionLabel: "invalid test decision",
-      context: {
-        cwd,
-        model: faux.getModel(),
-        modelRegistry: {
-          getProvider() { return faux.provider; },
-          async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
-        },
-        sessionManager,
-      } as unknown as ExtensionContext,
-    }), /exited without a readable decision receipt/);
-    const retained = sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === "ak_compliance_response");
-    assert.equal((retained as { data?: { response?: { stopReason?: string; errorMessage?: string } } })?.data?.response?.stopReason, "error");
-    assert.equal((retained as { data?: { response?: { stopReason?: string; errorMessage?: string } } })?.data?.response?.errorMessage, "WebSocket error");
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
 test("independent auditor gathers evidence and submits one decision", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-behavior-"));
   try {

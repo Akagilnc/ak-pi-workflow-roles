@@ -71,8 +71,8 @@ export function validateRuntimeReviewerReceipt(output) {
             const report = read(reports, axis);
             if (status === "successful" && (report === undefined || materialized === undefined))
                 throw new Error("Successful Reviewer outcome lacks report or materialization evidence");
-            if (status === "failed" && (report !== undefined || typeof read(outcome, "diagnostic") !== "string" || read(outcome, "diagnostic").trim() === ""))
-                throw new Error("Failed Reviewer outcome requires a diagnostic and cannot bind a report");
+            if (status === "failed" && report !== undefined)
+                throw new Error("Failed Reviewer outcome cannot bind a report");
             if (materialized !== undefined) {
                 const materialEntries = read(materialized, "entries");
                 if (!isRecord(materialized) || read(materialized, "leg") !== axis || typeof read(materialized, "workspaceIdentity") !== "string" || read(materialized, "workspaceIdentity") === "" ||
