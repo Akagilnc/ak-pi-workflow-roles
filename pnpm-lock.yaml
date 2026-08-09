@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@earendil-works/pi-ai@0.83.0': 651065a782cf5bff87d2ca4f6e51eaa16bed87e40380ae8deae767876bd37933
+  '@earendil-works/pi-ai@0.83.0': 3ea26c2f6bd8e317e050f7217e073a041bc8424989558f8ba06f6ce20f3cc197
 
 importers:
 
@@ -13,7 +13,7 @@ importers:
     devDependencies:
       '@earendil-works/pi-ai':
         specifier: 0.83.0
-        version: 0.83.0(patch_hash=651065a782cf5bff87d2ca4f6e51eaa16bed87e40380ae8deae767876bd37933)(ws@8.21.1)(zod@4.4.3)
+        version: 0.83.0(patch_hash=3ea26c2f6bd8e317e050f7217e073a041bc8424989558f8ba06f6ce20f3cc197)(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
         specifier: 0.83.0
         version: 0.83.0(ws@8.21.1)(zod@4.4.3)
@@ -1132,7 +1132,7 @@ snapshots:
 
   '@earendil-works/pi-agent-core@0.83.0(ws@8.21.1)(zod@4.4.3)':
     dependencies:
-      '@earendil-works/pi-ai': 0.83.0(patch_hash=651065a782cf5bff87d2ca4f6e51eaa16bed87e40380ae8deae767876bd37933)(ws@8.21.1)(zod@4.4.3)
+      '@earendil-works/pi-ai': 0.83.0(patch_hash=3ea26c2f6bd8e317e050f7217e073a041bc8424989558f8ba06f6ce20f3cc197)(ws@8.21.1)(zod@4.4.3)
       diff: 8.0.4
       ignore: 7.0.5
       typebox: 1.3.7
@@ -1145,7 +1145,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.83.0(patch_hash=651065a782cf5bff87d2ca4f6e51eaa16bed87e40380ae8deae767876bd37933)(ws@8.21.1)(zod@4.4.3)':
+  '@earendil-works/pi-ai@0.83.0(patch_hash=3ea26c2f6bd8e317e050f7217e073a041bc8424989558f8ba06f6ce20f3cc197)(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.91.1(zod@4.4.3)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
@@ -1169,7 +1169,7 @@ snapshots:
   '@earendil-works/pi-coding-agent@0.83.0(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@earendil-works/pi-agent-core': 0.83.0(ws@8.21.1)(zod@4.4.3)
-      '@earendil-works/pi-ai': 0.83.0(patch_hash=651065a782cf5bff87d2ca4f6e51eaa16bed87e40380ae8deae767876bd37933)(ws@8.21.1)(zod@4.4.3)
+      '@earendil-works/pi-ai': 0.83.0(patch_hash=3ea26c2f6bd8e317e050f7217e073a041bc8424989558f8ba06f6ce20f3cc197)(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-tui': 0.83.0
       '@silvia-odwyer/photon-node': 0.3.4
       chalk: 5.6.2
