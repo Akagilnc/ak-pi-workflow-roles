@@ -788,6 +788,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     isPreparing(): boolean {
       return preparation !== undefined || sessionReady !== undefined;
     },
+    knownRoutePlaybookReadFailure(): string | undefined {
+      return routePlaybookReadFailure;
+    },
     settle(settlement: NavigatorSettlement): Promise<void> {
       const next = settlementTail.then(() => settleOnce(settlement));
       // Contract: README.md#Navigator-attendance — rejected attendance settlements are drained only to serialize later attendance; retain the exact rejection for the caller/audit path.

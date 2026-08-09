@@ -1504,6 +1504,9 @@ function parseNavigatorAttendanceDetails(
   details: Record<string, unknown>,
 ): TerminalNavigatorFact {
   const disposition = details.disposition;
+  const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string"
+    ? { advisoryDiagnostic: details.routePlaybookReadFailure }
+    : {};
   if (disposition === "recommendation") {
     const next = details.next;
     if (!isRecord(next) || typeof next.role !== "string") {
@@ -1523,9 +1526,7 @@ function parseNavigatorAttendanceDetails(
           }))
       : undefined;
     return recommendationNavigatorFact({
-      ...(typeof details.routePlaybookReadFailure === "string"
-        ? { advisoryDiagnostic: details.routePlaybookReadFailure }
-        : {}),
+      ...advisoryDiagnostic,
       next: {
         role: next.role,
         phase: navigatorPhaseValue(next.phase),
@@ -1540,9 +1541,7 @@ function parseNavigatorAttendanceDetails(
   if (disposition === "unavailable") {
     return {
       disposition: "unavailable",
-      ...(typeof details.routePlaybookReadFailure === "string"
-        ? { advisoryDiagnostic: details.routePlaybookReadFailure }
-        : {}),
+      ...advisoryDiagnostic,
       source:
         typeof details.unavailableSource === "string"
           ? details.unavailableSource
@@ -1557,9 +1556,7 @@ function parseNavigatorAttendanceDetails(
   if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
     return {
       disposition: "no-advice",
-      ...(typeof details.routePlaybookReadFailure === "string"
-        ? { advisoryDiagnostic: details.routePlaybookReadFailure }
-        : {}),
+      ...advisoryDiagnostic,
     };
   }
   return {

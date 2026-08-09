@@ -560,6 +560,9 @@ ${helpContext}
     isPreparing() {
       return preparation !== void 0 || sessionReady !== void 0;
     },
+    knownRoutePlaybookReadFailure() {
+      return routePlaybookReadFailure;
+    },
     settle(settlement) {
       const next = settlementTail.then(() => settleOnce(settlement));
       settlementTail = next.catch((error) => {
