@@ -9329,13 +9329,13 @@ async function runExplicitInternalActivation(options) {
 // src/public-cli/invocation.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import {
-  lstat as lstat2,
+  lstat,
   mkdir as mkdir2,
-  readFile as readFile5,
+  readFile as readFile4,
   realpath as realpath2,
   writeFile as writeFile2
 } from "node:fs/promises";
-import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve5, sep as sep3 } from "node:path";
+import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve4, sep as sep3 } from "node:path";
 
 // src/activation-ledger-topology.ts
 import {
@@ -10097,8 +10097,6 @@ var REVIEWER_PREREQUISITES = [
 
 // src/merger-git-state.ts
 import { execFile } from "node:child_process";
-import { lstat, readFile as readFile4, readlink } from "node:fs/promises";
-import { resolve as resolve4 } from "node:path";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
 async function git(cwd, args) {
@@ -10126,47 +10124,7 @@ async function unmerged(cwd) {
   }
   return [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
 }
-async function residualSnapshot(cwd, activePaths) {
-  const raw = exactUtf8(await git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]), "Git worktree status");
-  if (raw.length > 0 && !raw.endsWith("\0")) throw new Error("Git worktree status is not NUL terminated");
-  const fields = raw.split("\0");
-  const records2 = [];
-  for (let cursor = 0; cursor < fields.length - 1; ) {
-    const field = fields[cursor++];
-    if (field.length < 4 || field[2] !== " ") throw new Error("Git returned a malformed worktree status row");
-    const names = [field.slice(3)];
-    if (field[0] === "R" || field[0] === "C" || field[1] === "R" || field[1] === "C") names.push(fields[cursor++]);
-    if (!names.some((path) => activePaths.has(path))) records2.push({ status: field.slice(0, 2), names });
-  }
-  return Promise.all(records2.map(async (record3) => ({
-    status: record3.status,
-    paths: await Promise.all(record3.names.map(async (path) => {
-      const index = await git(cwd, ["ls-files", "--stage", "-z", "--", path]);
-      try {
-        const stat2 = await lstat(resolve4(cwd, path));
-        const type = stat2.isFile() ? "file" : stat2.isSymbolicLink() ? "symlink" : stat2.isDirectory() ? "directory" : "other";
-        const bytes = stat2.isFile() ? await readFile4(resolve4(cwd, path)) : stat2.isSymbolicLink() ? Buffer.from(await readlink(resolve4(cwd, path))) : new Uint8Array();
-        return { path, index, mode: stat2.mode, type, bytes: new Uint8Array(bytes) };
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-        return { path, index, mode: 0, type: "missing", bytes: new Uint8Array() };
-      }
-    }))
-  })));
-}
-function sameSnapshot(left, right) {
-  if (left.length !== right.length) return false;
-  return left.every((record3, index) => {
-    const other = right[index];
-    return other !== void 0 && record3.status === other.status && record3.paths.length === other.paths.length && record3.paths.every((path, pathIndex) => {
-      const otherPath = other.paths[pathIndex];
-      return otherPath !== void 0 && path.path === otherPath.path && path.mode === otherPath.mode && path.type === otherPath.type && Buffer.from(path.index).equals(otherPath.index) && Buffer.from(path.bytes).equals(otherPath.bytes);
-    });
-  });
-}
 function createProductionMergerGitState(repositoryRoot = process.cwd()) {
-  let openingResidual;
-  let frozenActivePaths;
   return {
     async activeMerge() {
       const targetObjectId = line(await git(repositoryRoot, ["rev-parse", "--verify", "HEAD"]), "Git HEAD");
@@ -10186,13 +10144,7 @@ function createProductionMergerGitState(repositoryRoot = process.cwd()) {
       }
       const automaticMergeTreeId = line(automaticMergeTreeRaw, "Git automatic merge tree");
       if (!isFullGitObjectId(automaticMergeTreeId) || automaticMergeTreeId.length !== targetObjectId.length) throw new Error("Git automatic merge tree identity is unavailable or invalid");
-      const unmergedPaths = await unmerged(repositoryRoot);
-      if (openingResidual === void 0) {
-        const automaticMergePaths = nulPaths(await git(repositoryRoot, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--no-renames", targetObjectId, automaticMergeTreeId]), "Git active merge path delta");
-        frozenActivePaths = /* @__PURE__ */ new Set([...automaticMergePaths, ...unmergedPaths]);
-        openingResidual = await residualSnapshot(repositoryRoot, frozenActivePaths);
-      }
-      return { targetObjectId, sourceObjectId: mergeHeads[0], unmergedPaths, automaticMergeTreeId };
+      return { targetObjectId, sourceObjectId: mergeHeads[0], unmergedPaths: await unmerged(repositoryRoot), automaticMergeTreeId };
     },
     async completedMerge(mergeCommitId, automaticMergeTreeId) {
       if (!isFullGitObjectId(mergeCommitId) || !isFullGitObjectId(automaticMergeTreeId) || mergeCommitId.length !== automaticMergeTreeId.length) throw new Error("Merger completion object ID is invalid");
@@ -10200,13 +10152,12 @@ function createProductionMergerGitState(repositoryRoot = process.cwd()) {
       if (identity.length !== 2 || identity[0] !== mergeCommitId) throw new Error("Git merge completion identity drifted");
       const parentObjectIds = identity[1].split(" ").filter(Boolean);
       const currentHead = line(await git(repositoryRoot, ["rev-parse", "--verify", "HEAD"]), "Git HEAD");
-      if (openingResidual === void 0 || frozenActivePaths === void 0) throw new Error("Merger opening residual baseline was not captured");
-      const closingResidual = await residualSnapshot(repositoryRoot, frozenActivePaths);
+      const status = await git(repositoryRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
       const frozenTree = line(await git(repositoryRoot, ["rev-parse", "--verify", `${automaticMergeTreeId}^{tree}`]), "Git frozen automatic merge tree");
       if (frozenTree !== automaticMergeTreeId) throw new Error("Git frozen automatic merge tree identity drifted");
       const mergeTree = line(await git(repositoryRoot, ["rev-parse", "--verify", `${mergeCommitId}^{tree}`]), "Git completed merge tree");
       const resolutionChangedPaths = nulPaths(await git(repositoryRoot, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--no-renames", automaticMergeTreeId, mergeTree]), "Git resolution path delta");
-      return { mergeCommitId: currentHead, parentObjectIds, unmergedPaths: await unmerged(repositoryRoot), worktreeClean: sameSnapshot(openingResidual, closingResidual) && currentHead === mergeCommitId, resolutionChangedPaths };
+      return { mergeCommitId: currentHead, parentObjectIds, unmergedPaths: await unmerged(repositoryRoot), worktreeClean: status.byteLength === 0 && currentHead === mergeCommitId, resolutionChangedPaths };
     }
   };
 }
@@ -10418,10 +10369,10 @@ function parseFixerArgv(args) {
   };
 }
 async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
-  const absolute = isAbsolute3(sourcePath) ? sourcePath : resolve5(sourcePath);
+  const absolute = isAbsolute3(sourcePath) ? sourcePath : resolve4(sourcePath);
   let st;
   try {
-    st = await lstat2(absolute);
+    st = await lstat(absolute);
   } catch (error) {
     throw new CliUsageError(
       `attachment is not a readable regular file: ${sourcePath}`,
@@ -10433,7 +10384,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
     );
   }
-  const bytes = await readFile5(absolute);
+  const bytes = await readFile4(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename3(absolute)}`;
   const frozenPath = join4(destinationDir, name);
   await writeFile2(frozenPath, bytes);
@@ -10449,7 +10400,7 @@ async function admitJudgeInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve4(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
@@ -10540,7 +10491,7 @@ async function admitCoderInvocation(options) {
   if (options.phase !== "plan" && options.phase !== "apply") {
     throw new CliUsageError("coder phase must be plan or apply");
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve4(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
@@ -10630,7 +10581,7 @@ async function admitFixerInvocation(options) {
   if (options.phase !== "plan" && options.phase !== "apply") {
     throw new CliUsageError("fixer phase must be plan or apply");
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve4(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
@@ -10657,10 +10608,10 @@ async function admitFixerInvocation(options) {
   let prerequisites = Object.freeze([]);
   let prerequisitesPath;
   if (options.prerequisitesPath !== void 0) {
-    const absolutePrereq = isAbsolute3(options.prerequisitesPath) ? options.prerequisitesPath : resolve5(options.prerequisitesPath);
+    const absolutePrereq = isAbsolute3(options.prerequisitesPath) ? options.prerequisitesPath : resolve4(options.prerequisitesPath);
     let source;
     try {
-      source = await readFile5(absolutePrereq, "utf8");
+      source = await readFile4(absolutePrereq, "utf8");
     } catch (error) {
       throw new CliUsageError(
         `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
@@ -10956,7 +10907,7 @@ async function admitCollectorInvocation(options) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new CliUsageError(detail, { cause: error });
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve4(options.project ?? options.cwd);
   let repository;
   if (options.repo !== void 0) {
     try {
@@ -11176,7 +11127,7 @@ async function resolveDoctorCaseRunsPath(options) {
       "doctor --runs must be a project-relative path"
     );
   }
-  const resolved = resolve5(options.projectRoot, raw);
+  const resolved = resolve4(options.projectRoot, raw);
   if (resolved !== options.projectRoot && !pathContainedIn(options.projectRoot, resolved)) {
     throw new CliUsageError(
       "doctor --runs escapes the project root"
@@ -11215,7 +11166,7 @@ async function admitDoctorInvocation(options) {
       `doctor --issue must be a positive integer, got ${options.issueNumber}`
     );
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve4(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   let caseRunsPath;
@@ -11423,7 +11374,7 @@ async function admitReviewerInvocation(options) {
   if (options.baseRevision !== void 0 && options.baseRevision.trim() === "") {
     throw new CliUsageError("--base requires a nonempty revision");
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve4(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
@@ -11605,7 +11556,7 @@ async function admitMergerInvocation(options) {
   if (instruction.trim() === "") {
     throw new CliUsageError("merger requires a nonblank task instruction");
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve4(options.project ?? options.cwd);
   const derived = await deriveMergerEnvelopeFromActiveMerge(
     projectRoot,
     options.gitState ?? createProductionMergerGitState(projectRoot)
@@ -11734,7 +11685,7 @@ import { join as join9 } from "node:path";
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile6, realpath as realpath3 } from "node:fs/promises";
+import { readFile as readFile5, realpath as realpath3 } from "node:fs/promises";
 import { join as join5 } from "node:path";
 var PackagedMethodSkillUnavailableError = class extends Error {
   constructor(skillName, path, cause) {
@@ -11942,7 +11893,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const provenancePath = join5(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile6(provenancePath, "utf8");
+    provenanceRaw = await readFile5(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -11960,7 +11911,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
     const absolute = join5(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile6(absolute);
+      bytes = await readFile5(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -11976,7 +11927,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let raw;
   try {
     skillPath = await realpath3(skillPathConfigured);
-    raw = await readFile6(skillPath, "utf8");
+    raw = await readFile5(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -12029,7 +11980,7 @@ function observePackagedMethodSkillInvocation(text, expected) {
 }
 
 // src/public-cli/run-lifecycle.ts
-import { lstat as lstat3, open, readdir as readdir2, readFile as readFile7, unlink, writeFile as writeFile3 } from "node:fs/promises";
+import { lstat as lstat2, open, readdir as readdir2, readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
 var RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
@@ -12055,7 +12006,7 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readTypedHttp429Observation(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile7(typedProviderHttpPath(runDirectory), "utf8")
+      await readFile6(typedProviderHttpPath(runDirectory), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
@@ -12088,7 +12039,7 @@ async function writeRoleRunState(runDirectory, record3) {
 async function readRoleRunState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile7(join6(runDirectory, RUN_STATE_FILE), "utf8")
+      await readFile6(join6(runDirectory, RUN_STATE_FILE), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
@@ -12197,7 +12148,7 @@ async function markRunTerminal(runDirectory) {
 async function isSessionPrincipalAvailable(sessionFile) {
   if (sessionFile.trim() === "") return false;
   try {
-    const st = await lstat3(sessionFile);
+    const st = await lstat2(sessionFile);
     return st.isFile() && !st.isSymbolicLink();
   } catch {
     return false;
@@ -12300,7 +12251,7 @@ async function loadResumableRunRecord(home, runId) {
   let derived;
   try {
     const raw = JSON.parse(
-      await readFile7(run.admittedRequestPath, "utf8")
+      await readFile6(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       const record3 = raw;
@@ -12604,7 +12555,7 @@ async function peekRoleRunRole(home, runId) {
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { lstat as lstat4, mkdir as mkdir3, open as open2, readFile as readFile8, writeFile as writeFile4 } from "node:fs/promises";
+import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname5, join as join7 } from "node:path";
 
 // src/auditor-soul.ts
@@ -12802,7 +12753,7 @@ var COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 
 // src/work-subject-identity.ts
-import { resolve as resolve6 } from "node:path";
+import { resolve as resolve5 } from "node:path";
 function issueRoot(value) {
   const normalized = value.replaceAll("\\", "/");
   const marker = ".ak/work/issues/";
@@ -12812,7 +12763,7 @@ function issueRoot(value) {
   return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
 }
 function workIdentityFromCwd(cwd) {
-  const resolvedCwd = resolve6(cwd, ".");
+  const resolvedCwd = resolve5(cwd, ".");
   const cwdIssue = issueRoot(resolvedCwd);
   if (cwdIssue !== void 0) return cwdIssue;
   if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
@@ -12823,11 +12774,11 @@ function isMachineLedgerSessionPath(sessionPath) {
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
   if (sessionDir === "") {
-    return workIdentityFromCwd(cwd) ?? resolve6(cwd, ".ak/work");
+    return workIdentityFromCwd(cwd) ?? resolve5(cwd, ".ak/work");
   }
-  const resolvedSession = resolve6(cwd, sessionDir || ".ak/work");
+  const resolvedSession = resolve5(cwd, sessionDir || ".ak/work");
   if (isMachineLedgerSessionPath(resolvedSession)) {
-    return workIdentityFromCwd(cwd) ?? resolve6(cwd, ".ak/work");
+    return workIdentityFromCwd(cwd) ?? resolve5(cwd, ".ak/work");
   }
   const issue = issueRoot(resolvedSession);
   if (issue !== void 0) return issue;
@@ -13085,7 +13036,8 @@ function recommendationNavigatorFact(input) {
     next: input.next,
     reason: input.reason,
     command,
-    ...input.route === void 0 ? {} : { route: input.route }
+    ...input.route === void 0 ? {} : { route: input.route },
+    ...input.advisoryDiagnostic === void 0 ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }
   };
 }
 function formatTerminalResult(result2) {
@@ -13107,6 +13059,9 @@ function formatTerminalResult(result2) {
     lines.push(`fact	${encodeTerminalField(key)}	${encodeTerminalField(rendered)}`);
   }
   lines.push(`navigator	${result2.navigator.disposition}`);
+  if (result2.navigator.advisoryDiagnostic !== void 0) {
+    lines.push(`navigator-advisory	${encodeTerminalField(result2.navigator.advisoryDiagnostic)}`);
+  }
   if (result2.navigator.disposition === "recommendation") {
     lines.push(
       `next	${result2.navigator.next.role}	${result2.navigator.next.phase ?? "none"}`
@@ -13186,7 +13141,7 @@ function presentStructuralRejection(error, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile8(sessionFile, "utf8");
+    await readFile7(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError2(error)) return { state: "missing" };
@@ -13315,7 +13270,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile8(sessionFile, "utf8");
+  const text = await readFile7(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -13825,7 +13780,7 @@ function auditArtifactPublicationError(message, code) {
 }
 async function ensureAuditEvidenceDirectory(runDirectory) {
   const artifactsDir = join7(runDirectory, "artifacts");
-  const runStat = await lstat4(runDirectory);
+  const runStat = await lstat3(runDirectory);
   if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
     throw auditArtifactPublicationError(
       "audit evidence run directory is not a real directory",
@@ -13833,7 +13788,7 @@ async function ensureAuditEvidenceDirectory(runDirectory) {
     );
   }
   try {
-    const existing = await lstat4(artifactsDir);
+    const existing = await lstat3(artifactsDir);
     if (existing.isSymbolicLink()) {
       throw auditArtifactPublicationError(
         "audit evidence artifacts directory is a symlink",
@@ -13849,7 +13804,7 @@ async function ensureAuditEvidenceDirectory(runDirectory) {
   } catch (error) {
     if (!isMissingPathError2(error)) throw error;
     await mkdir3(artifactsDir, { recursive: true });
-    const created = await lstat4(artifactsDir);
+    const created = await lstat3(artifactsDir);
     if (created.isSymbolicLink() || !created.isDirectory()) {
       throw auditArtifactPublicationError(
         "audit evidence artifacts directory is not a real directory",
@@ -13863,7 +13818,7 @@ async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
   const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
   const evidencePath = join7(artifactsDir, "audit-incomplete.json");
   try {
-    const existing = await lstat4(evidencePath);
+    const existing = await lstat3(evidencePath);
     throw auditArtifactPublicationError(
       existing.isSymbolicLink() ? "audit evidence destination is a symlink" : "audit evidence destination collision",
       existing.isSymbolicLink() ? "ELOOP" : "EEXIST"
@@ -14039,6 +13994,7 @@ function navigatorAttendanceCorrelatedWithBoundMarker(details, attendanceIndex, 
 }
 function parseNavigatorAttendanceDetails(details) {
   const disposition = details.disposition;
+  const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string" ? { advisoryDiagnostic: details.routePlaybookReadFailure } : {};
   if (disposition === "recommendation") {
     const next = details.next;
     if (!isRecord4(next) || typeof next.role !== "string") {
@@ -14054,6 +14010,7 @@ function parseNavigatorAttendanceDetails(details) {
       phase: navigatorPhaseValue(target.phase)
     })) : void 0;
     return recommendationNavigatorFact({
+      ...advisoryDiagnostic,
       next: {
         role: next.role,
         phase: navigatorPhaseValue(next.phase)
@@ -14066,12 +14023,16 @@ function parseNavigatorAttendanceDetails(details) {
   if (disposition === "unavailable") {
     return {
       disposition: "unavailable",
+      ...advisoryDiagnostic,
       source: typeof details.unavailableSource === "string" ? details.unavailableSource : "unknown",
       reason: typeof details.unavailableReason === "string" ? details.unavailableReason : "Navigator unavailable"
     };
   }
   if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
-    return { disposition: "no-advice" };
+    return {
+      disposition: "no-advice",
+      ...advisoryDiagnostic
+    };
   }
   return {
     disposition: "unavailable",
@@ -15300,19 +15261,22 @@ function redactDecisiveFactsForPublicTerminal(facts, runId) {
   return out;
 }
 function redactNavigatorFactForPublicTerminal(navigator, runId) {
+  const advisoryDiagnostic = navigator.advisoryDiagnostic === void 0 ? {} : { advisoryDiagnostic: redactExactRunId(navigator.advisoryDiagnostic, runId) };
   if (navigator.disposition === "recommendation") {
     return {
       ...navigator,
+      ...advisoryDiagnostic,
       reason: redactExactRunId(navigator.reason, runId)
     };
   }
   if (navigator.disposition === "unavailable") {
     return {
       ...navigator,
+      ...advisoryDiagnostic,
       reason: redactExactRunId(navigator.reason, runId)
     };
   }
-  return navigator;
+  return { ...navigator, ...advisoryDiagnostic };
 }
 async function settleFailureTerminalResult(admitted, failure, options = {}) {
   const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
@@ -16826,7 +16790,7 @@ async function runPublicFixerResume(argv, env, io) {
 
 // src/public-cli/merger-run.ts
 import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
-import { join as join13, resolve as resolve7 } from "node:path";
+import { join as join13, resolve as resolve6 } from "node:path";
 function buildModelArgs6(model) {
   if (model === void 0) return [];
   return [
@@ -17040,7 +17004,7 @@ async function loadMergerMethodMaterial(packageRoot2) {
   );
 }
 async function admitMergerShellForActivationFailure(options) {
-  const projectRoot = resolve7(options.project ?? options.cwd);
+  const projectRoot = resolve6(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
