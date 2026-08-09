@@ -900,6 +900,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       sessionReady = undefined;
       candidates = undefined;
       preparationFailure = undefined;
+      routePlaybookSettlement = undefined;
+      routePlaybookReadFailure = undefined;
   }
 }
 
