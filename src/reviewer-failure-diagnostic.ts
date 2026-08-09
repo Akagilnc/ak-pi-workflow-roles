@@ -1,8 +1,8 @@
 import type { ReviewerFailureClassification } from "./reviewer-execution-ledger.ts";
 
 export function normalizeReviewerFailureDiagnostic(error: unknown, failure: ReviewerFailureClassification): string {
-  const original = error instanceof Error && "reviewerFailure" in error && Object.hasOwn(error, "cause") && !(error.cause instanceof Error)
-    ? error.cause
+  const original = error instanceof Error && Object.hasOwn(error, "reviewerOriginal")
+    ? (error as Error & { reviewerOriginal: unknown }).reviewerOriginal
     : error;
   const message = original instanceof Error
     ? original.message.trim()

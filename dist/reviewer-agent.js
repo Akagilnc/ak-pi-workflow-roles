@@ -56,6 +56,7 @@ export function createReviewerAgentRunner(dependencies = {}) {
                         ...(dependencies.credentialScratchParent === undefined
                             ? {}
                             : { credentialScratchParent: dependencies.credentialScratchParent }),
+                        ...(dependencies.providerStream === undefined ? {} : { providerStream: dependencies.providerStream }),
                     });
                     const disposition = await workspaceOwner.dispose(workspace);
                     return [leg.axis, Object.freeze({ status: "successful", report: child.report, usage: child.usage, target: batch.target, prompt: child.prompt, workspaceDisposition: disposition, runtimeConstructionEvidence: workspace.evidence })];

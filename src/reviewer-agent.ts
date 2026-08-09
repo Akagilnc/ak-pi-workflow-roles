@@ -1,3 +1,4 @@
+import type { Provider } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import type { AcceptedReviewerExecution, ReviewerPrerequisiteOperation } from "./reviewer-dispatch.ts";
@@ -22,6 +23,7 @@ type Dependencies = Readonly<{
   fault?(operation: ReviewerAgentFaultPoint): void;
   /** When set, child credential/config scratch is created under this parent so cleanup proofs stay process-local. */
   credentialScratchParent?: string;
+  providerStream?: Provider["stream"];
 }>;
 function classify(error: unknown, signal?: AbortSignal): ReviewerFailureClassification { if (signal?.aborted) return "cancelled"; if (typeof error === "object" && error !== null && "reviewerFailure" in error) return (error as { reviewerFailure: ReviewerFailureClassification }).reviewerFailure; return "unknown"; }
 function failed(error: unknown, target: ReviewerTargetSnapshot, prompt: ReviewerPromptIdentity, signal?: AbortSignal, retained?: string, evidence?: MaterializedBundleEvidenceV1): ReviewerFailedLegRunResult { const attached = typeof error === "object" && error !== null ? error as { targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition } : {}; const failure = classify(error, signal); const diagnostic = normalizeReviewerFailureDiagnostic(error, failure); return Object.freeze({ status: "failed", failure, diagnostic, cause: error, target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained }, ...(evidence === undefined ? {} : { runtimeConstructionEvidence: evidence }) }); }
@@ -52,6 +54,7 @@ export function createReviewerAgentRunner(dependencies: Dependencies = {}): Revi
             ...(dependencies.credentialScratchParent === undefined
               ? {}
               : { credentialScratchParent: dependencies.credentialScratchParent }),
+            ...(dependencies.providerStream === undefined ? {} : { providerStream: dependencies.providerStream }),
           });
           const disposition = await workspaceOwner.dispose(workspace);
           return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target: batch.target, prompt: child.prompt, workspaceDisposition: disposition, runtimeConstructionEvidence: workspace.evidence })] as const;
