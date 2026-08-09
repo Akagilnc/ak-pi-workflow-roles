@@ -13246,7 +13246,15 @@ async function readBoundSessionEntries(sessionFile) {
   return entries;
 }
 function extractSessionProviderStop(entries) {
+  let attemptStart = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "message" && entry.message?.role === "user") {
+      attemptStart = i;
+      break;
+    }
+  }
+  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
     const response = isRecord4(entry.data) && isRecord4(entry.data.response) ? entry.data.response : void 0;
@@ -13260,7 +13268,7 @@ function extractSessionProviderStop(entries) {
     }
     break;
   }
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
+  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;

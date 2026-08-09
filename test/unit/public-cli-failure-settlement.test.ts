@@ -2342,6 +2342,38 @@ test("audited roles publicly settle a production provider stop without promoting
     });
     const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "provider", diagnosticEquals: "WebSocket error", identityName: "ProviderStopError", identityCode: "openai-codex" });
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
+
+    // Resume-capable audited roles bind retained audit responses to the latest
+    // typed top-level user turn; an older attempt cannot replace its native error.
+    if (role !== "doctor") {
+      const resumedIo = captureIo();
+      const resumed = await runAkRole(argv[role](project), {
+        packageRoot, home, cwd: project, io: resumedIo.io,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => `run-${role}-stale-auditor-provider-stop`,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          const entries = [
+            { type: "custom", customType: "ak_compliance_response", data: { response: { role: "assistant", stopReason: "error", errorMessage: "older audit error", provider: "openai-codex" } } },
+            { type: "message", message: { role: "assistant", stopReason: "aborted" } },
+            { type: "message", message: { role: "user", content: [{ type: "text", text: "resume" }] } },
+            { type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "newer native error", provider: "xai" } },
+          ];
+          await writeFile(join(sessionDir, "session.jsonl"), entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+          return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
+        },
+      });
+      await assertPublicFailureSettlement({
+        result: resumed,
+        stdout: resumedIo.stdout,
+        stderr: resumedIo.stderr,
+        expectedCause: "provider",
+        diagnosticEquals: "newer native error",
+        identityName: "ProviderStopError",
+        identityCode: "xai",
+      });
+    }
   });
 });
 

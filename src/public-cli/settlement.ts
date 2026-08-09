@@ -536,11 +536,22 @@ export function extractSessionProviderStop(
   provider?: string;
   model?: string;
 } | undefined {
-  // The shared auditor is a nested model turn. Its retained typed response is
-  // authoritative when failInfrastructure subsequently aborts the parent turn.
-  // Only the latest retained audit response participates, so a later successful
-  // resubmission still supersedes an earlier provider stop.
+  // A resumed dispatch appends a typed top-level user turn to the same session.
+  // Retained audit state from an older attempt must not replace the newer attempt's
+  // native provider stop. Sessions without a user turn are the initial attempt.
+  let attemptStart = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "message" && entry.message?.role === "user") {
+      attemptStart = i;
+      break;
+    }
+  }
+
+  // The shared auditor is a nested model turn. Within the current attempt its
+  // retained typed response is authoritative when failInfrastructure subsequently
+  // aborts the parent turn.
+  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
     const response = isRecord(entry.data) && isRecord(entry.data.response) ? entry.data.response : undefined;
@@ -554,12 +565,12 @@ export function extractSessionProviderStop(
     }
     break;
   }
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
+  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "assistant") continue;
-    // Latest assistant only (reviewer-child-executor lastAssistant pattern).
+    // Latest assistant in the current attempt only (reviewer-child-executor lastAssistant pattern).
     if (message.stopReason !== "error") return undefined;
     return {
       stopReason: "error",
