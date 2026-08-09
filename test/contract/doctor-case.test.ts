@@ -278,8 +278,10 @@ test("single-case findings enforce actual/no-real-bite and prescription law", as
     if (error === undefined) assert.deepEqual(validateDoctorOutput(candidate, patient, evidenceStore), candidate);
     else assert.throws(() => validateDoctorOutput(candidate, patient, evidenceStore), error);
   }
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...assetFinding, disposition: "keep", lastRealBite: { kind: "noRealBite", targetKey: assetFinding.targetKey, eligibleEvidenceIds: [evidenceId] } }] }, patient, store), /noRealBite permits only thin or delete/);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...assetFinding, prescription: { kind: "patch", recommendation: "Patch it" } }] }, patient, store), /necessity explanation/);
+  const noRealBiteKeep = { ...output, findings: [{ ...assetFinding, disposition: "keep", lastRealBite: { kind: "noRealBite", targetKey: assetFinding.targetKey, eligibleEvidenceIds: [evidenceId] } }] } as const;
+  assert.deepEqual(validateDoctorOutput(noRealBiteKeep, patient, store), noRealBiteKeep);
+  const unexplainedPatch = { ...output, findings: [{ ...assetFinding, prescription: { kind: "patch", recommendation: "Patch it" } }] } as const;
+  assert.deepEqual(validateDoctorOutput(unexplainedPatch, patient, store), unexplainedPatch);
   assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, targetKey: "invented-run" }] }, patient, store), /lawful case target/);
   const refusal = { status: "refused", reason: "Need more bytes", missingEvidence: [{ need: "whole case", targetKeys: ["case"] }] } as const;
   assert.deepEqual(validateDoctorOutput(refusal, patient, store), refusal);
