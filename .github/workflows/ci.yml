@@ -12,12 +12,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run test:all
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run test:all
         env:
           AK_LEGACY_CASE_A_LIVE_SOURCE: "0"
           GH_TOKEN: ${{ github.token }}

@@ -24,9 +24,9 @@
   ],
   "scripts": {
     "generate:tool-execution-observation-schema": "tsx scripts/generate-tool-execution-observation-schema.ts",
-    "build": "npm run generate:tool-execution-observation-schema && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
-    "prepack": "npm run build",
-    "test": "npm run test:all",
+    "build": "pnpm run generate:tool-execution-observation-schema && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
+    "prepack": "pnpm run build",
+    "test": "pnpm run test:all",
     "test:fast": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
     "test:integration": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts",
     "test:all": "node scripts/run-test-all.mjs",
@@ -39,6 +39,7 @@
   "engines": {
     "node": ">=22.19.0"
   },
+  "packageManager": "pnpm@11.20.0",
   "peerDependencies": {
     "@earendil-works/pi-ai": ">=0.83.0 <=0.83.0",
     "@earendil-works/pi-coding-agent": ">=0.83.0 <=0.83.0",
