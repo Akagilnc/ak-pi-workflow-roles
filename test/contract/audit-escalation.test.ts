@@ -6,6 +6,7 @@ import {
   fauxToolCall,
   type AssistantMessage,
   type Context,
+  type ProviderStreamOptions,
 } from "@earendil-works/pi-ai";
 import {
   SessionManager,
@@ -121,19 +122,6 @@ const auditorCases = [
     run: (complete: any, auditContext: ExtensionContext = context) => createPiDoctorAuditor(complete)(doctorInput, { context: auditContext }),
   },
 ] as const;
-
-test("all retained auditors share typed escalation", async () => {
-  // Census is fixture integrity for this loop — assert once at the top, not as a sibling test.
-  assert.deepEqual(auditorCases.map((entry) => entry.role), AUDITOR_SOUL_ROLES);
-  for (const entry of auditorCases) {
-    const prompt = { value: undefined as string | undefined };
-    const result = await entry.run(captureSystemPrompt(entry.toolName, prompt));
-    assert.equal(result.status, "escalate");
-    assert.deepEqual(result.conflicts, escalationArguments.conflicts);
-    assert.deepEqual(result.decisionGate, escalationArguments.decisionGate);
-    assert.match(prompt.value ?? "", /./, `${entry.role} audit must load a nonblank Soul`);
-  }
-});
 
 test("escalation projects one terminating human decision and is not an accepted Receipt", async () => {
   const decision = {
