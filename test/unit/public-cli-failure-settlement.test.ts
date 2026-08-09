@@ -2304,7 +2304,6 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
 });
 
 async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extension: string; close(): Promise<void> }> {
-  const role = "judge";
   const marker = join(home, "parent-judge.txt");
   const extension = join(home, "provider-judge.ts");
   let requestCount = 0;
@@ -2343,11 +2342,8 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
       response.end(JSON.stringify({ error: { message: "WebSocket error" } }));
       return;
     }
-    const outputTool = toolNames.find((name: string) => name === `ak_${role}_output`);
-    const args = role === "judge" ? { judgeStatus: "converged", note: "test" }
-      : role === "fixer" ? { status: "unfinished", report: "test", remainingScope: "test" }
-      : role === "reviewer" ? { status: "refused", diagnostic: "test" }
-      : { status: "refused", reason: "test", missingEvidence: [{ need: "test", targetKeys: ["case"] }] };
+    const outputTool = toolNames.find((name: string) => name === "ak_judge_output");
+    const args = { judgeStatus: "converged", note: "test" };
     const payload = { id: `chatcmpl-${requestCount}`, object: "chat.completion.chunk", created: 1, model: "faux-1", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: `call-${requestCount}`, type: "function", function: { name: outputTool, arguments: JSON.stringify(args) } }] }, finish_reason: null }] };
     response.writeHead(200, { "content-type": "text/event-stream" });
     response.write(`data: ${JSON.stringify(payload)}\n\n`);
