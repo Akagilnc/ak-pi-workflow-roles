@@ -15725,7 +15725,7 @@ async function dispatchAdmittedJudge(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -16033,7 +16033,7 @@ async function dispatchAdmittedCoder(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -16334,7 +16334,7 @@ async function dispatchAdmittedCollector(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -16539,7 +16539,7 @@ async function dispatchAdmittedDoctor(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -16814,7 +16814,7 @@ async function dispatchAdmittedFixer(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -17172,7 +17172,7 @@ async function dispatchAdmittedMerger(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -17611,7 +17611,7 @@ async function dispatchAdmittedReviewer(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+        timeoutMs: env.timeoutMs,
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {

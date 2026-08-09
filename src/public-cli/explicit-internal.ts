@@ -185,7 +185,7 @@ export async function runExplicitInternalActivation(options: {
   home: string;
   agentDir: string;
   env?: NodeJS.ProcessEnv;
-  timeoutMs?: number;
+  timeoutMs?: number | undefined;
   runner?: ExplicitInternalPiRunner;
 }): Promise<ExplicitInternalPiResult> {
   const args = buildExplicitInternalActivationArgs(
