@@ -1040,7 +1040,7 @@ test("F1 provider-facing collector registrations retain semantic declarations", 
   });
 });
 
-test("F1 real-Pi invalid sole output denies at execute with zero GitHub", async () => {
+test("F1 real-Pi malformed sole output executes then remains non-accepted with zero GitHub", async () => {
   await withActivationHome({ prefix: "ak-collector-f1-out-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const neverTouched = createFakeGitHubTransport({
@@ -1051,8 +1051,8 @@ test("F1 real-Pi invalid sole output denies at execute with zero GitHub", async 
       reviewComments: [],
     });
 
-    // Shape space owned by collector-receipt schema matrix; keep one real-Pi tracer
-    // (discriminated-union clause most likely to rot). Batch-law sibling poison is gone (ADR 0041).
+    // Keep one real-Pi tracer proving malformed sole output reaches execute, remains
+    // observable as an error toolResult, and does not produce an accepted receipt.
     const tracer = {
       name: "unavailable missing scope",
       args: {
@@ -1086,21 +1086,8 @@ test("F1 real-Pi invalid sole output denies at execute with zero GitHub", async 
       assert.equal(result.exitCode, 1, tracer.name);
       assert.ok(
         result.toolResultIsError.some((isError) => isError),
-        "invalid sole output fails at the output execution seam",
+        "malformed sole output executes and remains an error toolResult",
       );
-    }
-
-    // Remaining shapes: exported schema / parse path (no Pi boot).
-    for (const row of [
-      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: ["s"], extra: true }] },
-      { legs: [{ legId: "codex", status: "unavailable", rationale: "x", evidenceRefs: ["s"], unavailableScope: "galaxy" }] },
-      { legs: [{ legId: "codex", status: "valid", rationale: "x", evidenceRefs: ["s"], unavailableScope: "global" }] },
-      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: ["s"], unavailableScope: "target" }] },
-      { legs: [{ legId: "codex", status: "missing", rationale: "   ", evidenceRefs: ["s"] }] },
-      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: [] }] },
-      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: ["s"] }], extra: 1 },
-    ] as const) {
-      assert.equal(collectorToolArgumentsValid(COLLECTOR_OUTPUT_TOOL, row), false);
     }
   });
 });
