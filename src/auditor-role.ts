@@ -26,7 +26,7 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
     const loader = new DefaultResourceLoader({ cwd, agentDir: scratch, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt });
     await loader.reload();
     const tool = { ...options.tool, label: options.roleLabel, async execute(...args: any[]) { if (decision !== undefined) throw new Error("Auditor decision was submitted more than once"); decision = args[1]; return options.tool.execute(...args); } };
-    const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash"], customTools: [tool], sessionManager: SessionManager.inMemory(cwd), settingsManager: settings });
+    const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash", "write", "edit"], customTools: [tool], sessionManager: SessionManager.inMemory(cwd), settingsManager: settings });
     const turnLimit = 32; let turns = 0; let turnError: AuditorTurnLimitError | undefined;
     const unsubscribe = session.subscribe((event) => { if (event.type === "message_end" && event.message.role === "assistant" && ++turns > turnLimit) { turnError = new AuditorTurnLimitError(turnLimit); void session.abort(); } });
     const abort = () => { void session.abort(); };

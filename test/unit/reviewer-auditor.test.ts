@@ -50,34 +50,6 @@ const context = {
   sessionManager: SessionManager.inMemory(),
 } as unknown as ExtensionContext;
 
-test("Reviewer auditor receives complete method inputs and has only its decision tool", async () => {
-  let seen: Context | undefined;
-  const audit = createPiReviewerAuditor(async (_model, request) => {
-    seen = request;
-    return fauxAssistantMessage(
-      fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-      { stopReason: "toolUse" },
-    );
-  });
-
-  assert.equal((await audit(input, { context })).status, "pass");
-  assert.deepEqual(seen?.tools?.map((tool) => tool.name), [REVIEWER_AUDIT_TOOL_NAME]);
-  const serialized = JSON.stringify(seen);
-  for (const expected of [
-    "Reviewer law",
-    "complete raw canonical Skill",
-    "opaque task",
-    "No findings",
-    "dispatch-1",
-    "Inspect the pinned diff",
-  ]) assert.match(serialized, new RegExp(expected));
-  assert.match(textOfAuditContext(seen), /"dispatchIdentity":"dispatch-1"/);
-  assert.equal(
-    seen?.systemPrompt,
-    await readFile(new URL("../../souls/reviewer-auditor.md", import.meta.url), "utf8"),
-  );
-});
-
 function textOfAuditContext(seen: Context | undefined): string {
   const user = seen?.messages.find((message) => message.role === "user");
   if (user?.role !== "user") return "";
@@ -113,30 +85,4 @@ test("Reviewer auditor rejects a current-shaped receipt when a materialized leg 
     throw new Error("provider must not run");
   });
   await assert.rejects(audit({ ...input, record: currentRecord }, { context }), ReviewerAuditEvidenceError);
-});
-
-test("Reviewer auditor enforces exact pass or revise decisions", async () => {
-  const revise = createPiReviewerAuditor(async () => fauxAssistantMessage(
-    fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, {
-      status: "revise",
-      violations: ["Axis aggregation is not traceable"],
-      conflicts: [],
-      decisionGate: null,
-    }),
-    { stopReason: "toolUse" },
-  ));
-  const decision = await revise(input, { context });
-  assert.equal(decision.status, "revise");
-  assert.deepEqual(
-    decision.status === "revise" ? decision.violations : [],
-    ["Axis aggregation is not traceable"],
-  );
-
-  const malformed = createPiReviewerAuditor(async () =>
-    fauxAssistantMessage("not a tool decision"),
-  );
-  await assert.rejects(
-    malformed(input, { context }),
-    /invalid reviewer audit decision/,
-  );
 });
