@@ -2,8 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore, type Api, type AssistantMessage, type Context, type Model, type Provider, type ProviderStreamOptions } from "@earendil-works/pi-ai";
-import { createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager, type AgentToolResult, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { childSessionManager } from "./activation-ledger-session.ts";
+import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { prepareComplianceDispatch } from "./compliance-transport.ts";
 
 export class AuditorTurnLimitError extends Error { constructor(readonly limit: number) { super(`Auditor exceeded ${limit} turns`); this.name = "AuditorTurnLimitError"; } }
@@ -11,6 +10,10 @@ export type AuditorCompletion = (model: Model<Api>, context: Context, options: P
 export type AuditorDecisionTool = { name: string; description: string; parameters: object; execute(...args: any[]): Promise<AgentToolResult<unknown>> };
 
 export async function runAuditorRole(options: { systemPrompt: string; serializedInput: string; tool: AuditorDecisionTool; roleLabel: string; context: ExtensionContext; signal?: AbortSignal; runCompletion?: AuditorCompletion }): Promise<{ decision: unknown; response: AssistantMessage }> {
+  const [{ createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager }, { childSessionManager }] = await Promise.all([
+    import("@earendil-works/pi-coding-agent"),
+    import("./activation-ledger-session.ts"),
+  ]);
   const activeModel = options.context.model;
   if (activeModel === undefined) throw new Error(`${options.roleLabel} requires an active model`);
   const dispatch = await prepareComplianceDispatch(activeModel, options.context, options.roleLabel);
