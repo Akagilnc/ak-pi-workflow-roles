@@ -203,7 +203,10 @@ export async function executeReviewerChild(
       .reverse()
       .find((message) => message.role === "assistant");
     if (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "error") {
-      throw classifiedError(new Error("Reviewer Agent provider failed", { cause: lastAssistant }), "provider");
+      const diagnostic = typeof lastAssistant.errorMessage === "string" && lastAssistant.errorMessage.trim() !== ""
+        ? lastAssistant.errorMessage
+        : "Reviewer Agent provider supplied no diagnostic details";
+      throw classifiedError(new Error(diagnostic, { cause: lastAssistant }), "provider");
     }
     if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
       throw classifiedError(new Error("Reviewer Agent child terminated without a report", { cause: lastAssistant ?? session.messages }), "child");

@@ -286,8 +286,9 @@ test("completion audits projected facts and revise can be resubmitted without re
   assert.deepEqual(evidence,{id:"absence",repositoryPath:"README.md",source:"pinned-git",sourcePath:"README.md",text:"README.md",utf8Length:9,sha256:createHash("sha256").update("README.md").digest("hex")});
 });
 
-test("one failed and one successful sibling are both audited before infrastructure termination", async()=>{
-  const reviewerHarness=setup({runDispatch:async(dispatch)=>{const [standards,spec]=dispatch.legs; throw new ReviewerDispatchExecutionError({identity:dispatch.identity,target:pin,legs:{standards:{status:"failed",failure:"provider",target:pin,prompt:standards!.prompt,workspaceDisposition:"not-created"},spec:successfulLeg(dispatch,spec!,"spec report")}});}});
+test("one failed provider leg keeps its typed diagnostic beside the successful sibling report", async()=>{
+  const providerFailure = new Error("WebSocket error");
+  const reviewerHarness=setup({runDispatch:async(dispatch)=>{const [standards,spec]=dispatch.legs; throw new ReviewerDispatchExecutionError({identity:dispatch.identity,target:pin,legs:{standards:{status:"failed",failure:"provider",cause:providerFailure,target:pin,prompt:standards!.prompt,workspaceDisposition:"not-created"},spec:successfulLeg(dispatch,spec!,"spec report")}});}});
   await reviewerHarness.runtime.activate();
   await assert.rejects(reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",proposal(true),undefined,undefined,{} as ExtensionContext),(error: unknown)=>{
     assert.equal(String(error).includes("spec report"),false);
@@ -297,7 +298,17 @@ test("one failed and one successful sibling are both audited before infrastructu
   captureReviewExpansion(reviewerHarness);
   const receipt=await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"provider failed"},undefined,undefined,outputContext("out"));
   assert.equal(receipt.details.outcomes.standards.failure,"provider");
+  assert.equal(receipt.details.outcomes.standards.diagnostic,"WebSocket error");
   assert.equal(receipt.details.reports.spec.text,"spec report");
+});
+
+test("provider leg without native details records that absence explicitly", async()=>{
+  const reviewerHarness=setup({runDispatch:async(dispatch)=>{const [standards]=dispatch.legs; throw new ReviewerDispatchExecutionError({identity:dispatch.identity,target:pin,legs:{standards:{status:"failed",failure:"provider",target:pin,prompt:standards!.prompt,workspaceDisposition:"not-created"}}});}});
+  await reviewerHarness.runtime.activate();
+  await assert.rejects(reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext));
+  captureReviewExpansion(reviewerHarness);
+  const receipt=await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"provider failed"},undefined,undefined,outputContext("out"));
+  assert.equal(receipt.details.outcomes.standards.diagnostic,"Reviewer Agent provider supplied no diagnostic details");
 });
 
 test("classified snapshot preparation failure settles into a refused production receipt without shutdown infrastructure failure", async()=>{

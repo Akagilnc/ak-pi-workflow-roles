@@ -2296,6 +2296,25 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
   });
 });
 
+test("shared auditor provider-stop outranks the later aborted parent turn", () => {
+  const response = {
+    role: "assistant",
+    stopReason: "error",
+    errorMessage: "WebSocket error",
+    provider: "openai-codex",
+    model: "gpt-5",
+  };
+  assert.deepEqual(extractSessionProviderStop([
+    { type: "custom", customType: "ak_compliance_response", data: { version: 1, response } },
+    { type: "message", message: { role: "assistant", stopReason: "aborted" } },
+  ]), {
+    stopReason: "error",
+    errorMessage: "WebSocket error",
+    provider: "openai-codex",
+    model: "gpt-5",
+  });
+});
+
 test("session provider-stop produces provider cause without injected knownFailure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
