@@ -566,6 +566,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       unavailableCause: failure.unavailableCause,
     };
   };
+  let routePlaybookSettlement: Promise<void> | undefined;
   const prepare = async (): Promise<NavigatorCandidate[]> => {
     // Exact principal is owned by shared lifecycle (or one mint per attendance).
     // Model/tool/advice paths cannot override it; role-session persistence is
@@ -609,6 +610,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           return "";
         }
       })();
+      // Preparation is fail-fast for its primary dependencies, but settlement
+      // independently drains this optional diagnostic before emitting attendance.
+      routePlaybookSettlement = routePlaybookPromise.then(() => undefined);
       const modelPromise = (async () => {
         try {
           return await readNavigatorModelSetting(options.modelSettingPath);
@@ -863,6 +867,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           report = unavailable(invocationId, error);
         }
       }
+      // A primary preparation failure may reject Promise.all before the optional
+      // routebook read finishes. Preserve that primary unavailable cause while
+      // waiting for, and independently attaching, the routebook diagnostic.
+      await routePlaybookSettlement;
       if (routePlaybookReadFailure !== undefined) {
         report = { ...report, routePlaybookReadFailure };
       }

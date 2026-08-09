@@ -343,6 +343,7 @@ function createNavigatorAttendance(options) {
       unavailableCause: failure.unavailableCause
     };
   };
+  let routePlaybookSettlement;
   const prepare = async () => {
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
@@ -376,6 +377,7 @@ function createNavigatorAttendance(options) {
         return "";
       }
     })();
+    routePlaybookSettlement = routePlaybookPromise.then(() => void 0);
     const modelPromise = (async () => {
       try {
         return await readNavigatorModelSetting(options.modelSettingPath);
@@ -641,6 +643,7 @@ ${helpContext}
         report = unavailable(invocationId, error);
       }
     }
+    await routePlaybookSettlement;
     if (routePlaybookReadFailure !== void 0) {
       report = { ...report, routePlaybookReadFailure };
     }
