@@ -94,6 +94,7 @@ import {
   isLawfulTypedTerminalOutcome,
   recommendationNavigatorFact,
   buildAuditIncompleteTerminalOutcome,
+  buildResidualIncompleteTerminalOutcome,
   redactExactRunId,
   type AuditIncompleteResidual,
   type ControlledFailureCause,
@@ -820,6 +821,26 @@ function toolResultText(message: SessionMessage): string {
     })
     .join("")
     .trim();
+}
+
+type BoundErroredToolCandidate = {
+  candidate: unknown;
+  diagnostic: string;
+  callIndex: number;
+};
+
+function boundErroredToolCandidate(
+  entries: readonly SessionEntry[],
+  resultIndex: number,
+  message: SessionMessage,
+  toolName: string,
+): BoundErroredToolCandidate | undefined {
+  if (message.toolName !== toolName || message.isError !== true) return undefined;
+  const bound = boundRoleToolCallForResult(entries, resultIndex, message, toolName);
+  const diagnostic = toolResultText(message);
+  return bound === undefined || diagnostic === ""
+    ? undefined
+    : { candidate: bound.candidate, diagnostic, callIndex: bound.callIndex };
 }
 
 /** Collector operational tools that fail closed via host infrastructure abort. */
@@ -2326,7 +2347,30 @@ async function settleLawfulCollectorTerminalResult(
   const entries = await readLawfulSettlementEntries(admitted);
   if (entries === undefined) return undefined;
   const extracted = extractCollectorRoleOutcome(entries);
-  if (extracted === undefined) return undefined;
+  if (extracted === undefined) {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
+      if (residual === undefined) continue;
+      const candidate = residual.candidate;
+      const duration = isRecord(candidate) ? candidate.durationMs : undefined;
+      if (Number.isSafeInteger(duration) && (duration as number) >= 1 && (duration as number) <= 900_000) {
+        continue;
+      }
+      return {
+        roleOutcome: buildResidualIncompleteTerminalOutcome({
+          role: "collector",
+          candidate,
+          diagnostic: residual.diagnostic,
+        }),
+        navigator: { disposition: "no-advice" },
+        artifacts: [],
+        runId: admitted.runId,
+      };
+    }
+    return undefined;
+  }
   // Re-load legs.json and bind its digest to admission before using its IDs (ADR 0037/0022).
   // A post-admission mutation that keeps receipt digest=A while legs become B must fail closed.
   const admittedManifest = await loadCollectorManifest(admitted.legsPath);
@@ -2997,7 +3041,46 @@ async function settleLawfulMergerTerminalResult(
   const entries = await readLawfulSettlementEntries(admitted);
   if (entries === undefined) return undefined;
   const extracted = extractMergerRoleOutcome(entries);
-  if (extracted === undefined) return undefined;
+  if (extracted === undefined) {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
+      if (residual === undefined) continue;
+      const callMessage = entries[residual.callIndex]?.message;
+      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content)
+        ? callMessage.content.filter((part) => isRecord(part) && part.type === "toolCall")
+        : [];
+      const attemptId = isRecord(residual.candidate)
+        ? safelyRead(residual.candidate, "attemptId")
+        : { readable: true as const, value: undefined };
+      // Mirror the execution boundary's established precedence: ADR 0041 sole-final,
+      // then ADR 0037 admitted-attempt identity, and only then output shape.
+      if (
+        calls.length !== 1 ||
+        calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME ||
+        !attemptId.readable ||
+        attemptId.value !== admitted.runId
+      ) {
+        continue;
+      }
+      try {
+        validateMergerOutput(residual.candidate, admitted.runId);
+      } catch {
+        return {
+          roleOutcome: buildResidualIncompleteTerminalOutcome({
+            role: "merger",
+            candidate: residual.candidate,
+            diagnostic: residual.diagnostic,
+          }),
+          navigator: { disposition: "no-advice" },
+          artifacts: [],
+          runId: admitted.runId,
+        };
+      }
+    }
+    return undefined;
+  }
   const methodInvocations = extractMergerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,

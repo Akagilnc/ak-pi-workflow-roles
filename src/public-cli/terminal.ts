@@ -39,6 +39,17 @@ export type TerminalRoleName =
   | "reviewer"
   | "merger";
 
+export type ResidualIncompleteTerminalOutcome = {
+  kind: "incomplete";
+  role: "merger" | "collector";
+  status: "incomplete";
+  decision: "no-usable-result";
+  candidate: unknown;
+  diagnostic: string;
+  acceptedReceipt: false;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
 export type AuditIncompleteTerminalOutcome = {
   kind: "audit_incomplete";
   role: TerminalRoleName;
@@ -83,6 +94,7 @@ export type TerminalRoleOutcome =
       decisiveFacts: Readonly<Record<string, unknown>>;
     }
   | AuditIncompleteTerminalOutcome
+  | ResidualIncompleteTerminalOutcome
   | {
       kind: "failure";
       role: TerminalRoleName;
@@ -106,6 +118,28 @@ export function exitCodeForTerminalOutcome(
   outcome: TerminalRoleOutcome,
 ): number {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
+}
+
+export function buildResidualIncompleteTerminalOutcome(input: {
+  role: "merger" | "collector";
+  candidate: unknown;
+  diagnostic: string;
+}): ResidualIncompleteTerminalOutcome {
+  return {
+    kind: "incomplete",
+    role: input.role,
+    status: "incomplete",
+    decision: "no-usable-result",
+    candidate: input.candidate,
+    diagnostic: input.diagnostic,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-result",
+      candidate: input.candidate,
+      diagnostic: input.diagnostic,
+      acceptedReceipt: false,
+    },
+  };
 }
 
 export function buildAuditIncompleteTerminalOutcome(input: {
