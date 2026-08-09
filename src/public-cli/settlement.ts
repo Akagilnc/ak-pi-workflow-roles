@@ -3475,6 +3475,9 @@ export async function settleFailureTerminalResult(
   if (failure.identity?.code !== undefined) {
     decisiveFacts.errorCode = failure.identity.code;
   }
+  if (failure.details !== undefined) {
+    decisiveFacts.secondaryEvidence = failure.details;
+  }
   // Resumable failures: durable artifacts still land under the run directory, but
   // the public Terminal must not re-disclose the run ID via top-level runId,
   // path components, or untrusted free text — only resume.command may carry it

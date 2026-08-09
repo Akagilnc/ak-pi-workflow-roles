@@ -15279,6 +15279,9 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
   if (failure.identity?.code !== void 0) {
     decisiveFacts.errorCode = failure.identity.code;
   }
+  if (failure.details !== void 0) {
+    decisiveFacts.secondaryEvidence = failure.details;
+  }
   if (options.resume !== void 0) {
     const publicDiagnostic = redactExactRunId(failure.diagnostic, admitted.runId);
     const publicFacts = redactDecisiveFactsForPublicTerminal(
