@@ -17,6 +17,7 @@ import {
 
 import {
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
+  ComplianceAuditTurnExhaustedError,
   ComplianceDecisionContractError,
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
@@ -412,6 +413,55 @@ test("successful non-object decision arguments retain a typed residual without a
   }
 });
 
+test("repeated unknown audit tools receive error results and exhaust a finite turn budget", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    let providerTurns = 0;
+    const seenMessages: Context["messages"][] = [];
+    let finalMessages: Context["messages"] = [];
+    const failure = runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      runCompletion: async (_model, requestContext) => {
+        providerTurns += 1;
+        seenMessages.push(structuredClone(requestContext.messages));
+        finalMessages = requestContext.messages;
+        if (providerTurns > 20) throw new Error("test safety bound exceeded");
+        return response(`unknown-${providerTurns}`, [
+          fauxToolCall("ak_other_decision", { status: "pass" }, { id: `unknown-call-${providerTurns}` }),
+        ]);
+      },
+      context: context(sessionManager),
+    });
+
+    await assert.rejects(failure, (error: unknown) => {
+      assert.ok(error instanceof ComplianceAuditTurnExhaustedError);
+      assert.equal(error.name, "ComplianceAuditTurnExhaustedError");
+      assert.equal(error.details.observedTurns, error.details.turnLimit);
+      assert.equal(error.details.observedToolCallCount, 1);
+      assert.deepEqual(error.details.observedToolNames, ["ak_other_decision"]);
+      assert.equal(error.details.responseStopReason, "stop");
+      return true;
+    });
+    assert.equal(providerTurns < 20, true);
+
+    const unknownResults = finalMessages.filter(
+      (message) => message.role === "toolResult" && message.toolName === "ak_other_decision",
+    );
+    assert.equal(unknownResults.length, providerTurns);
+    for (const [index, result] of unknownResults.entries()) {
+      assert.equal(result.role, "toolResult");
+      if (result.role !== "toolResult") continue;
+      assert.equal(result.toolCallId, `unknown-call-${index + 1}`);
+      assert.equal(result.toolName, "ak_other_decision");
+      assert.equal(result.isError, true);
+    }
+    assert.equal(seenMessages[1]?.at(-1)?.role, "toolResult");
+  });
+});
+
 test("malformed nested decisions retain raw responses and report typed facts", async () => {
   const cases = [
     {
@@ -444,14 +494,6 @@ test("malformed nested decisions retain raw responses and report typed facts", a
       expectedCount: 0,
       expectedNames: [],
       errorPresent: true,
-    },
-    {
-      id: "wrong-name",
-      content: [fauxToolCall("ak_other_decision", { status: "pass", violations: [], conflicts: [], decisionGate: null })],
-      stopReason: "stop" as const,
-      expectedCount: 1,
-      expectedNames: ["ak_other_decision"],
-      errorPresent: false,
     },
     {
       id: "malformed-arguments",
