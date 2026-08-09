@@ -41,7 +41,34 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
     if (turnError !== undefined) throw turnError;
     const response = [...session.messages].reverse().find((message): message is AssistantMessage => message.role === "assistant");
     session.dispose();
-    if (response !== undefined) options.retainResponse?.(response);
+    if (response !== undefined) {
+      try {
+        options.retainResponse?.(response);
+      } catch (retentionFailure) {
+        if (response.stopReason !== "error") throw retentionFailure;
+        const failure = new Error(response.errorMessage?.trim() || "provider failure", { cause: retentionFailure }) as Error & {
+          knownCause: "provider";
+          failureCode?: string;
+          details: Record<string, unknown>;
+        };
+        failure.name = "ProviderStopError";
+        failure.knownCause = "provider";
+        failure.failureCode = response.provider || response.model;
+        const retentionError = retentionFailure instanceof Error ? retentionFailure : undefined;
+        const retentionCause = retentionError?.cause;
+        failure.details = {
+          ...(response.provider ? { provider: response.provider } : {}),
+          ...(response.model ? { model: response.model } : {}),
+          retentionFailure: {
+            name: retentionError?.name ?? typeof retentionFailure,
+            message: retentionError?.message ?? String(retentionFailure),
+            ...((retentionError as Error & { code?: unknown } | undefined)?.code !== undefined ? { code: (retentionError as Error & { code?: unknown }).code } : {}),
+            ...(retentionCause === undefined ? {} : { cause: retentionCause instanceof Error ? { name: retentionCause.name, message: retentionCause.message, ...((retentionCause as Error & { code?: unknown }).code === undefined ? {} : { code: (retentionCause as Error & { code?: unknown }).code }) } : retentionCause }),
+          },
+        };
+        throw failure;
+      }
+    }
     if (response === undefined || response.stopReason === "error" || response.stopReason === "aborted" || decision === undefined) throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
     return { decision, response };
   } finally { await rm(scratch, { recursive: true, force: true }); }

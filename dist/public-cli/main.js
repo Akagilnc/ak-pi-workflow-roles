@@ -13141,7 +13141,8 @@ function classifyPostAdmissionFailure(input) {
       return {
         cause: error.knownCause,
         diagnostic: error.message || error.name || "unrecognized exception",
-        identity
+        identity,
+        ...error.details === void 0 ? {} : { details: error.details }
       };
     }
     if (error instanceof Error) {
@@ -13165,7 +13166,8 @@ function classifyPostAdmissionFailure(input) {
       diagnostic,
       details: {
         code: input.code,
-        ...input.timedOut ? { timedOut: true } : {}
+        ...input.timedOut ? { timedOut: true } : {},
+        ...input.knownDetails ?? {}
       },
       ...input.knownIdentity === void 0 ? {} : { identity: input.knownIdentity }
     };
@@ -15405,6 +15407,7 @@ async function presentControlledFailure(admitted, failureInput, io) {
     ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
     ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...failureInput.knownDetails === void 0 ? {} : { knownDetails: failureInput.knownDetails },
     ...session === void 0 ? {} : { session }
   });
   const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
@@ -15534,7 +15537,8 @@ async function dispatchAdmittedJudge(input) {
         ...knownFailure === void 0 ? {} : {
           knownCause: knownFailure.cause,
           ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
+          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic },
+          ...knownFailure.details === void 0 ? {} : { knownDetails: knownFailure.details }
         }
       },
       io
@@ -16238,6 +16242,7 @@ async function presentControlledFailure4(admitted, failureInput, io) {
     ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
     ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...failureInput.knownDetails === void 0 ? {} : { knownDetails: failureInput.knownDetails },
     ...session === void 0 ? {} : { session }
   });
   await markRunTerminal(admitted.runDirectory).catch(() => void 0);
@@ -16348,7 +16353,8 @@ async function dispatchAdmittedDoctor(input) {
         ...knownFailure === void 0 ? {} : {
           knownCause: knownFailure.cause,
           ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
+          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic },
+          ...knownFailure.details === void 0 ? {} : { knownDetails: knownFailure.details }
         }
       },
       io
@@ -16496,6 +16502,7 @@ async function presentControlledFailure5(admitted, failureInput, io) {
     ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
     ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...failureInput.knownDetails === void 0 ? {} : { knownDetails: failureInput.knownDetails },
     ...session === void 0 ? {} : { session }
   });
   const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
@@ -16630,7 +16637,8 @@ async function dispatchAdmittedFixer(input) {
         ...knownFailure === void 0 ? {} : {
           knownCause: knownFailure.cause,
           ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
+          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic },
+          ...knownFailure.details === void 0 ? {} : { knownDetails: knownFailure.details }
         }
       },
       io
@@ -17294,6 +17302,7 @@ async function presentControlledFailure7(admitted, failureInput, io) {
     ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
     ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...failureInput.knownDetails === void 0 ? {} : { knownDetails: failureInput.knownDetails },
     ...session === void 0 ? {} : { session }
   });
   const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted);
@@ -17428,7 +17437,8 @@ async function dispatchAdmittedReviewer(input) {
         ...knownFailure === void 0 ? {} : {
           knownCause: knownFailure.cause,
           ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
+          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic },
+          ...knownFailure.details === void 0 ? {} : { knownDetails: knownFailure.details }
         }
       },
       io

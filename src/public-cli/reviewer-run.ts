@@ -191,6 +191,7 @@ async function presentControlledFailure(
       readonly code?: string | number;
     };
     knownDiagnostic?: string;
+    knownDetails?: Readonly<Record<string, unknown>>;
   },
   io: CliIo,
 ): Promise<{
@@ -219,6 +220,9 @@ async function presentControlledFailure(
     ...(failureInput.knownDiagnostic === undefined
       ? {}
       : { knownDiagnostic: failureInput.knownDiagnostic }),
+    ...(failureInput.knownDetails === undefined
+      ? {}
+      : { knownDetails: failureInput.knownDetails }),
     ...(session === undefined ? {} : { session }),
   });
 
@@ -392,6 +396,9 @@ async function dispatchAdmittedReviewer(input: {
               ...(knownFailure.diagnostic === undefined
                 ? {}
                 : { knownDiagnostic: knownFailure.diagnostic }),
+              ...(knownFailure.details === undefined
+                ? {}
+                : { knownDetails: knownFailure.details }),
             }),
       },
       io,

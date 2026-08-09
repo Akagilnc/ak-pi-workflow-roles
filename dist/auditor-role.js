@@ -64,8 +64,32 @@ export async function runAuditorRole(options) {
             throw turnError;
         const response = [...session.messages].reverse().find((message) => message.role === "assistant");
         session.dispose();
-        if (response !== undefined)
-            options.retainResponse?.(response);
+        if (response !== undefined) {
+            try {
+                options.retainResponse?.(response);
+            }
+            catch (retentionFailure) {
+                if (response.stopReason !== "error")
+                    throw retentionFailure;
+                const failure = new Error(response.errorMessage?.trim() || "provider failure", { cause: retentionFailure });
+                failure.name = "ProviderStopError";
+                failure.knownCause = "provider";
+                failure.failureCode = response.provider || response.model;
+                const retentionError = retentionFailure instanceof Error ? retentionFailure : undefined;
+                const retentionCause = retentionError?.cause;
+                failure.details = {
+                    ...(response.provider ? { provider: response.provider } : {}),
+                    ...(response.model ? { model: response.model } : {}),
+                    retentionFailure: {
+                        name: retentionError?.name ?? typeof retentionFailure,
+                        message: retentionError?.message ?? String(retentionFailure),
+                        ...(retentionError?.code !== undefined ? { code: retentionError.code } : {}),
+                        ...(retentionCause === undefined ? {} : { cause: retentionCause instanceof Error ? { name: retentionCause.name, message: retentionCause.message, ...(retentionCause.code === undefined ? {} : { code: retentionCause.code }) } : retentionCause }),
+                    },
+                };
+                throw failure;
+            }
+        }
         if (response === undefined || response.stopReason === "error" || response.stopReason === "aborted" || decision === undefined)
             throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
         return { decision, response };

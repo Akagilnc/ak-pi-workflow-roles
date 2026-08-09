@@ -276,6 +276,7 @@ function isTypedActivationError(
 ): error is Error & {
   knownCause: ControlledFailureCause;
   failureCode?: string | number;
+  details?: Readonly<Record<string, unknown>>;
 } {
   if (!(error instanceof Error)) return false;
   const cause = (error as { knownCause?: unknown }).knownCause;
@@ -320,6 +321,8 @@ export function classifyPostAdmissionFailure(input: {
    * errorMessage, runner knownFailure.diagnostic). Preferred over stderr selection.
    */
   knownDiagnostic?: string;
+  /** Secondary evidence already carried by the typed production failure. */
+  knownDetails?: Readonly<Record<string, unknown>>;
 }): ControlledFailure {
   // Own-key presence, not value: `throw undefined` is a real caught exception.
   if (Object.hasOwn(input, "thrown")) {
@@ -333,6 +336,7 @@ export function classifyPostAdmissionFailure(input: {
         cause: error.knownCause,
         diagnostic: error.message || error.name || "unrecognized exception",
         identity,
+        ...(error.details === undefined ? {} : { details: error.details }),
       };
     }
     if (error instanceof Error) {
@@ -367,6 +371,7 @@ export function classifyPostAdmissionFailure(input: {
       details: {
         code: input.code,
         ...(input.timedOut ? { timedOut: true as const } : {}),
+        ...(input.knownDetails ?? {}),
       },
       ...(input.knownIdentity === undefined
         ? {}
