@@ -286,6 +286,9 @@ export const ROLE_FLAG = {
   },
 } as const;
 
+type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybookReadFailure"> &
+  Partial<Pick<NavigatorAttendance, "knownRoutePlaybookReadFailure">>;
+
 export type RoleRuntimeDependencies = {
   loadJudgeSoul(): Promise<string>;
   loadFixerSoul?(): Promise<string>;
@@ -309,7 +312,7 @@ export type RoleRuntimeDependencies = {
   auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
-  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendance | Promise<NavigatorAttendance>;
+  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
@@ -398,7 +401,7 @@ export function createRoleRuntimeExtension(
 
     let admitted = false;
     let selectedRole: string | undefined;
-    let navigatorAttendance: NavigatorAttendance | undefined;
+    let navigatorAttendance: NavigatorAttendanceDependency | undefined;
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
@@ -473,11 +476,13 @@ export function createRoleRuntimeExtension(
           const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
           if (raced.status === "timeout") {
             if (pendingNavigatorPresentation === undefined) {
+              const routePlaybookReadFailure = attendance.knownRoutePlaybookReadFailure?.();
               const report: NavigatorReport = {
                 disposition: "unavailable",
                 unavailableReason: "Navigator exceeded post-role delivery grace",
                 unavailableSource: "unknown",
                 unavailableCause: "unknown",
+                ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
               };
               const navigatorEvent: NavigatorEvent = {
                 version: 1,
@@ -489,6 +494,7 @@ export function createRoleRuntimeExtension(
                 unavailableReason: "Navigator exceeded post-role delivery grace",
                 unavailableSource: "unknown",
                 unavailableCause: "unknown",
+                ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
               };
               pendingNavigatorPresentation = { event: navigatorEvent, report };
             }
