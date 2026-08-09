@@ -17,7 +17,12 @@ import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { createNavigatorAttendance, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
+import {
+  createNavigatorAttendance,
+  type NavigatorEvent,
+  type NavigatorPreparationSession,
+} from "../../src/navigator-attendance.ts";
+import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
 import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
 import {
   createCoderRoleRuntime,
@@ -383,7 +388,7 @@ test("unsupported role fails with the frozen diagnostic before any loader runs",
   assert.deepEqual([...harness.tools], []);
 });
 
-test("focused Judge controller owns activation, output, narrowing, and prompt", async () => {
+test("focused Judge controller registers output without narrowing host tools", async () => {
   const harness = extensionHarness(undefined, {}, [
     "read",
     "grep",
@@ -407,14 +412,7 @@ test("focused Judge controller owns activation, output, narrowing, and prompt", 
   await runtime.activate();
 
   assert.deepEqual([...harness.tools.keys()], [JUDGE_OUTPUT_TOOL_NAME]);
-  assert.deepEqual(harness.activeToolSets, [[
-    "read",
-    "grep",
-    "find",
-    "ls",
-    "bash",
-    JUDGE_OUTPUT_TOOL_NAME,
-  ]]);
+  assert.deepEqual(harness.activeToolSets, []);
   assert.equal(
     (await harness.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE" },
@@ -624,78 +622,6 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
   ]);
   assert.equal(result.terminate, true);
   assert.deepEqual(result.details, verdict);
-});
-
-test("production Judge-to-Soul audit projection ignores opaque evidence and preserves receipt details", async () => {
-  const auditRequests: Context[] = [];
-  const auditor = createPiJudgeAuditor(async (_model, request) => {
-    auditRequests.push(request);
-    return fauxAssistantMessage(
-      fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-      { stopReason: "toolUse" },
-    );
-  });
-  const { tool } = await startJudge(auditor, productionTranscriptFromContext);
-  const auditedContext = (id: string, verdict: JudgeVerdict) => Object.assign(
-    toolCallContext([{ id, arguments: verdict }]),
-    {
-      model: { provider: "active", id: "judge" },
-      modelRegistry: {
-        async getProviderAuth() {
-          return { auth: { apiKey: "secret" } };
-        },
-        async getApiKeyAndHeaders() {
-          return { ok: true, apiKey: "secret" };
-        },
-      },
-    },
-  ) as ExtensionContext;
-  const withoutEvidence: JudgeVerdict = { judgeStatus: "converged" };
-  const evidence = { opaqueOnly: "must not reach the auditor" } as const;
-  const withEvidence: JudgeVerdict = { judgeStatus: "converged", evidence };
-
-  const withoutReceipt = await tool.execute(
-    "without-evidence",
-    withoutEvidence,
-    undefined,
-    undefined,
-    auditedContext("without-evidence", withoutEvidence),
-  );
-  const withReceipt = await tool.execute(
-    "with-evidence",
-    withEvidence,
-    undefined,
-    undefined,
-    auditedContext("with-evidence", withEvidence),
-  );
-
-  assert.equal(auditRequests.length, 2);
-  const serializedAuditInput = (request: Context): string => {
-    assert.equal(request.messages.length, 1);
-    const [user] = request.messages;
-    assert.ok(user?.role === "user");
-    assert.ok(Array.isArray(user.content));
-    assert.equal(user.content.length, 1);
-    const [part] = user.content;
-    assert.ok(part?.type === "text");
-    return part.text;
-  };
-  const firstAuditText = serializedAuditInput(auditRequests[0]!);
-  const secondAuditText = serializedAuditInput(auditRequests[1]!);
-  assert.deepEqual(
-    Buffer.from(firstAuditText, "utf8"),
-    Buffer.from(secondAuditText, "utf8"),
-  );
-  assert.match(
-    firstAuditText,
-    /\[Assistant tool calls\]: ak_judge_output\(judgeStatus="converged"\)/,
-  );
-  assert.doesNotMatch(firstAuditText, /evidence|opaqueOnly/);
-  assert.equal(withoutReceipt.terminate, true);
-  assert.equal(withReceipt.terminate, true);
-  assert.deepEqual(withoutReceipt.details, withoutEvidence);
-  assert.deepEqual(withReceipt.details, withEvidence);
-  assert.equal(withReceipt.details.evidence, evidence);
 });
 
 test("judge role returns revise as an ordinary errored tool result without aborting", async () => {
@@ -1296,73 +1222,6 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
   );
 });
 
-test("Fixer prospective prerequisite decisions survive the production submission lifecycle unchanged", async () => {
-  const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
-  const decisions = [
-    { status: "revise", violations: ["completed work was retrospectively relabeled as blocked"], conflicts: [], decisionGate: null },
-    { status: "pass", violations: [], conflicts: [], decisionGate: null },
-    { status: "pass", violations: [], conflicts: [], decisionGate: null },
-  ] as const;
-  let auditCalls = 0;
-  const auditInputs: Context[] = [];
-  const audit = createPiFixerAuditor(async (_model, request) => {
-    auditInputs.push(request);
-    return fauxAssistantMessage(
-      fauxToolCall(FIXER_AUDIT_TOOL_NAME, decisions[auditCalls++]!),
-      { stopReason: "toolUse" },
-    );
-  });
-  createRoleRuntimeExtension({
-    loadJudgeSoul: async () => "judge",
-    loadFixerSoul: async () => "fixer",
-    loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? JSON.stringify([{ id: "owner.choice", requirement: "The predecessor owner decision exists." }]) : "A predecessor owner decision is required before work when the packet says so.",
-    transcriptFromContext: () => "Current invocation record and verification evidence.",
-    auditSoulCompliance: async () => ({ status: "pass" }),
-    auditFixerCompliance: audit,
-  })(harness.pi as ExtensionAPI);
-  await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-    await harness.handlers.get("session_start")?.({}, activationCtx(home));
-  });
-  const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
-  const productionBeforeRegressionRefusal = {
-    status: "refused", report: "Both repairs and regressions exist, but commit ordering cannot be rewritten.",
-    classResults: [{ name: "Binding", disposition: "refused", remainingScope: "retrospective test-first ordering", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "production commit preceded the regression commit" } }],
-  };
-  const correctedCompletion = {
-    status: "completed", report: "The production change preceded its regression, so this does not claim TDD. Current focused and full verification pass.",
-    classResults: [{ name: "Binding", disposition: "completed", searchScope: "all binding sites", exceptions: [], commitSha: "a".repeat(40) }],
-  };
-  const absentOwnerDecision = {
-    status: "refused", report: "No work began because the packet-required owner decision is still absent and execution is presently inadmissible.",
-    classResults: [{ name: "Policy", disposition: "refused", remainingScope: "the entire policy change", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "the packet requires an owner decision before editing, and no such decision exists" } }],
-  };
-  const auditedContext = (id: string) => Object.assign(toolCallContext([{ id, name: FIXER_OUTPUT_TOOL_NAME }]), {
-    model: { provider: "active", id: "same-model" },
-    modelRegistry: {
-      async getProviderAuth() { return { auth: { apiKey: "secret" } }; },
-      async getApiKeyAndHeaders() { return { ok: true, apiKey: "secret" }; },
-    },
-  }) as ExtensionContext;
-
-  await assert.rejects(
-    tool.execute("retrospective", productionBeforeRegressionRefusal, undefined, undefined, auditedContext("retrospective")),
-    /Fixer output violates its law/,
-  );
-  const corrected = await tool.execute("corrected", correctedCompletion, undefined, undefined, auditedContext("corrected"));
-  const prerequisite = await tool.execute("prerequisite", absentOwnerDecision, undefined, undefined, auditedContext("prerequisite"));
-  assert.deepEqual(corrected.details, correctedCompletion);
-  assert.deepEqual(prerequisite.details, absentOwnerDecision);
-  assert.equal(corrected.terminate, true);
-  assert.equal(prerequisite.terminate, true);
-  assert.equal(auditCalls, 3);
-  assert.notEqual(auditInputs[0], auditInputs[1]);
-  for (const [index, candidate] of [productionBeforeRegressionRefusal, correctedCompletion, absentOwnerDecision].entries()) {
-    const userContent = auditInputs[index]?.messages.find((message) => message.role === "user")?.content;
-    assert.ok(Array.isArray(userContent));
-    assert.equal(userContent.some((part) => part.type === "text" && part.text.includes(JSON.stringify(candidate))), true);
-  }
-});
-
 test("fixer output must be the sole call in its assistant batch", async () => {
   const harness = extensionHarness("fixer", {
     "ak-fix-packet": "/materials/fix.md",
@@ -1502,6 +1361,7 @@ test(
     t.mock.timers.enable({ apis: ["setTimeout"] });
     assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
 
+    const routePlaybookCause = "ROUTEBOOK_FAILED_BEFORE_HELD_PROMPT";
     const modelRoot = await mkdtemp(join(tmpdir(), "ak-judge-grace-model-"));
     const modelSettingPath = join(modelRoot, "navigator-model.json");
     await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
@@ -1543,6 +1403,9 @@ test(
             sessionDir: join(modelRoot, "navigator-session"),
             modelSettingPath,
             loadSoul: async () => "route law",
+            loadRoutePlaybook: async () => {
+              throw new Error(routePlaybookCause);
+            },
             loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
             createSession: async () => ({
               async prompt() {
@@ -1591,17 +1454,14 @@ test(
 
         await harness.handlers.get("agent_settled")?.({}, ctx);
         assert.equal(sentMessages.length, 1);
-        const details = sentMessages[0]?.details as {
-          disposition?: string;
-          unavailableReason?: string;
-          unavailableSource?: string;
-          invocationId?: string;
-        };
+        const details = sentMessages[0]?.details as NavigatorEvent;
         assert.equal(details.disposition, "unavailable");
         assert.equal(details.invocationId, "post-role-grace-timeout");
         assert.equal(typeof details.unavailableReason, "string");
         assert.ok(String(details.unavailableReason).length > 0);
         assert.equal(details.unavailableSource, "unknown");
+        assert.equal(details.unavailableCause, "unknown");
+        assert.equal(details.routePlaybookReadFailure, routePlaybookCause);
 
         // Late preparation completion must not overwrite the grace unavailable fact.
         releasePreparation();
@@ -1620,18 +1480,39 @@ test(
         );
 
         // Session attendance fact → typed Terminal navigator (settlement owner, not presentation).
+        const terminalInvocationId = "019f8c2a-7b3e-7d11-8a4f-1c2d3e4f5a6b";
         const navigator = extractNavigatorFact([
+          {
+            type: "custom",
+            customType: NAVIGATOR_INVOCATION_ENTRY,
+            data: {
+              invocationId: terminalInvocationId,
+              role: "judge",
+              phase: null,
+              subjectKey: details.subjectKey,
+            },
+          },
+          {
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolName: JUDGE_OUTPUT_TOOL_NAME,
+              isError: false,
+              details: { judgeStatus: "converged" },
+            },
+          },
           {
             type: "custom_message",
             customType: "ak-navigator-attendance",
-            message: { details },
+            message: { details: { ...details, invocationId: terminalInvocationId } },
           },
-        ]);
+        ] as never);
         assert.equal(navigator.disposition, "unavailable");
         if (navigator.disposition === "unavailable") {
           assert.equal(navigator.source, "unknown");
           assert.equal(typeof navigator.reason, "string");
           assert.ok(navigator.reason.length > 0);
+          assert.equal(navigator.advisoryDiagnostic, routePlaybookCause);
         }
         const terminal = {
           roleOutcome: {

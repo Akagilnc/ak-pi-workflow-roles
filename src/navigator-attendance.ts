@@ -13,6 +13,8 @@ import {
   mintNavigatorInvocationId,
 } from "./navigator-invocation-identity.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
+import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
+import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 
@@ -153,6 +155,7 @@ export type NavigatorReport = {
   unavailableReason?: string;
   unavailableSource?: NavigatorUnavailableKey;
   unavailableCause?: NavigatorUnavailableKey;
+  routePlaybookReadFailure?: string;
   arrivalMessage?: string;
 };
 
@@ -170,6 +173,7 @@ export type NavigatorEvent = {
   unavailableReason?: string;
   unavailableSource?: NavigatorUnavailableKey;
   unavailableCause?: NavigatorUnavailableKey;
+  routePlaybookReadFailure?: string;
   arrivalMessage?: string;
 };
 
@@ -214,6 +218,7 @@ export type NavigatorAttendanceOptions = {
   subjectKey: string;
   sessionDir: string;
   loadSoul: () => Promise<string>;
+  loadRoutePlaybook?: () => Promise<string>;
   loadRoleHelp: (role: NavigatorTargetRole) => Promise<string>;
   createSession: NavigatorSessionFactory;
   modelSettingPath?: string;
@@ -360,15 +365,12 @@ export function navigatorSubjectKeyForInput(subjectRoot: string, reference: stri
 }
 
 function subjectDirectory(cwd: string, subjectKey: string): string {
-  const issue = issueRoot(subjectKey);
-  if (issue !== undefined) {
-    const base = join(issue, "runs", "navigator");
-    if (subjectKey === issue) return base;
-    const digest = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
-    return join(base, digest);
-  }
+  const book = activationBookDirectory(
+    resolveActivationLedgerHome(),
+    resolveBookKeyFromGit(cwd),
+  );
   const digest = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
-  return join(resolve(cwd, ".ak", "work", "navigator"), digest);
+  return join(book, "navigator", digest);
 }
 
 export function navigatorModelSettingPath(): string {
@@ -441,10 +443,14 @@ export function selectNavigatorCandidate(candidates: readonly NavigatorCandidate
 }
 
 export function formatNavigatorReport(report: NavigatorReport): string {
-  if (report.disposition === "no-advice") return "";
-  if (report.disposition === "unavailable") return `导航不可用：${oneLine(report.unavailableReason ?? "未能完成导航准备")}`;
-  if (report.disposition === "arrival") return oneLine(report.arrivalMessage ?? "已到达目的地");
+  const playbookFailure = report.routePlaybookReadFailure === undefined
+    ? []
+    : [`路书读取失败：${oneLine(report.routePlaybookReadFailure)}`];
+  if (report.disposition === "no-advice") return playbookFailure.join("\n");
+  if (report.disposition === "unavailable") return [...playbookFailure, `导航不可用：${oneLine(report.unavailableReason ?? "未能完成导航准备")}`].join("\n");
+  if (report.disposition === "arrival") return [...playbookFailure, oneLine(report.arrivalMessage ?? "已到达目的地")].join("\n");
   return [
+    ...playbookFailure,
     ...(report.route === undefined ? [] : [`路线：${routeText(report.route)}`]),
     `下一步：${targetText(report.next!)}`,
     ...(report.reason === undefined || report.reason.trim() === "" ? [] : [`理由：${oneLine(report.reason)}`]),
@@ -503,7 +509,8 @@ export function decorateSettlementWithNavigation<T extends { type: string }>(
 ): { content: Array<T | SettlementTextPart>; details: unknown } | undefined {
   if (presentation === undefined) return undefined;
   if (settlementNavigationFromEvent(presentation.event) === undefined) return undefined;
-  const reportText = formatNavigatorReport(presentation.report);
+  const { routePlaybookReadFailure: _advisoryFailure, ...receiptReport } = presentation.report;
+  const reportText = formatNavigatorReport(receiptReport);
   if (reportText === "") return undefined;
   return {
     content: appendNavigatorReportToContent(event.content, reportText),
@@ -529,6 +536,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let settlementTail: Promise<void> = Promise.resolve();
   let settlementFailure: unknown;
   let preparationFailure: unknown;
+  let routePlaybookReadFailure: string | undefined;
   let disposed = false;
   /** One-shot live-help warm; consumed by the next prepare so later prepares reread live help. */
   let warmedHelp: Promise<Array<{ role: NavigatorTargetRole; help: string }>> | undefined;
@@ -557,6 +565,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       unavailableCause: failure.unavailableCause,
     };
   };
+  let routePlaybookSettlement: Promise<void> | undefined;
   const prepare = async (): Promise<NavigatorCandidate[]> => {
     // Exact principal is owned by shared lifecycle (or one mint per attendance).
     // Model/tool/advice paths cannot override it; role-session persistence is
@@ -579,6 +588,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       let soul: string;
       let modelSetting: string;
       let help: Array<{ role: NavigatorTargetRole; help: string }>;
+      let routePlaybook = "";
+      routePlaybookReadFailure = undefined;
       const soulPromise = (async () => {
         try {
           const text = (await options.loadSoul()).trim();
@@ -589,6 +600,18 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           throw navigatorUnavailableError("context", error);
         }
       })();
+      const routePlaybookPromise = (async () => {
+        if (options.loadRoutePlaybook === undefined) return "";
+        try {
+          return await options.loadRoutePlaybook();
+        } catch (error) {
+          routePlaybookReadFailure = error instanceof Error ? error.message : String(error);
+          return "";
+        }
+      })();
+      // Preparation is fail-fast for its primary dependencies, but settlement
+      // independently drains this optional diagnostic before emitting attendance.
+      routePlaybookSettlement = routePlaybookPromise.then(() => undefined);
       const modelPromise = (async () => {
         try {
           return await readNavigatorModelSetting(options.modelSettingPath);
@@ -599,8 +622,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       // Prefer one-shot warm from session_start; clear so the next prepare reloads live.
       const helpPromise = warmedHelp ?? loadLiveHelp();
       warmedHelp = undefined;
-      [soul, modelSetting, help] = await Promise.all([
+      [soul, routePlaybook, modelSetting, help] = await Promise.all([
         soulPromise,
+        routePlaybookPromise,
         modelPromise,
         helpPromise,
       ]);
@@ -685,6 +709,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const request = [
         "Act as the Navigator direction advisor. Submit one next-step advice batch; do not execute or invoke any role.",
         `<navigator_soul>\n${soul}\n</navigator_soul>`,
+        ...(routePlaybookReadFailure === undefined ? [
+          `<route_playbook>\n${routePlaybook}\n</route_playbook>`,
+          "The route playbook is advisory material only. Exercise independent judgment: adopt, alter, or ignore it; the caller may also deviate.",
+        ] : ["The optional route playbook could not be read. Continue independent judgment from the other supplied materials."]),
         `<work_subject>\n${subject}\n</work_subject>`,
         `<controlling_authority>\n${authority}\n</controlling_authority>`,
         `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
@@ -758,6 +786,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     },
     isPreparing(): boolean {
       return preparation !== undefined || sessionReady !== undefined;
+    },
+    knownRoutePlaybookReadFailure(): string | undefined {
+      return routePlaybookReadFailure;
     },
     settle(settlement: NavigatorSettlement): Promise<void> {
       const next = settlementTail.then(() => settleOnce(settlement));
@@ -838,6 +869,13 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           report = unavailable(invocationId, error);
         }
       }
+      // A primary preparation failure may reject Promise.all before the optional
+      // routebook read finishes. Preserve that primary unavailable cause while
+      // waiting for, and independently attaching, the routebook diagnostic.
+      await routePlaybookSettlement;
+      if (routePlaybookReadFailure !== undefined) {
+        report = { ...report, routePlaybookReadFailure };
+      }
       const event: NavigatorEvent = {
         version: 1,
         disposition: report.disposition,
@@ -852,6 +890,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         ...(report.unavailableReason === undefined ? {} : { unavailableReason: report.unavailableReason }),
         ...(report.unavailableSource === undefined ? {} : { unavailableSource: report.unavailableSource }),
         ...(report.unavailableCause === undefined ? {} : { unavailableCause: report.unavailableCause }),
+        ...(report.routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure: report.routePlaybookReadFailure }),
         ...(report.arrivalMessage === undefined ? {} : { arrivalMessage: report.arrivalMessage }),
       };
       // Dispose during post-role grace must ignore late completion (ADR 0052 / #106).
@@ -863,6 +902,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       sessionReady = undefined;
       candidates = undefined;
       preparationFailure = undefined;
+      routePlaybookSettlement = undefined;
+      routePlaybookReadFailure = undefined;
   }
 }
 

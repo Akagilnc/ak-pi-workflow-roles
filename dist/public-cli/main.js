@@ -12967,6 +12967,23 @@ function isLawfulTypedTerminalOutcome(outcome) {
 function exitCodeForTerminalOutcome(outcome) {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
 }
+function buildResidualIncompleteTerminalOutcome(input) {
+  return {
+    kind: "incomplete",
+    role: input.role,
+    status: "incomplete",
+    decision: "no-usable-result",
+    candidate: input.candidate,
+    diagnostic: input.diagnostic,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-result",
+      candidate: input.candidate,
+      diagnostic: input.diagnostic,
+      acceptedReceipt: false
+    }
+  };
+}
 function buildAuditIncompleteTerminalOutcome(input) {
   const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
   const audit = {
@@ -13013,7 +13030,8 @@ function recommendationNavigatorFact(input) {
     next: input.next,
     reason: input.reason,
     command,
-    ...input.route === void 0 ? {} : { route: input.route }
+    ...input.route === void 0 ? {} : { route: input.route },
+    ...input.advisoryDiagnostic === void 0 ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }
   };
 }
 function formatTerminalResult(result2) {
@@ -13035,6 +13053,9 @@ function formatTerminalResult(result2) {
     lines.push(`fact	${encodeTerminalField(key)}	${encodeTerminalField(rendered)}`);
   }
   lines.push(`navigator	${result2.navigator.disposition}`);
+  if (result2.navigator.advisoryDiagnostic !== void 0) {
+    lines.push(`navigator-advisory	${encodeTerminalField(result2.navigator.advisoryDiagnostic)}`);
+  }
   if (result2.navigator.disposition === "recommendation") {
     lines.push(
       `next	${result2.navigator.next.role}	${result2.navigator.next.phase ?? "none"}`
@@ -13484,6 +13505,12 @@ function toolResultText(message) {
     }
     return "";
   }).join("").trim();
+}
+function boundErroredToolCandidate(entries, resultIndex, message, toolName) {
+  if (message.toolName !== toolName || message.isError !== true) return void 0;
+  const bound = boundRoleToolCallForResult(entries, resultIndex, message, toolName);
+  const diagnostic = toolResultText(message);
+  return bound === void 0 || diagnostic === "" ? void 0 : { candidate: bound.candidate, diagnostic, callIndex: bound.callIndex };
 }
 var COLLECTOR_INFRASTRUCTURE_TOOLS = /* @__PURE__ */ new Set([
   COLLECTOR_OBSERVE_TOOL,
@@ -13961,6 +13988,7 @@ function navigatorAttendanceCorrelatedWithBoundMarker(details, attendanceIndex, 
 }
 function parseNavigatorAttendanceDetails(details) {
   const disposition = details.disposition;
+  const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string" ? { advisoryDiagnostic: details.routePlaybookReadFailure } : {};
   if (disposition === "recommendation") {
     const next = details.next;
     if (!isRecord4(next) || typeof next.role !== "string") {
@@ -13976,6 +14004,7 @@ function parseNavigatorAttendanceDetails(details) {
       phase: navigatorPhaseValue(target.phase)
     })) : void 0;
     return recommendationNavigatorFact({
+      ...advisoryDiagnostic,
       next: {
         role: next.role,
         phase: navigatorPhaseValue(next.phase)
@@ -13988,12 +14017,16 @@ function parseNavigatorAttendanceDetails(details) {
   if (disposition === "unavailable") {
     return {
       disposition: "unavailable",
+      ...advisoryDiagnostic,
       source: typeof details.unavailableSource === "string" ? details.unavailableSource : "unknown",
       reason: typeof details.unavailableReason === "string" ? details.unavailableReason : "Navigator unavailable"
     };
   }
   if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
-    return { disposition: "no-advice" };
+    return {
+      disposition: "no-advice",
+      ...advisoryDiagnostic
+    };
   }
   return {
     disposition: "unavailable",
@@ -14519,7 +14552,30 @@ async function settleLawfulCollectorTerminalResult(admitted) {
   const entries = await readLawfulSettlementEntries(admitted);
   if (entries === void 0) return void 0;
   const extracted = extractCollectorRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
+  if (extracted === void 0) {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
+      if (residual === void 0) continue;
+      const candidate = residual.candidate;
+      const duration = isRecord4(candidate) ? candidate.durationMs : void 0;
+      if (Number.isSafeInteger(duration) && duration >= 1 && duration <= 9e5) {
+        continue;
+      }
+      return {
+        roleOutcome: buildResidualIncompleteTerminalOutcome({
+          role: "collector",
+          candidate,
+          diagnostic: residual.diagnostic
+        }),
+        navigator: { disposition: "no-advice" },
+        artifacts: [],
+        runId: admitted.runId
+      };
+    }
+    return void 0;
+  }
   const admittedManifest = await loadCollectorManifest(admitted.legsPath);
   if (admittedManifest.digest !== admitted.manifestDigest) {
     throw collectorReceiptBindingFailure(
@@ -14968,7 +15024,35 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
   const entries = await readLawfulSettlementEntries(admitted);
   if (entries === void 0) return void 0;
   const extracted = extractMergerRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
+  if (extracted === void 0) {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
+      if (residual === void 0) continue;
+      const callMessage = entries[residual.callIndex]?.message;
+      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content) ? callMessage.content.filter((part) => isRecord4(part) && part.type === "toolCall") : [];
+      const attemptId = isRecord4(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
+      if (calls.length !== 1 || calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME || !attemptId.readable || attemptId.value !== admitted.runId) {
+        continue;
+      }
+      try {
+        validateMergerOutput(residual.candidate, admitted.runId);
+      } catch {
+        return {
+          roleOutcome: buildResidualIncompleteTerminalOutcome({
+            role: "merger",
+            candidate: residual.candidate,
+            diagnostic: residual.diagnostic
+          }),
+          navigator: { disposition: "no-advice" },
+          artifacts: [],
+          runId: admitted.runId
+        };
+      }
+    }
+    return void 0;
+  }
   const methodInvocations = extractMergerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -15171,19 +15255,22 @@ function redactDecisiveFactsForPublicTerminal(facts, runId) {
   return out;
 }
 function redactNavigatorFactForPublicTerminal(navigator, runId) {
+  const advisoryDiagnostic = navigator.advisoryDiagnostic === void 0 ? {} : { advisoryDiagnostic: redactExactRunId(navigator.advisoryDiagnostic, runId) };
   if (navigator.disposition === "recommendation") {
     return {
       ...navigator,
+      ...advisoryDiagnostic,
       reason: redactExactRunId(navigator.reason, runId)
     };
   }
   if (navigator.disposition === "unavailable") {
     return {
       ...navigator,
+      ...advisoryDiagnostic,
       reason: redactExactRunId(navigator.reason, runId)
     };
   }
-  return navigator;
+  return { ...navigator, ...advisoryDiagnostic };
 }
 async function settleFailureTerminalResult(admitted, failure, options = {}) {
   const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
@@ -16026,7 +16113,7 @@ async function dispatchAdmittedCollector(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (lawful !== void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -16871,7 +16958,7 @@ async function dispatchAdmittedMerger(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (lawful !== void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {

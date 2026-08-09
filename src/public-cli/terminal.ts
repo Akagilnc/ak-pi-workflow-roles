@@ -39,6 +39,17 @@ export type TerminalRoleName =
   | "reviewer"
   | "merger";
 
+export type ResidualIncompleteTerminalOutcome = {
+  kind: "incomplete";
+  role: "merger" | "collector";
+  status: "incomplete";
+  decision: "no-usable-result";
+  candidate: unknown;
+  diagnostic: string;
+  acceptedReceipt: false;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
 export type AuditIncompleteTerminalOutcome = {
   kind: "audit_incomplete";
   role: TerminalRoleName;
@@ -83,6 +94,7 @@ export type TerminalRoleOutcome =
       decisiveFacts: Readonly<Record<string, unknown>>;
     }
   | AuditIncompleteTerminalOutcome
+  | ResidualIncompleteTerminalOutcome
   | {
       kind: "failure";
       role: TerminalRoleName;
@@ -106,6 +118,28 @@ export function exitCodeForTerminalOutcome(
   outcome: TerminalRoleOutcome,
 ): number {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
+}
+
+export function buildResidualIncompleteTerminalOutcome(input: {
+  role: "merger" | "collector";
+  candidate: unknown;
+  diagnostic: string;
+}): ResidualIncompleteTerminalOutcome {
+  return {
+    kind: "incomplete",
+    role: input.role,
+    status: "incomplete",
+    decision: "no-usable-result",
+    candidate: input.candidate,
+    diagnostic: input.diagnostic,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-result",
+      candidate: input.candidate,
+      diagnostic: input.diagnostic,
+      acceptedReceipt: false,
+    },
+  };
 }
 
 export function buildAuditIncompleteTerminalOutcome(input: {
@@ -148,14 +182,17 @@ export type TerminalNavigatorFact =
       /** Registry-rendered public command — never model prose. */
       command: string;
       route?: ReadonlyArray<{ role: string; phase: NavigatorPhase }>;
+      advisoryDiagnostic?: string;
     }
   | {
       disposition: "no-advice";
+      advisoryDiagnostic?: string;
     }
   | {
       disposition: "unavailable";
       source: string;
       reason: string;
+      advisoryDiagnostic?: string;
     };
 
 /** Present only when a controlled failure is v1-resumable (typed HTTP 429). */
@@ -206,6 +243,7 @@ export function recommendationNavigatorFact(input: {
   next: { role: string; phase: NavigatorPhase };
   reason: string;
   route?: ReadonlyArray<{ role: string; phase: NavigatorPhase }>;
+  advisoryDiagnostic?: string;
   /** Ignored — retained only so callers can pass through raw attendance without using it. */
   modelCommand?: string;
 }): TerminalNavigatorFact {
@@ -224,6 +262,7 @@ export function recommendationNavigatorFact(input: {
     reason: input.reason,
     command,
     ...(input.route === undefined ? {} : { route: input.route }),
+    ...(input.advisoryDiagnostic === undefined ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }),
   };
 }
 
@@ -255,6 +294,9 @@ export function formatTerminalResult(result: TerminalResult): string {
     lines.push(`fact\t${encodeTerminalField(key)}\t${encodeTerminalField(rendered)}`);
   }
   lines.push(`navigator\t${result.navigator.disposition}`);
+  if (result.navigator.advisoryDiagnostic !== undefined) {
+    lines.push(`navigator-advisory\t${encodeTerminalField(result.navigator.advisoryDiagnostic)}`);
+  }
   if (result.navigator.disposition === "recommendation") {
     lines.push(
       `next\t${result.navigator.next.role}\t${result.navigator.next.phase ?? "none"}`,

@@ -46,6 +46,7 @@ import {
   packagedRoleMetadata,
 } from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
+export { runAuditorRole } from "../src/role-runtime.ts";
 
 const extensionPath = fileURLToPath(import.meta.url);
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -56,6 +57,7 @@ const reviewerSoulPath = fileURLToPath(new URL("../souls/reviewer.md", import.me
 const collectorSoulPath = fileURLToPath(new URL("../souls/collector.md", import.meta.url));
 const doctorSoulPath = fileURLToPath(new URL("../souls/doctor.md", import.meta.url));
 const navigatorSoulPath = fileURLToPath(new URL("../souls/navigator.md", import.meta.url));
+const navigatorRoutePlaybookPath = fileURLToPath(new URL("../resources/navigator-route-playbook.md", import.meta.url));
 const mergerSoulPath = fileURLToPath(new URL("../souls/merger.md", import.meta.url));
 
 function navigatorInputReference(pi: ExtensionAPI, role: string): string | undefined {
@@ -321,6 +323,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
         authority: options.authority,
         invocationId: options.invocationId,
         loadSoul: () => readFile(navigatorSoulPath, "utf8"),
+        loadRoutePlaybook: () => readFile(navigatorRoutePlaybookPath, "utf8"),
         // In-process help: subprocess pi --help is reserved for cold-install proofs.
         // N child pi processes cannot fit the accepted 3s post-role grace under CI load.
         loadRoleHelp: async (role) => formatInProcessNavigatorRoleHelp(role),

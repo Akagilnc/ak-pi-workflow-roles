@@ -95,6 +95,25 @@ test("production Merger Git seam freezes the exact automatic merge tree and repo
   }
 });
 
+test("production Merger Git seam rejects pre-existing tracked and untracked dirt", async () => {
+  for (const dirt of ["tracked", "untracked"] as const) {
+    const fixture = await conflictedRepo();
+    try {
+      if (dirt === "tracked") await writeFile(resolve(fixture.cwd, "unrelated.txt"), "opening tracked dirt\n");
+      else await writeFile(resolve(fixture.cwd, "untracked.txt"), "opening untracked dirt\n");
+      const state = createProductionMergerGitState(fixture.cwd);
+      const active = await state.activeMerge();
+      await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n");
+      git(fixture.cwd, "add", "conflict.txt");
+      git(fixture.cwd, "commit", "-m", "resolve assigned merge");
+      const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
+      assert.equal((await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).worktreeClean, false, dirt);
+    } finally {
+      await rm(fixture.cwd, { recursive: true, force: true });
+    }
+  }
+});
+
 test("production Merger Git seam accepts a clean source-only first-parent change", async () => {
   const fixture = await conflictedRepo();
   try {
