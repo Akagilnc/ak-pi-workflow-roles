@@ -28,6 +28,41 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
+type NavigatorAttendanceDetails = {
+  disposition?: string;
+  invocationId?: string;
+  role?: string;
+  routePlaybookReadFailure?: string;
+  unavailableReason?: string;
+  unavailableSource?: string;
+  unavailableCause?: string;
+};
+
+async function readNavigatorAttendance(runDirectory: string): Promise<NavigatorAttendanceDetails> {
+  const text = await readFile(join(runDirectory, "session", "session.jsonl"), "utf8");
+  const entries = text.split("\n").filter(Boolean).map((line) => JSON.parse(line) as {
+    type?: string;
+    customType?: string;
+    data?: { invocationId?: string };
+    details?: NavigatorAttendanceDetails;
+    message?: { details?: NavigatorAttendanceDetails };
+  });
+  const attendance = entries.filter((entry) =>
+    entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"
+  );
+  assert.equal(attendance.length, 1, "each role run emits one typed Navigator attendance");
+  const details = attendance[0]!.message?.details ?? attendance[0]!.details;
+  assert.ok(details, "typed Navigator attendance carries details");
+  assert.equal(details.role, "coder");
+  assert.equal(typeof details.invocationId, "string");
+  assert.equal(entries.some((entry) =>
+    entry.type === "custom" &&
+    entry.customType === "ak-navigator-invocation" &&
+    entry.data?.invocationId === details.invocationId
+  ), true, "attendance correlates with its run's invocation principal");
+  return details;
+}
+
 async function runAkRoleBin(
   bin: string,
   args: string[],
@@ -240,9 +275,6 @@ test(
         assert.equal(forwardedE, 2);
         assert.equal(argvRecord.forwarded.includes(providerPath), true);
 
-        // Recommendation proves the installed marker reached the real Navigator provider context.
-        assert.match(result.stdout, /^navigator\trecommendation$/m);
-
         const bookKey = resolveBookKeyFromGit(project);
         const runsRoot = join(home, ".ak-roles", "books", bookKey, "runs");
         const { readdir } = await import("node:fs/promises");
@@ -284,6 +316,9 @@ test(
         // package TDD expansion, so acceptance is the gate proof on this production chain.
         const sessionFile = join(runDirectory, "session", "session.jsonl");
         const sessionText = await readFile(sessionFile, "utf8");
+        const recommendationAttendance = await readNavigatorAttendance(runDirectory);
+        assert.equal(recommendationAttendance.disposition, "recommendation");
+        assert.equal(recommendationAttendance.routePlaybookReadFailure, undefined);
         assert.equal(sessionText.includes("ak_coder_output"), true);
         assert.equal(sessionText.includes('"status":"completed"'), true);
         assert.equal(sessionText.includes('"isError":true') &&
@@ -331,18 +366,35 @@ test(
             },
           );
 
+        const knownRuns = new Set(runDirs);
         const continued = await runWithUnreadableRoutebook(false);
         assert.equal(continued.code, 0, continued.stderr);
-        assert.match(continued.stdout, /^navigator\trecommendation$/m);
-        assert.match(continued.stdout, /^navigator-advisory\t.*EACCES/m);
+        const afterContinued = await readdir(runsRoot);
+        const continuedRun = afterContinued.find((name) => name.endsWith("@coder") && !knownRuns.has(name));
+        assert.ok(continuedRun, "continued invocation has its own Coder run");
+        const continuedAttendance = await readNavigatorAttendance(join(runsRoot, continuedRun));
+        assert.equal(continuedAttendance.disposition, "recommendation");
+        assert.equal(typeof continuedAttendance.routePlaybookReadFailure, "string");
+        assert.equal(continuedAttendance.routePlaybookReadFailure!.includes("EACCES"), true);
+        assert.equal(continued.stdout.includes(continuedAttendance.routePlaybookReadFailure!), true);
 
         const unavailable = await runWithUnreadableRoutebook(true);
         assert.equal(unavailable.code, 0, unavailable.stderr);
-        assert.match(unavailable.stdout, /^navigator\tunavailable$/m);
-        assert.match(unavailable.stdout, /^navigator-advisory\t.*EACCES/m);
-        assert.match(unavailable.stdout, /^unavailable\t[^\t]+\t.+$/m);
+        const continuedRuns = new Set(afterContinued);
+        const afterUnavailable = await readdir(runsRoot);
+        const unavailableRun = afterUnavailable.find((name) => name.endsWith("@coder") && !continuedRuns.has(name));
+        assert.ok(unavailableRun, "unavailable invocation has its own Coder run");
+        const unavailableAttendance = await readNavigatorAttendance(join(runsRoot, unavailableRun));
+        assert.equal(unavailableAttendance.disposition, "unavailable");
+        assert.equal(typeof unavailableAttendance.unavailableReason, "string");
+        assert.equal(typeof unavailableAttendance.unavailableSource, "string");
+        assert.equal(typeof unavailableAttendance.unavailableCause, "string");
+        assert.equal(typeof unavailableAttendance.routePlaybookReadFailure, "string");
+        assert.equal(unavailableAttendance.routePlaybookReadFailure!.includes("EACCES"), true);
+        assert.notEqual(unavailableAttendance.unavailableCause, unavailableAttendance.routePlaybookReadFailure);
+        assert.equal(unavailable.stdout.includes(unavailableAttendance.routePlaybookReadFailure!), true);
 
-        const allRuns = await readdir(runsRoot);
+        const allRuns = afterUnavailable;
         const coderRuns = allRuns.filter((name) => name.endsWith("@coder"));
         assert.equal(coderRuns.length, 3);
         for (const name of coderRuns) {
