@@ -176,7 +176,7 @@ test("default compliance completion sends the production timeout and merges pare
     assert.notStrictEqual(seen.options?.signal, parent.signal);
     assert.equal("onResponse" in (seen.options ?? {}), false);
     assert.deepEqual(Object.keys(seen.options ?? {}).sort(), [
-      "apiKey", "cacheRetention", "maxTokens", "onPayload", "sessionId", "signal", "timeoutMs", "toolChoice",
+      "apiKey", "cacheRetention", "maxTokens", "sessionId", "signal", "timeoutMs",
     ]);
   });
 });
@@ -444,17 +444,6 @@ test("malformed nested decisions retain raw responses and report typed facts", a
       errorPresent: false,
     },
     {
-      id: "multiple-calls",
-      content: [
-        fauxToolCall(decisionToolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-        fauxToolCall("ak_other_decision", { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-      ],
-      stopReason: "toolUse" as const,
-      expectedCount: 2,
-      expectedNames: [decisionToolName, "ak_other_decision"],
-      errorPresent: false,
-    },
-    {
       id: "malformed-arguments",
       content: [
         fauxToolCall(decisionToolName, {
@@ -656,55 +645,38 @@ test("silent compliance completion exhausts idle retries as typed infrastructure
   });
 });
 
-test("compliance dispatch keeps one object-root tool across every supported API", async () => {
-  const expectedToolChoices: Record<string, unknown> = {
-    "anthropic-messages": undefined,
-    "bedrock-converse-stream": undefined,
-    "mistral-conversations": { type: "function", function: { name: decisionToolName } },
-    "openai-completions": { type: "function", function: { name: decisionToolName } },
-    "pi-messages": { type: "function", function: { name: decisionToolName } },
-    "azure-openai-responses": { type: "function", name: decisionToolName },
-    "openai-responses": { type: "function", name: decisionToolName },
-    "google-generative-ai": "any",
-    "google-vertex": "any",
-    "openai-codex-responses": "required",
-    default: "required",
-  };
-  for (const api of Object.keys(expectedToolChoices)) {
-    await withPersistedSession(async (sessionManager) => {
-      const base = context(sessionManager);
-      const seen: { model?: string; request?: Record<string, unknown>; context?: Context } = {};
-      const auditContext = {
-        ...base,
-        model: { ...(base.model as object), api: api === "default" ? "future-api" : api },
-      };
-      const result = await runComplianceAudit({
-        tool: decisionTool,
-        systemPrompt: "audit system",
-        serializedInput: "audit input",
-        roleLabel: "Compliance",
-        invalidDecisionLabel: "invalid compliance decision",
-        context: {
-          ...auditContext,
-          modelRegistry: {
-            ...(base.modelRegistry as object),
-            getProviderAuth: async () => ({ auth: { apiKey: "test-secret" } }),
-            getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-secret" }),
-          },
-        } as unknown as ExtensionContext,
-        runCompletion: async (model, requestContext, request) => {
-          seen.model = model.api;
-          seen.context = requestContext;
-          seen.request = request;
-          return response(`dispatch-${api}`, [fauxToolCall(decisionToolName, { status: "pass" })]);
-        },
-      });
-      assert.equal(result.status, "pass");
-      assert.equal((seen.context?.tools?.[0]?.parameters as { type?: unknown } | undefined)?.type, "object");
-      assert.deepEqual(seen.request?.toolChoice, expectedToolChoices[api]);
-      assert.equal(api !== "default" && api.includes("openai"), typeof seen.request?.onPayload === "function");
+test("shared compliance audit executes offered workspace evidence and carries its result into the deciding turn", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    const base = context(sessionManager);
+    let turns = 0;
+    let selectedEvidenceName: string | undefined;
+    const result = await runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: { ...base, cwd: process.cwd() } as unknown as ExtensionContext,
+      runCompletion: async (_model, requestContext, request) => {
+        turns += 1;
+        assert.equal(Object.hasOwn(request, "toolChoice"), false);
+        if (turns === 1) {
+          const evidence = requestContext.tools?.find((tool) =>
+            tool.name !== decisionToolName && Object.hasOwn((tool.parameters as any).properties ?? {}, "path")
+          );
+          assert.ok(evidence);
+          selectedEvidenceName = evidence.name;
+          return response("evidence", [fauxToolCall(evidence.name, { path: "package.json" })]);
+        }
+        const resultMessage = requestContext.messages.find((message) => message.role === "toolResult");
+        assert.equal(resultMessage?.toolName, selectedEvidenceName);
+        assert.match(JSON.stringify(resultMessage?.content), /pi-workflow-roles/);
+        return response("decision", [fauxToolCall(decisionToolName, { status: "pass" })]);
+      },
     });
-  }
+    assert.equal(result.status, "pass");
+    assert.equal(turns, 2);
+  });
 });
 
 test("payload and response-header hooks do not extend the first body-event silence budget", async (t) => {
@@ -767,8 +739,8 @@ test("payload and response-header hooks do not extend the first body-event silen
     await new Promise<void>((resolve) => setImmediate(resolve));
     t.mock.timers.tick(150_000);
     await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(hooks.payload, 1);
-    // Production no longer installs onResponse; even if a provider called one, it must not poke.
+    // Compliance evidence turns do not install outbound payload or response hooks.
+    assert.equal(hooks.payload, 0);
     assert.equal(hooks.response, 0);
     t.mock.timers.tick(50_000);
     await assert.rejects(

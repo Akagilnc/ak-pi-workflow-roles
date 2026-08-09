@@ -208,11 +208,7 @@ export function createJudgeRoleRuntime(
           };
         });
       }
-      const registeredTools = new Set(pi.getAllTools().map((tool) => tool.name));
-      pi.setActiveTools(
-        ["read", "grep", "find", "ls", "bash", JUDGE_OUTPUT_TOOL_NAME]
-          .filter((name) => registeredTools.has(name)),
-      );
+
     },
   };
 }
