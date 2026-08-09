@@ -27,11 +27,14 @@ export async function prepareComplianceDispatch(model: Model<Api>, context: Exte
 }
 
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
+export class ComplianceResponseRetentionError extends Error {
+  constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
+}
 type ActiveSessionResponseAppender = { appendCustomEntry(customType: string, data?: unknown): string };
 function retainComplianceResponse(context: ExtensionContext, response: AssistantMessage): void {
   const manager = context.sessionManager as unknown as Partial<ActiveSessionResponseAppender> | undefined;
-  if (typeof manager?.appendCustomEntry !== "function") throw new Error("compliance response retention is unavailable");
-  try { manager.appendCustomEntry(COMPLIANCE_RESPONSE_ENTRY_TYPE, { version: 1, response }); } catch (error) { throw new Error("compliance response retention failed", { cause: error }); }
+  if (typeof manager?.appendCustomEntry !== "function") throw new ComplianceResponseRetentionError("compliance response retention is unavailable");
+  try { manager.appendCustomEntry(COMPLIANCE_RESPONSE_ENTRY_TYPE, { version: 1, response }); } catch (error) { throw new ComplianceResponseRetentionError("compliance response retention failed", { cause: error }); }
 }
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 export function readComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision {
