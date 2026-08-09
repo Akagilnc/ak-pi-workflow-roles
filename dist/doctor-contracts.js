@@ -145,11 +145,6 @@ export function validateDoctorOutput(value, patient, store) {
         const guardrails = read(finding, "guardrails");
         for (const key of ["reproducibleFailure", "owningSeamOrInvariant", "deletionOrSimplificationSuffices"])
             readCitations(read(read(guardrails, key), "evidenceIds"), "guardrail");
-        const prescription = read(finding, "prescription");
-        const prescriptionKind = read(prescription, "kind");
-        const needsNecessity = prescriptionKind === "patch" || prescriptionKind === "addMechanism";
-        if (prescriptionKind !== undefined && needsNecessity !== (read(prescription, "necessityExplanation") !== undefined))
-            throw new Error("patch/addMechanism alone require a necessity explanation");
         const bite = read(finding, "lastRealBite");
         const biteKind = read(bite, "kind");
         if (biteKind !== "actual" && biteKind !== "noRealBite")
@@ -163,8 +158,6 @@ export function validateDoctorOutput(value, patient, store) {
                 throw new Error("actual bite must cite an admitted/read retained session");
         }
         else {
-            if (read(finding, "disposition") === "keep")
-                throw new Error("noRealBite permits only thin or delete");
             const eligible = patient.evidence.map((entry) => entry.id).sort();
             const ids = read(bite, "eligibleEvidenceIds");
             if (Array.isArray(ids)) {
