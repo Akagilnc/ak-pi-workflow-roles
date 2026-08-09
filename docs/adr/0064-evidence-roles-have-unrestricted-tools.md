@@ -1,4 +1,4 @@
-# 取证角色不受 runtime 工具限制
+# 大理寺与审刑院不受 runtime 工具限制
 
 Status: accepted（陛下 2026-08-09 拍定）
 
