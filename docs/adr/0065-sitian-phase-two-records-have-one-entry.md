@@ -11,7 +11,7 @@ Status: accepted（陛下 2026-08-09 grill 逐项拍定；decision keys 与绑�
 | `records-owner` | `sitian` | 「司天台就是记录的」「这就是司天台该有的职责啊。司天台最重要的。记录和生成高阶数据」 |
 | `record-entry` | `single-entry-no-destination-parameter` | 「只是现在要统一入口。而不是同一个逻辑。写在不同的地方」「按理说调用同一个函数就不可能有不同的行为啊」 |
 | `record-scope-phase-two` | `pi-session-records-only` | 「session 的记录。也就是 pi 提供的账本」「先把记录做好。记录都还没做好。生成什么高阶？」 |
-| `caller-identity` | `reuse-adr-0047-correlation` | Q「谁调了谁写在哪」选 A（复用 0047 correlation，不另加字段） |
+| `caller-identity` | `reuse-adr-0047-correlation` | 「A 嘛」（就「谁调了谁写在哪：复用 ADR 0047 correlation / 新加 caller 字段」二选一作答） |
 | `activation-check` | `move-into-record-entry` | 「C 可以」（删掉激活层那道检查，等价校验移进记录入口） |
 | `enforcement` | `legislation-not-type-sealing` | 「我觉得 A 就够了。后面就是完善角色的问题了。之前立法做的不好。漏了不少东西」「主要是 B 你搞的很复杂。收益就那样吧」 |
 | `visibility-gate` | `unignore-ak-work` | 「把 .ak/work 去掉 .gitignore 不就行了？」 |
