@@ -47,7 +47,6 @@ export function readComplianceCandidate(arguments_: unknown, usage?: Usage): Com
 }
 
 export async function runComplianceAudit(options: { tool: ReturnType<typeof createComplianceDecisionTool>; systemPrompt: string; serializedInput: string; roleLabel: string; invalidDecisionLabel: string; runCompletion?: ComplianceCompletion; context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision> {
-  const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, ...(options.signal === undefined ? {} : { signal: options.signal }), ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }) });
-  retainComplianceResponse(options.context, receipt.response);
+  const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, retainResponse: (response) => retainComplianceResponse(options.context, response), ...(options.signal === undefined ? {} : { signal: options.signal }), ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }) });
   return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }

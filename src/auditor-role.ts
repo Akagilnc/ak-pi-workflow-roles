@@ -10,7 +10,7 @@ export class AuditorTurnLimitError extends Error { constructor(readonly limit: n
 export type AuditorCompletion = (model: Model<Api>, context: Context, options: ProviderStreamOptions) => Promise<AssistantMessage>;
 export type AuditorDecisionTool = { name: string; description: string; parameters: object; execute(...args: any[]): Promise<AgentToolResult<unknown>> };
 
-export async function runAuditorRole(options: { systemPrompt: string; serializedInput: string; tool: AuditorDecisionTool; roleLabel: string; context: ExtensionContext; signal?: AbortSignal; runCompletion?: AuditorCompletion }): Promise<{ decision: unknown; response: AssistantMessage }> {
+export async function runAuditorRole(options: { systemPrompt: string; serializedInput: string; tool: AuditorDecisionTool; roleLabel: string; context: ExtensionContext; signal?: AbortSignal; runCompletion?: AuditorCompletion; retainResponse?(response: AssistantMessage): void }): Promise<{ decision: unknown; response: AssistantMessage }> {
   const activeModel = options.context.model;
   if (activeModel === undefined) throw new Error(`${options.roleLabel} requires an active model`);
   const dispatch = await prepareComplianceDispatch(activeModel, options.context, options.roleLabel);
@@ -36,6 +36,7 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
     if (turnError !== undefined) throw turnError;
     const response = [...session.messages].reverse().find((message): message is AssistantMessage => message.role === "assistant");
     session.dispose();
+    if (response !== undefined) options.retainResponse?.(response);
     if (response === undefined || response.stopReason === "error" || response.stopReason === "aborted" || decision === undefined) throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
     return { decision, response };
   } finally { await rm(scratch, { recursive: true, force: true }); }
