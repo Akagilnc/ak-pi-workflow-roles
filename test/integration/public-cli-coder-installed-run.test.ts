@@ -142,6 +142,11 @@ test(
         const piAgentDir = resolve(home, ".pi", "agent");
         await mkdir(piAgentDir, { recursive: true });
         const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
+        const installedRoutebook = resolve(
+          installed.installedRoot,
+          "resources/navigator-route-playbook.md",
+        );
+        await writeFile(installedRoutebook, "COLD_INSTALLED_ROUTEBOOK_MARKER\n", "utf8");
 
         // Empty home: no ambient Skill discovery.
         await assert.rejects(
@@ -230,8 +235,8 @@ test(
         assert.equal(forwardedE, 2);
         assert.equal(argvRecord.forwarded.includes(providerPath), true);
 
-        // The typed settlement owns the result; stdout is one human presentation write.
-        assert.ok(result.stdout.length > 0);
+        // Recommendation proves the installed marker reached the real Navigator provider context.
+        assert.match(result.stdout, /^navigator\trecommendation$/m);
 
         const bookKey = resolveBookKeyFromGit(project);
         const runsRoot = join(home, ".ak-roles", "books", bookKey, "runs");
@@ -289,7 +294,59 @@ test(
           await realpath(skillPath),
           await realpath(installedSkill),
         );
-        void instruction;
+
+        const roleReport = reportText;
+        assert.equal(roleReport.includes("COLD_INSTALLED_ROUTEBOOK_MARKER"), false);
+
+        await chmod(installedRoutebook, 0o000);
+        const runWithUnreadableRoutebook = async (unavailable: boolean) =>
+          runAkRoleBin(
+            installed.akRoleBin,
+            [
+              "coder",
+              "--model",
+              "ak-coder-offline/faux-1",
+              "--thinking",
+              "off",
+              "--project",
+              project,
+              instruction,
+            ],
+            {
+              home,
+              agentDir: piAgentDir,
+              cwd: project,
+              env: {
+                PI_BINARY: shimPath,
+                PI_OFFLINE: "1",
+                AK_TEST_ROUTEBOOK_UNREADABLE: "1",
+                ...(unavailable ? { AK_TEST_NAVIGATOR_UNAVAILABLE: "1" } : {}),
+              },
+            },
+          );
+
+        const continued = await runWithUnreadableRoutebook(false);
+        assert.equal(continued.code, 0, continued.stderr);
+        assert.match(continued.stdout, /^navigator\trecommendation$/m);
+        assert.match(continued.stdout, /^navigator-advisory\t.*EACCES/m);
+
+        const unavailable = await runWithUnreadableRoutebook(true);
+        assert.equal(unavailable.code, 0, unavailable.stderr);
+        assert.match(unavailable.stdout, /^navigator\tunavailable$/m);
+        assert.match(unavailable.stdout, /^navigator-advisory\t.*EACCES/m);
+        assert.match(unavailable.stdout, /^unavailable\t[^\t]+\t.+$/m);
+
+        const allRuns = await readdir(runsRoot);
+        const coderRuns = allRuns.filter((name) => name.endsWith("@coder"));
+        assert.equal(coderRuns.length, 3);
+        for (const name of coderRuns) {
+          const receipt = await readFile(
+            join(runsRoot, name, "artifacts", "report.json"),
+            "utf8",
+          );
+          assert.equal(receipt, roleReport);
+          assert.equal(receipt.includes("EACCES"), false);
+        }
       },
     );
   },
