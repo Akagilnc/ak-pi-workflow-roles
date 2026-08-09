@@ -302,21 +302,11 @@ test("production Reviewer child provider rejections retain typed diagnostics and
     ] as const;
     for(const row of cases){
       const faux=fauxProvider({provider:"reviewer-rejection",api:"reviewer-rejection"}); const model=faux.getModel();
-      faux.setResponses([fauxAssistantMessage("spec report")]);
-      const wrappedProvider: typeof faux.provider={
-        ...faux.provider,
-        stream(requestModel,context,options){
-          assert.equal(this,wrappedProvider);
-          if(JSON.stringify(context).includes("Emit exactly one substantive Standards report")) throw row.rejection;
-          return faux.provider.stream.call(faux.provider,requestModel,context,options);
-        },
-        streamSimple(requestModel,context,options){
-          assert.equal(this,wrappedProvider);
-          if(JSON.stringify(context).includes("Emit exactly one substantive Standards report")) throw row.rejection;
-          return faux.provider.streamSimple.call(faux.provider,requestModel,context,options);
-        },
-      };
-      const childContext={model,modelRegistry:{getProvider:()=>wrappedProvider,async getProviderAuth(){return {auth:{apiKey:"offline"}};},async getApiKeyAndHeaders(){return {ok:true as const,apiKey:"offline"};}},sessionManager:SessionManager.inMemory(),thinkingLevel:"off"} as unknown as ExtensionContext;
+      faux.setResponses([
+        fauxAssistantMessage("", { stopReason:"error", ...(row.rejection === undefined ? {} : { errorMessage: row.expected }) }),
+        fauxAssistantMessage("spec report"),
+      ]);
+      const childContext={model,modelRegistry:{getProvider:()=>faux.provider,async getProviderAuth(){return {auth:{apiKey:"offline"}};},async getApiKeyAndHeaders(){return {ok:true as const,apiKey:"offline"};}},sessionManager:SessionManager.inMemory(),thinkingLevel:"off"} as unknown as ExtensionContext;
       const runner=createReviewerAgentRunner({credentialScratchParent:root});
       const reviewerHarness=setup({createPinnedGitReader:async()=>reader,runDispatch:(dispatch)=>runner.run(dispatch,{context:childContext}),shutdownAgent:()=>runner.shutdown()});
       await reviewerHarness.runtime.activate();

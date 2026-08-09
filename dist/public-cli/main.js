@@ -13219,7 +13219,7 @@ function explicitInternalKnownFailureClassificationInput(failure) {
   };
 }
 function isMissingPathError2(error) {
-  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 function sessionReadFailure(error, fallbackMessage) {
   if (error instanceof SyntaxError) {
