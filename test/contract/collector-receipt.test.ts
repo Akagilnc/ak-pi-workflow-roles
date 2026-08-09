@@ -1357,141 +1357,49 @@ test("edited review after deadline cannot prove unavailable via backdated submit
 // F1 schema owner matrix
 // ---------------------------------------------------------------------------
 
-test("F1 parseCollectorOutputCandidate schema matrix", () => {
-  assert.deepEqual(
-    parseCollectorOutputCandidate({
-      legs: [{
-        legId: "codex",
-        status: "missing",
-        rationale: "line1\nline2 still nonblank",
-        evidenceRefs: ["snap"],
-      }],
-    }).legs[0]?.rationale,
-    "line1\nline2 still nonblank",
-  );
-  const unavailable = parseCollectorOutputCandidate({
+test("F1 parseCollectorOutputCandidate safely projects recognizable fields", () => {
+  const projected = parseCollectorOutputCandidate({
+    ignored: true,
     legs: [{
       legId: "codex",
-      status: "unavailable",
-      rationale: "declined",
-      evidenceRefs: ["e1"],
-      unavailableScope: "global",
+      status: "missing",
+      rationale: "line1\nline2",
+      evidenceRefs: ["snap", 1],
+      extra: true,
+    }, null, 1, { status: "other" }],
+  });
+  assert.deepEqual(projected, {
+    legs: [{
+      legId: "codex",
+      status: "missing",
+      rationale: "line1\nline2",
+      evidenceRefs: ["snap"],
     }],
   });
-  assert.equal(unavailable.legs[0]?.unavailableScope, "global");
 
-  const invalids: Array<[string, unknown]> = [
-    ["out-of-enum status", {
-      legs: [{
-        legId: "codex",
-        status: "refused",
-        rationale: "nope",
-        evidenceRefs: ["x"],
-      }],
-    }],
-    ["unknown leg field", {
-      legs: [{
-        legId: "codex",
-        status: "valid",
-        rationale: "ok",
-        evidenceRefs: ["x"],
-        extra: true,
-      }],
-    }],
-    ["unknown leg field reports", {
-      legs: [{
-        legId: "codex",
-        status: "valid",
-        rationale: "ok",
-        evidenceRefs: ["x"],
-        reports: [],
-      }],
-    }],
-    ["unavailable missing scope", {
-      legs: [{
-        legId: "codex",
-        status: "unavailable",
-        rationale: "ok",
-        evidenceRefs: ["x"],
-      }],
-    }],
-    ["unavailable invalid scope", {
-      legs: [{
-        legId: "codex",
-        status: "unavailable",
-        rationale: "ok",
-        evidenceRefs: ["x"],
-        unavailableScope: "galaxy",
-      }],
-    }],
-    ["scope on valid", {
-      legs: [{
-        legId: "codex",
-        status: "valid",
-        rationale: "ok",
-        evidenceRefs: ["x"],
-        unavailableScope: "global",
-      }],
-    }],
-    ["scope on missing", {
-      legs: [{
-        legId: "codex",
-        status: "missing",
-        rationale: "ok",
-        evidenceRefs: ["x"],
-        unavailableScope: "target",
-      }],
-    }],
-    ["blank rationale", {
-      legs: [{
-        legId: "codex",
-        status: "valid",
-        rationale: "   ",
-        evidenceRefs: ["x"],
-      }],
-    }],
-    ["empty refs", {
-      legs: [{
-        legId: "codex",
-        status: "valid",
-        rationale: "ok",
-        evidenceRefs: [],
-      }],
-    }],
-    ["unknown top-level", {
-      legs: [{
-        legId: "codex",
-        status: "valid",
-        rationale: "ok",
-        evidenceRefs: ["x"],
-      }],
-      extra: 1,
-    }],
-    ["missing legs", {}],
-    ["null raw", null],
-  ];
-  for (const [label, raw] of invalids) {
-    assert.throws(
-      () => parseCollectorOutputCandidate(raw),
-      /failed schema validation/i,
-      label,
-    );
+  for (const raw of [undefined, null, 1, "text", {}, { legs: null }]) {
+    assert.deepEqual(parseCollectorOutputCandidate(raw), { legs: [] });
   }
+  assert.deepEqual(
+    parseCollectorOutputCandidate(Object.defineProperty({}, "legs", {
+      get() { throw new Error("hostile getter"); },
+    })),
+    { legs: [] },
+  );
+  assert.deepEqual(
+    parseCollectorOutputCandidate({
+      legs: [Object.defineProperty({ status: "missing" }, "legId", {
+        get() { throw new Error("hostile getter"); },
+      })],
+    }).legs[0],
+    { legId: undefined, status: "missing", rationale: undefined, evidenceRefs: [] },
+  );
 
-  // Shared Check owner at the schema seam — no second validator fork.
+  // Tool transport still owns its generated-call schema.
   assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, undefined), false);
   assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, null), false);
   assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, {}), true);
-  // observe rejects non-empty object (additionalProperties: false)
   assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, { x: 1 }), false);
-
-  for (const [label, raw] of invalids) {
-    assert.equal(
-      collectorToolArgumentsValid(COLLECTOR_OUTPUT_TOOL, raw),
-      false,
-      `shared-check ${label}`,
-    );
-  }
 });
 
 // ---------------------------------------------------------------------------

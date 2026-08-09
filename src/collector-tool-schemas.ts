@@ -13,8 +13,8 @@ export const collectorObserveArgsSchema = Type.Object(
 
 export const collectorRequestArgsSchema = Type.Object(
   {
-    legId: nonEmptyString,
-    snapshotId: nonEmptyString,
+    legId: Type.String({ minLength: 1, description: "Configured Collector leg to request." }),
+    snapshotId: Type.String({ minLength: 1, description: "Latest retained observation snapshot supporting the request." }),
   },
   { additionalProperties: false },
 );
@@ -24,6 +24,7 @@ export const collectorWaitArgsSchema = Type.Object(
     durationMs: Type.Integer({
       minimum: 1,
       maximum: COLLECTOR_ELIGIBILITY_MS,
+      description: "Bounded wait duration before Collector reassesses current evidence.",
     }),
   },
   { additionalProperties: false },
@@ -31,34 +32,34 @@ export const collectorWaitArgsSchema = Type.Object(
 
 const collectorValidLegSchema = Type.Object(
   {
-    legId: nonEmptyString,
-    status: Type.Literal("valid"),
-    rationale: nonBlankString,
-    evidenceRefs: Type.Array(nonEmptyString, { minItems: 1 }),
+    legId: Type.String({ minLength: 1, description: "Configured Collector leg being settled." }),
+    status: Type.Literal("valid", { description: "Leg has qualifying current-target evidence." }),
+    rationale: Type.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
+    evidenceRefs: Type.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." }),
   },
   { additionalProperties: false },
 );
 
 const collectorUnavailableLegSchema = Type.Object(
   {
-    legId: nonEmptyString,
-    status: Type.Literal("unavailable"),
-    rationale: nonBlankString,
-    evidenceRefs: Type.Array(nonEmptyString, { minItems: 1 }),
+    legId: Type.String({ minLength: 1, description: "Configured Collector leg being settled." }),
+    status: Type.Literal("unavailable", { description: "Leg cannot be obtained within an identified scope." }),
+    rationale: Type.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
+    evidenceRefs: Type.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." }),
     unavailableScope: Type.Union([
       Type.Literal("target"),
       Type.Literal("global"),
-    ]),
+    ], { description: "Whether unavailability applies only to this target or globally." }),
   },
   { additionalProperties: false },
 );
 
 const collectorMissingLegSchema = Type.Object(
   {
-    legId: nonEmptyString,
-    status: Type.Literal("missing"),
-    rationale: nonBlankString,
-    evidenceRefs: Type.Array(nonEmptyString, { minItems: 1 }),
+    legId: Type.String({ minLength: 1, description: "Configured Collector leg being settled." }),
+    status: Type.Literal("missing", { description: "Leg lacks qualifying current-target evidence at cutoff." }),
+    rationale: Type.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
+    evidenceRefs: Type.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." }),
   },
   { additionalProperties: false },
 );
@@ -72,10 +73,12 @@ export const collectorOutputLegSchema = Type.Union([
 
 export const collectorOutputArgsSchema = Type.Object(
   {
-    legs: Type.Array(collectorOutputLegSchema, { minItems: 1 }),
+    legs: Type.Optional(Type.Array(collectorOutputLegSchema, { minItems: 1, description: "One truthful result for each admitted Collector leg." })),
   },
-  { additionalProperties: false },
+  { additionalProperties: true },
 );
+
+(collectorOutputArgsSchema as unknown as { required: string[] }).required = [];
 
 export type CollectorObserveArgs = Static<typeof collectorObserveArgsSchema>;
 export type CollectorRequestArgs = Static<typeof collectorRequestArgsSchema>;

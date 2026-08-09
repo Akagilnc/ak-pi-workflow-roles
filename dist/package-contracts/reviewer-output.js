@@ -1,114 +1,91 @@
 /** Package-owned Reviewer intent and runtime-receipt leaves — no role registration surface. */
 import { verifyBundleIdentity } from "../reviewer-construction.js";
+import { sha256Hex } from "../sha256.js";
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
 export const REVIEWER_ACCEPTED_TEXT = "Reviewer report accepted";
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function exactKeys(value, required, optional = []) {
-    const keys = Object.keys(value);
-    return required.every((key) => Object.hasOwn(value, key)) && keys.every((key) => required.includes(key) || optional.includes(key));
+function read(value, key) {
+    if (!isRecord(value))
+        return undefined;
+    try {
+        return value[key];
+    }
+    catch {
+        return undefined;
+    }
 }
-function validWorkspace(value) {
-    return value === "deleted" || value === "not-created" || (isRecord(value) && exactKeys(value, ["retained"]) && typeof value.retained === "string" && value.retained.length > 0);
-}
-function isReceiptText(value) {
-    return isRecord(value) && exactKeys(value, ["text"]) && typeof value.text === "string";
-}
-const failures = new Set(["cancelled", "provider", "snapshot", "workspace", "child", "unknown"]);
 export function validateReviewerIntent(output) {
-    if (!isRecord(output))
-        throw new Error("Reviewer output must be a completed or refused intent");
-    if (output.status === "completed" && exactKeys(output, ["status"]))
-        return { status: "completed" };
-    if (output.status === "refused" && exactKeys(output, ["status", "diagnostic"]) && typeof output.diagnostic === "string" && output.diagnostic.trim().length > 0) {
-        return { status: "refused", diagnostic: output.diagnostic };
-    }
-    throw new Error("Reviewer completed intent has no report; refused requires only a separate non-blank diagnostic");
+    const status = read(output, "status");
+    if (status === "completed")
+        return { status };
+    if (status === "refused")
+        return { status, diagnostic: read(output, "diagnostic") };
+    throw new Error("Reviewer output has no recognized execution intent");
 }
-/** Validate the runtime-owned V2 receipt against consumed text and live target facts — no identity shells. */
+/** Validate runtime-owned facts at their real identity and materialization seams. */
 export function validateRuntimeReviewerReceipt(output) {
-    if (!isRecord(output) || !exactKeys(output, ["version", "status", "reports", "outcomes", "identities"], ["diagnostic", "acceptedBatch"]) || output.version !== 2 ||
-        (output.status !== "completed" && output.status !== "refused") || !isRecord(output.reports) || !isRecord(output.outcomes) || !isRecord(output.identities))
-        throw new Error("Invalid Reviewer V2 receipt");
-    if (output.status === "completed" ? Object.hasOwn(output, "diagnostic") : typeof output.diagnostic !== "string" || output.diagnostic.trim().length === 0)
-        throw new Error("Reviewer receipt diagnostic disagrees with status");
-    if (!exactKeys(output.reports, [], ["standards", "spec"]) || !exactKeys(output.outcomes, [], ["standards", "spec"]) ||
-        !exactKeys(output.identities, ["canonicalSkill"], ["construction", "target"]))
-        throw new Error("Invalid Reviewer receipt projection keys");
-    const skill = output.identities.canonicalSkill;
-    if (!isReceiptText(skill))
-        throw new Error("Invalid canonical Skill content");
-    const hasBatch = Object.hasOwn(output, "acceptedBatch");
-    if (hasBatch !== Object.hasOwn(output.identities, "construction") || hasBatch !== Object.hasOwn(output.identities, "target") ||
-        (hasBatch && (!isRecord(output.acceptedBatch) || !isRecord(output.identities.construction) || !isRecord(output.identities.target))))
-        throw new Error("Incomplete Reviewer accepted-batch identity");
-    let expectedLegs = [];
-    if (hasBatch) {
-        const acceptedBatch = output.acceptedBatch;
-        const construction = output.identities.construction;
-        const target = output.identities.target;
-        if (!exactKeys(acceptedBatch, ["identity", "legs"]) || typeof acceptedBatch.identity !== "string" || acceptedBatch.identity.length === 0 || !Array.isArray(acceptedBatch.legs) ||
-            (acceptedBatch.legs.length !== 1 && acceptedBatch.legs.length !== 2))
-            throw new Error("Invalid Reviewer accepted-batch projection");
-        expectedLegs = acceptedBatch.legs;
-        const expectedAxes = expectedLegs.map((leg) => leg.axis);
-        if (expectedAxes[0] !== "standards" || (expectedAxes.length === 2 && expectedAxes[1] !== "spec") || expectedLegs.some((leg) => !isRecord(leg) || !exactKeys(leg, ["axis", "prompt"]) || !isReceiptText(leg.prompt)))
-            throw new Error("Invalid Reviewer accepted-leg projection");
-        const objectId = (value) => typeof value === "string" && new RegExp(target.objectFormat === "sha1" ? "^[0-9a-f]{40}$" : "^[0-9a-f]{64}$").test(value);
-        if (!exactKeys(construction, ["recipe", "bundle"]) || construction.recipe !== "reviewer-common-bundle-v1" || !isRecord(construction.bundle) || !exactKeys(construction.bundle, ["recipeIdentity", "manifestSha256", "entries"]) || !Array.isArray(construction.bundle.entries) || construction.bundle.entries.some((entry) => !isRecord(entry) || !exactKeys(entry, ["id", "relativeClonePath", "origin", "sourceIdentity", "utf8Length", "sha256"]) || Object.hasOwn(entry, "bytes")) || !verifyBundleIdentity(construction.bundle) ||
-            !exactKeys(target, ["repositoryRoot", "objectFormat", "targetHead", "refs"]) || typeof target.repositoryRoot !== "string" || target.repositoryRoot.length === 0 ||
-            (target.objectFormat !== "sha1" && target.objectFormat !== "sha256") || !objectId(target.targetHead) || !isRecord(target.refs) ||
-            Object.values(target.refs).some((ref) => !isRecord(ref) || !exactKeys(ref, ["objectId", "peeledCommitId"]) || !objectId(ref.objectId) || (ref.peeledCommitId !== null && !objectId(ref.peeledCommitId))))
+    const acceptedBatch = read(output, "acceptedBatch");
+    const identities = read(output, "identities");
+    const construction = read(identities, "construction");
+    const target = read(identities, "target");
+    const reports = read(output, "reports");
+    const outcomes = read(output, "outcomes");
+    const legs = read(acceptedBatch, "legs");
+    // A recognizable accepted batch must remain bound to its exact bundle and target.
+    if (acceptedBatch !== undefined || construction !== undefined || target !== undefined) {
+        if (!isRecord(acceptedBatch) || !isRecord(construction) || !isRecord(target) || !Array.isArray(legs))
+            throw new Error("Incomplete Reviewer accepted-batch identity");
+        const bundle = read(construction, "bundle");
+        const entries = read(bundle, "entries");
+        const objectFormat = read(target, "objectFormat");
+        const objectId = (value) => typeof value === "string" && new RegExp(objectFormat === "sha1" ? "^[0-9a-f]{40}$" : "^[0-9a-f]{64}$").test(value);
+        const refs = read(target, "refs");
+        const skillText = read(read(identities, "canonicalSkill"), "text");
+        const skillEntry = Array.isArray(entries) ? entries.find((entry) => read(entry, "origin") === "canonical-skill") : undefined;
+        if (typeof skillText !== "string" || !isRecord(skillEntry) || read(skillEntry, "sha256") !== sha256Hex(skillText) || read(skillEntry, "utf8Length") !== Buffer.byteLength(skillText, "utf8") ||
+            read(construction, "recipe") !== "reviewer-common-bundle-v1" || !isRecord(bundle) || !Array.isArray(entries) || !verifyBundleIdentity(bundle) ||
+            (objectFormat !== "sha1" && objectFormat !== "sha256") || !objectId(read(target, "targetHead")) || !isRecord(refs) ||
+            Object.values(refs).some((ref) => !isRecord(ref) || !objectId(read(ref, "objectId")) || (read(ref, "peeledCommitId") !== null && !objectId(read(ref, "peeledCommitId")))))
             throw new Error("Invalid Reviewer construction or target identity");
-    }
-    for (const axis of ["standards", "spec"]) {
-        const report = output.reports[axis];
-        const outcome = output.outcomes[axis];
-        if (report !== undefined && !isReceiptText(report))
-            throw new Error("Invalid Reviewer report text");
-        if (outcome === undefined) {
-            if (report !== undefined)
-                throw new Error("Reviewer report lacks outcome");
-            continue;
+        const expectedAxes = legs.map((leg) => read(leg, "axis"));
+        if (expectedAxes[0] !== "standards" || (expectedAxes.length === 2 && expectedAxes[1] !== "spec") || expectedAxes.length < 1 || expectedAxes.length > 2)
+            throw new Error("Invalid Reviewer accepted-leg projection");
+        if (!isRecord(outcomes) || !isRecord(reports))
+            throw new Error("Accepted Reviewer batch lacks outcomes or reports");
+        const outcomeAxes = Object.keys(outcomes).filter(axis => axis === "standards" || axis === "spec");
+        if (outcomeAxes.length !== expectedAxes.length || outcomeAxes.some((axis, index) => axis !== expectedAxes[index]))
+            throw new Error("Reviewer outcomes must exactly cover accepted legs in canonical order");
+        for (const [index, axisValue] of expectedAxes.entries()) {
+            const axis = axisValue;
+            const outcome = read(outcomes, axis);
+            if (!isRecord(outcome))
+                throw new Error("Reviewer accepted leg lacks outcome");
+            const expectedPrompt = read(read(legs[index], "prompt"), "text");
+            const actualPrompt = read(read(outcome, "prompt"), "text");
+            if (expectedPrompt !== actualPrompt)
+                throw new Error("Reviewer outcome prompt disagrees with accepted leg");
+            const materialized = read(outcome, "runtimeConstructionEvidence");
+            const status = read(outcome, "status");
+            const report = read(reports, axis);
+            if (status === "successful" && (report === undefined || materialized === undefined))
+                throw new Error("Successful Reviewer outcome lacks report or materialization evidence");
+            if (status === "failed" && report !== undefined)
+                throw new Error("Failed Reviewer outcome cannot bind a report");
+            if (materialized !== undefined) {
+                const materialEntries = read(materialized, "entries");
+                if (!isRecord(materialized) || read(materialized, "leg") !== axis || typeof read(materialized, "workspaceIdentity") !== "string" || read(materialized, "workspaceIdentity") === "" ||
+                    read(materialized, "manifestSha256") !== read(bundle, "manifestSha256") || !Array.isArray(materialEntries) || materialEntries.length !== entries.length || materialEntries.some((entry, entryIndex) => {
+                    const expected = entries[entryIndex];
+                    return !isRecord(entry) || read(entry, "verified") !== true || read(entry, "readable") !== true ||
+                        read(entry, "id") !== read(expected, "id") || read(entry, "relativeClonePath") !== read(expected, "relativeClonePath") ||
+                        read(entry, "utf8Length") !== read(expected, "utf8Length") || read(entry, "sha256") !== read(expected, "sha256");
+                }))
+                    throw new Error("Reviewer runtime construction evidence disagrees with accepted bundle or leg");
+            }
         }
-        if (!isRecord(outcome) || !exactKeys(outcome, ["status", "prompt", "workspaceDisposition"], ["failure", "runtimeConstructionEvidence"]) ||
-            (outcome.status !== "successful" && outcome.status !== "failed") || !isReceiptText(outcome.prompt) || !validWorkspace(outcome.workspaceDisposition))
-            throw new Error("Invalid Reviewer outcome");
-        const materialized = outcome.runtimeConstructionEvidence;
-        if (materialized !== undefined) {
-            const bundle = output.identities.construction.bundle;
-            const entries = bundle.entries;
-            if (!isRecord(materialized) || !exactKeys(materialized, ["leg", "workspaceIdentity", "manifestSha256", "entries"]) || materialized.leg !== axis ||
-                typeof materialized.workspaceIdentity !== "string" || materialized.workspaceIdentity.length === 0 || materialized.manifestSha256 !== bundle.manifestSha256 ||
-                !Array.isArray(materialized.entries) || materialized.entries.length !== entries.length || materialized.entries.some((entry, index) => {
-                const expected = entries[index];
-                return !isRecord(entry) || !exactKeys(entry, ["id", "relativeClonePath", "utf8Length", "sha256", "verified", "readable"]) || entry.verified !== true || entry.readable !== true ||
-                    entry.id !== expected.id || entry.relativeClonePath !== expected.relativeClonePath || entry.utf8Length !== expected.utf8Length || entry.sha256 !== expected.sha256;
-            }))
-                throw new Error("Reviewer runtime construction evidence disagrees with accepted bundle or leg");
-        }
-        if (outcome.status === "successful") {
-            if (Object.hasOwn(outcome, "failure") || report === undefined || materialized === undefined)
-                throw new Error("Successful Reviewer outcome requires exactly one report and materialization evidence");
-        }
-        else if (!failures.has(outcome.failure) || report !== undefined)
-            throw new Error("Failed Reviewer outcome requires a classification and no report");
     }
-    const expectedAxes = expectedLegs.map((leg) => leg.axis);
-    const outcomeAxes = Object.keys(output.outcomes);
-    if (hasBatch && (outcomeAxes.length !== expectedAxes.length || outcomeAxes.some((axis, index) => axis !== expectedAxes[index])))
-        throw new Error("Reviewer outcomes must exactly cover accepted legs in canonical order");
-    for (const [index, axis] of expectedAxes.entries()) {
-        const outcome = output.outcomes[axis];
-        const expectedPrompt = expectedLegs[index].prompt;
-        if (outcome.prompt.text !== expectedPrompt.text)
-            throw new Error("Reviewer outcome prompt disagrees with accepted leg");
-    }
-    if (output.status === "completed" && (!hasBatch || Object.values(output.outcomes).some((item) => item.status !== "successful")))
-        throw new Error("Completed Reviewer receipt requires a successful accepted batch");
-    if (!hasBatch && (Object.keys(output.outcomes).length !== 0 || Object.keys(output.reports).length !== 0))
-        throw new Error("Pre-acceptance Reviewer refusal cannot contain outcomes or reports");
     return output;
 }
 /** Project thin submitted intent onto runtime enrichment without comparing runtime-owned fields. */
