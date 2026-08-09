@@ -18,7 +18,7 @@ export class AuditorTurnLimitError extends Error {
 export type AuditorCompletion = (model: Model<Api>, options: ProviderStreamOptions) => Promise<AssistantMessage>;
 export type AuditorDecisionTool = { name: string; description: string; parameters: object; execute(...args: any[]): Promise<AgentToolResult<unknown>> };
 
-export async function runAuditorRole(options: { systemPrompt: string; serializedInput: string; tool: AuditorDecisionTool; roleLabel: string; context: ExtensionContext; signal?: AbortSignal; runCompletion?: AuditorCompletion; /** Internal deterministic test seam; not public CLI/config. */ streamIdleTimeoutMs?: number }): Promise<{ decision: unknown; response: AssistantMessage }> {
+export async function runAuditorRole(options: { systemPrompt: string; serializedInput: string; tool: AuditorDecisionTool; roleLabel: string; context: ExtensionContext; signal?: AbortSignal; runCompletion?: AuditorCompletion }): Promise<{ decision: unknown; response: AssistantMessage }> {
   const activeModel = options.context.model;
   if (activeModel === undefined) throw new Error(`${options.roleLabel} requires an active model`);
   const dispatch = await prepareComplianceDispatch(activeModel, options.context, options.roleLabel);
@@ -36,8 +36,16 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
   const parentProvider = options.context.modelRegistry.getProvider(activeModel.provider);
   if (parentProvider === undefined) throw new Error(`${options.roleLabel} provider not found: ${activeModel.provider}`);
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null });
-  const idle = createStreamIdleGuard({ ...(options.signal === undefined ? {} : { parentSignal: options.signal }), ...(options.streamIdleTimeoutMs === undefined ? {} : { idleTimeoutMs: options.streamIdleTimeoutMs }) });
-  const provider: Provider = { id: parentProvider?.id ?? activeModel.provider, name: parentProvider?.name ?? options.roleLabel, auth: { apiKey: { name: "Inherited auditor authentication", async resolve() { return { auth: { ...dispatch.auth, ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }) } }; } } }, getModels() { return [dispatch.model]; }, stream(model, context, request) { const inheritedRequest = { ...(request ?? {}), ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }), signal: idle.signal } as ProviderStreamOptions; const upstream = parentProvider!.stream(model, context, inheritedRequest as any); return { async *[Symbol.asyncIterator]() { for await (const event of upstream) { idle.poke(); yield event; } }, result: () => upstream.result() } as any; }, streamSimple(model, context, request) { return this.stream(model, context, request); } };
+  let streamFailure: unknown;
+  const provider: Provider = { id: parentProvider?.id ?? activeModel.provider, name: parentProvider?.name ?? options.roleLabel, auth: { apiKey: { name: "Inherited auditor authentication", async resolve() { return { auth: { ...dispatch.auth, ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }) } }; } } }, getModels() { return [dispatch.model]; }, stream(model, context, request) {
+    // The idle clock belongs to this provider stream only. Session setup, tool
+    // execution, and the gap before a later turn are not provider silence.
+    const idle = createStreamIdleGuard(options.signal === undefined ? {} : { parentSignal: options.signal });
+    idle.signal.addEventListener("abort", () => { streamFailure = idle.signal.reason; }, { once: true });
+    const inheritedRequest = { ...(request ?? {}), ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }), signal: idle.signal } as ProviderStreamOptions;
+    const upstream = parentProvider!.stream(model, context, inheritedRequest as any);
+    return { async *[Symbol.asyncIterator]() { try { for await (const event of upstream) { idle.poke(); yield event; } } finally { idle.dispose(); } }, result: () => upstream.result() } as any;
+  }, streamSimple(model, context, request) { return this.stream(model, context, request); } };
   runtime.registerNativeProvider(provider);
   const scratch = await mkdtemp(join(tmpdir(), "ak-auditor-role-"));
   let decision: unknown;
@@ -85,7 +93,7 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
         throw error;
       }
       if (options.signal?.aborted) throw options.signal.reason;
-      if (idle.signal.aborted) throw idle.signal.reason;
+      if (streamFailure !== undefined) throw streamFailure;
       if (decisionToolFailure !== undefined) throw decisionToolFailure;
       if (boundaryToolFailure !== undefined) throw boundaryToolFailure;
       if (boundaryResponse !== undefined && decision === undefined) {
@@ -103,7 +111,6 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
       session.dispose();
     }
   } finally {
-    idle.dispose();
     await rm(scratch, { recursive: true, force: true });
   }
 }
