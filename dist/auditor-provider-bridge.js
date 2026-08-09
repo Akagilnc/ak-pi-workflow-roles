@@ -2,10 +2,15 @@ import { createServer } from "node:net";
 import { unlink } from "node:fs/promises";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
-/** A private, typed child-process bridge. Authentication remains in the host process. */
+export const AUDITOR_BRIDGE_PROVIDER_ID = "ak-private-auditor-bridge";
+export const AUDITOR_BRIDGE_MODEL_ID = "ak-private-auditor-model";
+/** A private, typed child-process bridge. Authentication and the real model remain host-side. */
 export async function createAuditorProviderBridge(options) {
     await unlink(options.socketPath).catch(() => { });
+    const sockets = new Set();
     const server = createServer((socket) => {
+        sockets.add(socket);
+        socket.once("close", () => sockets.delete(socket));
         let input = "";
         socket.setEncoding("utf8");
         socket.on("data", (chunk) => {
@@ -14,7 +19,8 @@ export async function createAuditorProviderBridge(options) {
             if (newline < 0)
                 return;
             const line = input.slice(0, newline);
-            input = "";
+            input = input.slice(newline + 1);
+            socket.pause();
             void (async () => {
                 try {
                     const request = JSON.parse(line);
@@ -24,16 +30,13 @@ export async function createAuditorProviderBridge(options) {
                         const idle = createStreamIdleGuard(options.signal === undefined ? {} : { parentSignal: options.signal });
                         try {
                             const stream = options.provider.stream(options.model, request.context, { ...request.request, ...options.auth, signal: idle.signal });
-                            const events = [];
                             for await (const event of stream) {
                                 idle.poke();
-                                events.push(event);
+                                socket.write(`${JSON.stringify({ type: "event", event })}\n`);
                             }
                             if (idle.signal.aborted)
                                 throw idle.signal.reason;
                             const message = await stream.result();
-                            for (const event of events)
-                                socket.write(`${JSON.stringify({ type: "event", event })}\n`);
                             socket.end(`${JSON.stringify({ type: "result", message })}\n`);
                             break;
                         }
@@ -47,11 +50,21 @@ export async function createAuditorProviderBridge(options) {
                     }
                 }
                 catch (error) {
-                    socket.end(`${JSON.stringify({ type: "error", message: error instanceof Error ? error.message : String(error) })}\n`);
+                    if (!socket.destroyed)
+                        socket.end(`${JSON.stringify({ type: "error", message: error instanceof Error ? error.message : String(error) })}\n`);
                 }
             })();
         });
     });
     await new Promise((resolve, reject) => { server.once("error", reject); server.listen(options.socketPath, resolve); });
-    return { socketPath: options.socketPath, async close() { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); await unlink(options.socketPath).catch(() => { }); } };
+    let closing;
+    return { socketPath: options.socketPath, close() {
+            closing ??= (async () => {
+                for (const socket of sockets)
+                    socket.destroy();
+                await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+                await unlink(options.socketPath).catch(() => { });
+            })();
+            return closing;
+        } };
 }

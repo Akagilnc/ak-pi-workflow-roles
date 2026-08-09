@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { machinePiRuntimeFromActivation, runMachinePiRpc } from "./machine-pi-rpc.js";
 import { prepareComplianceDispatch } from "./compliance-transport.js";
-import { createAuditorProviderBridge } from "./auditor-provider-bridge.js";
+import { AUDITOR_BRIDGE_MODEL_ID, AUDITOR_BRIDGE_PROVIDER_ID, createAuditorProviderBridge } from "./auditor-provider-bridge.js";
 export async function runAuditorRole(options) {
     const model = options.context.model;
     if (model === undefined)
@@ -23,7 +23,18 @@ export async function runAuditorRole(options) {
     if (provider === undefined)
         throw new Error(`${options.roleLabel} provider not found: ${model.provider}`);
     const bridge = await createAuditorProviderBridge({ socketPath, provider, model: dispatch.model, auth: dispatch.auth });
-    await writeFile(configPath, `${JSON.stringify({ systemPrompt: options.systemPrompt, model: dispatch.model, providerName: provider.name, socketPath, tool: { name: options.tool.name, description: options.tool.description, parameters: options.tool.parameters } })}\n`, "utf8");
+    const childModel = {
+        id: AUDITOR_BRIDGE_MODEL_ID,
+        provider: AUDITOR_BRIDGE_PROVIDER_ID,
+        name: "Private auditor bridge",
+        api: dispatch.model.api,
+        reasoning: dispatch.model.reasoning,
+        input: dispatch.model.input,
+        cost: dispatch.model.cost,
+        contextWindow: dispatch.model.contextWindow,
+        maxTokens: dispatch.model.maxTokens,
+    };
+    await writeFile(configPath, `${JSON.stringify({ systemPrompt: options.systemPrompt, model: childModel, socketPath, tool: { name: options.tool.name, description: options.tool.description, parameters: options.tool.parameters } })}\n`, "utf8");
     const extensionPath = fileURLToPath(new URL("../extensions/auditor-rpc.ts", import.meta.url));
     let result;
     try {
@@ -32,7 +43,7 @@ export async function runAuditorRole(options) {
             env: { ...process.env, AK_AUDITOR_RPC_CONFIG: configPath },
             cwd: options.context.cwd ?? process.cwd(),
             sessionDir,
-            args: ["--no-extensions", "-e", extensionPath, "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--provider", model.provider, "--model", model.id, "--thinking", options.context.thinkingLevel ?? "off", "--tools", `read,grep,find,ls,bash,write,edit,${options.tool.name}`, `--ak-auditor-rpc-config=${configPath}`],
+            args: ["--no-extensions", "-e", extensionPath, "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--provider", AUDITOR_BRIDGE_PROVIDER_ID, "--model", AUDITOR_BRIDGE_MODEL_ID, "--thinking", options.context.thinkingLevel ?? "off", "--tools", `read,grep,find,ls,bash,write,edit,${options.tool.name}`, `--ak-auditor-rpc-config=${configPath}`],
             commands: [
                 { id: "retry", type: "set_auto_retry", enabled: false },
                 { id: "compaction", type: "set_auto_compaction", enabled: false },
