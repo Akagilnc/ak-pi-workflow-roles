@@ -2,7 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { createAgentSession, createBashTool, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, createBashTool, DefaultResourceLoader, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { childSessionManager } from "./activation-ledger-session.js";
 import { prepareComplianceDispatch } from "./compliance-transport.js";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.js";
 function classifiedError(error, reviewerFailure) { const wrapped = error instanceof Error ? error : new Error(String(error), { cause: error }); const classification = "reviewerFailure" in wrapped ? wrapped.reviewerFailure : reviewerFailure; return Object.assign(wrapped, { reviewerFailure: classification }); }
@@ -144,9 +145,7 @@ export async function executeReviewerChild(workspace, leg, context, options = {}
             resourceLoader: loader,
             tools: [...leg.grant.tools],
             customTools,
-            sessionManager: context.sessionManager?.getSessionFile?.() === undefined
-                ? SessionManager.inMemory(workspace)
-                : SessionManager.create(workspace, join(context.sessionManager.getSessionDir(), "reviewer-legs")),
+            sessionManager: childSessionManager(context.sessionManager, workspace, "reviewer-legs"),
             settingsManager: settings,
         });
         const usage = emptyUsage();
@@ -180,7 +179,7 @@ export async function executeReviewerChild(workspace, leg, context, options = {}
                 .reverse()
                 .find((message) => message.role === "assistant");
             if (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "error") {
-                throw classifiedError(new Error("Reviewer Agent provider failed", { cause: lastAssistant }), "provider");
+                throw classifiedError(new Error(lastAssistant.errorMessage ?? "", { cause: lastAssistant }), "provider");
             }
             if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
                 throw classifiedError(new Error("Reviewer Agent child terminated without a report", { cause: lastAssistant ?? session.messages }), "child");

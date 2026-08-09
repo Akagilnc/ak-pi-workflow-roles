@@ -908,9 +908,12 @@ appendAcceptedActivationToBook({
 });
 `);
   const workerCount = 16;
+  // Native type stripping keeps this filesystem race under the child deadline even
+  // when the full suite is concurrently compiling elsewhere; one tsx service per
+  // worker made loader contention, rather than ledger creation, decide the result.
   const children = await Promise.all(Array.from({ length: workerCount }, (_, index) =>
     runNodeSubprocess(
-      ["--import", "tsx", worker, String(index), ledgerHome],
+      ["--experimental-strip-types", worker, String(index), ledgerHome],
       { cwd: packageRoot, timeoutMs: 15_000 },
     )));
   for (const child of children) {
