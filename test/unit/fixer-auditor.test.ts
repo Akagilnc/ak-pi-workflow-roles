@@ -21,9 +21,6 @@ test("Fixer auditor uses the active model, exact invocation inputs, and a non-ov
   const audit = createPiFixerAuditor(async (actual, request) => { model = actual; seen = request; return fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); });
   assert.equal((await audit(input, { context })).status, "pass");
   assert.equal(model?.id, "same-model");
-  assert.deepEqual(seen?.tools?.map((tool) => tool.name), [FIXER_AUDIT_TOOL_NAME]);
-  const decisionTool = seen?.tools?.[0];
-  assert.equal("constrainedSampling" in decisionTool!, false);
   const userContent = seen?.messages.find((message) => message.role === "user")?.content;
   assert.ok(Array.isArray(userContent));
   const auditInput = userContent.map((part) => part.type === "text" ? part.text : "").join("");

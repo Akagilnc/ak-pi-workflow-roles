@@ -5,6 +5,7 @@ import {
   type Context,
   type Model,
   type ProviderStreamOptions,
+  type ToolResultMessage,
   type Usage,
 } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -123,62 +124,6 @@ export const complianceDecisionSchema = Type.Object(
     required: [],
   },
 );
-
-type ComplianceToolChoice =
-  | "any"
-  | "required"
-  | { type: "function"; name: string }
-  | { type: "function"; function: { name: string } }
-  | { type: "tool"; name: string };
-
-function complianceToolChoice(
-  model: Model<Api>,
-  toolName: string,
-): ComplianceToolChoice | undefined {
-  switch (model.api) {
-    case "anthropic-messages":
-    case "bedrock-converse-stream":
-      return undefined;
-    case "mistral-conversations":
-    case "openai-completions":
-    case "pi-messages":
-      return { type: "function", function: { name: toolName } };
-    case "azure-openai-responses":
-    case "openai-responses":
-      return { type: "function", name: toolName };
-    case "google-generative-ai":
-    case "google-vertex":
-      return "any";
-    case "openai-codex-responses":
-      return "required";
-    default:
-      return "required";
-  }
-}
-
-function singleComplianceToolCallPayload(
-  model: Model<Api>,
-  toolName: string,
-): ProviderStreamOptions["onPayload"] | undefined {
-  switch (model.api) {
-    case "azure-openai-responses":
-    case "openai-completions":
-    case "openai-codex-responses":
-    case "openai-responses":
-      return (payload: unknown) => {
-        if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-          return payload;
-        }
-        return {
-          ...(payload as Record<string, unknown>),
-          parallel_tool_calls: false,
-          tool_choice: complianceToolChoice(model, toolName),
-        };
-      };
-    default:
-      return undefined;
-  }
-}
 
 export function createComplianceDecisionTool(
   name: string,
@@ -408,17 +353,14 @@ export function readComplianceDecision(
       calls,
     );
   }
-  const call = calls[0];
-  if (
-    calls.length !== 1 ||
-    call?.type !== "toolCall" ||
-    call.name !== toolName
-  ) {
+  const decisionCalls = calls.filter((candidate) => candidate.name === toolName);
+  const call = decisionCalls[decisionCalls.length - 1];
+  if (call === undefined) {
     throw malformedComplianceDecision(
       response,
       toolName,
       invalidLabel,
-      "expected exactly one decision tool call",
+      "expected a decision tool call",
       calls,
     );
   }
@@ -468,11 +410,27 @@ export async function runComplianceAudit(options: {
   const idleMaxRetries = options.idleMaxRetries ?? DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES;
   // Silence clock starts with each attempt and resets only on real AssistantMessageEvent
   // yields from provider.stream — not on outbound payload transform or response headers.
-  const onPayload = singleComplianceToolCallPayload(
-    dispatch.model,
-    options.tool.name,
-  );
-  const toolChoice = complianceToolChoice(dispatch.model, options.tool.name);
+  // Keep Pi's workspace-tool implementation behind the audit execution seam.
+  // Eager value imports make the standalone public CLI bundle initialize Pi's
+  // CommonJS process helpers even for discovery-only commands such as --help.
+  const {
+    createBashTool,
+    createEditTool,
+    createFindTool,
+    createGrepTool,
+    createLsTool,
+    createReadTool,
+    createWriteTool,
+  } = await import("@earendil-works/pi-coding-agent");
+  const workspaceTools = [
+    createReadTool(options.context.cwd),
+    createWriteTool(options.context.cwd),
+    createEditTool(options.context.cwd),
+    createBashTool(options.context.cwd),
+    createGrepTool(options.context.cwd),
+    createFindTool(options.context.cwd),
+    createLsTool(options.context.cwd),
+  ];
   const requestContext: Context = {
     systemPrompt: options.systemPrompt,
     messages: [
@@ -485,7 +443,7 @@ export async function runComplianceAudit(options: {
         timestamp: Date.now(),
       },
     ],
-    tools: [options.tool],
+    tools: [...workspaceTools, options.tool],
   };
 
   let lastIdleError: StreamIdleTimeoutError | undefined;
@@ -493,75 +451,134 @@ export async function runComplianceAudit(options: {
     if (options.signal?.aborted) {
       throw abortRejectionReason(options.signal);
     }
-    const idle = createStreamIdleGuard({
-      idleTimeoutMs,
-      ...(options.signal === undefined ? {} : { parentSignal: options.signal }),
-    });
     try {
-      const complete =
-        options.runCompletion ??
-        (async (auditModel: Model<Api>, context: Context, request: ProviderStreamOptions) => {
-          const provider = options.context.modelRegistry.getProvider(
-            auditModel.provider,
-          );
-          if (provider === undefined) {
-            throw new Error(
-              `${options.roleLabel} provider not found: ${auditModel.provider}`,
-            );
-          }
-          const stream = provider.stream(auditModel, context, request);
-          for await (const _event of stream) {
-            idle.poke();
-          }
-          return stream.result();
-        });
-
       let response: AssistantMessage;
-      try {
-        response = await new Promise<AssistantMessage>((resolve, reject) => {
-          const onAbort = (): void => {
-            reject(abortRejectionReason(idle.signal));
-          };
-          if (idle.signal.aborted) {
-            onAbort();
-            return;
-          }
-          idle.signal.addEventListener("abort", onAbort, { once: true });
-          void complete(
-            dispatch.model,
-            requestContext,
-            {
-              ...dispatch.auth,
-              timeoutMs: COMPLIANCE_REQUEST_TIMEOUT_MS,
-              maxTokens: 2048,
-              cacheRetention: "none",
-              sessionId: uuidv7(),
-              ...(toolChoice === undefined ? {} : { toolChoice }),
-              ...(onPayload === undefined ? {} : { onPayload }),
-              signal: idle.signal,
-            },
-          ).then(
-            (value) => {
-              idle.signal.removeEventListener("abort", onAbort);
-              resolve(value);
-            },
-            (error: unknown) => {
-              idle.signal.removeEventListener("abort", onAbort);
-              if (isStreamIdleTimeoutError(idle.signal.reason)) {
-                reject(idle.signal.reason);
-                return;
-              }
-              reject(error);
-            },
-          );
+      while (true) {
+        // Provider silence is scoped to one completion turn. Tool execution happens
+        // after this guard is disposed and the next turn receives a fresh signal.
+        const idle = createStreamIdleGuard({
+          idleTimeoutMs,
+          ...(options.signal === undefined ? {} : { parentSignal: options.signal }),
         });
-      } catch (error) {
-        throwIfStreamIdleTimedOut(idle.signal.reason);
-        throw error;
+        try {
+          const complete =
+            options.runCompletion ??
+            (async (auditModel: Model<Api>, context: Context, request: ProviderStreamOptions) => {
+              const provider = options.context.modelRegistry.getProvider(
+                auditModel.provider,
+              );
+              if (provider === undefined) {
+                throw new Error(
+                  `${options.roleLabel} provider not found: ${auditModel.provider}`,
+                );
+              }
+              const stream = provider.stream(auditModel, context, request);
+              for await (const _event of stream) {
+                idle.poke();
+              }
+              return stream.result();
+            });
+          response = await new Promise<AssistantMessage>((resolve, reject) => {
+            const onAbort = (): void => {
+              reject(abortRejectionReason(idle.signal));
+            };
+            if (idle.signal.aborted) {
+              onAbort();
+              return;
+            }
+            idle.signal.addEventListener("abort", onAbort, { once: true });
+            void complete(
+              dispatch.model,
+              requestContext,
+              {
+                ...dispatch.auth,
+                timeoutMs: COMPLIANCE_REQUEST_TIMEOUT_MS,
+                maxTokens: 2048,
+                cacheRetention: "none",
+                sessionId: uuidv7(),
+                signal: idle.signal,
+              },
+            ).then(
+              (value) => {
+                idle.signal.removeEventListener("abort", onAbort);
+                resolve(value);
+              },
+              (error: unknown) => {
+                idle.signal.removeEventListener("abort", onAbort);
+                if (isStreamIdleTimeoutError(idle.signal.reason)) {
+                  reject(idle.signal.reason);
+                  return;
+                }
+                reject(error);
+              },
+            );
+          });
+          throwIfStreamIdleTimedOut(idle.signal.reason);
+        } catch (error) {
+          throwIfStreamIdleTimedOut(idle.signal.reason);
+          throw error;
+        } finally {
+          idle.dispose();
+        }
+
+        retainComplianceResponse(options.context, response);
+        const calls = response.content.filter(
+          (part): part is Extract<AssistantMessage["content"][number], { type: "toolCall" }> =>
+            part.type === "toolCall",
+        );
+        if (calls.some((call) => call.name === options.tool.name)) break;
+
+        const evidenceCalls = calls.flatMap((call) => {
+          const tool = workspaceTools.find((candidate) => candidate.name === call.name);
+          return tool === undefined ? [] : [{ call, tool }];
+        });
+        if (evidenceCalls.length === 0) {
+          return readComplianceDecision(
+            response,
+            options.tool.name,
+            options.invalidDecisionLabel,
+          );
+        }
+        requestContext.messages.push(response);
+        for (const { call, tool } of evidenceCalls) {
+          try {
+            const result = await (tool.execute as (
+              id: string,
+              arguments_: Record<string, unknown>,
+              signal?: AbortSignal,
+            ) => Promise<{ content: ToolResultMessage["content"]; details?: unknown }>)(
+              call.id,
+              call.arguments,
+              options.signal,
+            );
+            requestContext.messages.push({
+              role: "toolResult",
+              toolCallId: call.id,
+              toolName: call.name,
+              content: result.content,
+              details: result.details,
+              isError: false,
+              timestamp: Date.now(),
+            });
+          } catch (error) {
+            if (options.signal?.aborted) {
+              throw abortRejectionReason(options.signal);
+            }
+            requestContext.messages.push({
+              role: "toolResult",
+              toolCallId: call.id,
+              toolName: call.name,
+              content: [{
+                type: "text",
+                text: error instanceof Error ? error.message : String(error),
+              }],
+              isError: true,
+              timestamp: Date.now(),
+            });
+          }
+        }
       }
 
-      throwIfStreamIdleTimedOut(idle.signal.reason);
-      retainComplianceResponse(options.context, response);
       return readComplianceDecision(
         response,
         options.tool.name,
@@ -577,8 +594,6 @@ export async function runComplianceAudit(options: {
         continue;
       }
       throw error;
-    } finally {
-      idle.dispose();
     }
   }
 

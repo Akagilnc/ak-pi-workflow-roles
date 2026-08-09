@@ -32,6 +32,13 @@ const decisionTool = createComplianceDecisionTool(
   "Return the compliance decision.",
 );
 
+test("shared compliance decision schema has a provider-compatible object root", () => {
+  const parameters = decisionTool.parameters as unknown as Record<string, unknown>;
+  assert.equal(parameters.type, "object");
+  assert.equal(parameters.anyOf, undefined);
+  assert.equal(parameters.oneOf, undefined);
+});
+
 function context(sessionManager: SessionManager): ExtensionContext {
   return {
     model: {
@@ -176,8 +183,18 @@ test("default compliance completion sends the production timeout and merges pare
     assert.notStrictEqual(seen.options?.signal, parent.signal);
     assert.equal("onResponse" in (seen.options ?? {}), false);
     assert.deepEqual(Object.keys(seen.options ?? {}).sort(), [
-      "apiKey", "cacheRetention", "maxTokens", "onPayload", "sessionId", "signal", "timeoutMs", "toolChoice",
+      "apiKey", "cacheRetention", "maxTokens", "sessionId", "signal", "timeoutMs",
     ]);
+  });
+});
+
+test("a valid decision is accepted by name alongside sibling tool calls", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    const decision = await audit(response("decision-with-sibling", [
+      fauxToolCall("read", { path: "evidence.txt" }),
+      fauxToolCall(decisionToolName, { status: "pass" }),
+    ]), sessionManager);
+    assert.equal(decision.status, "pass");
   });
 });
 
@@ -444,17 +461,6 @@ test("malformed nested decisions retain raw responses and report typed facts", a
       errorPresent: false,
     },
     {
-      id: "multiple-calls",
-      content: [
-        fauxToolCall(decisionToolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-        fauxToolCall("ak_other_decision", { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-      ],
-      stopReason: "toolUse" as const,
-      expectedCount: 2,
-      expectedNames: [decisionToolName, "ak_other_decision"],
-      errorPresent: false,
-    },
-    {
       id: "malformed-arguments",
       content: [
         fauxToolCall(decisionToolName, {
@@ -656,55 +662,46 @@ test("silent compliance completion exhausts idle retries as typed infrastructure
   });
 });
 
-test("compliance dispatch keeps one object-root tool across every supported API", async () => {
-  const expectedToolChoices: Record<string, unknown> = {
-    "anthropic-messages": undefined,
-    "bedrock-converse-stream": undefined,
-    "mistral-conversations": { type: "function", function: { name: decisionToolName } },
-    "openai-completions": { type: "function", function: { name: decisionToolName } },
-    "pi-messages": { type: "function", function: { name: decisionToolName } },
-    "azure-openai-responses": { type: "function", name: decisionToolName },
-    "openai-responses": { type: "function", name: decisionToolName },
-    "google-generative-ai": "any",
-    "google-vertex": "any",
-    "openai-codex-responses": "required",
-    default: "required",
-  };
-  for (const api of Object.keys(expectedToolChoices)) {
-    await withPersistedSession(async (sessionManager) => {
-      const base = context(sessionManager);
-      const seen: { model?: string; request?: Record<string, unknown>; context?: Context } = {};
-      const auditContext = {
-        ...base,
-        model: { ...(base.model as object), api: api === "default" ? "future-api" : api },
-      };
-      const result = await runComplianceAudit({
-        tool: decisionTool,
-        systemPrompt: "audit system",
-        serializedInput: "audit input",
-        roleLabel: "Compliance",
-        invalidDecisionLabel: "invalid compliance decision",
-        context: {
-          ...auditContext,
-          modelRegistry: {
-            ...(base.modelRegistry as object),
-            getProviderAuth: async () => ({ auth: { apiKey: "test-secret" } }),
-            getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-secret" }),
-          },
-        } as unknown as ExtensionContext,
-        runCompletion: async (model, requestContext, request) => {
-          seen.model = model.api;
-          seen.context = requestContext;
-          seen.request = request;
-          return response(`dispatch-${api}`, [fauxToolCall(decisionToolName, { status: "pass" })]);
-        },
-      });
-      assert.equal(result.status, "pass");
-      assert.equal((seen.context?.tools?.[0]?.parameters as { type?: unknown } | undefined)?.type, "object");
-      assert.deepEqual(seen.request?.toolChoice, expectedToolChoices[api]);
-      assert.equal(api !== "default" && api.includes("openai"), typeof seen.request?.onPayload === "function");
+test("workspace evidence may outlast provider idle budget and reaches a fresh deciding turn", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    const base = context(sessionManager);
+    const providerSignals: AbortSignal[] = [];
+    let turns = 0;
+    let selectedEvidenceName: string | undefined;
+    const result = await runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: { ...base, cwd: process.cwd() } as unknown as ExtensionContext,
+      idleTimeoutMs: 10,
+      runCompletion: async (_model, requestContext, request) => {
+        turns += 1;
+        assert.ok(request.signal instanceof AbortSignal);
+        providerSignals.push(request.signal);
+        if (turns === 1) {
+          const evidence = requestContext.tools?.find((tool) =>
+            tool.name !== decisionToolName
+            && Object.hasOwn((tool.parameters as any).properties ?? {}, "command")
+          );
+          assert.ok(evidence);
+          selectedEvidenceName = evidence.name;
+          return response("evidence", [fauxToolCall(evidence.name, {
+            command: "node -e \"setTimeout(() => console.log('idle-boundary-complete'), 60)\"",
+          })]);
+        }
+        const resultMessage = requestContext.messages.find((message) => message.role === "toolResult");
+        assert.equal(resultMessage?.toolName, selectedEvidenceName);
+        assert.equal(resultMessage?.isError, false);
+        assert.match(JSON.stringify(resultMessage?.content), /idle-boundary-complete/);
+        return response("decision", [fauxToolCall(decisionToolName, { status: "pass" })]);
+      },
     });
-  }
+    assert.equal(result.status, "pass");
+    assert.equal(turns, 2);
+    assert.notStrictEqual(providerSignals[0], providerSignals[1]);
+  });
 });
 
 test("payload and response-header hooks do not extend the first body-event silence budget", async (t) => {
@@ -767,8 +764,8 @@ test("payload and response-header hooks do not extend the first body-event silen
     await new Promise<void>((resolve) => setImmediate(resolve));
     t.mock.timers.tick(150_000);
     await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(hooks.payload, 1);
-    // Production no longer installs onResponse; even if a provider called one, it must not poke.
+    assert.equal(hooks.payload, 0);
+    // Production installs neither outbound hook; neither can extend the idle budget.
     assert.equal(hooks.response, 0);
     t.mock.timers.tick(50_000);
     await assert.rejects(
