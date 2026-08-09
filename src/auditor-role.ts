@@ -61,6 +61,7 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
     const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash", "write", "edit", tool.name], customTools: [tool], sessionManager: childSessionManager(options.context.sessionManager, cwd, "auditor-roles"), settingsManager: settings });
     let turns = 0;
     let boundaryResponse: AssistantMessage | undefined;
+    let boundaryToolFailure: unknown;
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
         turns += 1;
@@ -68,7 +69,11 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
       }
       // Let every tool in the boundary turn settle before stopping. In particular,
       // a decision may share that turn with evidence tools executing in parallel.
-      if (event.type === "turn_end" && boundaryResponse !== undefined && decision === undefined) void session.abort();
+      if (event.type === "turn_end" && boundaryResponse !== undefined && decision === undefined) {
+        const evidenceCallIds = new Set(boundaryResponse.content.flatMap((part) => part.type === "toolCall" && part.name !== tool.name && ["read", "grep", "find", "ls", "bash", "write", "edit"].includes(part.name) ? [part.id] : []));
+        boundaryToolFailure = [...session.messages].reverse().find((message) => message.role === "toolResult" && evidenceCallIds.has(message.toolCallId) && message.isError);
+        void session.abort();
+      }
     });
     const abort = () => { void session.abort(); };
     if (options.signal?.aborted) abort(); else options.signal?.addEventListener("abort", abort, { once: true });
@@ -82,6 +87,7 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
       if (options.signal?.aborted) throw options.signal.reason;
       if (idle.signal.aborted) throw idle.signal.reason;
       if (decisionToolFailure !== undefined) throw decisionToolFailure;
+      if (boundaryToolFailure !== undefined) throw boundaryToolFailure;
       if (boundaryResponse !== undefined && decision === undefined) {
         if (boundaryResponse.stopReason === "error" || boundaryResponse.stopReason === "aborted") throw boundaryResponse;
         const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);

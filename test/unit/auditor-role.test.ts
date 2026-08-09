@@ -93,6 +93,21 @@ test("provider and decision-tool failures on the limit turn retain their origina
       runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: failingTool, roleLabel: "Test auditor", context }),
       (error: unknown) => error === toolFailure,
     );
+
+    faux.setResponses([
+      ...Array.from({ length: AUDITOR_TURN_LIMIT - 1 }, unknown),
+      fauxAssistantMessage([fauxToolCall("read", { path: "missing.txt" })], { stopReason: "toolUse" }),
+    ]);
+    await assert.rejects(
+      runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: baseTool, roleLabel: "Test auditor", context }),
+      (error: unknown) => {
+        assert.ok(!(error instanceof AuditorTurnLimitError));
+        assert.equal((error as { role?: unknown }).role, "toolResult");
+        assert.equal((error as { toolName?: unknown }).toolName, "read");
+        assert.equal((error as { isError?: unknown }).isError, true);
+        return true;
+      },
+    );
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
