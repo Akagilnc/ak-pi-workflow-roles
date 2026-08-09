@@ -17,10 +17,12 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
   const activeModel = options.context.model;
   if (activeModel === undefined) throw new Error(`${options.roleLabel} requires an active model`);
   const dispatch = await prepareComplianceDispatch(activeModel, options.context, options.roleLabel);
-  const parentProvider = options.context.modelRegistry.getProvider(activeModel.provider);
+  const parentProvider = options.runCompletion === undefined
+    ? options.context.modelRegistry.getProvider(activeModel.provider)
+    : undefined;
   if (parentProvider === undefined && options.runCompletion === undefined) throw new Error(`${options.roleLabel} provider not found: ${activeModel.provider}`);
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null });
-  const provider: Provider = { id: parentProvider?.id ?? activeModel.provider, name: parentProvider?.name ?? options.roleLabel, auth: { apiKey: { name: "Inherited auditor authentication", async resolve() { return { auth: { ...dispatch.auth, ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }) } }; } } }, getModels() { return [dispatch.model]; }, stream(model, context, request) { if (options.runCompletion !== undefined) { const promise = options.runCompletion(model, context, (request ?? {}) as ProviderStreamOptions); return { async *[Symbol.asyncIterator]() {}, result: () => promise } as any; } return parentProvider!.stream(model, context, request); }, streamSimple(model, context, request) { return parentProvider!.streamSimple(model, context, request); } };
+  const provider: Provider = { id: parentProvider?.id ?? activeModel.provider, name: parentProvider?.name ?? options.roleLabel, auth: { apiKey: { name: "Inherited auditor authentication", async resolve() { const { env, ...auth } = dispatch.auth; return { auth: { ...auth, ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }) }, ...(env === undefined ? {} : { env }) }; } } }, getModels() { return [dispatch.model]; }, stream(model, context, request) { if (options.runCompletion !== undefined) { const promise = options.runCompletion(model, context, (request ?? {}) as ProviderStreamOptions); return { async *[Symbol.asyncIterator]() {}, result: () => promise } as any; } return parentProvider!.stream(model, context, request); }, streamSimple(model, context, request) { return parentProvider!.streamSimple(model, context, request); } };
   runtime.registerNativeProvider(provider);
   const scratch = await mkdtemp(join(tmpdir(), "ak-auditor-role-"));
   let decision: unknown;
