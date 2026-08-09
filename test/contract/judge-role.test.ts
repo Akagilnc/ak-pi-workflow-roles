@@ -583,6 +583,21 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
   }
 });
 
+test("production audit transcript preserves the assignment received by the judge", () => {
+  const sessionManager = SessionManager.inMemory();
+  sessionManager.appendMessage({
+    role: "user",
+    content: "OWNER ASSIGNMENT: adjudicate issue 205",
+    timestamp: Date.now(),
+  });
+
+  const transcript = productionTranscriptFromContext({
+    sessionManager,
+  } as unknown as ExtensionContext);
+
+  assert.match(transcript, /OWNER ASSIGNMENT: adjudicate issue 205/);
+});
+
 test("judge role injects its soul and accepts a soul-compliant verdict", async () => {
   const seenAudits: SoulAuditInput[] = [];
   const { harness, tool } = await startJudge(async (input) => {
