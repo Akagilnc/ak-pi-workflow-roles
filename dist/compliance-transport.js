@@ -32,6 +32,47 @@ export const complianceDecisionSchema = Type.Object({
     additionalProperties: true,
     required: [],
 });
+function complianceToolChoice(model, toolName) {
+    switch (model.api) {
+        case "anthropic-messages":
+        case "bedrock-converse-stream":
+            return undefined;
+        case "mistral-conversations":
+        case "openai-completions":
+        case "pi-messages":
+            return { type: "function", function: { name: toolName } };
+        case "azure-openai-responses":
+        case "openai-responses":
+            return { type: "function", name: toolName };
+        case "google-generative-ai":
+        case "google-vertex":
+            return "any";
+        case "openai-codex-responses":
+            return "required";
+        default:
+            return "required";
+    }
+}
+function singleComplianceToolCallPayload(model, toolName) {
+    switch (model.api) {
+        case "azure-openai-responses":
+        case "openai-completions":
+        case "openai-codex-responses":
+        case "openai-responses":
+            return (payload) => {
+                if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+                    return payload;
+                }
+                return {
+                    ...payload,
+                    parallel_tool_calls: false,
+                    tool_choice: complianceToolChoice(model, toolName),
+                };
+            };
+        default:
+            return undefined;
+    }
+}
 export function createComplianceDecisionTool(name, description) {
     return {
         name,
@@ -185,10 +226,11 @@ export function readComplianceDecision(response, toolName, invalidLabel) {
     if (response.stopReason === "error" || response.stopReason === "aborted") {
         throw malformedComplianceDecision(response, toolName, invalidLabel, `provider response terminated with stopReason ${response.stopReason}`, calls);
     }
-    const decisionCalls = calls.filter((candidate) => candidate.name === toolName);
-    const call = decisionCalls[decisionCalls.length - 1];
-    if (call === undefined) {
-        throw malformedComplianceDecision(response, toolName, invalidLabel, "expected a decision tool call", calls);
+    const call = calls[0];
+    if (calls.length !== 1 ||
+        call?.type !== "toolCall" ||
+        call.name !== toolName) {
+        throw malformedComplianceDecision(response, toolName, invalidLabel, "expected exactly one decision tool call", calls);
     }
     const arguments_ = call.arguments;
     // ADR 0055/0057: shape is guidance, not a reject gate. Read what arrived;
@@ -216,19 +258,8 @@ export async function runComplianceAudit(options) {
     const idleMaxRetries = options.idleMaxRetries ?? DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES;
     // Silence clock starts with each attempt and resets only on real AssistantMessageEvent
     // yields from provider.stream — not on outbound payload transform or response headers.
-    // Keep Pi's workspace-tool implementation behind the audit execution seam.
-    // Eager value imports make the standalone public CLI bundle initialize Pi's
-    // CommonJS process helpers even for discovery-only commands such as --help.
-    const { createBashTool, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool, } = await import("@earendil-works/pi-coding-agent");
-    const workspaceTools = [
-        createReadTool(options.context.cwd),
-        createWriteTool(options.context.cwd),
-        createEditTool(options.context.cwd),
-        createBashTool(options.context.cwd),
-        createGrepTool(options.context.cwd),
-        createFindTool(options.context.cwd),
-        createLsTool(options.context.cwd),
-    ];
+    const onPayload = singleComplianceToolCallPayload(dispatch.model, options.tool.name);
+    const toolChoice = complianceToolChoice(dispatch.model, options.tool.name);
     const requestContext = {
         systemPrompt: options.systemPrompt,
         messages: [
@@ -241,115 +272,69 @@ export async function runComplianceAudit(options) {
                 timestamp: Date.now(),
             },
         ],
-        tools: [...workspaceTools, options.tool],
+        tools: [options.tool],
     };
     let lastIdleError;
     for (let attempt = 0; attempt <= idleMaxRetries; attempt += 1) {
         if (options.signal?.aborted) {
             throw abortRejectionReason(options.signal);
         }
+        const idle = createStreamIdleGuard({
+            idleTimeoutMs,
+            ...(options.signal === undefined ? {} : { parentSignal: options.signal }),
+        });
         try {
-            let response;
-            while (true) {
-                // Provider silence is scoped to one completion turn. Tool execution happens
-                // after this guard is disposed and the next turn receives a fresh signal.
-                const idle = createStreamIdleGuard({
-                    idleTimeoutMs,
-                    ...(options.signal === undefined ? {} : { parentSignal: options.signal }),
+            const complete = options.runCompletion ??
+                (async (auditModel, context, request) => {
+                    const provider = options.context.modelRegistry.getProvider(auditModel.provider);
+                    if (provider === undefined) {
+                        throw new Error(`${options.roleLabel} provider not found: ${auditModel.provider}`);
+                    }
+                    const stream = provider.stream(auditModel, context, request);
+                    for await (const _event of stream) {
+                        idle.poke();
+                    }
+                    return stream.result();
                 });
-                try {
-                    const complete = options.runCompletion ??
-                        (async (auditModel, context, request) => {
-                            const provider = options.context.modelRegistry.getProvider(auditModel.provider);
-                            if (provider === undefined) {
-                                throw new Error(`${options.roleLabel} provider not found: ${auditModel.provider}`);
-                            }
-                            const stream = provider.stream(auditModel, context, request);
-                            for await (const _event of stream) {
-                                idle.poke();
-                            }
-                            return stream.result();
-                        });
-                    response = await new Promise((resolve, reject) => {
-                        const onAbort = () => {
-                            reject(abortRejectionReason(idle.signal));
-                        };
-                        if (idle.signal.aborted) {
-                            onAbort();
+            let response;
+            try {
+                response = await new Promise((resolve, reject) => {
+                    const onAbort = () => {
+                        reject(abortRejectionReason(idle.signal));
+                    };
+                    if (idle.signal.aborted) {
+                        onAbort();
+                        return;
+                    }
+                    idle.signal.addEventListener("abort", onAbort, { once: true });
+                    void complete(dispatch.model, requestContext, {
+                        ...dispatch.auth,
+                        timeoutMs: COMPLIANCE_REQUEST_TIMEOUT_MS,
+                        maxTokens: 2048,
+                        cacheRetention: "none",
+                        sessionId: uuidv7(),
+                        ...(toolChoice === undefined ? {} : { toolChoice }),
+                        ...(onPayload === undefined ? {} : { onPayload }),
+                        signal: idle.signal,
+                    }).then((value) => {
+                        idle.signal.removeEventListener("abort", onAbort);
+                        resolve(value);
+                    }, (error) => {
+                        idle.signal.removeEventListener("abort", onAbort);
+                        if (isStreamIdleTimeoutError(idle.signal.reason)) {
+                            reject(idle.signal.reason);
                             return;
                         }
-                        idle.signal.addEventListener("abort", onAbort, { once: true });
-                        void complete(dispatch.model, requestContext, {
-                            ...dispatch.auth,
-                            timeoutMs: COMPLIANCE_REQUEST_TIMEOUT_MS,
-                            maxTokens: 2048,
-                            cacheRetention: "none",
-                            sessionId: uuidv7(),
-                            signal: idle.signal,
-                        }).then((value) => {
-                            idle.signal.removeEventListener("abort", onAbort);
-                            resolve(value);
-                        }, (error) => {
-                            idle.signal.removeEventListener("abort", onAbort);
-                            if (isStreamIdleTimeoutError(idle.signal.reason)) {
-                                reject(idle.signal.reason);
-                                return;
-                            }
-                            reject(error);
-                        });
+                        reject(error);
                     });
-                    throwIfStreamIdleTimedOut(idle.signal.reason);
-                }
-                catch (error) {
-                    throwIfStreamIdleTimedOut(idle.signal.reason);
-                    throw error;
-                }
-                finally {
-                    idle.dispose();
-                }
-                retainComplianceResponse(options.context, response);
-                const calls = response.content.filter((part) => part.type === "toolCall");
-                if (calls.some((call) => call.name === options.tool.name))
-                    break;
-                const evidenceCalls = calls.flatMap((call) => {
-                    const tool = workspaceTools.find((candidate) => candidate.name === call.name);
-                    return tool === undefined ? [] : [{ call, tool }];
                 });
-                if (evidenceCalls.length === 0) {
-                    return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
-                }
-                requestContext.messages.push(response);
-                for (const { call, tool } of evidenceCalls) {
-                    try {
-                        const result = await tool.execute(call.id, call.arguments, options.signal);
-                        requestContext.messages.push({
-                            role: "toolResult",
-                            toolCallId: call.id,
-                            toolName: call.name,
-                            content: result.content,
-                            details: result.details,
-                            isError: false,
-                            timestamp: Date.now(),
-                        });
-                    }
-                    catch (error) {
-                        if (options.signal?.aborted) {
-                            throw abortRejectionReason(options.signal);
-                        }
-                        requestContext.messages.push({
-                            role: "toolResult",
-                            toolCallId: call.id,
-                            toolName: call.name,
-                            content: [{
-                                    type: "text",
-                                    text: error instanceof Error ? error.message : String(error),
-                                }],
-                            isError: true,
-                            timestamp: Date.now(),
-                        });
-                    }
-                }
             }
+            catch (error) {
+                throwIfStreamIdleTimedOut(idle.signal.reason);
+                throw error;
+            }
+            throwIfStreamIdleTimedOut(idle.signal.reason);
+            retainComplianceResponse(options.context, response);
             return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
         }
         catch (error) {
@@ -360,6 +345,9 @@ export async function runComplianceAudit(options) {
                 continue;
             }
             throw error;
+        }
+        finally {
+            idle.dispose();
         }
     }
     throw lastIdleError ?? new StreamIdleTimeoutError(idleTimeoutMs);
