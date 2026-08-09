@@ -8,7 +8,8 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context } from "
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { AUDITOR_TURN_LIMIT, AuditorTurnLimitError, runAuditorRole } from "../../src/auditor-role.ts";
-import { createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
+import { ComplianceResponseRetentionError, createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
+import { StreamIdleTimeoutError } from "../../src/stream-idle-guard.ts";
 
 test("constant unknown tools receive error results and exhaust at a finite typed boundary", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-unknown-"));
@@ -107,6 +108,74 @@ test("provider and decision-tool failures on the limit turn retain their origina
         assert.equal((error as { isError?: unknown }).isError, true);
         return true;
       },
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("parent and typed idle cancellation win over exhaustion on the limit turn", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-boundary-abort-"));
+  try {
+    for (const reason of [new Error("parent aborted at boundary"), new StreamIdleTimeoutError(17)]) {
+      const faux = fauxProvider({ provider: "audit-boundary-abort" });
+      const controller = new AbortController();
+      const baseTool = createComplianceDecisionTool("ak_boundary_abort", "Submit.");
+      const tool = { ...baseTool, async execute(...args: Parameters<typeof baseTool.execute>) {
+        controller.abort(reason);
+        return baseTool.execute(...args);
+      } };
+      const unknown = () => fauxAssistantMessage([fauxToolCall("ak_other_decision", {})], { stopReason: "toolUse" });
+      faux.setResponses([
+        ...Array.from({ length: AUDITOR_TURN_LIMIT - 1 }, unknown),
+        fauxAssistantMessage([fauxToolCall(tool.name, { status: "pass" })], { stopReason: "toolUse" }),
+      ]);
+      const context = {
+        cwd,
+        model: faux.getModel(),
+        modelRegistry: {
+          getProvider() { return faux.provider; },
+          async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
+          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
+        },
+        sessionManager: SessionManager.inMemory(cwd),
+      } as unknown as ExtensionContext;
+      await assert.rejects(
+        runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool, roleLabel: "Test auditor", context, signal: controller.signal }),
+        (error: unknown) => error === reason,
+      );
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("retention failure after a decision on the limit turn retains its typed cause", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-boundary-retention-"));
+  try {
+    const faux = fauxProvider({ provider: "audit-boundary-retention" });
+    const tool = createComplianceDecisionTool("ak_boundary_retention", "Submit.");
+    const unknown = () => fauxAssistantMessage([fauxToolCall("ak_other_decision", {})], { stopReason: "toolUse" });
+    faux.setResponses([
+      ...Array.from({ length: AUDITOR_TURN_LIMIT - 1 }, unknown),
+      fauxAssistantMessage([fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })], { stopReason: "toolUse" }),
+    ]);
+    const retentionCause = new Error("session write failed");
+    const sessionManager = SessionManager.inMemory(cwd);
+    sessionManager.appendCustomEntry = () => { throw retentionCause; };
+    const context = {
+      cwd,
+      model: faux.getModel(),
+      modelRegistry: {
+        getProvider() { return faux.provider; },
+        async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
+        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
+      },
+      sessionManager,
+    } as unknown as ExtensionContext;
+    await assert.rejects(
+      runComplianceAudit({ tool, systemPrompt: "Decide.", serializedInput: "Inspect.", roleLabel: "Test auditor", invalidDecisionLabel: "invalid", context }),
+      (error: unknown) => error instanceof ComplianceResponseRetentionError && error.cause === retentionCause,
     );
   } finally {
     await rm(cwd, { recursive: true, force: true });
