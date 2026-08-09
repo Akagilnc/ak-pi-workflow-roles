@@ -12973,6 +12973,23 @@ function isLawfulTypedTerminalOutcome(outcome) {
 function exitCodeForTerminalOutcome(outcome) {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
 }
+function buildResidualIncompleteTerminalOutcome(input) {
+  return {
+    kind: "incomplete",
+    role: input.role,
+    status: "incomplete",
+    decision: "no-usable-result",
+    candidate: input.candidate,
+    diagnostic: input.diagnostic,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-result",
+      candidate: input.candidate,
+      diagnostic: input.diagnostic,
+      acceptedReceipt: false
+    }
+  };
+}
 function buildAuditIncompleteTerminalOutcome(input) {
   const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
   const audit = {
@@ -13490,6 +13507,12 @@ function toolResultText(message) {
     }
     return "";
   }).join("").trim();
+}
+function boundErroredToolCandidate(entries, resultIndex, message, toolName) {
+  if (message.toolName !== toolName || message.isError !== true) return void 0;
+  const bound = boundRoleToolCallForResult(entries, resultIndex, message, toolName);
+  const diagnostic = toolResultText(message);
+  return bound === void 0 || diagnostic === "" ? void 0 : { candidate: bound.candidate, diagnostic };
 }
 var COLLECTOR_INFRASTRUCTURE_TOOLS = /* @__PURE__ */ new Set([
   COLLECTOR_OBSERVE_TOOL,
@@ -14525,7 +14548,30 @@ async function settleLawfulCollectorTerminalResult(admitted) {
   const entries = await readLawfulSettlementEntries(admitted);
   if (entries === void 0) return void 0;
   const extracted = extractCollectorRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
+  if (extracted === void 0) {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
+      if (residual === void 0) continue;
+      const candidate = residual.candidate;
+      const duration = isRecord4(candidate) ? candidate.durationMs : void 0;
+      if (Number.isSafeInteger(duration) && duration >= 1 && duration <= 9e5) {
+        continue;
+      }
+      return {
+        roleOutcome: buildResidualIncompleteTerminalOutcome({
+          role: "collector",
+          candidate,
+          diagnostic: residual.diagnostic
+        }),
+        navigator: { disposition: "no-advice" },
+        artifacts: [],
+        runId: admitted.runId
+      };
+    }
+    return void 0;
+  }
   const admittedManifest = await loadCollectorManifest(admitted.legsPath);
   if (admittedManifest.digest !== admitted.manifestDigest) {
     throw collectorReceiptBindingFailure(
@@ -14974,7 +15020,29 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
   const entries = await readLawfulSettlementEntries(admitted);
   if (entries === void 0) return void 0;
   const extracted = extractMergerRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
+  if (extracted === void 0) {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
+      if (residual === void 0) continue;
+      try {
+        validateMergerOutput(residual.candidate);
+      } catch {
+        return {
+          roleOutcome: buildResidualIncompleteTerminalOutcome({
+            role: "merger",
+            candidate: residual.candidate,
+            diagnostic: residual.diagnostic
+          }),
+          navigator: { disposition: "no-advice" },
+          artifacts: [],
+          runId: admitted.runId
+        };
+      }
+    }
+    return void 0;
+  }
   const methodInvocations = extractMergerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -16032,7 +16100,7 @@ async function dispatchAdmittedCollector(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (lawful !== void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -16877,7 +16945,7 @@ async function dispatchAdmittedMerger(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (lawful !== void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
