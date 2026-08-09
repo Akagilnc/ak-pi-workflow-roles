@@ -40,7 +40,7 @@ export async function runAuditorRole(options) {
     if (parentProvider === undefined)
         throw new Error(`${options.roleLabel} provider not found: ${activeModel.provider}`);
     const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null });
-    const idle = createStreamIdleGuard({ ...(options.signal === undefined ? {} : { parentSignal: options.signal }) });
+    const idle = createStreamIdleGuard({ ...(options.signal === undefined ? {} : { parentSignal: options.signal }), ...(options.streamIdleTimeoutMs === undefined ? {} : { idleTimeoutMs: options.streamIdleTimeoutMs }) });
     const provider = { id: parentProvider?.id ?? activeModel.provider, name: parentProvider?.name ?? options.roleLabel, auth: { apiKey: { name: "Inherited auditor authentication", async resolve() { return { auth: { ...dispatch.auth, ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }) } }; } } }, getModels() { return [dispatch.model]; }, stream(model, context, request) { const inheritedRequest = { ...(request ?? {}), ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }), signal: idle.signal }; const upstream = parentProvider.stream(model, context, inheritedRequest); return { async *[Symbol.asyncIterator]() { for await (const event of upstream) {
                 idle.poke();
                 yield event;

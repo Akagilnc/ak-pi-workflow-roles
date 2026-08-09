@@ -64,7 +64,8 @@ export function trackedPackageInputPaths(): string[] {
 export interface MaterializePackageOptions {
   /**
    * Provide package node_modules for offline prepack/install.
-   * Default "symlink" (cheap). "copy" keeps the historical full tree copy.
+   * Default "copy" keeps package-manager lifecycle checks isolated. A symlink is
+   * unsafe because pnpm may purge the link target while reconciling the pack tree.
    * false skips node_modules entirely.
    */
   nodeModules?: boolean | "symlink" | "copy";
@@ -92,7 +93,7 @@ export async function materializePackageTree(
   }
 
   const nodeModulesMode = options.nodeModules === undefined
-    ? "symlink"
+    ? "copy"
     : options.nodeModules === true
     ? "symlink"
     : options.nodeModules === false
@@ -143,6 +144,14 @@ export interface IsolatedPackResult {
  * Materialize a private package tree and run real `npm pack` there so the
  * prepack → retained package build cannot rewrite shared dist/.
  */
+async function isolatedPackEnvironment(root: string): Promise<NodeJS.ProcessEnv> {
+  const bin = resolve(root, ".pack-bin");
+  await mkdir(bin, { recursive: true });
+  const shim = resolve(bin, "pnpm");
+  await writeFile(shim, `#!/bin/sh\n[ "$1" = run ] || exit 64\nshift\nname="$1"\nshift\nscript=$(node -e 'process.stdout.write(require("./package.json").scripts[process.argv[1]] || "")' "$name")\n[ -n "$script" ] || exit 65\nexec sh -c "$script" -- "$@"\n`, { mode: 0o755 });
+  return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+}
+
 export async function packIsolatedPackage(
   packDestination: string,
   options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
@@ -156,7 +165,7 @@ export async function packIsolatedPackage(
     const { stdout } = await execFileAsync(
       "npm",
       ["pack", "--json", "--pack-destination", packDestination],
-      { cwd: root, maxBuffer: 10 * 1024 * 1024 },
+      { cwd: root, env: await isolatedPackEnvironment(root), maxBuffer: 10 * 1024 * 1024 },
     );
     const pack = JSON.parse(stdout) as Array<{
       filename: string;
@@ -325,11 +334,11 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
       const packDestination = cacheDir;
       const materialRoot = await mkdtemp(resolve(cacheDir, "mat-"));
       try {
-        await materializePackageTree(materialRoot, { nodeModules: "symlink" });
+        await materializePackageTree(materialRoot, { nodeModules: "copy" });
         const { stdout } = await execFileAsync(
           "npm",
           ["pack", "--json", "--pack-destination", packDestination],
-          { cwd: materialRoot, maxBuffer: 10 * 1024 * 1024 },
+          { cwd: materialRoot, env: await isolatedPackEnvironment(materialRoot), maxBuffer: 10 * 1024 * 1024 },
         );
         const pack = JSON.parse(stdout) as Array<{
           filename: string;
@@ -647,6 +656,19 @@ async function withProcessGlobalLock<T>(scenario: () => Promise<T>): Promise<T> 
   }
 }
 
+export async function withClearedRoleRunDirectory<T>(scenario: () => Promise<T>): Promise<T> {
+  return withProcessGlobalLock(async () => {
+    const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+    delete process.env.AK_ROLE_RUN_DIR;
+    try {
+      return await scenario();
+    } finally {
+      if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+    }
+  });
+}
+
 export async function withHermeticHome<T>(
   options: { prefix?: string },
   scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
@@ -658,12 +680,18 @@ export async function withHermeticHome<T>(
     const agentDir = resolve(home, ".pi-agent");
     await mkdir(agentDir, { recursive: true });
     const previousHome = process.env.HOME;
+    const previousRunDir = process.env.AK_ROLE_RUN_DIR;
     process.env.HOME = home;
+    // A caller's admitted run belongs to the host process, never to a hermetic
+    // in-process Pi fixture. Tests that exercise admission seed their own value.
+    delete process.env.AK_ROLE_RUN_DIR;
     try {
       return await scenario({ home, agentDir });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
+      if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = previousRunDir;
       await rm(home, { recursive: true, force: true });
     }
   });

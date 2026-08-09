@@ -59,16 +59,11 @@ import type {
   TerminalArtifactRef,
   TerminalResult,
 } from "../../src/public-cli/terminal.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fail-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withHermeticHome({ prefix: "ak-public-cli-fail-" }, ({ home }) => scenario(home));
 }
 
 function captureIo() {
@@ -1823,6 +1818,7 @@ test("default runner empty-auth retains provider cause, identity, and primary di
       {
         packageRoot,
         home,
+        agentDir: join(home, ".pi-agent"),
         cwd: project,
         credentials: { "openai-codex": false, xai: false },
         createRunId: () => "run-default-empty-auth-001",
