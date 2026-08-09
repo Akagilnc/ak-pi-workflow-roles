@@ -13342,82 +13342,132 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
 }
 function coderDecisiveFacts(output) {
   const candidate = output;
-  const facts = { coderStatus: output.status };
-  if (output.status === "unfinished" && typeof candidate.remainingScope === "string") facts.remainingScope = candidate.remainingScope;
-  if (typeof candidate.report === "string") facts.reportPresent = candidate.report.trim().length > 0;
+  const status = safelyRead(candidate, "status");
+  const facts = {};
+  if (status.readable && typeof status.value === "string") facts.coderStatus = status.value;
+  const remainingScope = safelyRead(candidate, "remainingScope");
+  if (status.readable && status.value === "unfinished" && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  const report = safelyRead(candidate, "report");
+  if (report.readable && typeof report.value === "string") facts.reportPresent = report.value.trim().length > 0;
   return facts;
 }
 function fixerDecisiveFacts(output) {
-  const facts = {
-    fixerStatus: output.status
-  };
   const candidate = output;
-  if (output.status === "unfinished" && typeof candidate.remainingScope === "string") facts.remainingScope = candidate.remainingScope;
-  const planBlocker = candidate.blocker;
-  if (output.status === "refused" && planBlocker !== null && typeof planBlocker === "object") {
-    if (typeof candidate.remainingScope === "string") facts.remainingScope = candidate.remainingScope;
-    const blocker = planBlocker;
-    if (typeof blocker.cause === "string") facts.blockerCause = blocker.cause;
-    if (blocker.cause === "prerequisite_unmet" && typeof blocker.prerequisiteId === "string") facts.prerequisiteId = blocker.prerequisiteId;
+  const status = safelyRead(candidate, "status");
+  const facts = {};
+  if (status.readable && typeof status.value === "string") facts.fixerStatus = status.value;
+  const remainingScope = safelyRead(candidate, "remainingScope");
+  if (status.readable && (status.value === "unfinished" || status.value === "refused") && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  const blockerRead = safelyRead(candidate, "blocker");
+  if (status.readable && status.value === "refused" && blockerRead.readable && isRecord4(blockerRead.value)) {
+    const cause = safelyRead(blockerRead.value, "cause");
+    if (cause.readable && typeof cause.value === "string") facts.blockerCause = cause.value;
+    const prerequisiteId = safelyRead(blockerRead.value, "prerequisiteId");
+    if (cause.readable && cause.value === "prerequisite_unmet" && prerequisiteId.readable && typeof prerequisiteId.value === "string") facts.prerequisiteId = prerequisiteId.value;
   }
-  if ("classResults" in output && Array.isArray(output.classResults)) {
-    facts.classResultCount = output.classResults.length;
-    facts.classDispositions = output.classResults.map((entry) => ({ name: entry.name, disposition: entry.disposition }));
-    const refusedBlockers = output.classResults.flatMap(
-      (entry) => entry.disposition === "refused" ? [entry.blocker] : []
-    );
-    if (refusedBlockers.length > 0) {
-      facts.blockerCauses = refusedBlockers.map((blocker) => blocker.cause);
-      const prerequisiteIds = refusedBlockers.flatMap(
-        (blocker) => blocker.cause === "prerequisite_unmet" ? [blocker.prerequisiteId] : []
-      );
-      if (prerequisiteIds.length > 0) {
-        facts.prerequisiteIds = prerequisiteIds;
+  const classResults = safelyRead(candidate, "classResults");
+  if (classResults.readable && Array.isArray(classResults.value)) {
+    const rows = [];
+    const blockers = [];
+    try {
+      for (const entry of classResults.value) {
+        if (!isRecord4(entry)) throw new Error("unreadable class result");
+        const name = safelyRead(entry, "name");
+        const disposition = safelyRead(entry, "disposition");
+        if (!name.readable || !disposition.readable) throw new Error("unreadable class result");
+        rows.push({ name: name.value, disposition: disposition.value });
+        const blocker = safelyRead(entry, "blocker");
+        if (disposition.value === "refused" && blocker.readable && isRecord4(blocker.value)) blockers.push(blocker.value);
       }
+      facts.classResultCount = rows.length;
+      facts.classDispositions = rows;
+      const causes = blockers.flatMap((blocker) => {
+        const cause = safelyRead(blocker, "cause");
+        return cause.readable && typeof cause.value === "string" ? [cause.value] : [];
+      });
+      if (causes.length > 0) facts.blockerCauses = causes;
+      const prerequisiteIds = blockers.flatMap((blocker) => {
+        const cause = safelyRead(blocker, "cause");
+        const id = safelyRead(blocker, "prerequisiteId");
+        return cause.readable && cause.value === "prerequisite_unmet" && id.readable && typeof id.value === "string" ? [id.value] : [];
+      });
+      if (prerequisiteIds.length > 0) facts.prerequisiteIds = prerequisiteIds;
+    } catch {
     }
   }
-  if (typeof candidate.report === "string") facts.reportPresent = candidate.report.trim().length > 0;
+  const report = safelyRead(candidate, "report");
+  if (report.readable && typeof report.value === "string") facts.reportPresent = report.value.trim().length > 0;
   return facts;
 }
 function collectorDecisiveFacts(receipt) {
-  return {
-    repository: receipt.repository,
-    prNumber: receipt.prNumber,
-    targetHead: receipt.targetHead,
-    manifestDigest: receipt.manifestDigest,
-    legStatuses: receipt.legs.map((leg) => ({ legId: leg.legId, status: leg.status }))
-  };
+  const candidate = receipt;
+  const facts = {};
+  for (const key of ["repository", "prNumber", "targetHead", "manifestDigest"]) {
+    const value = safelyRead(candidate, key);
+    if (value.readable && value.value !== void 0) facts[key] = value.value;
+  }
+  const legs = safelyRead(candidate, "legs");
+  if (legs.readable && Array.isArray(legs.value)) {
+    try {
+      facts.legStatuses = legs.value.map((leg) => {
+        if (!isRecord4(leg)) throw new Error("unreadable Collector leg");
+        const legId = safelyRead(leg, "legId");
+        const status = safelyRead(leg, "status");
+        if (!legId.readable || !status.readable) throw new Error("unreadable Collector leg");
+        return { legId: legId.value, status: status.value };
+      });
+    } catch {
+    }
+  }
+  return facts;
 }
 function doctorDecisiveFacts(output) {
-  if (output.status === "refused") {
-    return {
-      doctorStatus: output.status,
-      reason: output.reason,
-      missingEvidenceCount: output.missingEvidence.length
-    };
+  const candidate = output;
+  const status = safelyRead(candidate, "status");
+  const facts = {};
+  if (status.readable && typeof status.value === "string") facts.doctorStatus = status.value;
+  if (status.readable && status.value === "refused") {
+    const reason = safelyRead(candidate, "reason");
+    if (reason.readable && reason.value !== void 0) facts.reason = reason.value;
+    const missing = safelyRead(candidate, "missingEvidence");
+    if (missing.readable && Array.isArray(missing.value)) facts.missingEvidenceCount = missing.value.length;
+    return facts;
   }
-  return {
-    doctorStatus: output.status,
-    issueNumber: output.case.issueNumber,
-    runsPath: output.case.runsPath,
-    findingsCount: output.findings.length
-  };
+  const caseValue = safelyRead(candidate, "case");
+  if (caseValue.readable && isRecord4(caseValue.value)) {
+    const issueNumber = safelyRead(caseValue.value, "issueNumber");
+    const runsPath = safelyRead(caseValue.value, "runsPath");
+    if (issueNumber.readable && issueNumber.value !== void 0) facts.issueNumber = issueNumber.value;
+    if (runsPath.readable && runsPath.value !== void 0) facts.runsPath = runsPath.value;
+  }
+  const findings = safelyRead(candidate, "findings");
+  if (findings.readable && Array.isArray(findings.value)) facts.findingsCount = findings.value.length;
+  return facts;
+}
+function reviewerAxes(value) {
+  if (!isRecord4(value)) return [];
+  return ["standards", "spec"].filter((axis) => {
+    const projected = safelyRead(value, axis);
+    return projected.readable && projected.value !== void 0;
+  });
 }
 function reviewerDecisiveFacts(output) {
-  const axes = ["standards", "spec"].filter(
-    (axis) => output.outcomes[axis] !== void 0
-  );
-  const reportAxes = ["standards", "spec"].filter(
-    (axis) => output.reports[axis] !== void 0
-  );
+  const candidate = output;
+  const status = safelyRead(candidate, "status");
+  const outcomes = safelyRead(candidate, "outcomes");
+  const reports = safelyRead(candidate, "reports");
+  const axes = reviewerAxes(outcomes.readable ? outcomes.value : void 0);
+  const reportAxes = reviewerAxes(reports.readable ? reports.value : void 0);
+  const acceptedBatch = safelyRead(candidate, "acceptedBatch");
   const facts = {
-    reviewerStatus: output.status,
-    axes: axes.join(","),
-    reportAxes: reportAxes.join(","),
-    acceptedBatchPresent: output.acceptedBatch !== void 0
+    axes,
+    reportAxes,
+    acceptedBatchPresent: acceptedBatch.readable && acceptedBatch.value !== void 0
   };
-  if (output.status === "refused") {
-    facts.diagnosticPresent = typeof output.diagnostic === "string" && output.diagnostic.trim().length > 0;
+  if (status.readable && typeof status.value === "string") facts.reviewerStatus = status.value;
+  const diagnostic = safelyRead(candidate, "diagnostic");
+  if (status.readable && status.value === "refused" && diagnostic.readable) {
+    facts.diagnosticPresent = typeof diagnostic.value === "string" && diagnostic.value.trim().length > 0;
   }
   return facts;
 }
@@ -13600,7 +13650,11 @@ function boundAuditEscalationForResult(entries, resultIndex, message, role, outp
   const decision = readComplianceCandidate(retained.candidate);
   if (decision.status !== "escalate") return void 0;
   const details = message.details;
-  if (!isAuditEscalationResult(details) || !isRecord4(details)) return void 0;
+  try {
+    if (!isAuditEscalationResult(details) || !isRecord4(details)) return void 0;
+  } catch {
+    return void 0;
+  }
   const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
   const hasDetailsConflicts = Object.hasOwn(details, "conflicts");
   if (hasDecisionConflicts !== hasDetailsConflicts) return void 0;
@@ -13610,6 +13664,15 @@ function boundAuditEscalationForResult(entries, resultIndex, message, role, outp
   if (hasDecisionGate !== hasDetailsGate) return void 0;
   if (hasDecisionGate && !sameAuditValue(details.auditDecisionGate, decision.decisionGate)) return void 0;
   return { decision, details };
+}
+function isUnboundAuditEscalationFace(details) {
+  try {
+    if (isAuditEscalationResult(details)) return true;
+  } catch {
+  }
+  if (!isRecord4(details)) return false;
+  const kind = safelyRead(details, "kind");
+  return kind.readable && kind.value === "audit_escalation";
 }
 function auditIncompleteFromCandidate(candidate) {
   const decision = readComplianceCandidate(candidate);
@@ -13819,6 +13882,7 @@ function extractJudgeRoleOutcome(entries) {
         decisiveFacts: { ...escalation.details }
       };
     }
+    if (isUnboundAuditEscalationFace(details)) continue;
     if (!isRecord4(details)) continue;
     const statusRead = safelyRead(details, "judgeStatus");
     if (!statusRead.readable) continue;
@@ -14320,6 +14384,7 @@ function extractFixerRoleOutcome(entries) {
         }
       };
     }
+    if (isUnboundAuditEscalationFace(details)) continue;
     try {
       const output = validateFixerOutput(details);
       const outcome = {
@@ -14553,6 +14618,7 @@ function extractDoctorRoleOutcome(entries) {
         }
       };
     }
+    if (isUnboundAuditEscalationFace(details)) continue;
     try {
       const output = validateRecordedDoctorOutput(details);
       const outcome = {
@@ -14725,6 +14791,7 @@ function extractReviewerRoleOutcome(entries) {
         }
       };
     }
+    if (isUnboundAuditEscalationFace(message.details)) continue;
     try {
       const receipt = validateRuntimeReviewerReceipt(message.details);
       const outcome = {
@@ -14786,18 +14853,16 @@ async function hasLawfulReviewerTerminalResult(admitted) {
   }
 }
 function mergerDecisiveFacts(output) {
-  if (output.status === "completed") {
-    return {
-      mergerStatus: output.status,
-      attemptId: output.attemptId,
-      mergeCommitId: output.mergeCommitId
-    };
-  }
-  return {
-    mergerStatus: output.status,
-    attemptId: output.attemptId,
-    diagnosis: output.diagnosis
-  };
+  const candidate = output;
+  const facts = {};
+  const status = safelyRead(candidate, "status");
+  const attemptId = safelyRead(candidate, "attemptId");
+  if (status.readable && typeof status.value === "string") facts.mergerStatus = status.value;
+  if (attemptId.readable && attemptId.value !== void 0) facts.attemptId = attemptId.value;
+  const decisiveKey = status.readable && status.value === "completed" ? "mergeCommitId" : "diagnosis";
+  const decisive = safelyRead(candidate, decisiveKey);
+  if (decisive.readable && decisive.value !== void 0) facts[decisiveKey] = decisive.value;
+  return facts;
 }
 function extractMergerMethodInvocations(entries, options) {
   const observed = [];

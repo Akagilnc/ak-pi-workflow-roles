@@ -1028,7 +1028,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
           : undefined,
         row.status,
       );
-      assert.equal(
+      assert.deepEqual(
         settled.roleOutcome.decisiveFacts[row.factKey],
         row.factValue,
         row.status,
@@ -1073,7 +1073,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
           : undefined,
         row.status,
       );
-      assert.equal(
+      assert.deepEqual(
         result.terminal!.roleOutcome.decisiveFacts[row.factKey],
         row.factValue,
         row.status,
