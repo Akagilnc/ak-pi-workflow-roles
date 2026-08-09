@@ -32,6 +32,13 @@ const decisionTool = createComplianceDecisionTool(
   "Return the compliance decision.",
 );
 
+test("shared compliance decision schema has a provider-compatible object root", () => {
+  const parameters = decisionTool.parameters as unknown as Record<string, unknown>;
+  assert.equal(parameters.type, "object");
+  assert.equal(parameters.anyOf, undefined);
+  assert.equal(parameters.oneOf, undefined);
+});
+
 function context(sessionManager: SessionManager): ExtensionContext {
   return {
     model: {
