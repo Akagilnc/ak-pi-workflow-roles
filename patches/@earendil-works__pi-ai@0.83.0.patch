@@ -10,7 +10,7 @@ index bb9fa794ee6cb9f73149dda5733b286941bbb550..001f2c36ac53aeace636a6b9d6728f40
 +    // the env var is set and no explicit serviceTier was supplied. pi-ai exposes no
 +    // official switch; pricing and resolveCodexServiceTier read options.serviceTier
 +    // downstream, so cost accounting stays honest. Env-gated: unset = stock behavior.
-+    if (options?.serviceTier === undefined && typeof process !== "undefined" && process.env?.PI_TEMP_FAST_MODE) {
++    if (options?.serviceTier === undefined && typeof process !== "undefined" && "PI_TEMP_FAST_MODE" in (process.env ?? {})) {
 +        options = { ...options, serviceTier: "priority" };
 +    }
      (async () => {
