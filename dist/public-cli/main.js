@@ -12575,106 +12575,24 @@ var auditorSoulPaths = Object.freeze({
   doctor: fileURLToPath(new URL("../souls/doctor-auditor.md", import.meta.url))
 });
 
-// src/compliance-transport.ts
-var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
-var decisionGateSchema = typebox_exports.Object(
-  {
-    question: nonblank2,
-    options: typebox_exports.Array(nonblank2, { minItems: 1 })
-  },
-  { additionalProperties: false }
-);
-var complianceDecisionSchema = typebox_exports.Object(
-  {
-    status: typebox_exports.Union([
-      typebox_exports.Literal("pass"),
-      typebox_exports.Literal("revise"),
-      typebox_exports.Literal("escalate")
-    ], { description: "Auditor decision status." }),
-    violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }),
-    conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }),
-    decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." })
-  },
-  {
-    additionalProperties: true,
-    required: []
-  }
-);
-function createComplianceDecisionTool(name, description) {
-  return {
-    name,
-    description,
-    parameters: complianceDecisionSchema
-  };
-}
+// src/compliance-decision.ts
 var COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
+var FIXER_AUDIT_TOOL_NAME = "ak_fixer_audit_decision";
+var JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
+var REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
 function readListField(value) {
-  if (Array.isArray(value)) return value;
-  if (value === void 0) return [];
-  return [value];
+  return Array.isArray(value) ? value : value === void 0 ? [] : [value];
 }
 function readComplianceCandidate(arguments_, usage) {
-  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
-    const type = arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_;
-    return {
-      status: "audit-incomplete",
-      observation: { kind: "non-object-arguments", type },
-      candidate: arguments_,
-      ...usage === void 0 ? {} : { usage }
-    };
-  }
+  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) return { status: "audit-incomplete", observation: { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ }, candidate: arguments_, ...usage === void 0 ? {} : { usage } };
   const args = arguments_;
   const status = args.status;
-  if (status === "pass") {
-    return { status: "pass", ...usage === void 0 ? {} : { usage } };
-  }
-  if (status === "revise") {
-    return {
-      status: "revise",
-      violations: readListField(args.violations),
-      ...usage === void 0 ? {} : { usage }
-    };
-  }
-  if (status === "escalate") {
-    return {
-      status: "escalate",
-      ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {},
-      ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {},
-      ...usage === void 0 ? {} : { usage }
-    };
-  }
-  return {
-    status: "audit-incomplete",
-    observation: {
-      kind: "object-status-unreadable",
-      status: status === void 0 ? "missing" : "unknown"
-    },
-    candidate: arguments_,
-    ...usage === void 0 ? {} : { usage }
-  };
+  if (status === "pass") return { status, ...usage === void 0 ? {} : { usage } };
+  if (status === "revise") return { status, violations: readListField(args.violations), ...usage === void 0 ? {} : { usage } };
+  if (status === "escalate") return { status, ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}, ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}, ...usage === void 0 ? {} : { usage } };
+  return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === void 0 ? "missing" : "unknown" }, candidate: arguments_, ...usage === void 0 ? {} : { usage } };
 }
-
-// src/doctor-auditor.ts
-var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
-var tool = createComplianceDecisionTool(DOCTOR_AUDIT_TOOL_NAME, "Return whether the proposed Doctor testimony demonstrably follows the supplied Doctor Soul and frozen evidence record. Completed receipts are later augmented with runtime-owned cost; empty findings are valid.");
-
-// src/fixer-auditor.ts
-var FIXER_AUDIT_TOOL_NAME = "ak_fixer_audit_decision";
-var tool2 = createComplianceDecisionTool(FIXER_AUDIT_TOOL_NAME, "Decide whether the Fixer candidate demonstrably complies with its supplied law and assignment.");
-
-// src/judge-auditor.ts
-var JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
-var auditDecisionTool = createComplianceDecisionTool(
-  JUDGE_AUDIT_TOOL_NAME,
-  "Return whether the proposed verdict demonstrably follows the supplied judge soul."
-);
-
-// src/reviewer-auditor.ts
-var REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
-var reviewerDecisionTool = createComplianceDecisionTool(
-  REVIEWER_AUDIT_TOOL_NAME,
-  "Decide whether the Reviewer receipt demonstrably followed its supplied method and boundaries."
-);
 
 // src/collector-evidence.ts
 var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;

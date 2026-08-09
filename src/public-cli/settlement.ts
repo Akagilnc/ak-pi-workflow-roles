@@ -9,16 +9,16 @@ import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
-import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
-import { FIXER_AUDIT_TOOL_NAME } from "../fixer-auditor.ts";
-import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
-import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
 import {
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
+  DOCTOR_AUDIT_TOOL_NAME,
+  FIXER_AUDIT_TOOL_NAME,
+  JUDGE_AUDIT_TOOL_NAME,
+  REVIEWER_AUDIT_TOOL_NAME,
   readComplianceCandidate,
   type ComplianceAuditIncomplete,
   type ComplianceDecision,
-} from "../compliance-transport.ts";
+} from "../compliance-decision.ts";
 import { loadCollectorManifest } from "../collector-config.ts";
 import {
   COLLECTOR_OBSERVE_TOOL,
