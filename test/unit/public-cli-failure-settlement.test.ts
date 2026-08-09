@@ -2343,6 +2343,47 @@ test("audited roles publicly settle a production provider stop without promoting
     const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "provider", diagnosticEquals: "WebSocket error", identityName: "ProviderStopError", identityCode: "openai-codex" });
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
 
+    // A retention write failure after the typed provider stop is secondary: it
+    // cannot replace the provider diagnostic/identity in Terminal or Error Artifact.
+    const retentionIo = captureIo();
+    const retentionResult = await runAkRole(argv[role](project), {
+      packageRoot, home, cwd: project, io: retentionIo.io,
+      credentials: { "openai-codex": true, xai: true },
+      createRunId: () => `run-${role}-auditor-retention-failure`,
+      piRunner: async (args) => {
+        const faux = fauxProvider({ provider: "openai-codex" });
+        faux.setResponses([fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" })]);
+        let typedFailure: any;
+        try {
+          await runComplianceAudit({
+            tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
+            systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
+            context: {
+              cwd: project, model: faux.getModel(), thinkingLevel: "off",
+              modelRegistry: {
+                getProvider() { return faux.provider; },
+                async getProviderAuth() { return { auth: { apiKey: "test" } }; },
+                async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
+              },
+              sessionManager: { getSessionFile() { return undefined; }, getSessionDir() { return project; }, appendCustomEntry() { throw Object.assign(new Error("disk full"), { code: "ENOSPC" }); } },
+            } as unknown as ExtensionContext,
+          });
+        } catch (error) { typedFailure = error; }
+        assert.equal(typedFailure?.knownCause, "provider");
+        assert.equal(typedFailure?.name, "ProviderStopError");
+        assert.equal(typedFailure?.message, "WebSocket error");
+        assert.equal(typedFailure?.failureCode, "openai-codex");
+        assert.deepEqual(typedFailure?.details?.retentionFailure, { name: "ComplianceResponseRetentionError", message: "compliance response retention failed", cause: { name: "Error", message: "disk full", code: "ENOSPC" } });
+        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+        await mkdir(sessionDir, { recursive: true });
+        await writeFile(join(sessionDir, "session.jsonl"), "");
+        return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args], knownFailure: { cause: typedFailure.knownCause, diagnostic: typedFailure.message, identity: { name: typedFailure.name, code: typedFailure.failureCode }, details: typedFailure.details } };
+      },
+    });
+    const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "provider", diagnosticEquals: "WebSocket error", identityName: "ProviderStopError", identityCode: "openai-codex" });
+    const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
+    assert.equal(retentionArtifact.details.retentionFailure.cause.code, "ENOSPC");
+
     // Resume-capable audited roles bind retained audit responses to the latest
     // typed top-level user turn; an older attempt cannot replace its native error.
     if (role !== "doctor") {
