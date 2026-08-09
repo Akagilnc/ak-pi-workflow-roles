@@ -40,6 +40,41 @@ async function conflictedRepository(root: string) {
   return commit;
 }
 
+async function tracePublicMerger(residual?: "sole" | "sibling" | "wrong-attempt") {
+  const providerPath = resolve(packageRoot, "test/fixtures/merger-baseline-provider.ts");
+  const home = await mkdtemp(join(tmpdir(), `ak-public-merger-${residual ?? "accepted"}-`));
+  try {
+    const project = join(home, "work"); await mkdir(project);
+    const commit = await conflictedRepository(project);
+    return await runAkRole([
+      "merger", "--model", "ak-merger-baseline/faux-1", "--thinking", "off",
+      "--project", project, "Resolve the ordinary conflict.",
+    ], {
+      packageRoot, home, agentDir: join(home, ".pi", "agent"), cwd: project,
+      createRunId: () => "run-merger-baseline-public",
+      mergerExtraPiArgs: ["-e", providerPath], mergerTimeoutMs: 90_000,
+      io: { stdout() {}, stderr() {} },
+      piRunner: async (args, options) => {
+        const run = await runPiSubprocess([...args], { cwd: options.cwd, timeoutMs: options.timeoutMs ?? 90_000,
+          env: { ...options.env, PI_OFFLINE: "1", AK_MERGER_FIXTURE_COMMIT: commit,
+            ...(residual === undefined ? {} : { AK_MERGER_FIXTURE_RESIDUAL: residual }) } });
+        return { code: run.code, stdout: run.stdout, stderr: run.stderr, timedOut: run.timedOut, args: [...args] };
+      },
+    });
+  } finally { await rm(home, { recursive: true, force: true }); }
+}
+
+test("public Merger preserves residual failure precedence", { timeout: 240_000 }, async () => {
+  for (const residual of ["sole", "sibling", "wrong-attempt"] as const) {
+    const result = await tracePublicMerger(residual);
+    const outcome = result.terminal?.roleOutcome;
+    assert.equal(outcome?.role, "merger", residual);
+    assert.notEqual(result.exitCode, 0, residual);
+    assert.notEqual(outcome?.decisiveFacts.acceptedReceipt, true, residual);
+    assert.equal(outcome?.kind, residual === "sole" ? "incomplete" : "failure", residual);
+  }
+});
+
 test("public Merger preserves opening .ak dirt and rejects every residual mutation", { timeout: 240_000 }, async () => {
   const providerPath = resolve(packageRoot, "test/fixtures/merger-baseline-provider.ts");
   for (const mutation of ["unchanged", "new", "changed", "deleted"] as const) {
