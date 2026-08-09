@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { prepareComplianceDispatch } from "./compliance-transport.js";
+import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, prepareComplianceDispatch } from "./compliance-transport.js";
 export class AuditorTurnLimitError extends Error {
     limit;
     constructor(limit) {
@@ -40,7 +40,12 @@ export async function runAuditorRole(options) {
         await loader.reload();
         const tool = { ...options.tool, label: options.roleLabel, async execute(...args) { if (decision !== undefined)
                 throw new Error("Auditor decision was submitted more than once"); decision = args[1]; return options.tool.execute(...args); } };
-        const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash", "write", "edit", tool.name], customTools: [tool], sessionManager: childSessionManager(options.context.sessionManager, cwd, "auditor-roles"), settingsManager: settings });
+        const parentSessionManager = options.context.sessionManager;
+        const parentHeader = parentSessionManager?.getHeader?.();
+        const parentSessionFile = parentSessionManager?.getSessionFile?.();
+        const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
+        const auditorSessionManager = childSessionManager(parentSessionManager, cwd, "auditor-roles");
+        const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash", "write", "edit", tool.name], customTools: [tool], sessionManager: auditorSessionManager, settingsManager: settings });
         const turnLimit = 32;
         let turns = 0;
         let turnError;
@@ -87,6 +92,20 @@ export async function runAuditorRole(options) {
                         ...(retentionCause === undefined ? {} : { cause: retentionCause instanceof Error ? { name: retentionCause.name, message: retentionCause.message, ...(retentionCause.code === undefined ? {} : { code: retentionCause.code }) } : retentionCause }),
                     },
                 };
+                auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, {
+                    version: 1,
+                    parent: {
+                        sessionId: parentHeader?.id,
+                        sessionFile: parentSessionFile,
+                        attemptEntryId: parentAttemptEntryId,
+                    },
+                    failure: {
+                        cause: failure.knownCause,
+                        identity: { name: failure.name, code: failure.failureCode },
+                        diagnostic: failure.message,
+                        details: failure.details,
+                    },
+                });
                 throw failure;
             }
         }

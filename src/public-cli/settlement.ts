@@ -4,7 +4,7 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
@@ -13,7 +13,9 @@ import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { FIXER_AUDIT_TOOL_NAME } from "../fixer-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
+import type { ExplicitInternalKnownFailure } from "./explicit-internal.ts";
 import {
+  AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
   readComplianceCandidate,
   type ComplianceAuditIncomplete,
@@ -414,6 +416,19 @@ export function classifyPostAdmissionFailure(input: {
   };
 }
 
+/** One projection owner for the four audited public runners. */
+export function explicitInternalKnownFailureClassificationInput(
+  failure: ExplicitInternalKnownFailure | undefined,
+) {
+  if (failure === undefined) return {};
+  return {
+    knownCause: failure.cause,
+    ...(failure.identity === undefined ? {} : { knownIdentity: failure.identity }),
+    ...(failure.diagnostic === undefined ? {} : { knownDiagnostic: failure.diagnostic }),
+    ...(failure.details === undefined ? {} : { knownDetails: failure.details }),
+  };
+}
+
 /** Post-role Navigator delivery grace (Issue #11 / #101 / #106 / #159). */
 export const NAVIGATOR_POST_ROLE_GRACE_MS = 10_000;
 
@@ -444,6 +459,8 @@ type SessionEntry = {
   id?: string;
   /** Session cwd from the durable header entry. */
   cwd?: string;
+  /** Parent session principal on durable child session headers. */
+  parentSession?: string;
 };
 
 /** Optional independent identity from admitted/shared lifecycle (not attendance self-fields). */
@@ -608,6 +625,61 @@ export async function readSessionProviderStop(
   try {
     const entries = await readBoundSessionEntries(sessionFile);
     return extractSessionProviderStop(entries);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Recover the typed retention failure from the child session bound to this parent. */
+export async function readBoundAuditorKnownFailure(
+  sessionFile: string,
+): Promise<ExplicitInternalKnownFailure | undefined> {
+  try {
+    const parentEntries = await readBoundSessionEntries(sessionFile);
+    const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
+    if (parentId === undefined) return undefined;
+    let latestParentUserIndex = -1;
+    for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
+      if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
+        latestParentUserIndex = i;
+        break;
+      }
+    }
+    const childDirectory = join(dirname(sessionFile), "auditor-roles");
+    const files = (await readdir(childDirectory))
+      .filter((file) => file.endsWith(".jsonl"))
+      .sort()
+      .reverse();
+    for (const file of files) {
+      const entries = await readBoundSessionEntries(join(childDirectory, file));
+      const header = entries.find((entry) => entry.type === "session");
+      if (!isRecord(header) || header.parentSession !== sessionFile) continue;
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        const entry = entries[i];
+        if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord(entry.data)) continue;
+        const parent = isRecord(entry.data.parent) ? entry.data.parent : undefined;
+        const failure = isRecord(entry.data.failure) ? entry.data.failure : undefined;
+        if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || failure?.cause !== "provider") continue;
+        const attemptEntryId = typeof parent.attemptEntryId === "string" ? parent.attemptEntryId : undefined;
+        const attemptEntryIndex = attemptEntryId === undefined
+          ? -1
+          : parentEntries.findIndex((parentEntry) => parentEntry.id === attemptEntryId);
+        // The recorded leaf must exist in the latest typed parent user turn. A
+        // child failure from an earlier resume attempt is not current evidence.
+        if (attemptEntryIndex < 0 || attemptEntryIndex < latestParentUserIndex) continue;
+        const identity = isRecord(failure.identity) ? failure.identity : undefined;
+        return {
+          cause: "provider",
+          ...(identity === undefined ? {} : { identity: {
+            ...(typeof identity.name === "string" ? { name: identity.name } : {}),
+            ...(typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}),
+          } }),
+          ...(typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {}),
+          ...(isRecord(failure.details) ? { details: failure.details } : {}),
+        };
+      }
+    }
+    return undefined;
   } catch {
     return undefined;
   }
