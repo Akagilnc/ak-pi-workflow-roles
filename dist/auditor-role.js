@@ -19,7 +19,7 @@ export async function runAuditorRole(options) {
     const socketPath = join(tmpdir(), `ak-aud-${process.pid}-${randomUUID()}.sock`);
     await mkdir(sessionDir, { recursive: true });
     const dispatch = await prepareComplianceDispatch(model, options.context, options.roleLabel);
-    const provider = options.context.modelRegistry.getProvider(model.provider);
+    const provider = typeof options.context.modelRegistry.getProvider === "function" ? options.context.modelRegistry.getProvider(model.provider) : { id: model.provider, name: options.roleLabel, auth: {}, getModels: () => [dispatch.model], stream() { throw new Error("host provider dispatch is unavailable"); }, streamSimple() { throw new Error("host provider dispatch is unavailable"); } };
     if (provider === undefined)
         throw new Error(`${options.roleLabel} provider not found: ${model.provider}`);
     const bridge = await createAuditorProviderBridge({ socketPath, provider, model: dispatch.model, auth: dispatch.auth });
@@ -32,7 +32,7 @@ export async function runAuditorRole(options) {
             env: { ...process.env, AK_AUDITOR_RPC_CONFIG: configPath },
             cwd: options.context.cwd ?? process.cwd(),
             sessionDir,
-            args: ["--no-extensions", "-e", extensionPath, "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--provider", model.provider, "--model", model.id, "--thinking", options.context.thinkingLevel ?? "off", "--tools", `read,grep,find,ls,bash,write,edit,${options.tool.name}`],
+            args: ["--no-extensions", "-e", extensionPath, "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--provider", model.provider, "--model", model.id, "--thinking", options.context.thinkingLevel ?? "off", "--tools", `read,grep,find,ls,bash,write,edit,${options.tool.name}`, `--ak-auditor-rpc-config=${configPath}`],
             commands: [
                 { id: "retry", type: "set_auto_retry", enabled: false },
                 { id: "compaction", type: "set_auto_compaction", enabled: false },

@@ -4,9 +4,11 @@ import { createAssistantMessageEventStream, type Api, type Context, type Model }
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 
+const CONFIG_FLAG = "ak-auditor-rpc-config";
 type Config = { systemPrompt: string; model: Model<Api>; providerName: string; socketPath: string; tool: { name: string; description: string; parameters: TSchema } };
 
 export default function auditorRpcExtension(pi: ExtensionAPI) {
+  pi.registerFlag(CONFIG_FLAG, { type: "string", description: "Internal auditor RPC configuration path" });
   let decisionSubmitted = false;
   const path = process.env.AK_AUDITOR_RPC_CONFIG;
   if (typeof path !== "string" || path === "") throw new Error("auditor RPC configuration is missing");
