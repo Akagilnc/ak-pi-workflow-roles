@@ -49,6 +49,7 @@ function context(sessionManager: SessionManager): ExtensionContext {
       },
     },
     sessionManager,
+    cwd: process.cwd(),
   } as unknown as ExtensionContext;
 }
 
@@ -459,6 +460,74 @@ test("repeated unknown audit tools receive error results and exhaust a finite tu
       assert.equal(result.isError, true);
     }
     assert.equal(seenMessages[1]?.at(-1)?.role, "toolResult");
+  });
+});
+
+test("turn-limit evidence execution preserves parent abort identity", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    const parent = new AbortController();
+    const parentReason = new Error("parent stopped final evidence execution");
+    let providerTurns = 0;
+    const failure = runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      runCompletion: async () => {
+        providerTurns += 1;
+        if (providerTurns < 8) {
+          return response(`pre-abort-${providerTurns}`, [
+            fauxToolCall("ak_other_decision", {}, { id: `pre-abort-call-${providerTurns}` }),
+          ]);
+        }
+        setTimeout(() => parent.abort(parentReason), 10);
+        return response("aborting-evidence", [
+          fauxToolCall("bash", { command: "sleep 5" }, { id: "aborting-evidence-call" }),
+        ]);
+      },
+      context: context(sessionManager),
+      signal: parent.signal,
+    });
+
+    await assert.rejects(failure, (error: unknown) => {
+      assert.strictEqual(error, parentReason);
+      return true;
+    });
+    assert.equal(providerTurns, 8);
+  });
+});
+
+test("turn-limit evidence execution preserves typed idle timeout", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    let providerTurns = 0;
+    const failure = runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      runCompletion: async () => {
+        providerTurns += 1;
+        if (providerTurns < 8) {
+          return response(`pre-idle-${providerTurns}`, [
+            fauxToolCall("ak_other_decision", {}, { id: `pre-idle-call-${providerTurns}` }),
+          ]);
+        }
+        return response("idle-evidence", [
+          fauxToolCall("bash", { command: "sleep 5" }, { id: "idle-evidence-call" }),
+        ]);
+      },
+      context: context(sessionManager),
+      idleTimeoutMs: 10,
+      idleMaxRetries: 0,
+    });
+
+    await assert.rejects(failure, (error: unknown) => {
+      assert.ok(error instanceof StreamIdleTimeoutError);
+      return true;
+    });
+    assert.equal(providerTurns, 8);
   });
 });
 
