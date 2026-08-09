@@ -1407,31 +1407,51 @@ test("public audit evidence collision returns a typed nonzero Terminal with resi
   });
 });
 
-test("empty object, bogus status, and incomplete continue are not lawful outcomes", () => {
-  const cases: unknown[] = [
+test("Judge settlement separates missing or unknown discriminators from known continue", () => {
+  const extract = (details: unknown) => extractJudgeRoleOutcome([
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details,
+      },
+    },
+  ]);
+
+  const missingOrUnknown: unknown[] = [
+    undefined,
+    null,
+    1,
     {},
     { judgeStatus: "bogus" },
-    { judgeStatus: "continue" },
-    { judgeStatus: "continue", fix: { summary: "x" }, classes: [] },
     { judgeStatus: "accepted" },
+    Object.defineProperty({}, "judgeStatus", { get: () => { throw new Error("hostile status"); } }),
   ];
-  for (const details of cases) {
-    const outcome = extractJudgeRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: JUDGE_OUTPUT_TOOL_NAME,
-          isError: false,
-          details,
-        },
-      },
-    ]);
-    assert.equal(
-      outcome,
-      undefined,
-      `expected non-lawful details to be rejected: ${JSON.stringify(details)}`,
-    );
+  for (const details of missingOrUnknown) {
+    assert.equal(extract(details), undefined);
+  }
+
+  const hostileOptional = Object.defineProperties(
+    { judgeStatus: "continue" },
+    {
+      fix: { get: () => { throw new Error("hostile fix"); } },
+      classes: { get: () => { throw new Error("hostile classes"); } },
+    },
+  );
+  const knownContinue: Array<{ details: unknown; facts: Record<string, unknown> }> = [
+    { details: { judgeStatus: "continue" }, facts: { judgeStatus: "continue" } },
+    { details: { judgeStatus: "continue", fix: null, classes: null }, facts: { judgeStatus: "continue" } },
+    { details: { judgeStatus: "continue", fix: { summary: "x" } }, facts: { judgeStatus: "continue", fixSummary: "x" } },
+    { details: { judgeStatus: "continue", classes: [] }, facts: { judgeStatus: "continue", classes: [], classCount: 0 } },
+    { details: hostileOptional, facts: { judgeStatus: "continue" } },
+  ];
+  for (const { details, facts } of knownContinue) {
+    const outcome = extract(details);
+    assert.equal(outcome?.kind, "accepted");
+    assert.equal(outcome?.status, "continue");
+    assert.deepEqual(outcome?.decisiveFacts, facts);
   }
 });
 

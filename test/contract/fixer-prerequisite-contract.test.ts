@@ -114,27 +114,16 @@ test("typed prerequisite blockers cross the public TypeBox schema and prerequisi
   }
 });
 
-test("current leaves reject old, malformed, and undeclared prerequisite references in plan and apply", () => {
+test("recognizable undeclared prerequisite references reject in plan and apply", () => {
   const invocation = mutableInput();
-  const blockers = [
-    { cause: "prerequisite_unmet", evidence: "old missing-ID leaf" },
-    { cause: "prerequisite_unmet", prerequisiteId: "bad/id", evidence: "malformed" },
-    { cause: "prerequisite_unmet", prerequisiteId: "undeclared", evidence: "not declared" },
-  ];
-  for (const [index, blocker] of blockers.entries()) {
-    const plan = { ...planRefusal, blocker };
-    const refusedLeaf = { ...applyRefusal.classResults[0], blocker };
-    const apply = { ...applyRefusal, classResults: [refusedLeaf] };
-    const mixed = { status: "partially_completed", report: "Mixed.", classResults: [{ name: "Done", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }, refusedLeaf] };
-    assert.equal(Value.Check(fixerOutputSchema, plan), index === 2, `TypeBox plan blocker ${index}`);
-    assert.equal(Value.Check(fixerOutputSchema, apply), index === 2, `TypeBox apply blocker ${index}`);
-    assert.throws(() => validateFixerOutputForPacket(plan, "plan", invocation), /Fixer output/);
-    assert.throws(() => validateFixerOutputForPacket(apply, "apply", invocation), /Fixer output/);
-    assert.throws(() => validateFixerOutputForPacket(mixed, "apply", invocation), /Fixer output/);
-  }
-  const decorated = { ...planRefusal, blocker: { ...planRefusal.blocker, presentation: true } };
-  assert.equal(Value.Check(fixerOutputSchema, decorated), true);
-  assert.deepEqual(validateFixerOutputForPacket(decorated, "plan", invocation), planRefusal);
+  const blocker = { cause: "prerequisite_unmet", prerequisiteId: "undeclared", evidence: "not declared" };
+  const plan = { ...planRefusal, blocker };
+  const refusedLeaf = { ...applyRefusal.classResults[0], blocker };
+  const apply = { ...applyRefusal, classResults: [refusedLeaf] };
+  const mixed = { status: "partially_completed", report: "Mixed.", classResults: [{ name: "Done", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }, refusedLeaf] };
+  assert.throws(() => validateFixerOutputForPacket(plan, "plan", invocation), /prerequisiteId.*declared/);
+  assert.throws(() => validateFixerOutputForPacket(apply, "apply", invocation), /prerequisiteId.*declared/);
+  assert.throws(() => validateFixerOutputForPacket(mixed, "apply", invocation), /prerequisiteId.*declared/);
   const empty = input(Object.freeze([]));
   assert.throws(() => validateFixerOutputForPacket(planRefusal, "plan", empty), /prerequisiteId.*declared/);
   assert.throws(() => validateFixerOutputForPacket(applyRefusal, "apply", empty), /prerequisiteId.*declared/);

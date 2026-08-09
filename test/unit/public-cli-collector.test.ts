@@ -540,7 +540,9 @@ test("extractCollectorRoleOutcome reads accepted receipt decisive facts", () => 
   assert.equal(extracted.outcome.status, "collected");
   assert.equal(extracted.outcome.decisiveFacts.repository, "acme/widgets");
   assert.equal(extracted.outcome.decisiveFacts.prNumber, 3);
-  assert.equal(extracted.outcome.decisiveFacts.legStatuses, "codex:missing");
+  assert.deepEqual(extracted.outcome.decisiveFacts.legStatuses, [
+    { legId: "codex", status: "missing" },
+  ]);
   assert.equal(extracted.outcome.decisiveFacts.targetHead, "b".repeat(40));
 });
 
@@ -684,9 +686,9 @@ test("runAkRole collector settles lawful receipt bound to admitted identity with
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.role, "collector");
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
-    assert.equal(
+    assert.deepEqual(
       result.terminal!.roleOutcome.decisiveFacts.legStatuses,
-      "codex:missing",
+      [{ legId: "codex", status: "missing" }],
     );
     assert.equal(
       result.terminal!.roleOutcome.decisiveFacts.manifestDigest,
