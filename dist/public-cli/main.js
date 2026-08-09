@@ -13465,7 +13465,8 @@ function recommendationNavigatorFact(input) {
     next: input.next,
     reason: input.reason,
     command,
-    ...input.route === void 0 ? {} : { route: input.route }
+    ...input.route === void 0 ? {} : { route: input.route },
+    ...input.advisoryDiagnostic === void 0 ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }
   };
 }
 function formatTerminalResult(result2) {
@@ -13487,6 +13488,9 @@ function formatTerminalResult(result2) {
     lines.push(`fact	${encodeTerminalField(key)}	${encodeTerminalField(rendered)}`);
   }
   lines.push(`navigator	${result2.navigator.disposition}`);
+  if (result2.navigator.advisoryDiagnostic !== void 0) {
+    lines.push(`navigator-advisory	${encodeTerminalField(result2.navigator.advisoryDiagnostic)}`);
+  }
   if (result2.navigator.disposition === "recommendation") {
     lines.push(
       `next	${result2.navigator.next.role}	${result2.navigator.next.phase ?? "none"}`
@@ -14325,6 +14329,7 @@ function parseNavigatorAttendanceDetails(details) {
       phase: navigatorPhaseValue(target.phase)
     })) : void 0;
     return recommendationNavigatorFact({
+      ...typeof details.routePlaybookReadFailure === "string" ? { advisoryDiagnostic: details.routePlaybookReadFailure } : {},
       next: {
         role: next.role,
         phase: navigatorPhaseValue(next.phase)
@@ -14337,12 +14342,16 @@ function parseNavigatorAttendanceDetails(details) {
   if (disposition === "unavailable") {
     return {
       disposition: "unavailable",
+      ...typeof details.routePlaybookReadFailure === "string" ? { advisoryDiagnostic: details.routePlaybookReadFailure } : {},
       source: typeof details.unavailableSource === "string" ? details.unavailableSource : "unknown",
       reason: typeof details.unavailableReason === "string" ? details.unavailableReason : "Navigator unavailable"
     };
   }
   if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
-    return { disposition: "no-advice" };
+    return {
+      disposition: "no-advice",
+      ...typeof details.routePlaybookReadFailure === "string" ? { advisoryDiagnostic: details.routePlaybookReadFailure } : {}
+    };
   }
   return {
     disposition: "unavailable",
@@ -15517,19 +15526,22 @@ function redactDecisiveFactsForPublicTerminal(facts, runId) {
   return out;
 }
 function redactNavigatorFactForPublicTerminal(navigator, runId) {
+  const advisoryDiagnostic = navigator.advisoryDiagnostic === void 0 ? {} : { advisoryDiagnostic: redactExactRunId(navigator.advisoryDiagnostic, runId) };
   if (navigator.disposition === "recommendation") {
     return {
       ...navigator,
+      ...advisoryDiagnostic,
       reason: redactExactRunId(navigator.reason, runId)
     };
   }
   if (navigator.disposition === "unavailable") {
     return {
       ...navigator,
+      ...advisoryDiagnostic,
       reason: redactExactRunId(navigator.reason, runId)
     };
   }
-  return navigator;
+  return { ...navigator, ...advisoryDiagnostic };
 }
 async function settleFailureTerminalResult(admitted, failure, options = {}) {
   const navigator = await extractNavigatorFactFromAdmittedSession(admitted);

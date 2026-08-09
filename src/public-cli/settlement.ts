@@ -1413,6 +1413,9 @@ function parseNavigatorAttendanceDetails(
           }))
       : undefined;
     return recommendationNavigatorFact({
+      ...(typeof details.routePlaybookReadFailure === "string"
+        ? { advisoryDiagnostic: details.routePlaybookReadFailure }
+        : {}),
       next: {
         role: next.role,
         phase: navigatorPhaseValue(next.phase),
@@ -1427,6 +1430,9 @@ function parseNavigatorAttendanceDetails(
   if (disposition === "unavailable") {
     return {
       disposition: "unavailable",
+      ...(typeof details.routePlaybookReadFailure === "string"
+        ? { advisoryDiagnostic: details.routePlaybookReadFailure }
+        : {}),
       source:
         typeof details.unavailableSource === "string"
           ? details.unavailableSource
@@ -1439,7 +1445,12 @@ function parseNavigatorAttendanceDetails(
   }
   // arrival and legacy silence both mean affirmative lawful no next-role advice.
   if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
-    return { disposition: "no-advice" };
+    return {
+      disposition: "no-advice",
+      ...(typeof details.routePlaybookReadFailure === "string"
+        ? { advisoryDiagnostic: details.routePlaybookReadFailure }
+        : {}),
+    };
   }
   return {
     disposition: "unavailable",
@@ -3190,19 +3201,24 @@ function redactNavigatorFactForPublicTerminal(
   navigator: TerminalNavigatorFact,
   runId: string,
 ): TerminalNavigatorFact {
+  const advisoryDiagnostic = navigator.advisoryDiagnostic === undefined
+    ? {}
+    : { advisoryDiagnostic: redactExactRunId(navigator.advisoryDiagnostic, runId) };
   if (navigator.disposition === "recommendation") {
     return {
       ...navigator,
+      ...advisoryDiagnostic,
       reason: redactExactRunId(navigator.reason, runId),
     };
   }
   if (navigator.disposition === "unavailable") {
     return {
       ...navigator,
+      ...advisoryDiagnostic,
       reason: redactExactRunId(navigator.reason, runId),
     };
   }
-  return navigator;
+  return { ...navigator, ...advisoryDiagnostic };
 }
 
 /**
