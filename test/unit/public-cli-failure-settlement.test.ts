@@ -27,7 +27,10 @@ import { FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import {
+  CODER_OUTPUT_TOOL_NAME,
+  FIXER_OUTPUT_TOOL_NAME,
+} from "../../src/package-contracts/worker-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -1263,6 +1266,12 @@ test("audit escalation requires the retained seat-bound response across all four
       ? (value as { outcome?: { kind?: unknown } }).outcome?.kind
       : (value as { kind?: unknown }).kind;
   };
+  const hostileRows = {
+    judge: { source: "public", property: "conflicts" },
+    fixer: { source: "retained", property: "conflicts" },
+    reviewer: { source: "public", property: "auditDecisionGate" },
+    doctor: { source: "retained", property: "decisionGate" },
+  } as const;
   for (const role of AUDITOR_SOUL_ROLES) {
     const seat = seats[role];
     const roleCallId = `${role}-role-call`;
@@ -1311,6 +1320,33 @@ test("audit escalation requires the retained seat-bound response across all four
     const entries = [roleCall, retained, result];
     const extracted = extract(role, entries);
     assert.equal(outcomeKind(extracted), "audit_escalation", role);
+
+    // One real-extractor, four-seat negative table covers both retained and
+    // public audit-owned accessors. Raw toolResult evidence remains in entries,
+    // but a hostile read cannot escape or produce any Receipt-shaped outcome.
+    const hostile = hostileRows[role];
+    const hostileCandidate = { ...auditCandidate };
+    const hostileDetails = { ...details };
+    Object.defineProperty(
+      hostile.source === "retained" ? hostileCandidate : hostileDetails,
+      hostile.property,
+      { enumerable: true, get: () => { throw new Error(`${role} hostile ${hostile.property}`); } },
+    );
+    const hostileRetained = {
+      ...retained,
+      data: { response: { content: [{ type: "toolCall", name: seat.audit, arguments: hostileCandidate }] } },
+    };
+    const hostileResult = {
+      ...result,
+      message: { ...result.message, details: hostileDetails },
+    };
+    let hostileOutcome: unknown;
+    assert.doesNotThrow(() => {
+      hostileOutcome = extract(role, [roleCall, hostileRetained, hostileResult]);
+    }, `${role}: hostile ${hostile.source} ${hostile.property}`);
+    assert.equal(outcomeKind(hostileOutcome), undefined, `${role}: hostile evidence must not settle`);
+    assert.equal(hostileResult.message.details, hostileDetails, `${role}: raw terminal remains observable`);
+
     assert.notEqual(
       publicNavigatorSettlement(role, role === "fixer" ? "apply" : null, {
         toolName: seat.output,
@@ -1407,31 +1443,51 @@ test("public audit evidence collision returns a typed nonzero Terminal with resi
   });
 });
 
-test("empty object, bogus status, and incomplete continue are not lawful outcomes", () => {
-  const cases: unknown[] = [
+test("Judge settlement separates missing or unknown discriminators from known continue", () => {
+  const extract = (details: unknown) => extractJudgeRoleOutcome([
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details,
+      },
+    },
+  ]);
+
+  const missingOrUnknown: unknown[] = [
+    undefined,
+    null,
+    1,
     {},
     { judgeStatus: "bogus" },
-    { judgeStatus: "continue" },
-    { judgeStatus: "continue", fix: { summary: "x" }, classes: [] },
     { judgeStatus: "accepted" },
+    Object.defineProperty({}, "judgeStatus", { get: () => { throw new Error("hostile status"); } }),
   ];
-  for (const details of cases) {
-    const outcome = extractJudgeRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: JUDGE_OUTPUT_TOOL_NAME,
-          isError: false,
-          details,
-        },
-      },
-    ]);
-    assert.equal(
-      outcome,
-      undefined,
-      `expected non-lawful details to be rejected: ${JSON.stringify(details)}`,
-    );
+  for (const details of missingOrUnknown) {
+    assert.equal(extract(details), undefined);
+  }
+
+  const hostileOptional = Object.defineProperties(
+    { judgeStatus: "continue" },
+    {
+      fix: { get: () => { throw new Error("hostile fix"); } },
+      classes: { get: () => { throw new Error("hostile classes"); } },
+    },
+  );
+  const knownContinue: Array<{ details: unknown; facts: Record<string, unknown> }> = [
+    { details: { judgeStatus: "continue" }, facts: { judgeStatus: "continue" } },
+    { details: { judgeStatus: "continue", fix: null, classes: null }, facts: { judgeStatus: "continue" } },
+    { details: { judgeStatus: "continue", fix: { summary: "x" } }, facts: { judgeStatus: "continue", fixSummary: "x" } },
+    { details: { judgeStatus: "continue", classes: [] }, facts: { judgeStatus: "continue", classes: [], classCount: 0 } },
+    { details: hostileOptional, facts: { judgeStatus: "continue" } },
+  ];
+  for (const { details, facts } of knownContinue) {
+    const outcome = extract(details);
+    assert.equal(outcome?.kind, "accepted");
+    assert.equal(outcome?.status, "continue");
+    assert.deepEqual(outcome?.decisiveFacts, facts);
   }
 });
 
@@ -2586,6 +2642,65 @@ test("timedOut with session provider-stop retains provider identity (AC2)", asyn
     assert.equal(errorBody.identity?.name, "ProviderStopError");
     assert.equal(errorBody.identity?.code, "xai");
     assert.equal(errorBody.details?.timedOut, true);
+  });
+});
+
+test("real Coder/Fixer runs require a legal execution status before accepted settlement", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const rows = [
+      { role: "coder", phase: "plan", tool: CODER_OUTPUT_TOOL_NAME, statuses: ["planned", "completed", "refused", "unfinished"] },
+      { role: "fixer", phase: "plan", tool: FIXER_OUTPUT_TOOL_NAME, statuses: ["planned", "completed", "refused", "partially_completed", "unfinished"] },
+    ] as const;
+
+    for (const row of rows) {
+      for (const details of [{}, ...row.statuses.map((status) => ({ status }))]) {
+        const status = "status" in details ? details.status : "missing";
+        const { io } = captureIo();
+        const result = await runAkRole(
+          [row.role, row.phase, "--project", project, `${row.role} ${status} discriminator`],
+          {
+            packageRoot,
+            home,
+            cwd: project,
+            createRunId: () => `run-${row.role}-discriminator-${status}`,
+            io,
+            piRunner: async (args) => {
+              const sessionFile = args[args.indexOf("--session") + 1]!;
+              await mkdir(join(sessionFile, ".."), { recursive: true });
+              await writeFile(sessionFile, `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: `${row.role}-terminal`,
+                  toolName: row.tool,
+                  isError: false,
+                  details,
+                },
+              })}\n`, "utf8");
+              return { code: 0, stderr: "", timedOut: false, args: [...args] };
+            },
+          },
+        );
+
+        assert.ok(result.terminal, `${row.role}:${status} terminal`);
+        if (status === "missing") {
+          assert.notEqual(result.exitCode, 0, `${row.role}: missing status`);
+          assert.notEqual(result.terminal!.roleOutcome.kind, "accepted", row.role);
+          assert.equal(result.terminal!.roleOutcome.kind, "failure", row.role);
+          if (result.terminal!.roleOutcome.kind === "failure") {
+            assert.equal(result.terminal!.roleOutcome.cause, "output", row.role);
+          }
+        } else {
+          assert.equal(result.exitCode, 0, `${row.role}:${status}`);
+          assert.equal(result.terminal!.roleOutcome.kind, "accepted", `${row.role}:${status}`);
+          assert.equal(result.terminal!.roleOutcome.status, status, `${row.role}:${status}`);
+        }
+      }
+    }
   });
 });
 

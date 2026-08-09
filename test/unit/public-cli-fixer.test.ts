@@ -914,13 +914,13 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
     assert.equal(refusedExtracted.outcome.kind, "accepted");
     assert.equal(refusedExtracted.outcome.status, "refused");
     assert.equal(refusedExtracted.outcome.decisiveFacts.fixerStatus, "refused");
-    assert.equal(
+    assert.deepEqual(
       refusedExtracted.outcome.decisiveFacts.classDispositions,
-      "PolicyCase:refused",
+      [{ name: "PolicyCase", disposition: "refused" }],
     );
-    assert.equal(
+    assert.deepEqual(
       refusedExtracted.outcome.decisiveFacts.blockerCauses,
-      "authority_violation",
+      ["authority_violation"],
     );
 
     const partialExtracted = extractFixerRoleOutcome([
@@ -942,17 +942,17 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       "partially_completed",
     );
     assert.equal(partialExtracted.outcome.decisiveFacts.classResultCount, 2);
-    assert.equal(
+    assert.deepEqual(
       partialExtracted.outcome.decisiveFacts.classDispositions,
-      "ParserCase:completed,TransportCase:refused",
+      [{ name: "ParserCase", disposition: "completed" }, { name: "TransportCase", disposition: "refused" }],
     );
-    assert.equal(
+    assert.deepEqual(
       partialExtracted.outcome.decisiveFacts.blockerCauses,
-      "prerequisite_unmet",
+      ["prerequisite_unmet"],
     );
-    assert.equal(
+    assert.deepEqual(
       partialExtracted.outcome.decisiveFacts.prerequisiteIds,
-      "repository.ready",
+      ["repository.ready"],
     );
 
     const escalationExtracted = extractFixerRoleOutcome([
@@ -996,7 +996,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         kind: "accepted",
         status: "refused",
         factKey: "blockerCauses",
-        factValue: "authority_violation",
+        factValue: ["authority_violation"],
       },
       {
         runId: "run-fixer-status-partial",
@@ -1028,7 +1028,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
           : undefined,
         row.status,
       );
-      assert.equal(
+      assert.deepEqual(
         settled.roleOutcome.decisiveFacts[row.factKey],
         row.factValue,
         row.status,
@@ -1073,7 +1073,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
           : undefined,
         row.status,
       );
-      assert.equal(
+      assert.deepEqual(
         result.terminal!.roleOutcome.decisiveFacts[row.factKey],
         row.factValue,
         row.status,

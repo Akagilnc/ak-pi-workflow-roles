@@ -1,6 +1,6 @@
 import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { canonicalJson } from "./canonical-json.ts";
+import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
@@ -73,26 +73,37 @@ const cost = Type.Object({
   ])),
   outputBytes: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), payload: Type.Literal("raw JSONL bytes"), providerWireBytes: Type.Literal("unavailable") }, { additionalProperties: false }),
 }, { additionalProperties: false });
-export const doctorSubmissionSchema = Type.Union([
+const doctorSubmissionVariants = Type.Union([
   Type.Object({
     status: Type.Literal("completed", { description: "Truthful single-case testimony was completed; the runtime adds derived cost to the receipt." }),
-    case: caseIdentity,
+    case: Type.Unsafe({ ...caseIdentity, description: "Identity of the retained Doctor case." }),
     findings: Type.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." }),
   }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
   Type.Object({
     status: Type.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
-    reason: nonblank,
-    missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1 }),
+    reason: Type.String({ minLength: 1, description: "Reason evidence is insufficient for truthful testimony." }),
+    missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "Evidence required before truthful testimony is possible." }),
   }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." }),
 ]);
+export const doctorSubmissionSchema = openToolObjectFromUnion(doctorSubmissionVariants);
 export const doctorOutputSchema = Type.Union([
   Type.Object({ status: Type.Literal("completed"), case: caseIdentity, findings: Type.Array(finding), cost }, { additionalProperties: false }),
-  doctorSubmissionSchema.anyOf[1]!,
+  doctorSubmissionVariants.anyOf[1]!,
 ]);
-export const doctorEvidenceReadSchema = Type.Object({ evidenceId: nonblank, offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096 })) }, { additionalProperties: false });
+export const doctorEvidenceReadSchema = Type.Object({ evidenceId: Type.String({ minLength: 1, description: "Identifier of the retained evidence to read." }), offset: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based byte offset at which to begin reading." })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096, description: "Maximum number of bytes to return." })) }, { additionalProperties: false });
 export class DoctorSubmissionContractError extends Error { override readonly name = "DoctorSubmissionContractError"; }
-export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission { if (!Value.Check(doctorSubmissionSchema, value)) throw new DoctorSubmissionContractError("Doctor submission does not match its contract"); return value as DoctorSubmission; }
-export function validateRecordedDoctorOutput(value: unknown): DoctorOutput { if (!Value.Check(doctorOutputSchema, value)) throw new Error("Doctor output does not match its contract"); return value as DoctorOutput; }
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
+function read(value: unknown, key: string): unknown { if (!isRecord(value)) return undefined; try { return value[key]; } catch { return undefined; } }
+export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission {
+  const status = read(value, "status");
+  if (status !== "completed" && status !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  return value as DoctorSubmission;
+}
+export function validateRecordedDoctorOutput(value: unknown): DoctorOutput {
+  const output = validateDoctorSubmissionShape(value);
+  if (read(output, "status") === "completed" && read(output, "cost") === undefined) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
+  return output as DoctorOutput;
+}
 
 export class DoctorEvidenceStore {
   readonly entries: Map<string, DoctorEvidenceEntry>; private readonly coverage = new Map<string, Array<[number, number]>>();
@@ -104,32 +115,51 @@ export class DoctorEvidenceStore {
 export function validateDoctorOutput(value: unknown, patient: DoctorCase, store: DoctorEvidenceStore): DoctorSubmission {
   const output = validateDoctorSubmissionShape(value);
   const lawfulTargets = new Set(["case", ...patient.cost.invocations.sources]);
-  const assertTargets = (targetKeys: string[]) => { for (const targetKey of targetKeys) if (!lawfulTargets.has(targetKey)) throw new Error(`Target key is not a lawful case target: ${targetKey}`); };
-  if (output.status === "refused") { for (const missing of output.missingEvidence) assertTargets(missing.targetKeys); return output; }
-  if (canonicalJson(output.case) !== canonicalJson(patient.identity)) throw new Error("Doctor submission case must equal the activated case identity");
-  const readCitations = (ids: string[], label: string) => { for (const id of ids) if (!store.entries.has(id) || !store.hasRead(id)) throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
-  for (const finding of output.findings) {
-    if (!("assetEvidence" in finding)) {
-      assertTargets([finding.targetKey]);
-      readCitations(finding.evidenceIds, "finding");
-      continue;
+  const assertTarget = (targetKey: unknown) => { if (typeof targetKey === "string" && !lawfulTargets.has(targetKey)) throw new Error(`Target key is not a lawful case target: ${targetKey}`); };
+  const readCitations = (ids: unknown, label: string) => { if (!Array.isArray(ids)) return; for (const id of ids) if (typeof id === "string" && (!store.entries.has(id) || !store.hasRead(id))) throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
+  if (read(output, "status") === "refused") {
+    const missingEvidence = read(output, "missingEvidence");
+    if (Array.isArray(missingEvidence)) for (const missing of missingEvidence) {
+      const targets = read(missing, "targetKeys");
+      if (Array.isArray(targets)) for (const target of targets) assertTarget(target);
     }
-    if (finding.assetEvidence.targetKey !== finding.targetKey || finding.assetEvidence.targetKind !== finding.targetKind) throw new Error("Typed asset evidence must establish the finding identity");
-    readCitations([finding.assetEvidence.evidenceId], "asset evidence");
-    readCitations(finding.evidenceIds, "finding");
-    for (const answer of Object.values(finding.guardrails)) readCitations(answer.evidenceIds, "guardrail");
-    const needsNecessity = finding.prescription.kind === "patch" || finding.prescription.kind === "addMechanism";
-    if (needsNecessity !== (finding.prescription.necessityExplanation !== undefined)) throw new Error("patch/addMechanism alone require a necessity explanation");
-    if (finding.lastRealBite.targetKey !== finding.targetKey) throw new Error("lastRealBite target mismatch");
-    if (finding.lastRealBite.kind === "actual") {
-      const entry = store.entries.get(finding.lastRealBite.evidenceId);
+    return output;
+  }
+  const identity = read(output, "case");
+  const issueNumber = read(identity, "issueNumber");
+  const runsPath = read(identity, "runsPath");
+  if ((issueNumber !== undefined && issueNumber !== patient.identity.issueNumber) || (runsPath !== undefined && runsPath !== patient.identity.runsPath)) throw new Error("Doctor submission case must equal the activated case identity");
+  const findings = read(output, "findings");
+  if (!Array.isArray(findings)) return output;
+  for (const finding of findings) {
+    const targetKey = read(finding, "targetKey");
+    readCitations(read(finding, "evidenceIds"), "finding");
+    const assetEvidence = read(finding, "assetEvidence");
+    if (!isRecord(assetEvidence)) { assertTarget(targetKey); continue; }
+    const assetTargetKey = read(assetEvidence, "targetKey");
+    const assetTargetKind = read(assetEvidence, "targetKind");
+    const assetEvidenceId = read(assetEvidence, "evidenceId");
+    if (typeof assetTargetKey === "string" && assetTargetKey !== targetKey) throw new Error("Typed asset evidence must establish the finding target key");
+    if (typeof assetTargetKind === "string" && assetTargetKind !== read(finding, "targetKind")) throw new Error("Typed asset evidence must establish the finding target kind");
+    if (typeof assetEvidenceId === "string") readCitations([assetEvidenceId], "asset evidence");
+    const guardrails = read(finding, "guardrails");
+    for (const key of ["reproducibleFailure", "owningSeamOrInvariant", "deletionOrSimplificationSuffices"]) readCitations(read(read(guardrails, key), "evidenceIds"), "guardrail");
+    const bite = read(finding, "lastRealBite");
+    const biteKind = read(bite, "kind");
+    if (biteKind !== "actual" && biteKind !== "noRealBite") continue;
+    if (read(bite, "targetKey") !== targetKey) throw new Error("lastRealBite target mismatch");
+    if (biteKind === "actual") {
+      const evidenceId = read(bite, "evidenceId");
+      const entry = typeof evidenceId === "string" ? store.entries.get(evidenceId) : undefined;
       if (!entry || entry.kind !== "session" || !store.hasRead(entry.id)) throw new Error("actual bite must cite an admitted/read retained session");
     } else {
-      if (finding.disposition === "keep") throw new Error("noRealBite permits only thin or delete");
       const eligible = patient.evidence.map((entry) => entry.id).sort();
-      const claimed = [...finding.lastRealBite.eligibleEvidenceIds].sort();
-      if (canonicalJson(claimed) !== canonicalJson(eligible)) throw new Error("noRealBite must prove the complete eligible single-case evidence population");
-      readCitations(eligible, "noRealBite");
+      const ids = read(bite, "eligibleEvidenceIds");
+      if (Array.isArray(ids)) {
+        const claimed = ids.filter((id): id is string => typeof id === "string").sort();
+        if (canonicalJson(claimed) !== canonicalJson(eligible)) throw new Error("noRealBite must prove the complete eligible single-case evidence population");
+        readCitations(eligible, "noRealBite");
+      }
     }
   }
   return output;

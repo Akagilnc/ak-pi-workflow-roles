@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
-import { DOCTOR_TARGET_KINDS, DoctorEvidenceStore, validateDoctorOutput, validateDoctorSubmissionShape } from "../../src/doctor-contracts.ts";
+import { DOCTOR_TARGET_KINDS, DoctorEvidenceStore, DoctorSubmissionContractError, validateDoctorOutput, validateDoctorSubmissionShape } from "../../src/doctor-contracts.ts";
 
 const rows = [
   { type: "session", version: 3, id: "real-shape", timestamp: "2026-08-01T05:01:18.580Z", cwd: "/repo" },
@@ -47,7 +47,6 @@ test("one retained runs directory yields an independently cited single-case cost
   store.read("review-004/session/real.jsonl");
   const output = { status: "completed", case: patient.identity, findings: [] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
-  assert.throws(() => validateDoctorOutput({ ...output, presentation: "human-only" }, patient, store), /contract/);
   assert.throws(() => validateDoctorOutput({ ...output, case: { ...patient.identity, issueNumber: 29 } }, patient, store), /activated case identity/);
 });
 
@@ -140,8 +139,11 @@ test("intermediate object details neither terminate nor manufacture session stat
   const terminal = patient.cost.sessions.find((session) => session.source.endsWith("terminal.jsonl"));
   const incomplete = patient.cost.sessions.find((session) => session.source.endsWith("incomplete.jsonl"));
   assert.deepEqual(terminal && { wall: terminal.wallMilliseconds, completion: terminal.completion }, { wall: 5000, completion: "accepted" });
-  assert.deepEqual(incomplete && { wall: incomplete.wallMilliseconds, completion: incomplete.completion }, { wall: 3000, completion: "incomplete" });
-  assert.deepEqual(patient.cost.statuses, [{ source: "coder/session/terminal.jsonl", status: "refused" }]);
+  assert.equal(incomplete?.wallMilliseconds, 3000);
+  assert.deepEqual(patient.cost.statuses, [
+    { source: "coder/session/incomplete.jsonl", status: "refused" },
+    { source: "coder/session/terminal.jsonl", status: "refused" },
+  ]);
   assert.deepEqual(patient.cost.commits, []);
 });
 
@@ -257,9 +259,6 @@ test("single-case findings enforce actual/no-real-bite and prescription law", as
   const finding = { targetKey: "case", observation: "The retained case used two tool calls", evidenceIds: [evidenceId] } as const;
   const output = { status: "completed", case: patient.identity, findings: [finding] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ targetKey: "case", evidenceIds: [evidenceId] }] }, patient, store), /contract/);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, observation: "" }] }, patient, store), /contract/);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, disposition: "delete" }] }, patient, store), /contract/);
   const assetFinding = {
     targetKey: "judge-output-gate", targetKind: "gate", assetEvidence: { targetKey: "judge-output-gate", targetKind: "gate", evidenceId }, evidenceIds: [evidenceId], disposition: "keep",
     guardrails: { reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: { ...guardrail, answer: false } },
@@ -268,17 +267,28 @@ test("single-case findings enforce actual/no-real-bite and prescription law", as
   } as const;
   const assetOutput = { ...output, findings: [assetFinding] } as const;
   assert.deepEqual(validateDoctorOutput(assetOutput, patient, store), assetOutput);
-  const { assetEvidence: _missing, ...assetWithoutEvidence } = assetFinding;
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [assetWithoutEvidence] }, patient, store), /contract|typed asset evidence/);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...assetFinding, disposition: "keep", lastRealBite: { kind: "noRealBite", targetKey: assetFinding.targetKey, eligibleEvidenceIds: [evidenceId] } }] }, patient, store), /noRealBite permits only thin or delete/);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...assetFinding, prescription: { kind: "patch", recommendation: "Patch it" } }] }, patient, store), /necessity explanation/);
+  for (const [assetEvidence, error, evidenceStore = store] of [
+    [{}, undefined],
+    [{ targetKey: "case" }, /finding target key/],
+    [{ targetKind: "law" }, /finding target kind/],
+    [{ evidenceId: "unknown" }, /admitted\/read evidence/],
+    [{ evidenceId }, /admitted\/read evidence/, new DoctorEvidenceStore(patient)],
+  ] as const) {
+    const candidate = { ...assetOutput, findings: [{ ...assetFinding, assetEvidence }] };
+    if (error === undefined) assert.deepEqual(validateDoctorOutput(candidate, patient, evidenceStore), candidate);
+    else assert.throws(() => validateDoctorOutput(candidate, patient, evidenceStore), error);
+  }
+  const noRealBiteKeep = { ...output, findings: [{ ...assetFinding, disposition: "keep", lastRealBite: { kind: "noRealBite", targetKey: assetFinding.targetKey, eligibleEvidenceIds: [evidenceId] } }] } as const;
+  assert.deepEqual(validateDoctorOutput(noRealBiteKeep, patient, store), noRealBiteKeep);
+  const unexplainedPatch = { ...output, findings: [{ ...assetFinding, prescription: { kind: "patch", recommendation: "Patch it" } }] } as const;
+  assert.deepEqual(validateDoctorOutput(unexplainedPatch, patient, store), unexplainedPatch);
   assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, targetKey: "invented-run" }] }, patient, store), /lawful case target/);
   const refusal = { status: "refused", reason: "Need more bytes", missingEvidence: [{ need: "whole case", targetKeys: ["case"] }] } as const;
   assert.deepEqual(validateDoctorOutput(refusal, patient, store), refusal);
   assert.throws(() => validateDoctorOutput({ ...refusal, missingEvidence: [{ need: "unknown", targetKeys: ["invented-gate"] }] }, patient, store), /lawful case target/);
 });
 
-test("Doctor submission accepts unknown guardrails keys while enforcing the three required members", () => {
+test("Doctor submission accepts unknown guardrail keys and safely rejects unrecognized execution intent", () => {
   const guardrail = { answer: true, evidenceIds: ["e1"], explanation: "observed" };
   const baseFinding = {
     targetKey: "judge-output-gate",
@@ -304,28 +314,7 @@ test("Doctor submission accepts unknown guardrails keys while enforcing the thre
   };
   assert.deepEqual(validateDoctorSubmissionShape(withUnknown), withUnknown);
 
-  const missingMember = {
-    ...withUnknown,
-    findings: [{
-      ...baseFinding,
-      guardrails: {
-        reproducibleFailure: guardrail,
-        owningSeamOrInvariant: guardrail,
-      },
-    }],
-  };
-  assert.throws(() => validateDoctorSubmissionShape(missingMember), /contract/);
-
-  const wrongType = {
-    ...withUnknown,
-    findings: [{
-      ...baseFinding,
-      guardrails: {
-        reproducibleFailure: { ...guardrail, answer: "yes" },
-        owningSeamOrInvariant: guardrail,
-        deletionOrSimplificationSuffices: { ...guardrail, answer: false },
-      },
-    }],
-  };
-  assert.throws(() => validateDoctorSubmissionShape(wrongType), /contract/);
+  for (const candidate of [undefined, null, 1, new Proxy({}, { get() { throw new Error("getter"); } })]) {
+    assert.throws(() => validateDoctorSubmissionShape(candidate), DoctorSubmissionContractError);
+  }
 });

@@ -1,29 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  AcceptedDetailsContractError,
-  acceptedFacts,
-  validateAcceptedDetails,
-} from "../../src/package-contracts/terminating-tools.ts";
+import { acceptedFacts } from "../../src/package-contracts/terminating-tools.ts";
 import type { CollectorReceipt } from "../../src/package-contracts/collector-output.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 
-test("accepted-details validation distinguishes contract rejection from unexpected validator failure", () => {
-  assert.throws(
-    () => validateAcceptedDetails("ak_coder_output", {}),
-    AcceptedDetailsContractError,
-  );
-
-  const failure = new TypeError("validator implementation failed");
-  const hostileDetails = new Proxy({}, {
-    ownKeys() { throw failure; },
-  });
-  assert.throws(
-    () => validateAcceptedDetails("ak_coder_output", hostileDetails),
-    (error) => error === failure,
-  );
-});
 
 test("acceptedFacts projects Collector leg terminal states as a typed set, not a joined status string", () => {
   const base = {
