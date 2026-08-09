@@ -298,7 +298,6 @@ test("production Reviewer child provider rejections retain typed diagnostics and
     const cases=[
       { rejection:{errorMessage:"WebSocket error"}, expected:"WebSocket error", mixed:true },
       { rejection:undefined, expected:"Reviewer Agent provider supplied no diagnostic details", mixed:false },
-      { rejection:new Error("socket closed",{cause:{errorMessage:"nested detail"}}), expected:"socket closed", mixed:false },
     ] as const;
     for(const row of cases){
       const faux=fauxProvider({provider:"reviewer-rejection",api:"reviewer-rejection"}); const model=faux.getModel();
@@ -319,6 +318,20 @@ test("production Reviewer child provider rejections retain typed diagnostics and
       assert.equal(receipt.details.outcomes.standards.diagnostic,row.expected);
       if(row.mixed) assert.match(receipt.details.reports.spec.text,/./);
     }
+
+    const throwing=fauxProvider({provider:"reviewer-rejection",api:"reviewer-rejection"});
+    const throwingProvider=throwing.provider as typeof throwing.provider & { streamSimple: typeof throwing.provider.streamSimple };
+    throwingProvider.streamSimple=function(){ throw new Error("socket closed",{cause:{errorMessage:"nested detail"}}); };
+    const throwingContext={model:throwing.getModel(),modelRegistry:{getProvider:()=>throwingProvider,async getProviderAuth(){return {auth:{apiKey:"offline"}};},async getApiKeyAndHeaders(){return {ok:true as const,apiKey:"offline"};}},sessionManager:SessionManager.inMemory(),thinkingLevel:"off"} as unknown as ExtensionContext;
+    const throwingRunner=createReviewerAgentRunner({credentialScratchParent:root});
+    const throwingHarness=setup({createPinnedGitReader:async()=>reader,runDispatch:(dispatch)=>throwingRunner.run(dispatch,{context:throwingContext}),shutdownAgent:()=>throwingRunner.shutdown()});
+    await throwingHarness.runtime.activate();
+    const throwingResult=throwingHarness.tools.get(AGENT_TOOL_NAME).execute("run",{...proposal(),base:{revision:base}},undefined,undefined,throwingContext);
+    await assert.rejects(throwingResult,/execution failed/);
+    captureReviewExpansion(throwingHarness);
+    const throwingReceipt=await throwingHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"provider failed"},undefined,undefined,outputContext("out"));
+    assert.equal(throwingReceipt.details.outcomes.standards.failure,"provider");
+    assert.equal(throwingReceipt.details.outcomes.standards.diagnostic,"socket closed");
   } finally { await rm(root,{recursive:true,force:true}); }
 });
 

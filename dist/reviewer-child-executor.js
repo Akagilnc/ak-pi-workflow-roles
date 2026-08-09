@@ -84,20 +84,10 @@ async function createChildRuntime(context) {
         },
         getModels() { return [dispatch.model]; },
         stream(model, childContext, options) {
-            try {
-                return parentProvider.stream(model, childContext, options);
-            }
-            catch (error) {
-                throw classifiedError(error, "provider");
-            }
+            return parentProvider.stream(model, childContext, options);
         },
         streamSimple(model, childContext, options) {
-            try {
-                return parentProvider.streamSimple(model, childContext, options);
-            }
-            catch (error) {
-                throw classifiedError(error, "provider");
-            }
+            return parentProvider.streamSimple(model, childContext, options);
         },
     };
     runtime.registerNativeProvider(provider);
