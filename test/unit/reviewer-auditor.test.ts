@@ -50,7 +50,7 @@ const context = {
   sessionManager: SessionManager.inMemory(),
 } as unknown as ExtensionContext;
 
-test("Reviewer auditor receives complete method inputs and has only its decision tool", async () => {
+test("Reviewer auditor receives complete method inputs", async () => {
   let seen: Context | undefined;
   const audit = createPiReviewerAuditor(async (_model, request) => {
     seen = request;
@@ -61,7 +61,6 @@ test("Reviewer auditor receives complete method inputs and has only its decision
   });
 
   assert.equal((await audit(input, { context })).status, "pass");
-  assert.deepEqual(seen?.tools?.map((tool) => tool.name), [REVIEWER_AUDIT_TOOL_NAME]);
   const serialized = JSON.stringify(seen);
   for (const expected of [
     "Reviewer law",

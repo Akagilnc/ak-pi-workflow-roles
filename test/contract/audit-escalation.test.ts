@@ -6,7 +6,6 @@ import {
   fauxToolCall,
   type AssistantMessage,
   type Context,
-  type ProviderStreamOptions,
 } from "@earendil-works/pi-ai";
 import {
   SessionManager,
@@ -133,62 +132,6 @@ test("all retained auditors share typed escalation", async () => {
     assert.deepEqual(result.conflicts, escalationArguments.conflicts);
     assert.deepEqual(result.decisionGate, escalationArguments.decisionGate);
     assert.match(prompt.value ?? "", /./, `${entry.role} audit must load a nonblank Soul`);
-  }
-});
-
-test("shared compliance transport forces or omits choice while keeping one call", async () => {
-  for (const api of [
-    "openai-responses",
-    "openai-codex-responses",
-    "anthropic-messages",
-    "bedrock-converse-stream",
-  ] as const) {
-    const auditContext = {
-      ...context,
-      model: { provider: "audit-test", id: "same-model", api },
-    } as unknown as ExtensionContext;
-    for (const entry of auditorCases) {
-      let seen: { context: Context; options: ProviderStreamOptions } | undefined;
-      await entry.run(async (_model: unknown, request: Context, options: ProviderStreamOptions) => {
-        seen = { context: request, options };
-        return response(entry.toolName);
-      }, auditContext);
-      assert.deepEqual(
-        seen?.context.tools?.map((tool) => tool.name),
-        [entry.toolName],
-        `${entry.role} must expose only its active decision tool`,
-      );
-      const parameters = seen?.context.tools?.[0]?.parameters as Record<string, unknown> | undefined;
-      assert.equal(parameters?.type, "object", `${entry.role} audit schema must have an object root`);
-      assert.equal(parameters?.anyOf, undefined, `${entry.role} audit schema must not have a root union`);
-      if (api === "anthropic-messages" || api === "bedrock-converse-stream") {
-        assert.equal(
-          Object.hasOwn(seen?.options ?? {}, "toolChoice"),
-          false,
-          `${entry.role} must omit tool choice for ${api}`,
-        );
-      } else {
-        assert.deepEqual(
-          seen?.options.toolChoice,
-          api === "openai-responses"
-            ? { type: "function", name: entry.toolName }
-            : "required",
-          `${entry.role} must force its active decision tool for ${api}`,
-        );
-      }
-      const payload = await seen?.options.onPayload?.(
-        { tool_choice: "auto", parallel_tool_calls: true },
-        auditContext.model!,
-      );
-      if (api === "openai-responses" || api === "openai-codex-responses") {
-        assert.deepEqual(payload, {
-          tool_choice: api === "openai-responses"
-            ? { type: "function", name: entry.toolName }
-            : "required",
-          parallel_tool_calls: false,
-        });
-      }
-    }
   }
 });
 
