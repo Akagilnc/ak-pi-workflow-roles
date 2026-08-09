@@ -11,6 +11,8 @@ import {
   mintNavigatorInvocationId
 } from "./navigator-invocation-identity.js";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
+import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
+import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
@@ -185,15 +187,12 @@ function navigatorSubjectKeyForInput(subjectRoot, reference, cwd = process.cwd()
   return navigatorSubjectKey(subjectRoot, resolvedReference);
 }
 function subjectDirectory(cwd, subjectKey) {
-  const issue = issueRoot(subjectKey);
-  if (issue !== void 0) {
-    const base = join(issue, "runs", "navigator");
-    if (subjectKey === issue) return base;
-    const digest2 = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
-    return join(base, digest2);
-  }
+  const book = activationBookDirectory(
+    resolveActivationLedgerHome(),
+    resolveBookKeyFromGit(cwd)
+  );
   const digest = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
-  return join(resolve(cwd, ".ak", "work", "navigator"), digest);
+  return join(book, "navigator", digest);
 }
 function navigatorModelSettingPath() {
   return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "navigator-model.json");

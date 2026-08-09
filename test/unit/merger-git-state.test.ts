@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -95,27 +95,19 @@ test("production Merger Git seam freezes the exact automatic merge tree and repo
   }
 });
 
-test("production Merger Git seam preserves opening residual dirt exactly", async () => {
-  for (const mutation of ["unchanged", "new", "changed", "deleted"] as const) {
+test("production Merger Git seam rejects pre-existing tracked and untracked dirt", async () => {
+  for (const dirt of ["tracked", "untracked"] as const) {
     const fixture = await conflictedRepo();
     try {
-      await mkdir(resolve(fixture.cwd, ".ak/work"), { recursive: true });
-      await writeFile(resolve(fixture.cwd, ".ak/work/opening.jsonl"), "opening\n");
-      await writeFile(resolve(fixture.cwd, "unrelated.txt"), "opening tracked dirt\n");
+      if (dirt === "tracked") await writeFile(resolve(fixture.cwd, "unrelated.txt"), "opening tracked dirt\n");
+      else await writeFile(resolve(fixture.cwd, "untracked.txt"), "opening untracked dirt\n");
       const state = createProductionMergerGitState(fixture.cwd);
       const active = await state.activeMerge();
       await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n");
       git(fixture.cwd, "add", "conflict.txt");
       git(fixture.cwd, "commit", "-m", "resolve assigned merge");
       const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
-      if (mutation === "new") await writeFile(resolve(fixture.cwd, ".ak/work/new.jsonl"), "new\n");
-      if (mutation === "changed") await writeFile(resolve(fixture.cwd, ".ak/work/opening.jsonl"), "changed\n");
-      if (mutation === "deleted") await rm(resolve(fixture.cwd, ".ak/work/opening.jsonl"));
-      assert.equal(
-        (await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).worktreeClean,
-        mutation === "unchanged",
-        mutation,
-      );
+      assert.equal((await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).worktreeClean, false, dirt);
     } finally {
       await rm(fixture.cwd, { recursive: true, force: true });
     }
