@@ -31,7 +31,7 @@ export async function buildPublicAkRoleBin(
     target: "node20",
     bundle: true,
     banner: {
-      js: '#!/usr/bin/env node\nimport { createRequire as __createRequire } from "node:module";\nconst require = __createRequire(import.meta.url);\n',
+      js: "#!/usr/bin/env node\n",
     },
     logLevel: "silent",
   });
