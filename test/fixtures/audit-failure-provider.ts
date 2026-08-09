@@ -21,21 +21,6 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     provider: "ak-audit-failure",
     tokenSize: { min: 1000, max: 1000 },
   });
-  if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
-    // Header timeoutMs and body-idle both default to owner-final 183000ms but are distinct seams.
-    // Idle arms first; the provider schedules timeoutMs second. Compress provider waits harder so the
-    // typed timeout AssistantMessage can settle before idle abort (and idle retries) take over.
-    const realSetTimeout = globalThis.setTimeout;
-    let deadlineClocks = 0;
-    globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
-      if (delay === 183000) {
-        deadlineClocks += 1;
-        const compressed = deadlineClocks % 2 === 1 ? 100 : 25;
-        return realSetTimeout(handler, compressed, ...args);
-      }
-      return realSetTimeout(handler, delay, ...args);
-    }) as typeof setTimeout;
-  }
   const observation = process.env.AK_NAVIGATOR_OBSERVATION === "1";
   /** Canonical delivery matrix: recommendation | unavailable | silence (extends observation seam). */
   const deliveryOutcome = process.env.AK_NAVIGATOR_DELIVERY_OUTCOME;
@@ -91,21 +76,12 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
         }));
       }
       if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
-        const timeoutMs = options?.timeoutMs;
-        if (typeof timeoutMs !== "number" || timeoutMs <= 0) {
-          return await new Promise<ReturnType<typeof fauxAssistantMessage>>(() => undefined);
-        }
-        // Honor timeoutMs the way registry providers do. The fixture only
-        // compresses the 183000 production delay on setTimeout so the real
-        // deadline fires without sleeping 183s; it does not invent terminal
-        // evidence for the test to read back.
-        return await new Promise<ReturnType<typeof fauxAssistantMessage>>((resolve) => {
-          setTimeout(() => {
-            resolve(fauxAssistantMessage([], {
-              stopReason: "error",
-              errorMessage: "provider timeout: compliance request expired",
-            }));
-          }, timeoutMs);
+        // Provider timeout is already represented by the provider-owned typed
+        // AssistantMessage. Return that terminal fact directly: this fixture
+        // verifies transport/retention identity, not wall-clock scheduling.
+        return fauxAssistantMessage([], {
+          stopReason: "error",
+          errorMessage: "provider timeout: compliance request expired",
         });
       }
       if (deliveryMode === "silence") {

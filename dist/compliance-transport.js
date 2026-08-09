@@ -32,7 +32,18 @@ function retainComplianceResponse(context, response) {
     }
 }
 export async function runComplianceAudit(options) {
-    const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, ...(options.signal === undefined ? {} : { signal: options.signal }), ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }) });
+    let receipt;
+    try {
+        receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, ...(options.signal === undefined ? {} : { signal: options.signal }), ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }) });
+    }
+    catch (error) {
+        // AgentSession throws the provider's terminal AssistantMessage for typed
+        // error responses. Retain that exact response before preserving its identity.
+        if (typeof error === "object" && error !== null && error.role === "assistant") {
+            retainComplianceResponse(options.context, error);
+        }
+        throw error;
+    }
     retainComplianceResponse(options.context, receipt.response);
     return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }

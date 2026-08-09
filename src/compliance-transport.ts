@@ -35,7 +35,17 @@ function retainComplianceResponse(context: ExtensionContext, response: Assistant
   try { manager.appendCustomEntry(COMPLIANCE_RESPONSE_ENTRY_TYPE, { version: 1, response }); } catch (error) { throw new ComplianceResponseRetentionError("compliance response retention failed", { cause: error }); }
 }
 export async function runComplianceAudit(options: { tool: ReturnType<typeof createComplianceDecisionTool>; systemPrompt: string; serializedInput: string; roleLabel: string; invalidDecisionLabel: string; runCompletion?: ComplianceCompletion; context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision> {
-  const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, ...(options.signal === undefined ? {} : { signal: options.signal }), ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }) });
+  let receipt: Awaited<ReturnType<typeof runAuditorRole>>;
+  try {
+    receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, ...(options.signal === undefined ? {} : { signal: options.signal }), ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }) });
+  } catch (error) {
+    // AgentSession throws the provider's terminal AssistantMessage for typed
+    // error responses. Retain that exact response before preserving its identity.
+    if (typeof error === "object" && error !== null && (error as { role?: unknown }).role === "assistant") {
+      retainComplianceResponse(options.context, error as AssistantMessage);
+    }
+    throw error;
+  }
   retainComplianceResponse(options.context, receipt.response);
   return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }
