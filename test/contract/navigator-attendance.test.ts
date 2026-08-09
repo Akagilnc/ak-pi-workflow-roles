@@ -113,6 +113,7 @@ async function attendance(path: string, harness: ReturnType<typeof sessionHarnes
     context: context(), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28", sessionDir: "/repo/.ak/work/issues/28/runs/navigator/session",
     subject: "Fix issue 28", authority: "owner decision",
     loadSoul: async () => "route judgment",
+    loadRoutePlaybook: async () => "arbitrary advisory prose",
     loadRoleHelp,
     createSession: harness.factory,
     modelSettingPath: path,

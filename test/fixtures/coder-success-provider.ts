@@ -6,11 +6,12 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
+  type Context,
   type Provider,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { CODER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
+import { CODER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/role-runtime.ts";
 
 export default function coderSuccessProvider(pi: ExtensionAPI): void {
   const faux = fauxProvider({
@@ -18,8 +19,26 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
     provider: "ak-coder-offline",
     tokenSize: { min: 1000, max: 1000 },
   });
-  faux.setResponses([
-    fauxAssistantMessage(
+  const respond = async (context: Context) => {
+    const toolNames = context.tools?.map((tool) => tool.name) ?? [];
+    if (toolNames.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+      const contextText = JSON.stringify(context.messages);
+      const hasInstalledRoutebook = contextText.includes("COLD_INSTALLED_ROUTEBOOK_MARKER");
+      const unavailable = process.env.AK_TEST_NAVIGATOR_UNAVAILABLE === "1";
+      const expectedUnreadable = process.env.AK_TEST_ROUTEBOOK_UNREADABLE === "1";
+      return fauxAssistantMessage(
+        fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+          candidates: unavailable || (!hasInstalledRoutebook && !expectedUnreadable) ? [] : [{
+            id: "cold-installed-advice",
+            matches: { role: "coder", phase: "apply", kind: "accepted" },
+            next: { role: "reviewer", phase: null },
+            reason: "fixture advice",
+          }],
+        }),
+        { stopReason: "toolUse" },
+      );
+    }
+    return fauxAssistantMessage(
       fauxToolCall(
         CODER_OUTPUT_TOOL_NAME,
         {
@@ -30,8 +49,10 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
         { id: "coder-success-completed" },
       ),
       { stopReason: "toolUse" },
-    ),
-  ]);
+    );
+  };
+  // The public process uses this provider once for Coder and once for Navigator.
+  faux.setResponses([respond, respond]);
 
   const model = faux.getModel();
   const provider: Provider = {

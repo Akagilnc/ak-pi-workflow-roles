@@ -891,6 +891,50 @@ test("cold-installed live help follows the loaded extension and changes on the n
         assert.equal(events[1]!.command, "ak-role judge");
         assert.equal(events[1]!.command?.includes("/task.md"), false);
 
+        const routebookEvents: any[] = [];
+        let routebookReads = 0;
+        const routebookNav = attendanceModule.createNavigatorAttendance({
+          context: {
+            sessionManager: {
+              getSessionId: () => "cold-routebook",
+              appendCustomEntry() { return "ok"; },
+            },
+            cwd: fixture,
+          } as never,
+          role: "coder",
+          phase: "apply",
+          subjectKey: resolve(fixture, "routebook-task.md"),
+          sessionDir: resolve(fixture, "routebook-navigator"),
+          subject: "cold-installed routebook task",
+          authority: "cold-installed routebook authority",
+          modelSettingPath,
+          loadSoul: async () => "route judgment",
+          loadRoutePlaybook: async () => {
+            routebookReads += 1;
+            throw new Error("FIRST_ROUTEBOOK_CAUSE");
+          },
+          loadRoleHelp: (role: any) => runtime.loadNavigatorRoleHelp({ exec } as never, resolve(installedRoot, "extensions/role-runtime.ts"), fixture, role),
+          createSession: async ({ tool }: any) => { prepareTool = tool; return session; },
+          onEvent: async (event: any) => { routebookEvents.push(event); },
+        });
+        routebookNav.prepare();
+        await routebookNav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+        routebookNav.setWorkContext({
+          subjectKey: resolve(fixture, "routebook-task.md"),
+          subject: "second cold-installed routebook task",
+          authority: "cold-installed routebook authority",
+          contextError: new Error("SECOND_CONTEXT_CAUSE"),
+        });
+        routebookNav.prepare();
+        await routebookNav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+        assert.equal(routebookReads, 1, "early second context failure must not reread the routebook");
+        assert.equal(routebookEvents.length, 2);
+        assert.equal(routebookEvents[0]!.routePlaybookReadFailure, "FIRST_ROUTEBOOK_CAUSE");
+        assert.equal(routebookEvents[1]!.disposition, "unavailable");
+        assert.equal(routebookEvents[1]!.unavailableSource, "context");
+        assert.equal(routebookEvents[1]!.unavailableReason, "SECOND_CONTEXT_CAUSE");
+        assert.equal(routebookEvents[1]!.routePlaybookReadFailure, undefined, "settled routebook diagnosis must not leak into the next preparation");
+
         // Cross the installed package entrypoint with the bundled Luna Max default,
         // then edit and restore the same setting without permitting a fallback.
         // Independent presentation is proven by observable typed attendance events,

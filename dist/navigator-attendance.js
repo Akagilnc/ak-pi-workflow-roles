@@ -255,10 +255,12 @@ function selectNavigatorCandidate(candidates, settlement) {
   return usable.find((candidate) => candidate.matches === void 0);
 }
 function formatNavigatorReport(report) {
-  if (report.disposition === "no-advice") return "";
-  if (report.disposition === "unavailable") return `\u5BFC\u822A\u4E0D\u53EF\u7528\uFF1A${oneLine(report.unavailableReason ?? "\u672A\u80FD\u5B8C\u6210\u5BFC\u822A\u51C6\u5907")}`;
-  if (report.disposition === "arrival") return oneLine(report.arrivalMessage ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730");
+  const playbookFailure = report.routePlaybookReadFailure === void 0 ? [] : [`\u8DEF\u4E66\u8BFB\u53D6\u5931\u8D25\uFF1A${oneLine(report.routePlaybookReadFailure)}`];
+  if (report.disposition === "no-advice") return playbookFailure.join("\n");
+  if (report.disposition === "unavailable") return [...playbookFailure, `\u5BFC\u822A\u4E0D\u53EF\u7528\uFF1A${oneLine(report.unavailableReason ?? "\u672A\u80FD\u5B8C\u6210\u5BFC\u822A\u51C6\u5907")}`].join("\n");
+  if (report.disposition === "arrival") return [...playbookFailure, oneLine(report.arrivalMessage ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730")].join("\n");
   return [
+    ...playbookFailure,
     ...report.route === void 0 ? [] : [`\u8DEF\u7EBF\uFF1A${routeText(report.route)}`],
     `\u4E0B\u4E00\u6B65\uFF1A${targetText(report.next)}`,
     ...report.reason === void 0 || report.reason.trim() === "" ? [] : [`\u7406\u7531\uFF1A${oneLine(report.reason)}`],
@@ -292,7 +294,8 @@ ${reportText}` };
 function decorateSettlementWithNavigation(event, presentation) {
   if (presentation === void 0) return void 0;
   if (settlementNavigationFromEvent(presentation.event) === void 0) return void 0;
-  const reportText = formatNavigatorReport(presentation.report);
+  const { routePlaybookReadFailure: _advisoryFailure, ...receiptReport } = presentation.report;
+  const reportText = formatNavigatorReport(receiptReport);
   if (reportText === "") return void 0;
   return {
     content: appendNavigatorReportToContent(event.content, reportText),
@@ -316,6 +319,7 @@ function createNavigatorAttendance(options) {
   let settlementTail = Promise.resolve();
   let settlementFailure;
   let preparationFailure;
+  let routePlaybookReadFailure;
   let disposed = false;
   let warmedHelp;
   const loadLiveHelp = async () => {
@@ -339,6 +343,7 @@ function createNavigatorAttendance(options) {
       unavailableCause: failure.unavailableCause
     };
   };
+  let routePlaybookSettlement;
   const prepare = async () => {
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
@@ -352,6 +357,8 @@ function createNavigatorAttendance(options) {
     let soul;
     let modelSetting;
     let help;
+    let routePlaybook = "";
+    routePlaybookReadFailure = void 0;
     const soulPromise = (async () => {
       try {
         const text = (await options.loadSoul()).trim();
@@ -361,6 +368,16 @@ function createNavigatorAttendance(options) {
         throw navigatorUnavailableError("context", error);
       }
     })();
+    const routePlaybookPromise = (async () => {
+      if (options.loadRoutePlaybook === void 0) return "";
+      try {
+        return await options.loadRoutePlaybook();
+      } catch (error) {
+        routePlaybookReadFailure = error instanceof Error ? error.message : String(error);
+        return "";
+      }
+    })();
+    routePlaybookSettlement = routePlaybookPromise.then(() => void 0);
     const modelPromise = (async () => {
       try {
         return await readNavigatorModelSetting(options.modelSettingPath);
@@ -370,8 +387,9 @@ function createNavigatorAttendance(options) {
     })();
     const helpPromise = warmedHelp ?? loadLiveHelp();
     warmedHelp = void 0;
-    [soul, modelSetting, help] = await Promise.all([
+    [soul, routePlaybook, modelSetting, help] = await Promise.all([
       soulPromise,
+      routePlaybookPromise,
       modelPromise,
       helpPromise
     ]);
@@ -455,6 +473,12 @@ ${text}
       `<navigator_soul>
 ${soul}
 </navigator_soul>`,
+      ...routePlaybookReadFailure === void 0 ? [
+        `<route_playbook>
+${routePlaybook}
+</route_playbook>`,
+        "The route playbook is advisory material only. Exercise independent judgment: adopt, alter, or ignore it; the caller may also deviate."
+      ] : ["The optional route playbook could not be read. Continue independent judgment from the other supplied materials."],
       `<work_subject>
 ${subject}
 </work_subject>`,
@@ -535,6 +559,9 @@ ${helpContext}
     },
     isPreparing() {
       return preparation !== void 0 || sessionReady !== void 0;
+    },
+    knownRoutePlaybookReadFailure() {
+      return routePlaybookReadFailure;
     },
     settle(settlement) {
       const next = settlementTail.then(() => settleOnce(settlement));
@@ -619,6 +646,10 @@ ${helpContext}
         report = unavailable(invocationId, error);
       }
     }
+    await routePlaybookSettlement;
+    if (routePlaybookReadFailure !== void 0) {
+      report = { ...report, routePlaybookReadFailure };
+    }
     const event = {
       version: 1,
       disposition: report.disposition,
@@ -633,6 +664,7 @@ ${helpContext}
       ...report.unavailableReason === void 0 ? {} : { unavailableReason: report.unavailableReason },
       ...report.unavailableSource === void 0 ? {} : { unavailableSource: report.unavailableSource },
       ...report.unavailableCause === void 0 ? {} : { unavailableCause: report.unavailableCause },
+      ...report.routePlaybookReadFailure === void 0 ? {} : { routePlaybookReadFailure: report.routePlaybookReadFailure },
       ...report.arrivalMessage === void 0 ? {} : { arrivalMessage: report.arrivalMessage }
     };
     if (!disposed) {
@@ -642,6 +674,8 @@ ${helpContext}
     sessionReady = void 0;
     candidates = void 0;
     preparationFailure = void 0;
+    routePlaybookSettlement = void 0;
+    routePlaybookReadFailure = void 0;
   }
 }
 function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()) {
