@@ -8895,15 +8895,11 @@ function canonicalPath(path) {
 }
 function validatePathSet(value, label) {
   if (!Array.isArray(value) || value.length === 0 || !value.every(canonicalPath)) fail2(`Merger ${label} must be a non-empty canonical path set`);
-  const paths = value;
-  const sorted = [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-  if (new Set(paths).size !== paths.length || paths.some((path, i) => path !== sorted[i])) fail2(`Merger ${label} must be unique and canonical byte-sorted`);
-  return paths;
+  return value;
 }
 function validateMaterial(value, label) {
   if (!record(value) || typeof value.bytesBase64 !== "string" || typeof value.sha256 !== "string") fail2(`Merger ${label} material is malformed`);
   const bytes = Buffer.from(value.bytesBase64, "base64");
-  if (bytes.toString("base64") !== value.bytesBase64) fail2(`Merger ${label} bytes are not canonical base64`);
   exactUtf8(bytes, `Merger ${label} material`);
   if (sha256Hex(bytes) !== value.sha256) fail2(`Merger ${label} material digest mismatch`);
 }
@@ -8915,7 +8911,7 @@ function deepFreeze(value) {
   return value;
 }
 function validateMergerInput(value) {
-  if (!record(value) || value.version !== 1 || blank(value.attemptId) || !isFullGitObjectId(value.targetObjectId) || !isFullGitObjectId(value.sourceObjectId) || value.targetObjectId.length !== value.sourceObjectId.length) fail2("Merger input has invalid identity or object ID");
+  if (!record(value) || blank(value.attemptId) || !isFullGitObjectId(value.targetObjectId) || !isFullGitObjectId(value.sourceObjectId) || value.targetObjectId.length !== value.sourceObjectId.length) fail2("Merger input has invalid identity or object ID");
   if (!record(value.materials)) fail2();
   for (const key of ["task", "authority", "targetIntent", "sourceIntent"]) validateMaterial(value.materials[key], key);
   const conflicts = validatePathSet(value.expectedConflictPaths, "expected conflict paths");
@@ -8923,12 +8919,12 @@ function validateMergerInput(value) {
   if (!conflicts.every((path) => scope.includes(path))) fail2("Merger resolution scope must contain the complete conflict set");
   if (!Array.isArray(value.authorizedChecks)) fail2("Merger authorized checks are malformed");
   for (const check of value.authorizedChecks) {
-    if (!record(check) || blank(check.name) || !Array.isArray(check.argv) || check.argv.length === 0 || check.argv.some(blank)) fail2("Merger authorized check is malformed");
+    if (!record(check) || !Array.isArray(check.argv) || check.argv.length === 0 || check.argv.some(blank)) fail2("Merger authorized check is malformed");
   }
   return deepFreeze(structuredClone(value));
 }
 function validateMergerOutput(value, expectedAttemptId) {
-  if (!record(value) || blank(value.attemptId) || blank(value.report) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("Merger output attempt mismatch or blank report");
+  if (!record(value) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("Merger output attempt mismatch");
   if (value.status === "completed" && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
   if (value.status === "escalate") return structuredClone(value);
   throw new Error("Merger output has no recognized execution discriminator");
