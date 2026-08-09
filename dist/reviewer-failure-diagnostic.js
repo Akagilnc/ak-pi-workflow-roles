@@ -1,5 +1,14 @@
 export function normalizeReviewerFailureDiagnostic(error, failure) {
-    const message = error instanceof Error ? error.message.trim() : String(error).trim();
+    const original = error instanceof Error && Object.hasOwn(error, "cause") && !(error.cause instanceof Error)
+        ? error.cause
+        : error;
+    const message = original instanceof Error
+        ? original.message.trim()
+        : typeof original === "string"
+            ? original.trim()
+            : typeof original === "object" && original !== null && typeof original.errorMessage === "string"
+                ? original.errorMessage.trim()
+                : "";
     if (message !== "")
         return message;
     return failure === "provider"
