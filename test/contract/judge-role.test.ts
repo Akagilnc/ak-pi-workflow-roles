@@ -564,6 +564,13 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     assert.ok(tool);
     assert.equal(tool.name, fixture.name);
     assert.ok(typeof tool.description === "string" && tool.description.length > 0);
+    if (fixture.role === "judge") {
+      assert.deepEqual(tool.parameters.properties.judgeStatus, {
+        type: "string",
+        enum: ["converged", "continue", "escalate"],
+        description: "Judge adjudication outcome discriminator.",
+      });
+    }
     assert.ok(
       (tool.promptGuidelines ?? []).some((line) => line.includes(fixture.name)),
       `${fixture.name} guidelines must name the tool`,

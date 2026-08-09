@@ -1,4 +1,3 @@
-import {} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { uuidv7 } from "./uuidv7.js";
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError, createStreamIdleGuard, isStreamIdleTimeoutError, } from "./stream-idle-guard.js";

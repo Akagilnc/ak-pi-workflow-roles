@@ -11967,7 +11967,7 @@ function observePackagedMethodSkillInvocation(text, expected) {
     location,
     ...expected.includeExpansionIdentity === true ? {
       content: match[3],
-      userMessage: match[4]?.trim() || void 0
+      userMessage: match[4]
     } : {}
   });
 }

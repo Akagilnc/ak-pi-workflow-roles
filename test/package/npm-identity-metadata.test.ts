@@ -361,6 +361,16 @@ test("packed artifact ships package-owned diagnosing-bugs method with adapted bo
   });
 });
 
+test("packed compliance transport has no Pi AI runtime import", async () => {
+  await withExtractedPack(async ({ root }) => {
+    const complianceJs = await readFile(
+      resolve(root, "package/dist/compliance-transport.js"),
+      "utf8",
+    );
+    assert.equal(complianceJs.includes("@earendil-works/pi-ai"), false);
+  });
+});
+
 test("packed artifact name is the registry-settled identity", async () => {
   await withExtractedPack(async (extracted) => {
     assert.equal(extracted.packageJson.name, SETTLED_PACKAGE_NAME);

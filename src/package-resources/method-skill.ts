@@ -453,7 +453,7 @@ export function observePackagedMethodSkillInvocation(
     ...(expected.includeExpansionIdentity === true
       ? {
           content: match[3]!,
-          userMessage: match[4]?.trim() || undefined,
+          userMessage: match[4],
         }
       : {}),
   });

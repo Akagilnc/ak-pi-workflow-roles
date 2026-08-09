@@ -197,7 +197,7 @@ test("packaged tdd binding captures expansion against package skill path only", 
   await withEmptyHome(async () => {
     const binding = await loadPackagedCanonicalSkillBinding(packageRoot, "tdd");
     assert.equal(binding.name, "tdd");
-    const request = "Implement the approved slice.";
+    const request = "  Implement the approved slice.  ";
     assert.equal(binding.invocation(request), `/skill:tdd ${request}`);
 
     // Use binding snapshot paths for exact expansion (realpath may differ by OS).

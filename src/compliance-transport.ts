@@ -1,10 +1,10 @@
-import {
-  type Api,
-  type AssistantMessage,
-  type Context,
-  type Model,
-  type ProviderStreamOptions,
-  type Usage,
+import type {
+  Api,
+  AssistantMessage,
+  Context,
+  Model,
+  ProviderStreamOptions,
+  Usage,
 } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
