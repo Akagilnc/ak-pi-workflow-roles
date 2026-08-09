@@ -9,7 +9,7 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 
 import { AUDITOR_TURN_LIMIT, AuditorTurnLimitError, runAuditorRole } from "../../src/auditor-role.ts";
 import { ComplianceResponseRetentionError, createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
-import { StreamIdleTimeoutError } from "../../src/stream-idle-guard.ts";
+import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError } from "../../src/stream-idle-guard.ts";
 
 test("constant unknown tools receive error results and exhaust at a finite typed boundary", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-unknown-"));
@@ -184,10 +184,16 @@ test("real provider stream idle signal retains its typed cause at the turn bound
       },
       sessionManager: SessionManager.inMemory(cwd),
     } as unknown as ExtensionContext;
-    await assert.rejects(
-      runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: createComplianceDecisionTool("ak_boundary_idle", "Submit."), roleLabel: "Test auditor", context, streamIdleTimeoutMs: 20 }),
-      (error: unknown) => error instanceof StreamIdleTimeoutError && error.idleTimeoutMs === 20,
-    );
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => realSetTimeout(handler, delay === DEFAULT_STREAM_IDLE_TIMEOUT_MS ? 20 : delay, ...args)) as typeof setTimeout;
+    try {
+      await assert.rejects(
+        runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: createComplianceDecisionTool("ak_boundary_idle", "Submit."), roleLabel: "Test auditor", context }),
+        (error: unknown) => error instanceof StreamIdleTimeoutError && error.idleTimeoutMs === DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+      );
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
     assert.equal(streams, AUDITOR_TURN_LIMIT);
   } finally {
     await rm(cwd, { recursive: true, force: true });
