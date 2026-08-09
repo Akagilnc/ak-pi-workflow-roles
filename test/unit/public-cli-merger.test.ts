@@ -756,3 +756,32 @@ test("ak-role resume continues merger with package method and exact session", as
     );
   });
 });
+
+test("public Merger retains malformed output candidate as typed incomplete", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    await materializeConflictedRepo(project);
+    const candidate = { status: "unknown-shape", report: 7 };
+    const result = await runAkRole(["merger", "--project", project, "merge"], {
+      packageRoot, home, cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      createRunId: () => "run-merger-residual-182",
+      io: captureIo().io,
+      piRunner: async (args) => {
+        const sessionFile = args[args.indexOf("--session") + 1]!;
+        await mkdir(join(sessionFile, ".."), { recursive: true });
+        await writeFile(sessionFile, [
+          { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "bad", name: MERGER_OUTPUT_TOOL_NAME, arguments: candidate }] } },
+          { type: "message", message: { role: "toolResult", toolCallId: "bad", toolName: MERGER_OUTPUT_TOOL_NAME, isError: true, content: [{ type: "text", text: "Merger status is unrecognized" }] } },
+        ].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+        return { code: 1, stderr: "aborted", timedOut: false, args: [...args] };
+      },
+    });
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminal?.roleOutcome.kind, "incomplete");
+    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.candidate, candidate);
+    assert.equal(result.terminal?.roleOutcome.decisiveFacts.acceptedReceipt, false);
+    assert.match(String(result.terminal?.roleOutcome.decisiveFacts.diagnostic), /unrecognized/);
+  });
+});
