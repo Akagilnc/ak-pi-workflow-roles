@@ -383,7 +383,7 @@ test("unsupported role fails with the frozen diagnostic before any loader runs",
   assert.deepEqual([...harness.tools], []);
 });
 
-test("focused Judge controller owns activation, output, narrowing, and prompt", async () => {
+test("focused Judge controller registers output without narrowing host tools", async () => {
   const harness = extensionHarness(undefined, {}, [
     "read",
     "grep",
@@ -407,14 +407,7 @@ test("focused Judge controller owns activation, output, narrowing, and prompt", 
   await runtime.activate();
 
   assert.deepEqual([...harness.tools.keys()], [JUDGE_OUTPUT_TOOL_NAME]);
-  assert.deepEqual(harness.activeToolSets, [[
-    "read",
-    "grep",
-    "find",
-    "ls",
-    "bash",
-    JUDGE_OUTPUT_TOOL_NAME,
-  ]]);
+  assert.deepEqual(harness.activeToolSets, []);
   assert.equal(
     (await harness.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE" },

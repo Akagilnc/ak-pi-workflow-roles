@@ -7,7 +7,16 @@ import {
   type ProviderStreamOptions,
   type Usage,
 } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  createBashTool,
+  createEditTool,
+  createFindTool,
+  createGrepTool,
+  createLsTool,
+  createReadTool,
+  createWriteTool,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import {
@@ -408,17 +417,13 @@ export function readComplianceDecision(
       calls,
     );
   }
-  const call = calls[0];
-  if (
-    calls.length !== 1 ||
-    call?.type !== "toolCall" ||
-    call.name !== toolName
-  ) {
+  const call = calls.find((candidate) => candidate.name === toolName);
+  if (call === undefined) {
     throw malformedComplianceDecision(
       response,
       toolName,
       invalidLabel,
-      "expected exactly one decision tool call",
+      "expected a decision tool call",
       calls,
     );
   }
@@ -468,11 +473,15 @@ export async function runComplianceAudit(options: {
   const idleMaxRetries = options.idleMaxRetries ?? DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES;
   // Silence clock starts with each attempt and resets only on real AssistantMessageEvent
   // yields from provider.stream — not on outbound payload transform or response headers.
-  const onPayload = singleComplianceToolCallPayload(
-    dispatch.model,
-    options.tool.name,
-  );
-  const toolChoice = complianceToolChoice(dispatch.model, options.tool.name);
+  const workspaceTools = [
+    createReadTool(options.context.cwd),
+    createWriteTool(options.context.cwd),
+    createEditTool(options.context.cwd),
+    createBashTool(options.context.cwd),
+    createGrepTool(options.context.cwd),
+    createFindTool(options.context.cwd),
+    createLsTool(options.context.cwd),
+  ];
   const requestContext: Context = {
     systemPrompt: options.systemPrompt,
     messages: [
@@ -485,7 +494,7 @@ export async function runComplianceAudit(options: {
         timestamp: Date.now(),
       },
     ],
-    tools: [options.tool],
+    tools: [...workspaceTools, options.tool],
   };
 
   let lastIdleError: StreamIdleTimeoutError | undefined;
@@ -518,7 +527,7 @@ export async function runComplianceAudit(options: {
 
       let response: AssistantMessage;
       try {
-        response = await new Promise<AssistantMessage>((resolve, reject) => {
+        const completeTurn = () => new Promise<AssistantMessage>((resolve, reject) => {
           const onAbort = (): void => {
             reject(abortRejectionReason(idle.signal));
           };
@@ -536,8 +545,6 @@ export async function runComplianceAudit(options: {
               maxTokens: 2048,
               cacheRetention: "none",
               sessionId: uuidv7(),
-              ...(toolChoice === undefined ? {} : { toolChoice }),
-              ...(onPayload === undefined ? {} : { onPayload }),
               signal: idle.signal,
             },
           ).then(
@@ -555,13 +562,47 @@ export async function runComplianceAudit(options: {
             },
           );
         });
+        while (true) {
+          response = await completeTurn();
+          throwIfStreamIdleTimedOut(idle.signal.reason);
+          retainComplianceResponse(options.context, response);
+          const calls = response.content.filter(
+            (part): part is Extract<AssistantMessage["content"][number], { type: "toolCall" }> => part.type === "toolCall",
+          );
+          const evidenceCalls = calls.filter((call) => call.name !== options.tool.name);
+          let executedEvidence = 0;
+          if (evidenceCalls.length > 0) {
+            requestContext.messages.push(response);
+            for (const call of evidenceCalls) {
+              const tool = workspaceTools.find((candidate) => candidate.name === call.name);
+              if (tool === undefined) continue;
+              executedEvidence += 1;
+              try {
+                const result = await (tool.execute as any)(call.id, call.arguments, idle.signal);
+                requestContext.messages.push({
+                  role: "toolResult", toolCallId: call.id, toolName: call.name,
+                  content: result.content, details: result.details, isError: false, timestamp: Date.now(),
+                });
+              } catch (error) {
+                requestContext.messages.push({
+                  role: "toolResult", toolCallId: call.id, toolName: call.name,
+                  content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+                  isError: true, timestamp: Date.now(),
+                });
+              }
+            }
+          }
+          if (calls.some((call) => call.name === options.tool.name)) break;
+          if (executedEvidence === 0) {
+            return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
+          }
+        }
       } catch (error) {
         throwIfStreamIdleTimedOut(idle.signal.reason);
         throw error;
       }
 
       throwIfStreamIdleTimedOut(idle.signal.reason);
-      retainComplianceResponse(options.context, response);
       return readComplianceDecision(
         response,
         options.tool.name,
