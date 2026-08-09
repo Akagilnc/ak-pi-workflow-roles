@@ -67,6 +67,15 @@ export async function prepareComplianceDispatch(model, context, label) {
     };
 }
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+const COMPLIANCE_AUDIT_TURN_LIMIT = 8;
+export class ComplianceAuditTurnExhaustedError extends Error {
+    details;
+    constructor(message, details) {
+        super(message);
+        this.details = details;
+        this.name = "ComplianceAuditTurnExhaustedError";
+    }
+}
 export class ComplianceDecisionContractError extends Error {
     details;
     constructor(message, details) {
@@ -244,6 +253,7 @@ export async function runComplianceAudit(options) {
         tools: [...workspaceTools, options.tool],
     };
     let lastIdleError;
+    let observedTurns = 0;
     for (let attempt = 0; attempt <= idleMaxRetries; attempt += 1) {
         if (options.signal?.aborted) {
             throw abortRejectionReason(options.signal);
@@ -297,20 +307,32 @@ export async function runComplianceAudit(options) {
                 });
                 while (true) {
                     response = await completeTurn();
+                    observedTurns += 1;
                     throwIfStreamIdleTimedOut(idle.signal.reason);
                     retainComplianceResponse(options.context, response);
                     const calls = response.content.filter((part) => part.type === "toolCall");
                     if (calls.some((call) => call.name === options.tool.name))
                         break;
-                    const evidenceCalls = calls.flatMap((call) => {
-                        const tool = workspaceTools.find((candidate) => candidate.name === call.name);
-                        return tool === undefined ? [] : [{ call, tool }];
-                    });
-                    if (evidenceCalls.length === 0) {
+                    if (calls.length === 0) {
                         return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
                     }
                     requestContext.messages.push(response);
-                    for (const { call, tool } of evidenceCalls) {
+                    for (const call of calls) {
+                        const tool = workspaceTools.find((candidate) => candidate.name === call.name);
+                        if (tool === undefined) {
+                            requestContext.messages.push({
+                                role: "toolResult",
+                                toolCallId: call.id,
+                                toolName: call.name,
+                                content: [{
+                                        type: "text",
+                                        text: `Unknown compliance audit tool: ${call.name}`,
+                                    }],
+                                isError: true,
+                                timestamp: Date.now(),
+                            });
+                            continue;
+                        }
                         try {
                             const result = await tool.execute(call.id, call.arguments, idle.signal);
                             requestContext.messages.push({
@@ -336,6 +358,13 @@ export async function runComplianceAudit(options) {
                                 timestamp: Date.now(),
                             });
                         }
+                    }
+                    if (observedTurns >= COMPLIANCE_AUDIT_TURN_LIMIT) {
+                        throw new ComplianceAuditTurnExhaustedError(`compliance audit exhausted its ${COMPLIANCE_AUDIT_TURN_LIMIT}-turn limit`, {
+                            turnLimit: COMPLIANCE_AUDIT_TURN_LIMIT,
+                            observedTurns,
+                            ...complianceDecisionFacts(response, options.tool.name, calls),
+                        });
                     }
                 }
             }
