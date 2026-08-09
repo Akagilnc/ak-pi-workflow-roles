@@ -2,8 +2,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { childSessionManager } from "./activation-ledger-session.js";
 import { prepareComplianceDispatch } from "./compliance-transport.js";
 export class AuditorTurnLimitError extends Error {
     limit;
@@ -14,6 +12,10 @@ export class AuditorTurnLimitError extends Error {
     }
 }
 export async function runAuditorRole(options) {
+    const [{ createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager }, { childSessionManager }] = await Promise.all([
+        import("@earendil-works/pi-coding-agent"),
+        import("./activation-ledger-session.js"),
+    ]);
     const activeModel = options.context.model;
     if (activeModel === undefined)
         throw new Error(`${options.roleLabel} requires an active model`);
