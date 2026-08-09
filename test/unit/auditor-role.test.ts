@@ -52,6 +52,52 @@ test("constant unknown tools receive error results and exhaust at a finite typed
   }
 });
 
+test("provider and decision-tool failures on the limit turn retain their original identity", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-boundary-cause-"));
+  try {
+    const faux = fauxProvider({ provider: "audit-boundary-cause" });
+    const model = faux.getModel();
+    const context = {
+      cwd,
+      model,
+      modelRegistry: {
+        getProvider() { return faux.provider; },
+        async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
+        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
+      },
+      sessionManager: SessionManager.inMemory(cwd),
+    } as unknown as ExtensionContext;
+    const unknown = () => fauxAssistantMessage([fauxToolCall("ak_other_decision", {})], { stopReason: "toolUse" });
+
+    const providerFailure = fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider failed at boundary" });
+    faux.setResponses([...Array.from({ length: AUDITOR_TURN_LIMIT - 1 }, unknown), providerFailure]);
+    await assert.rejects(
+      runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: createComplianceDecisionTool("ak_boundary_provider", "Submit."), roleLabel: "Test auditor", context }),
+      (error: unknown) => {
+        assert.ok(!(error instanceof AuditorTurnLimitError));
+        assert.equal((error as { role?: unknown }).role, "assistant");
+        assert.equal((error as { stopReason?: unknown }).stopReason, "error");
+        assert.equal((error as { errorMessage?: unknown }).errorMessage, "provider failed at boundary");
+        return true;
+      },
+    );
+
+    const toolFailure = new Error("decision execution failed at boundary");
+    const baseTool = createComplianceDecisionTool("ak_boundary_tool", "Submit.");
+    const failingTool = { ...baseTool, async execute() { throw toolFailure; } };
+    faux.setResponses([
+      ...Array.from({ length: AUDITOR_TURN_LIMIT - 1 }, unknown),
+      fauxAssistantMessage([fauxToolCall(failingTool.name, { status: "pass" })], { stopReason: "toolUse" }),
+    ]);
+    await assert.rejects(
+      runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: failingTool, roleLabel: "Test auditor", context }),
+      (error: unknown) => error === toolFailure,
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("evidence and decision calls in the same assistant turn succeed", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-same-turn-"));
   try {
