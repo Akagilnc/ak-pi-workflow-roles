@@ -641,7 +641,7 @@ ${helpContext}
         report = unavailable(invocationId, error);
       }
     }
-    if (routePlaybookReadFailure !== void 0 && report.disposition !== "unavailable") {
+    if (routePlaybookReadFailure !== void 0) {
       report = { ...report, routePlaybookReadFailure };
     }
     const event = {

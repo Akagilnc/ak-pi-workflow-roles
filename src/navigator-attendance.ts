@@ -863,7 +863,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           report = unavailable(invocationId, error);
         }
       }
-      if (routePlaybookReadFailure !== undefined && report.disposition !== "unavailable") {
+      if (routePlaybookReadFailure !== undefined) {
         report = { ...report, routePlaybookReadFailure };
       }
       const event: NavigatorEvent = {
