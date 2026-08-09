@@ -584,6 +584,9 @@ export async function runComplianceAudit(options: {
                 timestamp: Date.now(),
               });
             } catch (error) {
+              if (idle.signal.aborted) {
+                throw abortRejectionReason(idle.signal);
+              }
               requestContext.messages.push({
                 role: "toolResult",
                 toolCallId: call.id,
@@ -596,6 +599,12 @@ export async function runComplianceAudit(options: {
                 timestamp: Date.now(),
               });
             }
+          }
+          // Tool execution can be the operation that observes parent/idle abort.
+          // Preserve that cancellation identity instead of converting it into
+          // either a tool error result or turn-budget exhaustion.
+          if (idle.signal.aborted) {
+            throw abortRejectionReason(idle.signal);
           }
           if (observedTurns >= COMPLIANCE_AUDIT_TURN_LIMIT) {
             throw new ComplianceAuditTurnExhaustedError(
