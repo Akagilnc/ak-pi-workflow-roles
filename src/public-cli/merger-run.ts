@@ -61,7 +61,6 @@ import {
   formatTerminalResult,
   hasLawfulMergerTerminalResult,
   inspectJudgeSession,
-  isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   presentStructuralRejection,
   readSessionProviderStop,
@@ -341,7 +340,7 @@ async function dispatchAdmittedMerger(input: {
         io,
       );
     }
-    if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (lawful !== undefined) {
       await markRunTerminal(admitted.runDirectory).catch(() => undefined);
       io.stdout(formatTerminalResult(lawful));
       return {
