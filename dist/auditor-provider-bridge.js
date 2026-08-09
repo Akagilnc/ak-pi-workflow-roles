@@ -1,0 +1,57 @@
+import { createServer } from "node:net";
+import { unlink } from "node:fs/promises";
+import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
+export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
+/** A private, typed child-process bridge. Authentication remains in the host process. */
+export async function createAuditorProviderBridge(options) {
+    await unlink(options.socketPath).catch(() => { });
+    const server = createServer((socket) => {
+        let input = "";
+        socket.setEncoding("utf8");
+        socket.on("data", (chunk) => {
+            input += chunk;
+            const newline = input.indexOf("\n");
+            if (newline < 0)
+                return;
+            const line = input.slice(0, newline);
+            input = "";
+            void (async () => {
+                try {
+                    const request = JSON.parse(line);
+                    if (request.type !== "stream")
+                        throw new Error("invalid auditor provider request");
+                    for (let attempt = 0;; attempt += 1) {
+                        const idle = createStreamIdleGuard(options.signal === undefined ? {} : { parentSignal: options.signal });
+                        try {
+                            const stream = options.provider.stream(options.model, request.context, { ...request.request, ...options.auth, signal: idle.signal });
+                            const events = [];
+                            for await (const event of stream) {
+                                idle.poke();
+                                events.push(event);
+                            }
+                            if (idle.signal.aborted)
+                                throw idle.signal.reason;
+                            const message = await stream.result();
+                            for (const event of events)
+                                socket.write(`${JSON.stringify({ type: "event", event })}\n`);
+                            socket.end(`${JSON.stringify({ type: "result", message })}\n`);
+                            break;
+                        }
+                        catch (error) {
+                            if (!isStreamIdleTimeoutError(error) || attempt >= DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES || options.signal?.aborted)
+                                throw error;
+                        }
+                        finally {
+                            idle.dispose();
+                        }
+                    }
+                }
+                catch (error) {
+                    socket.end(`${JSON.stringify({ type: "error", message: error instanceof Error ? error.message : String(error) })}\n`);
+                }
+            })();
+        });
+    });
+    await new Promise((resolve, reject) => { server.once("error", reject); server.listen(options.socketPath, resolve); });
+    return { socketPath: options.socketPath, async close() { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); await unlink(options.socketPath).catch(() => { }); } };
+}

@@ -65,7 +65,7 @@ export async function runMachinePiRpc(options: RpcOptions): Promise<MachinePiRpc
       let event: Record<string, unknown>;
       try { event = JSON.parse(line) as Record<string, unknown>; } catch (cause) { fail(new Error("machine Pi RPC emitted invalid JSONL", { cause })); return; }
       if (event.type === "response" && event.success === false) { fail(new Error(`machine Pi RPC command failed: ${String(event.error)}`)); return; }
-      if (event.type === "message_end" && typeof event.message === "object" && event.message !== null) response = event.message as Record<string, unknown>;
+      if (event.type === "message_end" && typeof event.message === "object" && event.message !== null && (event.message as { role?: unknown }).role === "assistant") response = event.message as Record<string, unknown>;
       if (event.type === "tool_execution_end" && event.toolName === options.decisionToolName) {
         // The terminating decision tool accepts the first submission. A stale
         // duplicate event can neither reopen the lifecycle nor overwrite it.

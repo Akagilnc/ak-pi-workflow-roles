@@ -3,6 +3,8 @@ import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-codin
 import { Type } from "typebox";
 import { runAuditorRole } from "./auditor-role.ts";
 
+export { DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES } from "./auditor-provider-bridge.ts";
+
 export type ComplianceCompletion = (model: Model<Api>, context: Context, options: ProviderStreamOptions) => Promise<AssistantMessage>;
 export type ComplianceArgumentRootType = "null" | "array" | "undefined" | "string" | "number" | "boolean" | "bigint" | "symbol" | "function";
 export type ComplianceAuditObservation = { kind: "non-object-arguments"; type: ComplianceArgumentRootType } | { kind: "object-status-unreadable"; status: "missing" | "unknown" };

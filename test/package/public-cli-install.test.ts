@@ -202,6 +202,7 @@ test("ordinary Pi startup does not register Internal --ak-role; ak-role explicit
 import { writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") { console.log("pi-shim"); process.exit(0); }
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args), "utf8");
 const child = spawn(${JSON.stringify(realPi)}, args, {
   stdio: "inherit",
@@ -302,7 +303,9 @@ test("installed ak-role coder admits plan/apply and binds package-owned tdd with
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") { console.log("pi-shim"); process.exit(0); }
+writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args), "utf8");
 process.exit(1);
 `,
       "utf8",
@@ -343,7 +346,9 @@ process.exit(1);
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") { console.log("pi-shim"); process.exit(0); }
+writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(args), "utf8");
 process.exit(1);
 `,
       "utf8",
@@ -418,7 +423,9 @@ test("installed ak-role collector admits PR/legs and pins isolation without pref
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") { console.log("pi-shim"); process.exit(0); }
+writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args), "utf8");
 process.exit(1);
 `,
       "utf8",
@@ -467,7 +474,9 @@ process.exit(1);
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-writeFileSync(${JSON.stringify(overrideLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") { console.log("pi-shim"); process.exit(0); }
+writeFileSync(${JSON.stringify(overrideLog)}, JSON.stringify(args), "utf8");
 process.exit(1);
 `,
       "utf8",
@@ -561,7 +570,9 @@ test("installed ak-role fixer admits plan/apply and binds package diagnosing-bug
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") { console.log("pi-shim"); process.exit(0); }
+writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args), "utf8");
 process.exit(1);
 `,
       "utf8",
@@ -610,7 +621,9 @@ process.exit(1);
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") { console.log("pi-shim"); process.exit(0); }
+writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(args), "utf8");
 process.exit(1);
 `,
       "utf8",

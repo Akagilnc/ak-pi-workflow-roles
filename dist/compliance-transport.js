@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import { runAuditorRole } from "./auditor-role.js";
+export { DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES } from "./auditor-provider-bridge.js";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
 // Transport must retain malformed candidates so they can settle as typed

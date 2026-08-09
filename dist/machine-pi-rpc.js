@@ -77,7 +77,7 @@ export async function runMachinePiRpc(options) {
                 fail(new Error(`machine Pi RPC command failed: ${String(event.error)}`));
                 return;
             }
-            if (event.type === "message_end" && typeof event.message === "object" && event.message !== null)
+            if (event.type === "message_end" && typeof event.message === "object" && event.message !== null && event.message.role === "assistant")
                 response = event.message;
             if (event.type === "tool_execution_end" && event.toolName === options.decisionToolName) {
                 // The terminating decision tool accepts the first submission. A stale

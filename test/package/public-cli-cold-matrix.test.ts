@@ -170,6 +170,7 @@ async function writePiArgvShim(
 import { writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") { console.log("pi-shim"); process.exit(0); }
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args), "utf8");
 const child = spawn(${JSON.stringify(realPi)}, args, {
   stdio: "inherit",
@@ -191,7 +192,9 @@ child.on("close", (code, signal) => {
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") { console.log("pi-shim"); process.exit(0); }
+writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args), "utf8");
 process.exit(${exitCode});
 `,
       "utf8",
