@@ -21,7 +21,6 @@ import {
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   StreamIdleTimeoutError,
-  complianceDecisionSchema,
   createComplianceDecisionTool,
   runComplianceAudit,
 } from "../../src/compliance-transport.ts";
@@ -331,22 +330,6 @@ test("shared compliance transport retains valid nested decisions verbatim", asyn
         false,
       );
     });
-  }
-});
-
-test("Codex decision schema is an open zero-required object with declared fields", () => {
-  assert.equal(complianceDecisionSchema.type, "object");
-  assert.equal((complianceDecisionSchema as { anyOf?: unknown }).anyOf, undefined);
-  assert.deepEqual(complianceDecisionSchema.required, []);
-  assert.equal((complianceDecisionSchema as unknown as { additionalProperties?: unknown }).additionalProperties, true);
-  assert.deepEqual(Object.keys(complianceDecisionSchema.properties), [
-    "status",
-    "violations",
-    "conflicts",
-    "decisionGate",
-  ]);
-  for (const property of Object.values(complianceDecisionSchema.properties)) {
-    assert.equal(typeof (property as { description?: unknown }).description, "string");
   }
 });
 

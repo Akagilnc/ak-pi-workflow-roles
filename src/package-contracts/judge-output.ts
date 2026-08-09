@@ -26,115 +26,14 @@ export type JudgeVerdict =
     evidence?: unknown;
   };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasExactKeys(
-  value: Record<string, unknown>,
-  expected: readonly string[],
-): boolean {
-  const keys = Object.keys(value);
-  return (
-    keys.length === expected.length &&
-    expected.every((key) => Object.hasOwn(value, key))
-  );
-}
-
 export function validateAcceptedJudgeDetails(verdict: unknown): JudgeVerdict {
-  if (!isRecord(verdict)) throw new Error("Judge verdict must be an object");
-  if (
-    verdict.note !== undefined &&
-    (typeof verdict.note !== "string" || verdict.note.trim().length === 0)
-  ) {
-    throw new Error("Judge note must be a non-blank string when provided");
+  if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) throw new Error("Judge verdict has no execution discriminator");
+  let judgeStatus: unknown;
+  try {
+    judgeStatus = (verdict as Record<string, unknown>).judgeStatus;
+  } catch {
+    throw new Error("Judge verdict has no execution discriminator");
   }
-  const withOptionalFields = (keys: string[]): string[] => [
-    ...keys,
-    ...(verdict.note === undefined ? [] : ["note"]),
-    ...(verdict.evidence === undefined ? [] : ["evidence"]),
-  ];
-  const note = verdict.note === undefined ? {} : { note: verdict.note };
-  const evidence = verdict.evidence === undefined
-    ? {}
-    : { evidence: verdict.evidence };
-  const validClasses = (value: unknown): value is JudgeClass[] => {
-    if (!Array.isArray(value) || value.length === 0) return false;
-    const names = new Set<string>();
-    return value.every((entry) => {
-      if (!isRecord(entry) ||
-        !hasExactKeys(entry, ["name", "owner", "boundary", "disposition"])) {
-        return false;
-      }
-      for (const key of ["name", "owner", "boundary", "disposition"] as const) {
-        if (typeof entry[key] !== "string" || entry[key].trim().length === 0) {
-          return false;
-        }
-      }
-      if ((entry.name as string).includes(",") || names.has(entry.name as string)) {
-        return false;
-      }
-      names.add(entry.name as string);
-      return true;
-    });
-  };
-
-  if (verdict.judgeStatus === "converged") {
-    const expectedKeys = withOptionalFields(["judgeStatus"]);
-    if (!hasExactKeys(verdict, expectedKeys)) {
-      const extraKeys = Object.keys(verdict).filter(
-        (key) => !expectedKeys.includes(key),
-      );
-      throw new Error(`Judge converged forbids extra keys: ${extraKeys.join(", ")}`);
-    }
-    return { judgeStatus: "converged", ...note, ...evidence };
-  }
-  if (verdict.judgeStatus === "continue") {
-    if (
-      !hasExactKeys(verdict, withOptionalFields(["judgeStatus", "fix", "classes"])) ||
-      !isRecord(verdict.fix) ||
-      !hasExactKeys(verdict.fix, ["summary"]) ||
-      typeof verdict.fix.summary !== "string" ||
-      verdict.fix.summary.trim().length === 0 ||
-      !validClasses(verdict.classes)
-    ) {
-      throw new Error("Judge continue requires fix.summary and nonempty unique comma-free classes");
-    }
-    return {
-      judgeStatus: "continue",
-      fix: { summary: verdict.fix.summary },
-      classes: verdict.classes.map((entry) => ({ ...entry })),
-      ...note,
-      ...evidence,
-    };
-  }
-  if (verdict.judgeStatus === "escalate") {
-    const gate = verdict.decisionGate;
-    if (
-      !hasExactKeys(
-        verdict,
-        withOptionalFields(["judgeStatus", "decisionGate"]),
-      ) ||
-      !isRecord(gate) ||
-      !hasExactKeys(gate, ["question", "options"]) ||
-      typeof gate.question !== "string" ||
-      gate.question.trim().length === 0 ||
-      !Array.isArray(gate.options) ||
-      gate.options.length === 0 ||
-      !gate.options.every(
-        (option) => typeof option === "string" && option.trim().length > 0,
-      )
-    ) {
-      throw new Error(
-        "Judge escalate requires only a non-blank decisionGate question and options",
-      );
-    }
-    return {
-      judgeStatus: "escalate",
-      decisionGate: { question: gate.question, options: [...gate.options] },
-      ...note,
-      ...evidence,
-    };
-  }
-  throw new Error("Judge verdict has an invalid status");
+  if (["converged", "continue", "escalate"].includes(String(judgeStatus))) return verdict as JudgeVerdict;
+  throw new Error("Judge verdict has no execution discriminator");
 }

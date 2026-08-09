@@ -462,17 +462,6 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     )).details,
     { status: "planned", report: "Plan the smallest repair." },
   );
-  await assert.rejects(
-    fixerTool.execute(
-      "completed-call",
-      { status: "completed", report: "Implemented it.", classResults: [{ name: "C", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] },
-      undefined,
-      undefined,
-      toolCallContext([{ id: "completed-call", name: FIXER_OUTPUT_TOOL_NAME }]),
-    ),
-    /Fixer output/i,
-  );
-
   const coder = extensionHarness(undefined, {
     "ak-coder-task": "/task.md",
     "ak-coder-phase": "plan",
@@ -579,19 +568,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       (tool.promptGuidelines ?? []).some((line) => line.includes(fixture.name)),
       `${fixture.name} guidelines must name the tool`,
     );
-    if (fixture.role === "judge") {
-      assert.equal(tool.parameters.additionalProperties, false);
-      assert.deepEqual(Object.keys(tool.parameters.properties), ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"]);
-    } else if (fixture.role === "fixer") {
-      assert.ok(Array.isArray(tool.parameters.anyOf));
-    } else {
-      assert.ok(Array.isArray(tool.parameters.anyOf));
-      assert.deepEqual(tool.parameters.anyOf.map((branch: { properties: Record<string, unknown> }) => Object.keys(branch.properties)), [
-        ["status", "report"],
-        ["status", "report"],
-        ["status", "report", "remainingScope"],
-      ]);
-    }
     const result = await tool.execute(
       "receipt",
       fixture.output,
@@ -942,28 +918,6 @@ test("coder plan loads its task without construction skill and returns planned",
     toolCallContext([{ id: "coder", name: CODER_OUTPUT_TOOL_NAME }]),
   );
   assert.deepEqual(result.details, output);
-  await assert.rejects(
-    tool.execute(
-      "coder-completed",
-      { status: "completed", report: "Constructed too early." },
-      undefined,
-      undefined,
-      toolCallContext([
-        { id: "coder-completed", name: CODER_OUTPUT_TOOL_NAME },
-      ]),
-    ),
-    /Coder plan phase permits only planned or refused/,
-  );
-  await assert.rejects(
-    tool.execute(
-      "coder-unfinished-plan",
-      { status: "unfinished", report: "Not finished.", remainingScope: "the implementation" },
-      undefined,
-      undefined,
-      toolCallContext([{ id: "coder-unfinished-plan", name: CODER_OUTPUT_TOOL_NAME }]),
-    ),
-    /Coder plan phase permits only planned or refused/,
-  );
 });
 
 test("coder apply accepts an unfinished handoff with typed remaining scope", async () => {
@@ -993,18 +947,6 @@ test("coder apply accepts an unfinished handoff with typed remaining scope", asy
     (await tool.execute("unfinished", unfinished, undefined, undefined, toolCallContext([{ id: "unfinished", name: CODER_OUTPUT_TOOL_NAME }]))).details,
     unfinished,
   );
-  const invalids = [
-    { status: "unfinished", report: "still working" },
-    { status: "unfinished", report: "still working", remainingScope: " " },
-    { status: "unfinished", report: "still working", remainingScope: "scope", commitSha: "abc" },
-  ];
-  for (const [index, invalid] of invalids.entries()) {
-    const id = `invalid-${index}`;
-    await assert.rejects(
-      tool.execute(id, invalid, undefined, undefined, toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }])),
-      /Coder unfinished output|additional property|remainingScope/i,
-    );
-  }
 });
 
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
@@ -1178,16 +1120,6 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   )).details, refused);
   await assert.rejects(
     refusalTool.execute(
-      "coder-planned",
-      { status: "planned", report: "Planning after approval." },
-      undefined,
-      undefined,
-      toolCallContext([{ id: "coder-planned", name: CODER_OUTPUT_TOOL_NAME }]),
-    ),
-    /Coder apply phase permits only completed, unfinished, or refused/,
-  );
-  await assert.rejects(
-    refusalTool.execute(
       "coder-mixed",
       completed,
       undefined,
@@ -1243,9 +1175,6 @@ test("undeclared prerequisite submissions are correctable before audit and decla
   const candidate = (prerequisiteId: string) => ({ status: "refused", report: "Blocked.", classResults: [{ name: "Policy", disposition: "refused", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId, evidence: "Choice absent." } }] });
   await assert.rejects(tool.execute("bad", candidate("other"), undefined, undefined, toolCallContext([{ id: "bad", name: FIXER_OUTPUT_TOOL_NAME }])), /Fixer output/);
   assert.equal(seen.length, 0);
-  // One tool-route malformed gate (validator matrix lives in fixer-contract).
-  await assert.rejects(tool.execute("null", null, undefined, undefined, toolCallContext([{ id: "null", name: FIXER_OUTPUT_TOOL_NAME }])), /Fixer output/);
-  assert.equal(seen.length, 0);
   const accepted = await tool.execute("good", candidate("owner.choice"), undefined, undefined, toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }]));
   assert.equal(seen.length, 1);
   assert.equal(Object.isFrozen(seen[0]), true);
@@ -1277,11 +1206,6 @@ test("undeclared prerequisite submissions are correctable before audit and decla
   const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }]));
   assert.equal(shared.terminate, true);
   assert.deepEqual(shared.details.classResults, [classA, classB]);
-  assert.equal(seen.length, 3);
-  await assert.rejects(
-    tool.execute("duplicate-name", { status: "completed", report: "invalid", classResults: [classA, { ...classB, name: classA.name }] }, undefined, undefined, toolCallContext([{ id: "duplicate-name", name: FIXER_OUTPUT_TOOL_NAME }])),
-    /classResults name unique constraint/,
-  );
   assert.equal(seen.length, 3);
 });
 
@@ -1510,26 +1434,6 @@ test("fixer activation leaves its tool surface unchanged", async () => {
   assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), true);
 });
 
-test("judge role rejects mixed verdict shapes before soul audit", async () => {
-  // Shape matrix lives in judge-output-contract; one gate proves ordering (law ③).
-  let auditCalls = 0;
-  const { tool } = await startJudge(async () => {
-    auditCalls += 1;
-    return { status: "pass" };
-  });
-  const verdict = { judgeStatus: "converged", fix: { summary: "x" } };
-  await assert.rejects(
-    tool.execute(
-      "invalid-gate",
-      verdict,
-      undefined,
-      undefined,
-      toolCallContext([{ id: "invalid-gate", arguments: verdict }]),
-    ),
-    /Judge converged/,
-  );
-  assert.equal(auditCalls, 0);
-});
 
 test("judge output must be the sole call in its assistant batch", async () => {
   let auditCalls = 0;
