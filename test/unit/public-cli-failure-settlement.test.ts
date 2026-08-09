@@ -2372,7 +2372,7 @@ test("audited roles publicly settle a production provider stop without promoting
         assert.equal(typedFailure?.knownCause, "provider");
         assert.equal(typedFailure?.name, "ProviderStopError");
         assert.equal(typedFailure?.message, "WebSocket error");
-        assert.equal(typedFailure?.failureCode, "openai-codex");
+        assert.equal(typedFailure?.failureCode, "openai-codex/faux-1");
         assert.deepEqual(typedFailure?.details?.retentionFailure, { name: "ComplianceResponseRetentionError", message: "compliance response retention failed", cause: { name: "Error", message: "disk full", code: "ENOSPC" } });
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
@@ -2380,7 +2380,8 @@ test("audited roles publicly settle a production provider stop without promoting
         return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args], knownFailure: { cause: typedFailure.knownCause, diagnostic: typedFailure.message, identity: { name: typedFailure.name, code: typedFailure.failureCode }, details: typedFailure.details } };
       },
     });
-    const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "provider", diagnosticEquals: "WebSocket error", identityName: "ProviderStopError", identityCode: "openai-codex" });
+    const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "provider", diagnosticEquals: "WebSocket error", identityName: "ProviderStopError", identityCode: "openai-codex/faux-1" });
+    assert.equal((retentionSettlement.terminal.roleOutcome as any).decisiveFacts.secondaryEvidence.model, "faux-1");
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
     assert.equal(retentionArtifact.details.retentionFailure.cause.code, "ENOSPC");
 
