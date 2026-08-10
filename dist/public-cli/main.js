@@ -13794,7 +13794,7 @@ function extractComplianceAuditIncompleteRoleOutcome(entries, role, outputToolNa
     );
     if (roleCall === void 0) continue;
     const details = message.details;
-    if (isComplianceAuditIncomplete(details) && (details.observation.kind === "missing-dossier" || details.observation.kind === "missing-subject")) {
+    if (details.observation.kind === "missing-dossier" || details.observation.kind === "missing-subject") {
       return {
         outcome: buildAuditIncompleteTerminalOutcome({
           role,

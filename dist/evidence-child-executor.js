@@ -10,24 +10,18 @@ import { createAssistantMessageEventStream, InMemoryCredentialStore, } from "@ea
 import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch, } from "./compliance-transport.js";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
-export async function openInProcessAgentSession(...args) {
-    const mod = await import("./in-process-session.js");
-    return mod.openInProcessAgentSession(...args);
-}
 // ── shared constants / types ──────────────────────────────────────────────
 export const AUDITOR_TURN_LIMIT = 32;
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
 export class AuditorTurnLimitError extends Error {
     limit;
     observedTurns;
-    lastResponse;
-    constructor(limit, observedTurns, lastResponse) {
+    constructor(limit, observedTurns) {
         super(observedTurns === undefined
             ? `Auditor exceeded ${limit} turns`
             : `Auditor exhausted its ${limit}-turn limit after ${observedTurns} provider turns`);
         this.limit = limit;
         this.observedTurns = observedTurns;
-        this.lastResponse = lastResponse;
         this.name = "AuditorTurnLimitError";
     }
 }
@@ -258,36 +252,14 @@ function addUsage(total, next) {
 }
 export async function executeEvidenceChild(workspace, prompt, context, options = {}) {
     const signal = options.signal;
-    const fault = options.fault;
     return withInProcessScratch({
         prefix: "ak-evidence-child-",
         ...(options.credentialScratchParent === undefined
             ? {}
             : { parentDirectory: options.credentialScratchParent }),
     }, async (childConfigDir) => {
-        const { createAgentSession, DefaultResourceLoader, SettingsManager, } = await import("@earendil-works/pi-coding-agent");
+        const { openInProcessAgentSession } = await import("./in-process-session.js");
         const { childSessionManager } = await import("./activation-ledger-session.js");
-        const settings = SettingsManager.inMemory({
-            compaction: { enabled: false },
-            retry: { enabled: false },
-        });
-        const loader = new DefaultResourceLoader({
-            cwd: workspace,
-            agentDir: childConfigDir,
-            settingsManager: settings,
-            noExtensions: true,
-            noSkills: true,
-            noPromptTemplates: true,
-            noThemes: true,
-            noContextFiles: true,
-            systemPrompt: [
-                "Work only in the supplied workspace.",
-                "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
-                "Return one substantive non-blank report.",
-            ].join("\n"),
-        });
-        fault?.("child.reload");
-        await loader.reload();
         let inherited;
         try {
             inherited = await createInheritedRuntime({
@@ -298,17 +270,20 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
         catch (error) {
             throw classifiedError(error, "provider");
         }
-        fault?.("child.session");
         // No tools allowlist — Pi defaults + unrestricted evidence surface (ADR 0064).
-        const { session } = await createAgentSession({
+        // Single createAgentSession owner: in-process-session.ts.
+        const { session, dispose } = await openInProcessAgentSession({
             cwd: workspace,
             agentDir: childConfigDir,
             model: inherited.model,
             thinkingLevel: context.thinkingLevel ?? "off",
             modelRuntime: inherited.runtime,
-            resourceLoader: loader,
+            systemPrompt: [
+                "Work only in the supplied workspace.",
+                "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
+                "Return one substantive non-blank report.",
+            ].join("\n"),
             sessionManager: childSessionManager(context.sessionManager, workspace, "evidence-children"),
-            settingsManager: settings,
         });
         const usage = emptyUsage();
         const unsubscribe = session.subscribe((event) => {
@@ -356,7 +331,7 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
         finally {
             signal?.removeEventListener("abort", abortChild);
             let cleanupFailure;
-            for (const cleanup of [() => unsubscribe(), () => session.dispose()]) {
+            for (const cleanup of [() => unsubscribe(), () => dispose()]) {
                 try {
                     cleanup();
                 }
@@ -546,8 +521,4 @@ export async function executeAuditorChild(options) {
             dispose();
         }
     });
-}
-/** Historical public name — same body as executeAuditorChild. */
-export async function runAuditorRole(options) {
-    return executeAuditorChild(options);
 }

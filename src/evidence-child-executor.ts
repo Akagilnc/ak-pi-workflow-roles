@@ -33,31 +33,15 @@ import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
 
-// Re-export for callers that already dynamic-import this module; do not static-pull
-// in-process-session here (keeps public-cli free of pi-coding-agent).
-export type { OpenInProcessAgentSessionOptions } from "./in-process-session.ts";
-export async function openInProcessAgentSession(
-  ...args: Parameters<typeof import("./in-process-session.ts").openInProcessAgentSession>
-): ReturnType<typeof import("./in-process-session.ts").openInProcessAgentSession> {
-  const mod = await import("./in-process-session.ts");
-  return mod.openInProcessAgentSession(...args);
-}
-
 // ── shared constants / types ──────────────────────────────────────────────
 
 export const AUDITOR_TURN_LIMIT = 32;
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
 
-export type EvidenceChildFaultPoint = "child.reload" | "child.session";
-export type AuditorLastResponseFacts = {
-  stopReason: AssistantMessage["stopReason"];
-  toolNames: readonly string[];
-};
 export class AuditorTurnLimitError extends Error {
   constructor(
     readonly limit: number,
     readonly observedTurns?: number,
-    readonly lastResponse?: AuditorLastResponseFacts,
   ) {
     super(
       observedTurns === undefined
@@ -349,7 +333,6 @@ function addUsage(total: Usage, next: Usage): void {
 
 export type EvidenceChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
-  fault?(operation: EvidenceChildFaultPoint): void;
   /** Parent directory for credential/config scratch. Defaults to os.tmpdir(). */
   credentialScratchParent?: string;
 }>;
@@ -361,7 +344,6 @@ export async function executeEvidenceChild(
   options: EvidenceChildExecuteOptions = {},
 ): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptText }> {
   const signal = options.signal;
-  const fault = options.fault;
   return withInProcessScratch(
     {
       prefix: "ak-evidence-child-",
@@ -370,33 +352,8 @@ export async function executeEvidenceChild(
         : { parentDirectory: options.credentialScratchParent }),
     },
     async (childConfigDir) => {
-      const {
-        createAgentSession,
-        DefaultResourceLoader,
-        SettingsManager,
-      } = await import("@earendil-works/pi-coding-agent");
+      const { openInProcessAgentSession } = await import("./in-process-session.ts");
       const { childSessionManager } = await import("./activation-ledger-session.ts");
-      const settings = SettingsManager.inMemory({
-        compaction: { enabled: false },
-        retry: { enabled: false },
-      });
-      const loader = new DefaultResourceLoader({
-        cwd: workspace,
-        agentDir: childConfigDir,
-        settingsManager: settings,
-        noExtensions: true,
-        noSkills: true,
-        noPromptTemplates: true,
-        noThemes: true,
-        noContextFiles: true,
-        systemPrompt: [
-          "Work only in the supplied workspace.",
-          "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
-          "Return one substantive non-blank report.",
-        ].join("\n"),
-      });
-      fault?.("child.reload");
-      await loader.reload();
       let inherited: InheritedRuntime;
       try {
         inherited = await createInheritedRuntime({
@@ -406,17 +363,20 @@ export async function executeEvidenceChild(
       } catch (error) {
         throw classifiedError(error, "provider");
       }
-      fault?.("child.session");
       // No tools allowlist — Pi defaults + unrestricted evidence surface (ADR 0064).
-      const { session } = await createAgentSession({
+      // Single createAgentSession owner: in-process-session.ts.
+      const { session, dispose } = await openInProcessAgentSession({
         cwd: workspace,
         agentDir: childConfigDir,
         model: inherited.model,
         thinkingLevel: context.thinkingLevel ?? "off",
         modelRuntime: inherited.runtime,
-        resourceLoader: loader,
+        systemPrompt: [
+          "Work only in the supplied workspace.",
+          "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
+          "Return one substantive non-blank report.",
+        ].join("\n"),
         sessionManager: childSessionManager(context.sessionManager, workspace, "evidence-children"),
-        settingsManager: settings,
       });
       const usage = emptyUsage();
       const unsubscribe = session.subscribe((event) => {
@@ -464,7 +424,7 @@ export async function executeEvidenceChild(
       } finally {
         signal?.removeEventListener("abort", abortChild);
         let cleanupFailure: unknown;
-        for (const cleanup of [() => unsubscribe(), () => session.dispose()]) {
+        for (const cleanup of [() => unsubscribe(), () => dispose()]) {
           try {
             cleanup();
           } catch (failure) {
@@ -683,11 +643,4 @@ export async function executeAuditorChild(
       dispose();
     }
   });
-}
-
-/** Historical public name — same body as executeAuditorChild. */
-export async function runAuditorRole(
-  options: AuditorRoleOptions,
-): Promise<{ decision: unknown; response: AssistantMessage }> {
-  return executeAuditorChild(options);
 }

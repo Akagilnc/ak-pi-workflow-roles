@@ -2,7 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isReviewerPromptText, type ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import type { AcceptedReviewerExecution } from "./reviewer-dispatch.ts";
 import type { ReviewerTargetSnapshot, ReviewerWorkspaceDisposition, ReviewerFailureClassification, ReviewerUsage } from "./reviewer-execution-ledger.ts";
-import { executeReviewerChild, type ReviewerExecutorFaultPoint } from "./reviewer-child-executor.ts";
+import { executeReviewerChild } from "./reviewer-child-executor.ts";
 import { createReviewerWorkspaceOwner, type ReviewerWorkspaceFaultPoint } from "./reviewer-workspace.ts";
 import { normalizeReviewerFailureDiagnostic } from "./reviewer-failure-diagnostic.ts";
 
@@ -30,7 +30,7 @@ export class ReviewerDispatchExecutionError extends Error {
   }
 }
 export type ReviewerAgentRunner = { run(dispatch: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>; shutdown(): Promise<void> };
-export type ReviewerAgentFaultPoint = ReviewerWorkspaceFaultPoint | ReviewerExecutorFaultPoint;
+export type ReviewerAgentFaultPoint = ReviewerWorkspaceFaultPoint;
 type Dependencies = Readonly<{
   fault?(operation: ReviewerAgentFaultPoint): void;
   /** When set, child credential/config scratch is created under this parent so cleanup proofs stay process-local. */
@@ -73,7 +73,6 @@ export function createReviewerAgentRunner(dependencies: Dependencies = {}): Revi
         try {
           const child = await executeReviewerChild(workspace.path, leg, options.context, {
             ...(options.signal === undefined ? {} : { signal: options.signal }),
-            ...(dependencies.fault === undefined ? {} : { fault: dependencies.fault }),
             ...(dependencies.credentialScratchParent === undefined
               ? {}
               : { credentialScratchParent: dependencies.credentialScratchParent }),

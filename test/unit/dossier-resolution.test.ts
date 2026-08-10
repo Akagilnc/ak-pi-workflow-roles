@@ -12,33 +12,9 @@ import {
   readJudgeAuditSubjects,
 } from "../../src/dossier-resolution.ts";
 
-test("absent AK_ROLE_RUN_DIR is bare-Pi ok, not missing-dossier", () => {
-  const previous = process.env.AK_ROLE_RUN_DIR;
-  delete process.env.AK_ROLE_RUN_DIR;
-  try {
-    const result = resolveAuditDossier();
-    assert.deepEqual(result, { status: "ok" });
-    assert.equal("runDirectory" in result && result.runDirectory !== undefined, false);
-  } finally {
-    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previous;
-  }
-});
-
-test("nonexistent AK_ROLE_RUN_DIR is missing-dossier", async () => {
-  const previous = process.env.AK_ROLE_RUN_DIR;
-  process.env.AK_ROLE_RUN_DIR = join(tmpdir(), "ak-missing-run-dir-does-not-exist");
-  try {
-    const result = resolveAuditDossier();
-    assert.deepEqual(result, {
-      status: "incomplete",
-      observation: { kind: "missing-dossier" },
-    });
-  } finally {
-    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previous;
-  }
-});
+// bare-Pi absent pointer and missing-dossier path gates are covered at the
+// real auditor entry (judge-auditor-dossier.test.ts); keep only the concurrent
+// isolation contract and helper-level subject shape here.
 
 test("concurrent pointers keep two runs from crossing dossiers", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-dossier-concurrent-"));

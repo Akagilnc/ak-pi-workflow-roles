@@ -81,7 +81,7 @@ function auditExtensionContext(
   } as unknown as ExtensionContext;
 }
 
-test("auditor gathers evidence without projected materials and submits one decision", async () => {
+test("auditor gathers evidence and submits one decision", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-zero-projection-"));
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory);
@@ -100,12 +100,8 @@ test("auditor gathers evidence without projected materials and submits one decis
     let turns = 0;
     const complete = (context: Context) => {
       turns += 1;
-      // Zero projection: user message must not embed soul/transcript/verdict blocks.
-      const userText = context.messages
-        .filter((message) => message.role === "user")
-        .map((message) => JSON.stringify(message.content))
-        .join("\n");
-      assert.equal(/judge_soul|adjudication_record|proposed_verdict/.test(userText), false);
+      // Zero-projection contract is asserted once at the real judge entry
+      // (judge-auditor-dossier.test.ts); this case bites gather + one decision.
       if (turns === 1) {
         // Behavior proof of unrestricted tools (ADR 0064): read is available
         // without a second active-tools / tools allowlist cage.
