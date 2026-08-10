@@ -51,8 +51,10 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
       { stopReason: "toolUse" },
     );
   };
-  // The public process uses this provider once for Coder and once for Navigator.
-  faux.setResponses([respond, respond]);
+  // Public process: Navigator prepare + Coder completed. Gate ① may bounce the first
+  // completed (zero new commit) once; same payload resubmit is the confirm path — keep
+  // enough identical steps for bounce→confirm without exhausting the faux queue.
+  faux.setResponses([respond, respond, respond, respond]);
 
   const model = faux.getModel();
   const provider: Provider = {
