@@ -98,7 +98,7 @@ ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
 **merge 按钮归调用者**，没有任何角色握不可逆权限：门下省把收证这件苦活做完并报收集终态，人（或 AI）自己判断、自己点，点完想调主簿就调、不调也可以。
 
-上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；审刑院也并非只跟在大理寺之后，大理寺、修内司、御史台、太医署各自都有一次。
+上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；审刑院也并非只跟在大理寺之后，大理寺、御史台、太医署各自都有一次。
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 

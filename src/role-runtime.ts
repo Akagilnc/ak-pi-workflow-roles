@@ -177,12 +177,6 @@ export { AUDITOR_SOUL_ROLES, loadAuditorSoul } from "./auditor-soul.ts";
 export type { AuditorSoulRole } from "./auditor-soul.ts";
 export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME, createPiJudgeAuditor } from "./judge-auditor.ts";
 export { REVIEWER_AUDIT_TOOL_NAME, createPiReviewerAuditor } from "./reviewer-auditor.ts";
-export {
-  installWorkerGitHooks,
-  WORKER_COMMIT_SUBJECT_PREFIX,
-  createWorkerSubmissionGate,
-  WorkerCommitReminderError,
-} from "./worker-submission-gates.ts";
 export { DOCTOR_AUDIT_TOOL_NAME, createPiDoctorAuditor } from "./doctor-auditor.ts";
 export type { ComplianceDecision } from "./compliance-transport.ts";
 export {
@@ -609,7 +603,6 @@ export function createRoleRuntimeExtension(
           return dependencies.loadFixPacket(path);
         },
       },
-      hostActions,
     );
     const coder = createCoderRoleRuntime(
       pi,
