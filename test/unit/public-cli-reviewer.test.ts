@@ -153,7 +153,7 @@ function lawfulReviewerReceipt(
   };
 }
 
-test("parseReviewerArgv accepts common flags and optional base revision", () => {
+test("parseReviewerArgv accepts project/base and rejects Reviewer attachments", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
@@ -165,15 +165,13 @@ test("parseReviewerArgv accepts common flags and optional base revision", () => 
     parseReviewerArgv([
       "--base",
       "main",
-      "--attach",
-      "spec.md",
       "--project",
       "/tmp/p",
       "Review since the base.",
     ]),
     {
       instruction: "Review since the base.",
-      attachmentPaths: ["spec.md"],
+      attachmentPaths: [],
       baseRevision: "main",
       project: "/tmp/p",
     },
@@ -181,6 +179,8 @@ test("parseReviewerArgv accepts common flags and optional base revision", () => 
   assert.throws(() => parseReviewerArgv(["--unknown-flag"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--base", "", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--project", "", "task"]), isUsage);
+  assert.throws(() => parseReviewerArgv(["--attach", "spec.md", "task"]), isUsage);
+  assert.throws(() => parseReviewerArgv(["--attach=spec.md", "task"]), isUsage);
   // Capability packets are not a public surface.
   assert.throws(() => parseReviewerArgv(["--capabilities", "c.json", "task"]), isUsage);
 });
