@@ -19,10 +19,12 @@ const entries = [
  * for roles/config/help discovery. package.json#bin → dist/public-cli/main.js.
  * Exported so package tests can prove the committed artifact matches source.
  */
-async function buildBundledBin(entryPoint, outfile) {
+export async function buildPublicAkRoleBin(
+  outfile = "dist/public-cli/main.js",
+) {
   await mkdir(dirname(outfile), { recursive: true });
   await build({
-    entryPoints: [entryPoint],
+    entryPoints: ["src/public-cli/main.ts"],
     outfile,
     format: "esm",
     platform: "node",
@@ -34,12 +36,6 @@ async function buildBundledBin(entryPoint, outfile) {
     logLevel: "silent",
   });
   await chmod(outfile, 0o755);
-}
-
-export async function buildPublicAkRoleBin(
-  outfile = "dist/public-cli/main.js",
-) {
-  await buildBundledBin("src/public-cli/main.ts", outfile);
 }
 
 export async function buildPackageArtifacts() {
