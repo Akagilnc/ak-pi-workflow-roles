@@ -184,6 +184,10 @@ export async function executeAuditorChild(options) {
         let retentionFailure;
         let retainedResponse;
         const evidenceToolNames = new Set(AUDITOR_EVIDENCE_TOOLS);
+        const findEvidenceToolFailure = (response) => {
+            const evidenceCallIds = new Set(response.content.flatMap((part) => part.type === "toolCall" && evidenceToolNames.has(part.name) ? [part.id] : []));
+            return [...session.messages].reverse().find((message) => message.role === "toolResult" && evidenceCallIds.has(message.toolCallId) && message.isError);
+        };
         const unsubscribe = session.subscribe((event) => {
             if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
                 turns += 1;
@@ -200,8 +204,7 @@ export async function executeAuditorChild(options) {
             // Let every evidence tool in the boundary turn settle before stopping.
             if (event.type === "turn_end") {
                 if (boundaryResponse !== undefined) {
-                    const evidenceCallIds = new Set(boundaryResponse.content.flatMap((part) => part.type === "toolCall" && evidenceToolNames.has(part.name) ? [part.id] : []));
-                    evidenceToolFailure = [...session.messages].reverse().find((message) => message.role === "toolResult" && evidenceCallIds.has(message.toolCallId) && message.isError);
+                    evidenceToolFailure = findEvidenceToolFailure(boundaryResponse);
                 }
                 if (decision !== undefined || boundaryResponse !== undefined || retentionFailure !== undefined)
                     void session.abort();
@@ -236,8 +239,7 @@ export async function executeAuditorChild(options) {
             if (decision !== undefined) {
                 const decisionResponse = [...session.messages].reverse().find((message) => message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
                 if (decisionResponse !== undefined) {
-                    const evidenceCallIds = new Set(decisionResponse.content.flatMap((part) => part.type === "toolCall" && evidenceToolNames.has(part.name) ? [part.id] : []));
-                    evidenceToolFailure = [...session.messages].reverse().find((message) => message.role === "toolResult" && evidenceCallIds.has(message.toolCallId) && message.isError) ?? evidenceToolFailure;
+                    evidenceToolFailure = findEvidenceToolFailure(decisionResponse) ?? evidenceToolFailure;
                 }
             }
             if (evidenceToolFailure !== undefined)

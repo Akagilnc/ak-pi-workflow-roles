@@ -140,49 +140,6 @@ export interface IsolatedPackResult {
   files: Array<{ path: string }>;
 }
 
-/**
- * Materialize a private package tree and run real `npm pack` there so the
- * prepack → retained package build cannot rewrite shared dist/.
- */
-async function isolatedPackEnvironment(root: string): Promise<NodeJS.ProcessEnv> {
-  const bin = resolve(root, ".pack-bin");
-  await mkdir(bin, { recursive: true });
-  const shim = resolve(bin, "pnpm");
-  await writeFile(shim, `#!/bin/sh\n[ "$1" = run ] || exit 64\nshift\nname="$1"\nshift\nscript=$(node -e 'process.stdout.write(require("./package.json").scripts[process.argv[1]] || "")' "$name")\n[ -n "$script" ] || exit 65\nexec sh -c "$script" -- "$@"\n`, { mode: 0o755 });
-  return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
-}
-
-export async function packIsolatedPackage(
-  packDestination: string,
-  options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
-): Promise<IsolatedPackResult> {
-  await mkdir(packDestination, { recursive: true });
-  const root = await mkdtemp(resolve(tmpdir(), "ak-pack-mat-"));
-  try {
-    await materializePackageTree(root, {
-      nodeModules: options.nodeModules ?? "symlink",
-    });
-    const { stdout } = await execFileAsync(
-      "npm",
-      ["pack", "--json", "--pack-destination", packDestination],
-      { cwd: root, env: await isolatedPackEnvironment(root), maxBuffer: 10 * 1024 * 1024 },
-    );
-    const pack = JSON.parse(stdout) as Array<{
-      filename: string;
-      files: Array<{ path: string }>;
-    }>;
-    const entry = pack[0]!;
-    return {
-      root,
-      tarball: resolve(packDestination, entry.filename),
-      filename: entry.filename,
-      files: entry.files,
-    };
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-}
-
 export interface ConstructionProvenance {
   /** `git rev-parse HEAD` at fixture build time. */
   head: string;
@@ -337,10 +294,11 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
         await materializePackageTree(materialRoot, { nodeModules: "copy" });
         const { stdout } = await execFileAsync(
           "npm",
-          ["pack", "--json", "--pack-destination", packDestination],
-          { cwd: materialRoot, env: await isolatedPackEnvironment(materialRoot), maxBuffer: 10 * 1024 * 1024 },
+          ["pack", "--silent", "--json", "--pack-destination", packDestination],
+          { cwd: materialRoot, maxBuffer: 10 * 1024 * 1024 },
         );
-        const pack = JSON.parse(stdout) as Array<{
+        const jsonStart = Math.max(stdout.lastIndexOf("\n["), stdout.startsWith("[") ? 0 : -1);
+        const pack = JSON.parse(stdout.slice(jsonStart < 0 ? 0 : jsonStart + (jsonStart === 0 ? 0 : 1))) as Array<{
           filename: string;
           files: Array<{ path: string }>;
         }>;
