@@ -21,6 +21,7 @@ import {
   writeToolExecutionObservationRecord,
   type ToolExecutionObservationWriter,
 } from "./tool-execution-observation.ts";
+import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -132,6 +133,15 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
+export {
+  PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE,
+  PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
+  PackageOwnedToolIdleTimeoutError,
+  installPackageOwnedToolRegistration,
+  isPackageOwnedToolIdleTimeoutError,
+  registerPackageOwnedTool,
+  wrapPackageOwnedToolDefinition,
+} from "./package-owned-tool-idle.ts";
 export { runAuditorRole } from "./auditor-role.ts";
 export type { AuditorCompletion, AuditorDecisionTool } from "./auditor-role.ts";
 
@@ -399,6 +409,8 @@ export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
+    // #102: one shared package-owned tool registration surface for all role runtimes.
+    installPackageOwnedToolRegistration(pi);
     pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
 
     let admitted = false;

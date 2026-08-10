@@ -17,6 +17,7 @@ import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
+import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
@@ -407,7 +408,7 @@ export function parseNavigatorModelSetting(value: string): { provider: string; m
 }
 
 export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => void): ToolDefinition {
-  return {
+  return wrapPackageOwnedToolDefinition({
     name: NAVIGATOR_PREPARE_TOOL_NAME,
     label: "Navigator preparation",
     description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
@@ -418,7 +419,7 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
       onOutput(value as PrepareOutput);
       return { content: [{ type: "text" as const, text: "Navigator preparation accepted" }], details: value, terminate: true as const };
     },
-  };
+  });
 }
 
 export function selectNavigatorCandidate(candidates: readonly NavigatorCandidate[], settlement: NavigatorSettlement): NavigatorCandidate | undefined {
