@@ -13377,10 +13377,9 @@ async function readBoundAuditorKnownFailure(sessionFile) {
 }
 async function resolveAuditedRunnerKnownFailure(input) {
   if (input.runner !== void 0) return input.runner;
-  const parentStop = await readSessionProviderStop(input.sessionFile);
-  if (parentStop !== void 0) return knownFailureFromProviderStop(parentStop);
   try {
-    return await readBoundAuditorKnownFailure(input.sessionFile) ?? input.credential;
+    const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
+    if (auditorFailure !== void 0) return auditorFailure;
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
     return {
@@ -13389,6 +13388,8 @@ async function resolveAuditedRunnerKnownFailure(input) {
       diagnostic: failure.message || failure.name
     };
   }
+  const parentStop = await readSessionProviderStop(input.sessionFile);
+  return parentStop === void 0 ? input.credential : knownFailureFromProviderStop(parentStop);
 }
 function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);

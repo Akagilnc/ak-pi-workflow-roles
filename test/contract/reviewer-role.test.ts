@@ -301,10 +301,15 @@ test("production Reviewer child provider rejections retain typed diagnostics and
     ] as const;
     for(const row of cases){
       const faux=fauxProvider({provider:"reviewer-rejection",api:"reviewer-rejection"}); const model=faux.getModel();
-      faux.setResponses([
-        fauxAssistantMessage("", { stopReason:"error", ...(row.rejection === undefined ? {} : { errorMessage: row.expected }) }),
-        fauxAssistantMessage("spec report"),
-      ]);
+      const axisResponse = (context: unknown) => {
+        const prompt = JSON.stringify(context);
+        return prompt.includes("Axis-Output-Adapter:") && prompt.includes(":standards")
+          ? fauxAssistantMessage("", { stopReason:"error", ...(row.rejection === undefined ? {} : { errorMessage: row.expected }) })
+          : fauxAssistantMessage("spec report");
+      };
+      // Sibling legs race by design. Both provider slots derive their response
+      // from the delivered axis instead of assigning semantics by call order.
+      faux.setResponses([axisResponse, axisResponse]);
       const childContext={model,modelRegistry:{getProvider:()=>faux.provider,async getProviderAuth(){return {auth:{apiKey:"offline"}};},async getApiKeyAndHeaders(){return {ok:true as const,apiKey:"offline"};}},sessionManager:SessionManager.inMemory(),thinkingLevel:"off"} as unknown as ExtensionContext;
       const runner=createReviewerAgentRunner({credentialScratchParent:root});
       const reviewerHarness=setup({createPinnedGitReader:async()=>reader,runDispatch:(dispatch)=>runner.run(dispatch,{context:childContext}),shutdownAgent:()=>runner.shutdown()});

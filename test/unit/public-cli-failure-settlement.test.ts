@@ -2498,6 +2498,39 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
   });
 });
 
+test("bound auditor provider failure outranks the parent abort it caused", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "parent.jsonl");
+    const childDir = join(sessionDir, "auditor-roles");
+    await mkdir(childDir, { recursive: true });
+    await writeFile(sessionFile, [
+      { type: "session", id: "parent-session" },
+      { type: "message", id: "parent-user", message: { role: "user" } },
+      { type: "message", id: "parent-attempt", message: { role: "assistant", stopReason: "error", errorMessage: "This operation was aborted", provider: "openai-codex", model: "faux-1" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    await writeFile(join(childDir, "child.jsonl"), [
+      { type: "session", id: "child-session", parentSession: sessionFile },
+      { type: "custom", customType: "ak_auditor_parent_attempt_binding", data: { version: 1, parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "parent-attempt" } } },
+      { type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "WebSocket error", provider: "openai-codex", model: "faux-1" } },
+      { type: "custom", customType: "ak_auditor_compliance_failure", data: { parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "parent-attempt" }, failure: { cause: "provider", diagnostic: "WebSocket error", identity: { name: "faux-1", code: "openai-codex" } } } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+    assert.deepEqual(
+      await resolveAuditedRunnerKnownFailure({
+        runner: undefined,
+        sessionFile,
+        credential: undefined,
+      }),
+      {
+        cause: "provider",
+        diagnostic: "WebSocket error",
+        identity: { name: "faux-1", code: "openai-codex" },
+      },
+    );
+  });
+});
+
 test("retained auditor failure is bound to the latest parent resume attempt", async () => {
   await withTempHome(async (home) => {
     const sessionDir = join(home, "session");
