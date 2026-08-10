@@ -133,7 +133,7 @@ export function compileMechanicalBundle(input: {
   const bundle = Object.freeze({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, manifestSha256: sha256Hex(manifestBytes(entries)), entries });
   return { canonicalSkill, construction: REVIEWER_CONSTRUCTION_RECIPE, bundle };
 }
-export type FinalizedReviewerGrant = ReviewerCapabilityRequest & Readonly<{ bashCommands: readonly string[] }>;
+export type FinalizedReviewerGrant = ReviewerCapabilityRequest;
 export type ConstructedReviewerLeg = Readonly<{ axis:"standards"|"spec"; prompt:ReviewerPromptIdentity; grant:FinalizedReviewerGrant }>;
 export type ConstructedReviewerDispatch = Readonly<{ identity:string; recipe:"reviewer-common-bundle-v1"; input:Readonly<{task:ReviewerPromptIdentity;canonicalSkill:CanonicalSkillIdentity;construction:ReviewerConstructionIdentity;capabilityDocument:ReviewerPromptIdentity}>; targetSnapshot:ReviewerPinnedTarget; prerequisiteOperations:readonly ReviewerPrerequisiteOperation[]; range:ReviewerFrozenEvidence["range"]; materials:ReviewerFrozenEvidence["materials"]; relevanceHints?:AdmittedReviewerProposal["relevanceHints"]; bundle:PinnedMechanicalBundleV1; legs:readonly ConstructedReviewerLeg[] }>;
 export type ReviewerPromptCompiler = (prompt:string,axis:"standards"|"spec",pass:1|2)=>ReviewerPromptIdentity;
@@ -142,7 +142,7 @@ export type ReviewerPromptCompiler = (prompt:string,axis:"standards"|"spec",pass
 export function constructReviewerDispatch(input:{identity:string;taskText:string;canonicalSkill:string;capabilityDocument:ReviewerPromptIdentity;target:ReviewerPinnedTarget;admitted:AdmittedReviewerProposal;evidence:ReviewerFrozenEvidence;reviewScopeKeys?:readonly string[];compilePrompt?:ReviewerPromptCompiler}):ConstructedReviewerDispatch {
   const task=reviewerPromptIdentity(input.taskText); const compiled=compileMechanicalBundle({canonicalSkill:input.canonicalSkill,task:input.taskText,range:input.evidence.range,materials:input.evidence.materials});
   const common=[`Task-SHA256: ${task.sha256}`,`Target: ${input.evidence.range.target}`,`Base: ${input.evidence.range.base}`,`Diff: ${input.evidence.range.diffCommand}`,reviewerScopePrompt(input.reviewScopeKeys),`Recipe: ${compiled.construction.recipeId}@${compiled.construction.version}`,`Bundle-Manifest-SHA256: ${compiled.bundle.manifestSha256}`,bundlePromptReferences(compiled.bundle)].join("\n");
-  const finalize=(grant:ReviewerCapabilityRequest):FinalizedReviewerGrant=>Object.freeze({...grant,bashCommands:Object.freeze([])});
+  const finalize=(grant:ReviewerCapabilityRequest):FinalizedReviewerGrant=>Object.freeze({...grant});
   const axes:Array<{axis:"standards"|"spec";grant:FinalizedReviewerGrant}>=[{axis:"standards",grant:finalize(input.admitted.standardsGrant)},...(input.admitted.specGrant?[{axis:"spec" as const,grant:finalize(input.admitted.specGrant)}]:[])];
   const compile=input.compilePrompt??((text:string)=>reviewerPromptIdentity(text)); const materialReferences=compiled.bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256 })); const build=(x:typeof axes[number],pass:1|2)=>compile(`${common}\nGrant: ${JSON.stringify(x.grant)}\n${reviewerAxisMethodAdapter(x.axis, materialReferences)}\n`,x.axis,pass);
   const first=axes.map(x=>build(x,1)),second=axes.map(x=>build(x,2));

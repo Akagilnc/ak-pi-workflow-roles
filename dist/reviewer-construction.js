@@ -94,7 +94,7 @@ export function constructReviewerDispatch(input) {
     const task = reviewerPromptIdentity(input.taskText);
     const compiled = compileMechanicalBundle({ canonicalSkill: input.canonicalSkill, task: input.taskText, range: input.evidence.range, materials: input.evidence.materials });
     const common = [`Task-SHA256: ${task.sha256}`, `Target: ${input.evidence.range.target}`, `Base: ${input.evidence.range.base}`, `Diff: ${input.evidence.range.diffCommand}`, reviewerScopePrompt(input.reviewScopeKeys), `Recipe: ${compiled.construction.recipeId}@${compiled.construction.version}`, `Bundle-Manifest-SHA256: ${compiled.bundle.manifestSha256}`, bundlePromptReferences(compiled.bundle)].join("\n");
-    const finalize = (grant) => Object.freeze({ ...grant, bashCommands: Object.freeze([]) });
+    const finalize = (grant) => Object.freeze({ ...grant });
     const axes = [{ axis: "standards", grant: finalize(input.admitted.standardsGrant) }, ...(input.admitted.specGrant ? [{ axis: "spec", grant: finalize(input.admitted.specGrant) }] : [])];
     const compile = input.compilePrompt ?? ((text) => reviewerPromptIdentity(text));
     const materialReferences = compiled.bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256 }));

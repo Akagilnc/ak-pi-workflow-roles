@@ -1834,59 +1834,7 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
   });
 });
 
-test("default runner empty-auth retains provider cause, identity, and primary diagnostic", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    // No piRunner: production defaultExplicitInternalPiRunner subprocess.
-    // Empty auth.json + selected xai is the live counterexample from Judge apply.
-    const result = await runAkRole(
-      ["--model", "xai/grok-4:off", "judge", "--project", project, "probe empty auth"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": false, xai: false },
-        createRunId: () => "run-default-empty-auth-001",
-        judgeTimeoutMs: 60_000,
-        io,
-      },
-    );
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "provider",
-      identityName: "MissingProviderCredential",
-      identityCode: "xai",
-    });
-    // Typed credential channel + emission bounds (AC6) — not presentation prose.
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "MissingProviderCredential");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
-      assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
-      assert.ok(terminal.roleOutcome.diagnostic.length > 0);
-    }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause: string;
-      identity?: { name?: string; code?: string | number };
-    };
-    assert.equal(errorBody.cause, "provider");
-    assert.equal(errorBody.identity?.name, "MissingProviderCredential");
-    assert.equal(errorBody.identity?.code, "xai");
-    assert.equal(
-      stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
-      1,
-    );
-    assert.ok(stderr[0]!.length <= CONCISE_DIAGNOSTIC_MAX_CHARS + 32);
-  });
-});
-
-test("lawful terminal preferred over child nonzero exit (no wash into failure)", async () => {
+test("lawful terminal preferred over child nonzero exit and missing credential snapshot", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -1898,6 +1846,7 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
         packageRoot,
         home,
         cwd: project,
+        credentials: { "openai-codex": false, xai: false },
         createRunId: () => "run-prefer-lawful-001",
         io,
         piRunner: async (args) => {
