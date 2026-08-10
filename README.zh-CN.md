@@ -128,4 +128,4 @@ pi --no-extensions \
 - stdout 丢 `/dev/null`——session 文件才是正本，stdout 是无上限副本面；仪表挂 `stderr.log` 与 session 文件；
 - `stderr.log` 与 `invocation.json` 落在同次 `runs/` 目录，如上例。
 
-Codex fast 档：本仓经 pnpm patch 改造 pi-ai（`patches/`，每次 `pnpm install` 自动应用），开关真源是文件 `~/.pi-codex-fast` 的内容。开：`echo "fast_mode = on" > ~/.pi-codex-fast`；关：`echo "fast_mode = off" > ~/.pi-codex-fast`（或删文件）。整文件须恰为 `fast_mode = on`——无文件、空文件、`off` 或任何其他内容皆为官方原样。每个 codex 请求重读一次该文件（不缓存），拨动后正在跑的进程下一个请求即按新状态走——不重启、不开新 shell。同 HOME 的所有 patched 进程共享同一开关。显式 `serviceTier` 永远优先于开关。`"priority"` 比默认档贵；pricing 下游读注入后的值记账，成本不含糊。实际注入时每请求向 stderr 打一行自述：`[ak-patch] codex fast: service_tier=priority (switch enabled)`。npm 装的既有副本（全局 Pi、旧 worktree）不受影响。
+Codex fast 档：安装或升级 Pi 0.84.1 后运行一次 `ak-deploy-codex-fast-patch`。开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：`echo "fast_mode = off" > ~/.pi-codex-fast`（或删文件）。修改后无需重启，下一个请求即生效。Fast 档价格高于默认档。
