@@ -6,7 +6,8 @@
   "license": "Apache-2.0",
   "keywords": ["pi-package"],
   "bin": {
-    "ak-role": "./dist/public-cli/main.js"
+    "ak-role": "./dist/public-cli/main.js",
+    "ak-deploy-codex-fast-patch": "./dist/deploy-codex-fast-patch-main.js"
   },
   "files": [
     "dist",
@@ -17,6 +18,7 @@
     "souls",
     "schemas",
     "packets",
+    "patches",
     "resources",
     "README.md",
     "LICENSE",

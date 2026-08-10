@@ -100,4 +100,4 @@ Discipline:
 - send stdout to `/dev/null`—the session file is the authoritative record and stdout is an unbounded copy surface; attach dashboards to `stderr.log` and the session file;
 - keep `stderr.log` and `invocation.json` in the same `runs/` directory, as in the example above.
 
-Codex fast tier: enable it with `echo "fast_mode = on" > ~/.pi-codex-fast`; disable it with `echo "fast_mode = off" > ~/.pi-codex-fast` (or delete the file). The change takes effect on the next request without a restart. Fast tier costs more than the default tier.
+Codex fast tier: after installing or upgrading Pi 0.84.1, run `ak-deploy-codex-fast-patch` once. Enable fast tier with `echo "fast_mode = on" > ~/.pi-codex-fast`; disable it with `echo "fast_mode = off" > ~/.pi-codex-fast` (or delete the file). The change takes effect on the next request without a restart. Fast tier costs more than the default tier.
