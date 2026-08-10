@@ -287,6 +287,37 @@ test("retention failure after a decision on the limit turn retains its typed cau
   }
 });
 
+test("failed evidence and decision in an ordinary turn retains the evidence failure", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-same-turn-failure-"));
+  try {
+    const faux = fauxProvider({ provider: "audit-same-turn-failure" });
+    const tool = createComplianceDecisionTool("ak_test_auditor_decision", "Submit the decision.");
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall("read", { path: "missing.txt" }),
+        fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+      ], { stopReason: "toolUse" }),
+    ]);
+    await assert.rejects(
+      runAuditorRole({
+        systemPrompt: "Inspect and decide.",
+        serializedInput: "Inspect missing.txt and decide.",
+        tool,
+        roleLabel: "Test auditor",
+        context: auditorContext(cwd, faux.provider, { model: faux.getModel() }),
+      }),
+      (error: unknown) => {
+        assert.equal((error as { role?: unknown }).role, "toolResult");
+        assert.equal((error as { toolName?: unknown }).toolName, "read");
+        assert.equal((error as { isError?: unknown }).isError, true);
+        return true;
+      },
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("evidence and decision calls in the same assistant turn succeed", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-same-turn-"));
   try {
