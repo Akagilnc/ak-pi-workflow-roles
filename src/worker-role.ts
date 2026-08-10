@@ -166,7 +166,6 @@ function requireSingletonSubmissionCall(
 export function createFixerRoleRuntime(
   pi: ExtensionAPI,
   dependencies: FixerRoleDependencies,
-  _hostActions?: WorkerRoleHostActions,
 ): WorkerRoleRuntime {
   let soul: string | undefined;
   let packet: FixerInvocationInput | undefined;

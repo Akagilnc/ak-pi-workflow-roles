@@ -1,7 +1,7 @@
 /** #242 worker gates ①②④. ① durability: ADR 0065/#216 only — no appendCustomEntry bypass. */
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 
 export const WORKER_COMMIT_SUBJECT_PREFIX = "ak-roles:";
 const DONE = new Set(["completed", "partially_completed"]);
@@ -18,7 +18,8 @@ function git(cwd: string, args: string[]): string {
   }).trim();
 }
 
-// ② only commits unreachable from any pre-tx ref (`$new --not --all`); ④ ban non-fast-forward.
+// ② each newly-created commit (incl. empty subject); ④ ban non-fast-forward.
+// Scoped by install: worktree-local core.hooksPath → only the armed tree.
 const HOOK = `#!/bin/sh
 [ "$1" = prepared ] || exit 0
 prefix=${WORKER_COMMIT_SUBJECT_PREFIX}
@@ -28,26 +29,18 @@ while read -r old new ref; do
   if [ -n "$old" ] && [ -n "$(printf %s "$old" | tr -d 0)" ]; then
     git merge-base --is-ancestor "$old" "$new" 2>/dev/null || { echo "ak-roles: rejected non-fast-forward update of $ref (no amend/rebase/reset)" >&2; exit 1; }
   fi
-  subjects=$(git log --format=%s "$new" --not --all 2>/dev/null) || subjects=
-  [ -n "$subjects" ] || continue
-  old_ifs=$IFS; IFS='
-'
-  for subj in $subjects; do
-    IFS=$old_ifs; [ -n "$subj" ] || continue
+  for commit in $(git rev-list "$new" --not --all 2>/dev/null); do
+    subj=$(git log -1 --format=%s "$commit")
     case $subj in "$prefix"*) ;; *) echo "ak-roles: commit subject must start with $prefix (got: $subj)" >&2; exit 1 ;; esac
   done
-  IFS=$old_ifs
 done
 `;
 
+/** Bind ②④ to this worktree only — private hooksPath + worktree config; never shared common hooks. */
 export function installWorkerGitHooks(cwd: string): void {
-  const abs = (flag: string) => git(cwd, ["rev-parse", "--path-format=absolute", flag]);
-  // Linked worktree hooks resolve to shared common dir — refuse rather than lock sibling trees.
-  if (abs("--git-dir") !== abs("--git-common-dir")) {
-    throw new Error("ak-roles: refusing worker hooks install in linked worktree shared hooks dir");
-  }
-  const hooksPath = git(cwd, ["rev-parse", "--git-path", "hooks"]);
-  const dir = isAbsolute(hooksPath) ? hooksPath : resolve(cwd, hooksPath);
+  git(cwd, ["config", "extensions.worktreeConfig", "true"]);
+  const gitDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-dir"]);
+  const dir = resolve(gitDir, "ak-roles-hooks");
   const path = resolve(dir, "reference-transaction");
   if (existsSync(path) && readFileSync(path, "utf8") !== HOOK) {
     throw new Error("ak-roles: refusing to overwrite existing reference-transaction hook");
@@ -55,11 +48,19 @@ export function installWorkerGitHooks(cwd: string): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(path, HOOK, "utf8");
   chmodSync(path, 0o755);
+  git(cwd, ["config", "--worktree", "core.hooksPath", dir]);
 }
 
 export function createWorkerSubmissionGate(): { arm(cwd: string): void; assertAcceptable(status: string): void } {
   let baseline: string | null | undefined, root: string | undefined, reminded = false;
-  const head = (cwd: string) => { try { return git(cwd, ["rev-parse", "HEAD"]); } catch { return null; } };
+  // null = unborn HEAD only; any other git failure throws (no swallow).
+  const head = (cwd: string): string | null => {
+    try { return git(cwd, ["rev-parse", "HEAD"]); }
+    catch {
+      git(cwd, ["rev-parse", "--git-dir"]); // surface real git/repo failures
+      return null;
+    }
+  };
   return {
     arm(cwd) { root = cwd; baseline = head(cwd); reminded = false; },
     assertAcceptable(status) {
