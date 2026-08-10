@@ -479,7 +479,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         if (role === "judge") {
           runtime = judgeRole.createJudgeRoleRuntime(harness.pi, {
             loadSoul: async () => "judge law",
-            transcriptFromContext: () => "judge transcript",
             auditSoulCompliance: auditCompliance,
           }, { failInfrastructure(error: unknown) { throw error; } });
         } else if (role === "fixer") {

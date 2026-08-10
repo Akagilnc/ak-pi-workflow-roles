@@ -528,20 +528,15 @@ export async function executeAuditorChild(
     const cwd = options.context.cwd ?? process.cwd();
 
     let decision: unknown;
-    let decisionToolFailure: unknown;
     const tool = wrapPackageOwnedToolDefinition({
       ...options.tool,
       label: options.roleLabel,
       async execute(...args: any[]) {
         if (decision !== undefined) throw new Error("Auditor decision was submitted more than once");
-        try {
-          const result = await options.tool.execute(...args);
-          decision = args[1];
-          return result;
-        } catch (error) {
-          decisionToolFailure = error;
-          throw error;
-        }
+        // Record first so a second submit is rejected even if execute returns;
+        // compliance decision tools return and do not throw.
+        decision = args[1];
+        return options.tool.execute(...args);
       },
     });
 
@@ -607,7 +602,6 @@ export async function executeAuditorChild(
       }
       if (options.signal?.aborted) throw options.signal.reason;
       if (inherited.streamFailure !== undefined) throw inherited.streamFailure;
-      if (decisionToolFailure !== undefined) throw decisionToolFailure;
       if (turnError !== undefined) throw turnError;
 
       const assistants = [...session.messages]
@@ -689,4 +683,11 @@ export async function executeAuditorChild(
       dispose();
     }
   });
+}
+
+/** Historical public name — same body as executeAuditorChild. */
+export async function runAuditorRole(
+  options: AuditorRoleOptions,
+): Promise<{ decision: unknown; response: AssistantMessage }> {
+  return executeAuditorChild(options);
 }
