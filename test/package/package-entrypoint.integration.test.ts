@@ -445,7 +445,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         const harness = role === "fixer"
           ? makeHarness({ "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" })
           : role === "reviewer"
-            ? makeHarness({ "ak-review-task": "/task", "ak-review-capabilities": "/capabilities" })
+            ? makeHarness({ "ak-review-task": "/task", "ak-review-base": "review-base" })
             : role === "doctor"
               ? makeHarness({ "ak-doctor-case": "/case" })
               : makeHarness();
