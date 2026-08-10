@@ -300,12 +300,20 @@ test("production Reviewer child provider rejections retain typed diagnostics and
       { rejection:undefined, expected:"Reviewer Agent provider supplied no diagnostic details", mixed:false },
     ] as const;
     for(const row of cases){
-      const faux=fauxProvider({provider:"reviewer-rejection",api:"reviewer-rejection"}); const model=faux.getModel();
-      faux.setResponses([
+      const standardsFaux=fauxProvider({provider:"reviewer-rejection",api:"reviewer-rejection"});
+      const specFaux=fauxProvider({provider:"reviewer-rejection",api:"reviewer-rejection"});
+      standardsFaux.setResponses([
         fauxAssistantMessage("", { stopReason:"error", ...(row.rejection === undefined ? {} : { errorMessage: row.expected }) }),
-        fauxAssistantMessage("spec report"),
       ]);
-      const childContext={model,modelRegistry:{getProvider:()=>faux.provider,async getProviderAuth(){return {auth:{apiKey:"offline"}};},async getApiKeyAndHeaders(){return {ok:true as const,apiKey:"offline"};}},sessionManager:SessionManager.inMemory(),thinkingLevel:"off"} as unknown as ExtensionContext;
+      specFaux.setResponses([fauxAssistantMessage("spec report")]);
+      const standardsStream=standardsFaux.provider.streamSimple.bind(standardsFaux.provider);
+      const specStream=specFaux.provider.streamSimple.bind(specFaux.provider);
+      const provider=standardsFaux.provider as typeof standardsFaux.provider & { streamSimple: typeof standardsFaux.provider.streamSimple };
+      provider.streamSimple=function(model,context,options){
+        const stream=JSON.stringify(context.messages).includes("reviewer-axis-output@1:standards")?standardsStream:specStream;
+        return stream(model,context,options);
+      };
+      const childContext={model:standardsFaux.getModel(),modelRegistry:{getProvider:()=>provider,async getProviderAuth(){return {auth:{apiKey:"offline"}};},async getApiKeyAndHeaders(){return {ok:true as const,apiKey:"offline"};}},sessionManager:SessionManager.inMemory(),thinkingLevel:"off"} as unknown as ExtensionContext;
       const runner=createReviewerAgentRunner({credentialScratchParent:root});
       const reviewerHarness=setup({createPinnedGitReader:async()=>reader,runDispatch:(dispatch)=>runner.run(dispatch,{context:childContext}),shutdownAgent:()=>runner.shutdown()});
       await reviewerHarness.runtime.activate();
