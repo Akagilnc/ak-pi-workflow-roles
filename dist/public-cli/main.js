@@ -12594,10 +12594,6 @@ var auditorSoulPaths = Object.freeze({
   doctor: fileURLToPath(new URL("../souls/doctor-auditor.md", import.meta.url))
 });
 
-// src/role-child-executor.ts
-var AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
-var AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
-
 // src/tool-execution-observation.ts
 var observationBase = {
   role: typebox_exports.String({ minLength: 1 }),
@@ -12620,6 +12616,10 @@ var toolExecutionObservationRecordSchema = typebox_exports.Union([
     isError: typebox_exports.Boolean()
   }, { additionalProperties: true })
 ]);
+
+// src/role-child-executor.ts
+var AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
+var AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
 
 // src/compliance-transport.ts
 var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
