@@ -153,10 +153,10 @@ test("parseReviewerArgv accepts project/base and rejects Reviewer attachments", 
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
-  assert.deepEqual(parseReviewerArgv(["Review the branch since main."]), {
-    instruction: "Review the branch since main.",
-    attachmentPaths: [],
-  });
+  assert.throws(
+    () => parseReviewerArgv(["Review the branch since main."]),
+    /reviewer requires --base.*canonical code-review.*fixed point/i,
+  );
   assert.deepEqual(
     parseReviewerArgv([
       "--base",

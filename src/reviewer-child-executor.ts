@@ -10,6 +10,16 @@ export type ReviewerChildExecuteOptions = Readonly<{
 }>;
 
 /** Reviewer policy adapter over the shared evidence-child lifecycle seam. */
-export function executeReviewerChild(workspace: string, leg: AcceptedReviewerLeg, context: ExtensionContext, options: ReviewerChildExecuteOptions = {}) {
-  return executeEvidenceChild(workspace, leg.prompt, context, options);
+export async function executeReviewerChild(workspace: string, leg: AcceptedReviewerLeg, context: ExtensionContext, options: ReviewerChildExecuteOptions = {}) {
+  try {
+    return await executeEvidenceChild(workspace, leg.prompt, context, options);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "evidenceChildFailure" in error) {
+      const classification = (error as { evidenceChildFailure?: unknown }).evidenceChildFailure;
+      if (classification === "provider" || classification === "child") {
+        Object.assign(error, { reviewerFailure: classification });
+      }
+    }
+    throw error;
+  }
 }

@@ -11323,10 +11323,13 @@ function parseReviewerArgv(args) {
     }
     positional.push(token);
   }
+  if (baseRevision === void 0) {
+    throw new CliUsageError("reviewer requires --base <revision>; canonical code-review requires the caller to select a fixed point");
+  }
   return {
     instruction: positional.join(" "),
     attachmentPaths,
-    ...baseRevision === void 0 ? {} : { baseRevision },
+    baseRevision,
     ...project === void 0 ? {} : { project }
   };
 }
@@ -17280,12 +17283,18 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     "--ak-review-task",
     admitted.taskPath,
     "--ak-review-base",
-    admitted.baseRevision ?? "HEAD~1",
+    requireAdmittedReviewerBase(admitted),
     "--mode",
     "json",
     ...buildModelArgs7(options.model),
     prompt
   ];
+}
+function requireAdmittedReviewerBase(admitted) {
+  if (admitted.baseRevision === void 0 || admitted.baseRevision.trim() === "") {
+    throw new CliUsageError("Reviewer run lacks the caller-selected fixed review point");
+  }
+  return admitted.baseRevision;
 }
 function buildReviewerResumeActivationExtraArgs(admitted, options) {
   const skillPath = resolvePackagedMethodSkillPath(
@@ -17309,7 +17318,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     "--ak-review-task",
     admitted.taskPath,
     "--ak-review-base",
-    admitted.baseRevision ?? "HEAD~1",
+    requireAdmittedReviewerBase(admitted),
     "--mode",
     "json",
     ...buildModelArgs7(options.model),

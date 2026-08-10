@@ -42,7 +42,7 @@ function requireSoleReviewerOutputCall(id: string, ctx: ExtensionContext): void 
   if (calls.length !== 1 || calls[0]?.id !== id || calls[0]?.name !== REVIEWER_OUTPUT_TOOL_NAME) throw new Error("Reviewer output must be the sole final tool call");
 }
 
-export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: ReviewerRoleDependencies, hostActions: ReviewerRoleHostActions): { activate(ctx?: ExtensionContext): Promise<void> } {
+export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: ReviewerRoleDependencies, hostActions: ReviewerRoleHostActions): { activate(ctx?: ExtensionContext): Promise<void>; dispatchFixed(ctx: ExtensionContext): Promise<void> } {
   let soul: string | undefined;
   let taskBytes: Uint8Array | undefined;
   let task: string | undefined;
@@ -54,7 +54,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
   let registered = false;
   let reviewScopeKeys: readonly string[] | undefined;
   let fixedBaseRevision: string | undefined;
-  let fixedDispatchStarted = false;
   const ledger = createReviewerExecutionLedger();
   pi.registerFlag("ak-review-task", { description: "Opaque Markdown review task assigned to the reviewer role", type: "string" });
   pi.registerFlag("ak-review-base", { description: "Fixed base revision for the pinned review target", type: "string" });
@@ -165,13 +164,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
         } });
       pi.on("input", (event) => { if (originalRequest !== undefined) return { action: "continue" as const }; originalRequest = event.text; return { action: "transform" as const, text: binding!.invocation(event.text), ...(event.images === undefined ? {} : { images: event.images }) }; });
       pi.on("before_agent_start", async (event, toolCtx) => {
-        if (!fixedDispatchStarted) {
-          fixedDispatchStarted = true;
-          const result = await dispatcher!.dispatch(fixedBaseRevision!, { context: toolCtx });
-          if (result.status !== "accepted") throw new Error(`Fixed Reviewer dispatch was not accepted: ${result.status}`);
-          const available = new Set(pi.getAllTools().map((tool) => tool.name));
-          pi.setActiveTools(available.has(REVIEWER_OUTPUT_TOOL_NAME) ? [REVIEWER_OUTPUT_TOOL_NAME] : []);
-        }
         if (!expansionCaptured) {
           if (originalRequest === undefined || binding!.captureExpansion(event.prompt, originalRequest) === undefined) {
             const error = ledger.recordInfrastructureFailure(new Error("Canonical code-review Skill expansion did not match the captured request"));
@@ -185,5 +177,11 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     }
     const available = new Set(pi.getAllTools().map((tool) => tool.name));
     pi.setActiveTools([REVIEWER_OUTPUT_TOOL_NAME].filter((name) => available.has(name)));
+  }, async dispatchFixed(ctx) {
+    if (dispatcher === undefined || fixedBaseRevision === undefined) throw new Error("Reviewer must be activated before fixed dispatch");
+    const result = await dispatcher.dispatch(fixedBaseRevision, { context: ctx });
+    if (result.status !== "accepted") throw new Error(`Fixed Reviewer dispatch was not accepted: ${result.status}`);
+    const available = new Set(pi.getAllTools().map((tool) => tool.name));
+    pi.setActiveTools(available.has(REVIEWER_OUTPUT_TOOL_NAME) ? [REVIEWER_OUTPUT_TOOL_NAME] : []);
   } };
 }
