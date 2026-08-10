@@ -17,14 +17,7 @@ const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array
 export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ description: "Auditor decision status." }), violations: Type.Array(nonblank, { description: "Observed compliance violations." }), conflicts: Type.Array(nonblank, { description: "Unresolved authority or execution conflicts." }), decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
 
 export function createComplianceDecisionTool(name: string, description: string) {
-  return {
-    name,
-    description,
-    parameters: complianceDecisionSchema,
-    async execute(_id: string, params: unknown): Promise<AgentToolResult<unknown>> {
-      return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true };
-    },
-  };
+  return { name, description, parameters: complianceDecisionSchema, async execute(_id: string, params: unknown): Promise<AgentToolResult<unknown>> { return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true }; } };
 }
 
 export async function prepareComplianceDispatch(model: Model<Api>, context: ExtensionContext, label: string): Promise<ComplianceDispatch> {
