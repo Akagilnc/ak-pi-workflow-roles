@@ -94,7 +94,6 @@ function lawfulReviewerReceipt(
       diffSha256: "1".repeat(64),
       commits: ["b"],
     },
-    materials: [],
   }).bundle;
   const prompt = (axis: string) => ({ text: `${axis} prompt\n` });
   const reports = Object.fromEntries(
@@ -179,7 +178,6 @@ test("parseReviewerArgv accepts project/base and rejects Reviewer attachments", 
   assert.throws(() => parseReviewerArgv(["--attach", "spec.md", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach=spec.md", "task"]), isUsage);
   // Capability packets are not a public surface.
-  assert.throws(() => parseReviewerArgv(["--capabilities", "c.json", "task"]), isUsage);
 });
 
 test("admitReviewerInvocation persists only the task and fixed base", async () => {
@@ -229,7 +227,6 @@ test("admitReviewerInvocation persists only the task and fixed base", async () =
     );
     assert.match(taskText, /Base revision for the fixed review target: origin\/main/);
 
-    await assert.rejects(access(join(admitted.runDirectory, "capabilities.json")));
 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(
@@ -247,13 +244,12 @@ test("admitReviewerInvocation persists only the task and fixed base", async () =
       await readFile(admitted.admittedRequestPath, "utf8"),
     ) as Record<string, unknown>;
     assert.equal(persisted.role, "reviewer");
-    assert.equal("capabilitiesPath" in persisted, false);
     assert.equal("taskSha256" in persisted, false);
     assert.equal(persisted.baseRevision, "origin/main");
   });
 });
 
-test("buildReviewerActivationExtraArgs forces package code-review and fixed base without a capability packet", async () => {
+test("buildReviewerActivationExtraArgs forces package code-review and fixed base", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -273,7 +269,6 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     assert.equal(args.includes("--ak-role"), true);
     assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
     assert.equal(args[args.indexOf("--ak-review-task") + 1], admitted.taskPath);
-    assert.equal(args.includes("--ak-review-capabilities"), false);
     assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
     assert.equal(
       args.some(
@@ -283,9 +278,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
       ),
       true,
     );
-    // No ambient home skill path and no caller capability packet flag.
     assert.equal(args.some((a) => a.includes(".agents/skills")), false);
-    assert.equal(args.includes("--capabilities"), false);
 
     const resume = buildReviewerResumeActivationExtraArgs(admitted, {
       packageRoot,
@@ -293,7 +286,6 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     assert.equal(resume.includes("--skill"), true);
     assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
     assert.equal(resume.includes(admitted.instruction), false);
-    assert.equal(resume.includes("--ak-review-capabilities"), false);
     assert.equal(resume[resume.indexOf("--ak-review-base") + 1], "HEAD~1");
   });
 });
@@ -437,7 +429,6 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       methodInvocations: Array<{ name: string; location: string }>;
     };
     assert.equal("taskSha256" in evidence, false);
-    assert.equal("capabilitiesPath" in evidence, false);
     assert.equal(evidence.baseRevision, "main");
     assert.equal(evidence.methodProvenance.name, "code-review");
     assert.equal(
@@ -488,7 +479,7 @@ test("package code-review method stays usable without Matt setup and forbids gov
   assert.equal(material.skillPath.includes(".agents/skills"), false);
 });
 
-test("ak-role reviewer admits fixed base/task without capability material and rejects blank task", async () => {
+test("ak-role reviewer admits fixed base/task and rejects blank task", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -600,7 +591,6 @@ test("ak-role reviewer admits fixed base/task without capability material and re
       );
       await access(join(runDirectory, "admitted-request.json"));
       await access(join(runDirectory, "task.md"));
-      await assert.rejects(access(join(runDirectory, "capabilities.json")));
       // Adapter never writes Matt setup / governance files into the project.
       const projectEntries = await readdir(project);
       assert.equal(projectEntries.includes("docs"), false);
@@ -673,7 +663,6 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     assert.equal(admitted.role, "reviewer");
     assert.equal(admitted.baseRevision, "main");
     assert.equal("taskSha256" in admitted, false);
-    assert.equal("capabilitiesPath" in admitted, false);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
@@ -687,8 +676,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
         assert.equal(args[args.indexOf("--ak-review-task") + 1], admitted.taskPath);
-        assert.equal(args.includes("--ak-review-capabilities"), false);
-        assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
+            assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);

@@ -1,13 +1,12 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
-import type { AcceptedReviewerExecution, ReviewerPrerequisiteOperation } from "./reviewer-dispatch.ts";
+import type { AcceptedReviewerExecution } from "./reviewer-dispatch.ts";
 import type { MaterializedBundleEvidenceV1 } from "./reviewer-bundle-materializer.ts";
 import type { ReviewerTargetSnapshot, ReviewerWorkspaceDisposition, ReviewerFailureClassification, ReviewerUsage } from "./reviewer-execution-ledger.ts";
 import { executeReviewerChild, type ReviewerExecutorFaultPoint } from "./reviewer-child-executor.ts";
 import { createReviewerWorkspaceOwner, type ReviewerWorkspaceFaultPoint } from "./reviewer-workspace.ts";
 import { normalizeReviewerFailureDiagnostic } from "./reviewer-failure-diagnostic.ts";
 
-const RUNNER_PREREQUISITES = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const satisfies readonly ReviewerPrerequisiteOperation[];
 type ReviewerLegRunResultCommon = Readonly<{ target: ReviewerTargetSnapshot; prompt: ReviewerPromptIdentity; workspaceDisposition: ReviewerWorkspaceDisposition }>;
 export type ReviewerSuccessfulLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "successful"; report: string; usage: ReviewerUsage; failure?: never; runtimeConstructionEvidence: MaterializedBundleEvidenceV1 }>;
 export type ReviewerFailedLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "failed"; failure: ReviewerFailureClassification; diagnostic: string; cause?: unknown; report?: never; usage?: never; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>;
@@ -32,7 +31,6 @@ export function createReviewerAgentRunner(dependencies: Dependencies = {}): Revi
       if (dispatch.recipe !== "reviewer-common-bundle-v1" || dispatch.legs.length < 1 || dispatch.legs.length > 2 || dispatch.legs[0]?.axis !== "standards" || (dispatch.legs.length === 2 && dispatch.legs[1]?.axis !== "spec")) throw new Error("Invalid accepted Reviewer dispatch cardinality or axes");
       if (accepted) throw new Error("Reviewer runner accepts exactly one dispatch"); accepted = true;
       for (const leg of dispatch.legs) if (!isReviewerPromptIdentity(leg.prompt)) throw new Error("Accepted Reviewer prompt evidence mismatch");
-      for (const operation of RUNNER_PREREQUISITES) if (!dispatch.prerequisiteOperations.includes(operation)) throw new Error(`Missing accepted runner prerequisite: ${operation}`);
       let batch;
       try { batch = await workspaceOwner.prepare(dispatch.targetSnapshot, dispatch.legs.map(l => l.axis), dispatch.bundle, options.signal); }
       catch (error) {

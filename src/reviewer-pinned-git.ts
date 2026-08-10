@@ -5,8 +5,6 @@ import { promisify } from "node:util";
 import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArgs, type ReviewerRefMap } from "./reviewer-git-snapshot.ts";
 import { sha256Hex } from "./sha256.ts";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
-import { exactUtf8 } from "./exact-utf8.ts";
-import { ReviewerAdmissionError, type AdmittedReviewerProposal, type ReviewerMaterialSource } from "./reviewer-admission.ts";
 
 export type ReviewerObjectFormat = "sha1" | "sha256";
 export type ReviewerPinnedTarget = Readonly<{
@@ -22,16 +20,11 @@ export type ReviewerRange = Readonly<{
   diffSha256: string;
   commits: readonly string[];
 }>;
-export type ReviewerMaterialEvidence = Readonly<{ id: string; repositoryPath: string; source?: ReviewerMaterialSource; sourcePath?: string; text: string; utf8Length: number; sha256: string }>;
-export type ReviewerHostMaterial = Readonly<{ id: string; path: string; bytes: Uint8Array; utf8Length: number; sha256: string }>;
-export type ReviewerFrozenEvidence = Readonly<{ range: ReviewerRange; materials: readonly ReviewerMaterialEvidence[] }>;
-
 export type ReviewerPinnedGitReader = {
   pin: ReviewerPinnedTarget;
   snapshot(): Promise<ReviewerPinnedTarget>;
   resolve(base: string): Promise<string>;
   range(base: string): Promise<ReviewerRange>;
-  material(path: string, revision: string): Promise<Uint8Array>;
 };
 
 const execFileAsync = promisify(execFile);
@@ -47,42 +40,6 @@ async function execGit<T extends "utf8" | "buffer">(args: readonly string[], opt
 }
 function exitCode(error: unknown): number | undefined { const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined; return typeof code === "number" ? code : undefined; }
 async function repositoryIsAvailable(root: string): Promise<{ available: boolean; cause?: unknown }> { try { await access(`${root}/.git`); return { available: true }; } catch (cause) { return { available: false, cause }; } }
-const evidenceViolation = (code: "range-invalid"|"material-invalid"|"capability-invalid"): never => {
-  const diagnostic = code === "range-invalid"
-    ? "derived range must match the resolved base and pinned target with canonical command, digest, and unique commits"
-    : code === "material-invalid"
-      ? "selected material must be valid UTF-8 at the pinned target"
-      : "capability constraint failed while acquiring pinned evidence";
-  if(code==="capability-invalid")throw new ReviewerAdmissionError(code, diagnostic);
-  throw new ReviewerCorrectablePreflightError(code, diagnostic);
-};
-const classifyEvidenceRead = (error: unknown): never => { if (error instanceof ReviewerCorrectablePreflightError) throw error; throw error; };
-
-/** Acquires and normalizes all proposal-dependent bytes against the immutable pin. */
-export async function acquireReviewerPinnedEvidence(reader: ReviewerPinnedGitReader, target: ReviewerPinnedTarget, admitted: AdmittedReviewerProposal, hostMaterials: readonly ReviewerHostMaterial[] = []): Promise<ReviewerFrozenEvidence> {
-  let base: string; let readRange: ReviewerRange;
-  try { base=await reader.resolve(admitted.baseRevision); readRange=await reader.range(base); } catch(error){ classifyEvidenceRead(error); }
-  if(readRange!.base!==base!||readRange!.target!==target.targetHead||readRange!.diffCommand!==`git diff ${base!}...${target.targetHead}`||!/^[0-9a-f]{64}$/.test(readRange!.diffSha256)||readRange!.diffSha256===sha256Hex("")||!Array.isArray(readRange!.commits)||!readRange!.commits.every(x=>typeof x==="string")||new Set(readRange!.commits).size!==readRange!.commits.length)evidenceViolation("range-invalid");
-  const range=Object.freeze({...readRange!,commits:Object.freeze([...readRange!.commits])});
-  const materials: ReviewerMaterialEvidence[]=[];
-  const hostByPath=new Map(hostMaterials.map((item)=>[item.path,item]));
-  for(const item of admitted.materials){
-    let bytes:Uint8Array;
-    let sourcePath=item.source==="host-input"?item.sourcePath!:item.repositoryPath;
-    if(item.source==="host-input"){
-      const supplied=hostByPath.get(item.sourcePath!);
-      if(supplied===undefined||supplied.path!==item.sourcePath||!(supplied.bytes instanceof Uint8Array)||supplied.utf8Length!==supplied.bytes.byteLength||sha256Hex(supplied.bytes)!==supplied.sha256)evidenceViolation("material-invalid");
-      bytes=Uint8Array.from(supplied!.bytes);
-    } else {
-      try{bytes=await reader.material(item.repositoryPath,target.targetHead);}catch(error){classifyEvidenceRead(error);}
-    }
-    let text:string;try{text=exactUtf8(bytes!,"Reviewer material");}catch{evidenceViolation("material-invalid");}
-    const utf8Length=bytes!.byteLength;
-    const sha256=sha256Hex(bytes!);
-    materials.push(Object.freeze({id:item.id,repositoryPath:item.repositoryPath,source:item.source,sourcePath, text:text!,utf8Length,sha256}));
-  }
-  return Object.freeze({range,materials:Object.freeze(materials)});
-}
 export const immutableReviewerPin = (pin: ReviewerPinnedTarget): ReviewerPinnedTarget => Object.freeze({
   repositoryRoot: pin.repositoryRoot, objectFormat: pin.objectFormat, targetHead: pin.targetHead, refs: immutableReviewerRefs(pin.refs),
 });
@@ -103,7 +60,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
   const refs = parseReviewerRefSnapshot(await gitText(repositoryRoot, reviewerRefSnapshotArgs()));
   const pin = immutableReviewerPin({ repositoryRoot, objectFormat, targetHead, refs });
   const invalid = (
-    code: "base-invalid" | "range-invalid" | "material-invalid",
+    code: "base-invalid" | "range-invalid",
     diagnostic: string,
     cause?: unknown,
   ): never => {
@@ -182,24 +139,6 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
       if (diff.length === 0) invalid("range-invalid", "review range must contain a non-empty diff between base and pinned target");
       return Object.freeze({ base: mergeBase, target: targetHead, diffCommand, diffSha256: sha256Hex(Uint8Array.from(diff)), commits: Object.freeze(commitsText ? commitsText.split("\n") : []) });
     },
-    async material(path: string, revision: string) {
-      if (revision !== targetHead) throw new Error("Material revision is not the pinned target");
-      if (path.startsWith("/")) invalid("material-invalid", "materials.repositoryPath must be relative, not absolute");
-      if (path.includes("\\")) invalid("material-invalid", "materials.repositoryPath must not contain backslashes");
-      if (/[\u0000-\u001f\u007f]/u.test(path)) invalid("material-invalid", "materials.repositoryPath must not contain control characters");
-      if (path.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
-        invalid("material-invalid", "materials.repositoryPath must not contain empty, current-directory, or parent-directory segments");
-      }
-      try {
-        const { stdout } = await execGit(["-C", repositoryRoot, "show", `${revision}:${path}`], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
-        return Uint8Array.from(stdout);
-      } catch (error) {
-        if (exitCode(error) === 128) {
-          const repository = await repositoryIsAvailable(repositoryRoot);
-          if (repository.available) invalid("material-invalid", "pinned material at materials.repositoryPath is missing from the target", error);
-        }
-        throw error;
-      }
-    },
+
   });
 }

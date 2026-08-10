@@ -74,7 +74,6 @@ function lawfulReviewerReceipt() {
       diffSha256: "1".repeat(64),
       commits: ["b"],
     },
-    materials: [],
   }).bundle;
   const axes = ["standards", "spec"] as const;
   const prompt = (axis: string) => ({ text: `${axis} prompt\n` });
