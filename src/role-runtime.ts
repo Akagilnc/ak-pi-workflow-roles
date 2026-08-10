@@ -133,14 +133,6 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
-export {
-  PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE,
-  PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
-  PackageOwnedToolIdleTimeoutError,
-  installPackageOwnedToolRegistration,
-  isPackageOwnedToolIdleTimeoutError,
-  wrapPackageOwnedToolDefinition,
-} from "./package-owned-tool-idle.ts";
 export { runAuditorRole } from "./auditor-role.ts";
 export type { AuditorCompletion, AuditorDecisionTool } from "./auditor-role.ts";
 

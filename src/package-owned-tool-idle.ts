@@ -29,18 +29,6 @@ export class PackageOwnedToolIdleTimeoutError extends Error {
   }
 }
 
-export function isPackageOwnedToolIdleTimeoutError(
-  value: unknown,
-): value is PackageOwnedToolIdleTimeoutError {
-  return value instanceof PackageOwnedToolIdleTimeoutError
-    || (
-      typeof value === "object"
-      && value !== null
-      && (value as { name?: unknown }).name === "PackageOwnedToolIdleTimeoutError"
-      && (value as { code?: unknown }).code === PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE
-    );
-}
-
 /** Minimal executable tool shape accepted by the shared idle wrapper. */
 export type PackageOwnedToolLike = {
   readonly name: string;

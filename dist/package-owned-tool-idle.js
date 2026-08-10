@@ -11,13 +11,6 @@ export class PackageOwnedToolIdleTimeoutError extends Error {
         this.name = "PackageOwnedToolIdleTimeoutError";
     }
 }
-export function isPackageOwnedToolIdleTimeoutError(value) {
-    return value instanceof PackageOwnedToolIdleTimeoutError
-        || (typeof value === "object"
-            && value !== null
-            && value.name === "PackageOwnedToolIdleTimeoutError"
-            && value.code === PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE);
-}
 /**
  * Package-tool activity includes content production and host-only details
  * progress. Keep the observation-plane oracle separate: its stderr heartbeat
