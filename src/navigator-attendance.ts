@@ -184,10 +184,29 @@ export type NavigatorContextProjection = {
   subject: string;
   authority: string;
   currentRole: { role: string; phase: NavigatorPhase };
+  /** Present only on settlement-bound prepare; speculative prepare omits it. */
+  currentSettlement?: NavigatorSettlement;
   priorRoute: NavigatorRouteTarget[] | null;
   publicSettlementHistory: NavigatorSettlementFact[];
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
+
+/**
+ * Shared terminal-internal consistency for Navigator advice vs the just-accepted
+ * settlement (family #224/#226/#227). One table for all seats — not per-role guards.
+ *
+ * Merger closes delivery. It is only consistent immediately after judge converged.
+ * Fresh accepted work from any other seat must not skip to merger (ADR 0061 keeps
+ * advice free-form; this only suppresses self-contradictory typed emission).
+ */
+export function navigatorAdviceConsistentWithSettlement(
+  next: NavigatorRouteTarget,
+  settlement: NavigatorSettlement,
+): boolean {
+  if (settlement.kind !== "accepted") return true;
+  if (next.role !== "merger") return true;
+  return settlement.role === "judge" && settlement.status === "converged";
+}
 
 // Provider admission is ADR 0060 object root only. Nested advisory shape
 // (candidates/next/route/matches/reason/command) is never a gate — every object
@@ -567,10 +586,14 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     };
   };
   let routePlaybookSettlement: Promise<void> | undefined;
+  /** Settlement-bound prepare only; cleared at the start of each prepare body. */
+  let prepareBoundSettlement: NavigatorSettlement | undefined;
   const prepare = async (): Promise<NavigatorCandidate[]> => {
     // Exact principal is owned by shared lifecycle (or one mint per attendance).
     // Model/tool/advice paths cannot override it; role-session persistence is
     // pi.appendEntry at lifecycle start — not optional sessionManager probing.
+    const boundSettlement = prepareBoundSettlement;
+    prepareBoundSettlement = undefined;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
@@ -700,6 +723,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         subject,
         authority,
         currentRole: { role: options.role, phase: options.phase },
+        ...(boundSettlement === undefined ? {} : { currentSettlement: boundSettlement }),
         priorRoute: exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))
           ? prior.route.map((target) => ({ role: target.role as NavigatorTargetRole, phase: target.phase as NavigatorPhase }))
           : null,
@@ -717,8 +741,16 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         `<work_subject>\n${subject}\n</work_subject>`,
         `<controlling_authority>\n${authority}\n</controlling_authority>`,
         `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
+        ...(boundSettlement === undefined ? [] : [
+          `<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`,
+          "The current role has just reached this typed settlement. Recommend the next packaged role AFTER this settlement.",
+          "public_settlement_history is prior background only — a prior terminal does not consume or replace the work this settlement just produced.",
+        ]),
         `<prior_route>\n${JSON.stringify(prior ?? null)}\n</prior_route>`,
         `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
+        ...(boundSettlement === undefined ? [
+          "Preparation is speculative while the current role still runs. Prefer candidates[].matches keyed to plausible accepted outcomes of the current role; prior history must not substitute for the current role's work.",
+        ] : []),
         `<live_role_help>\n${helpContext}\n</live_role_help>`,
         `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call.`,
         "v1 requires a usable next direction: candidates[].next.role, with phase only when present and meaningful. route, matches, id, reason, and command are optional context — never retry to satisfy optional shape.",
@@ -843,9 +875,27 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       } else {
         try {
           if (sessionReady !== undefined) await sessionReady;
-          const prepared = await preparation;
+          let prepared = await preparation;
           session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
-          const selected = selectNavigatorCandidate(prepared, settlement);
+          let selected = selectNavigatorCandidate(prepared, settlement);
+          // Family #224/#226/#227 shared seam: speculative prepare runs before the
+          // current terminal exists and may treat prior history as decisive. When
+          // selected next contradicts this accepted settlement, discard it and
+          // re-prepare once bound to the settlement (single shared mechanism).
+          if (
+            selected?.next !== undefined
+            && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)
+          ) {
+            prepareBoundSettlement = settlement;
+            prepared = await prepare();
+            selected = selectNavigatorCandidate(prepared, settlement);
+            if (
+              selected?.next !== undefined
+              && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)
+            ) {
+              throw new Error("Navigator advice contradicts the accepted settlement");
+            }
+          }
           // Usable model/authority next only — never invent from settlement role/status, prior absence, or prose.
           if (selected?.next === undefined) {
             throw new Error("Navigator prepared no machine-usable next direction");
