@@ -420,9 +420,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
         terminal.artifacts.find((a) => a.kind === "evidence")!.path,
         "utf8",
       ),
-    ) as {
-      taskSha256: string;
-      capabilitiesPath: string;
+    ) as Record<string, unknown> & {
       baseRevision?: string;
       methodProvenance: {
         name: string;
