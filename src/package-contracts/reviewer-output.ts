@@ -23,7 +23,7 @@ type RuntimeReviewerOutcomeCommon = Readonly<{
 }>;
 export type RuntimeReviewerOutcome = RuntimeReviewerOutcomeCommon & (
   | Readonly<{ status: "successful"; failure?: never; runtimeConstructionEvidence: MaterializedBundleEvidenceV1 }>
-  | Readonly<{ status: "failed"; failure: ReviewerFailureClassification; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>
+  | Readonly<{ status: "failed"; failure: ReviewerFailureClassification; diagnostic: string; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>
 );
 export type RuntimeReviewerAcceptedBatch = Readonly<{
   identity: string;

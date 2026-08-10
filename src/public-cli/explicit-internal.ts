@@ -41,6 +41,8 @@ export type ExplicitInternalKnownFailure = {
    * assistant errorMessage). Settlement prefers this over child stderr selection.
    */
   readonly diagnostic?: string;
+  /** Secondary evidence attached to the same typed failure record. */
+  readonly details?: Readonly<Record<string, unknown>>;
 };
 
 /**

@@ -40,7 +40,7 @@ test("Reviewer target IDs are bound to the accepted object format", () => {
 
 test("settlement preserves ledgered materialization evidence for successful and later-failed legs", () => {
   const source = receipt(["standards", "spec"], "refused") as any;
-  source.outcomes.spec.status = "failed"; source.outcomes.spec.failure = "child"; delete source.reports.spec;
+  source.outcomes.spec.status = "failed"; source.outcomes.spec.failure = "child"; source.outcomes.spec.diagnostic = "child diagnostic"; delete source.reports.spec;
   const results = Object.fromEntries(["standards", "spec"].map(axis => [axis, {
     dispatchIdentity: "dispatch", axis, ...source.outcomes[axis], target: source.identities.target,
     ...(axis === "standards" ? { report: source.reports.standards.text } : {}),
@@ -113,7 +113,7 @@ test("terminal receipt retains host material identity facts without host bytes",
 
 test("accepted projection authenticates exact canonical terminal leg and report coverage", () => {
   validateRuntimeReviewerReceipt(receipt(["standards"])); validateRuntimeReviewerReceipt(receipt(["standards", "spec"]));
-  const mixed = receipt(["standards", "spec"], "refused") as any; mixed.outcomes.spec = { ...mixed.outcomes.spec, status: "failed", failure: "child" }; delete mixed.reports.spec; validateRuntimeReviewerReceipt(mixed);
+  const mixed = receipt(["standards", "spec"], "refused") as any; mixed.outcomes.spec = { ...mixed.outcomes.spec, status: "failed", failure: "child", diagnostic: "child diagnostic" }; delete mixed.reports.spec; validateRuntimeReviewerReceipt(mixed);
   const mismatchedEvidence = receipt(["standards", "spec"]) as any; mismatchedEvidence.outcomes.spec.runtimeConstructionEvidence.leg = "standards"; assert.throws(() => validateRuntimeReviewerReceipt(mismatchedEvidence));
   const mismatchedSkill = receipt() as any; mismatchedSkill.identities.canonicalSkill.text = "different expansion\n"; assert.throws(() => validateRuntimeReviewerReceipt(mismatchedSkill));
   for (const mutate of [

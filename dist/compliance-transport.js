@@ -19,6 +19,8 @@ export async function prepareComplianceDispatch(model, context, label) {
     return { model: resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model, auth: { ...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }), ...(auth.headers === undefined ? {} : { headers: auth.headers }), ...(env === undefined ? {} : { env }) } };
 }
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+export const AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
+export const AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
 export class ComplianceResponseRetentionError extends Error {
     constructor(message, options) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
 }
@@ -63,7 +65,6 @@ export async function runComplianceAudit(options) {
             throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
         return readComplianceCandidate(call.arguments, response.usage);
     }
-    const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, ...(options.signal === undefined ? {} : { signal: options.signal }) });
-    retainComplianceResponse(options.context, receipt.response);
+    const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, retainResponse: (response) => retainComplianceResponse(options.context, response), ...(options.signal === undefined ? {} : { signal: options.signal }) });
     return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }

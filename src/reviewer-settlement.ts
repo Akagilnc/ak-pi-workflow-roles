@@ -39,6 +39,7 @@ export function assembleRuntimeReviewerReceipt(input: {
         prompt: receiptPrompt(result.prompt),
         workspaceDisposition: result.workspaceDisposition,
         failure: result.failure,
+        diagnostic: result.diagnostic,
         ...(result.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: result.runtimeConstructionEvidence }),
       };
     }
