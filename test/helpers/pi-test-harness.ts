@@ -335,9 +335,11 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
         const { stdout } = await execFileAsync(
           "npm",
           ["pack", "--json", "--pack-destination", packDestination],
-          { cwd: materialRoot, maxBuffer: 10 * 1024 * 1024 },
+          { cwd: materialRoot, maxBuffer: 10 * 1024 * 1024, env: { ...process.env, PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false" } },
         );
-        const pack = JSON.parse(stdout) as Array<{
+        const jsonStart = stdout.indexOf("[");
+        if (jsonStart < 0) throw new Error(`npm pack did not emit JSON: ${stdout}`);
+        const pack = JSON.parse(stdout.slice(jsonStart)) as Array<{
           filename: string;
           files: Array<{ path: string }>;
         }>;

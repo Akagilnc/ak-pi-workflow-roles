@@ -9,6 +9,7 @@ import { join } from "node:path";
 import {
   knownFailureFromProviderStop,
   runExplicitInternalActivation,
+  type ExplicitInternalKnownFailure,
   type ExplicitInternalPiRunner,
   type ExplicitInternalPiResult,
 } from "./explicit-internal.ts";
@@ -23,6 +24,10 @@ import {
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
+import {
+  missingCredentialPreDispatchFailure,
+  postRunMissingCredentialFailure,
+} from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
@@ -39,6 +44,7 @@ import {
   inspectJudgeSession,
   presentFailureTerminal,
   presentStructuralRejection,
+  explicitInternalKnownFailureClassificationInput,
   readCollectorInfrastructureFailure,
   readSessionProviderStop,
   settleFailureTerminalResult,
@@ -49,7 +55,6 @@ import type {
   ControlledFailureCause,
   TerminalResult,
 } from "./terminal.ts";
-import { knownFailureForMissingProviderCredential } from "./judge-run.ts";
 
 export type CollectorRunEnv = {
   home: string;
@@ -121,6 +126,7 @@ async function presentControlledFailure(
     code: number | null;
     stderr: string;
     thrown?: unknown;
+    knownFailure?: ExplicitInternalKnownFailure;
     knownCause?: ControlledFailureCause;
     knownIdentity?: {
       readonly name?: string;
@@ -138,6 +144,7 @@ async function presentControlledFailure(
   const session =
     !hasThrown &&
     !failureInput.timedOut &&
+    failureInput.knownFailure === undefined &&
     failureInput.knownCause === undefined
       ? await inspectJudgeSession(admitted.sessionFile)
       : undefined;
@@ -146,6 +153,7 @@ async function presentControlledFailure(
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...(hasThrown ? { thrown: failureInput.thrown } : {}),
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
     ...(failureInput.knownCause === undefined
       ? {}
       : { knownCause: failureInput.knownCause }),
@@ -183,6 +191,17 @@ async function dispatchAdmittedCollector(input: {
 }> {
   const { admitted, env, io, extraArgs, lease } = input;
   try {
+    const missingCredential = missingCredentialPreDispatchFailure(
+      env.model,
+      env.credentials,
+    );
+    if (missingCredential !== undefined) {
+      return await presentControlledFailure(
+        admitted,
+        missingCredential,
+        io,
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
@@ -268,10 +287,11 @@ async function dispatchAdmittedCollector(input: {
       sessionProviderStop === undefined
         ? undefined
         : knownFailureFromProviderStop(sessionProviderStop);
-    const credentialFailure =
-      result.timedOut || result.code !== 0
-        ? knownFailureForMissingProviderCredential(env.model, env.credentials)
-        : undefined;
+    const credentialFailure = postRunMissingCredentialFailure(
+      result,
+      env.model,
+      env.credentials,
+    );
     const knownFailure =
       result.knownFailure ??
       (infrastructureFailure === undefined
@@ -291,17 +311,7 @@ async function dispatchAdmittedCollector(input: {
         timedOut: result.timedOut,
         code: result.code,
         stderr: result.stderr,
-        ...(knownFailure === undefined
-          ? {}
-          : {
-              knownCause: knownFailure.cause,
-              ...(knownFailure.identity === undefined
-                ? {}
-                : { knownIdentity: knownFailure.identity }),
-              ...(knownFailure.diagnostic === undefined
-                ? {}
-                : { knownDiagnostic: knownFailure.diagnostic }),
-            }),
+        ...(knownFailure === undefined ? {} : { knownFailure }),
       },
       io,
     );

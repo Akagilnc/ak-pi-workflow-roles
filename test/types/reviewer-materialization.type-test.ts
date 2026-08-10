@@ -1,5 +1,5 @@
 /**
- * Pure typecheck fixture for materialization outcome contracts.
+ * Pure typecheck fixture: materialization evidence shells are gone (ADR 0031 / #236).
  * Not registered as a runtime test — tsc include covers it.
  */
 import type {
@@ -9,29 +9,13 @@ import type {
 import type { ReviewerLegResultEvidence } from "../../src/reviewer-execution-ledger.ts";
 import type { RuntimeReviewerOutcome } from "../../src/package-contracts/reviewer-output.ts";
 
-export function assertMaterializationOutcomeContracts(
-  runnerSuccess: Omit<ReviewerSuccessfulLegRunResult, "runtimeConstructionEvidence">,
-  ledgerSuccess: Omit<
-    Extract<ReviewerLegResultEvidence, { status: "successful" }>,
-    "runtimeConstructionEvidence"
-  >,
-  receiptSuccess: Omit<
-    Extract<RuntimeReviewerOutcome, { status: "successful" }>,
-    "runtimeConstructionEvidence"
-  >,
-  preMaterializationFailure: ReviewerFailedLegRunResult,
-  postMaterializationFailure: ReviewerFailedLegRunResult &
-    Required<Pick<ReviewerFailedLegRunResult, "runtimeConstructionEvidence">>,
+export function assertPlainTextOutcomeContracts(
+  runnerSuccess: ReviewerSuccessfulLegRunResult,
+  ledgerSuccess: Extract<ReviewerLegResultEvidence, { status: "successful" }>,
+  receiptSuccess: Extract<RuntimeReviewerOutcome, { status: "successful" }>,
+  failure: ReviewerFailedLegRunResult,
 ): void {
-  // @ts-expect-error successful runner outcomes require materialization evidence
-  const invalidRunnerSuccess: ReviewerSuccessfulLegRunResult = runnerSuccess;
-  // @ts-expect-error successful ledger outcomes require materialization evidence
-  const invalidLedgerSuccess: ReviewerLegResultEvidence = ledgerSuccess;
-  // @ts-expect-error successful receipt outcomes require materialization evidence
-  const invalidReceiptSuccess: RuntimeReviewerOutcome = receiptSuccess;
-  const validFailures: readonly ReviewerFailedLegRunResult[] = [
-    preMaterializationFailure,
-    postMaterializationFailure,
-  ];
-  void [invalidRunnerSuccess, invalidLedgerSuccess, invalidReceiptSuccess, validFailures];
+  // Successful outcomes are plain text + workspace disposition — no materialization shell.
+  const ok: readonly unknown[] = [runnerSuccess, ledgerSuccess, receiptSuccess, failure];
+  void ok;
 }

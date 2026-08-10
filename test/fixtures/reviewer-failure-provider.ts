@@ -60,9 +60,15 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
   let providerCalls = 0;
   const first = () => {
     providerCalls += 1;
-    return stage.startsWith("child-") || stage.startsWith("preflight-") ? agentCall : outputCall;
+    return stage.startsWith("child-") || stage.startsWith("preflight-")
+      ? agentCall
+      : fauxAssistantMessage("Independent review found no findings.");
   };
   const second = () => {
+    if (stage.startsWith("audit-")) {
+      providerCalls += 1;
+      return outputCall;
+    }
     if (stage === "child-session") {
       providerCalls += 1;
       console.error("INJECTED_REVIEWER_CHILD_SESSION_FAILURE");
@@ -76,6 +82,9 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
       console.error("Reviewer Agent returned a blank child report");
       return fauxAssistantMessage("   ");
     }
+    return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
+  };
+  const third = () => {
     if (stage === "audit-malformed-decision") {
       providerCalls += 1;
       console.error("invalid reviewer audit decision");
@@ -85,8 +94,14 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
   };
   faux.setResponses([
     first,
+    ...(stage.startsWith("audit-")
+      ? [() => {
+          providerCalls += 1;
+          return fauxAssistantMessage("Second independent review found no findings.");
+        }]
+      : []),
     second,
-    fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE"),
+    third,
     fauxAssistantMessage(
       fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, {
         status: "refused",
