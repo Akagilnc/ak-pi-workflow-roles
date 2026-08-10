@@ -9,17 +9,25 @@ export type ReviewerChildExecuteOptions = Readonly<{
   credentialScratchParent?: string;
 }>;
 
+/**
+ * Single conversion at the Reviewer adapter boundary: shared child classifications
+ * become Reviewer failure classifications without a second error taxonomy.
+ */
+export function projectSharedChildFailure(error: unknown): unknown {
+  if (typeof error === "object" && error !== null && "evidenceChildFailure" in error) {
+    const classification = (error as { evidenceChildFailure?: unknown }).evidenceChildFailure;
+    if (classification === "provider" || classification === "child") {
+      Object.assign(error, { reviewerFailure: classification });
+    }
+  }
+  return error;
+}
+
 /** Reviewer policy adapter over the shared evidence-child lifecycle seam. */
 export async function executeReviewerChild(workspace: string, leg: AcceptedReviewerLeg, context: ExtensionContext, options: ReviewerChildExecuteOptions = {}) {
   try {
     return await executeEvidenceChild(workspace, leg.prompt, context, options);
   } catch (error) {
-    if (typeof error === "object" && error !== null && "evidenceChildFailure" in error) {
-      const classification = (error as { evidenceChildFailure?: unknown }).evidenceChildFailure;
-      if (classification === "provider" || classification === "child") {
-        Object.assign(error, { reviewerFailure: classification });
-      }
-    }
-    throw error;
+    throw projectSharedChildFailure(error);
   }
 }
