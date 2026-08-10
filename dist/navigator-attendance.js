@@ -15,6 +15,7 @@ import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
 import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
+import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
@@ -226,7 +227,7 @@ function parseNavigatorModelSetting(value) {
   return { provider, model, thinkingLevel: suffix === "max" ? "max" : "off" };
 }
 function createNavigatorPrepareTool(onOutput) {
-  return {
+  return wrapPackageOwnedToolDefinition({
     name: NAVIGATOR_PREPARE_TOOL_NAME,
     label: "Navigator preparation",
     description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
@@ -235,7 +236,7 @@ function createNavigatorPrepareTool(onOutput) {
       onOutput(value);
       return { content: [{ type: "text", text: "Navigator preparation accepted" }], details: value, terminate: true };
     }
-  };
+  });
 }
 function selectNavigatorCandidate(candidates, settlement) {
   if (settlement.kind !== "accepted") return void 0;

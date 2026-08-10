@@ -1,12 +1,20 @@
 import { Type } from "typebox";
 import { runAuditorRole } from "./auditor-role.js";
+import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
 // Transport must retain malformed candidates so they can settle as typed
 // audit-incomplete outcomes; status values are guidance, not a schema gate.
 export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ description: "Auditor decision status." }), violations: Type.Array(nonblank, { description: "Observed compliance violations." }), conflicts: Type.Array(nonblank, { description: "Unresolved authority or execution conflicts." }), decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
 export function createComplianceDecisionTool(name, description) {
-    return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) { return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true }; } };
+    return wrapPackageOwnedToolDefinition({
+        name,
+        description,
+        parameters: complianceDecisionSchema,
+        async execute(_id, params) {
+            return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true };
+        },
+    });
 }
 export async function prepareComplianceDispatch(model, context, label) {
     const resolution = await context.modelRegistry.getProviderAuth(model.provider).catch((error) => { throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); });

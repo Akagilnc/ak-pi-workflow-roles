@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch } from "./compliance-transport.js";
+import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 export class AuditorTurnLimitError extends Error {
     limit;
     constructor(limit) {
@@ -38,8 +39,16 @@ export async function runAuditorRole(options) {
         const cwd = options.context.cwd ?? process.cwd();
         const loader = new DefaultResourceLoader({ cwd, agentDir: scratch, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt });
         await loader.reload();
-        const tool = { ...options.tool, label: options.roleLabel, async execute(...args) { if (decision !== undefined)
-                throw new Error("Auditor decision was submitted more than once"); decision = args[1]; return options.tool.execute(...args); } };
+        const tool = wrapPackageOwnedToolDefinition({
+            ...options.tool,
+            label: options.roleLabel,
+            async execute(...args) {
+                if (decision !== undefined)
+                    throw new Error("Auditor decision was submitted more than once");
+                decision = args[1];
+                return options.tool.execute(...args);
+            },
+        });
         const parentSessionManager = options.context.sessionManager;
         const parentHeader = parentSessionManager?.getHeader?.();
         const parentSessionFile = parentSessionManager?.getSessionFile?.();
