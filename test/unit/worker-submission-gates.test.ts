@@ -1,6 +1,7 @@
 /** #242 shortest real tracers — one bar per granted gate, positive+negative same bar. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { chmodSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +12,6 @@ import {
   installWorkerGitHooks,
   WorkerCommitReminderError,
   WORKER_COMMIT_SUBJECT_PREFIX,
-  WORKER_SUBMISSION_GATE_SITIAN_DEPENDENCY,
 } from "../../src/worker-submission-gates.ts";
 
 function git(cwd: string, args: readonly string[]): string {
@@ -51,14 +51,12 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
     gate3.arm(root);
     git(root, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} more`]);
     assert.doesNotThrow(() => gate3.assertAcceptable("completed"));
-    assert.equal(WORKER_SUBMISSION_GATE_SITIAN_DEPENDENCY.issue, 216);
-    assert.equal(WORKER_SUBMISSION_GATE_SITIAN_DEPENDENCY.status, "blocked_on_sitian_unique_entry");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("②④ bad title and amend rejected by hook; fixed title and new commit pass", async () => {
+test("②④ bad title and amend rejected by hook; fixed title, new commit, and pre-existing history pass", async () => {
   const root = await tempGitRepo();
   try {
     installWorkerGitHooks(root);
@@ -79,6 +77,27 @@ test("②④ bad title and amend rejected by hook; fixed title and new commit pa
     assert.notEqual(git(root, ["rev-parse", "HEAD"]), afterGood);
     await writeFile(join(root, "dirt.txt"), "dirty\n");
     git(root, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} still ok dirty`]);
+
+    // Pre-existing unprefixed history must not be re-checked on ref creation / no-ff merge.
+    git(root, ["checkout", "-b", "topic"]);
+    git(root, ["branch", "topic-alias"]);
+    git(root, ["checkout", "main"]);
+    git(root, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} mainline`]);
+    git(root, ["merge", "--no-ff", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} merge topic`, "topic"]);
+
+    // Linked worktree shares hooks dir — refuse install (do not lock sibling trees).
+    const wt = join(root, "wt-linked");
+    git(root, ["worktree", "add", wt]);
+    assert.throws(() => installWorkerGitHooks(wt), /linked worktree shared hooks dir/);
+    // Main tree still commits; linked install refusal must not have clobbered the hook.
+    git(root, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} after linked refuse`]);
+
+    // Foreign reference-transaction hook → fails closed, no silent overwrite.
+    const hooksDir = git(root, ["rev-parse", "--path-format=absolute", "--git-path", "hooks"]);
+    const hookPath = join(hooksDir, "reference-transaction");
+    await writeFile(hookPath, "#!/bin/sh\nexit 0\n", "utf8");
+    chmodSync(hookPath, 0o755);
+    assert.throws(() => installWorkerGitHooks(root), /refusing to overwrite existing reference-transaction hook/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
