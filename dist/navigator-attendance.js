@@ -84,6 +84,11 @@ function navigatorUnavailableError(source, error, cause = source) {
   const message = error instanceof Error ? error.message : String(error);
   return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
 }
+function navigatorAdviceConsistentWithSettlement(next, settlement) {
+  if (settlement.kind !== "accepted") return true;
+  if (next.role !== "merger") return true;
+  return settlement.role === "judge" && settlement.status === "converged";
+}
 const prepareSchema = Type.Object({}, { additionalProperties: true });
 const ROUTE_ENTRY = "ak-navigator-route";
 const CONTEXT_ENTRY = "ak-navigator-context";
@@ -344,7 +349,10 @@ function createNavigatorAttendance(options) {
     };
   };
   let routePlaybookSettlement;
+  let prepareBoundSettlement;
   const prepare = async () => {
+    const boundSettlement = prepareBoundSettlement;
+    prepareBoundSettlement = void 0;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
     if (contextError !== void 0) throw navigatorUnavailableError("context", contextError);
@@ -463,6 +471,7 @@ ${text}
       subject,
       authority,
       currentRole: { role: options.role, phase: options.phase },
+      ...boundSettlement === void 0 ? {} : { currentSettlement: boundSettlement },
       priorRoute: exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target)) ? prior.route.map((target) => ({ role: target.role, phase: target.phase })) : null,
       publicSettlementHistory,
       liveRoleHelp: help
@@ -488,12 +497,22 @@ ${authority}
       `<current_role>
 ${JSON.stringify({ role: options.role, phase: options.phase })}
 </current_role>`,
+      ...boundSettlement === void 0 ? [] : [
+        `<current_settlement>
+${JSON.stringify(boundSettlement)}
+</current_settlement>`,
+        "The current role has just reached this typed settlement. Recommend the next packaged role AFTER this settlement.",
+        "public_settlement_history is prior background only \u2014 a prior terminal does not consume or replace the work this settlement just produced."
+      ],
       `<prior_route>
 ${JSON.stringify(prior ?? null)}
 </prior_route>`,
       `<public_settlement_history>
 ${JSON.stringify(projection.publicSettlementHistory)}
 </public_settlement_history>`,
+      ...boundSettlement === void 0 ? [
+        "Preparation is speculative while the current role still runs. Prefer candidates[].matches keyed to plausible accepted outcomes of the current role; prior history must not substitute for the current role's work."
+      ] : [],
       `<live_role_help>
 ${helpContext}
 </live_role_help>`,
@@ -622,9 +641,17 @@ ${helpContext}
     } else {
       try {
         if (sessionReady !== void 0) await sessionReady;
-        const prepared = await preparation;
+        let prepared = await preparation;
         session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
-        const selected = selectNavigatorCandidate(prepared, settlement);
+        let selected = selectNavigatorCandidate(prepared, settlement);
+        if (selected?.next !== void 0 && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)) {
+          prepareBoundSettlement = settlement;
+          prepared = await prepare();
+          selected = selectNavigatorCandidate(prepared, settlement);
+          if (selected?.next !== void 0 && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)) {
+            throw new Error("Navigator advice contradicts the accepted settlement");
+          }
+        }
         if (selected?.next === void 0) {
           throw new Error("Navigator prepared no machine-usable next direction");
         }
@@ -948,6 +975,7 @@ export {
   createNavigatorPrepareTool,
   decorateSettlementWithNavigation,
   formatNavigatorReport,
+  navigatorAdviceConsistentWithSettlement,
   navigatorModelSettingPath,
   navigatorProviderFailure,
   navigatorProviderFailureFromError,
