@@ -44,6 +44,12 @@ import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE as PACKAGE_INTERNAL_ROLE_ENTRYPOINT }
 
 const execFileAsync = promisify(execFile);
 
+export async function flushEventLoopTurns(times = 20): Promise<void> {
+  for (let i = 0; i < times; i += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
 export const packageRoot = dirname(
   fileURLToPath(new URL("../../package.json", import.meta.url)),
 );

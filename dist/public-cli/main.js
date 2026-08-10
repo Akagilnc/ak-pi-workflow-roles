@@ -12598,6 +12598,29 @@ var auditorSoulPaths = Object.freeze({
 var AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
 var AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
 
+// src/tool-execution-observation.ts
+var observationBase = {
+  role: typebox_exports.String({ minLength: 1 }),
+  toolCallId: typebox_exports.String({ minLength: 1 }),
+  toolName: typebox_exports.String({ minLength: 1 }),
+  timestamp: typebox_exports.String({ format: "date-time" })
+};
+var toolExecutionObservationRecordSchema = typebox_exports.Union([
+  typebox_exports.Object({
+    ...observationBase,
+    event: typebox_exports.Literal("tool_execution_start")
+  }, { additionalProperties: true }),
+  typebox_exports.Object({
+    ...observationBase,
+    event: typebox_exports.Literal("tool_execution_update")
+  }, { additionalProperties: true }),
+  typebox_exports.Object({
+    ...observationBase,
+    event: typebox_exports.Literal("tool_execution_end"),
+    isError: typebox_exports.Boolean()
+  }, { additionalProperties: true })
+]);
+
 // src/compliance-transport.ts
 var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
 var decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
