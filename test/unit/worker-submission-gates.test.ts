@@ -1,18 +1,28 @@
 /** #242 shortest real tracers — one bar per granted gate, positive+negative same bar. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
+
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
   createWorkerSubmissionGate,
   installWorkerGitHooks,
   WorkerCommitReminderError,
+  WORKER_COMMIT_BASELINE_ENTRY_TYPE,
+  WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
   WORKER_COMMIT_SUBJECT_PREFIX,
+  WORKER_SUBMISSION_GATE_RECORD_KIND,
 } from "../../src/worker-submission-gates.ts";
+import {
+  machineLedgerHome,
+  seedGitRepository,
+  withHermeticHome,
+} from "../helpers/pi-test-harness.ts";
 
 function git(cwd: string, args: readonly string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -191,4 +201,99 @@ exit 0
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("① durability: baseline+bounce via real createRecordSession survive resume; no second false bounce", async () => {
+  await withHermeticHome({ prefix: "ak-worker-gate-durable-" }, async ({ home }) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitRepository(project);
+    git(project, ["config", "user.email", "gate@test.local"]);
+    git(project, ["config", "user.name", "Gate Test"]);
+    git(project, ["commit", "--allow-empty", "-m", "seed"]);
+    const baselineHead = git(project, ["rev-parse", "HEAD"]);
+
+    // Durable parent under ledger home — production nest shape (ADR 0065 / #216).
+    const parentDir = join(
+      machineLedgerHome(home),
+      "books",
+      "proj",
+      "runs",
+      "activation",
+      "worker-run",
+    );
+    await mkdir(parentDir, { recursive: true });
+    const parentFile = join(parentDir, "session.jsonl");
+    await writeFile(
+      parentFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "worker-parent",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: project,
+      })}\n`,
+    );
+    const parent = SessionManager.open(parentFile);
+
+    // First process: arm + zero-commit completed → bounce once.
+    const first = createWorkerSubmissionGate();
+    first.arm(project, parent);
+    assert.throws(() => first.assertAcceptable("completed"), WorkerCommitReminderError);
+
+    // Records must land under parent nest via sitian kind (not a parallel ledger path).
+    const nest = join(dirname(parentFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
+    const files = readdirSync(nest).filter((name) => name.endsWith(".jsonl"));
+    assert.equal(files.length, 1);
+    const body = readFileSync(join(nest, files[0]!), "utf8");
+    assert.match(body, new RegExp(WORKER_COMMIT_BASELINE_ENTRY_TYPE));
+    assert.match(body, new RegExp(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE));
+    assert.match(body, new RegExp(baselineHead));
+
+    // Advance HEAD after bounce — baseline must stay the first-arm tip across resume.
+    git(project, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} after bounce`]);
+
+    // Fresh gate instance ≡ process resume: must not re-bounce; baseline still first tip.
+    const resumed = createWorkerSubmissionGate();
+    resumed.arm(project, parent);
+    assert.doesNotThrow(() => resumed.assertAcceptable("completed"));
+
+    // Baseline persistence (no bounce path): new arm after only baseline, HEAD unchanged → bounce;
+    // then a third instance that only saw the bounce record must accept without re-firing.
+    const project2 = join(home, "proj2");
+    await mkdir(project2, { recursive: true });
+    seedGitRepository(project2);
+    git(project2, ["config", "user.email", "gate@test.local"]);
+    git(project2, ["config", "user.name", "Gate Test"]);
+    git(project2, ["commit", "--allow-empty", "-m", "seed2"]);
+    const parent2Dir = join(
+      machineLedgerHome(home),
+      "books",
+      "proj2",
+      "runs",
+      "activation",
+      "worker-run-2",
+    );
+    await mkdir(parent2Dir, { recursive: true });
+    const parent2File = join(parent2Dir, "session.jsonl");
+    await writeFile(
+      parent2File,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "worker-parent-2",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: project2,
+      })}\n`,
+    );
+    const parent2 = SessionManager.open(parent2File);
+    const a = createWorkerSubmissionGate();
+    a.arm(project2, parent2);
+    assert.throws(() => a.assertAcceptable("completed"), WorkerCommitReminderError);
+    const b = createWorkerSubmissionGate();
+    b.arm(project2, parent2);
+    // Same HEAD, already reminded once on durable record — confirm path, no second bounce.
+    assert.doesNotThrow(() => b.assertAcceptable("completed"));
+    assert.doesNotThrow(() => b.assertAcceptable("partially_completed"));
+  });
 });
