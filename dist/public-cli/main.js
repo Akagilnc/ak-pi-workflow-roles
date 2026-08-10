@@ -10100,19 +10100,6 @@ async function loadCollectorManifest(path) {
   };
 }
 
-// src/reviewer-admission.ts
-var REVIEWER_CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
-var REVIEWER_PREREQUISITES = [
-  "preflight.git.pin-target",
-  "preflight.git.resolve-base",
-  "preflight.git.derive-range",
-  "preflight.git.list-ordered-commits",
-  "preflight.git.read-material",
-  "runner.git.materialize-mirror",
-  "runner.git.materialize-workspace",
-  "runner.git.verify-snapshot"
-];
-
 // src/merger-git-state.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -11343,21 +11330,6 @@ function parseReviewerArgv(args) {
     ...project === void 0 ? {} : { project }
   };
 }
-function deriveReviewerCapabilitiesFromTask(taskBytes) {
-  const taskSha256 = sha256Hex(taskBytes);
-  const text = `${JSON.stringify({
-    version: 1,
-    taskSha256,
-    tools: [...REVIEWER_CHILD_TOOLS],
-    prerequisiteOperations: [...REVIEWER_PREREQUISITES]
-  })}
-`;
-  return {
-    taskSha256,
-    text,
-    bytes: new TextEncoder().encode(text)
-  };
-}
 function composeReviewerTaskText(instruction, baseRevision) {
   const lines = [instruction];
   if (baseRevision !== void 0) {
@@ -11412,10 +11384,6 @@ async function admitReviewerInvocation(options) {
   );
   const taskPath = join4(runDirectory, "task.md");
   await writeFile2(taskPath, taskText, "utf8");
-  const taskBytes = new TextEncoder().encode(taskText);
-  const derived = deriveReviewerCapabilitiesFromTask(taskBytes);
-  const capabilitiesPath = join4(runDirectory, "capabilities.json");
-  await writeFile2(capabilitiesPath, derived.text, "utf8");
   const admitted = {
     role: "reviewer",
     runId,
@@ -11427,8 +11395,6 @@ async function admitReviewerInvocation(options) {
     instruction,
     instructionEmpty: false,
     taskPath,
-    capabilitiesPath,
-    taskSha256: derived.taskSha256,
     ...options.baseRevision === void 0 ? {} : { baseRevision: options.baseRevision },
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -11459,8 +11425,6 @@ async function admitReviewerInvocation(options) {
     sessionFile,
     admittedRequestPath,
     taskPath,
-    capabilitiesPath,
-    taskSha256: derived.taskSha256,
     ...options.baseRevision === void 0 ? {} : { baseRevision: options.baseRevision }
   };
 }
@@ -12253,8 +12217,6 @@ async function loadResumableRunRecord(home, runId) {
   let packetPath;
   let prerequisitesPath;
   let prerequisites;
-  let capabilitiesPath;
-  let taskSha256;
   let baseRevision;
   let mergerInputPath;
   let derived;
@@ -12287,12 +12249,6 @@ async function loadResumableRunRecord(home, runId) {
       }
       if (Array.isArray(record3.prerequisites)) {
         prerequisites = record3.prerequisites;
-      }
-      if (typeof record3.capabilitiesPath === "string" && record3.capabilitiesPath.trim() !== "") {
-        capabilitiesPath = record3.capabilitiesPath;
-      }
-      if (typeof record3.taskSha256 === "string" && record3.taskSha256.trim() !== "") {
-        taskSha256 = record3.taskSha256;
       }
       if (typeof record3.baseRevision === "string" && record3.baseRevision.trim() !== "") {
         baseRevision = record3.baseRevision;
@@ -12330,8 +12286,6 @@ async function loadResumableRunRecord(home, runId) {
       ...packetPath === void 0 ? {} : { packetPath },
       ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
       ...prerequisites === void 0 ? {} : { prerequisites },
-      ...capabilitiesPath === void 0 ? {} : { capabilitiesPath },
-      ...taskSha256 === void 0 ? {} : { taskSha256 },
       ...baseRevision === void 0 ? {} : { baseRevision },
       ...mergerInputPath === void 0 ? {} : { mergerInputPath },
       ...derived === void 0 ? {} : { derived }
@@ -12470,18 +12424,6 @@ async function loadResumableReviewerRun(home, runId) {
       `role run admitted reviewer task path is missing: ${runId}`
     );
   }
-  const capabilitiesPath = loaded.admittedFields.capabilitiesPath;
-  if (capabilitiesPath === void 0) {
-    throw new CliUsageError(
-      `role run admitted reviewer capabilities path is missing: ${runId}`
-    );
-  }
-  const taskSha256 = loaded.admittedFields.taskSha256;
-  if (taskSha256 === void 0) {
-    throw new CliUsageError(
-      `role run admitted reviewer task digest is missing: ${runId}`
-    );
-  }
   if (loaded.admittedFields.instruction.trim() === "") {
     throw new CliUsageError(
       `role run admitted reviewer task is blank: ${runId}`
@@ -12500,8 +12442,6 @@ async function loadResumableReviewerRun(home, runId) {
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
-    capabilitiesPath,
-    taskSha256,
     ...loaded.admittedFields.baseRevision === void 0 ? {} : { baseRevision: loaded.admittedFields.baseRevision }
   };
   return {
@@ -14909,8 +14849,6 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
         sessionFile: admitted.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         taskPath: admitted.taskPath,
-        capabilitiesPath: admitted.capabilitiesPath,
-        taskSha256: admitted.taskSha256,
         ...admitted.baseRevision === void 0 ? {} : { baseRevision: admitted.baseRevision },
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
