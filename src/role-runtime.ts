@@ -205,7 +205,10 @@ export { createProductionMergerGitState } from "./merger-git-state.ts";
 export type { MergerGitState, ActiveMergerGitState, CompletedMergerGitState } from "./merger-git-state.ts";
 export type { MergerRoleDependencies } from "./merger-role.ts";
 
-type WorkerArmable = { activate(context?: ExtensionContext): Promise<void>; armSubmissionGate(cwd: string): void };
+type WorkerArmable = {
+  activate(context?: ExtensionContext): Promise<void>;
+  armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
+};
 
 type ActivationRuntime = {
   event: { reason: string };
@@ -866,10 +869,11 @@ export function createRoleRuntimeExtension(
 
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
         // Worker gates ②④ + ① baseline: envelope arms the worktree after role install.
+        // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.
         if (entry.role === "coder" || entry.role === "fixer") {
           installWorkerGitHooks(ctx.cwd);
-          if (entry.role === "coder") coder.armSubmissionGate(ctx.cwd);
-          else fixer.armSubmissionGate(ctx.cwd);
+          if (entry.role === "coder") coder.armSubmissionGate(ctx.cwd, ctx.sessionManager);
+          else fixer.armSubmissionGate(ctx.cwd, ctx.sessionManager);
         }
         appendAcceptedActivationToBook({
           ledgerHome,

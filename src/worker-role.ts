@@ -120,8 +120,8 @@ export type CoderRoleDependencies = {
 
 export type WorkerRoleRuntime = {
   activate(ctx?: ExtensionContext): Promise<void>;
-  /** Arm gate ① baseline after envelope places the worktree (coder/fixer). */
-  armSubmissionGate(cwd: string): void;
+  /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Parent feeds sitian durability. */
+  armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -271,8 +271,8 @@ export function createFixerRoleRuntime(
         });
       }
     },
-    armSubmissionGate(cwd: string) {
-      submissionGate.arm(cwd);
+    armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }) {
+      submissionGate.arm(cwd, parent);
     },
   };
 }
@@ -427,8 +427,8 @@ export function createCoderRoleRuntime(
         });
       }
     },
-    armSubmissionGate(cwd: string) {
-      submissionGate.arm(cwd);
+    armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }) {
+      submissionGate.arm(cwd, parent);
     },
   };
 }
