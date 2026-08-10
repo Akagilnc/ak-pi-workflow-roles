@@ -19,12 +19,10 @@ const entries = [
  * for roles/config/help discovery. package.json#bin → dist/public-cli/main.js.
  * Exported so package tests can prove the committed artifact matches source.
  */
-export async function buildPublicAkRoleBin(
-  outfile = "dist/public-cli/main.js",
-) {
+async function buildBundledBin(entryPoint, outfile) {
   await mkdir(dirname(outfile), { recursive: true });
   await build({
-    entryPoints: ["src/public-cli/main.ts"],
+    entryPoints: [entryPoint],
     outfile,
     format: "esm",
     platform: "node",
@@ -36,6 +34,18 @@ export async function buildPublicAkRoleBin(
     logLevel: "silent",
   });
   await chmod(outfile, 0o755);
+}
+
+export async function buildPublicAkRoleBin(
+  outfile = "dist/public-cli/main.js",
+) {
+  await buildBundledBin("src/public-cli/main.ts", outfile);
+}
+
+export async function buildCodexFastPatchDeploymentBin(
+  outfile = "dist/deploy-codex-fast-patch-main.js",
+) {
+  await buildBundledBin("src/deploy-codex-fast-patch-main.ts", outfile);
 }
 
 export async function buildPackageArtifacts() {
@@ -54,6 +64,7 @@ export async function buildPackageArtifacts() {
     await writeFile(path, source.replaceAll(/(from\s*["'][^"']+)\.ts(["'])/g, "$1.js$2"));
   }
   await buildPublicAkRoleBin();
+  await buildCodexFastPatchDeploymentBin();
 }
 
 const isMain =
