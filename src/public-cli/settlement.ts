@@ -714,10 +714,9 @@ export async function resolveAuditedRunnerKnownFailure(input: {
   credential: ExplicitInternalKnownFailure | undefined;
 }): Promise<ExplicitInternalKnownFailure | undefined> {
   if (input.runner !== undefined) return input.runner;
-  const parentStop = await readSessionProviderStop(input.sessionFile);
-  if (parentStop !== undefined) return knownFailureFromProviderStop(parentStop);
   try {
-    return (await readBoundAuditorKnownFailure(input.sessionFile)) ?? input.credential;
+    const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
+    if (auditorFailure !== undefined) return auditorFailure;
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
     return {
@@ -726,6 +725,10 @@ export async function resolveAuditedRunnerKnownFailure(input: {
       diagnostic: failure.message || failure.name,
     };
   }
+  const parentStop = await readSessionProviderStop(input.sessionFile);
+  return parentStop === undefined
+    ? input.credential
+    : knownFailureFromProviderStop(parentStop);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
