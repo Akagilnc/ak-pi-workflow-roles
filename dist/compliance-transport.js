@@ -60,10 +60,10 @@ export async function runComplianceAudit(options) {
         const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: options.serializedInput }], timestamp: Date.now() }], tools: [options.tool] };
         const response = await options.runCompletion(dispatch.model, context, { ...dispatch.auth, ...(options.signal === undefined ? {} : { signal: options.signal }) });
         retainComplianceResponse(options.context, response);
+        if (response.stopReason === "error" || response.stopReason === "aborted")
+            throw response;
         const call = [...response.content].reverse().find((part) => part.type === "toolCall" && part.name === options.tool.name);
-        if (call === undefined || call.type !== "toolCall")
-            throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
-        return readComplianceCandidate(call.arguments, response.usage);
+        return readComplianceCandidate(call?.type === "toolCall" ? call.arguments : undefined, response.usage);
     }
     const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, retainResponse: (response) => retainComplianceResponse(options.context, response), ...(options.signal === undefined ? {} : { signal: options.signal }) });
     return readComplianceCandidate(receipt.decision, receipt.response.usage);
