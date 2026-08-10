@@ -318,7 +318,7 @@ function jsonEvents(stdout: string): any[] {
     .map((line) => JSON.parse(line) as any);
 }
 
-function assertJsonAbortFacts(
+function assertJsonFailureFacts(
   result: { stdout: string },
   toolName: string,
   label: string,
@@ -340,10 +340,10 @@ function assertJsonAbortFacts(
       (event) =>
         event.type === "message_end" &&
         event.message?.role === "assistant" &&
-        event.message.stopReason === "aborted",
+        event.message.stopReason === "error",
     ),
     true,
-    `${label} stops with typed aborted reason`,
+    `${label} stops with typed error reason`,
   );
 }
 
@@ -352,7 +352,7 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
     const result = await runCli(mode);
     assertAuditAbortWithoutReceipt(result, mode);
     if (mode === "json") {
-      assertJsonAbortFacts(result, "ak_judge_output", mode);
+      assertJsonFailureFacts(result, "ak_judge_output", mode);
     }
   }
 });
@@ -458,7 +458,7 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
       (event) =>
         event.type === "message_end" &&
         event.message?.role === "assistant" &&
-        event.message.stopReason === "aborted",
+        event.message.stopReason === "error",
     ),
     true,
   );
@@ -484,7 +484,7 @@ test("fatal Fixer audit infrastructure failure aborts print and JSON without a r
     const result = await runFixerAuditFailureCli({ mode });
     assertAuditAbortWithoutReceipt(result, `fixer/${mode}`);
     if (mode === "json") {
-      assertJsonAbortFacts(result, "ak_fixer_output", mode);
+      assertJsonFailureFacts(result, "ak_fixer_output", mode);
     }
   }
 });
@@ -555,7 +555,7 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
     assert.equal(result.timedOut, false, `${processRow.stage}/${mode} subprocess did not time out`);
     assert.equal(result.code, 1, `${processRow.stage}/${mode} exits nonzero`);
     if (mode === "json") {
-      assertJsonAbortFacts(result, processRow.tool, `${processRow.stage}/${mode}`);
+      assertJsonFailureFacts(result, processRow.tool, `${processRow.stage}/${mode}`);
     }
   }
 
@@ -572,7 +572,7 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
   for (const row of matrix) {
     const result = await runReviewerCli("json", row.stage);
     assert.equal(result.code, 1, `${row.stage} exits nonzero`);
-    assertJsonAbortFacts(result, row.tool, row.stage);
+    assertJsonFailureFacts(result, row.tool, row.stage);
   }
 });
 
