@@ -4,12 +4,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type Provider } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context, type Model, type Provider } from "@earendil-works/pi-ai";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { AUDITOR_TURN_LIMIT, AuditorTurnLimitError, runAuditorRole } from "../../src/auditor-role.ts";
+import { AUDITOR_TURN_LIMIT, DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES, AuditorTurnLimitError, runAuditorRole } from "../../src/auditor-role.ts";
 import { ComplianceResponseRetentionError, createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError } from "../../src/stream-idle-guard.ts";
+
+function auditorContext(cwd: string, provider: Provider, options: { model?: Model<any>; sessionManager?: SessionManager } = {}): ExtensionContext {
+  return {
+    cwd,
+    model: options.model ?? provider.getModels()[0],
+    modelRegistry: {
+      getProvider() { return provider; },
+      async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
+      async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
+    },
+    sessionManager: options.sessionManager ?? SessionManager.inMemory(cwd),
+  } as unknown as ExtensionContext;
+}
 
 test("constant unknown tools receive error results and exhaust at a finite typed boundary", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-unknown-"));
@@ -20,17 +33,7 @@ test("constant unknown tools receive error results and exhaust at a finite typed
       seen.push(context);
       return fauxAssistantMessage([fauxToolCall("ak_other_decision", { status: "pass" })], { stopReason: "toolUse" });
     }));
-    const model = faux.getModel();
-    const context = {
-      cwd,
-      model,
-      modelRegistry: {
-        getProvider() { return faux.provider; },
-        async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
-        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
-      },
-      sessionManager: SessionManager.inMemory(cwd),
-    } as unknown as ExtensionContext;
+    const context = auditorContext(cwd, faux.provider, { model: faux.getModel() });
     const tool = createComplianceDecisionTool("ak_test_auditor_decision", "Submit the decision.");
     await assert.rejects(
       runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool, roleLabel: "Test auditor", context }),
@@ -57,17 +60,7 @@ test("provider and decision-tool failures on the limit turn retain their origina
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-boundary-cause-"));
   try {
     const faux = fauxProvider({ provider: "audit-boundary-cause" });
-    const model = faux.getModel();
-    const context = {
-      cwd,
-      model,
-      modelRegistry: {
-        getProvider() { return faux.provider; },
-        async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
-        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
-      },
-      sessionManager: SessionManager.inMemory(cwd),
-    } as unknown as ExtensionContext;
+    const context = auditorContext(cwd, faux.provider, { model: faux.getModel() });
     const unknown = () => fauxAssistantMessage([fauxToolCall("ak_other_decision", {})], { stopReason: "toolUse" });
 
     const providerFailure = fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider failed at boundary" });
@@ -95,20 +88,25 @@ test("provider and decision-tool failures on the limit turn retain their origina
       (error: unknown) => error === toolFailure,
     );
 
-    faux.setResponses([
-      ...Array.from({ length: AUDITOR_TURN_LIMIT - 1 }, unknown),
-      fauxAssistantMessage([fauxToolCall("read", { path: "missing.txt" })], { stopReason: "toolUse" }),
-    ]);
-    await assert.rejects(
-      runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: baseTool, roleLabel: "Test auditor", context }),
-      (error: unknown) => {
-        assert.ok(!(error instanceof AuditorTurnLimitError));
-        assert.equal((error as { role?: unknown }).role, "toolResult");
-        assert.equal((error as { toolName?: unknown }).toolName, "read");
-        assert.equal((error as { isError?: unknown }).isError, true);
-        return true;
-      },
-    );
+    for (const includeDecision of [false, true]) {
+      faux.setResponses([
+        ...Array.from({ length: AUDITOR_TURN_LIMIT - 1 }, unknown),
+        fauxAssistantMessage([
+          fauxToolCall("read", { path: "missing.txt" }),
+          ...(includeDecision ? [fauxToolCall(baseTool.name, { status: "pass" })] : []),
+        ], { stopReason: "toolUse" }),
+      ]);
+      await assert.rejects(
+        runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: baseTool, roleLabel: "Test auditor", context }),
+        (error: unknown) => {
+          assert.ok(!(error instanceof AuditorTurnLimitError));
+          assert.equal((error as { role?: unknown }).role, "toolResult");
+          assert.equal((error as { toolName?: unknown }).toolName, "read");
+          assert.equal((error as { isError?: unknown }).isError, true);
+          return true;
+        },
+      );
+    }
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -130,16 +128,7 @@ test("parent and typed idle cancellation win over exhaustion on the limit turn",
         ...Array.from({ length: AUDITOR_TURN_LIMIT - 1 }, unknown),
         fauxAssistantMessage([fauxToolCall(tool.name, { status: "pass" })], { stopReason: "toolUse" }),
       ]);
-      const context = {
-        cwd,
-        model: faux.getModel(),
-        modelRegistry: {
-          getProvider() { return faux.provider; },
-          async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
-        },
-        sessionManager: SessionManager.inMemory(cwd),
-      } as unknown as ExtensionContext;
+      const context = auditorContext(cwd, faux.provider, { model: faux.getModel() });
       await assert.rejects(
         runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool, roleLabel: "Test auditor", context, signal: controller.signal }),
         (error: unknown) => error === reason,
@@ -162,28 +151,15 @@ test("real provider stream idle signal retains its typed cause at the turn bound
       stream(model, context, options) {
         streams += 1;
         if (streams < AUDITOR_TURN_LIMIT) return faux.provider.stream(model, context, options);
-        const signal = options?.signal;
-        const waitForIdle = async (): Promise<never> => {
-          if (!signal?.aborted) await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
-          throw signal?.reason;
-        };
-        return {
-          async *[Symbol.asyncIterator]() { await waitForIdle(); },
-          result: waitForIdle,
-        } as ReturnType<Provider["stream"]>;
+        const stream = createAssistantMessageEventStream();
+        options?.signal?.addEventListener("abort", () => {
+          stream.push({ type: "error", reason: "error", error: fauxAssistantMessage("", { stopReason: "error", errorMessage: "idle" }) });
+        }, { once: true });
+        return stream;
       },
       streamSimple(model, context, options) { return this.stream(model, context, options); },
     };
-    const context = {
-      cwd,
-      model: faux.getModel(),
-      modelRegistry: {
-        getProvider() { return provider; },
-        async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
-        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
-      },
-      sessionManager: SessionManager.inMemory(cwd),
-    } as unknown as ExtensionContext;
+    const context = auditorContext(cwd, provider, { model: faux.getModel() });
     const realSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => realSetTimeout(handler, delay === DEFAULT_STREAM_IDLE_TIMEOUT_MS ? 20 : delay, ...args)) as typeof setTimeout;
     try {
@@ -194,7 +170,95 @@ test("real provider stream idle signal retains its typed cause at the turn bound
     } finally {
       globalThis.setTimeout = realSetTimeout;
     }
-    assert.equal(streams, AUDITOR_TURN_LIMIT);
+    assert.equal(streams, AUDITOR_TURN_LIMIT + DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("idle retries only StreamIdleTimeoutError and succeeds on the bounded final attempt", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-idle-retry-"));
+  try {
+    const faux = fauxProvider({ provider: "audit-idle-retry" });
+    const tool = createComplianceDecisionTool("ak_idle_retry", "Submit.");
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall(tool.name, { status: "pass" })], { stopReason: "toolUse" }),
+    ]);
+    let attempts = 0;
+    const provider: Provider = {
+      ...faux.provider,
+      stream(model, context, options) {
+        attempts += 1;
+        if (attempts > DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES) return faux.provider.stream(model, context, options);
+        const stream = createAssistantMessageEventStream();
+        options?.signal?.addEventListener("abort", () => {
+          stream.push({ type: "error", reason: "error", error: fauxAssistantMessage("", { stopReason: "error", errorMessage: "idle" }) });
+        }, { once: true });
+        return stream;
+      },
+      streamSimple(model, context, options) { return this.stream(model, context, options); },
+    };
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => realSetTimeout(handler, delay === DEFAULT_STREAM_IDLE_TIMEOUT_MS ? 10 : delay, ...args)) as typeof setTimeout;
+    try {
+      const decision = await runComplianceAudit({ tool, systemPrompt: "Decide.", serializedInput: "Inspect.", roleLabel: "Test auditor", invalidDecisionLabel: "invalid", context: auditorContext(cwd, provider, { model: faux.getModel() }) });
+      assert.equal(decision.status, "pass");
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+    assert.equal(attempts, DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES + 1);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("injected and AgentSession terminal responses settle unreadable decisions as audit-incomplete", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-unreadable-"));
+  try {
+    const tool = createComplianceDecisionTool("ak_unreadable", "Submit.");
+    for (const injected of [true, false]) {
+      const faux = fauxProvider({ provider: `audit-unreadable-${injected}` });
+      const response = fauxAssistantMessage("terminal prose without a decision", { stopReason: "stop" });
+      const sessionManager = SessionManager.inMemory(cwd);
+      if (!injected) faux.setResponses([response]);
+      const decision = await runComplianceAudit({
+        tool,
+        systemPrompt: "Decide.",
+        serializedInput: "Inspect.",
+        roleLabel: "Test auditor",
+        invalidDecisionLabel: "invalid",
+        context: auditorContext(cwd, faux.provider, { model: faux.getModel(), sessionManager }),
+        ...(injected ? { runCompletion: async () => response } : {}),
+      });
+      assert.equal(decision.status, "audit-incomplete");
+      if (decision.status === "audit-incomplete") assert.equal(decision.candidate, undefined);
+      const retained = sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === "ak_compliance_response");
+      assert.ok(retained?.type === "custom");
+      const retainedResponse = (retained.data as { response?: AssistantMessage }).response;
+      if (injected) assert.equal(retainedResponse, response);
+      else assert.deepEqual(retainedResponse?.content, response.content);
+    }
+
+    for (const stopReason of ["error", "aborted"] as const) {
+      const faux = fauxProvider({ provider: `audit-injected-${stopReason}` });
+      const response = fauxAssistantMessage("provider stopped", { stopReason, errorMessage: stopReason });
+      const sessionManager = SessionManager.inMemory(cwd);
+      await assert.rejects(
+        runComplianceAudit({
+          tool,
+          systemPrompt: "Decide.",
+          serializedInput: "Inspect.",
+          roleLabel: "Test auditor",
+          invalidDecisionLabel: "invalid",
+          context: auditorContext(cwd, faux.provider, { model: faux.getModel(), sessionManager }),
+          runCompletion: async () => response,
+        }),
+        (error: unknown) => error === response,
+      );
+      const retained = sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === "ak_compliance_response");
+      assert.ok(retained?.type === "custom");
+      assert.equal((retained.data as { response?: AssistantMessage }).response, response);
+    }
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -213,16 +277,7 @@ test("retention failure after a decision on the limit turn retains its typed cau
     const retentionCause = new Error("session write failed");
     const sessionManager = SessionManager.inMemory(cwd);
     sessionManager.appendCustomEntry = () => { throw retentionCause; };
-    const context = {
-      cwd,
-      model: faux.getModel(),
-      modelRegistry: {
-        getProvider() { return faux.provider; },
-        async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
-        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
-      },
-      sessionManager,
-    } as unknown as ExtensionContext;
+    const context = auditorContext(cwd, faux.provider, { model: faux.getModel(), sessionManager });
     await assert.rejects(
       runComplianceAudit({ tool, systemPrompt: "Decide.", serializedInput: "Inspect.", roleLabel: "Test auditor", invalidDecisionLabel: "invalid", context }),
       (error: unknown) => error instanceof ComplianceResponseRetentionError && error.cause === retentionCause,
@@ -249,16 +304,7 @@ test("evidence and decision calls in the same assistant turn succeed", async () 
       serializedInput: "Inspect evidence.txt and decide.",
       tool,
       roleLabel: "Test auditor",
-      context: {
-        cwd,
-        model: faux.getModel(),
-        modelRegistry: {
-          getProvider() { return faux.provider; },
-          async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
-        },
-        sessionManager: SessionManager.inMemory(cwd),
-      } as unknown as ExtensionContext,
+      context: auditorContext(cwd, faux.provider, { model: faux.getModel() }),
     });
     assert.deepEqual(result.decision, { status: "pass", violations: [], conflicts: [], decisionGate: null });
   } finally {
@@ -289,16 +335,7 @@ test("independent auditor gathers evidence and submits one decision", async () =
       serializedInput: "Inspect evidence.txt and decide.",
       roleLabel: "Test auditor",
       invalidDecisionLabel: "invalid test decision",
-      context: {
-        cwd,
-        model: faux.getModel(),
-        modelRegistry: {
-          getProvider() { return faux.provider; },
-          async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
-        },
-        sessionManager,
-      } as unknown as ExtensionContext,
+      context: auditorContext(cwd, faux.provider, { model: faux.getModel(), sessionManager }),
     });
     assert.equal(decision.status, "pass");
     assert.equal(turns, 2);

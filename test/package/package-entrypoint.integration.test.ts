@@ -1841,77 +1841,91 @@ test("packaged judge escalation emits one typed human decision", async () => {
         provider: "ak-judge-escalation-offline",
         tokenSize: { min: 1000, max: 1000 },
       });
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: packageRoot,
-        agentDir,
-        faux,
-        additionalExtensionPaths: [packageEntrypoint(manifest)],
-        systemPrompt: "JUDGE ESCALATION INTEGRATION PROMPT",
-        mode: "print",
-        flags: { "ak-role": "judge" },
-        noTools: "builtin",
-      }, async ({ session, sessionManager }) => {
-        faux.setResponses([
-          fauxAssistantMessage(
-            fauxToolCall(
-              JUDGE_OUTPUT_TOOL_NAME,
-              { judgeStatus: "converged" },
-              { id: "escalating-judge" },
+      const model = faux.getModel();
+      const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      try {
+        await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
+        await withInProcessPi({
+          activationLedgerSession: true,
+          cwd: packageRoot,
+          agentDir,
+          faux,
+          additionalExtensionPaths: [packageEntrypoint(manifest)],
+          systemPrompt: "JUDGE ESCALATION INTEGRATION PROMPT",
+          mode: "print",
+          flags: { "ak-role": "judge" },
+          noTools: "builtin",
+        }, async ({ session, sessionManager }) => {
+          faux.setResponses([
+            fauxAssistantMessage(
+              fauxToolCall(
+                JUDGE_OUTPUT_TOOL_NAME,
+                { judgeStatus: "converged" },
+                { id: "escalating-judge" },
+              ),
+              { stopReason: "toolUse" },
             ),
-            { stopReason: "toolUse" },
-          ),
-          fauxAssistantMessage(
-            fauxToolCall(
-              SOUL_AUDIT_TOOL_NAME,
-              {
-                status: "escalate",
-                violations: [],
-                conflicts: ["Soul authority conflicts with controlling authority"],
-                decisionGate: {
-                  question: "Which authority governs this verdict?",
-                  options: ["Soul", "Controlling authority"],
+            fauxAssistantMessage(
+              fauxToolCall(
+                SOUL_AUDIT_TOOL_NAME,
+                {
+                  status: "escalate",
+                  violations: [],
+                  conflicts: ["Soul authority conflicts with controlling authority"],
+                  decisionGate: {
+                    question: "Which authority governs this verdict?",
+                    options: ["Soul", "Controlling authority"],
+                  },
                 },
-              },
-              { id: "audit-escalation" },
+                { id: "audit-escalation" },
+              ),
+              { stopReason: "toolUse" },
             ),
-            { stopReason: "toolUse" },
-          ),
-        ]);
-        await session.prompt("Exercise packaged audit escalation.");
+            fauxAssistantMessage(
+              fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [] }, { id: "navigator-after-escalation" }),
+              { stopReason: "toolUse" },
+            ),
+          ]);
+          await session.prompt("Exercise packaged audit escalation.");
 
-        const result = sessionManager
-          .getEntries()
-          .find(
-            (entry) =>
-              entry.type === "message" &&
-              entry.message.role === "toolResult" &&
-              entry.message.toolCallId === "escalating-judge",
+          const result = sessionManager
+            .getEntries()
+            .find(
+              (entry) =>
+                entry.type === "message" &&
+                entry.message.role === "toolResult" &&
+                entry.message.toolCallId === "escalating-judge",
+            );
+          if (!(result?.type === "message" && result.message.role === "toolResult")) {
+            throw new Error("packaged Judge escalation tool result is missing");
+          }
+          const toolResult = result.message;
+          assert.equal(toolResult.isError, false);
+          // Audit face + delivered judge verdict retained together (ADR 0055).
+          assert.equal(toolResult.details.kind, "audit_escalation");
+          assert.deepEqual(toolResult.details.conflicts, [
+            "Soul authority conflicts with controlling authority",
+          ]);
+          assert.deepEqual(toolResult.details.auditDecisionGate, {
+            question: "Which authority governs this verdict?",
+            options: ["Soul", "Controlling authority"],
+          });
+          assert.equal(
+            (toolResult.details as { judgeStatus?: unknown }).judgeStatus,
+            "converged",
           );
-        if (!(result?.type === "message" && result.message.role === "toolResult")) {
-          throw new Error("packaged Judge escalation tool result is missing");
-        }
-        const toolResult = result.message;
-        assert.equal(toolResult.isError, false);
-        // Audit face + delivered judge verdict retained together (ADR 0055).
-        assert.equal(toolResult.details.kind, "audit_escalation");
-        assert.deepEqual(toolResult.details.conflicts, [
-          "Soul authority conflicts with controlling authority",
-        ]);
-        assert.deepEqual(toolResult.details.auditDecisionGate, {
-          question: "Which authority governs this verdict?",
-          options: ["Soul", "Controlling authority"],
+          assert.equal(isAuditEscalationResult(toolResult.details), true);
+          assert.throws(
+            () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, toolResult.details),
+            (error: unknown) => error instanceof Error && error.name === "AcceptedDetailsContractError",
+          );
+          assert.equal(faux.state.callCount, 3, "Judge, its nested auditor, and Navigator must share the explicit offline provider");
         });
-        assert.equal(
-          (toolResult.details as { judgeStatus?: unknown }).judgeStatus,
-          "converged",
-        );
-        assert.equal(isAuditEscalationResult(toolResult.details), true);
-        assert.throws(
-          () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, toolResult.details),
-          (error: unknown) => error instanceof Error && error.name === "AcceptedDetailsContractError",
-        );
-      });
+      } finally {
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      }
     },
   );
 });

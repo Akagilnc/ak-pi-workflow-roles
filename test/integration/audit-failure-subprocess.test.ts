@@ -303,12 +303,27 @@ async function runCoderSkillFailureCli(
   );
 }
 
-function assertAuditAbortWithoutReceipt(
+function assertAuditIncompleteSettlement(
   result: { code: number | null; stdout: string; stderr: string; timedOut: boolean },
-  label: string,
+  toolName: string,
+  mode: "print" | "json",
 ) {
-  assert.equal(result.timedOut, false, `${label} subprocess did not time out`);
-  assert.equal(result.code, 1, `${label} exits nonzero`);
+  assert.equal(result.timedOut, false, `${mode} subprocess did not time out`);
+  assert.equal(result.code, 0, `${mode} settles audit-incomplete without aborting`);
+  const toolEnd = result.stderr
+    .split("\n")
+    .filter((line) => line.trim().startsWith("{"))
+    .map((line) => JSON.parse(line) as any)
+    .find((event) => event.event === "tool_execution_end" && event.toolName === toolName);
+  assert.equal(toolEnd?.isError, false, `${mode} accepts the typed audit-incomplete settlement`);
+  if (mode === "json") {
+    const output = jsonEvents(result.stdout).find(
+      (event) => event.type === "message_end" && event.message?.role === "toolResult" && event.message.toolName === toolName,
+    );
+    assert.equal(output?.message?.isError, false);
+    assert.equal(output?.message?.details?.status, "audit-incomplete");
+    assert.deepEqual(output?.message?.details?.observation, { kind: "non-object-arguments", type: "undefined" });
+  }
 }
 
 function jsonEvents(stdout: string): any[] {
@@ -347,21 +362,17 @@ function assertJsonAbortFacts(
   );
 }
 
-test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions", async () => {
+test("unreadable Judge audit settles as typed incomplete in print and JSON CLI actions", async () => {
   for (const mode of ["print", "json"] as const) {
-    const result = await runCli(mode);
-    assertAuditAbortWithoutReceipt(result, mode);
-    if (mode === "json") {
-      assertJsonAbortFacts(result, "ak_judge_output", mode);
-    }
+    assertAuditIncompleteSettlement(await runCli(mode), "ak_judge_output", mode);
   }
 });
 
-test("fatal Judge audit failure drains one healthy packaged Navigator without advice", async () => {
+test("unreadable Judge audit drains one healthy packaged Navigator before typed incomplete settlement", async () => {
   // Process boundary required: process-release evidence is emitted on process exit.
   const result = await runHealthyNavigatorAuditFailureCli("json");
   assert.equal(result.timedOut, false, "subprocess did not time out");
-  assert.equal(result.code, 1, "subprocess exits nonzero");
+  assert.equal(result.code, 0, "subprocess settles audit-incomplete without aborting");
   const evidenceLine = result.stderr
     .split("\n")
     .find((line) => line.startsWith("AUDIT_FAILURE_EVIDENCE="));
@@ -391,8 +402,9 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
       failedOutputCorrelation: boolean;
     };
   };
+  assert.equal(evidence.providerCalls, 3, "Judge, auditor, and Navigator share the fixture provider");
   assert.equal(evidence.navigatorCalls, 1);
-  assert.equal(evidence.navigator.settlementKind, "role_infrastructure_failure");
+  assert.equal(evidence.navigator.settlementKind, "accepted");
   const timestamp = (value: string, label: string) => {
     const parsed = Date.parse(value);
     assert.ok(Number.isFinite(parsed), `${label} must be an ISO timestamp`);
@@ -422,37 +434,31 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     settledAt <= inputReleasedAt && inputReleasedAt <= processReleasedAt,
     "input and process release must follow the drained Navigator settlement",
   );
-  assert.deepEqual(evidence.role.failedOutput, {
-    toolCallId: "fatal-judge",
-    toolName: "ak_judge_output",
-    isError: true,
-    // Shared lifecycle persists the typed infra fact so exact-session restart
-    // classifies this terminal as durable completion (not a retryable isError).
-    details: {
-      kind: "role_infrastructure_failure",
-      source: "shared-role-lifecycle",
-      reasonCode: "host_failure",
-    },
-  });
+  assert.equal(evidence.role.failedOutput.toolCallId, "fatal-judge");
+  assert.equal(evidence.role.failedOutput.toolName, "ak_judge_output");
+  assert.equal(evidence.role.failedOutput.isError, false);
+  assert.equal(evidence.role.failedOutput.details.status, "audit-incomplete");
+  assert.deepEqual(evidence.role.failedOutput.details.observation, { kind: "non-object-arguments", type: "undefined" });
   assert.equal(
     evidence.role.failedOutputCorrelation,
     true,
-    "failure must correlate the exact Judge output call",
+    "settlement must correlate the exact Judge output call",
   );
   assert.equal(evidence.navigator.releaseAfterDrain, true);
   const events = result.stdout
     .split("\n")
     .filter((line) => line.trim().startsWith("{"))
     .map((line) => JSON.parse(line) as any);
-  const failedOutputs = events.filter(
+  const settledOutputs = events.filter(
     (event) =>
       event.type === "message_end" &&
       event.message?.role === "toolResult" &&
       event.message.toolName === "ak_judge_output" &&
       event.message.toolCallId === "fatal-judge",
   );
-  assert.equal(failedOutputs.length, 1, "must report exactly the failed Judge output call");
-  assert.equal(failedOutputs[0].message.isError, true);
+  assert.equal(settledOutputs.length, 1, "must report exactly the incomplete Judge output call");
+  assert.equal(settledOutputs[0].message.isError, false);
+  assert.equal(settledOutputs[0].message.details.status, "audit-incomplete");
   assert.equal(
     events.some(
       (event) =>
@@ -460,7 +466,7 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
         event.message?.role === "assistant" &&
         event.message.stopReason === "aborted",
     ),
-    true,
+    false,
   );
   // JSON stream emits message_end with role=custom; session principal uses custom_message.
   const attendance = events.filter(
@@ -470,22 +476,16 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
         event.message?.customType === "ak-navigator-attendance") ||
       (event.type === "custom_message" && event.customType === "ak-navigator-attendance"),
   );
-  assert.equal(attendance.length, 1, "infrastructure failure emits affirmative typed no-advice");
+  assert.equal(attendance.length, 1, "audit-incomplete emits the drained typed recommendation");
   assert.equal(
     attendance[0]?.message?.details?.disposition ?? attendance[0]?.details?.disposition,
-    "no-advice",
+    "recommendation",
   );
 });
 
-test("fatal Fixer audit infrastructure failure aborts print and JSON without a receipt", async () => {
-  // Fixer-specific process proof (distinct from the Judge survivor): exit code +
-  // typed isError/stopReason on ak_fixer_output.
+test("unreadable Fixer audit settles as typed incomplete in print and JSON", async () => {
   for (const mode of ["print", "json"] as const) {
-    const result = await runFixerAuditFailureCli({ mode });
-    assertAuditAbortWithoutReceipt(result, `fixer/${mode}`);
-    if (mode === "json") {
-      assertJsonAbortFacts(result, "ak_fixer_output", mode);
-    }
+    assertAuditIncompleteSettlement(await runFixerAuditFailureCli({ mode }), "ak_fixer_output", mode);
   }
 });
 
