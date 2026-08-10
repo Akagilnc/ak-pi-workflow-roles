@@ -447,7 +447,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         let selectedDecision = decision;
         const complete = async (_model: unknown, _request: Context) => {
           auditCalls += 1;
-          const auditTool = role === "fixer" ? "unused_fixer_audit" : toolNames[role as Exclude<typeof role, "fixer">];
+          const auditTool = toolNames[role as Exclude<typeof role, "fixer">];
           return fauxAssistantMessage(fauxToolCall(auditTool, selectedDecision), { stopReason: "toolUse" });
         };
         const auditCompliance = (input: any, options: any) => {

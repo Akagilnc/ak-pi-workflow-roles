@@ -182,7 +182,6 @@ export {
   WORKER_COMMIT_SUBJECT_PREFIX,
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
-  WORKER_SUBMISSION_GATE_SITIAN_DEPENDENCY,
 } from "./worker-submission-gates.ts";
 export { DOCTOR_AUDIT_TOOL_NAME, createPiDoctorAuditor } from "./doctor-auditor.ts";
 export type { ComplianceDecision } from "./compliance-transport.ts";

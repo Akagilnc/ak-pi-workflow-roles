@@ -62,7 +62,9 @@ import {
   persistActivationSessionFile,
   readAcceptedActivationFacts,
   runNodeSubprocess,
+  runPiSubprocess,
   withActivationHome,
+  withHermeticHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
@@ -1133,59 +1135,49 @@ test("ledger append and durable session admission reject symlink component escap
   });
 });
 
-test("incident 2026-08-02: malformed Fixer prerequisites fail activation before provider dispatch", async () => {
-  // #242 retired the Fixer audit-failure provider; keep the activation-fail-closed tracer via in-process extension.
-  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
-  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-  const { mkdtemp, rm, writeFile, mkdir } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const { tmpdir } = await import("node:os");
-  const { seedGitRepository } = await import("../helpers/pi-test-harness.ts");
-  const home = await mkdtemp(join(tmpdir(), "ak-fixer-activation-incident-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
-  try {
-    seedGitRepository(home);
-    const sessionDir = join(home, ".ak-roles", "books", home.split("/").pop()!, "runs", "fixer-act", "session");
-    await mkdir(sessionDir, { recursive: true });
-    const handlers = new Map<string, any>();
-    const flags = new Map<string, string>([
-      ["ak-role", "fixer"],
-      ["ak-fix-packet", join(home, "instructions.md")],
-      ["ak-fixer-prerequisites", join(home, "prerequisites.json")],
-      ["ak-fixer-phase", "apply"],
-    ]);
-    await writeFile(join(home, "instructions.md"), "Apply the assigned repair.\n");
-    await writeFile(join(home, "prerequisites.json"), JSON.stringify({ prerequisites: [] }));
-    const pi = {
-      registerFlag() {},
-      getFlag(name: string) { return flags.get(name); },
-      registerTool() {},
-      getAllTools() { return []; },
-      setActiveTools() {},
-      getActiveTools() { return []; },
-      on(name: string, handler: any) { handlers.set(name, handler); },
-      appendEntry() {},
-    };
-    createRoleRuntimeExtension({
-      loadJudgeSoul: async () => "judge",
-      loadFixerSoul: async () => "fixer",
-      loadFixPacket: async (path: string) => path.endsWith("prerequisites.json")
-        ? JSON.stringify({ prerequisites: [] })
-        : "Apply the assigned repair.\n",
-      transcriptFromContext: () => "",
-      auditSoulCompliance: async () => ({ status: "pass" }),
-    })(pi as any);
-    const sessionManager = SessionManager.create(home, sessionDir);
-    await assert.rejects(
-      Promise.resolve(handlers.get("session_start")?.({}, { cwd: home, sessionManager, abort() {} })),
-      /Fixer prerequisite|FixerPacketValidationError|AK_INVALID_FIX_PACKET/i,
+test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subprocess before provider dispatch", async () => {
+  // Real CLI subprocess via existing harness; no audit-leg revival — call-count fixture only.
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const { resolve } = await import("node:path");
+  await withHermeticHome({ prefix: "ak-fixer-activation-incident-" }, async ({ home, agentDir }) => {
+    const instructions = resolve(home, "instructions.md");
+    const prerequisites = resolve(home, "prerequisites.json");
+    await writeFile(instructions, "Apply the assigned repair.\n");
+    await writeFile(prerequisites, JSON.stringify({ prerequisites: [] }));
+    const sessionDirectory = resolve(
+      home, ".ak-roles", "books", resolveBookKeyFromGit(packageRoot), "runs", "fixer-act", "session",
     );
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    await rm(home, { recursive: true, force: true });
-  }
+    await mkdir(sessionDirectory, { recursive: true });
+    const result = await runPiSubprocess([
+      "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+      "--session-dir", sessionDirectory,
+      "-e", resolve(packageRoot, "extensions/role-runtime.ts"),
+      "-e", resolve(packageRoot, "test/fixtures/coder-success-provider.ts"),
+      "--ak-role", "fixer", "--ak-fixer-phase", "apply",
+      "--ak-fix-packet", instructions,
+      "--ak-fixer-prerequisites", prerequisites,
+      "--provider", "ak-coder-offline", "--model", "faux-1", "-p", "Apply.",
+    ], {
+      cwd: packageRoot,
+      timeoutMs: 15_000,
+      env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" },
+    });
+    assert.equal(result.timedOut, false, "malformed prerequisites subprocess did not time out");
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /CODER_SUCCESS_PROVIDER_CALLS=0/);
+    const traces = result.stderr.split("\n").flatMap((line) => {
+      try {
+        const value = JSON.parse(line) as ActivationTraceRecord;
+        return Value.Check(activationTraceRecordSchema, value) ? [value] : [];
+      } catch { return []; }
+    });
+    const failed = traces.find((trace) => trace.status === "failed");
+    assert.ok(failed && failed.status === "failed", "missing failed activation trace");
+    assert.equal(failed.role, "fixer");
+    assert.equal(failed.stageId, "load-and-install");
+    assert.equal(failed.cause.identity, "AK_INVALID_FIX_PACKET");
+    assert.match(failed.cause.message, /Fixer prerequisites/);
+  });
 });
 
 
