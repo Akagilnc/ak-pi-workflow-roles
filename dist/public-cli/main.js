@@ -13793,6 +13793,16 @@ function extractComplianceAuditIncompleteRoleOutcome(entries, role, outputToolNa
       outputToolName
     );
     if (roleCall === void 0) continue;
+    const details = message.details;
+    if (isComplianceAuditIncomplete(details) && (details.observation.kind === "missing-dossier" || details.observation.kind === "missing-subject")) {
+      return {
+        outcome: buildAuditIncompleteTerminalOutcome({
+          role,
+          roleCandidate: roleCall.candidate,
+          audit: details
+        })
+      };
+    }
     const retained = boundRetainedAuditResponse(
       entries,
       roleCall.callIndex,
