@@ -921,10 +921,11 @@ export interface InProcessPiOptions {
   noExtensions?: boolean;
   reviewerShutdown?: boolean;
   /**
-   * Opt-in at activation-owning tests only: place a durable session file under the
-   * machine ledger book (ADR 0048). Requires hermetic HOME and a git cwd. Generic
+   * Opt-in at activation-owning tests only: real parent SessionManager whose
+   * getSessionFile/getSessionDir share a persisted directory under the machine
+   * ledger book (ADR 0048). Requires hermetic HOME and a git cwd. Generic
    * in-process callers must leave this unset so they incur no git discovery or
-   * durable-session persistence.
+   * durable-session persistence. cwd/Navigator subject semantics stay fixture-owned.
    */
   activationLedgerSession?: boolean;
 }
@@ -1009,10 +1010,10 @@ export async function withInProcessPi<T>(
   // Activation-owning tests opt in via activationLedgerSession.
   let sessionManager: SessionManager = options.sessionManager ?? SessionManager.inMemory(options.cwd);
   if (options.sessionManager === undefined && options.activationLedgerSession === true) {
-    // Keep in-memory session-dir semantics (empty getSessionDir) so Navigator subject
-    // derivation from cwd/.ak/work stays intact, while exposing a genuinely persisted
-    // session file under the machine ledger book (ADR 0048).
-    const memorySession = sessionManager;
+    // Real parent manager: file + dir co-located under the hermetic ledger book so
+    // nested auditor-roles land beside the parent (ADR 0048), not at repo root.
+    // subjectPath treats machine-ledger session dirs like empty getSessionDir, so
+    // cwd/Navigator identity stays fixture-owned.
     const hermeticHome = process.env.HOME;
     if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
       throw new Error("withInProcessPi activationLedgerSession requires process.env.HOME");
@@ -1022,19 +1023,15 @@ export async function withInProcessPi<T>(
     }
     // Opt-in path requires a git cwd; infrastructure and non-git failures propagate.
     const bookKey = resolveBookKeyFromGit(options.cwd);
-    const durableSessionFile = persistActivationSessionFile({
-      home: hermeticHome,
+    const parentSessionDir = join(
+      machineLedgerHome(hermeticHome),
+      "books",
       bookKey,
-      name: "inprocess-pi",
-      cwd: options.cwd,
-    });
-    sessionManager = new Proxy(memorySession, {
-      get(target, property, receiver) {
-        if (property === "getSessionFile") return () => durableSessionFile;
-        const value = Reflect.get(target, property, receiver);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
+      "runs",
+      "activation",
+      "inprocess-pi",
+    );
+    sessionManager = SessionManager.create(options.cwd, parentSessionDir);
   }
   const { session, extensionsResult } = await createAgentSession({
     cwd: options.cwd,
