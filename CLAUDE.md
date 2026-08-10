@@ -23,7 +23,7 @@
 
 ## Commit 前缀法（2026-08-10 陛下拍定）
 
-工厂 worker 提交标题一律冠 `ak-roles:`，置于 conventional-commit 前缀之前。交卷闸只裁 worker 提交，前缀域＝闭合单集 `{ak-roles:}`；直改通道与人工提交不经此闸，循宿主宪法 #10 开放通则（如 `claude:`）。GitHub 生成的 merge commit 豁免。
+提交标题一律冠 `ak-roles:` 在最前。
 
 ## Soul 内容纪律
 
