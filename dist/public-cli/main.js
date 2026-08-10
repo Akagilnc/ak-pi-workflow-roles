@@ -345,62 +345,6 @@ function validateAcceptedJudgeDetails(verdict) {
   throw new Error("Judge verdict has no execution discriminator");
 }
 
-// src/exact-utf8.ts
-var decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-function exactUtf8(bytes, label) {
-  let text;
-  try {
-    text = decoder.decode(bytes);
-  } catch (error) {
-    throw new Error(`${label} is not valid UTF-8`, { cause: error });
-  }
-  return text;
-}
-
-// src/sha256.ts
-import { createHash } from "node:crypto";
-function sha256Hex(bytes) {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
-// src/reviewer-construction.ts
-var REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
-  recipeId: "reviewer-common-bundle",
-  version: 1,
-  runtimeVersion: "1",
-  implementationSha256: sha256Hex("reviewer-common-bundle:v1:path-digest-prompts")
-});
-var REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
-  adapterId: "reviewer-axis-output",
-  version: 1,
-  implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities")
-});
-var REVIEWER_STANDARDS_CONCLUSION_KEYS = Object.freeze([
-  "constitutionality",
-  "minimum-necessary-test-cost",
-  "complexity"
-]);
-var REVIEWER_STANDARDS_CONCLUSION_LABELS = Object.freeze({
-  constitutionality: "constitutionality",
-  "minimum-necessary-test-cost": "minimum-necessary test cost",
-  complexity: "complexity"
-});
-function manifestBytes(entries) {
-  return JSON.stringify({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, entries: entries.map((entry) => {
-    const { bytes: _bytes, ...identity } = entry;
-    return identity;
-  }) });
-}
-function verifyBundleIdentity(bundle) {
-  return bundle.entries.every((item) => {
-    if ("bytes" in item) {
-      const bytes = item.bytes;
-      return exactUtf8(Buffer.from(bytes), item.id) === bytes && Buffer.byteLength(bytes) === item.utf8Length && sha256Hex(bytes) === item.sha256;
-    }
-    return typeof item.id === "string" && typeof item.relativeClonePath === "string" && typeof item.origin === "string" && typeof item.sourceIdentity === "string" && Number.isInteger(item.utf8Length) && item.utf8Length >= 0 && /^[0-9a-f]{64}$/.test(item.sha256);
-  }) && sha256Hex(manifestBytes(bundle.entries)) === bundle.manifestSha256;
-}
-
 // src/package-contracts/reviewer-output.ts
 var REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
 function isRecord(value) {
@@ -425,14 +369,11 @@ function validateRuntimeReviewerReceipt(output) {
   if (acceptedBatch !== void 0 || construction !== void 0 || target !== void 0) {
     if (!isRecord(acceptedBatch) || !isRecord(construction) || !isRecord(target) || !Array.isArray(legs))
       throw new Error("Incomplete Reviewer accepted-batch identity");
-    const bundle = read(construction, "bundle");
-    const entries = read(bundle, "entries");
     const objectFormat = read(target, "objectFormat");
     const objectId = (value) => typeof value === "string" && new RegExp(objectFormat === "sha1" ? "^[0-9a-f]{40}$" : "^[0-9a-f]{64}$").test(value);
     const refs = read(target, "refs");
     const skillText = read(read(identities, "canonicalSkill"), "text");
-    const skillEntry = Array.isArray(entries) ? entries.find((entry) => read(entry, "origin") === "canonical-skill") : void 0;
-    if (typeof skillText !== "string" || !isRecord(skillEntry) || read(skillEntry, "sha256") !== sha256Hex(skillText) || read(skillEntry, "utf8Length") !== Buffer.byteLength(skillText, "utf8") || read(construction, "recipe") !== "reviewer-common-bundle-v1" || !isRecord(bundle) || !Array.isArray(entries) || !verifyBundleIdentity(bundle) || objectFormat !== "sha1" && objectFormat !== "sha256" || !objectId(read(target, "targetHead")) || !isRecord(refs) || Object.values(refs).some((ref) => !isRecord(ref) || !objectId(read(ref, "objectId")) || read(ref, "peeledCommitId") !== null && !objectId(read(ref, "peeledCommitId"))))
+    if (typeof skillText !== "string" || read(construction, "recipe") !== "reviewer-common-bundle-v1" || objectFormat !== "sha1" && objectFormat !== "sha256" || !objectId(read(target, "targetHead")) || !isRecord(refs) || Object.values(refs).some((ref) => !isRecord(ref) || !objectId(read(ref, "objectId")) || read(ref, "peeledCommitId") !== null && !objectId(read(ref, "peeledCommitId"))))
       throw new Error("Invalid Reviewer construction or target identity");
     const expectedAxes = legs.map((leg) => read(leg, "axis"));
     if (expectedAxes[0] !== "standards" || expectedAxes.length === 2 && expectedAxes[1] !== "spec" || expectedAxes.length < 1 || expectedAxes.length > 2)
@@ -448,19 +389,11 @@ function validateRuntimeReviewerReceipt(output) {
       const expectedPrompt = read(read(legs[index], "prompt"), "text");
       const actualPrompt = read(read(outcome, "prompt"), "text");
       if (expectedPrompt !== actualPrompt) throw new Error("Reviewer outcome prompt disagrees with accepted leg");
-      const materialized = read(outcome, "runtimeConstructionEvidence");
       const status = read(outcome, "status");
       const report = read(reports, axis);
-      if (status === "successful" && (report === void 0 || materialized === void 0))
-        throw new Error("Successful Reviewer outcome lacks report or materialization evidence");
+      if (status === "successful" && report === void 0)
+        throw new Error("Successful Reviewer outcome lacks report");
       if (status === "failed" && report !== void 0) throw new Error("Failed Reviewer outcome cannot bind a report");
-      if (materialized !== void 0) {
-        const materialEntries = read(materialized, "entries");
-        if (!isRecord(materialized) || read(materialized, "leg") !== axis || typeof read(materialized, "workspaceIdentity") !== "string" || read(materialized, "workspaceIdentity") === "" || read(materialized, "manifestSha256") !== read(bundle, "manifestSha256") || !Array.isArray(materialEntries) || materialEntries.length !== entries.length || materialEntries.some((entry, entryIndex) => {
-          const expected = entries[entryIndex];
-          return !isRecord(entry) || read(entry, "verified") !== true || read(entry, "readable") !== true || read(entry, "id") !== read(expected, "id") || read(entry, "relativeClonePath") !== read(expected, "relativeClonePath") || read(entry, "utf8Length") !== read(expected, "utf8Length") || read(entry, "sha256") !== read(expected, "sha256");
-        })) throw new Error("Reviewer runtime construction evidence disagrees with accepted bundle or leg");
-      }
     }
   }
   return output;
@@ -9079,6 +9012,24 @@ function isFullGitObjectId(value) {
   return typeof value === "string" && FULL_GIT_OBJECT_ID_RE.test(value);
 }
 
+// src/exact-utf8.ts
+var decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+function exactUtf8(bytes, label) {
+  let text;
+  try {
+    text = decoder.decode(bytes);
+  } catch (error) {
+    throw new Error(`${label} is not valid UTF-8`, { cause: error });
+  }
+  return text;
+}
+
+// src/sha256.ts
+import { createHash } from "node:crypto";
+function sha256Hex(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 // src/merger-contracts.ts
 var oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
 var materialSchema = typebox_exports.Object({ bytesBase64: typebox_exports.String(), sha256: typebox_exports.String() }, { additionalProperties: false });
@@ -15388,6 +15339,7 @@ import { writeFile as writeFile5 } from "node:fs/promises";
 import { join as join8 } from "node:path";
 function knownFailureForMissingProviderCredential(model, credentials) {
   if (model === void 0 || credentials === void 0) return void 0;
+  if (model.provider !== "openai-codex" && model.provider !== "xai") return void 0;
   if (!missingPublicProviderCredential(model.provider, credentials)) {
     return void 0;
   }
@@ -15490,6 +15442,22 @@ async function presentControlledFailure(admitted, failureInput, io) {
 async function dispatchAdmittedJudge(input) {
   const { admitted, env, io, extraArgs, lease } = input;
   try {
+    const missingCredential = knownFailureForMissingProviderCredential(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: 1,
+          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
+          knownFailure: missingCredential
+        },
+        io
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
@@ -15796,6 +15764,23 @@ async function presentControlledFailure2(admitted, failureInput, io) {
 async function dispatchAdmittedCoder(input) {
   const { admitted, env, io, extraArgs, lease, methodProvenance } = input;
   try {
+    const missingCredential = knownFailureForMissingProviderCredential(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure2(
+        admitted,
+        {
+          timedOut: false,
+          code: 1,
+          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
+          knownCause: missingCredential.cause,
+          ...missingCredential.identity === void 0 ? {} : { knownIdentity: missingCredential.identity }
+        },
+        io
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
@@ -16097,6 +16082,23 @@ async function presentControlledFailure3(admitted, failureInput, io) {
 async function dispatchAdmittedCollector(input) {
   const { admitted, env, io, extraArgs, lease } = input;
   try {
+    const missingCredential = knownFailureForMissingProviderCredential(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure3(
+        admitted,
+        {
+          timedOut: false,
+          code: 1,
+          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
+          knownCause: missingCredential.cause,
+          ...missingCredential.identity === void 0 ? {} : { knownIdentity: missingCredential.identity }
+        },
+        io
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
@@ -16300,6 +16302,22 @@ async function presentControlledFailure4(admitted, failureInput, io) {
 async function dispatchAdmittedDoctor(input) {
   const { admitted, env, io, extraArgs, lease } = input;
   try {
+    const missingCredential = knownFailureForMissingProviderCredential(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure4(
+        admitted,
+        {
+          timedOut: false,
+          code: 1,
+          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
+          knownFailure: missingCredential
+        },
+        io
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
@@ -16569,6 +16587,22 @@ async function presentControlledFailure5(admitted, failureInput, io) {
 async function dispatchAdmittedFixer(input) {
   const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
   try {
+    const missingCredential = knownFailureForMissingProviderCredential(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure5(
+        admitted,
+        {
+          timedOut: false,
+          code: 1,
+          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
+          knownFailure: missingCredential
+        },
+        io
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
@@ -16922,6 +16956,23 @@ async function presentControlledFailure6(admitted, failureInput, io) {
 async function dispatchAdmittedMerger(input) {
   const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
   try {
+    const missingCredential = knownFailureForMissingProviderCredential(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure6(
+        admitted,
+        {
+          timedOut: false,
+          code: 1,
+          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
+          knownCause: missingCredential.cause,
+          ...missingCredential.identity === void 0 ? {} : { knownIdentity: missingCredential.identity }
+        },
+        io
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
@@ -17365,6 +17416,22 @@ async function presentControlledFailure7(admitted, failureInput, io) {
 async function dispatchAdmittedReviewer(input) {
   const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
   try {
+    const missingCredential = knownFailureForMissingProviderCredential(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure7(
+        admitted,
+        {
+          timedOut: false,
+          code: 1,
+          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
+          knownFailure: missingCredential
+        },
+        io
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {

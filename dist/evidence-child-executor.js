@@ -153,8 +153,9 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
         let primaryFailure;
         try {
             const delivered = prompt;
+            // delivered is plain prompt text (ADR 0031)
             try {
-                await session.prompt(delivered.text);
+                await session.prompt(delivered);
             }
             catch (error) {
                 throw classifiedError(error, "provider");

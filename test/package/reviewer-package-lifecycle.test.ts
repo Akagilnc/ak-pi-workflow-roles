@@ -1,23 +1,19 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { type Context, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
-import { withColdInstalledPackage, withHermeticHome, withInProcessPi, withProcessCwd } from "../helpers/pi-test-harness.ts";
+import { runAkRole } from "../../src/public-cli/cli.ts";
+import { withColdInstalledPackage, withHermeticHome, packageRoot } from "../helpers/pi-test-harness.ts";
+import { runPiSubprocess } from "../helpers/pi-test-harness.ts";
 
 const exec = promisify(execFile);
-const Output = "ak_reviewer_output";
-const Audit = "ak_reviewer_audit_decision";
-function userText(context: Context): string {
-  const message = context.messages.find((item) => item.role === "user");
-  if (!message || message.role !== "user") return "";
-  return typeof message.content === "string" ? message.content : message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+async function git(cwd: string, ...args: string[]) {
+  return (await exec("git", ["-C", cwd, ...args])).stdout.trim();
 }
-async function git(cwd: string, ...args: string[]) { return (await exec("git", ["-C", cwd, ...args])).stdout.trim(); }
 
-test("installed npm tarball runs the fixed two-axis Reviewer lifecycle", async () => {
+test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain", async () => {
   process.env.CI = "true";
   await withHermeticHome({ prefix: "ak-reviewer-package-" }, async ({ home }) => {
     await withColdInstalledPackage(home, async ({ fixture, pack, installedRoot }) => {
@@ -37,54 +33,158 @@ test("installed npm tarball runs the fixed two-axis Reviewer lifecycle", async (
       await writeFile(resolve(fixture, "consumer.txt"), "reviewed\n");
       await git(fixture, "commit", "-am", "reviewed change");
 
-      const taskPath = resolve(fixture, "review-task.md");
-      await writeFile(taskPath, "Review the fixed target against review-base.\n");
       const nestedCwd = resolve(fixture, "nested", "invocation");
       await mkdir(nestedCwd, { recursive: true });
-      const skillPath = resolve(installedRoot, "resources/methods/code-review/SKILL.md");
       const agentDir = resolve(fixture, ".pi-agent");
-      const faux = fauxProvider({ api: "package-reviewer", provider: "package-reviewer", tokenSize: { min: 1000, max: 1000 } });
-      const children: Context[] = [];
-      const audits: Context[] = [];
-      let frozenReviewerReceipt: unknown;
-      faux.setResponses([
-        (context) => { children.push(context); return fauxAssistantMessage("Standards finding count: 0."); },
-        (context) => { children.push(context); return fauxAssistantMessage("Spec: fixed target satisfies the stated behavior."); },
-        fauxAssistantMessage(fauxToolCall(Output, { status: "completed" }, { id: "output" }), { stopReason: "toolUse" }),
-        (context) => { audits.push(context); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); },
-      ]);
+      await mkdir(agentDir, { recursive: true });
+      const providerPath = resolve(packageRoot, "test/fixtures/reviewer-two-axis-provider.ts");
+      const stdout: string[] = [];
+      const stderr: string[] = [];
 
-      await withProcessCwd(nestedCwd, async () => {
-        await withInProcessPi({ activationLedgerSession: true, cwd: nestedCwd, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-base": "review-base" }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
-          assert.deepEqual(loader.getExtensions().errors, []);
-          await session.prompt("Review this fixed point.");
-          assert.equal(children.length, 2);
-          assert.deepEqual(children.map((context) => /standards/.test(userText(context)) ? "standards" : "spec").sort(), ["spec", "standards"]);
-          assert.equal(audits.length, 1);
-          const output = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "output") as any;
-          assert.equal(output.message.isError, false);
-          assert.equal(output.message.details.status, "completed");
-          frozenReviewerReceipt = structuredClone(output.message.details);
-          assert.deepEqual(output.message.details.acceptedBatch.legs.map((leg: any) => leg.axis), ["standards", "spec"]);
-          assert.equal(output.message.details.reports.standards.text, "Standards finding count: 0.");
-          assert.equal(output.message.details.reports.spec.text, "Spec: fixed target satisfies the stated behavior.");
-          assert.equal(faux.getPendingResponseCount(), 0);
-        });
+      const reviewer = await runAkRole(
+        [
+          "reviewer",
+          "--model",
+          "ak-reviewer-two-axis/faux-1",
+          "--thinking",
+          "off",
+          "--project",
+          fixture,
+          "--base",
+          "review-base",
+          "Review the fixed target against review-base.",
+        ],
+        {
+          packageRoot: installedRoot,
+          home,
+          agentDir,
+          cwd: nestedCwd,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => "run-public-reviewer-001",
+          reviewerExtraPiArgs: ["-e", providerPath],
+          reviewerTimeoutMs: 120_000,
+          io: {
+            stdout: (text) => {
+              stdout.push(text);
+            },
+            stderr: (text) => {
+              stderr.push(text);
+            },
+          },
+          piRunner: async (args, options) => {
+            const subprocess = await runPiSubprocess([...args], {
+              cwd: options.cwd,
+              env: {
+                ...options.env,
+                PI_OFFLINE: "1",
+              },
+              timeoutMs: options.timeoutMs ?? 120_000,
+            });
+            return {
+              code: subprocess.code,
+              stdout: subprocess.stdout,
+              stderr: subprocess.stderr,
+              timedOut: subprocess.timedOut,
+              args: [...args],
+            };
+          },
+        },
+      );
 
-        // The test is the external caller: Reviewer and Judge remain independently
-        // invocable roles and neither owns this handoff topology.
-        faux.setResponses([
-          fauxAssistantMessage(fauxToolCall("ak_judge_output", { judgeStatus: "converged" }, { id: "judge-output" }), { stopReason: "toolUse" }),
-          fauxAssistantMessage(fauxToolCall("ak_soul_audit_decision", { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }),
-        ]);
-        await withInProcessPi({ activationLedgerSession: true, cwd: nestedCwd, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")], noExtensions: true, systemPrompt: "PACKAGED JUDGE", mode: "print", flags: { "ak-role": "judge" } }, async ({ session, sessionManager }) => {
-          assert.ok(frozenReviewerReceipt);
-          await session.prompt(`Adjudicate this exact auditor-accepted frozen Reviewer receipt:\n${JSON.stringify(frozenReviewerReceipt)}`);
-          const judged = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "judge-output") as any;
-          assert.equal(judged.message.isError, false);
-          assert.equal(judged.message.details.judgeStatus, "converged");
-        });
-      });
+      assert.equal(reviewer.exitCode, 0, stderr.join("") || JSON.stringify(reviewer.terminal) || "public reviewer failed");
+      assert.ok(reviewer.terminal);
+      assert.equal(reviewer.terminal?.roleOutcome.kind, "accepted", JSON.stringify(reviewer.terminal));
+      if (reviewer.terminal?.roleOutcome.kind === "accepted") {
+        assert.equal(reviewer.terminal.roleOutcome.role, "reviewer");
+        assert.equal(reviewer.terminal.roleOutcome.status, "completed");
+        const facts = reviewer.terminal.roleOutcome.decisiveFacts as {
+          axes?: unknown;
+          reportAxes?: unknown;
+        };
+        assert.deepEqual(facts.axes, ["standards", "spec"]);
+        assert.deepEqual(facts.reportAxes, ["standards", "spec"]);
+      }
+
+      const reportArtifact = reviewer.terminal?.artifacts.find((item) => item.kind === "report");
+      assert.ok(reportArtifact, `reviewer must publish frozen report artifact: ${JSON.stringify(reviewer.terminal)}`);
+      const published = JSON.parse(await readFile(reportArtifact!.path, "utf8")) as {
+        receipt?: {
+          acceptedBatch?: { legs?: Array<{ axis: string }> };
+          reports?: { standards?: { text?: string }; spec?: { text?: string } };
+        };
+        acceptedBatch?: { legs?: Array<{ axis: string }> };
+        reports?: { standards?: { text?: string }; spec?: { text?: string } };
+      };
+      const frozenReviewerReceipt = published.receipt ?? published;
+      assert.ok(
+        frozenReviewerReceipt.acceptedBatch?.legs,
+        `missing acceptedBatch in ${JSON.stringify(published).slice(0, 500)}`,
+      );
+      assert.deepEqual(
+        frozenReviewerReceipt.acceptedBatch!.legs!.map((leg) => leg.axis),
+        ["standards", "spec"],
+      );
+      assert.equal(frozenReviewerReceipt.reports?.standards?.text, "Standards finding count: 0.");
+      assert.equal(
+        frozenReviewerReceipt.reports?.spec?.text,
+        "Spec: fixed target satisfies the stated behavior.",
+      );
+
+      // Caller-owned handoff: public Judge admits the frozen Reviewer receipt.
+      const judgeProvider = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
+      const judgeStdout: string[] = [];
+      const judgeStderr: string[] = [];
+      const judge = await runAkRole(
+        [
+          "judge",
+          "--model",
+          "ak-audit-failure/faux-1",
+          "--thinking",
+          "off",
+          "--project",
+          fixture,
+          `Adjudicate this exact auditor-accepted frozen Reviewer receipt:\n${JSON.stringify(frozenReviewerReceipt)}`,
+        ],
+        {
+          packageRoot: installedRoot,
+          home,
+          agentDir,
+          cwd: nestedCwd,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => "run-public-judge-001",
+          judgeExtraPiArgs: ["-e", judgeProvider],
+          judgeTimeoutMs: 90_000,
+          io: {
+            stdout: (text) => {
+              judgeStdout.push(text);
+            },
+            stderr: (text) => {
+              judgeStderr.push(text);
+            },
+          },
+          piRunner: async (args, options) => {
+            const subprocess = await runPiSubprocess([...args], {
+              cwd: options.cwd,
+              env: {
+                ...options.env,
+                PI_OFFLINE: "1",
+                AK_NAVIGATOR_DELIVERY_OUTCOME: "recommendation",
+              },
+              timeoutMs: options.timeoutMs ?? 90_000,
+            });
+            return {
+              code: subprocess.code,
+              stdout: subprocess.stdout,
+              stderr: subprocess.stderr,
+              timedOut: subprocess.timedOut,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.equal(judge.exitCode, 0, judgeStderr.join("") || "public judge failed");
+      assert.ok(judge.terminal);
+      assert.equal(judge.terminal?.roleOutcome.kind, "accepted");
     });
   });
 });
