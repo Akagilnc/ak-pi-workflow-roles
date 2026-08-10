@@ -10,8 +10,15 @@ import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts"
 import type { ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
 export type ReviewerExecutorFaultPoint = "child.reload" | "child.session";
-type ClassifiedReviewerError = Error & Readonly<{ reviewerFailure: "provider" | "child" }>;
-function classifiedError(error: unknown, reviewerFailure: "provider" | "child"): ClassifiedReviewerError { const wrapped = error instanceof Error ? error : new Error(String(error), { cause: error }); const classification = "reviewerFailure" in wrapped ? (wrapped as ClassifiedReviewerError).reviewerFailure : reviewerFailure; return Object.assign(wrapped, { reviewerFailure: classification }); }
+type ClassifiedReviewerError = Error & Readonly<{ reviewerFailure: "provider" | "child"; reviewerOriginal?: unknown }>;
+function classifiedError(error: unknown, reviewerFailure: "provider" | "child"): ClassifiedReviewerError {
+  const diagnostic = typeof error === "object" && error !== null && typeof (error as { errorMessage?: unknown }).errorMessage === "string"
+    ? (error as { errorMessage: string }).errorMessage
+    : error === undefined ? "" : String(error);
+  const wrapped = error instanceof Error ? error : Object.assign(new Error(diagnostic, { cause: error }), { reviewerOriginal: error });
+  const classification = "reviewerFailure" in wrapped ? (wrapped as ClassifiedReviewerError).reviewerFailure : reviewerFailure;
+  return Object.assign(wrapped, { reviewerFailure: classification });
+}
 function emptyUsage(): Usage {
   return {
     input: 0,
@@ -203,7 +210,7 @@ export async function executeReviewerChild(
       .reverse()
       .find((message) => message.role === "assistant");
     if (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "error") {
-      throw classifiedError(new Error("Reviewer Agent provider failed", { cause: lastAssistant }), "provider");
+      throw classifiedError(new Error(lastAssistant.errorMessage ?? "", { cause: lastAssistant }), "provider");
     }
     if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
       throw classifiedError(new Error("Reviewer Agent child terminated without a report", { cause: lastAssistant ?? session.messages }), "child");

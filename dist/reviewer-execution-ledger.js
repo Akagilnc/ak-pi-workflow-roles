@@ -24,7 +24,7 @@ export function projectReviewerDispatchOutcome(ledger, dispatch, result) {
         if (actual === undefined)
             throw new Error(`Reviewer runner omitted ${leg.axis} result`);
         ledger.append(actual.status === "failed"
-            ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition }
+            ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, diagnostic: actual.diagnostic, ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition }
             : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, runtimeConstructionEvidence: actual.runtimeConstructionEvidence, workspaceDisposition: actual.workspaceDisposition });
     }
 }

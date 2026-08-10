@@ -7,11 +7,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { createReviewerRoleRuntime, AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME, type ReviewerAuditInput } from "../../src/reviewer-role.ts";
 import type { AcceptedReviewerDispatch, AcceptedReviewerExecution, AcceptedReviewerLeg, ReviewerProposalV1 } from "../../src/reviewer-dispatch.ts";
-import { ReviewerDispatchExecutionError } from "../../src/reviewer-agent.ts";
+import { createReviewerAgentRunner, ReviewerDispatchExecutionError } from "../../src/reviewer-agent.ts";
 import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
 import { ReviewerCorrectablePreflightError } from "../../src/reviewer-preflight-error.ts";
 import { createReviewerPinnedGitReader } from "../../src/reviewer-pinned-git.ts";
@@ -286,24 +287,58 @@ test("completion audits projected facts and revise can be resubmitted without re
   assert.deepEqual(evidence,{id:"absence",repositoryPath:"README.md",source:"pinned-git",sourcePath:"README.md",text:"README.md",utf8Length:9,sha256:createHash("sha256").update("README.md").digest("hex")});
 });
 
-test("one failed and one successful sibling are both audited before infrastructure termination", async()=>{
-  const reviewerHarness=setup({runDispatch:async(dispatch)=>{const [standards,spec]=dispatch.legs; throw new ReviewerDispatchExecutionError({identity:dispatch.identity,target:pin,legs:{standards:{status:"failed",failure:"provider",target:pin,prompt:standards!.prompt,workspaceDisposition:"not-created"},spec:successfulLeg(dispatch,spec!,"spec report")}});}});
-  await reviewerHarness.runtime.activate();
-  await assert.rejects(reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",proposal(true),undefined,undefined,{} as ExtensionContext),(error: unknown)=>{
-    assert.equal(String(error).includes("spec report"),false);
-    assert.deepEqual(reviewerHarness.activeTools,[REVIEWER_OUTPUT_TOOL_NAME]);
-    return /execution failed/.test(String(error));
-  });
-  captureReviewExpansion(reviewerHarness);
-  const receipt=await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"provider failed"},undefined,undefined,outputContext("out"));
-  assert.equal(receipt.details.outcomes.standards.failure,"provider");
-  assert.equal(receipt.details.reports.spec.text,"spec report");
+test("production Reviewer child provider rejections retain typed diagnostics and mixed-leg reports", async()=>{
+  const root=await mkdtemp(join(tmpdir(),"reviewer-provider-rejection-"));
+  try {
+    await git(root,"init","-b","main"); await git(root,"config","user.email","test@example.com"); await git(root,"config","user.name","Test");
+    await writeFile(join(root,"RULES.md"),"rules\n"); await writeFile(join(root,"SPEC.md"),"spec\n"); await git(root,"add","."); await git(root,"commit","-m","base");
+    const base=await git(root,"rev-parse","HEAD");
+    await writeFile(join(root,"README.md"),"target\n"); await git(root,"add","."); await git(root,"commit","-m","target");
+    const reader=await createReviewerPinnedGitReader(root);
+    const cases=[
+      { rejection:{errorMessage:"WebSocket error"}, expected:"WebSocket error", mixed:true },
+      { rejection:undefined, expected:"Reviewer Agent provider supplied no diagnostic details", mixed:false },
+    ] as const;
+    for(const row of cases){
+      const faux=fauxProvider({provider:"reviewer-rejection",api:"reviewer-rejection"}); const model=faux.getModel();
+      faux.setResponses([
+        fauxAssistantMessage("", { stopReason:"error", ...(row.rejection === undefined ? {} : { errorMessage: row.expected }) }),
+        fauxAssistantMessage("spec report"),
+      ]);
+      const childContext={model,modelRegistry:{getProvider:()=>faux.provider,async getProviderAuth(){return {auth:{apiKey:"offline"}};},async getApiKeyAndHeaders(){return {ok:true as const,apiKey:"offline"};}},sessionManager:SessionManager.inMemory(),thinkingLevel:"off"} as unknown as ExtensionContext;
+      const runner=createReviewerAgentRunner({credentialScratchParent:root});
+      const reviewerHarness=setup({createPinnedGitReader:async()=>reader,runDispatch:(dispatch)=>runner.run(dispatch,{context:childContext}),shutdownAgent:()=>runner.shutdown()});
+      await reviewerHarness.runtime.activate();
+      const candidate={...(row.mixed?proposal(true):proposal()),base:{revision:base}};
+      const dispatchResult=reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",candidate,undefined,undefined,childContext);
+      await assert.rejects(dispatchResult,/execution failed/,row.expected);
+      captureReviewExpansion(reviewerHarness);
+      const receipt=await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"provider failed"},undefined,undefined,outputContext("out"));
+      assert.equal(receipt.details.outcomes.standards.failure,"provider");
+      assert.equal(receipt.details.outcomes.standards.diagnostic,row.expected);
+      if(row.mixed) assert.match(receipt.details.reports.spec.text,/./);
+    }
+
+    const throwing=fauxProvider({provider:"reviewer-rejection",api:"reviewer-rejection"});
+    const throwingProvider=throwing.provider as typeof throwing.provider & { streamSimple: typeof throwing.provider.streamSimple };
+    throwingProvider.streamSimple=function(){ throw new Error("socket closed",{cause:{errorMessage:"nested detail"}}); };
+    const throwingContext={model:throwing.getModel(),modelRegistry:{getProvider:()=>throwingProvider,async getProviderAuth(){return {auth:{apiKey:"offline"}};},async getApiKeyAndHeaders(){return {ok:true as const,apiKey:"offline"};}},sessionManager:SessionManager.inMemory(),thinkingLevel:"off"} as unknown as ExtensionContext;
+    const throwingRunner=createReviewerAgentRunner({credentialScratchParent:root});
+    const throwingHarness=setup({createPinnedGitReader:async()=>reader,runDispatch:(dispatch)=>throwingRunner.run(dispatch,{context:throwingContext}),shutdownAgent:()=>throwingRunner.shutdown()});
+    await throwingHarness.runtime.activate();
+    const throwingResult=throwingHarness.tools.get(AGENT_TOOL_NAME).execute("run",{...proposal(),base:{revision:base}},undefined,undefined,throwingContext);
+    await assert.rejects(throwingResult,/execution failed/);
+    captureReviewExpansion(throwingHarness);
+    const throwingReceipt=await throwingHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"provider failed"},undefined,undefined,outputContext("out"));
+    assert.equal(throwingReceipt.details.outcomes.standards.failure,"provider");
+    assert.equal(throwingReceipt.details.outcomes.standards.diagnostic,"socket closed");
+  } finally { await rm(root,{recursive:true,force:true}); }
 });
 
 test("classified snapshot preparation failure settles into a refused production receipt without shutdown infrastructure failure", async()=>{
   let shutdowns=0;
   const reviewerHarness=setup({
-    runDispatch:async(dispatch)=>{const leg=dispatch.legs[0]!;throw new ReviewerDispatchExecutionError({identity:dispatch.identity,target:pin,legs:{standards:{status:"failed",failure:"snapshot",target:pin,prompt:leg.prompt,workspaceDisposition:{retained:"/tmp/retained-snapshot-evidence"}}}});},
+    runDispatch:async(dispatch)=>{const leg=dispatch.legs[0]!;throw new ReviewerDispatchExecutionError({identity:dispatch.identity,target:pin,legs:{standards:{status:"failed",failure:"snapshot",diagnostic:"snapshot preparation failed",target:pin,prompt:leg.prompt,workspaceDisposition:{retained:"/tmp/retained-snapshot-evidence"}}}});},
     shutdownAgent:async()=>{shutdowns++;},
   });
   await reviewerHarness.runtime.activate();

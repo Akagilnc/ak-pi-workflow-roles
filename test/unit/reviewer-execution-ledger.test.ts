@@ -85,7 +85,7 @@ test("both sibling failures preserve exact settlement order and bounded evidence
   ledger.append(accepted(true));
   ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: "proposal-1", cardinality: 2 });
   for (const [axis, prompt, failure] of [["standards", "standards π", "provider"], ["spec", "spec prompt", "child"]] as const) {
-    ledger.append({ source: "reviewer-agent", type: "leg-settled", dispatchIdentity: "proposal-1", axis, status: "failed", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, target, failure, workspaceDisposition: "not-created" });
+    ledger.append({ source: "reviewer-agent", type: "leg-settled", dispatchIdentity: "proposal-1", axis, status: "failed", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, target, failure, diagnostic: `${failure} diagnostic`, workspaceDisposition: "not-created" });
   }
   const record = ledger.recordForAudit("refused");
   assert.deepEqual(Object.keys(record.results), ["standards", "spec"]);
@@ -164,6 +164,7 @@ test("failed-leg dispositions project through the durable ledger by classificati
       prompt: event.legs[0]!.prompt,
       target,
       failure: row.failure,
+      diagnostic: `${row.failure} diagnostic`,
       workspaceDisposition: row.workspaceDisposition,
       ...(row.failure === "child"
         ? {

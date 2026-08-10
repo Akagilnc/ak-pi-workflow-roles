@@ -4,7 +4,7 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
@@ -13,7 +13,10 @@ import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { FIXER_AUDIT_TOOL_NAME } from "../fixer-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
+import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure } from "./explicit-internal.ts";
 import {
+  AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
+  AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
   readComplianceCandidate,
   type ComplianceAuditIncomplete,
@@ -276,6 +279,7 @@ function isTypedActivationError(
 ): error is Error & {
   knownCause: ControlledFailureCause;
   failureCode?: string | number;
+  details?: Readonly<Record<string, unknown>>;
 } {
   if (!(error instanceof Error)) return false;
   const cause = (error as { knownCause?: unknown }).knownCause;
@@ -320,6 +324,8 @@ export function classifyPostAdmissionFailure(input: {
    * errorMessage, runner knownFailure.diagnostic). Preferred over stderr selection.
    */
   knownDiagnostic?: string;
+  /** Secondary evidence already carried by the typed production failure. */
+  knownDetails?: Readonly<Record<string, unknown>>;
 }): ControlledFailure {
   // Own-key presence, not value: `throw undefined` is a real caught exception.
   if (Object.hasOwn(input, "thrown")) {
@@ -333,6 +339,7 @@ export function classifyPostAdmissionFailure(input: {
         cause: error.knownCause,
         diagnostic: error.message || error.name || "unrecognized exception",
         identity,
+        ...(error.details === undefined ? {} : { details: error.details }),
       };
     }
     if (error instanceof Error) {
@@ -361,10 +368,13 @@ export function classifyPostAdmissionFailure(input: {
       input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
         ? input.knownDiagnostic
         : conciseChildDiagnostic(input.stderr, fallback);
+    const { code: _knownCode, timedOut: _knownTimedOut, ...knownDetails } =
+      input.knownDetails ?? {};
     return {
       cause: input.knownCause,
       diagnostic,
       details: {
+        ...knownDetails,
         code: input.code,
         ...(input.timedOut ? { timedOut: true as const } : {}),
       },
@@ -409,6 +419,19 @@ export function classifyPostAdmissionFailure(input: {
   };
 }
 
+/** One projection owner for the four audited public runners. */
+export function explicitInternalKnownFailureClassificationInput(
+  failure: ExplicitInternalKnownFailure | undefined,
+) {
+  if (failure === undefined) return {};
+  return {
+    knownCause: failure.cause,
+    ...(failure.identity === undefined ? {} : { knownIdentity: failure.identity }),
+    ...(failure.diagnostic === undefined ? {} : { knownDiagnostic: failure.diagnostic }),
+    ...(failure.details === undefined ? {} : { knownDetails: failure.details }),
+  };
+}
+
 /** Post-role Navigator delivery grace (Issue #11 / #101 / #106 / #159). */
 export const NAVIGATOR_POST_ROLE_GRACE_MS = 10_000;
 
@@ -439,6 +462,8 @@ type SessionEntry = {
   id?: string;
   /** Session cwd from the durable header entry. */
   cwd?: string;
+  /** Parent session principal on durable child session headers. */
+  parentSession?: string;
 };
 
 /** Optional independent identity from admitted/shared lifecycle (not attendance self-fields). */
@@ -451,8 +476,7 @@ function isMissingPathError(error: unknown): boolean {
   return (
     error instanceof Error &&
     "code" in error &&
-    ((error as { code?: unknown }).code === "ENOENT" ||
-      (error as { code?: unknown }).code === "ENOTDIR")
+    (error as { code?: unknown }).code === "ENOENT"
   );
 }
 
@@ -536,12 +560,41 @@ export function extractSessionProviderStop(
   provider?: string;
   model?: string;
 } | undefined {
+  // A resumed dispatch appends a typed top-level user turn to the same session.
+  // Retained audit state from an older attempt must not replace the newer attempt's
+  // native provider stop. Sessions without a user turn are the initial attempt.
+  let attemptStart = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "message" && entry.message?.role === "user") {
+      attemptStart = i;
+      break;
+    }
+  }
+
+  // The shared auditor is a nested model turn. Within the current attempt its
+  // retained typed response is authoritative when failInfrastructure subsequently
+  // aborts the parent turn.
+  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
+    const response = isRecord(entry.data) && isRecord(entry.data.response) ? entry.data.response : undefined;
+    if (response?.role === "assistant" && response.stopReason === "error") {
+      return {
+        stopReason: "error",
+        ...(typeof response.errorMessage === "string" && response.errorMessage.trim() !== "" ? { errorMessage: response.errorMessage } : {}),
+        ...(typeof response.provider === "string" && response.provider.trim() !== "" ? { provider: response.provider } : {}),
+        ...(typeof response.model === "string" && response.model.trim() !== "" ? { model: response.model } : {}),
+      };
+    }
+    break;
+  }
+  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "assistant") continue;
-    // Latest assistant only (reviewer-child-executor lastAssistant pattern).
+    // Latest assistant in the current attempt only (reviewer-child-executor lastAssistant pattern).
     if (message.stopReason !== "error") return undefined;
     return {
       stopReason: "error",
@@ -576,6 +629,102 @@ export async function readSessionProviderStop(
     return extractSessionProviderStop(entries);
   } catch {
     return undefined;
+  }
+}
+
+/** Recover a provider stop from the auditor child bound to the current parent attempt. */
+export async function readBoundAuditorKnownFailure(
+  sessionFile: string,
+): Promise<ExplicitInternalKnownFailure | undefined> {
+  let parentEntries: SessionEntry[];
+  try {
+    parentEntries = await readBoundSessionEntries(sessionFile);
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw sessionReadFailure(error, "failed to read parent session for auditor binding");
+  }
+  const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
+  if (parentId === undefined) return undefined;
+  let latestParentUserIndex = -1;
+  for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
+    if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
+      latestParentUserIndex = i;
+      break;
+    }
+  }
+  const childDirectory = join(dirname(sessionFile), "auditor-roles");
+  let names: string[];
+  try {
+    names = await readdir(childDirectory);
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw sessionReadFailure(error, "failed to read bound auditor session directory");
+  }
+  for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
+    let entries: SessionEntry[];
+    try {
+      entries = await readBoundSessionEntries(join(childDirectory, file));
+    } catch (error) {
+      throw sessionReadFailure(error, "failed to read discovered auditor session");
+    }
+    const header = entries.find((entry) => entry.type === "session");
+    if (!isRecord(header) || header.parentSession !== sessionFile) continue;
+    const bindingEntry = entries.find((entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE);
+    const bindingParent = isRecord(bindingEntry?.data) && isRecord(bindingEntry.data.parent) ? bindingEntry.data.parent : undefined;
+    const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : undefined;
+    const attemptEntryIndex = attemptEntryId === undefined ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
+    if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
+
+    const stop = extractSessionProviderStop(entries);
+    if (stop === undefined) continue;
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const entry = entries[i];
+      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord(entry.data)) continue;
+      const parent = isRecord(entry.data.parent) ? entry.data.parent : undefined;
+      const failure = isRecord(entry.data.failure) ? entry.data.failure : undefined;
+      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider") continue;
+      const identity = isRecord(failure.identity) ? failure.identity : undefined;
+      return {
+        cause: "provider",
+        ...(identity === undefined ? {} : { identity: {
+          ...(typeof identity.name === "string" ? { name: identity.name } : {}),
+          ...(typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}),
+        } }),
+        ...(typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {}),
+        ...(isRecord(failure.details) ? { details: failure.details } : {}),
+      };
+    }
+    const primary = knownFailureFromProviderStop(stop)!;
+    return {
+      ...primary,
+      details: {
+        ...(stop.provider === undefined ? {} : { provider: stop.provider }),
+        ...(stop.model === undefined ? {} : { model: stop.model }),
+        secondaryEvidence: "unavailable",
+      },
+    };
+  }
+  return undefined;
+}
+
+/** Sole evidence-priority owner for public runners with Soul auditors. */
+export async function resolveAuditedRunnerKnownFailure(input: {
+  runner: ExplicitInternalKnownFailure | undefined;
+  sessionFile: string;
+  credential: ExplicitInternalKnownFailure | undefined;
+}): Promise<ExplicitInternalKnownFailure | undefined> {
+  if (input.runner !== undefined) return input.runner;
+  const parentStop = await readSessionProviderStop(input.sessionFile);
+  if (parentStop !== undefined) return knownFailureFromProviderStop(parentStop);
+  try {
+    return (await readBoundAuditorKnownFailure(input.sessionFile)) ?? input.credential;
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
+    return {
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name,
+    };
   }
 }
 
@@ -3440,6 +3589,9 @@ export async function settleFailureTerminalResult(
   }
   if (failure.identity?.code !== undefined) {
     decisiveFacts.errorCode = failure.identity.code;
+  }
+  if (failure.details !== undefined) {
+    decisiveFacts.secondaryEvidence = failure.details;
   }
   // Resumable failures: durable artifacts still land under the run directory, but
   // the public Terminal must not re-disclose the run ID via top-level runId,

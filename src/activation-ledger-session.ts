@@ -15,7 +15,12 @@ import {
   pathContainedIn,
 } from "./activation-ledger-topology.ts";
 
-export function childSessionManager(parent: { getSessionFile(): string | undefined; getSessionDir(): string } | undefined, cwd: string, childDirectory: string): SessionManager { return parent?.getSessionFile() === undefined ? SessionManager.inMemory(cwd) : SessionManager.create(cwd, join(parent.getSessionDir(), childDirectory)); }
+export function childSessionManager(parent: { getSessionFile(): string | undefined; getSessionDir(): string } | undefined, cwd: string, childDirectory: string): SessionManager {
+  const parentSession = parent?.getSessionFile();
+  return parentSession === undefined
+    ? SessionManager.inMemory(cwd)
+    : SessionManager.create(cwd, join(parent!.getSessionDir(), childDirectory), { parentSession });
+}
 
 /** Durable pointer to the authoritative Pi session file principal (ADR 0048/0049). */
 export type ActivationSessionPointer = {

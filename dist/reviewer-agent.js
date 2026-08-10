@@ -1,6 +1,7 @@
 import { isReviewerPromptIdentity } from "./reviewer-prompt-identity.js";
 import { executeReviewerChild } from "./reviewer-child-executor.js";
 import { createReviewerWorkspaceOwner } from "./reviewer-workspace.js";
+import { normalizeReviewerFailureDiagnostic } from "./reviewer-failure-diagnostic.js";
 const RUNNER_PREREQUISITES = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"];
 export class ReviewerDispatchExecutionError extends Error {
     outcome;
@@ -13,7 +14,7 @@ export class ReviewerDispatchExecutionError extends Error {
 function classify(error, signal) { if (signal?.aborted)
     return "cancelled"; if (typeof error === "object" && error !== null && "reviewerFailure" in error)
     return error.reviewerFailure; return "unknown"; }
-function failed(error, target, prompt, signal, retained, evidence) { const attached = typeof error === "object" && error !== null ? error : {}; return Object.freeze({ status: "failed", failure: classify(error, signal), cause: error, target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained }, ...(evidence === undefined ? {} : { runtimeConstructionEvidence: evidence }) }); }
+function failed(error, target, prompt, signal, retained, evidence) { const attached = typeof error === "object" && error !== null ? error : {}; const failure = classify(error, signal); const diagnostic = normalizeReviewerFailureDiagnostic(error, failure); return Object.freeze({ status: "failed", failure, diagnostic, cause: error, target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained }, ...(evidence === undefined ? {} : { runtimeConstructionEvidence: evidence }) }); }
 export function createReviewerAgentRunner(dependencies = {}) {
     const workspaceOwner = createReviewerWorkspaceOwner(dependencies.fault === undefined ? {} : { fault: dependencies.fault });
     let accepted = false;

@@ -5,11 +5,12 @@ import type { MaterializedBundleEvidenceV1 } from "./reviewer-bundle-materialize
 import type { ReviewerTargetSnapshot, ReviewerWorkspaceDisposition, ReviewerFailureClassification, ReviewerUsage } from "./reviewer-execution-ledger.ts";
 import { executeReviewerChild, type ReviewerExecutorFaultPoint } from "./reviewer-child-executor.ts";
 import { createReviewerWorkspaceOwner, type ReviewerWorkspaceFaultPoint } from "./reviewer-workspace.ts";
+import { normalizeReviewerFailureDiagnostic } from "./reviewer-failure-diagnostic.ts";
 
 const RUNNER_PREREQUISITES = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const satisfies readonly ReviewerPrerequisiteOperation[];
 type ReviewerLegRunResultCommon = Readonly<{ target: ReviewerTargetSnapshot; prompt: ReviewerPromptIdentity; workspaceDisposition: ReviewerWorkspaceDisposition }>;
 export type ReviewerSuccessfulLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "successful"; report: string; usage: ReviewerUsage; failure?: never; runtimeConstructionEvidence: MaterializedBundleEvidenceV1 }>;
-export type ReviewerFailedLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "failed"; failure: ReviewerFailureClassification; cause?: unknown; report?: never; usage?: never; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>;
+export type ReviewerFailedLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "failed"; failure: ReviewerFailureClassification; diagnostic: string; cause?: unknown; report?: never; usage?: never; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>;
 export type ReviewerLegRunResult = ReviewerSuccessfulLegRunResult | ReviewerFailedLegRunResult;
 type Envelope<L> = Readonly<{ identity: string; target: ReviewerTargetSnapshot; legs: Readonly<L> }>;
 export type ReviewerDispatchRunResult = Envelope<{ standards: ReviewerLegRunResult; spec?: never }> | Envelope<{ standards: ReviewerLegRunResult; spec: ReviewerLegRunResult }>;
@@ -23,7 +24,7 @@ type Dependencies = Readonly<{
   credentialScratchParent?: string;
 }>;
 function classify(error: unknown, signal?: AbortSignal): ReviewerFailureClassification { if (signal?.aborted) return "cancelled"; if (typeof error === "object" && error !== null && "reviewerFailure" in error) return (error as { reviewerFailure: ReviewerFailureClassification }).reviewerFailure; return "unknown"; }
-function failed(error: unknown, target: ReviewerTargetSnapshot, prompt: ReviewerPromptIdentity, signal?: AbortSignal, retained?: string, evidence?: MaterializedBundleEvidenceV1): ReviewerFailedLegRunResult { const attached = typeof error === "object" && error !== null ? error as { targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition } : {}; return Object.freeze({ status: "failed", failure: classify(error, signal), cause: error, target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained }, ...(evidence === undefined ? {} : { runtimeConstructionEvidence: evidence }) }); }
+function failed(error: unknown, target: ReviewerTargetSnapshot, prompt: ReviewerPromptIdentity, signal?: AbortSignal, retained?: string, evidence?: MaterializedBundleEvidenceV1): ReviewerFailedLegRunResult { const attached = typeof error === "object" && error !== null ? error as { targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition } : {}; const failure = classify(error, signal); const diagnostic = normalizeReviewerFailureDiagnostic(error, failure); return Object.freeze({ status: "failed", failure, diagnostic, cause: error, target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained }, ...(evidence === undefined ? {} : { runtimeConstructionEvidence: evidence }) }); }
 export function createReviewerAgentRunner(dependencies: Dependencies = {}): ReviewerAgentRunner {
   const workspaceOwner = createReviewerWorkspaceOwner(dependencies.fault === undefined ? {} : { fault: dependencies.fault }); let accepted = false;
   return {

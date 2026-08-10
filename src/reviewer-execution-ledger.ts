@@ -42,7 +42,7 @@ type ReviewerLegResultEvidenceCommon = Readonly<{
 }>;
 export type ReviewerLegResultEvidence = ReviewerLegResultEvidenceCommon & (
   | Readonly<{ status: "successful"; report: string; usage: ReviewerUsage; failure?: never; runtimeConstructionEvidence: MaterializedBundleEvidenceV1 }>
-  | Readonly<{ status: "failed"; failure: ReviewerFailureClassification; report?: never; usage?: never; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>
+  | Readonly<{ status: "failed"; failure: ReviewerFailureClassification; diagnostic: string; report?: never; usage?: never; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>
 );
 export type ReviewerEvidenceEvent =
   | Readonly<{ source: "reviewer-transport"; type: "transport-rejected"; identity: string; violation: "schema"; started: false }>
@@ -84,7 +84,7 @@ export function projectReviewerDispatchOutcome(
     const actual = result.legs[leg.axis];
     if (actual === undefined) throw new Error(`Reviewer runner omitted ${leg.axis} result`);
     ledger.append(actual.status === "failed"
-      ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition }
+      ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, diagnostic: actual.diagnostic, ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition }
       : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, runtimeConstructionEvidence: actual.runtimeConstructionEvidence, workspaceDisposition: actual.workspaceDisposition });
   }
 }
