@@ -2,13 +2,20 @@ import type { Api, AssistantMessage, Context, Model, Usage } from "@earendil-wor
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { runAuditorRole, type AuditorCompletion } from "./auditor-role.ts";
+import type { DossierObservation } from "./dossier-resolution.ts";
 
 export type ComplianceCompletion = AuditorCompletion;
 export type ComplianceArgumentRootType = "null" | "array" | "undefined" | "string" | "number" | "boolean" | "bigint" | "symbol" | "function";
-export type ComplianceAuditObservation = { kind: "non-object-arguments"; type: ComplianceArgumentRootType } | { kind: "object-status-unreadable"; status: "missing" | "unknown" };
+export type ComplianceAuditObservation =
+  | { kind: "non-object-arguments"; type: ComplianceArgumentRootType }
+  | { kind: "object-status-unreadable"; status: "missing" | "unknown" }
+  | DossierObservation;
 export type ComplianceAuditIncomplete = { status: "audit-incomplete"; observation: ComplianceAuditObservation; candidate: unknown; usage?: Usage };
 export type ComplianceDecision = { status: "pass"; usage?: Usage } | { status: "revise"; violations: readonly unknown[]; usage?: Usage } | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage } | ComplianceAuditIncomplete;
 export type ComplianceDispatch = { model: Model<Api>; auth: { apiKey?: string; headers?: Record<string, string>; env?: Record<string, string> } };
+
+/** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
+export const AUDITOR_DOSSIER_PROMPT = "Audit the current run dossier." as const;
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
@@ -60,20 +67,41 @@ export function readComplianceCandidate(arguments_: unknown, usage?: Usage): Com
   return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === undefined ? "missing" : "unknown" }, candidate: arguments_, ...(usage === undefined ? {} : { usage }) };
 }
 
-export async function runComplianceAudit(options: { tool: ReturnType<typeof createComplianceDecisionTool>; systemPrompt: string; serializedInput: string; roleLabel: string; invalidDecisionLabel: string; runCompletion?: ComplianceCompletion; context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision> {
+export type RunComplianceAuditOptions = {
+  tool: ReturnType<typeof createComplianceDecisionTool>;
+  systemPrompt: string;
+  /** @deprecated Fixer-lane hand-delivery only (#242 retires). Prefer omitting for zero-projection auditors. */
+  serializedInput?: string;
+  roleLabel: string;
+  invalidDecisionLabel: string;
+  runCompletion?: ComplianceCompletion;
+  context: ExtensionContext;
+  signal?: AbortSignal;
+};
+
+export async function runComplianceAudit(options: RunComplianceAuditOptions): Promise<ComplianceDecision> {
+  const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
   // The injected completion seam is deterministic unit infrastructure; the
   // ordinary provider path below still crosses the independent Pi role.
   if (options.runCompletion !== undefined) {
     const model = options.context.model;
     if (model === undefined) throw new Error(`${options.roleLabel} requires an active model`);
     const dispatch = await prepareComplianceDispatch(model, options.context, options.roleLabel);
-    const context: Context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: options.serializedInput }], timestamp: Date.now() }], tools: [options.tool] };
+    const context: Context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }], tools: [options.tool] };
     const response = await options.runCompletion(dispatch.model, context, { ...dispatch.auth, ...(options.signal === undefined ? {} : { signal: options.signal }) });
     retainComplianceResponse(options.context, response);
     const call = [...response.content].reverse().find((part) => part.type === "toolCall" && part.name === options.tool.name);
     if (call === undefined || call.type !== "toolCall") throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
     return readComplianceCandidate(call.arguments, response.usage);
   }
-  const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, retainResponse: (response) => retainComplianceResponse(options.context, response), ...(options.signal === undefined ? {} : { signal: options.signal }) });
+  const receipt = await runAuditorRole({
+    tool: options.tool,
+    systemPrompt: options.systemPrompt,
+    prompt,
+    roleLabel: options.roleLabel,
+    context: options.context,
+    retainResponse: (response) => retainComplianceResponse(options.context, response),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
   return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }

@@ -1,5 +1,7 @@
 import { Type } from "typebox";
 import { runAuditorRole } from "./auditor-role.js";
+/** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
+export const AUDITOR_DOSSIER_PROMPT = "Audit the current run dossier.";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
 // Transport must retain malformed candidates so they can settle as typed
@@ -50,6 +52,7 @@ export function readComplianceCandidate(arguments_, usage) {
     return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === undefined ? "missing" : "unknown" }, candidate: arguments_, ...(usage === undefined ? {} : { usage }) };
 }
 export async function runComplianceAudit(options) {
+    const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
     // The injected completion seam is deterministic unit infrastructure; the
     // ordinary provider path below still crosses the independent Pi role.
     if (options.runCompletion !== undefined) {
@@ -57,7 +60,7 @@ export async function runComplianceAudit(options) {
         if (model === undefined)
             throw new Error(`${options.roleLabel} requires an active model`);
         const dispatch = await prepareComplianceDispatch(model, options.context, options.roleLabel);
-        const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: options.serializedInput }], timestamp: Date.now() }], tools: [options.tool] };
+        const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }], tools: [options.tool] };
         const response = await options.runCompletion(dispatch.model, context, { ...dispatch.auth, ...(options.signal === undefined ? {} : { signal: options.signal }) });
         retainComplianceResponse(options.context, response);
         const call = [...response.content].reverse().find((part) => part.type === "toolCall" && part.name === options.tool.name);
@@ -65,6 +68,14 @@ export async function runComplianceAudit(options) {
             throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
         return readComplianceCandidate(call.arguments, response.usage);
     }
-    const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, retainResponse: (response) => retainComplianceResponse(options.context, response), ...(options.signal === undefined ? {} : { signal: options.signal }) });
+    const receipt = await runAuditorRole({
+        tool: options.tool,
+        systemPrompt: options.systemPrompt,
+        prompt,
+        roleLabel: options.roleLabel,
+        context: options.context,
+        retainResponse: (response) => retainComplianceResponse(options.context, response),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
     return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }

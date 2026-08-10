@@ -12525,7 +12525,10 @@ function readComplianceCandidate(arguments_, usage) {
 
 // src/doctor-auditor.ts
 var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
-var tool = createComplianceDecisionTool(DOCTOR_AUDIT_TOOL_NAME, "Return whether the proposed Doctor testimony demonstrably follows the supplied Doctor Soul and frozen evidence record. Completed receipts are later augmented with runtime-owned cost; empty findings are valid.");
+var tool = createComplianceDecisionTool(
+  DOCTOR_AUDIT_TOOL_NAME,
+  "Return whether the proposed Doctor testimony demonstrably follows the Doctor Soul and frozen evidence record from the dossier. Completed receipts are later augmented with runtime-owned cost; empty findings are valid."
+);
 
 // src/fixer-auditor.ts
 var FIXER_AUDIT_TOOL_NAME = "ak_fixer_audit_decision";
@@ -12535,14 +12538,14 @@ var tool2 = createComplianceDecisionTool(FIXER_AUDIT_TOOL_NAME, "Decide whether 
 var JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
 var auditDecisionTool = createComplianceDecisionTool(
   JUDGE_AUDIT_TOOL_NAME,
-  "Return whether the proposed verdict demonstrably follows the supplied judge soul."
+  "Return whether the proposed verdict demonstrably follows the judge soul and dossier evidence."
 );
 
 // src/reviewer-auditor.ts
 var REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
 var reviewerDecisionTool = createComplianceDecisionTool(
   REVIEWER_AUDIT_TOOL_NAME,
-  "Decide whether the Reviewer receipt demonstrably followed its supplied method and boundaries."
+  "Decide whether the Reviewer receipt demonstrably followed its method and boundaries from the dossier."
 );
 
 // src/collector-evidence.ts
@@ -12880,7 +12883,7 @@ function buildAuditIncompleteTerminalOutcome(input) {
       auditCandidate: audit.candidate,
       auditObservation: audit.observation,
       observationKind: audit.observation.kind,
-      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.status,
+      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.kind === "object-status-unreadable" ? audit.observation.status : audit.observation.kind === "missing-subject" ? audit.observation.subject : audit.observation.kind,
       acceptedReceipt: false
     }
   };
@@ -13614,6 +13617,10 @@ function isComplianceAuditIncomplete(value) {
   if (!isRecord4(value) || value.status !== "audit-incomplete") return false;
   const observation = value.observation;
   if (!isRecord4(observation)) return false;
+  if (observation.kind === "missing-dossier") return true;
+  if (observation.kind === "missing-subject") {
+    return typeof observation.subject === "string" && observation.subject.length > 0;
+  }
   if (observation.kind === "object-status-unreadable") {
     return observation.status === "missing" || observation.status === "unknown";
   }

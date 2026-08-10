@@ -313,7 +313,7 @@ export type RoleRuntimeDependencies = {
   loadMergerInput?(path: string): Promise<unknown>;
   mergerGitState?: MergerRoleDependencies["gitState"];
   createMergerGitState?(repositoryRoot: string): MergerRoleDependencies["gitState"];
-  auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
+  auditDoctorCompliance?(options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
   createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
@@ -328,7 +328,6 @@ export type RoleRuntimeDependencies = {
   shutdownReviewerAgent?(): Promise<void>;
   transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
-    input: SoulAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
   auditFixerCompliance?(
@@ -336,7 +335,6 @@ export type RoleRuntimeDependencies = {
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<ComplianceDecision>;
   auditReviewerCompliance?(
-    input: ReviewerAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<ComplianceDecision>;
   activationClock?(): string;
@@ -663,11 +661,11 @@ export function createRoleRuntimeExtension(
         ...(dependencies.shutdownReviewerAgent === undefined
           ? {}
           : { shutdownAgent: dependencies.shutdownReviewerAgent }),
-        async auditCompliance(input, options) {
+        async auditCompliance(options) {
           if (dependencies.auditReviewerCompliance === undefined) {
             throw new Error("Reviewer runtime dependencies are not configured");
           }
-          return dependencies.auditReviewerCompliance(input, options);
+          return dependencies.auditReviewerCompliance(options);
         },
       },
       hostActions,
@@ -675,7 +673,7 @@ export function createRoleRuntimeExtension(
     const doctor = createDoctorRoleRuntime(pi, {
       async loadSoul() { if (!dependencies.loadDoctorSoul) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorSoul(); },
       async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
-      async auditCompliance(input, options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(input, options); },
+      async auditCompliance(options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(options); },
     }, hostActions);
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(pi, {

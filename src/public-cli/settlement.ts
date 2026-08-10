@@ -1148,6 +1148,10 @@ function isComplianceAuditIncomplete(value: unknown): value is ComplianceAuditIn
   if (!isRecord(value) || value.status !== "audit-incomplete") return false;
   const observation = value.observation;
   if (!isRecord(observation)) return false;
+  if (observation.kind === "missing-dossier") return true;
+  if (observation.kind === "missing-subject") {
+    return typeof observation.subject === "string" && observation.subject.length > 0;
+  }
   if (observation.kind === "object-status-unreadable") {
     return observation.status === "missing" || observation.status === "unknown";
   }

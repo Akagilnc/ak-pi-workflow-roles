@@ -3,7 +3,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, SessionManager, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
@@ -15,6 +15,7 @@ import {
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
+import { openInProcessAgentSession } from "./in-process-session.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
@@ -1166,37 +1167,37 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
     } catch (error) {
       throw navigatorUnavailableError("session", error);
     }
-    let created: Awaited<ReturnType<typeof createAgentSession>>;
+    let opened: Awaited<ReturnType<typeof openInProcessAgentSession>>;
     try {
-      created = await createAgentSession({
-      cwd: context.cwd,
-      model,
-      modelRuntime,
-      thinkingLevel: parsed.thinkingLevel,
-      sessionManager: SessionManager.continueRecent(context.cwd, sessionDir),
-      settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
-      noTools: "all",
-      tools: [NAVIGATOR_PREPARE_TOOL_NAME],
-      customTools: [tool],
-    });
+      // Shared in-process session open (#233) — same ModelRuntime module instance.
+      opened = await openInProcessAgentSession({
+        cwd: context.cwd,
+        model,
+        modelRuntime,
+        thinkingLevel: parsed.thinkingLevel,
+        sessionManager: SessionManager.continueRecent(context.cwd, sessionDir),
+        noTools: "all",
+        tools: [NAVIGATOR_PREPARE_TOOL_NAME],
+        customTools: [tool],
+      });
     } catch (error) {
       throw navigatorUnavailableError("session", error);
     }
-    if (created.session.thinkingLevel !== parsed.thinkingLevel) {
-      created.session.dispose();
+    if (opened.session.thinkingLevel !== parsed.thinkingLevel) {
+      opened.dispose();
       throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${parsed.thinkingLevel} is unavailable for ${configured}`);
     }
     return {
       prompt: async (text) => {
         try {
-          await created.session.prompt(text);
+          await opened.session.prompt(text);
         } catch (error) {
           throw navigatorUnavailableError("transport", error);
         }
       },
       providerFailure: () => providerFailure,
-      appendEntry: (customType, data) => { created.session.sessionManager.appendCustomEntry(customType, data); },
-      entries: () => created.session.sessionManager.getEntries(),
+      appendEntry: (customType, data) => { opened.session.sessionManager.appendCustomEntry(customType, data); },
+      entries: () => opened.session.sessionManager.getEntries(),
       setModel: async (next, thinkingLevel) => {
         let nextParsed: ReturnType<typeof parseNavigatorModelSetting>;
         try {
@@ -1217,17 +1218,17 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         try {
           // setModel replaces the registered provider id; keep the stream seam instrumented.
           modelRuntime.registerNativeProvider(instrumentProvider(nextProvider));
-          await created.session.setModel(nextModel);
-          created.session.setThinkingLevel(thinkingLevel);
+          await opened.session.setModel(nextModel);
+          opened.session.setThinkingLevel(thinkingLevel);
         } catch (error) {
           throw navigatorUnavailableError("session", error);
         }
-        if (created.session.thinkingLevel !== nextParsed.thinkingLevel || created.session.thinkingLevel !== thinkingLevel) {
+        if (opened.session.thinkingLevel !== nextParsed.thinkingLevel || opened.session.thinkingLevel !== thinkingLevel) {
           throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${thinkingLevel} is unavailable for ${next}`);
         }
       },
-      getThinkingLevel: () => created.session.thinkingLevel,
-      dispose: () => created.session.dispose(),
+      getThinkingLevel: () => opened.session.thinkingLevel,
+      dispose: () => opened.dispose(),
     };
   };
 }
