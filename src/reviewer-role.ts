@@ -99,7 +99,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
   };
 
   pi.registerFlag("ak-review-task", { description: "Opaque Markdown review task assigned to the reviewer role", type: "string" });
-  pi.registerFlag("ak-review-capabilities", { description: "Closed Reviewer capability grant bound to the exact task bytes", type: "string" });
+  pi.registerFlag("ak-review-base", { description: "Fixed base revision for the pinned review target", type: "string" });
   pi.registerFlag("ak-review-scope-keys", { description: "Optional comma-separated exact class keys limiting Reviewer scope", type: "string" });
 
   return { async activate(ctx) {
@@ -118,16 +118,14 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       reviewScopeKeys = parsed;
     }
     const taskPath = pi.getFlag("ak-review-task");
-    const capabilityPath = pi.getFlag("ak-review-capabilities");
+    const baseRevision = pi.getFlag("ak-review-base");
     if (typeof taskPath !== "string" || !taskPath.trim()) throw new Error("Reviewer role requires --ak-review-task");
-    if (typeof capabilityPath !== "string" || !capabilityPath.trim()) throw new Error("Reviewer role requires --ak-review-capabilities");
+    if (typeof baseRevision !== "string" || !baseRevision.trim()) throw new Error("Reviewer role requires --ak-review-base");
     taskBytes = Uint8Array.from(await dependencies.loadTask(taskPath));
     task = exactUtf8(taskBytes, "Reviewer task");
     if (!task.trim()) throw new Error("Reviewer task is empty");
-    capabilities = parseReviewerCapabilities(await dependencies.loadCapabilities(capabilityPath), taskBytes);
-    if (!capabilities.prerequisiteOperations.includes("preflight.git.pin-target")) {
-      throw new Error("Missing preflight prerequisite: preflight.git.pin-target");
-    }
+    const capabilityText = JSON.stringify({ version: 1, taskSha256: sha256Hex(taskBytes), tools: REVIEWER_CHILD_TOOLS, prerequisiteOperations: REVIEWER_PREREQUISITES });
+    capabilities = parseReviewerCapabilities(new TextEncoder().encode(capabilityText), taskBytes);
     const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
     if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
     binding = loaded;
