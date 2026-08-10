@@ -5,7 +5,6 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 
 import { loadCanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
-import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const originalHome = process.env.HOME;
@@ -66,7 +65,7 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
       path: canonicalPath,
       baseDir: dirname(canonicalPath),
       body,
-      snapshotIdentity: reviewerPromptIdentity(raw),
+      snapshotIdentity: Object.freeze({ text: raw }),
     });
     assert.equal(binding.invocation("Implement the approved slice."), "/skill:tdd Implement the approved slice.");
     assert.ok(Object.isFrozen(binding));

@@ -13,9 +13,9 @@ export class AuditorTurnLimitError extends Error {
     }
 }
 export async function runAuditorRole(options) {
-    const [{ createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager }, { childSessionManager }] = await Promise.all([
+    const [{ createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager }, { createRecordSession }] = await Promise.all([
         import("@earendil-works/pi-coding-agent"),
-        import("./activation-ledger-session.js"),
+        import("./sitian-record-entry.js"),
     ]);
     const activeModel = options.context.model;
     if (activeModel === undefined)
@@ -53,7 +53,11 @@ export async function runAuditorRole(options) {
         const parentHeader = parentSessionManager?.getHeader?.();
         const parentSessionFile = parentSessionManager?.getSessionFile?.();
         const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
-        const auditorSessionManager = childSessionManager(parentSessionManager, cwd, "auditor-roles");
+        const auditorSessionManager = createRecordSession({
+            cwd,
+            kind: "auditor-roles",
+            ...(parentSessionManager === undefined ? {} : { parent: parentSessionManager }),
+        });
         const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash", "write", "edit", tool.name], customTools: [tool], sessionManager: auditorSessionManager, settingsManager: settings });
         const binding = {
             version: 1,

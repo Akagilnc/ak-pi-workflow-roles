@@ -226,6 +226,78 @@ var init_activation_ledger_topology = __esm({
   }
 });
 
+// src/activation-ledger-git.ts
+import { execFileSync } from "node:child_process";
+import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
+function envWithoutGitDiscovery(base = process.env) {
+  const env = { ...base };
+  for (const key of GIT_DISCOVERY_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
+}
+function isGitSpawnInfrastructureError(error) {
+  if (error === null || typeof error !== "object" || !("code" in error)) return false;
+  const code = error.code;
+  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
+}
+function gitChildExitedNonzero(error) {
+  if (error === null || typeof error !== "object" || !("status" in error)) return false;
+  const status = error.status;
+  return typeof status === "number" && status !== 0;
+}
+function resolveBookKeyFromGit(cwd) {
+  let commonDir;
+  try {
+    commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: envWithoutGitDiscovery()
+    }).trim();
+  } catch (error) {
+    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
+      throw error;
+    }
+    const err = error;
+    const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
+    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
+  }
+  if (commonDir.length === 0) {
+    throw new Error("git rev-parse --git-common-dir returned an empty path");
+  }
+  const absoluteCommon = isAbsolute2(commonDir) ? commonDir : resolve2(cwd, commonDir);
+  const hostDirectory = basename2(absoluteCommon) === ".git" ? dirname3(absoluteCommon) : absoluteCommon;
+  const bookKey = basename2(hostDirectory);
+  if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
+    throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
+  }
+  return bookKey;
+}
+var GIT_DISCOVERY_ENV_KEYS, ActivationGitRepositoryRequiredError;
+var init_activation_ledger_git = __esm({
+  "src/activation-ledger-git.ts"() {
+    "use strict";
+    GIT_DISCOVERY_ENV_KEYS = [
+      "GIT_DIR",
+      "GIT_COMMON_DIR",
+      "GIT_WORK_TREE",
+      "GIT_CEILING_DIRECTORIES",
+      "GIT_DISCOVERY_ACROSS_FILESYSTEM"
+    ];
+    ActivationGitRepositoryRequiredError = class extends Error {
+      code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
+      constructor(detail, options) {
+        super(
+          `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "ActivationGitRepositoryRequiredError";
+      }
+    };
+  }
+});
+
 // src/public-cli/main.ts
 import { dirname as dirname6, join as join16 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -345,62 +417,6 @@ function validateAcceptedJudgeDetails(verdict) {
   throw new Error("Judge verdict has no execution discriminator");
 }
 
-// src/exact-utf8.ts
-var decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-function exactUtf8(bytes, label) {
-  let text;
-  try {
-    text = decoder.decode(bytes);
-  } catch (error) {
-    throw new Error(`${label} is not valid UTF-8`, { cause: error });
-  }
-  return text;
-}
-
-// src/sha256.ts
-import { createHash } from "node:crypto";
-function sha256Hex(bytes) {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
-// src/reviewer-construction.ts
-var REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
-  recipeId: "reviewer-common-bundle",
-  version: 1,
-  runtimeVersion: "1",
-  implementationSha256: sha256Hex("reviewer-common-bundle:v1:path-digest-prompts")
-});
-var REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
-  adapterId: "reviewer-axis-output",
-  version: 1,
-  implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities")
-});
-var REVIEWER_STANDARDS_CONCLUSION_KEYS = Object.freeze([
-  "constitutionality",
-  "minimum-necessary-test-cost",
-  "complexity"
-]);
-var REVIEWER_STANDARDS_CONCLUSION_LABELS = Object.freeze({
-  constitutionality: "constitutionality",
-  "minimum-necessary-test-cost": "minimum-necessary test cost",
-  complexity: "complexity"
-});
-function manifestBytes(entries) {
-  return JSON.stringify({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, entries: entries.map((entry) => {
-    const { bytes: _bytes, ...identity } = entry;
-    return identity;
-  }) });
-}
-function verifyBundleIdentity(bundle) {
-  return bundle.entries.every((item) => {
-    if ("bytes" in item) {
-      const bytes = item.bytes;
-      return exactUtf8(Buffer.from(bytes), item.id) === bytes && Buffer.byteLength(bytes) === item.utf8Length && sha256Hex(bytes) === item.sha256;
-    }
-    return typeof item.id === "string" && typeof item.relativeClonePath === "string" && typeof item.origin === "string" && typeof item.sourceIdentity === "string" && Number.isInteger(item.utf8Length) && item.utf8Length >= 0 && /^[0-9a-f]{64}$/.test(item.sha256);
-  }) && sha256Hex(manifestBytes(bundle.entries)) === bundle.manifestSha256;
-}
-
 // src/package-contracts/reviewer-output.ts
 var REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
 function isRecord(value) {
@@ -425,14 +441,11 @@ function validateRuntimeReviewerReceipt(output) {
   if (acceptedBatch !== void 0 || construction !== void 0 || target !== void 0) {
     if (!isRecord(acceptedBatch) || !isRecord(construction) || !isRecord(target) || !Array.isArray(legs))
       throw new Error("Incomplete Reviewer accepted-batch identity");
-    const bundle = read(construction, "bundle");
-    const entries = read(bundle, "entries");
     const objectFormat = read(target, "objectFormat");
     const objectId = (value) => typeof value === "string" && new RegExp(objectFormat === "sha1" ? "^[0-9a-f]{40}$" : "^[0-9a-f]{64}$").test(value);
     const refs = read(target, "refs");
     const skillText = read(read(identities, "canonicalSkill"), "text");
-    const skillEntry = Array.isArray(entries) ? entries.find((entry) => read(entry, "origin") === "canonical-skill") : void 0;
-    if (typeof skillText !== "string" || !isRecord(skillEntry) || read(skillEntry, "sha256") !== sha256Hex(skillText) || read(skillEntry, "utf8Length") !== Buffer.byteLength(skillText, "utf8") || read(construction, "recipe") !== "reviewer-common-bundle-v1" || !isRecord(bundle) || !Array.isArray(entries) || !verifyBundleIdentity(bundle) || objectFormat !== "sha1" && objectFormat !== "sha256" || !objectId(read(target, "targetHead")) || !isRecord(refs) || Object.values(refs).some((ref) => !isRecord(ref) || !objectId(read(ref, "objectId")) || read(ref, "peeledCommitId") !== null && !objectId(read(ref, "peeledCommitId"))))
+    if (typeof skillText !== "string" || read(construction, "recipe") !== "reviewer-common-bundle-v1" || objectFormat !== "sha1" && objectFormat !== "sha256" || !objectId(read(target, "targetHead")) || !isRecord(refs) || Object.values(refs).some((ref) => !isRecord(ref) || !objectId(read(ref, "objectId")) || read(ref, "peeledCommitId") !== null && !objectId(read(ref, "peeledCommitId"))))
       throw new Error("Invalid Reviewer construction or target identity");
     const expectedAxes = legs.map((leg) => read(leg, "axis"));
     if (expectedAxes[0] !== "standards" || expectedAxes.length === 2 && expectedAxes[1] !== "spec" || expectedAxes.length < 1 || expectedAxes.length > 2)
@@ -448,19 +461,11 @@ function validateRuntimeReviewerReceipt(output) {
       const expectedPrompt = read(read(legs[index], "prompt"), "text");
       const actualPrompt = read(read(outcome, "prompt"), "text");
       if (expectedPrompt !== actualPrompt) throw new Error("Reviewer outcome prompt disagrees with accepted leg");
-      const materialized = read(outcome, "runtimeConstructionEvidence");
       const status = read(outcome, "status");
       const report = read(reports, axis);
-      if (status === "successful" && (report === void 0 || materialized === void 0))
-        throw new Error("Successful Reviewer outcome lacks report or materialization evidence");
+      if (status === "successful" && report === void 0)
+        throw new Error("Successful Reviewer outcome lacks report");
       if (status === "failed" && report !== void 0) throw new Error("Failed Reviewer outcome cannot bind a report");
-      if (materialized !== void 0) {
-        const materialEntries = read(materialized, "entries");
-        if (!isRecord(materialized) || read(materialized, "leg") !== axis || typeof read(materialized, "workspaceIdentity") !== "string" || read(materialized, "workspaceIdentity") === "" || read(materialized, "manifestSha256") !== read(bundle, "manifestSha256") || !Array.isArray(materialEntries) || materialEntries.length !== entries.length || materialEntries.some((entry, entryIndex) => {
-          const expected = entries[entryIndex];
-          return !isRecord(entry) || read(entry, "verified") !== true || read(entry, "readable") !== true || read(entry, "id") !== read(expected, "id") || read(entry, "relativeClonePath") !== read(expected, "relativeClonePath") || read(entry, "utf8Length") !== read(expected, "utf8Length") || read(entry, "sha256") !== read(expected, "sha256");
-        })) throw new Error("Reviewer runtime construction evidence disagrees with accepted bundle or leg");
-      }
     }
   }
   return output;
@@ -9084,6 +9089,24 @@ function isFullGitObjectId(value) {
   return typeof value === "string" && FULL_GIT_OBJECT_ID_RE.test(value);
 }
 
+// src/exact-utf8.ts
+var decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+function exactUtf8(bytes, label) {
+  let text;
+  try {
+    text = decoder.decode(bytes);
+  } catch (error) {
+    throw new Error(`${label} is not valid UTF-8`, { cause: error });
+  }
+  return text;
+}
+
+// src/sha256.ts
+import { createHash } from "node:crypto";
+function sha256Hex(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 // src/merger-contracts.ts
 var oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
 var materialSchema = typebox_exports.Object({ bytesBase64: typebox_exports.String(), sha256: typebox_exports.String() }, { additionalProperties: false });
@@ -9160,7 +9183,7 @@ var PACKAGED_ROLE_REGISTRY = [
   { role: "judge", phases: [null], outputTool: JUDGE_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
   { role: "fixer", phases: ["plan", "apply"], outputTool: FIXER_OUTPUT_TOOL_NAME, inputFlag: "ak-fix-packet", phaseFlag: "ak-fixer-phase", activationStage: "load-and-install" },
   { role: "coder", phases: ["plan", "apply"], outputTool: CODER_OUTPUT_TOOL_NAME, inputFlag: "ak-coder-task", phaseFlag: "ak-coder-phase", activationStage: "load-and-install" },
-  { role: "reviewer", phases: [null], outputTool: REVIEWER_OUTPUT_TOOL_NAME, inputFlag: "ak-review-task", phaseFlag: void 0, activationStage: "load-and-install" },
+  { role: "reviewer", phases: [null], outputTool: REVIEWER_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
   { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: "ak-collector-legs", phaseFlag: void 0, activationStage: "load-and-install" },
   { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: void 0, activationStage: "load-and-install" },
   { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: void 0, activationStage: "prepare-git-and-install" }
@@ -9553,6 +9576,7 @@ async function runExplicitInternalActivation(options) {
 
 // src/public-cli/invocation.ts
 init_activation_ledger_topology();
+init_activation_ledger_git();
 import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat,
@@ -9562,72 +9586,6 @@ import {
   writeFile as writeFile2
 } from "node:fs/promises";
 import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve4, sep as sep3 } from "node:path";
-
-// src/activation-ledger-git.ts
-import { execFileSync } from "node:child_process";
-import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
-var GIT_DISCOVERY_ENV_KEYS = [
-  "GIT_DIR",
-  "GIT_COMMON_DIR",
-  "GIT_WORK_TREE",
-  "GIT_CEILING_DIRECTORIES",
-  "GIT_DISCOVERY_ACROSS_FILESYSTEM"
-];
-function envWithoutGitDiscovery(base = process.env) {
-  const env = { ...base };
-  for (const key of GIT_DISCOVERY_ENV_KEYS) {
-    delete env[key];
-  }
-  return env;
-}
-var ActivationGitRepositoryRequiredError = class extends Error {
-  code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
-  constructor(detail, options) {
-    super(
-      `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
-      options?.cause === void 0 ? void 0 : { cause: options.cause }
-    );
-    this.name = "ActivationGitRepositoryRequiredError";
-  }
-};
-function isGitSpawnInfrastructureError(error) {
-  if (error === null || typeof error !== "object" || !("code" in error)) return false;
-  const code = error.code;
-  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
-}
-function gitChildExitedNonzero(error) {
-  if (error === null || typeof error !== "object" || !("status" in error)) return false;
-  const status = error.status;
-  return typeof status === "number" && status !== 0;
-}
-function resolveBookKeyFromGit(cwd) {
-  let commonDir;
-  try {
-    commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: envWithoutGitDiscovery()
-    }).trim();
-  } catch (error) {
-    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
-      throw error;
-    }
-    const err = error;
-    const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
-    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
-  }
-  if (commonDir.length === 0) {
-    throw new Error("git rev-parse --git-common-dir returned an empty path");
-  }
-  const absoluteCommon = isAbsolute2(commonDir) ? commonDir : resolve2(cwd, commonDir);
-  const hostDirectory = basename2(absoluteCommon) === ".git" ? dirname3(absoluteCommon) : absoluteCommon;
-  const bookKey = basename2(hostDirectory);
-  if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
-    throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
-  }
-  return bookKey;
-}
 
 // src/doctor-evidence.ts
 import { readdir, readFile as readFile2, realpath, stat } from "node:fs/promises";
@@ -10104,19 +10062,6 @@ async function loadCollectorManifest(path) {
     sourcePath: path
   };
 }
-
-// src/reviewer-admission.ts
-var REVIEWER_CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
-var REVIEWER_PREREQUISITES = [
-  "preflight.git.pin-target",
-  "preflight.git.resolve-base",
-  "preflight.git.derive-range",
-  "preflight.git.list-ordered-commits",
-  "preflight.git.read-material",
-  "runner.git.materialize-mirror",
-  "runner.git.materialize-workspace",
-  "runner.git.verify-snapshot"
-];
 
 // src/merger-git-state.ts
 import { execFile } from "node:child_process";
@@ -11320,16 +11265,6 @@ function parseReviewerArgv(args) {
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
     if (token === "--project") {
       project = requireOptionPath("--project", tokens.shift());
       continue;
@@ -11351,50 +11286,21 @@ function parseReviewerArgv(args) {
     }
     positional.push(token);
   }
+  if (baseRevision === void 0) {
+    throw new CliUsageError("reviewer requires --base <revision>; canonical code-review requires the caller to select a fixed point");
+  }
   return {
     instruction: positional.join(" "),
     attachmentPaths,
-    ...baseRevision === void 0 ? {} : { baseRevision },
+    baseRevision,
     ...project === void 0 ? {} : { project }
   };
-}
-function deriveReviewerCapabilitiesFromTask(taskBytes) {
-  const taskSha256 = sha256Hex(taskBytes);
-  const text = `${JSON.stringify({
-    version: 1,
-    taskSha256,
-    tools: [...REVIEWER_CHILD_TOOLS],
-    prerequisiteOperations: [...REVIEWER_PREREQUISITES]
-  })}
-`;
-  return {
-    taskSha256,
-    text,
-    bytes: new TextEncoder().encode(text)
-  };
-}
-function composeReviewerTaskText(instruction, baseRevision) {
-  const lines = [instruction];
-  if (baseRevision !== void 0) {
-    lines.push("");
-    lines.push(
-      `Base revision for the fixed review target: ${baseRevision}`
-    );
-    lines.push(
-      "Use this exact revision as proposal base.revision unless preflight proves it unusable."
-    );
-  }
-  return lines.join("\n");
 }
 async function admitReviewerInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  const instruction = options.instruction;
-  if (instruction.trim() === "") {
-    throw new CliUsageError("reviewer requires a nonblank task instruction");
-  }
-  if (options.baseRevision !== void 0 && options.baseRevision.trim() === "") {
+  if (options.baseRevision.trim() === "") {
     throw new CliUsageError("--base requires a nonempty revision");
   }
   const projectRoot = resolve4(options.project ?? options.cwd);
@@ -11421,16 +11327,8 @@ async function admitReviewerInvocation(options) {
       )
     );
   }
-  const taskText = composeReviewerTaskText(
-    instruction,
-    options.baseRevision
-  );
-  const taskPath = join4(runDirectory, "task.md");
-  await writeFile2(taskPath, taskText, "utf8");
-  const taskBytes = new TextEncoder().encode(taskText);
-  const derived = deriveReviewerCapabilitiesFromTask(taskBytes);
-  const capabilitiesPath = join4(runDirectory, "capabilities.json");
-  await writeFile2(capabilitiesPath, derived.text, "utf8");
+  const instruction = options.instruction;
+  const instructionEmpty = instruction.trim() === "";
   const admitted = {
     role: "reviewer",
     runId,
@@ -11440,11 +11338,8 @@ async function admitReviewerInvocation(options) {
     sessionDirectory,
     sessionFile,
     instruction,
-    instructionEmpty: false,
-    taskPath,
-    capabilitiesPath,
-    taskSha256: derived.taskSha256,
-    ...options.baseRevision === void 0 ? {} : { baseRevision: options.baseRevision },
+    instructionEmpty,
+    baseRevision: options.baseRevision,
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
       frozenPath: a.frozenPath,
@@ -11467,34 +11362,20 @@ async function admitReviewerInvocation(options) {
     bookKey,
     projectRoot,
     instruction,
-    instructionEmpty: false,
+    instructionEmpty,
     attachments,
     runDirectory,
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
-    taskPath,
-    capabilitiesPath,
-    taskSha256: derived.taskSha256,
-    ...options.baseRevision === void 0 ? {} : { baseRevision: options.baseRevision }
+    baseRevision: options.baseRevision
   };
 }
 function buildReviewerTransportPrompt(admitted) {
-  const lines = [admitted.instruction];
-  if (admitted.baseRevision !== void 0) {
-    lines.push("");
-    lines.push(
-      `Admitted base revision: ${admitted.baseRevision}`
-    );
-  }
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return lines.join("\n");
+  return [
+    `Base revision for the fixed review target: ${admitted.baseRevision}`,
+    "Use this exact revision as the fixed review point."
+  ].join("\n");
 }
 function parseMergerArgv(args) {
   const attachmentPaths = [];
@@ -11703,8 +11584,8 @@ function buildMergerTransportPrompt(admitted) {
 }
 
 // src/public-cli/coder-run.ts
-import { writeFile as writeFile6 } from "node:fs/promises";
-import { join as join9 } from "node:path";
+import { writeFile as writeFile5 } from "node:fs/promises";
+import { join as join8 } from "node:path";
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
@@ -12002,6 +11883,36 @@ function observePackagedMethodSkillInvocation(text, expected) {
   return Object.freeze({ name: expected.name, location });
 }
 
+// src/public-cli/public-run-credentials.ts
+function knownFailureForMissingProviderCredential(model, credentials) {
+  if (model === void 0 || credentials === void 0) return void 0;
+  if (model.provider !== "openai-codex" && model.provider !== "xai") return void 0;
+  if (!missingPublicProviderCredential(model.provider, credentials)) {
+    return void 0;
+  }
+  return {
+    cause: "provider",
+    identity: {
+      name: "MissingProviderCredential",
+      code: model.provider
+    }
+  };
+}
+function missingCredentialPreDispatchFailure(model, credentials) {
+  const knownFailure = knownFailureForMissingProviderCredential(model, credentials);
+  if (knownFailure === void 0) return void 0;
+  return {
+    timedOut: false,
+    code: 1,
+    stderr: `Missing credential for provider ${String(knownFailure.identity?.code ?? "unknown")}`,
+    knownFailure
+  };
+}
+function postRunMissingCredentialFailure(result2, model, credentials) {
+  if (!(result2.timedOut || result2.code !== 0)) return void 0;
+  return knownFailureForMissingProviderCredential(model, credentials);
+}
+
 // src/public-cli/run-lifecycle.ts
 init_activation_ledger_topology();
 import { lstat as lstat2, open, readdir as readdir2, readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
@@ -12268,8 +12179,6 @@ async function loadResumableRunRecord(home, runId) {
   let packetPath;
   let prerequisitesPath;
   let prerequisites;
-  let capabilitiesPath;
-  let taskSha256;
   let baseRevision;
   let mergerInputPath;
   let derived;
@@ -12302,12 +12211,6 @@ async function loadResumableRunRecord(home, runId) {
       }
       if (Array.isArray(record3.prerequisites)) {
         prerequisites = record3.prerequisites;
-      }
-      if (typeof record3.capabilitiesPath === "string" && record3.capabilitiesPath.trim() !== "") {
-        capabilitiesPath = record3.capabilitiesPath;
-      }
-      if (typeof record3.taskSha256 === "string" && record3.taskSha256.trim() !== "") {
-        taskSha256 = record3.taskSha256;
       }
       if (typeof record3.baseRevision === "string" && record3.baseRevision.trim() !== "") {
         baseRevision = record3.baseRevision;
@@ -12345,8 +12248,6 @@ async function loadResumableRunRecord(home, runId) {
       ...packetPath === void 0 ? {} : { packetPath },
       ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
       ...prerequisites === void 0 ? {} : { prerequisites },
-      ...capabilitiesPath === void 0 ? {} : { capabilitiesPath },
-      ...taskSha256 === void 0 ? {} : { taskSha256 },
       ...baseRevision === void 0 ? {} : { baseRevision },
       ...mergerInputPath === void 0 ? {} : { mergerInputPath },
       ...derived === void 0 ? {} : { derived }
@@ -12479,27 +12380,10 @@ async function loadResumableReviewerRun(home, runId) {
       `role run ${runId} belongs to ${loaded.run.role}, not reviewer`
     );
   }
-  const taskPath = loaded.admittedFields.taskPath;
-  if (taskPath === void 0) {
+  const baseRevision = loaded.admittedFields.baseRevision;
+  if (baseRevision === void 0 || baseRevision.trim() === "") {
     throw new CliUsageError(
-      `role run admitted reviewer task path is missing: ${runId}`
-    );
-  }
-  const capabilitiesPath = loaded.admittedFields.capabilitiesPath;
-  if (capabilitiesPath === void 0) {
-    throw new CliUsageError(
-      `role run admitted reviewer capabilities path is missing: ${runId}`
-    );
-  }
-  const taskSha256 = loaded.admittedFields.taskSha256;
-  if (taskSha256 === void 0) {
-    throw new CliUsageError(
-      `role run admitted reviewer task digest is missing: ${runId}`
-    );
-  }
-  if (loaded.admittedFields.instruction.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted reviewer task is blank: ${runId}`
+      `role run admitted reviewer base revision is missing: ${runId}`
     );
   }
   const admitted = {
@@ -12508,16 +12392,13 @@ async function loadResumableReviewerRun(home, runId) {
     bookKey: loaded.run.bookKey,
     projectRoot: loaded.run.projectRoot,
     instruction: loaded.admittedFields.instruction,
-    instructionEmpty: false,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
-    taskPath,
-    capabilitiesPath,
-    taskSha256,
-    ...loaded.admittedFields.baseRevision === void 0 ? {} : { baseRevision: loaded.admittedFields.baseRevision }
+    baseRevision
   };
   return {
     admitted,
@@ -13327,6 +13208,38 @@ async function readSessionProviderStop(sessionFile) {
     return void 0;
   }
 }
+async function readBoundEvidenceChildKnownFailure(sessionFile) {
+  const childDirectory = join7(dirname5(sessionFile), "evidence-children");
+  let names;
+  try {
+    names = await readdir3(childDirectory);
+  } catch (error) {
+    if (isMissingPathError2(error)) return void 0;
+    throw sessionReadFailure(error, "failed to read bound evidence-child session directory");
+  }
+  for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
+    let entries;
+    try {
+      entries = await readBoundSessionEntries(join7(childDirectory, file));
+    } catch (error) {
+      throw sessionReadFailure(error, "failed to read discovered evidence-child session");
+    }
+    const header = entries.find((entry) => entry.type === "session");
+    if (!isRecord4(header) || header.parentSession !== sessionFile) continue;
+    const stop = extractSessionProviderStop(entries);
+    if (stop === void 0) continue;
+    const primary = knownFailureFromProviderStop(stop);
+    return {
+      ...primary,
+      details: {
+        ...stop.provider === void 0 ? {} : { provider: stop.provider },
+        ...stop.model === void 0 ? {} : { model: stop.model },
+        secondaryEvidence: "evidence-child"
+      }
+    };
+  }
+  return void 0;
+}
 async function readBoundAuditorKnownFailure(sessionFile) {
   let parentEntries;
   try {
@@ -13399,10 +13312,9 @@ async function readBoundAuditorKnownFailure(sessionFile) {
 }
 async function resolveAuditedRunnerKnownFailure(input) {
   if (input.runner !== void 0) return input.runner;
-  const parentStop = await readSessionProviderStop(input.sessionFile);
-  if (parentStop !== void 0) return knownFailureFromProviderStop(parentStop);
   try {
-    return await readBoundAuditorKnownFailure(input.sessionFile) ?? input.credential;
+    const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
+    if (auditorFailure !== void 0) return auditorFailure;
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
     return {
@@ -13411,6 +13323,19 @@ async function resolveAuditedRunnerKnownFailure(input) {
       diagnostic: failure.message || failure.name
     };
   }
+  try {
+    const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
+    if (evidenceChildFailure !== void 0) return evidenceChildFailure;
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound evidence-child failure");
+    return {
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name
+    };
+  }
+  const parentStop = await readSessionProviderStop(input.sessionFile);
+  return parentStop === void 0 ? input.credential : knownFailureFromProviderStop(parentStop);
 }
 function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -14896,10 +14821,8 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
         sessionDirectory,
         sessionFile: admitted.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
-        taskPath: admitted.taskPath,
-        capabilitiesPath: admitted.capabilitiesPath,
-        taskSha256: admitted.taskSha256,
-        ...admitted.baseRevision === void 0 ? {} : { baseRevision: admitted.baseRevision },
+        baseRevision: admitted.baseRevision,
+        ...admitted.instructionEmpty ? {} : { callerProvenance: admitted.instruction },
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
           frozenPath: a.frozenPath,
@@ -15430,22 +15353,7 @@ function presentFailureTerminal(terminal, io) {
   );
 }
 
-// src/public-cli/judge-run.ts
-import { writeFile as writeFile5 } from "node:fs/promises";
-import { join as join8 } from "node:path";
-function knownFailureForMissingProviderCredential(model, credentials) {
-  if (model === void 0 || credentials === void 0) return void 0;
-  if (!missingPublicProviderCredential(model.provider, credentials)) {
-    return void 0;
-  }
-  return {
-    cause: "provider",
-    identity: {
-      name: "MissingProviderCredential",
-      code: model.provider
-    }
-  };
-}
+// src/public-cli/coder-run.ts
 function buildModelArgs(model) {
   if (model === void 0) return [];
   return [
@@ -15457,30 +15365,43 @@ function buildModelArgs(model) {
     model.thinking
   ];
 }
-function buildJudgeActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildJudgeTransportPrompt(admitted);
+function buildCoderActivationExtraArgs(admitted, options) {
+  const prompt = buildCoderTransportPrompt(admitted);
+  const skillArgs = admitted.phase === "apply" ? [
+    "--skill",
+    resolvePackagedMethodSkillPath(options.packageRoot, "tdd")
+  ] : [];
   return [
     "--no-skills",
+    ...skillArgs,
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
-    // Exact Pi session file principal (SessionManager.open), not directory-latest.
     "--session",
     admitted.sessionFile,
     "--session-dir",
     admitted.sessionDirectory,
     ...options.extraPiArgs ?? [],
     "--ak-role",
-    "judge",
+    "coder",
+    "--ak-coder-phase",
+    admitted.phase,
+    "--ak-coder-task",
+    admitted.taskPath,
     "--mode",
     "json",
     ...buildModelArgs(options.model),
     prompt
   ];
 }
-function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
+function buildCoderResumeActivationExtraArgs(admitted, options) {
+  const skillArgs = admitted.phase === "apply" ? [
+    "--skill",
+    resolvePackagedMethodSkillPath(options.packageRoot, "tdd")
+  ] : [];
   return [
     "--no-skills",
+    ...skillArgs,
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
@@ -15490,7 +15411,11 @@ function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
     admitted.sessionDirectory,
     ...options.extraPiArgs ?? [],
     "--ak-role",
-    "judge",
+    "coder",
+    "--ak-coder-phase",
+    admitted.phase,
+    "--ak-coder-task",
+    admitted.taskPath,
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -15499,16 +15424,19 @@ function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
 }
 async function presentControlledFailure(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...hasThrown ? { thrown: failureInput.thrown } : {},
     ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
+    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
+    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
     ...session === void 0 ? {} : { session }
   });
-  const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
+  const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted);
   const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
   const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
     admitted.sessionFile
@@ -15522,7 +15450,7 @@ async function presentControlledFailure(admitted, failureInput, io) {
   } else {
     await markRunTerminal(admitted.runDirectory).catch(() => void 0);
   }
-  const terminal = await settleJudgeFailureTerminalResult(
+  const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
@@ -15534,17 +15462,26 @@ async function presentControlledFailure(admitted, failureInput, io) {
     terminal
   };
 }
-async function dispatchAdmittedJudge(input) {
-  const { admitted, env, io, extraArgs, lease } = input;
+async function dispatchAdmittedCoder(input) {
+  const { admitted, env, io, extraArgs, lease, methodProvenance } = input;
   try {
+    const missingCredential = missingCredentialPreDispatchFailure(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure(
+        admitted,
+        missingCredential,
+        io
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
       HOME: env.home,
       PI_CODING_AGENT_DIR: env.agentDir,
-      // Public-run marker so Navigator work context prefers admitted instruction
-      // and role-runtime can record typed provider HTTP observations.
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
     if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
@@ -15584,9 +15521,536 @@ async function dispatchAdmittedJudge(input) {
     }
     let lawful;
     try {
-      lawful = await trySettleJudgeTerminalResult(admitted);
+      lawful = await trySettleCoderTerminalResult(admitted, {
+        ...methodProvenance === void 0 ? {} : { methodProvenance }
+      });
     } catch (error) {
       return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: result2.code,
+          stderr: result2.stderr,
+          thrown: error
+        },
+        io
+      );
+    }
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(lawful));
+      return {
+        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        admitted,
+        terminal: lawful
+      };
+    }
+    const sessionProviderStop = await readSessionProviderStop(
+      admitted.sessionFile
+    );
+    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
+    const credentialFailure = postRunMissingCredentialFailure(
+      result2,
+      env.model,
+      env.credentials
+    );
+    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: result2.timedOut,
+        code: result2.code,
+        stderr: result2.stderr,
+        ...knownFailure === void 0 ? {} : { knownFailure }
+      },
+      io
+    );
+  } finally {
+    await lease.release();
+  }
+}
+async function runPublicCoder(argv, env, io, parseCoderArgv2) {
+  let admitted;
+  try {
+    const parsed = parseCoderArgv2(argv);
+    admitted = await admitCoderInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      phase: parsed.phase,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  let methodProvenance;
+  if (admitted.phase === "apply") {
+    try {
+      const material = await loadPackagedMethodSkillMaterial(
+        env.packageRoot,
+        "tdd"
+      );
+      methodProvenance = material.provenance;
+    } catch (error) {
+      await lease.release();
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+          knownCause: "activation"
+        },
+        io
+      );
+    }
+  }
+  const extraArgs = buildCoderActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedCoder({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    ...methodProvenance === void 0 ? {} : { methodProvenance }
+  });
+}
+async function runPublicCoderResume(argv, env, io) {
+  const runId = argv[0];
+  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
+    presentStructuralRejection(
+      new CliUsageError("usage: ak-role resume <runId>"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  if (argv.length > 1) {
+    presentStructuralRejection(
+      new CliUsageError("resume takes exactly one run id"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  let loaded;
+  try {
+    loaded = await loadResumableCoderRun(env.home, runId);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const { admitted } = loaded;
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      io.stderr(formatCliDiagnostic(error.message));
+      return { exitCode: 1 };
+    }
+    throw error;
+  }
+  let methodProvenance;
+  if (admitted.phase === "apply") {
+    try {
+      const material = await loadPackagedMethodSkillMaterial(
+        env.packageRoot,
+        "tdd"
+      );
+      methodProvenance = material.provenance;
+    } catch (error) {
+      await lease.release();
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+          knownCause: "activation"
+        },
+        io
+      );
+    }
+  }
+  const extraArgs = buildCoderResumeActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedCoder({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    ...methodProvenance === void 0 ? {} : { methodProvenance }
+  });
+}
+
+// src/public-cli/collector-run.ts
+import { writeFile as writeFile6 } from "node:fs/promises";
+import { join as join9 } from "node:path";
+function buildModelArgs2(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    "--thinking",
+    model.thinking
+  ];
+}
+function buildCollectorActivationExtraArgs(admitted, options = {}) {
+  const prompt = buildCollectorTransportPrompt(admitted);
+  return [
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "collector",
+    "--ak-collector-repo",
+    admitted.repository.display,
+    "--ak-collector-pr",
+    String(admitted.prNumber),
+    "--ak-collector-legs",
+    admitted.legsPath,
+    "--mode",
+    "json",
+    ...buildModelArgs2(options.model),
+    prompt
+  ];
+}
+async function presentControlledFailure2(admitted, failureInput, io) {
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const failure = classifyPostAdmissionFailure({
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...hasThrown ? { thrown: failureInput.thrown } : {},
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
+    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
+    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...session === void 0 ? {} : { session }
+  });
+  await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+  const terminal = await settleFailureTerminalResult(admitted, failure);
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+    terminal
+  };
+}
+async function dispatchAdmittedCollector(input) {
+  const { admitted, env, io, extraArgs, lease } = input;
+  try {
+    const missingCredential = missingCredentialPreDispatchFailure(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure2(
+        admitted,
+        missingCredential,
+        io
+      );
+    }
+    await markRunRunning(admitted.runDirectory);
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
+    const childEnv = {
+      ...process.env,
+      HOME: env.home,
+      PI_CODING_AGENT_DIR: env.agentDir,
+      AK_ROLE_RUN_DIR: admitted.runDirectory
+    };
+    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = env.correlationId;
+    }
+    let result2;
+    try {
+      result2 = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs,
+        cwd: admitted.projectRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        env: childEnv,
+        timeoutMs: env.timeoutMs,
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+    } catch (error) {
+      return await presentControlledFailure2(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error
+        },
+        io
+      );
+    }
+    try {
+      await writeFile6(
+        join9(admitted.runDirectory, "stderr.log"),
+        result2.stderr,
+        "utf8"
+      );
+    } catch {
+    }
+    let lawful;
+    try {
+      lawful = await trySettleCollectorTerminalResult(admitted);
+    } catch (error) {
+      return await presentControlledFailure2(
+        admitted,
+        {
+          timedOut: false,
+          code: result2.code,
+          stderr: result2.stderr,
+          thrown: error
+        },
+        io
+      );
+    }
+    if (lawful !== void 0) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(lawful));
+      return {
+        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        admitted,
+        terminal: lawful
+      };
+    }
+    const infrastructureFailure = await readCollectorInfrastructureFailure(
+      admitted.sessionFile
+    );
+    const sessionProviderStop = await readSessionProviderStop(
+      admitted.sessionFile
+    );
+    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
+    const credentialFailure = postRunMissingCredentialFailure(
+      result2,
+      env.model,
+      env.credentials
+    );
+    const knownFailure = result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
+      cause: infrastructureFailure.cause,
+      diagnostic: infrastructureFailure.diagnostic,
+      ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
+    }) ?? sessionProviderFailure ?? credentialFailure;
+    return await presentControlledFailure2(
+      admitted,
+      {
+        timedOut: result2.timedOut,
+        code: result2.code,
+        stderr: result2.stderr,
+        ...knownFailure === void 0 ? {} : { knownFailure }
+      },
+      io
+    );
+  } finally {
+    await lease.release();
+  }
+}
+async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
+  let admitted;
+  try {
+    const parsed = parseCollectorArgv2(argv);
+    admitted = await admitCollectorInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      prNumber: parsed.prNumber,
+      legs: parsed.legs,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...parsed.repo === void 0 ? {} : { repo: parsed.repo },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const extraArgs = buildCollectorActivationExtraArgs(admitted, {
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedCollector({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease
+  });
+}
+
+// src/public-cli/doctor-run.ts
+import { writeFile as writeFile7 } from "node:fs/promises";
+import { join as join10 } from "node:path";
+function buildModelArgs3(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    "--thinking",
+    model.thinking
+  ];
+}
+function buildDoctorActivationExtraArgs(admitted, options = {}) {
+  const prompt = buildDoctorTransportPrompt(admitted);
+  return [
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "doctor",
+    "--ak-doctor-case",
+    admitted.caseRunsPath,
+    "--mode",
+    "json",
+    ...buildModelArgs3(options.model),
+    prompt
+  ];
+}
+async function presentControlledFailure3(admitted, failureInput, io) {
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const failure = classifyPostAdmissionFailure({
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...hasThrown ? { thrown: failureInput.thrown } : {},
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...session === void 0 ? {} : { session }
+  });
+  await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+  const terminal = await settleFailureTerminalResult(admitted, failure);
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+    terminal
+  };
+}
+async function dispatchAdmittedDoctor(input) {
+  const { admitted, env, io, extraArgs, lease } = input;
+  try {
+    const missingCredential = missingCredentialPreDispatchFailure(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure3(
+        admitted,
+        missingCredential,
+        io
+      );
+    }
+    await markRunRunning(admitted.runDirectory);
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
+    const childEnv = {
+      ...process.env,
+      HOME: env.home,
+      PI_CODING_AGENT_DIR: env.agentDir,
+      AK_ROLE_RUN_DIR: admitted.runDirectory
+    };
+    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = env.correlationId;
+    }
+    let result2;
+    try {
+      result2 = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs,
+        cwd: admitted.projectRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        env: childEnv,
+        timeoutMs: env.timeoutMs,
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+    } catch (error) {
+      return await presentControlledFailure3(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error
+        },
+        io
+      );
+    }
+    try {
+      await writeFile7(
+        join10(admitted.runDirectory, "stderr.log"),
+        result2.stderr,
+        "utf8"
+      );
+    } catch {
+    }
+    let lawful;
+    try {
+      lawful = await trySettleDoctorTerminalResult(admitted);
+    } catch (error) {
+      return await presentControlledFailure3(
         admitted,
         {
           timedOut: false,
@@ -15620,13 +16084,653 @@ async function dispatchAdmittedJudge(input) {
         terminal: auditIncomplete
       };
     }
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const credentialFailure = postRunMissingCredentialFailure(
+      result2,
+      env.model,
+      env.credentials
+    );
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
       credential: credentialFailure
     });
-    return await presentControlledFailure(
+    return await presentControlledFailure3(
+      admitted,
+      {
+        timedOut: result2.timedOut,
+        code: result2.code,
+        stderr: result2.stderr,
+        ...knownFailure === void 0 ? {} : { knownFailure }
+      },
+      io
+    );
+  } finally {
+    await lease.release();
+  }
+}
+async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
+  let admitted;
+  try {
+    const parsed = parseDoctorArgv2(argv);
+    admitted = await admitDoctorInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      issueNumber: parsed.issueNumber,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...parsed.runs === void 0 ? {} : { runs: parsed.runs },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const extraArgs = buildDoctorActivationExtraArgs(admitted, {
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedDoctor({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease
+  });
+}
+
+// src/public-cli/fixer-run.ts
+import { writeFile as writeFile8 } from "node:fs/promises";
+import { join as join11 } from "node:path";
+function buildModelArgs4(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    "--thinking",
+    model.thinking
+  ];
+}
+function buildFixerActivationExtraArgs(admitted, options) {
+  const prompt = buildFixerTransportPrompt(admitted);
+  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
+    options.packageRoot,
+    "diagnosing-bugs"
+  );
+  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
+  const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
+  return [
+    "--no-skills",
+    "--skill",
+    diagnosisSkillPath,
+    "--skill",
+    tddSkillPath,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "fixer",
+    "--ak-fixer-phase",
+    admitted.phase,
+    "--ak-fix-packet",
+    admitted.packetPath,
+    ...prerequisiteArgs,
+    "--mode",
+    "json",
+    ...buildModelArgs4(options.model),
+    prompt
+  ];
+}
+function buildFixerResumeActivationExtraArgs(admitted, options) {
+  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
+    options.packageRoot,
+    "diagnosing-bugs"
+  );
+  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
+  const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
+  return [
+    "--no-skills",
+    "--skill",
+    diagnosisSkillPath,
+    "--skill",
+    tddSkillPath,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "fixer",
+    "--ak-fixer-phase",
+    admitted.phase,
+    "--ak-fix-packet",
+    admitted.packetPath,
+    ...prerequisiteArgs,
+    "--mode",
+    "json",
+    ...buildModelArgs4(options.model),
+    RESUME_TRANSPORT_ENVELOPE
+  ];
+}
+async function presentControlledFailure4(admitted, failureInput, io) {
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const failure = classifyPostAdmissionFailure({
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...hasThrown ? { thrown: failureInput.thrown } : {},
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...session === void 0 ? {} : { session }
+  });
+  const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
+  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+    admitted.sessionFile
+  );
+  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
+    hasLawfulTerminalResult,
+    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
+  });
+  if (resumable && typedHttp429 !== void 0) {
+    await markRunResumable(admitted.runDirectory, typedHttp429);
+  } else {
+    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+  }
+  const terminal = await settleFailureTerminalResult(
+    admitted,
+    failure,
+    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
+  );
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+    terminal
+  };
+}
+async function dispatchAdmittedFixer(input) {
+  const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
+  try {
+    const missingCredential = missingCredentialPreDispatchFailure(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure4(
+        admitted,
+        missingCredential,
+        io
+      );
+    }
+    await markRunRunning(admitted.runDirectory);
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
+    const childEnv = {
+      ...process.env,
+      HOME: env.home,
+      PI_CODING_AGENT_DIR: env.agentDir,
+      AK_ROLE_RUN_DIR: admitted.runDirectory
+    };
+    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = env.correlationId;
+    }
+    let result2;
+    try {
+      result2 = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs,
+        cwd: admitted.projectRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        env: childEnv,
+        timeoutMs: env.timeoutMs,
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+    } catch (error) {
+      return await presentControlledFailure4(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error
+        },
+        io
+      );
+    }
+    try {
+      await writeFile8(
+        join11(admitted.runDirectory, "stderr.log"),
+        result2.stderr,
+        "utf8"
+      );
+    } catch {
+    }
+    let lawful;
+    try {
+      lawful = await trySettleFixerTerminalResult(admitted, {
+        methodProvenance: methodMaterial.provenance,
+        methodSkillPath: methodMaterial.skillPath,
+        methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+          env.packageRoot,
+          "diagnosing-bugs"
+        )
+      });
+    } catch (error) {
+      return await presentControlledFailure4(
+        admitted,
+        {
+          timedOut: false,
+          code: result2.code,
+          stderr: result2.stderr,
+          thrown: error
+        },
+        io
+      );
+    }
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(lawful));
+      return {
+        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        admitted,
+        terminal: lawful
+      };
+    }
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== void 0) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete
+      };
+    }
+    const credentialFailure = postRunMissingCredentialFailure(
+      result2,
+      env.model,
+      env.credentials
+    );
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
+    return await presentControlledFailure4(
+      admitted,
+      {
+        timedOut: result2.timedOut,
+        code: result2.code,
+        stderr: result2.stderr,
+        ...knownFailure === void 0 ? {} : { knownFailure }
+      },
+      io
+    );
+  } finally {
+    await lease.release();
+  }
+}
+async function loadFixerMethodMaterial(packageRoot2) {
+  return await loadPackagedMethodSkillMaterial(packageRoot2, "diagnosing-bugs");
+}
+async function runPublicFixer(argv, env, io, parseFixerArgv2) {
+  let admitted;
+  try {
+    const parsed = parseFixerArgv2(argv);
+    admitted = await admitFixerInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      phase: parsed.phase,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.prerequisitesPath === void 0 ? {} : { prerequisitesPath: parsed.prerequisitesPath },
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  let methodMaterial;
+  try {
+    methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
+  } catch (error) {
+    await lease.release();
+    return await presentControlledFailure4(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error
+      },
+      io
+    );
+  }
+  const extraArgs = buildFixerActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedFixer({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    methodMaterial
+  });
+}
+async function runPublicFixerResume(argv, env, io) {
+  const runId = argv[0];
+  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
+    presentStructuralRejection(
+      new CliUsageError("usage: ak-role resume <runId>"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  if (argv.length > 1) {
+    presentStructuralRejection(
+      new CliUsageError("resume takes exactly one run id"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  let loaded;
+  try {
+    loaded = await loadResumableFixerRun(env.home, runId);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const { admitted } = loaded;
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      io.stderr(formatCliDiagnostic(error.message));
+      return { exitCode: 1 };
+    }
+    throw error;
+  }
+  let methodMaterial;
+  try {
+    methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
+  } catch (error) {
+    await lease.release();
+    return await presentControlledFailure4(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error
+      },
+      io
+    );
+  }
+  const extraArgs = buildFixerResumeActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedFixer({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    methodMaterial
+  });
+}
+
+// src/public-cli/judge-run.ts
+import { writeFile as writeFile9 } from "node:fs/promises";
+import { join as join12 } from "node:path";
+function buildModelArgs5(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    "--thinking",
+    model.thinking
+  ];
+}
+function buildJudgeActivationExtraArgs(admitted, options = {}) {
+  const prompt = buildJudgeTransportPrompt(admitted);
+  return [
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    // Exact Pi session file principal (SessionManager.open), not directory-latest.
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "judge",
+    "--mode",
+    "json",
+    ...buildModelArgs5(options.model),
+    prompt
+  ];
+}
+function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
+  return [
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "judge",
+    "--mode",
+    "json",
+    ...buildModelArgs5(options.model),
+    RESUME_TRANSPORT_ENVELOPE
+  ];
+}
+async function presentControlledFailure5(admitted, failureInput, io) {
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const failure = classifyPostAdmissionFailure({
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...hasThrown ? { thrown: failureInput.thrown } : {},
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...session === void 0 ? {} : { session }
+  });
+  const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
+  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+    admitted.sessionFile
+  );
+  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
+    hasLawfulTerminalResult,
+    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
+  });
+  if (resumable && typedHttp429 !== void 0) {
+    await markRunResumable(admitted.runDirectory, typedHttp429);
+  } else {
+    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+  }
+  const terminal = await settleJudgeFailureTerminalResult(
+    admitted,
+    failure,
+    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
+  );
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+    terminal
+  };
+}
+async function dispatchAdmittedJudge(input) {
+  const { admitted, env, io, extraArgs, lease } = input;
+  try {
+    const missingCredential = missingCredentialPreDispatchFailure(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure5(
+        admitted,
+        missingCredential,
+        io
+      );
+    }
+    await markRunRunning(admitted.runDirectory);
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
+    const childEnv = {
+      ...process.env,
+      HOME: env.home,
+      PI_CODING_AGENT_DIR: env.agentDir,
+      // Public-run marker so Navigator work context prefers admitted instruction
+      // and role-runtime can record typed provider HTTP observations.
+      AK_ROLE_RUN_DIR: admitted.runDirectory
+    };
+    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = env.correlationId;
+    }
+    let result2;
+    try {
+      result2 = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs,
+        cwd: admitted.projectRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        env: childEnv,
+        timeoutMs: env.timeoutMs,
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+    } catch (error) {
+      return await presentControlledFailure5(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error
+        },
+        io
+      );
+    }
+    try {
+      await writeFile9(
+        join12(admitted.runDirectory, "stderr.log"),
+        result2.stderr,
+        "utf8"
+      );
+    } catch {
+    }
+    let lawful;
+    try {
+      lawful = await trySettleJudgeTerminalResult(admitted);
+    } catch (error) {
+      return await presentControlledFailure5(
+        admitted,
+        {
+          timedOut: false,
+          code: result2.code,
+          stderr: result2.stderr,
+          thrown: error
+        },
+        io
+      );
+    }
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(lawful));
+      return {
+        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        admitted,
+        terminal: lawful
+      };
+    }
+    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
+    if (auditIncomplete !== void 0) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      if (auditIncomplete.roleOutcome.kind === "failure") {
+        presentFailureTerminal(auditIncomplete, io);
+      } else {
+        io.stdout(formatTerminalResult(auditIncomplete));
+      }
+      return {
+        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
+        admitted,
+        terminal: auditIncomplete
+      };
+    }
+    const credentialFailure = postRunMissingCredentialFailure(
+      result2,
+      env.model,
+      env.credentials
+    );
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
+    return await presentControlledFailure5(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -15732,1135 +16836,11 @@ async function runPublicResume(argv, env, io) {
   });
 }
 
-// src/public-cli/coder-run.ts
-function buildModelArgs2(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking
-  ];
-}
-function buildCoderActivationExtraArgs(admitted, options) {
-  const prompt = buildCoderTransportPrompt(admitted);
-  const skillArgs = admitted.phase === "apply" ? [
-    "--skill",
-    resolvePackagedMethodSkillPath(options.packageRoot, "tdd")
-  ] : [];
-  return [
-    "--no-skills",
-    ...skillArgs,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "coder",
-    "--ak-coder-phase",
-    admitted.phase,
-    "--ak-coder-task",
-    admitted.taskPath,
-    "--mode",
-    "json",
-    ...buildModelArgs2(options.model),
-    prompt
-  ];
-}
-function buildCoderResumeActivationExtraArgs(admitted, options) {
-  const skillArgs = admitted.phase === "apply" ? [
-    "--skill",
-    resolvePackagedMethodSkillPath(options.packageRoot, "tdd")
-  ] : [];
-  return [
-    "--no-skills",
-    ...skillArgs,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "coder",
-    "--ak-coder-phase",
-    admitted.phase,
-    "--ak-coder-task",
-    admitted.taskPath,
-    "--mode",
-    "json",
-    ...buildModelArgs2(options.model),
-    RESUME_TRANSPORT_ENVELOPE
-  ];
-}
-async function presentControlledFailure2(admitted, failureInput, io) {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
-    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
-    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
-    ...session === void 0 ? {} : { session }
-  });
-  const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted);
-  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
-    admitted.sessionFile
-  );
-  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
-    hasLawfulTerminalResult,
-    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
-  });
-  if (resumable && typedHttp429 !== void 0) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  }
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
-  );
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal
-  };
-}
-async function dispatchAdmittedCoder(input) {
-  const { admitted, env, io, extraArgs, lease, methodProvenance } = input;
-  try {
-    await markRunRunning(admitted.runDirectory);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
-    }
-    let result2;
-    try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-    } catch (error) {
-      return await presentControlledFailure2(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error
-        },
-        io
-      );
-    }
-    try {
-      await writeFile6(
-        join9(admitted.runDirectory, "stderr.log"),
-        result2.stderr,
-        "utf8"
-      );
-    } catch {
-    }
-    let lawful;
-    try {
-      lawful = await trySettleCoderTerminalResult(admitted, {
-        ...methodProvenance === void 0 ? {} : { methodProvenance }
-      });
-    } catch (error) {
-      return await presentControlledFailure2(
-        admitted,
-        {
-          timedOut: false,
-          code: result2.code,
-          stderr: result2.stderr,
-          thrown: error
-        },
-        io
-      );
-    }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful
-      };
-    }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
-    return await presentControlledFailure2(
-      admitted,
-      {
-        timedOut: result2.timedOut,
-        code: result2.code,
-        stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : {
-          knownCause: knownFailure.cause,
-          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
-        }
-      },
-      io
-    );
-  } finally {
-    await lease.release();
-  }
-}
-async function runPublicCoder(argv, env, io, parseCoderArgv2) {
-  let admitted;
-  try {
-    const parsed = parseCoderArgv2(argv);
-    admitted = await admitCoderInvocation({
-      home: env.home,
-      cwd: env.cwd,
-      phase: parsed.phase,
-      instruction: parsed.instruction,
-      attachmentPaths: parsed.attachmentPaths,
-      ...parsed.project === void 0 ? {} : { project: parsed.project },
-      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
-    });
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  let methodProvenance;
-  if (admitted.phase === "apply") {
-    try {
-      const material = await loadPackagedMethodSkillMaterial(
-        env.packageRoot,
-        "tdd"
-      );
-      methodProvenance = material.provenance;
-    } catch (error) {
-      await lease.release();
-      return await presentControlledFailure2(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-          knownCause: "activation"
-        },
-        io
-      );
-    }
-  }
-  const extraArgs = buildCoderActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedCoder({
-    admitted,
-    env,
-    io,
-    extraArgs,
-    lease,
-    ...methodProvenance === void 0 ? {} : { methodProvenance }
-  });
-}
-async function runPublicCoderResume(argv, env, io) {
-  const runId = argv[0];
-  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
-    presentStructuralRejection(
-      new CliUsageError("usage: ak-role resume <runId>"),
-      io
-    );
-    return { exitCode: 2 };
-  }
-  if (argv.length > 1) {
-    presentStructuralRejection(
-      new CliUsageError("resume takes exactly one run id"),
-      io
-    );
-    return { exitCode: 2 };
-  }
-  let loaded;
-  try {
-    loaded = await loadResumableCoderRun(env.home, runId);
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  const { admitted } = loaded;
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
-    }
-    throw error;
-  }
-  let methodProvenance;
-  if (admitted.phase === "apply") {
-    try {
-      const material = await loadPackagedMethodSkillMaterial(
-        env.packageRoot,
-        "tdd"
-      );
-      methodProvenance = material.provenance;
-    } catch (error) {
-      await lease.release();
-      return await presentControlledFailure2(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-          knownCause: "activation"
-        },
-        io
-      );
-    }
-  }
-  const extraArgs = buildCoderResumeActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedCoder({
-    admitted,
-    env,
-    io,
-    extraArgs,
-    lease,
-    ...methodProvenance === void 0 ? {} : { methodProvenance }
-  });
-}
-
-// src/public-cli/collector-run.ts
-import { writeFile as writeFile7 } from "node:fs/promises";
-import { join as join10 } from "node:path";
-function buildModelArgs3(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking
-  ];
-}
-function buildCollectorActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildCollectorTransportPrompt(admitted);
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "collector",
-    "--ak-collector-repo",
-    admitted.repository.display,
-    "--ak-collector-pr",
-    String(admitted.prNumber),
-    "--ak-collector-legs",
-    admitted.legsPath,
-    "--mode",
-    "json",
-    ...buildModelArgs3(options.model),
-    prompt
-  ];
-}
-async function presentControlledFailure3(admitted, failureInput, io) {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
-    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
-    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
-    ...session === void 0 ? {} : { session }
-  });
-  await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  const terminal = await settleFailureTerminalResult(admitted, failure);
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal
-  };
-}
-async function dispatchAdmittedCollector(input) {
-  const { admitted, env, io, extraArgs, lease } = input;
-  try {
-    await markRunRunning(admitted.runDirectory);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
-    }
-    let result2;
-    try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-    } catch (error) {
-      return await presentControlledFailure3(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error
-        },
-        io
-      );
-    }
-    try {
-      await writeFile7(
-        join10(admitted.runDirectory, "stderr.log"),
-        result2.stderr,
-        "utf8"
-      );
-    } catch {
-    }
-    let lawful;
-    try {
-      lawful = await trySettleCollectorTerminalResult(admitted);
-    } catch (error) {
-      return await presentControlledFailure3(
-        admitted,
-        {
-          timedOut: false,
-          code: result2.code,
-          stderr: result2.stderr,
-          thrown: error
-        },
-        io
-      );
-    }
-    if (lawful !== void 0) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful
-      };
-    }
-    const infrastructureFailure = await readCollectorInfrastructureFailure(
-      admitted.sessionFile
-    );
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const knownFailure = result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
-      cause: infrastructureFailure.cause,
-      diagnostic: infrastructureFailure.diagnostic,
-      ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
-    }) ?? sessionProviderFailure ?? credentialFailure;
-    return await presentControlledFailure3(
-      admitted,
-      {
-        timedOut: result2.timedOut,
-        code: result2.code,
-        stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : {
-          knownCause: knownFailure.cause,
-          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
-        }
-      },
-      io
-    );
-  } finally {
-    await lease.release();
-  }
-}
-async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
-  let admitted;
-  try {
-    const parsed = parseCollectorArgv2(argv);
-    admitted = await admitCollectorInvocation({
-      home: env.home,
-      cwd: env.cwd,
-      prNumber: parsed.prNumber,
-      legs: parsed.legs,
-      instruction: parsed.instruction,
-      attachmentPaths: parsed.attachmentPaths,
-      ...parsed.project === void 0 ? {} : { project: parsed.project },
-      ...parsed.repo === void 0 ? {} : { repo: parsed.repo },
-      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
-    });
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  const extraArgs = buildCollectorActivationExtraArgs(admitted, {
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedCollector({
-    admitted,
-    env,
-    io,
-    extraArgs,
-    lease
-  });
-}
-
-// src/public-cli/doctor-run.ts
-import { writeFile as writeFile8 } from "node:fs/promises";
-import { join as join11 } from "node:path";
-function buildModelArgs4(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking
-  ];
-}
-function buildDoctorActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildDoctorTransportPrompt(admitted);
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "doctor",
-    "--ak-doctor-case",
-    admitted.caseRunsPath,
-    "--mode",
-    "json",
-    ...buildModelArgs4(options.model),
-    prompt
-  ];
-}
-async function presentControlledFailure4(admitted, failureInput, io) {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
-    ...session === void 0 ? {} : { session }
-  });
-  await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  const terminal = await settleFailureTerminalResult(admitted, failure);
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal
-  };
-}
-async function dispatchAdmittedDoctor(input) {
-  const { admitted, env, io, extraArgs, lease } = input;
-  try {
-    await markRunRunning(admitted.runDirectory);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
-    }
-    let result2;
-    try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-    } catch (error) {
-      return await presentControlledFailure4(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error
-        },
-        io
-      );
-    }
-    try {
-      await writeFile8(
-        join11(admitted.runDirectory, "stderr.log"),
-        result2.stderr,
-        "utf8"
-      );
-    } catch {
-    }
-    let lawful;
-    try {
-      lawful = await trySettleDoctorTerminalResult(admitted);
-    } catch (error) {
-      return await presentControlledFailure4(
-        admitted,
-        {
-          timedOut: false,
-          code: result2.code,
-          stderr: result2.stderr,
-          thrown: error
-        },
-        io
-      );
-    }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful
-      };
-    }
-    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
-    if (auditIncomplete !== void 0) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      if (auditIncomplete.roleOutcome.kind === "failure") {
-        presentFailureTerminal(auditIncomplete, io);
-      } else {
-        io.stdout(formatTerminalResult(auditIncomplete));
-      }
-      return {
-        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
-        admitted,
-        terminal: auditIncomplete
-      };
-    }
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
-      runner: result2.knownFailure,
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure
-    });
-    return await presentControlledFailure4(
-      admitted,
-      {
-        timedOut: result2.timedOut,
-        code: result2.code,
-        stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : { knownFailure }
-      },
-      io
-    );
-  } finally {
-    await lease.release();
-  }
-}
-async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
-  let admitted;
-  try {
-    const parsed = parseDoctorArgv2(argv);
-    admitted = await admitDoctorInvocation({
-      home: env.home,
-      cwd: env.cwd,
-      issueNumber: parsed.issueNumber,
-      instruction: parsed.instruction,
-      attachmentPaths: parsed.attachmentPaths,
-      ...parsed.project === void 0 ? {} : { project: parsed.project },
-      ...parsed.runs === void 0 ? {} : { runs: parsed.runs },
-      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
-    });
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  const extraArgs = buildDoctorActivationExtraArgs(admitted, {
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedDoctor({
-    admitted,
-    env,
-    io,
-    extraArgs,
-    lease
-  });
-}
-
-// src/public-cli/fixer-run.ts
-import { writeFile as writeFile9 } from "node:fs/promises";
-import { join as join12 } from "node:path";
-function buildModelArgs5(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking
-  ];
-}
-function buildFixerActivationExtraArgs(admitted, options) {
-  const prompt = buildFixerTransportPrompt(admitted);
-  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "diagnosing-bugs"
-  );
-  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
-  const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
-  return [
-    "--no-skills",
-    "--skill",
-    diagnosisSkillPath,
-    "--skill",
-    tddSkillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "fixer",
-    "--ak-fixer-phase",
-    admitted.phase,
-    "--ak-fix-packet",
-    admitted.packetPath,
-    ...prerequisiteArgs,
-    "--mode",
-    "json",
-    ...buildModelArgs5(options.model),
-    prompt
-  ];
-}
-function buildFixerResumeActivationExtraArgs(admitted, options) {
-  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "diagnosing-bugs"
-  );
-  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
-  const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
-  return [
-    "--no-skills",
-    "--skill",
-    diagnosisSkillPath,
-    "--skill",
-    tddSkillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "fixer",
-    "--ak-fixer-phase",
-    admitted.phase,
-    "--ak-fix-packet",
-    admitted.packetPath,
-    ...prerequisiteArgs,
-    "--mode",
-    "json",
-    ...buildModelArgs5(options.model),
-    RESUME_TRANSPORT_ENVELOPE
-  ];
-}
-async function presentControlledFailure5(admitted, failureInput, io) {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
-    ...session === void 0 ? {} : { session }
-  });
-  const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
-  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
-    admitted.sessionFile
-  );
-  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
-    hasLawfulTerminalResult,
-    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
-  });
-  if (resumable && typedHttp429 !== void 0) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  }
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
-  );
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal
-  };
-}
-async function dispatchAdmittedFixer(input) {
-  const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
-  try {
-    await markRunRunning(admitted.runDirectory);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
-    }
-    let result2;
-    try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-    } catch (error) {
-      return await presentControlledFailure5(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error
-        },
-        io
-      );
-    }
-    try {
-      await writeFile9(
-        join12(admitted.runDirectory, "stderr.log"),
-        result2.stderr,
-        "utf8"
-      );
-    } catch {
-    }
-    let lawful;
-    try {
-      lawful = await trySettleFixerTerminalResult(admitted, {
-        methodProvenance: methodMaterial.provenance,
-        methodSkillPath: methodMaterial.skillPath,
-        methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-          env.packageRoot,
-          "diagnosing-bugs"
-        )
-      });
-    } catch (error) {
-      return await presentControlledFailure5(
-        admitted,
-        {
-          timedOut: false,
-          code: result2.code,
-          stderr: result2.stderr,
-          thrown: error
-        },
-        io
-      );
-    }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful
-      };
-    }
-    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
-    if (auditIncomplete !== void 0) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      if (auditIncomplete.roleOutcome.kind === "failure") {
-        presentFailureTerminal(auditIncomplete, io);
-      } else {
-        io.stdout(formatTerminalResult(auditIncomplete));
-      }
-      return {
-        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
-        admitted,
-        terminal: auditIncomplete
-      };
-    }
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
-      runner: result2.knownFailure,
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure
-    });
-    return await presentControlledFailure5(
-      admitted,
-      {
-        timedOut: result2.timedOut,
-        code: result2.code,
-        stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : { knownFailure }
-      },
-      io
-    );
-  } finally {
-    await lease.release();
-  }
-}
-async function loadFixerMethodMaterial(packageRoot2) {
-  return await loadPackagedMethodSkillMaterial(packageRoot2, "diagnosing-bugs");
-}
-async function runPublicFixer(argv, env, io, parseFixerArgv2) {
-  let admitted;
-  try {
-    const parsed = parseFixerArgv2(argv);
-    admitted = await admitFixerInvocation({
-      home: env.home,
-      cwd: env.cwd,
-      phase: parsed.phase,
-      instruction: parsed.instruction,
-      attachmentPaths: parsed.attachmentPaths,
-      ...parsed.prerequisitesPath === void 0 ? {} : { prerequisitesPath: parsed.prerequisitesPath },
-      ...parsed.project === void 0 ? {} : { project: parsed.project },
-      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
-    });
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  let methodMaterial;
-  try {
-    methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
-  } catch (error) {
-    await lease.release();
-    return await presentControlledFailure5(
-      admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error
-      },
-      io
-    );
-  }
-  const extraArgs = buildFixerActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedFixer({
-    admitted,
-    env,
-    io,
-    extraArgs,
-    lease,
-    methodMaterial
-  });
-}
-async function runPublicFixerResume(argv, env, io) {
-  const runId = argv[0];
-  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
-    presentStructuralRejection(
-      new CliUsageError("usage: ak-role resume <runId>"),
-      io
-    );
-    return { exitCode: 2 };
-  }
-  if (argv.length > 1) {
-    presentStructuralRejection(
-      new CliUsageError("resume takes exactly one run id"),
-      io
-    );
-    return { exitCode: 2 };
-  }
-  let loaded;
-  try {
-    loaded = await loadResumableFixerRun(env.home, runId);
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  const { admitted } = loaded;
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
-    }
-    throw error;
-  }
-  let methodMaterial;
-  try {
-    methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
-  } catch (error) {
-    await lease.release();
-    return await presentControlledFailure5(
-      admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error
-      },
-      io
-    );
-  }
-  const extraArgs = buildFixerResumeActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedFixer({
-    admitted,
-    env,
-    io,
-    extraArgs,
-    lease,
-    methodMaterial
-  });
-}
-
 // src/public-cli/merger-run.ts
+init_activation_ledger_git();
+init_activation_ledger_topology();
 import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
 import { join as join13, resolve as resolve6 } from "node:path";
-init_activation_ledger_topology();
 function buildModelArgs6(model) {
   if (model === void 0) return [];
   return [
@@ -16929,12 +16909,13 @@ function buildMergerResumeActivationExtraArgs(admitted, options) {
 }
 async function presentControlledFailure6(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...hasThrown ? { thrown: failureInput.thrown } : {},
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
     ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
     ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
@@ -16969,6 +16950,17 @@ async function presentControlledFailure6(admitted, failureInput, io) {
 async function dispatchAdmittedMerger(input) {
   const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
   try {
+    const missingCredential = missingCredentialPreDispatchFailure(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure6(
+        admitted,
+        missingCredential,
+        io
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
@@ -17047,7 +17039,11 @@ async function dispatchAdmittedMerger(input) {
       admitted.sessionFile
     );
     const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const credentialFailure = postRunMissingCredentialFailure(
+      result2,
+      env.model,
+      env.credentials
+    );
     const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
     return await presentControlledFailure6(
       admitted,
@@ -17055,11 +17051,7 @@ async function dispatchAdmittedMerger(input) {
         timedOut: result2.timedOut,
         code: result2.code,
         stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : {
-          knownCause: knownFailure.cause,
-          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
-        }
+        ...knownFailure === void 0 ? {} : { knownFailure }
       },
       io
     );
@@ -17327,10 +17319,8 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     ...options.extraPiArgs ?? [],
     "--ak-role",
     "reviewer",
-    "--ak-review-task",
-    admitted.taskPath,
-    "--ak-review-capabilities",
-    admitted.capabilitiesPath,
+    "--ak-review-base",
+    admitted.baseRevision,
     "--mode",
     "json",
     ...buildModelArgs7(options.model),
@@ -17356,10 +17346,8 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     ...options.extraPiArgs ?? [],
     "--ak-role",
     "reviewer",
-    "--ak-review-task",
-    admitted.taskPath,
-    "--ak-review-capabilities",
-    admitted.capabilitiesPath,
+    "--ak-review-base",
+    admitted.baseRevision,
     "--mode",
     "json",
     ...buildModelArgs7(options.model),
@@ -17406,6 +17394,17 @@ async function presentControlledFailure7(admitted, failureInput, io) {
 async function dispatchAdmittedReviewer(input) {
   const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
   try {
+    const missingCredential = missingCredentialPreDispatchFailure(
+      env.model,
+      env.credentials
+    );
+    if (missingCredential !== void 0) {
+      return await presentControlledFailure7(
+        admitted,
+        missingCredential,
+        io
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
@@ -17494,7 +17493,11 @@ async function dispatchAdmittedReviewer(input) {
         terminal: auditIncomplete
       };
     }
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const credentialFailure = postRunMissingCredentialFailure(
+      result2,
+      env.model,
+      env.credentials
+    );
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
@@ -17526,7 +17529,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
-      ...parsed.baseRevision === void 0 ? {} : { baseRevision: parsed.baseRevision },
+      baseRevision: parsed.baseRevision,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
       ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
     });
