@@ -42,6 +42,7 @@ import {
   sampleUser,
 } from "../helpers/fake-github-transport.ts";
 import {
+  flushEventLoopTurns,
   withActivationHome,
   withHermeticHome,
   withInProcessPi,
@@ -627,12 +628,6 @@ test("observe content exposes authenticated request-marker so wait/missing path 
   });
 });
 
-async function flushCollectorMicrotasks(times = 20): Promise<void> {
-  for (let i = 0; i < times; i += 1) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-}
-
 async function runCollectorSession(input: {
   home: string;
   agentDir: string;
@@ -758,12 +753,12 @@ test("healthy 300000ms Collector wait reports elapsed progress and outlives the 
       noTools: "builtin",
     }, async ({ session, sessionManager }) => {
       const promptDone = session.prompt("start");
-      await flushCollectorMicrotasks();
+      await flushEventLoopTurns();
 
       for (const elapsed of [60_000, 120_000, 180_000, 240_000]) {
         elapsedMs = elapsed;
         t.mock.timers.tick(60_000);
-        await flushCollectorMicrotasks();
+        await flushEventLoopTurns();
         const waitResults = sessionManager.getEntries().filter((entry) =>
           entry.type === "message"
           && entry.message.role === "toolResult"
@@ -774,7 +769,7 @@ test("healthy 300000ms Collector wait reports elapsed progress and outlives the 
 
       elapsedMs = 300_000;
       t.mock.timers.tick(60_000);
-      await flushCollectorMicrotasks(50);
+      await flushEventLoopTurns(50);
       await promptDone;
 
       const waitResults = sessionManager.getEntries().filter((entry) =>
