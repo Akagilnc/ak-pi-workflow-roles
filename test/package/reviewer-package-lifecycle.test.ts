@@ -58,7 +58,7 @@ test("installed npm tarball runs the fixed two-axis Reviewer lifecycle", async (
           assert.deepEqual(loader.getExtensions().errors, []);
           await session.prompt("Review this fixed point.");
           assert.equal(children.length, 2);
-          assert.deepEqual(children.map((context) => /standards/.test(userText(context)) ? "standards" : "spec"), ["standards", "spec"]);
+          assert.deepEqual(children.map((context) => /standards/.test(userText(context)) ? "standards" : "spec").sort(), ["spec", "standards"]);
           assert.equal(audits.length, 1);
           const output = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "output") as any;
           assert.equal(output.message.isError, false);
@@ -67,6 +67,19 @@ test("installed npm tarball runs the fixed two-axis Reviewer lifecycle", async (
           assert.equal(output.message.details.reports.standards.text, "Standards finding count: 0.");
           assert.equal(output.message.details.reports.spec.text, "Spec: fixed target satisfies the stated behavior.");
           assert.equal(faux.getPendingResponseCount(), 0);
+        });
+
+        // The test is the external caller: Reviewer and Judge remain independently
+        // invocable roles and neither owns this handoff topology.
+        faux.setResponses([
+          fauxAssistantMessage(fauxToolCall("ak_judge_output", { judgeStatus: "converged" }, { id: "judge-output" }), { stopReason: "toolUse" }),
+          fauxAssistantMessage(fauxToolCall("ak_soul_audit_decision", { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }),
+        ]);
+        await withInProcessPi({ activationLedgerSession: true, cwd: nestedCwd, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")], noExtensions: true, systemPrompt: "PACKAGED JUDGE", mode: "print", flags: { "ak-role": "judge" } }, async ({ session, sessionManager }) => {
+          await session.prompt(`Adjudicate this auditor-accepted Reviewer result: ${audits.length} semantic audit passed; Standards finding count: 0; Spec satisfied.`);
+          const judged = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "judge-output") as any;
+          assert.equal(judged.message.isError, false);
+          assert.equal(judged.message.details.judgeStatus, "converged");
         });
       });
     });

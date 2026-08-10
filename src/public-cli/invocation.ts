@@ -1644,7 +1644,7 @@ export function buildDoctorTransportPrompt(
 
 /**
  * Parse Reviewer-specific argv after the `reviewer` token.
- * Public flags: --project and optional --base.
+ * Public flags: --project and required --base (the non-interactive CLI cannot answer the canonical fixed-point question).
  * Reviewer gathers its own evidence; users submit neither attachments nor capability packets.
  */
 export function parseReviewerArgv(
@@ -1684,10 +1684,13 @@ export function parseReviewerArgv(
     positional.push(token);
   }
 
+  if (baseRevision === undefined) {
+    throw new CliUsageError("reviewer requires --base <revision>; canonical code-review requires the caller to select a fixed point");
+  }
   return {
     instruction: positional.join(" "),
     attachmentPaths,
-    ...(baseRevision === undefined ? {} : { baseRevision }),
+    baseRevision,
     ...(project === undefined ? {} : { project }),
   };
 }

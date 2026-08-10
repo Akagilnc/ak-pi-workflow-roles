@@ -129,7 +129,7 @@ export function buildReviewerActivationExtraArgs(
     "--ak-review-task",
     admitted.taskPath,
     "--ak-review-base",
-    admitted.baseRevision ?? "HEAD~1",
+    requireAdmittedReviewerBase(admitted),
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -141,6 +141,13 @@ export function buildReviewerActivationExtraArgs(
  * Reopen the exact Reviewer Pi session for resume. Preserves fixed Reviewer inputs
  * and package code-review binding; does not resubmit the original instruction.
  */
+function requireAdmittedReviewerBase(admitted: AdmittedReviewerInvocation): string {
+  if (admitted.baseRevision === undefined || admitted.baseRevision.trim() === "") {
+    throw new CliUsageError("Reviewer run lacks the caller-selected fixed review point");
+  }
+  return admitted.baseRevision;
+}
+
 export function buildReviewerResumeActivationExtraArgs(
   admitted: AdmittedReviewerInvocation,
   options: {
@@ -170,7 +177,7 @@ export function buildReviewerResumeActivationExtraArgs(
     "--ak-review-task",
     admitted.taskPath,
     "--ak-review-base",
-    admitted.baseRevision ?? "HEAD~1",
+    requireAdmittedReviewerBase(admitted),
     "--mode",
     "json",
     ...buildModelArgs(options.model),
