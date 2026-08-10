@@ -29,25 +29,11 @@ export type CreateRecordSessionOptions = {
   readonly parent?: RecordSessionParent;
 };
 
-function assertRecordKind(kind: string): void {
-  if (
-    kind.length === 0 ||
-    kind === "." ||
-    kind === ".." ||
-    kind.includes("/") ||
-    kind.includes("\\") ||
-    kind.includes("\0")
-  ) {
-    throw new Error(`sitian record kind must be a single path segment, got ${JSON.stringify(kind)}`);
-  }
-}
-
 /**
  * Sole package entry that constructs a durable Pi session record (ADR 0065).
  * No destination/path parameters — location is computed from ledger topology only.
  */
 export function createRecordSession(options: CreateRecordSessionOptions): SessionManager {
-  assertRecordKind(options.kind);
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
   if (parentFile === undefined || parentFile.length === 0) {
