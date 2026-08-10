@@ -42,12 +42,6 @@ export async function buildPublicAkRoleBin(
   await buildBundledBin("src/public-cli/main.ts", outfile);
 }
 
-export async function buildCodexFastPatchDeploymentBin(
-  outfile = "dist/deploy-codex-fast-patch-main.js",
-) {
-  await buildBundledBin("src/deploy-codex-fast-patch-main.ts", outfile);
-}
-
 export async function buildPackageArtifacts() {
   await build({
     entryPoints: entries.map((name) => `src/${name}.ts`),
@@ -64,7 +58,6 @@ export async function buildPackageArtifacts() {
     await writeFile(path, source.replaceAll(/(from\s*["'][^"']+)\.ts(["'])/g, "$1.js$2"));
   }
   await buildPublicAkRoleBin();
-  await buildCodexFastPatchDeploymentBin();
 }
 
 const isMain =
