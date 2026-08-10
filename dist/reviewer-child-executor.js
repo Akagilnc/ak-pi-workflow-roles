@@ -6,7 +6,14 @@ import { createAgentSession, createBashTool, DefaultResourceLoader, ModelRuntime
 import { childSessionManager } from "./activation-ledger-session.js";
 import { prepareComplianceDispatch } from "./compliance-transport.js";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.js";
-function classifiedError(error, reviewerFailure) { const wrapped = error instanceof Error ? error : new Error(String(error), { cause: error }); const classification = "reviewerFailure" in wrapped ? wrapped.reviewerFailure : reviewerFailure; return Object.assign(wrapped, { reviewerFailure: classification }); }
+function classifiedError(error, reviewerFailure) {
+    const diagnostic = typeof error === "object" && error !== null && typeof error.errorMessage === "string"
+        ? error.errorMessage
+        : error === undefined ? "" : String(error);
+    const wrapped = error instanceof Error ? error : Object.assign(new Error(diagnostic, { cause: error }), { reviewerOriginal: error });
+    const classification = "reviewerFailure" in wrapped ? wrapped.reviewerFailure : reviewerFailure;
+    return Object.assign(wrapped, { reviewerFailure: classification });
+}
 function emptyUsage() {
     return {
         input: 0,
@@ -179,7 +186,7 @@ export async function executeReviewerChild(workspace, leg, context, options = {}
                 .reverse()
                 .find((message) => message.role === "assistant");
             if (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "error") {
-                throw classifiedError(new Error("Reviewer Agent provider failed", { cause: lastAssistant }), "provider");
+                throw classifiedError(new Error(lastAssistant.errorMessage ?? "", { cause: lastAssistant }), "provider");
             }
             if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
                 throw classifiedError(new Error("Reviewer Agent child terminated without a report", { cause: lastAssistant ?? session.messages }), "child");

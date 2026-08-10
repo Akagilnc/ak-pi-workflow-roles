@@ -25,7 +25,7 @@
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
 - **Collector(门下省)**:单次调用内独立观察外部 GitHub PR 评审腿、可选请求、判定收集终态并提交自包含回执的角色;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`,无默认腿清单。
 - **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的配置腿是外部 GitHub 作者集合,与 Reviewer 内部 Agent 腿不同。
-- **Soul 审刑院(Soul-compliance audit)**:交卷受理链上的第二次模型调用,只审「大理寺是否可证地按 soul 办了案」,不得替换大理寺的实质裁决。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md)。
+- **Soul 审刑院(Soul-compliance audit)**:独立的实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」；不再限于复核大理寺的程序或既给材料。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md),现行职掌见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)。
 - **绑定(Binding)**:等待真实调用方拉动的未来机械校验能力。当前包既不提供 `targetHead` 绑定输入,也不提供对应的 fail-closed 绑定闸。
 - **Navigator(游奕使)**:由共享角色生命周期自动旁听包角色结算的独立领航席；依据工作 subject、controlling authority 与自身路线记忆建议最低成本且安全的下一包角色/phase，并在首次或路线变化时给出完整简洁路线。不裁决、不授权、不执行，普通建议允许调用者偏离；角色推理、工具轨迹和施工细节不进入其上下文。
 - **路书(Route playbook)**:游奕使用于专业判断的一组非约束参考路线，按工作性质、风险与复杂度展示常见推进方式；既不规定游奕使必须照走，也不约束调用者采用建议。_Avoid_:默认工作流、路由表、自动编排规则。
@@ -37,6 +37,8 @@
 - **附件(Attachment)**:调用者明确附给一次角色调用、并在受理时冻结内容的材料；原路径只表明出处，resume 继续消费同一份材料而非路径上的后来版本。
 - **终局结果(Terminal result)**:公开角色 CLI 对一次已受理调用交付的完整结果，汇合角色结算、Navigator 出席事实与声明的 artifacts；过程事件与 session 记录不是终局结果。
 - **角色运行(Role run)**:一次已受理角色调用的持久执行身份，连接其调用请求、Pi session 与终局结果，并可在用户改选模型后继续同一现场。
+- **候簿(Ledger book)**:包所有的机器级记录之家,按主仓分簿(键=git common dir 宿主目录的 basename)。它是记录落点的唯一真源;消费者仓零侵入——记录不写进被服务的仓库。_Avoid_:家册、账本目录、工作区记录。
+- **司天台(Sitian)**:记录的所有者。两件职掌——**如实记录**(记录的落点由它决定,不由写入方各自选)与**生成高阶数据**(从记录派生可消费的结论,双面对账是其第一期实例)。确定性机制,非 LLM 角色。_Avoid_:Recorder、Docket、遥测。
 - **Artifact reference**:终局结果中声明的本地材料引用，用于打开完整报告、证据或错误详情；它补充内联核心结论，不替代结论。
 - **编排器(Orchestrator)**:包外的交通系统——起各角色 Pi 进程、递材料、按三态判词走边。它只读回执,不定义交卷形状。
 - **三态判词**:`converged` / `continue` / `escalate`。环境/工具链故障不是判词,以非零退出走故障通道。

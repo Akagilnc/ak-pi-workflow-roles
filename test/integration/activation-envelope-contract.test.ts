@@ -907,16 +907,17 @@ appendAcceptedActivationToBook({
   }),
 });
 `);
-  // Two workers are sufficient to exercise first-creation; eight retain a
-  // broad race without making a focused contract test compete for 16 tsx VMs.
-  const workerCount = 8;
+  const workerCount = 16;
+  // Native type stripping keeps this filesystem race under the child deadline even
+  // when the full suite is concurrently compiling elsewhere; one tsx service per
+  // worker made loader contention, rather than ledger creation, decide the result.
   const children = await Promise.all(Array.from({ length: workerCount }, (_, index) =>
     runNodeSubprocess(
-      ["--import", "tsx", worker, String(index), ledgerHome],
+      ["--experimental-strip-types", worker, String(index), ledgerHome],
       { cwd: packageRoot, timeoutMs: 15_000 },
     )));
   for (const child of children) {
-    assert.equal(child.code, 0, `${child.stderr}\ntimedOut=${child.timedOut}`);
+    assert.equal(child.code, 0, child.stderr);
   }
   for (let index = 0; index < workerCount; index += 1) {
     const bookKey = `book-${index}`;
