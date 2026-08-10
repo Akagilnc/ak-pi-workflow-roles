@@ -11315,16 +11315,6 @@ function parseReviewerArgv(args) {
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
     if (token === "--project") {
       project = requireOptionPath("--project", tokens.shift());
       continue;
@@ -17351,8 +17341,8 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     "reviewer",
     "--ak-review-task",
     admitted.taskPath,
-    "--ak-review-capabilities",
-    admitted.capabilitiesPath,
+    "--ak-review-base",
+    admitted.baseRevision ?? "HEAD~1",
     "--mode",
     "json",
     ...buildModelArgs7(options.model),
@@ -17380,8 +17370,8 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     "reviewer",
     "--ak-review-task",
     admitted.taskPath,
-    "--ak-review-capabilities",
-    admitted.capabilitiesPath,
+    "--ak-review-base",
+    admitted.baseRevision ?? "HEAD~1",
     "--mode",
     "json",
     ...buildModelArgs7(options.model),

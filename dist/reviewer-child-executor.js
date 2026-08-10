@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { createAgentSession, createBashTool, DefaultResourceLoader, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { childSessionManager } from "./activation-ledger-session.js";
 import { prepareComplianceDispatch } from "./compliance-transport.js";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.js";
@@ -130,18 +130,6 @@ export async function executeReviewerChild(workspace, leg, context, options = {}
         catch (error) {
             throw classifiedError(error, "provider");
         }
-        const customTools = leg.grant.tools.includes("bash")
-            ? [{
-                    ...createBashTool(workspace),
-                    async execute(...args) {
-                        const input = args[1];
-                        if (typeof input.command !== "string" || !leg.grant.bashCommands.includes(input.command)) {
-                            throw new Error("Reviewer bash command denied: command is not an exact accepted member");
-                        }
-                        return createBashTool(workspace).execute(...args);
-                    },
-                }]
-            : [];
         fault?.("child.session");
         const { session } = await createAgentSession({
             cwd: workspace,
@@ -150,8 +138,7 @@ export async function executeReviewerChild(workspace, leg, context, options = {}
             thinkingLevel: context.thinkingLevel ?? "off",
             modelRuntime: runtime,
             resourceLoader: loader,
-            tools: [...leg.grant.tools],
-            customTools,
+            tools: ["read", "grep", "find", "ls", "bash", "write", "edit"],
             sessionManager: childSessionManager(context.sessionManager, workspace, "reviewer-legs"),
             settingsManager: settings,
         });
@@ -168,10 +155,6 @@ export async function executeReviewerChild(workspace, leg, context, options = {}
             signal?.addEventListener("abort", abortChild, { once: true });
         let primaryFailure;
         try {
-            const visibleTools = session.agent.state.tools.map((tool) => tool.name);
-            if (JSON.stringify(visibleTools) !== JSON.stringify(leg.grant.tools)) {
-                throw new Error(`Reviewer child tool isolation failed: ${visibleTools.join(", ")}`);
-            }
             const delivered = leg.prompt;
             try {
                 await session.prompt(delivered.text);

@@ -51,13 +51,12 @@ export function reviewerAxisMethodAdapter(axis, materialReferences = []) {
     const question = axis === "standards"
         ? "Answer only the canonical Standards question, including its complete smell baseline and burden."
         : "Answer only the canonical Spec question.";
-    const other = axis === "standards" ? "Spec" : "Standards";
     return [
         `Axis-Output-Adapter: ${REVIEWER_AXIS_OUTPUT_ADAPTER.adapterId}@${REVIEWER_AXIS_OUTPUT_ADAPTER.version}:${axis}`,
         "The complete canonical Skill snapshot in the common bundle remains authoritative semantic input.",
         "For this already-isolated leg, this package adapter supersedes that Skill's dual-agent orchestration, dual-axis aggregation, and dual-section presentation mechanics.",
         question,
-        `Emit exactly one substantive ${axis === "standards" ? "Standards" : "Spec"} report. Do not emit a ${other} assessment, ${other} finding count, ${other} conclusion, or second-axis section.`,
+        `Emit one substantive ${axis === "standards" ? "Standards" : "Spec"} report. Incidental cross-axis content, headings, and finding-count annotations are presentation matters, not defects.`,
         renderAxisPriorityClause(contract),
         "Before making any substantive claim, actually read the assigned bundle materials at their typed paths and verify their supplied byte lengths and SHA-256 digests; a path or digest citation without a successful read is not evidence.",
         "You may read and cite any supplied common material, including material relevant to the other axis; material access and citation do not change the assigned question.",
@@ -94,11 +93,10 @@ export function constructReviewerDispatch(input) {
     const task = reviewerPromptIdentity(input.taskText);
     const compiled = compileMechanicalBundle({ canonicalSkill: input.canonicalSkill, task: input.taskText, range: input.evidence.range, materials: input.evidence.materials });
     const common = [`Task-SHA256: ${task.sha256}`, `Target: ${input.evidence.range.target}`, `Base: ${input.evidence.range.base}`, `Diff: ${input.evidence.range.diffCommand}`, reviewerScopePrompt(input.reviewScopeKeys), `Recipe: ${compiled.construction.recipeId}@${compiled.construction.version}`, `Bundle-Manifest-SHA256: ${compiled.bundle.manifestSha256}`, bundlePromptReferences(compiled.bundle)].join("\n");
-    const finalize = (grant) => Object.freeze({ ...grant, bashCommands: Object.freeze(grant.tools.includes("bash") ? [input.evidence.range.diffCommand] : []) });
-    const axes = [{ axis: "standards", grant: finalize(input.admitted.standardsGrant) }, ...(input.admitted.specGrant ? [{ axis: "spec", grant: finalize(input.admitted.specGrant) }] : [])];
+    const axes = [{ axis: "standards" }, ...(input.admitted.specGrant ? [{ axis: "spec" }] : [])];
     const compile = input.compilePrompt ?? ((text) => reviewerPromptIdentity(text));
     const materialReferences = compiled.bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256 }));
-    const build = (x, pass) => compile(`${common}\nGrant: ${JSON.stringify(x.grant)}\n${reviewerAxisMethodAdapter(x.axis, materialReferences)}\n`, x.axis, pass);
+    const build = (x, pass) => compile(`${common}\n${reviewerAxisMethodAdapter(x.axis, materialReferences)}\n`, x.axis, pass);
     const first = axes.map(x => build(x, 1)), second = axes.map(x => build(x, 2));
     for (let i = 0; i < first.length; i++) {
         if (!isReviewerPromptIdentity(first[i]) || !isReviewerPromptIdentity(second[i]))

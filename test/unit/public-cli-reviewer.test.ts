@@ -283,7 +283,7 @@ test("admitReviewerInvocation derives task-bound capabilities and freezes attach
   });
 });
 
-test("buildReviewerActivationExtraArgs forces package code-review and derived capabilities", async () => {
+test("buildReviewerActivationExtraArgs forces package code-review and fixed base without a capability packet", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -303,10 +303,8 @@ test("buildReviewerActivationExtraArgs forces package code-review and derived ca
     assert.equal(args.includes("--ak-role"), true);
     assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
     assert.equal(args[args.indexOf("--ak-review-task") + 1], admitted.taskPath);
-    assert.equal(
-      args[args.indexOf("--ak-review-capabilities") + 1],
-      admitted.capabilitiesPath,
-    );
+    assert.equal(args.includes("--ak-review-capabilities"), false);
+    assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
     assert.equal(
       args.some(
         (a) =>
@@ -325,10 +323,8 @@ test("buildReviewerActivationExtraArgs forces package code-review and derived ca
     assert.equal(resume.includes("--skill"), true);
     assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
     assert.equal(resume.includes(admitted.instruction), false);
-    assert.equal(
-      resume[resume.indexOf("--ak-review-capabilities") + 1],
-      admitted.capabilitiesPath,
-    );
+    assert.equal(resume.includes("--ak-review-capabilities"), false);
+    assert.equal(resume[resume.indexOf("--ak-review-base") + 1], "HEAD~1");
   });
 });
 
@@ -728,10 +724,8 @@ test("ak-role resume continues reviewer with derived capabilities and package sk
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
         assert.equal(args[args.indexOf("--ak-review-task") + 1], admitted.taskPath);
-        assert.equal(
-          args[args.indexOf("--ak-review-capabilities") + 1],
-          admitted.capabilitiesPath,
-        );
+        assert.equal(args.includes("--ak-review-capabilities"), false);
+        assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
