@@ -1,6 +1,6 @@
 /**
- * #111 public Reviewer path — common Invocation, optional base, adapter-derived
- * capabilities, package code-review provenance + typed expansion evidence.
+ * #111 public Reviewer path — common Invocation, optional fixed base,
+ * package code-review provenance + typed expansion evidence.
  */
 import assert from "node:assert/strict";
 import {
@@ -23,14 +23,12 @@ import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
-import { REVIEWER_CHILD_TOOLS, REVIEWER_PREREQUISITES } from "../../src/reviewer-admission.ts";
 import { compileMechanicalBundle, projectMechanicalBundleIdentity } from "../../src/reviewer-construction.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitReviewerInvocation,
   composeReviewerTaskText,
-  deriveReviewerCapabilitiesFromTask,
   parseReviewerArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -45,7 +43,6 @@ import {
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
-import { sha256Hex } from "../../src/sha256.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-reviewer-"));
@@ -185,7 +182,7 @@ test("parseReviewerArgv accepts project/base and rejects Reviewer attachments", 
   assert.throws(() => parseReviewerArgv(["--capabilities", "c.json", "task"]), isUsage);
 });
 
-test("admitReviewerInvocation derives task-bound capabilities and freezes attachments", async () => {
+test("admitReviewerInvocation persists only the task and fixed base", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -232,29 +229,7 @@ test("admitReviewerInvocation derives task-bound capabilities and freezes attach
     );
     assert.match(taskText, /Base revision for the fixed review target: origin\/main/);
 
-    const capabilitiesRaw = await readFile(admitted.capabilitiesPath, "utf8");
-    const capabilities = JSON.parse(capabilitiesRaw) as {
-      version: number;
-      taskSha256: string;
-      tools: string[];
-      prerequisiteOperations: string[];
-    };
-    assert.equal(capabilities.version, 1);
-    assert.equal(capabilities.taskSha256, admitted.taskSha256);
-    assert.equal(
-      admitted.taskSha256,
-      sha256Hex(new TextEncoder().encode(taskText)),
-    );
-    assert.deepEqual(capabilities.tools, [...REVIEWER_CHILD_TOOLS]);
-    assert.deepEqual(capabilities.prerequisiteOperations, [
-      ...REVIEWER_PREREQUISITES,
-    ]);
-    // Derived from exact task bytes — not a caller packet.
-    const derived = deriveReviewerCapabilitiesFromTask(
-      new TextEncoder().encode(taskText),
-    );
-    assert.equal(derived.taskSha256, admitted.taskSha256);
-    assert.equal(derived.text, capabilitiesRaw);
+    await assert.rejects(access(join(admitted.runDirectory, "capabilities.json")));
 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(
@@ -270,15 +245,10 @@ test("admitReviewerInvocation derives task-bound capabilities and freezes attach
     );
     const persisted = JSON.parse(
       await readFile(admitted.admittedRequestPath, "utf8"),
-    ) as {
-      role: string;
-      capabilitiesPath: string;
-      taskSha256: string;
-      baseRevision?: string;
-    };
+    ) as Record<string, unknown>;
     assert.equal(persisted.role, "reviewer");
-    assert.equal(persisted.capabilitiesPath, admitted.capabilitiesPath);
-    assert.equal(persisted.taskSha256, admitted.taskSha256);
+    assert.equal("capabilitiesPath" in persisted, false);
+    assert.equal("taskSha256" in persisted, false);
     assert.equal(persisted.baseRevision, "origin/main");
   });
 });
@@ -468,8 +438,8 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       methodInvocationObserved: boolean;
       methodInvocations: Array<{ name: string; location: string }>;
     };
-    assert.equal(evidence.taskSha256, admitted.taskSha256);
-    assert.equal(evidence.capabilitiesPath, admitted.capabilitiesPath);
+    assert.equal("taskSha256" in evidence, false);
+    assert.equal("capabilitiesPath" in evidence, false);
     assert.equal(evidence.baseRevision, "main");
     assert.equal(evidence.methodProvenance.name, "code-review");
     assert.equal(
@@ -520,7 +490,7 @@ test("package code-review method stays usable without Matt setup and forbids gov
   assert.equal(material.skillPath.includes(".agents/skills"), false);
 });
 
-test("ak-role reviewer admits base/task, derives capabilities, and rejects blank task", async () => {
+test("ak-role reviewer admits fixed base/task without capability material and rejects blank task", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -632,7 +602,7 @@ test("ak-role reviewer admits base/task, derives capabilities, and rejects blank
       );
       await access(join(runDirectory, "admitted-request.json"));
       await access(join(runDirectory, "task.md"));
-      await access(join(runDirectory, "capabilities.json"));
+      await assert.rejects(access(join(runDirectory, "capabilities.json")));
       // Adapter never writes Matt setup / governance files into the project.
       const projectEntries = await readdir(project);
       assert.equal(projectEntries.includes("docs"), false);
@@ -649,7 +619,7 @@ test("ak-role reviewer admits base/task, derives capabilities, and rejects blank
   });
 });
 
-test("ak-role resume continues reviewer with derived capabilities and package skill", async () => {
+test("ak-role resume continues reviewer with fixed base and package skill", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -701,16 +671,11 @@ test("ak-role resume continues reviewer with derived capabilities and package sk
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as {
-      role: string;
-      taskPath: string;
-      capabilitiesPath: string;
-      taskSha256: string;
-      baseRevision?: string;
-    };
+    ) as Record<string, unknown> & { role: string; taskPath: string; baseRevision?: string };
     assert.equal(admitted.role, "reviewer");
     assert.equal(admitted.baseRevision, "main");
-    assert.equal(typeof admitted.taskSha256, "string");
+    assert.equal("taskSha256" in admitted, false);
+    assert.equal("capabilitiesPath" in admitted, false);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;

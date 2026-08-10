@@ -2827,8 +2827,8 @@ export function extractReviewerMethodInvocations(
 
 /**
  * Publish lawful Reviewer success Artifacts on the shared #106 success interface.
- * Evidence records package code-review provenance, adapter-derived capabilities,
- * and typed expansion observation without ambient home Skill paths.
+ * Evidence records package code-review provenance and typed expansion
+ * observation without ambient home Skill paths.
  */
 export async function publishReviewerArtifacts(
   admitted: AdmittedReviewerInvocation,
@@ -2869,8 +2869,6 @@ export async function publishReviewerArtifacts(
         sessionFile: admitted.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         taskPath: admitted.taskPath,
-        capabilitiesPath: admitted.capabilitiesPath,
-        taskSha256: admitted.taskSha256,
         ...(admitted.baseRevision === undefined
           ? {}
           : { baseRevision: admitted.baseRevision }),
