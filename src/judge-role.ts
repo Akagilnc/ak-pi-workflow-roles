@@ -65,6 +65,7 @@ const judgeVerdictSchema = Type.Object(
 
 type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
 
+/** @deprecated Materials no longer hand-delivered to auditor (#233). Kept for test migration. */
 export type SoulAuditInput = {
   soul: string;
   transcript: string;
@@ -77,7 +78,6 @@ export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
   transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
-    input: SoulAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
 };
@@ -164,14 +164,11 @@ export function createJudgeRoleRuntime(
             if (soul === undefined) throw new Error("Judge soul was not loaded");
             requireSingletonSubmissionCall(toolCallId, ctx);
             const verdict = validateVerdict(parameters);
+            // Candidate verdict is already on the parent session books as this
+            // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
             let audit: SoulAuditResult;
             try {
               audit = await dependencies.auditSoulCompliance(
-                {
-                  soul,
-                  transcript: dependencies.transcriptFromContext(ctx),
-                  verdict: projectJudgeVerdictForAudit(verdict),
-                },
                 signal === undefined
                   ? { context: ctx }
                   : { context: ctx, signal },

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { createAgentSession, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
@@ -13,6 +13,7 @@ import {
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
 import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.js";
+import { openInProcessAgentSession } from "./in-process-session.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
@@ -86,6 +87,7 @@ function navigatorUnavailableError(source, error, cause = source) {
 }
 function navigatorAdviceConsistentWithSettlement(next, settlement) {
   if (settlement.kind !== "accepted") return true;
+  if (settlement.status === "unfinished" && next.role === "judge") return false;
   if (next.role !== "merger") return true;
   return settlement.role === "judge" && settlement.status === "converged";
 }
@@ -885,15 +887,14 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
     } catch (error) {
       throw navigatorUnavailableError("session", error);
     }
-    let created;
+    let opened;
     try {
-      created = await createAgentSession({
+      opened = await openInProcessAgentSession({
         cwd: context.cwd,
         model,
         modelRuntime,
         thinkingLevel: parsed.thinkingLevel,
         sessionManager: SessionManager.continueRecent(context.cwd, sessionDir),
-        settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
         noTools: "all",
         tools: [NAVIGATOR_PREPARE_TOOL_NAME],
         customTools: [tool]
@@ -901,23 +902,23 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
     } catch (error) {
       throw navigatorUnavailableError("session", error);
     }
-    if (created.session.thinkingLevel !== parsed.thinkingLevel) {
-      created.session.dispose();
+    if (opened.session.thinkingLevel !== parsed.thinkingLevel) {
+      opened.dispose();
       throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${parsed.thinkingLevel} is unavailable for ${configured}`);
     }
     return {
       prompt: async (text) => {
         try {
-          await created.session.prompt(text);
+          await opened.session.prompt(text);
         } catch (error) {
           throw navigatorUnavailableError("transport", error);
         }
       },
       providerFailure: () => providerFailure,
       appendEntry: (customType, data) => {
-        created.session.sessionManager.appendCustomEntry(customType, data);
+        opened.session.sessionManager.appendCustomEntry(customType, data);
       },
-      entries: () => created.session.sessionManager.getEntries(),
+      entries: () => opened.session.sessionManager.getEntries(),
       setModel: async (next, thinkingLevel) => {
         let nextParsed;
         try {
@@ -937,17 +938,17 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
         if (!nextAuth.ok) throw new NavigatorUnavailableError("auth", nextAuth.error);
         try {
           modelRuntime.registerNativeProvider(instrumentProvider(nextProvider));
-          await created.session.setModel(nextModel);
-          created.session.setThinkingLevel(thinkingLevel);
+          await opened.session.setModel(nextModel);
+          opened.session.setThinkingLevel(thinkingLevel);
         } catch (error) {
           throw navigatorUnavailableError("session", error);
         }
-        if (created.session.thinkingLevel !== nextParsed.thinkingLevel || created.session.thinkingLevel !== thinkingLevel) {
+        if (opened.session.thinkingLevel !== nextParsed.thinkingLevel || opened.session.thinkingLevel !== thinkingLevel) {
           throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${thinkingLevel} is unavailable for ${next}`);
         }
       },
-      getThinkingLevel: () => created.session.thinkingLevel,
-      dispose: () => created.session.dispose()
+      getThinkingLevel: () => opened.session.thinkingLevel,
+      dispose: () => opened.dispose()
     };
   };
 }
