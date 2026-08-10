@@ -36,7 +36,6 @@ import {
   MERGER_INPUT_FLAG,
   MERGER_OUTPUT_TOOL_NAME,
   navigatorSessionDirectory,
-  resolveBookKeyFromGit,
   ROLE_FLAG,
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
   toolExecutionObservationRecordSchema,
@@ -53,7 +52,6 @@ import {
   getSharedIsolatedPack,
   loadRawPackageManifest,
   packageRoot,
-  persistActivationSessionFile,
   type RawPackageManifest,
   resolvePackageEntrypoint,
   runNodeSubprocess,
@@ -557,7 +555,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
     (await readFile(resolve(packageRoot, "souls/judge.md"), "utf8")).trim();
   await withActivationHome(
     { prefix: "ak-role-integration-" },
-    async ({ home, agentDir }) => {
+    async ({ agentDir }) => {
       const faux = fauxProvider({
         api: "ak-role-offline",
         provider: "ak-role-offline",
@@ -606,21 +604,8 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           },
         }),
       );
-      // Real parent manager: durable file/dir co-located under the hermetic
-      // activation ledger, cwd kept at packageRoot (ADR 0048 nested topology).
-      const parentSessionFile = persistActivationSessionFile({
-        home,
-        bookKey: resolveBookKeyFromGit(packageRoot),
-        name: "packaged-judge",
-        cwd: packageRoot,
-      });
-      const parentSessionManager = SessionManager.open(
-        parentSessionFile,
-        dirname(parentSessionFile),
-        packageRoot,
-      );
       await withInProcessPi({
-        sessionManager: parentSessionManager,
+        activationLedgerSession: true,
         cwd: packageRoot,
         agentDir,
         faux,
@@ -788,9 +773,12 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.equal(String(nearest.data?.invocationId).includes(":"), false);
 
         // Nested auditor JSONL stays under the parent session dir, not repo root.
+        // activationLedgerSession supplies real file+dir topology (ADR 0048).
+        const parentSessionFile = sessionManager.getSessionFile();
         const parentDir = sessionManager.getSessionDir();
-        assert.equal(sessionManager.getSessionFile(), parentSessionFile);
-        assert.equal(parentDir, dirname(parentSessionFile));
+        assert.equal(typeof parentSessionFile, "string");
+        assert.ok(String(parentSessionFile).length > 0);
+        assert.equal(parentDir, dirname(parentSessionFile!));
         assert.equal(sessionManager.getHeader()?.cwd, packageRoot);
         const auditorDir = join(parentDir, "auditor-roles");
         const auditorFiles = (await readdir(auditorDir))
