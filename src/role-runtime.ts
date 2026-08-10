@@ -139,7 +139,6 @@ export {
   PackageOwnedToolIdleTimeoutError,
   installPackageOwnedToolRegistration,
   isPackageOwnedToolIdleTimeoutError,
-  registerPackageOwnedTool,
   wrapPackageOwnedToolDefinition,
 } from "./package-owned-tool-idle.ts";
 export { runAuditorRole } from "./auditor-role.ts";

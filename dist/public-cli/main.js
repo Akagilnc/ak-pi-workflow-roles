@@ -12616,96 +12616,20 @@ var toolExecutionObservationRecordSchema = typebox_exports.Union([
     isError: typebox_exports.Boolean()
   }, { additionalProperties: true })
 ]);
-function isProducingToolUpdate(partialResult) {
-  if (partialResult == null) return false;
-  if (typeof partialResult !== "object") return true;
-  const content = partialResult.content;
-  if (!Array.isArray(content)) return true;
-  if (content.length === 0) return false;
-  return content.some((part) => {
-    if (typeof part !== "object" || part === null) return true;
-    const text = part.text;
-    if (typeof text === "string") return text.length > 0;
-    return true;
-  });
-}
-
-// src/package-owned-tool-idle.ts
-var PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS = 183e3;
-var PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE = "AK_PACKAGE_OWNED_TOOL_IDLE_TIMEOUT";
-var WRAPPED = /* @__PURE__ */ Symbol.for("ak.packageOwnedToolIdleWrapped");
-var PackageOwnedToolIdleTimeoutError = class extends Error {
-  code = PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE;
-  idleTimeoutMs = PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS;
-  constructor() {
-    super(`package-owned tool idle timeout after ${PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS}ms`);
-    this.name = "PackageOwnedToolIdleTimeoutError";
-  }
-};
-function wrapPackageOwnedToolDefinition(tool3) {
-  if (tool3.execute[WRAPPED] === true) return tool3;
-  const originalExecute = tool3.execute.bind(tool3);
-  const wrappedExecute = function packageOwnedToolIdleExecute(...args) {
-    const signal = args[2];
-    const onUpdate = args[3];
-    return new Promise((resolve7, reject) => {
-      let settled = false;
-      let timer;
-      const clear = () => {
-        if (timer !== void 0) {
-          clearTimeout(timer);
-          timer = void 0;
-        }
-      };
-      const settle = (deliver) => {
-        if (settled) return;
-        settled = true;
-        clear();
-        deliver();
-      };
-      const arm = () => {
-        if (settled) return;
-        clear();
-        timer = setTimeout(() => {
-          timer = void 0;
-          settle(() => reject(new PackageOwnedToolIdleTimeoutError()));
-        }, PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
-      };
-      const guardedOnUpdate = onUpdate === void 0 ? void 0 : (partialResult) => {
-        if (settled) return;
-        if (isProducingToolUpdate(partialResult)) arm();
-        onUpdate(partialResult);
-      };
-      arm();
-      const callArgs = args.slice();
-      callArgs[2] = signal;
-      callArgs[3] = guardedOnUpdate;
-      void Promise.resolve().then(() => originalExecute(...callArgs)).then(
-        (result2) => settle(() => resolve7(result2)),
-        (error) => settle(() => reject(error))
-      );
-    });
-  };
-  wrappedExecute[WRAPPED] = true;
-  return {
-    ...tool3,
-    execute: wrappedExecute
-  };
-}
 
 // src/compliance-transport.ts
 var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
 var decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
 var complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
 function createComplianceDecisionTool(name, description) {
-  return wrapPackageOwnedToolDefinition({
+  return {
     name,
     description,
     parameters: complianceDecisionSchema,
     async execute(_id, params) {
       return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true };
     }
-  });
+  };
 }
 var COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
 var AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";

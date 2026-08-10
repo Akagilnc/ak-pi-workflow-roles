@@ -8,9 +8,13 @@
  */
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
+import {
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  createStreamIdleGuard,
+} from "./stream-idle-guard.ts";
 import { isProducingToolUpdate } from "./tool-execution-observation.ts";
 
-export const PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS = 183_000;
+export const PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS = DEFAULT_STREAM_IDLE_TIMEOUT_MS;
 export const PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE = "AK_PACKAGE_OWNED_TOOL_IDLE_TIMEOUT" as const;
 
 const WRAPPED = Symbol.for("ak.packageOwnedToolIdleWrapped");
@@ -44,6 +48,23 @@ export type PackageOwnedToolLike = {
 };
 
 /**
+ * Package-tool activity includes content production and host-only details
+ * progress. Keep the observation-plane oracle separate: its stderr heartbeat
+ * contract remains content-driven. Pi's known execute-entry placeholder
+ * (`content: [], details: undefined`) is not activity.
+ */
+function isPackageOwnedToolActivityUpdate(partialResult: unknown): boolean {
+  if (isProducingToolUpdate(partialResult)) return true;
+  if (typeof partialResult !== "object" || partialResult === null) return false;
+  const details = (partialResult as { details?: unknown }).details;
+  if (details === undefined || details === null) return false;
+  if (typeof details === "string") return details.length > 0;
+  if (Array.isArray(details)) return details.length > 0;
+  if (typeof details === "object") return Reflect.ownKeys(details).length > 0;
+  return true;
+}
+
+/**
  * Single shared execute wrapper for package-owned tool definitions.
  * Idempotent: wrapping twice returns the same protected definition.
  */
@@ -63,40 +84,29 @@ export function wrapPackageOwnedToolDefinition<T extends PackageOwnedToolLike>(t
     const onUpdate = args[3] as ((partialResult: unknown) => void) | undefined;
     return new Promise((resolve, reject) => {
       let settled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-
-      const clear = (): void => {
-        if (timer !== undefined) {
-          clearTimeout(timer);
-          timer = undefined;
-        }
-      };
+      const idle = createStreamIdleGuard({
+        idleTimeoutMs: PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
+      });
 
       const settle = (deliver: () => void): void => {
         if (settled) return;
         settled = true;
-        clear();
+        idle.signal.removeEventListener("abort", onIdle);
+        idle.dispose();
         deliver();
       };
-
-      const arm = (): void => {
-        if (settled) return;
-        clear();
-        timer = setTimeout(() => {
-          timer = undefined;
-          settle(() => reject(new PackageOwnedToolIdleTimeoutError()));
-        }, PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
+      const onIdle = (): void => {
+        settle(() => reject(new PackageOwnedToolIdleTimeoutError()));
       };
+      idle.signal.addEventListener("abort", onIdle, { once: true });
 
       const guardedOnUpdate = onUpdate === undefined
         ? undefined
         : (partialResult: unknown) => {
             if (settled) return;
-            if (isProducingToolUpdate(partialResult)) arm();
+            if (isPackageOwnedToolActivityUpdate(partialResult)) idle.poke();
             onUpdate(partialResult);
           };
-
-      arm();
 
       const callArgs = args.slice();
       // Preserve the original signal at args[2]; timeout must not abort it.
@@ -117,14 +127,6 @@ export function wrapPackageOwnedToolDefinition<T extends PackageOwnedToolLike>(t
     ...tool,
     execute: wrappedExecute as T["execute"],
   };
-}
-
-/** Register one package-owned tool definition through the shared idle wrapper. */
-export function registerPackageOwnedTool(
-  pi: Pick<ExtensionAPI, "registerTool">,
-  tool: ToolDefinition<any, any, any>,
-): void {
-  pi.registerTool(wrapPackageOwnedToolDefinition(tool) as ToolDefinition<any, any, any>);
 }
 
 /**

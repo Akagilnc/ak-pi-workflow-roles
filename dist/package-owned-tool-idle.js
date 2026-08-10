@@ -1,5 +1,6 @@
+import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, createStreamIdleGuard, } from "./stream-idle-guard.js";
 import { isProducingToolUpdate } from "./tool-execution-observation.js";
-export const PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS = 183_000;
+export const PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS = DEFAULT_STREAM_IDLE_TIMEOUT_MS;
 export const PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE = "AK_PACKAGE_OWNED_TOOL_IDLE_TIMEOUT";
 const WRAPPED = Symbol.for("ak.packageOwnedToolIdleWrapped");
 export class PackageOwnedToolIdleTimeoutError extends Error {
@@ -18,6 +19,28 @@ export function isPackageOwnedToolIdleTimeoutError(value) {
             && value.code === PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE);
 }
 /**
+ * Package-tool activity includes content production and host-only details
+ * progress. Keep the observation-plane oracle separate: its stderr heartbeat
+ * contract remains content-driven. Pi's known execute-entry placeholder
+ * (`content: [], details: undefined`) is not activity.
+ */
+function isPackageOwnedToolActivityUpdate(partialResult) {
+    if (isProducingToolUpdate(partialResult))
+        return true;
+    if (typeof partialResult !== "object" || partialResult === null)
+        return false;
+    const details = partialResult.details;
+    if (details === undefined || details === null)
+        return false;
+    if (typeof details === "string")
+        return details.length > 0;
+    if (Array.isArray(details))
+        return details.length > 0;
+    if (typeof details === "object")
+        return Reflect.ownKeys(details).length > 0;
+    return true;
+}
+/**
  * Single shared execute wrapper for package-owned tool definitions.
  * Idempotent: wrapping twice returns the same protected definition.
  */
@@ -32,39 +55,30 @@ export function wrapPackageOwnedToolDefinition(tool) {
         const onUpdate = args[3];
         return new Promise((resolve, reject) => {
             let settled = false;
-            let timer;
-            const clear = () => {
-                if (timer !== undefined) {
-                    clearTimeout(timer);
-                    timer = undefined;
-                }
-            };
+            const idle = createStreamIdleGuard({
+                idleTimeoutMs: PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
+            });
             const settle = (deliver) => {
                 if (settled)
                     return;
                 settled = true;
-                clear();
+                idle.signal.removeEventListener("abort", onIdle);
+                idle.dispose();
                 deliver();
             };
-            const arm = () => {
-                if (settled)
-                    return;
-                clear();
-                timer = setTimeout(() => {
-                    timer = undefined;
-                    settle(() => reject(new PackageOwnedToolIdleTimeoutError()));
-                }, PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
+            const onIdle = () => {
+                settle(() => reject(new PackageOwnedToolIdleTimeoutError()));
             };
+            idle.signal.addEventListener("abort", onIdle, { once: true });
             const guardedOnUpdate = onUpdate === undefined
                 ? undefined
                 : (partialResult) => {
                     if (settled)
                         return;
-                    if (isProducingToolUpdate(partialResult))
-                        arm();
+                    if (isPackageOwnedToolActivityUpdate(partialResult))
+                        idle.poke();
                     onUpdate(partialResult);
                 };
-            arm();
             const callArgs = args.slice();
             // Preserve the original signal at args[2]; timeout must not abort it.
             callArgs[2] = signal;
@@ -79,10 +93,6 @@ export function wrapPackageOwnedToolDefinition(tool) {
         ...tool,
         execute: wrappedExecute,
     };
-}
-/** Register one package-owned tool definition through the shared idle wrapper. */
-export function registerPackageOwnedTool(pi, tool) {
-    pi.registerTool(wrapPackageOwnedToolDefinition(tool));
 }
 /**
  * Install the shared registration surface on an ExtensionAPI once.
