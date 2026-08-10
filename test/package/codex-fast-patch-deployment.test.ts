@@ -24,10 +24,17 @@ const execFileAsync = promisify(execFile);
 const PI_AI_VERSION = "0.84.1";
 const PATCHED_RELATIVE = "dist/api/openai-codex-responses.js";
 
-async function createPristinePiHost(root: string): Promise<{
+async function createPristinePiHost(
+  root: string,
+  options: { shellShim?: boolean; ancestorGit?: boolean } = {},
+): Promise<{
   piBin: string;
   piAiRoot: string;
 }> {
+  if (options.ancestorGit) {
+    await mkdir(root, { recursive: true });
+    await execFileAsync("git", ["init", "--quiet"], { cwd: root });
+  }
   const codingRoot = resolve(root, "pi-coding-agent");
   await mkdir(resolve(codingRoot, "dist"), { recursive: true });
   await writeFile(
@@ -45,11 +52,25 @@ async function createPristinePiHost(root: string): Promise<{
     { cwd: codingRoot, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
   );
   const cli = resolve(codingRoot, "dist/cli.js");
-  await writeFile(cli, "#!/usr/bin/env node\n", "utf8");
+  await writeFile(
+    cli,
+    `#!/usr/bin/env node\nif (process.argv.includes("--version")) console.log(${JSON.stringify(PI_AI_VERSION)});\n`,
+    "utf8",
+  );
+  await chmod(cli, 0o755);
   const binDir = resolve(root, "bin");
   await mkdir(binDir, { recursive: true });
   const piBin = resolve(binDir, "pi");
-  await symlink(cli, piBin);
+  if (options.shellShim) {
+    await writeFile(
+      piBin,
+      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(cli)} "$@"\n`,
+      "utf8",
+    );
+    await chmod(piBin, 0o755);
+  } else {
+    await symlink(cli, piBin);
+  }
   return {
     piBin,
     piAiRoot: resolve(
@@ -191,6 +212,46 @@ async function observeWireBehavior(piAiRoot: string, home: string) {
     else process.env.HOME = oldHome;
   }
 }
+
+test("packed deployment CLI resolves a package-manager shell shim to the Pi package", async () => {
+  const root = await mkdtemp(resolve(tmpdir(), "ak-fast-patch-shim-"));
+  await withPrimaryAwareCleanup(
+    async () => {
+      const bin = await installDeploymentCli(root);
+      const host = await createPristinePiHost(resolve(root, "host"), {
+        shellShim: true,
+      });
+      const deployed = await runDeployment(bin, host.piBin);
+      assert.equal(deployed.code, 0, deployed.stderr);
+      assert.equal(
+        (await readFile(resolve(host.piAiRoot, PATCHED_RELATIVE), "utf8"))
+          .includes("codexFastSwitchEnabled"),
+        true,
+      );
+    },
+    async () => rm(root, { recursive: true, force: true }),
+  );
+});
+
+test("packed deployment CLI applies below an unrelated ancestor Git worktree", async () => {
+  const root = await mkdtemp(resolve(tmpdir(), "ak-fast-patch-ancestor-git-"));
+  await withPrimaryAwareCleanup(
+    async () => {
+      const bin = await installDeploymentCli(root);
+      const host = await createPristinePiHost(resolve(root, "host"), {
+        ancestorGit: true,
+      });
+      const deployed = await runDeployment(bin, host.piBin);
+      assert.equal(deployed.code, 0, deployed.stderr);
+      assert.equal(
+        (await readFile(resolve(host.piAiRoot, PATCHED_RELATIVE), "utf8"))
+          .includes("codexFastSwitchEnabled"),
+        true,
+      );
+    },
+    async () => rm(root, { recursive: true, force: true }),
+  );
+});
 
 test("packed deployment CLI applies the 0.84.1 patch idempotently, rejects unknown bytes, and changes only eligible wire requests", async () => {
   const root = await mkdtemp(resolve(tmpdir(), "ak-fast-patch-deploy-"));
