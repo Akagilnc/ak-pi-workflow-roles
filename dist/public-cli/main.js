@@ -12594,6 +12594,10 @@ var auditorSoulPaths = Object.freeze({
   doctor: fileURLToPath(new URL("../souls/doctor-auditor.md", import.meta.url))
 });
 
+// src/role-child-executor.ts
+var AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
+var AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
+
 // src/compliance-transport.ts
 var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
 var decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
@@ -12604,8 +12608,6 @@ function createComplianceDecisionTool(name, description) {
   } };
 }
 var COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
-var AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
-var AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
 function readListField(value) {
   return Array.isArray(value) ? value : value === void 0 ? [] : [value];
 }
