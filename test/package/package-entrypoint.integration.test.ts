@@ -1995,17 +1995,43 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           );
 
           let coderContext: Context | undefined;
-          faux.setResponses([
-            (context) => {
-              coderContext = context;
-              return fauxAssistantMessage(
-                fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
-                  id: row.callId,
-                }),
-                { stopReason: "toolUse" },
-              );
-            },
-          ]);
+          // completed zero-commit: ① bounces once; same payload resubmit confirms.
+          // unfinished: ① does not apply — single call accepted.
+          const firstCallId = row.output.status === "completed"
+            ? `${row.callId}-bounce`
+            : row.callId;
+          faux.setResponses(
+            row.output.status === "completed"
+              ? [
+                (context) => {
+                  coderContext = context;
+                  return fauxAssistantMessage(
+                    fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
+                      id: firstCallId,
+                    }),
+                    { stopReason: "toolUse" },
+                  );
+                },
+                () =>
+                  fauxAssistantMessage(
+                    fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
+                      id: row.callId,
+                    }),
+                    { stopReason: "toolUse" },
+                  ),
+              ]
+              : [
+                (context) => {
+                  coderContext = context;
+                  return fauxAssistantMessage(
+                    fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
+                      id: row.callId,
+                    }),
+                    { stopReason: "toolUse" },
+                  );
+                },
+              ],
+          );
           await session.prompt(row.prompt);
 
           const seenContext = coderContext as Context | undefined;
@@ -2047,6 +2073,20 @@ test("packaged coder apply proves canonical native tdd expansion including colli
             }`,
             userMessage: row.userMessage,
           });
+          if (row.output.status === "completed") {
+            const bounced = sessionManager.getEntries().find(
+              (entry) =>
+                entry.type === "message" &&
+                entry.message.role === "toolResult" &&
+                entry.message.toolCallId === firstCallId,
+            );
+            assert.ok(
+              bounced?.type === "message" &&
+                bounced.message.role === "toolResult",
+            );
+            assert.equal(bounced.message.isError, true);
+            assert.match(textOf(bounced.message), /未观察到 commit/);
+          }
           const accepted = sessionManager.getEntries().find(
             (entry) =>
               entry.type === "message" &&
