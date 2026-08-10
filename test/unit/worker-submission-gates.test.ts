@@ -1,7 +1,7 @@
 /** #242 shortest real tracers — one bar per granted gate, positive+negative same bar. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,12 +127,67 @@ test("②④ bad title/empty subject/amend rejected; fixed title, new commit, pr
     git(wt, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} integration base`]);
     git(wt, ["merge", "--no-ff", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} merge topic`, "topic"]);
 
-    // Foreign reference-transaction hook → fails closed, no silent overwrite.
+    // Own-package prior hook body (marker present, content differs) must reload.
     const hooksDir = git(wt, ["config", "--get", "core.hooksPath"]);
     const hookPath = join(hooksDir, "reference-transaction");
+    const priorOwn = `#!/bin/sh
+# ak-roles: worker-submission-gates reference-transaction
+# prior package revision body
+exit 0
+`;
+    await writeFile(hookPath, priorOwn, "utf8");
+    chmodSync(hookPath, 0o755);
+    assert.doesNotThrow(() => installWorkerGitHooks(wt));
+    assert.match(await import("node:fs/promises").then((fs) => fs.readFile(hookPath, "utf8")), /rev-list/);
+
+    // Foreign reference-transaction hook → fails closed, no silent overwrite.
     await writeFile(hookPath, "#!/bin/sh\nexit 0\n", "utf8");
     chmodSync(hookPath, 0o755);
     assert.throws(() => installWorkerGitHooks(wt), /refusing to overwrite existing reference-transaction hook/);
+
+    // Invariant 1 — bare host + linked worktrees: arm one tree, siblings stay work trees.
+    // Probe lives only under tmpdir; never arm the real host repo.
+    const probe = mkdtempSync(join(tmpdir(), "ak-worker-gate-bare-host-"));
+    try {
+      const seedRepo = join(probe, "seed");
+      const host = join(probe, "host.git");
+      const wtA = join(probe, "wtA");
+      const wtB = join(probe, "wtB");
+      git(probe, ["init", "-b", "main", seedRepo]);
+      git(seedRepo, ["config", "user.email", "gate@test.local"]);
+      git(seedRepo, ["config", "user.name", "Gate Test"]);
+      git(seedRepo, ["commit", "--allow-empty", "-m", "seed"]);
+      execFileSync("git", ["clone", "--bare", seedRepo, host], {
+        cwd: probe, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+      git(host, ["worktree", "add", wtA, "main"]);
+      git(host, ["worktree", "add", "-b", "side", wtB, "main"]);
+      git(wtA, ["config", "user.email", "gate@test.local"]);
+      git(wtA, ["config", "user.name", "Gate Test"]);
+      git(wtB, ["config", "user.email", "gate@test.local"]);
+      git(wtB, ["config", "user.name", "Gate Test"]);
+
+      assert.equal(git(wtA, ["status", "--porcelain"]), "");
+      assert.equal(git(wtB, ["status", "--porcelain"]), "");
+      // Bare host itself is not a work tree — fail closed before shared-config damage.
+      assert.throws(() => installWorkerGitHooks(host), /outside a git work tree/);
+      assert.equal(git(wtA, ["status", "--porcelain"]), "");
+      assert.equal(git(wtB, ["status", "--porcelain"]), "");
+
+      installWorkerGitHooks(wtA);
+      // Armed + never-armed sibling both remain usable work trees.
+      assert.equal(git(wtA, ["status", "--porcelain"]), "");
+      assert.equal(git(wtB, ["status", "--porcelain"]), "");
+      assert.throws(
+        () => git(wtA, ["commit", "--allow-empty", "-m", "no prefix"]),
+        /ak-roles: commit subject must start with ak-roles:/,
+      );
+      // Sibling never armed — unconstrained.
+      git(wtB, ["commit", "--allow-empty", "-m", "sibling unprefixed ok on bare host"]);
+      git(wtA, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} bare-host armed ok`]);
+    } finally {
+      await rm(probe, { recursive: true, force: true });
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

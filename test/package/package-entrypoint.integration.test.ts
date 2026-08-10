@@ -1948,6 +1948,13 @@ test("packaged coder apply proves canonical native tdd expansion including colli
       { prefix: "ak-coder-integration-" },
       async ({ home, agentDir }) => {
         // Package-owned TDD (#109): empty home, skill path from installed package tree.
+        // Worktree is a temp git repo — never arm the real package checkout (gate ②④ install).
+        const work = resolve(home, "work");
+        await mkdir(work, { recursive: true });
+        execFileSync("git", ["init", "-b", "main"], { cwd: work });
+        execFileSync("git", ["config", "user.email", "coder-tdd@test.local"], { cwd: work });
+        execFileSync("git", ["config", "user.name", "Coder TDD"], { cwd: work });
+        execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: work });
         const tddSkillPath = resolve(
           packageRoot,
           "resources/methods/tdd/SKILL.md",
@@ -1963,7 +1970,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
         });
         await withInProcessPi({
           activationLedgerSession: true,
-          cwd: packageRoot,
+          cwd: work,
           agentDir,
           faux,
           additionalExtensionPaths: [packageEntrypoint(manifest)],
@@ -2071,6 +2078,13 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
     async ({ home, agentDir }) => {
       const packetPath = resolve(home, "fix-packet.json");
       await writeFile(packetPath, JSON.stringify({ version: 1, instructions: "# Approved repair\n\nApply it.", prerequisites: [] }));
+      // Temp git worktree — production arm must not mutate the real package checkout.
+      const work = resolve(home, "work");
+      await mkdir(work, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: work });
+      execFileSync("git", ["config", "user.email", "fixer-seatbelt@test.local"], { cwd: work });
+      execFileSync("git", ["config", "user.name", "Fixer Seatbelt"], { cwd: work });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: work });
       for (const phase of ["plan", "apply"] as const) {
         const faux = fauxProvider({
           api: `ak-fixer-offline-${phase}`,
@@ -2079,7 +2093,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
         });
         await withInProcessPi({
           activationLedgerSession: true,
-          cwd: packageRoot,
+          cwd: work,
           agentDir,
           faux,
           additionalExtensionPaths: [packageEntrypoint(manifest)],

@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 
 export const WORKER_COMMIT_SUBJECT_PREFIX = "ak-roles:";
 const DONE = new Set(["completed", "partially_completed"]);
+/** Marker: own-package hooks are reloadable across HOOK body changes; foreign hooks refuse. */
+const HOOK_MARKER = "ak-roles: worker-submission-gates reference-transaction";
 
 export class WorkerCommitReminderError extends Error {
   readonly code = "worker_commit_reminder" as const;
@@ -18,9 +20,17 @@ function git(cwd: string, args: string[]): string {
   }).trim();
 }
 
+function gitFile(file: string, args: string[]): string {
+  return execFileSync("git", ["config", "--file", file, ...args], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_COMMON_DIR: undefined },
+  }).trim();
+}
+
 // ② each newly-created commit (incl. empty subject); ④ ban non-fast-forward.
 // Scoped by install: worktree-local core.hooksPath → only the armed tree.
 const HOOK = `#!/bin/sh
+# ${HOOK_MARKER}
 [ "$1" = prepared ] || exit 0
 prefix=${WORKER_COMMIT_SUBJECT_PREFIX}
 while read -r old new ref; do
@@ -36,14 +46,59 @@ while read -r old new ref; do
 done
 `;
 
-/** Bind ②④ to this worktree only — private hooksPath + worktree config; never shared common hooks. */
+/**
+ * Bind ②④ to this worktree only — private hooksPath + worktree config.
+ * Never leave shared common config in a state that bricks sibling/main trees
+ * (git requires core.bare/core.worktree moved out of common when worktreeConfig is on).
+ */
 export function installWorkerGitHooks(cwd: string): void {
+  // Fail closed before any shared-config write: bare host / non-work-tree is not armable.
+  let inside: string;
+  try {
+    inside = git(cwd, ["rev-parse", "--is-inside-work-tree"]);
+  } catch (error) {
+    throw new Error(
+      `ak-roles: refusing worker hooks install outside a git work tree: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (inside !== "true") {
+    throw new Error("ak-roles: refusing worker hooks install outside a git work tree");
+  }
+
+  const commonDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const commonConfig = resolve(commonDir, "config");
+  const mainWorktreeConfig = resolve(commonDir, "config.worktree");
+
+  // Snapshot worktree-only keys still sitting in common config (git docs: must move on enable).
+  let bareInCommon = false;
+  let worktreeInCommon: string | undefined;
+  try { bareInCommon = gitFile(commonConfig, ["--get", "core.bare"]) === "true"; } catch { /* unset */ }
+  try { worktreeInCommon = gitFile(commonConfig, ["--get", "core.worktree"]); } catch { /* unset */ }
+
   git(cwd, ["config", "extensions.worktreeConfig", "true"]);
+
+  // Migrate immediately so sibling trees never observe bare-in-common under worktreeConfig.
+  if (bareInCommon) {
+    try { gitFile(commonConfig, ["--unset", "core.bare"]); } catch { /* raced */ }
+    gitFile(mainWorktreeConfig, ["core.bare", "true"]);
+  }
+  if (worktreeInCommon !== undefined) {
+    try { gitFile(commonConfig, ["--unset", "core.worktree"]); } catch { /* raced */ }
+    gitFile(mainWorktreeConfig, ["core.worktree", worktreeInCommon]);
+  }
+
   const gitDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-dir"]);
   const dir = resolve(gitDir, "ak-roles-hooks");
   const path = resolve(dir, "reference-transaction");
-  if (existsSync(path) && readFileSync(path, "utf8") !== HOOK) {
-    throw new Error("ak-roles: refusing to overwrite existing reference-transaction hook");
+  if (existsSync(path)) {
+    const existing = readFileSync(path, "utf8");
+    // Own-package marker → reload OK (HOOK body may change across versions).
+    // Foreign same-name hook → fail closed, never overwrite.
+    if (!existing.includes(HOOK_MARKER)) {
+      throw new Error("ak-roles: refusing to overwrite existing reference-transaction hook");
+    }
   }
   mkdirSync(dir, { recursive: true });
   writeFileSync(path, HOOK, "utf8");

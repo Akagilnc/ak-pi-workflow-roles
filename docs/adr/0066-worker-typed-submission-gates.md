@@ -28,7 +28,7 @@ Status: accepted（陛下 2026-08-10 grill 链 + r14 票面收敛；decision key
 1. **① 交卷闸（防忘提醒）**：`completed` / `partially_completed` 且零新 commit → 打回一次 typed「未观察到 commit」；同 run 重交视为确认。`planned` / `refused` / `unfinished` 零 commit 合法。工作树脏不脏机器不管。
 2. **②④ git 层前置闸**：信封布置 coder/fixer 工作树时装 `reference-transaction` 钩子——新 commit 标题须冠 `ak-roles:` 在最前；拒绝分支/HEAD 非前进式改写。交卷时不设②④检查。钩子漏网不加第二道机器，归大理寺看卷。
 3. **⑥ 举证单**：`ak_fixer_output` 独有 optional `testEvidence` 字段（contract / minimumNecessaryCost / measuredDuration）；要求交、机器不查存在/齐备/覆盖。Coder 不增此字段。
-4. **耐久**：跨 resume 的 baseline 与打回记录须经 [ADR 0065](0065-sitian-phase-two-records-have-one-entry.md) 司天唯一入口。#216 OPEN 期间本实现仅进程内状态，**不**直调 `SessionManager.appendCustomEntry`、不自造旁路 ledger。
+4. **耐久**：跨 resume 的 baseline 与打回记录须经 [ADR 0065](0065-sitian-phase-two-records-have-one-entry.md) 司天唯一入口写入；gate **不**直调 `SessionManager.appendCustomEntry`、不自造旁路/平行 ledger。该入口 blocked_on [#216](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/216)（司天第二期记录入口）；#216 并入 main 后由本票消费入口补齐①耐久 tracer。在入口落地前，跨 resume 耐久缺位是已知 blocked 项，不得以施工方自撰收窄改写票面条款。
 
 ## 具名 supersession / 射程修订
 
