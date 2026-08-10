@@ -3,7 +3,7 @@
  * 调用方只声明自己是谁的什么；落点由候簿拓扑算出，签名不含任何落点/路径参数。
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
-import { resolve, join } from "node:path";
+import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -17,7 +17,6 @@ import {
 /** Parent session surface needed to link and (when already under home) nest the record. */
 export type RecordSessionParent = {
   getSessionFile(): string | undefined;
-  getSessionDir(): string;
 };
 
 export type CreateRecordSessionOptions = {
@@ -43,13 +42,14 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
 
   const ledgerHome = resolveActivationLedgerHome();
   const parentResolved = resolve(parentFile);
-  const parentDir = resolve(options.parent!.getSessionDir());
 
   // Nest under parent only when the parent record already lives under the package home.
+  // Nest base is dirname(parent file) — the durable principal's directory — never a
+  // separate getSessionDir() that can diverge (empty in-memory dir + durable file).
   // Otherwise the book is resolved from cwd (ADR 0048) and the kind sits under that book —
   // workspace / foreign parents cannot drag records out of home.
   const sessionDir = physicallyContainedIn(ledgerHome, parentResolved)
-    ? join(parentDir, options.kind)
+    ? join(dirname(parentResolved), options.kind)
     : join(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
 
   ensureRealDirectoryTree(ledgerHome, sessionDir);
