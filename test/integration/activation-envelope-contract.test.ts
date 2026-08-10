@@ -55,7 +55,6 @@ import {
   samplePull,
   sampleUser,
 } from "../helpers/fake-github-transport.ts";
-import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
 import {
   activationBookKeyFor,
   machineLedgerHome,
@@ -277,7 +276,7 @@ test("seven packaged terminating tools expose the provider-open registration inv
   const declaredFields = (role: string): readonly string[] => {
     switch (role) {
       case "coder": return ["status", "report", "remainingScope"];
-      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults"];
+      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence"];
       case "reviewer": return ["status", "diagnostic"];
       case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"];
       case "collector": return ["legs"];
@@ -1134,30 +1133,59 @@ test("ledger append and durable session admission reject symlink component escap
   });
 });
 
-test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subprocess before provider dispatch", async () => {
-  // Shared CLI harness with audit-failure-subprocess (same extension pair + provider + hermetic home).
-  const result = await runFixerAuditFailureCli({
-    packet: "Apply the assigned repair.\n",
-    prerequisites: { prerequisites: [] },
-    timeoutMs: 15_000,
-    prefix: "ak-fixer-activation-incident-",
-  });
-  assert.equal(result.timedOut, false, "malformed prerequisites subprocess did not time out");
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=0/);
-  const traces = result.stderr.split("\n").flatMap((line) => {
-    try { const value = JSON.parse(line) as ActivationTraceRecord; return Value.Check(activationTraceRecordSchema, value) ? [value] : []; }
-    catch { return []; }
-  });
-  assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
-    { role: "fixer", stageId: "load-and-install", status: "failed" },
-  ]);
-  const failed = traces[0];
-  assert.ok(failed?.status === "failed");
-  assert.ok(["AK_INVALID_FIX_PACKET", "FixerPacketValidationError"].includes(failed.cause.identity));
-  assert.equal(failed.cause.name, "FixerPacketValidationError");
-  if (typeof failed.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
-  assert.match(failed.cause.evidenceId, /^activation-cause-/);
+test("incident 2026-08-02: malformed Fixer prerequisites fail activation before provider dispatch", async () => {
+  // #242 retired the Fixer audit-failure provider; keep the activation-fail-closed tracer via in-process extension.
+  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
+  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const { mkdtemp, rm, writeFile, mkdir } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const { seedGitRepository } = await import("../helpers/pi-test-harness.ts");
+  const home = await mkdtemp(join(tmpdir(), "ak-fixer-activation-incident-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    seedGitRepository(home);
+    const sessionDir = join(home, ".ak-roles", "books", home.split("/").pop()!, "runs", "fixer-act", "session");
+    await mkdir(sessionDir, { recursive: true });
+    const handlers = new Map<string, any>();
+    const flags = new Map<string, string>([
+      ["ak-role", "fixer"],
+      ["ak-fix-packet", join(home, "instructions.md")],
+      ["ak-fixer-prerequisites", join(home, "prerequisites.json")],
+      ["ak-fixer-phase", "apply"],
+    ]);
+    await writeFile(join(home, "instructions.md"), "Apply the assigned repair.\n");
+    await writeFile(join(home, "prerequisites.json"), JSON.stringify({ prerequisites: [] }));
+    const pi = {
+      registerFlag() {},
+      getFlag(name: string) { return flags.get(name); },
+      registerTool() {},
+      getAllTools() { return []; },
+      setActiveTools() {},
+      getActiveTools() { return []; },
+      on(name: string, handler: any) { handlers.set(name, handler); },
+      appendEntry() {},
+    };
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "judge",
+      loadFixerSoul: async () => "fixer",
+      loadFixPacket: async (path: string) => path.endsWith("prerequisites.json")
+        ? JSON.stringify({ prerequisites: [] })
+        : "Apply the assigned repair.\n",
+      transcriptFromContext: () => "",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+    })(pi as any);
+    const sessionManager = SessionManager.create(home, sessionDir);
+    await assert.rejects(
+      Promise.resolve(handlers.get("session_start")?.({}, { cwd: home, sessionManager, abort() {} })),
+      /Fixer prerequisite|FixerPacketValidationError|AK_INVALID_FIX_PACKET/i,
+    );
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 

@@ -23,7 +23,6 @@ import {
 } from "../../src/audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { createPiDoctorAuditor, DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
-import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
 import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createPiReviewerAuditor, REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 import {
@@ -74,13 +73,6 @@ const judgeInput = {
   transcript: "judge record",
   verdict: { judgeStatus: "converged" as const },
 };
-const fixerInput = {
-  soul: "fixer law",
-  packet: { version: 1 as const, instructions: "repair", prerequisites: [] },
-  phase: "apply" as const,
-  transcript: "fixer record",
-  candidate: { status: "completed" as const, report: "done", classResults: [] },
-};
 const reviewerInput = {
   soul: "reviewer law",
   canonicalSkill: "skill",
@@ -105,11 +97,6 @@ const auditorCases = [
     role: "judge" as const,
     toolName: JUDGE_AUDIT_TOOL_NAME,
     run: (complete: any, auditContext: ExtensionContext = context) => createPiJudgeAuditor(complete)(judgeInput, { context: auditContext }),
-  },
-  {
-    role: "fixer" as const,
-    toolName: FIXER_AUDIT_TOOL_NAME,
-    run: (complete: any, auditContext: ExtensionContext = context) => createPiFixerAuditor(complete)(fixerInput, { context: auditContext }),
   },
   {
     role: "reviewer" as const,
