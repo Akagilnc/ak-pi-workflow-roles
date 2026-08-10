@@ -83,6 +83,8 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
   let expansionCaptured = false;
   let registered = false;
   let reviewScopeKeys: readonly string[] | undefined;
+  let fixedBaseRevision: string | undefined;
+  let fixedDispatchStarted = false;
   const ledger = createReviewerExecutionLedger();
   const pendingTransport = new Map<string, string>();
   const admittedToolCalls = new Set<string>();
@@ -121,6 +123,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     const baseRevision = pi.getFlag("ak-review-base");
     if (typeof taskPath !== "string" || !taskPath.trim()) throw new Error("Reviewer role requires --ak-review-task");
     if (typeof baseRevision !== "string" || !baseRevision.trim()) throw new Error("Reviewer role requires --ak-review-base");
+    fixedBaseRevision = baseRevision;
     taskBytes = Uint8Array.from(await dependencies.loadTask(taskPath));
     task = exactUtf8(taskBytes, "Reviewer task");
     if (!task.trim()) throw new Error("Reviewer task is empty");
@@ -246,7 +249,21 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       pi.on("tool_execution_end", handleTransportTerminal);
       pi.on("tool_result", handleTransportTerminal);
       pi.on("input", (event) => { if (originalRequest !== undefined) return { action: "continue" as const }; originalRequest = event.text; return { action: "transform" as const, text: binding!.invocation(event.text), ...(event.images === undefined ? {} : { images: event.images }) }; });
-      pi.on("before_agent_start", (event, toolCtx) => {
+      pi.on("before_agent_start", async (event, toolCtx) => {
+        if (!fixedDispatchStarted) {
+          fixedDispatchStarted = true;
+          const unrestricted = Object.freeze({ tools: REVIEWER_CHILD_TOOLS.filter((tool) => dependencies.hostTools().includes(tool)), prerequisiteOperations: REVIEWER_PREREQUISITES });
+          const result = await dispatcher!.propose({
+            version: 1,
+            base: { revision: fixedBaseRevision! },
+            materials: [],
+            spec: { state: "established" },
+            required: { standards: unrestricted, spec: unrestricted },
+          }, { context: toolCtx });
+          if (result.status !== "accepted") throw new Error(`Fixed Reviewer dispatch was not accepted: ${result.status}`);
+          const available = new Set(pi.getAllTools().map((tool) => tool.name));
+          pi.setActiveTools(available.has(REVIEWER_OUTPUT_TOOL_NAME) ? [REVIEWER_OUTPUT_TOOL_NAME] : []);
+        }
         if (!expansionCaptured) {
           if (originalRequest === undefined || binding!.captureExpansion(event.prompt, originalRequest) === undefined) {
             const error = ledger.recordInfrastructureFailure(new Error("Canonical code-review Skill expansion did not match the captured request"));
@@ -259,6 +276,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });
     }
     const available = new Set(pi.getAllTools().map((tool) => tool.name));
-    pi.setActiveTools([AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME].filter((name) => available.has(name)));
+    pi.setActiveTools([REVIEWER_OUTPUT_TOOL_NAME].filter((name) => available.has(name)));
   } };
 }

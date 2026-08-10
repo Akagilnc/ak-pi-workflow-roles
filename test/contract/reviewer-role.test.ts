@@ -58,6 +58,18 @@ function setup(overrides: Partial<Parameters<typeof createReviewerRoleRuntime>[1
   return {...reviewerHarness,runtime,audits,get starts(){return starts;},get activeTools(){return reviewerHarness.activeTools;}};
 }
 
+test("activation dispatches both fixed-target axes without a model proposal", async()=>{
+  const reviewerHarness=setup();
+  reviewerHarness.flags["ak-review-base"]="main~1";
+  await reviewerHarness.runtime.activate();
+  assert.deepEqual(reviewerHarness.activeTools,[REVIEWER_OUTPUT_TOOL_NAME]);
+  reviewerHarness.handlers.get("input")({text:"review"});
+  await reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"},{} as ExtensionContext);
+  assert.equal(reviewerHarness.starts,1);
+  const receipt=await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed"},undefined,undefined,outputContext("out"));
+  assert.deepEqual(receipt.details.acceptedBatch.legs.map((leg:any)=>leg.axis),["standards","spec"]);
+});
+
 test("activation authorizes pin-target before creating the pinned Git reader", async()=>{
   let pins=0;
   const withoutPin=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read"],prerequisiteOperations:operations.filter(operation=>operation!=="preflight.git.pin-target")}));
