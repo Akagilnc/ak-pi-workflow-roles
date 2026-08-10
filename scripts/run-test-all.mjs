@@ -116,7 +116,7 @@ function fail(message) {
   process.exit(1);
 }
 
-function runNodeTest(files, { concurrency, preserveRoleRun = false } = {}) {
+function runNodeTest(files, { concurrency } = {}) {
   if (files.length === 0) return Promise.resolve(0);
 
   const args = ["--import", "tsx", "--test"];
@@ -126,19 +126,14 @@ function runNodeTest(files, { concurrency, preserveRoleRun = false } = {}) {
   args.push(...files);
 
   // Resolve `node` from PATH so lawful tests may intercept children via an
-  // isolated PATH seam. No test-only env hook is accepted here. Ordinary files
-  // must not share the caller's run metadata under parallelism; the serial real-
-  // Pi lane preserves it so nested auditor sessions do not fall back to cwd.
-  const env = preserveRoleRun
-    ? process.env
-    : Object.fromEntries(
-        Object.entries(process.env).filter(([name]) => name !== "AK_ROLE_RUN_DIR"),
-      );
+  // isolated PATH seam. No test-only env hook is accepted here.
   return new Promise((resolvePromise, reject) => {
     const child = spawn("node", args, {
       cwd: root,
       stdio: "inherit",
-      env,
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(([name]) => name !== "AK_ROLE_RUN_DIR"),
+      ),
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
@@ -162,8 +157,5 @@ if (ordinaryCode !== 0) {
   process.exit(ordinaryCode);
 }
 
-const heavyCode = await runNodeTest(heavy, {
-  concurrency: 1,
-  preserveRoleRun: true,
-});
+const heavyCode = await runNodeTest(heavy, { concurrency: 1 });
 process.exit(heavyCode);
