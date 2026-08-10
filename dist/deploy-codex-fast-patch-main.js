@@ -46,22 +46,34 @@ async function resolveGlobalPiAiRoot(piExecutable) {
     )
   );
 }
-async function patchCheck(piAiRoot, patchPath, reverse) {
-  try {
-    await execFileAsync(
-      "git",
-      ["apply", ...reverse ? ["--reverse"] : [], "--check", patchPath],
-      { cwd: piAiRoot, maxBuffer: 10 * 1024 * 1024 }
-    );
-    return true;
-  } catch (error) {
-    if (typeof error.code === "number") return false;
-    throw error;
+function readPatchIdentity(patchBytes) {
+  const indexes = [...patchBytes.matchAll(/^index ([0-9a-f]{40})\.\.([0-9a-f]{40}) 100644$/gm)];
+  const oldPaths = [...patchBytes.matchAll(/^--- a\/(.+)$/gm)];
+  const newPaths = [...patchBytes.matchAll(/^\+\+\+ b\/(.+)$/gm)];
+  if (indexes.length !== 1 || oldPaths.length !== 1 || newPaths.length !== 1) {
+    throw new Error("cannot deploy Codex fast patch: patch must change exactly one regular file");
   }
+  const relativePath = oldPaths[0][1];
+  if (newPaths[0][1] !== relativePath || relativePath.startsWith("/") || relativePath.split("/").includes("..")) {
+    throw new Error("cannot deploy Codex fast patch: patch target path is invalid");
+  }
+  return {
+    relativePath,
+    pristineBlob: indexes[0][1],
+    patchedBlob: indexes[0][2]
+  };
+}
+async function gitBlobIdentity(root, relativePath) {
+  const { stdout } = await execFileAsync("git", ["hash-object", relativePath], {
+    cwd: root,
+    maxBuffer: 10 * 1024 * 1024
+  });
+  return stdout.trim();
 }
 async function deployCodexFastPatch(options) {
   const patchPath = resolve(options.packageRoot, CODEX_FAST_PATCH_RELATIVE);
   await access(patchPath);
+  const patchIdentity = readPatchIdentity(await readFile(patchPath, "utf8"));
   const piExecutable = options.piExecutable ?? await findPiExecutable(options.path ?? process.env.PATH ?? "");
   const piAiRoot = await resolveGlobalPiAiRoot(piExecutable);
   const piAiManifest = JSON.parse(
@@ -72,27 +84,38 @@ async function deployCodexFastPatch(options) {
       `cannot deploy Codex fast patch: expected @earendil-works/pi-ai@${CODEX_FAST_PATCH_PI_VERSION}, found ${String(piAiManifest.name)}@${String(piAiManifest.version)}`
     );
   }
-  if (await patchCheck(piAiRoot, patchPath, false)) {
-    await execFileAsync("git", ["apply", patchPath], {
-      cwd: piAiRoot,
-      maxBuffer: 10 * 1024 * 1024
-    });
-    return {
-      disposition: "applied",
-      piAiRoot,
-      version: CODEX_FAST_PATCH_PI_VERSION
-    };
-  }
-  if (await patchCheck(piAiRoot, patchPath, true)) {
+  const observedBlob = await gitBlobIdentity(
+    piAiRoot,
+    patchIdentity.relativePath
+  );
+  if (observedBlob === patchIdentity.patchedBlob) {
     return {
       disposition: "already-applied",
       piAiRoot,
       version: CODEX_FAST_PATCH_PI_VERSION
     };
   }
-  throw new Error(
-    `cannot deploy Codex fast patch: ${piAiRoot} has unknown bytes (neither pristine ${CODEX_FAST_PATCH_PI_VERSION} nor already applied)`
+  if (observedBlob !== patchIdentity.pristineBlob) {
+    throw new Error(
+      `cannot deploy Codex fast patch: ${piAiRoot} has unknown bytes (neither pristine ${CODEX_FAST_PATCH_PI_VERSION} nor already applied)`
+    );
+  }
+  await execFileAsync("git", ["apply", patchPath], {
+    cwd: piAiRoot,
+    maxBuffer: 10 * 1024 * 1024
+  });
+  const deployedBlob = await gitBlobIdentity(
+    piAiRoot,
+    patchIdentity.relativePath
   );
+  if (deployedBlob !== patchIdentity.patchedBlob) {
+    throw new Error("cannot deploy Codex fast patch: applied bytes do not match the repo patch identity");
+  }
+  return {
+    disposition: "applied",
+    piAiRoot,
+    version: CODEX_FAST_PATCH_PI_VERSION
+  };
 }
 
 // src/deploy-codex-fast-patch-main.ts

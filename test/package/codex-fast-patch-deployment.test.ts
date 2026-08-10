@@ -216,8 +216,8 @@ test("packed deployment CLI applies the 0.84.1 patch idempotently, rejects unkno
       await writeFile(
         wrongPath,
         (await readFile(wrongPath, "utf8")).replace(
-          "const _os = loadNodeOs();",
-          "const _os = null;",
+          "const DEFAULT_MAX_RETRIES = 0;",
+          "const DEFAULT_MAX_RETRIES = 1;",
         ),
         "utf8",
       );

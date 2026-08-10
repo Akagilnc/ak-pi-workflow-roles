@@ -26,8 +26,8 @@
   ],
   "scripts": {
     "generate:tool-execution-observation-schema": "tsx scripts/generate-tool-execution-observation-schema.ts",
-    "build": "pnpm run generate:tool-execution-observation-schema && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
-    "prepack": "tsx scripts/generate-tool-execution-observation-schema.ts && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
+    "build": "tsx scripts/generate-tool-execution-observation-schema.ts && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
+    "prepack": "npm run build",
     "test": "pnpm run test:all",
     "test:fast": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
     "test:integration": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts",
