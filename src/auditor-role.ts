@@ -106,10 +106,7 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
       const responseCall = response?.content.flatMap((part) => part.type === "toolCall" && part.name === tool.name ? [part] : [])[0];
       const observedDecision = decision ?? responseCall?.arguments;
       if (observedDecision === undefined && (latestAssistant?.stopReason === "error" || latestAssistant?.stopReason === "aborted")) throw latestAssistant;
-      if (response === undefined || observedDecision === undefined) {
-        if (latestAssistant !== undefined) return { decision: undefined, response: latestAssistant };
-        throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
-      }
+      if (response === undefined || observedDecision === undefined) throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
       return { decision: observedDecision, response };
     } finally {
       options.signal?.removeEventListener("abort", abort);
