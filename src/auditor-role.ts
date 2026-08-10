@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { InMemoryCredentialStore, type Api, type AssistantMessage, type Context, type Model, type Provider, type ProviderStreamOptions } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch, type AuditorParentAttemptBinding } from "./compliance-transport.ts";
+import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 
 export class AuditorTurnLimitError extends Error { constructor(readonly limit: number) { super(`Auditor exceeded ${limit} turns`); this.name = "AuditorTurnLimitError"; } }
 export type AuditorCompletion = (model: Model<Api>, context: Context, options: ProviderStreamOptions) => Promise<AssistantMessage>;
@@ -32,7 +33,15 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
     const cwd = options.context.cwd ?? process.cwd();
     const loader = new DefaultResourceLoader({ cwd, agentDir: scratch, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt });
     await loader.reload();
-    const tool = { ...options.tool, label: options.roleLabel, async execute(...args: any[]) { if (decision !== undefined) throw new Error("Auditor decision was submitted more than once"); decision = args[1]; return options.tool.execute(...args); } };
+    const tool = wrapPackageOwnedToolDefinition({
+      ...options.tool,
+      label: options.roleLabel,
+      async execute(...args: any[]) {
+        if (decision !== undefined) throw new Error("Auditor decision was submitted more than once");
+        decision = args[1];
+        return options.tool.execute(...args);
+      },
+    });
     const parentSessionManager = options.context.sessionManager;
     const parentHeader = parentSessionManager?.getHeader?.();
     const parentSessionFile = parentSessionManager?.getSessionFile?.();

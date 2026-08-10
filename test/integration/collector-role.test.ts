@@ -42,6 +42,7 @@ import {
   sampleUser,
 } from "../helpers/fake-github-transport.ts";
 import {
+  flushEventLoopTurns,
   withActivationHome,
   withHermeticHome,
   withInProcessPi,
@@ -686,6 +687,115 @@ async function runCollectorSession(input: {
     process.exitCode = previousExit;
   }
 }
+
+test("healthy 300000ms Collector wait reports elapsed progress and outlives the 183000ms idle clock", { timeout: 30_000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await withActivationHome({ prefix: "ak-collector-long-wait-" }, async ({ agentDir, home }) => {
+    const legs = await writeLegs(home);
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull(),
+      reviews: [],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const startedWall = new Date("2024-01-01T00:00:00Z").getTime();
+    let elapsedMs = 0;
+    const clock: CollectorClock = {
+      wallNow: () => new Date(startedWall + elapsedMs),
+      monoNow: () => elapsedMs,
+      sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    };
+    const faux = fauxProvider({
+      api: "ak-collector-long-wait",
+      provider: "ak-collector-long-wait",
+      tokenSize: { min: 1000, max: 1000 },
+    });
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall(COLLECTOR_WAIT_TOOL, { durationMs: 300_000 }, { id: "long-wait" }),
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("continued after healthy wait"),
+    ]);
+    const updates: unknown[] = [];
+
+    await withInProcessPi({
+      activationLedgerSession: true,
+      cwd: home,
+      agentDir,
+      faux,
+      modelsPath: null,
+      extensionFactories: [
+        createRoleRuntimeExtension({
+          loadJudgeSoul: async () => "judge",
+          loadCollectorSoul: async () => COLLECTOR_SOUL,
+          createCollectorTransport: () => transport,
+          createCollectorClock: () => clock,
+          transcriptFromContext: () => "",
+          auditSoulCompliance: async () => ({ status: "pass" }),
+        }),
+        (pi) => {
+          pi.on("tool_execution_update", (event) => {
+            if (event.toolName === COLLECTOR_WAIT_TOOL) updates.push(event.partialResult);
+          });
+        },
+      ],
+      noExtensions: true,
+      systemPrompt: "BASE",
+      mode: "print",
+      flags: {
+        "ak-role": "collector",
+        "ak-collector-repo": "acme/widgets",
+        "ak-collector-pr": "1",
+        "ak-collector-legs": legs,
+      },
+      noTools: "builtin",
+    }, async ({ session, sessionManager }) => {
+      const promptDone = session.prompt("start");
+      await flushEventLoopTurns();
+
+      for (const elapsed of [60_000, 120_000, 180_000, 240_000]) {
+        elapsedMs = elapsed;
+        t.mock.timers.tick(60_000);
+        await flushEventLoopTurns();
+        const waitResults = sessionManager.getEntries().filter((entry) =>
+          entry.type === "message"
+          && entry.message.role === "toolResult"
+          && entry.message.toolName === COLLECTOR_WAIT_TOOL
+        );
+        assert.equal(waitResults.length, 0, `healthy wait remains pending at ${elapsed}ms`);
+      }
+
+      elapsedMs = 300_000;
+      t.mock.timers.tick(60_000);
+      await flushEventLoopTurns(50);
+      await promptDone;
+
+      const waitResults = sessionManager.getEntries().filter((entry) =>
+        entry.type === "message"
+        && entry.message.role === "toolResult"
+        && entry.message.toolName === COLLECTOR_WAIT_TOOL
+      );
+      assert.equal(waitResults.length, 1);
+      assert.equal(
+        waitResults[0]?.type === "message"
+          ? (waitResults[0].message as { isError?: boolean }).isError
+          : undefined,
+        false,
+        "legal five-minute wait completes successfully",
+      );
+      const elapsedUpdates = updates.map((update) =>
+        (update as { content?: unknown[]; details?: { elapsedMs?: unknown } }).details?.elapsedMs
+      );
+      assert.deepEqual(elapsedUpdates.slice(0, 4), [60_000, 120_000, 180_000, 240_000]);
+      assert.ok(updates.slice(0, 4).every((update) =>
+        Array.isArray((update as { content?: unknown }).content)
+        && (update as { content: unknown[] }).content.length === 0
+      ), "Collector wait progress is details-only");
+    });
+  });
+});
 
 test("collector dual operational in one assistant turn is not batch-poisoned", async () => {
   // ADR 0041: same-batch second operational is not whole-message fatal; each op runs at its seam.
