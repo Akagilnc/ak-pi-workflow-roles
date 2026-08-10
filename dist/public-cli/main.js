@@ -1,10 +1,230 @@
 #!/usr/bin/env node
 
 var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
+};
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
+
+// src/activation-ledger-topology.ts
+import {
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  statSync
+} from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { basename, dirname as dirname2, isAbsolute, join as join3, relative, resolve, sep } from "node:path";
+function resolveActivationLedgerHome(home = homedir2) {
+  const processHome = home();
+  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
+    throw new ActivationLedgerError(
+      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
+    );
+  }
+  return resolve(processHome, ".ak-roles");
+}
+function activationBookDirectory(ledgerHome, bookKey) {
+  return join3(ledgerHome, "books", bookKey);
+}
+function pathContainedIn(root, candidate) {
+  const rel = relative(root, candidate);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+function physicalPathIdentity(path) {
+  const absolute = resolve(path);
+  const missing = [];
+  let cursor = absolute;
+  while (true) {
+    try {
+      const real = realpathSync(cursor);
+      return missing.length === 0 ? real : join3(real, ...missing);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        return absolute;
+      }
+      const parent = dirname2(cursor);
+      if (parent === cursor) return absolute;
+      missing.unshift(basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+function physicallyContainedIn(root, candidate) {
+  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
+}
+function errnoCode(error) {
+  return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
+}
+function errorText(error) {
+  if (!(error instanceof Error)) return String(error);
+  return error.message;
+}
+function assertPhysicalLedgerRoot(absoluteRoot) {
+  let st;
+  try {
+    st = lstatSync(absoluteRoot);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st === void 0) {
+    try {
+      mkdirSync(absoluteRoot, { recursive: true });
+    } catch (error) {
+      if (errnoCode(error) !== "EEXIST") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
+    }
+    try {
+      st = lstatSync(absoluteRoot);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st.isSymbolicLink()) {
+    throw new ActivationLedgerError(
+      `activation ledger home is a symbolic link: ${absoluteRoot}`
+    );
+  }
+  if (!st.isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
+  }
+}
+function ensureRealDirectoryTree(root, targetDir) {
+  if (!isAbsolute(root)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
+  }
+  const absoluteRoot = resolve(root);
+  const absoluteTarget = resolve(targetDir);
+  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  assertPhysicalLedgerRoot(absoluteRoot);
+  let realRoot;
+  try {
+    realRoot = realpathSync(absoluteRoot);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  if (!statSync(realRoot).isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
+  }
+  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
+  if (rel === "") return realRoot;
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  let lexicalCursor = absoluteRoot;
+  for (const part of rel.split(sep)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
+    }
+    lexicalCursor = join3(lexicalCursor, part);
+    let st;
+    try {
+      st = lstatSync(lexicalCursor);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
+      try {
+        mkdirSync(lexicalCursor);
+      } catch (mkdirError) {
+        if (errnoCode(mkdirError) !== "EEXIST") {
+          throw new ActivationLedgerError(
+            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
+            { cause: mkdirError }
+          );
+        }
+      }
+      try {
+        st = lstatSync(lexicalCursor);
+      } catch (statError) {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
+          { cause: statError }
+        );
+      }
+    }
+    if (st.isSymbolicLink()) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is a symbolic link: ${lexicalCursor}`
+      );
+    }
+    if (!st.isDirectory()) {
+      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
+    }
+    let realCursor;
+    try {
+      realCursor = realpathSync(lexicalCursor);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
+      throw new ActivationLedgerError(
+        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`
+      );
+    }
+  }
+  try {
+    return realpathSync(absoluteTarget);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+}
+var ActivationLedgerError;
+var init_activation_ledger_topology = __esm({
+  "src/activation-ledger-topology.ts"() {
+    "use strict";
+    ActivationLedgerError = class extends Error {
+      code = "AK_ACTIVATION_LEDGER";
+      constructor(message, options) {
+        super(
+          message,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "ActivationLedgerError";
+      }
+    };
+  }
+});
 
 // src/public-cli/main.ts
 import { dirname as dirname6, join as join16 } from "node:path";
@@ -9327,6 +9547,7 @@ async function runExplicitInternalActivation(options) {
 }
 
 // src/public-cli/invocation.ts
+init_activation_ledger_topology();
 import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat,
@@ -9336,209 +9557,6 @@ import {
   writeFile as writeFile2
 } from "node:fs/promises";
 import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve4, sep as sep3 } from "node:path";
-
-// src/activation-ledger-topology.ts
-import {
-  lstatSync,
-  mkdirSync,
-  realpathSync,
-  statSync
-} from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { basename, dirname as dirname2, isAbsolute, join as join3, relative, resolve, sep } from "node:path";
-var ActivationLedgerError = class extends Error {
-  code = "AK_ACTIVATION_LEDGER";
-  constructor(message, options) {
-    super(
-      message,
-      options?.cause === void 0 ? void 0 : { cause: options.cause }
-    );
-    this.name = "ActivationLedgerError";
-  }
-};
-function resolveActivationLedgerHome(home = homedir2) {
-  const processHome = home();
-  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
-    throw new ActivationLedgerError(
-      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
-    );
-  }
-  return resolve(processHome, ".ak-roles");
-}
-function activationBookDirectory(ledgerHome, bookKey) {
-  return join3(ledgerHome, "books", bookKey);
-}
-function pathContainedIn(root, candidate) {
-  const rel = relative(root, candidate);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-function physicalPathIdentity(path) {
-  const absolute = resolve(path);
-  const missing = [];
-  let cursor = absolute;
-  while (true) {
-    try {
-      const real = realpathSync(cursor);
-      return missing.length === 0 ? real : join3(real, ...missing);
-    } catch (error) {
-      if (errnoCode(error) !== "ENOENT") {
-        return absolute;
-      }
-      const parent = dirname2(cursor);
-      if (parent === cursor) return absolute;
-      missing.unshift(basename(cursor));
-      cursor = parent;
-    }
-  }
-}
-function physicallyContainedIn(root, candidate) {
-  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
-}
-function errnoCode(error) {
-  return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
-}
-function errorText(error) {
-  if (!(error instanceof Error)) return String(error);
-  return error.message;
-}
-function assertPhysicalLedgerRoot(absoluteRoot) {
-  let st;
-  try {
-    st = lstatSync(absoluteRoot);
-  } catch (error) {
-    if (errnoCode(error) !== "ENOENT") {
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-  if (st === void 0) {
-    try {
-      mkdirSync(absoluteRoot, { recursive: true });
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-    try {
-      st = lstatSync(absoluteRoot);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-  if (st.isSymbolicLink()) {
-    throw new ActivationLedgerError(
-      `activation ledger home is a symbolic link: ${absoluteRoot}`
-    );
-  }
-  if (!st.isDirectory()) {
-    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
-  }
-}
-function ensureRealDirectoryTree(root, targetDir) {
-  if (!isAbsolute(root)) {
-    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
-  }
-  const absoluteRoot = resolve(root);
-  const absoluteTarget = resolve(targetDir);
-  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
-    throw new ActivationLedgerError(
-      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
-    );
-  }
-  assertPhysicalLedgerRoot(absoluteRoot);
-  let realRoot;
-  try {
-    realRoot = realpathSync(absoluteRoot);
-  } catch (error) {
-    throw new ActivationLedgerError(
-      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
-      { cause: error }
-    );
-  }
-  if (!statSync(realRoot).isDirectory()) {
-    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
-  }
-  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
-  if (rel === "") return realRoot;
-  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
-    throw new ActivationLedgerError(
-      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
-    );
-  }
-  let lexicalCursor = absoluteRoot;
-  for (const part of rel.split(sep)) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") {
-      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
-    }
-    lexicalCursor = join3(lexicalCursor, part);
-    let st;
-    try {
-      st = lstatSync(lexicalCursor);
-    } catch (error) {
-      if (errnoCode(error) !== "ENOENT") {
-        throw new ActivationLedgerError(
-          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
-          { cause: error }
-        );
-      }
-      try {
-        mkdirSync(lexicalCursor);
-      } catch (mkdirError) {
-        if (errnoCode(mkdirError) !== "EEXIST") {
-          throw new ActivationLedgerError(
-            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
-            { cause: mkdirError }
-          );
-        }
-      }
-      try {
-        st = lstatSync(lexicalCursor);
-      } catch (statError) {
-        throw new ActivationLedgerError(
-          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
-          { cause: statError }
-        );
-      }
-    }
-    if (st.isSymbolicLink()) {
-      throw new ActivationLedgerError(
-        `activation ledger path component is a symbolic link: ${lexicalCursor}`
-      );
-    }
-    if (!st.isDirectory()) {
-      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
-    }
-    let realCursor;
-    try {
-      realCursor = realpathSync(lexicalCursor);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
-      throw new ActivationLedgerError(
-        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`
-      );
-    }
-  }
-  try {
-    return realpathSync(absoluteTarget);
-  } catch (error) {
-    throw new ActivationLedgerError(
-      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
-      { cause: error }
-    );
-  }
-}
 
 // src/activation-ledger-git.ts
 import { execFileSync } from "node:child_process";
@@ -11980,6 +11998,7 @@ function observePackagedMethodSkillInvocation(text, expected) {
 }
 
 // src/public-cli/run-lifecycle.ts
+init_activation_ledger_topology();
 import { lstat as lstat2, open, readdir as readdir2, readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
@@ -12555,7 +12574,7 @@ async function peekRoleRunRole(home, runId) {
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
+import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile7, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname5, join as join7 } from "node:path";
 
 // src/auditor-soul.ts
@@ -12575,12 +12594,18 @@ var auditorSoulPaths = Object.freeze({
   doctor: fileURLToPath(new URL("../souls/doctor-auditor.md", import.meta.url))
 });
 
-// src/compliance-decision.ts
+// src/compliance-transport.ts
+var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
+var decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
+var complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
+function createComplianceDecisionTool(name, description) {
+  return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) {
+    return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true };
+  } };
+}
 var COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
-var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
-var FIXER_AUDIT_TOOL_NAME = "ak_fixer_audit_decision";
-var JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
-var REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
+var AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
+var AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
 function readListField(value) {
   return Array.isArray(value) ? value : value === void 0 ? [] : [value];
 }
@@ -12593,6 +12618,28 @@ function readComplianceCandidate(arguments_, usage) {
   if (status === "escalate") return { status, ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}, ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}, ...usage === void 0 ? {} : { usage } };
   return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === void 0 ? "missing" : "unknown" }, candidate: arguments_, ...usage === void 0 ? {} : { usage } };
 }
+
+// src/doctor-auditor.ts
+var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
+var tool = createComplianceDecisionTool(DOCTOR_AUDIT_TOOL_NAME, "Return whether the proposed Doctor testimony demonstrably follows the supplied Doctor Soul and frozen evidence record. Completed receipts are later augmented with runtime-owned cost; empty findings are valid.");
+
+// src/fixer-auditor.ts
+var FIXER_AUDIT_TOOL_NAME = "ak_fixer_audit_decision";
+var tool2 = createComplianceDecisionTool(FIXER_AUDIT_TOOL_NAME, "Decide whether the Fixer candidate demonstrably complies with its supplied law and assignment.");
+
+// src/judge-auditor.ts
+var JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
+var auditDecisionTool = createComplianceDecisionTool(
+  JUDGE_AUDIT_TOOL_NAME,
+  "Return whether the proposed verdict demonstrably follows the supplied judge soul."
+);
+
+// src/reviewer-auditor.ts
+var REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
+var reviewerDecisionTool = createComplianceDecisionTool(
+  REVIEWER_AUDIT_TOOL_NAME,
+  "Decide whether the Reviewer receipt demonstrably followed its supplied method and boundaries."
+);
 
 // src/collector-evidence.ts
 var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
@@ -12671,6 +12718,7 @@ var COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 
 // src/work-subject-identity.ts
+init_activation_ledger_topology();
 import { resolve as resolve5 } from "node:path";
 function issueRoot(value) {
   const normalized = value.replaceAll("\\", "/");
@@ -13095,7 +13143,8 @@ function classifyPostAdmissionFailure(input) {
       return {
         cause: error.knownCause,
         diagnostic: error.message || error.name || "unrecognized exception",
-        identity
+        identity,
+        ...error.details === void 0 ? {} : { details: error.details }
       };
     }
     if (error instanceof Error) {
@@ -13114,10 +13163,12 @@ function classifyPostAdmissionFailure(input) {
   if (input.knownCause !== void 0) {
     const fallback = input.knownCause === "provider" ? "provider failure" : input.knownCause === "session" ? "session unreadable" : input.knownCause === "output" ? "Judge Role run completed without a lawful typed terminal result" : `judge role run failed (${input.knownCause})`;
     const diagnostic = input.knownDiagnostic !== void 0 && input.knownDiagnostic.trim() !== "" ? input.knownDiagnostic : conciseChildDiagnostic(input.stderr, fallback);
+    const { code: _knownCode, timedOut: _knownTimedOut, ...knownDetails } = input.knownDetails ?? {};
     return {
       cause: input.knownCause,
       diagnostic,
       details: {
+        ...knownDetails,
         code: input.code,
         ...input.timedOut ? { timedOut: true } : {}
       },
@@ -13159,8 +13210,17 @@ function classifyPostAdmissionFailure(input) {
     details: { code: input.code }
   };
 }
+function explicitInternalKnownFailureClassificationInput(failure) {
+  if (failure === void 0) return {};
+  return {
+    knownCause: failure.cause,
+    ...failure.identity === void 0 ? {} : { knownIdentity: failure.identity },
+    ...failure.diagnostic === void 0 ? {} : { knownDiagnostic: failure.diagnostic },
+    ...failure.details === void 0 ? {} : { knownDetails: failure.details }
+  };
+}
 function isMissingPathError2(error) {
-  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 function sessionReadFailure(error, fallbackMessage) {
   if (error instanceof SyntaxError) {
@@ -13200,7 +13260,29 @@ async function readBoundSessionEntries(sessionFile) {
   return entries;
 }
 function extractSessionProviderStop(entries) {
+  let attemptStart = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "message" && entry.message?.role === "user") {
+      attemptStart = i;
+      break;
+    }
+  }
+  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
+    const response = isRecord4(entry.data) && isRecord4(entry.data.response) ? entry.data.response : void 0;
+    if (response?.role === "assistant" && response.stopReason === "error") {
+      return {
+        stopReason: "error",
+        ...typeof response.errorMessage === "string" && response.errorMessage.trim() !== "" ? { errorMessage: response.errorMessage } : {},
+        ...typeof response.provider === "string" && response.provider.trim() !== "" ? { provider: response.provider } : {},
+        ...typeof response.model === "string" && response.model.trim() !== "" ? { model: response.model } : {}
+      };
+    }
+    break;
+  }
+  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
@@ -13221,6 +13303,91 @@ async function readSessionProviderStop(sessionFile) {
     return extractSessionProviderStop(entries);
   } catch {
     return void 0;
+  }
+}
+async function readBoundAuditorKnownFailure(sessionFile) {
+  let parentEntries;
+  try {
+    parentEntries = await readBoundSessionEntries(sessionFile);
+  } catch (error) {
+    if (isMissingPathError2(error)) return void 0;
+    throw sessionReadFailure(error, "failed to read parent session for auditor binding");
+  }
+  const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
+  if (parentId === void 0) return void 0;
+  let latestParentUserIndex = -1;
+  for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
+    if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
+      latestParentUserIndex = i;
+      break;
+    }
+  }
+  const childDirectory = join7(dirname5(sessionFile), "auditor-roles");
+  let names;
+  try {
+    names = await readdir3(childDirectory);
+  } catch (error) {
+    if (isMissingPathError2(error)) return void 0;
+    throw sessionReadFailure(error, "failed to read bound auditor session directory");
+  }
+  for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
+    let entries;
+    try {
+      entries = await readBoundSessionEntries(join7(childDirectory, file));
+    } catch (error) {
+      throw sessionReadFailure(error, "failed to read discovered auditor session");
+    }
+    const header = entries.find((entry) => entry.type === "session");
+    if (!isRecord4(header) || header.parentSession !== sessionFile) continue;
+    const bindingEntry = entries.find((entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE);
+    const bindingParent = isRecord4(bindingEntry?.data) && isRecord4(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
+    const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
+    const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
+    if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
+    const stop = extractSessionProviderStop(entries);
+    if (stop === void 0) continue;
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const entry = entries[i];
+      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord4(entry.data)) continue;
+      const parent = isRecord4(entry.data.parent) ? entry.data.parent : void 0;
+      const failure = isRecord4(entry.data.failure) ? entry.data.failure : void 0;
+      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider") continue;
+      const identity = isRecord4(failure.identity) ? failure.identity : void 0;
+      return {
+        cause: "provider",
+        ...identity === void 0 ? {} : { identity: {
+          ...typeof identity.name === "string" ? { name: identity.name } : {},
+          ...typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}
+        } },
+        ...typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {},
+        ...isRecord4(failure.details) ? { details: failure.details } : {}
+      };
+    }
+    const primary = knownFailureFromProviderStop(stop);
+    return {
+      ...primary,
+      details: {
+        ...stop.provider === void 0 ? {} : { provider: stop.provider },
+        ...stop.model === void 0 ? {} : { model: stop.model },
+        secondaryEvidence: "unavailable"
+      }
+    };
+  }
+  return void 0;
+}
+async function resolveAuditedRunnerKnownFailure(input) {
+  if (input.runner !== void 0) return input.runner;
+  const parentStop = await readSessionProviderStop(input.sessionFile);
+  if (parentStop !== void 0) return knownFailureFromProviderStop(parentStop);
+  try {
+    return await readBoundAuditorKnownFailure(input.sessionFile) ?? input.credential;
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
+    return {
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name
+    };
   }
 }
 function isRecord4(value) {
@@ -15209,6 +15376,9 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
   if (failure.identity?.code !== void 0) {
     decisiveFacts.errorCode = failure.identity.code;
   }
+  if (failure.details !== void 0) {
+    decisiveFacts.secondaryEvidence = failure.details;
+  }
   if (options.resume !== void 0) {
     const publicDiagnostic = redactExactRunId(failure.diagnostic, admitted.runId);
     const publicFacts = redactDecisiveFactsForPublicTerminal(
@@ -15328,15 +15498,13 @@ function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
 }
 async function presentControlledFailure(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
-    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
-    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
     ...session === void 0 ? {} : { session }
   });
   const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
@@ -15451,23 +15619,19 @@ async function dispatchAdmittedJudge(input) {
         terminal: auditIncomplete
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure(
       admitted,
       {
         timedOut: result2.timedOut,
         code: result2.code,
         stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : {
-          knownCause: knownFailure.cause,
-          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
-        }
+        ...knownFailure === void 0 ? {} : { knownFailure }
       },
       io
     );
@@ -16161,15 +16325,13 @@ function buildDoctorActivationExtraArgs(admitted, options = {}) {
 }
 async function presentControlledFailure4(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
-    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
-    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
     ...session === void 0 ? {} : { session }
   });
   await markRunTerminal(admitted.runDirectory).catch(() => void 0);
@@ -16265,23 +16427,19 @@ async function dispatchAdmittedDoctor(input) {
         terminal: auditIncomplete
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure4(
       admitted,
       {
         timedOut: result2.timedOut,
         code: result2.code,
         stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : {
-          knownCause: knownFailure.cause,
-          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
-        }
+        ...knownFailure === void 0 ? {} : { knownFailure }
       },
       io
     );
@@ -16419,15 +16577,13 @@ function buildFixerResumeActivationExtraArgs(admitted, options) {
 }
 async function presentControlledFailure5(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
-    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
-    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
     ...session === void 0 ? {} : { session }
   });
   const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
@@ -16547,23 +16703,19 @@ async function dispatchAdmittedFixer(input) {
         terminal: auditIncomplete
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure5(
       admitted,
       {
         timedOut: result2.timedOut,
         code: result2.code,
         stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : {
-          knownCause: knownFailure.cause,
-          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
-        }
+        ...knownFailure === void 0 ? {} : { knownFailure }
       },
       io
     );
@@ -16617,8 +16769,7 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
         timedOut: false,
         code: null,
         stderr: "",
-        thrown: error,
-        knownCause: "activation"
+        thrown: error
       },
       io
     );
@@ -16685,8 +16836,7 @@ async function runPublicFixerResume(argv, env, io) {
         timedOut: false,
         code: null,
         stderr: "",
-        thrown: error,
-        knownCause: "activation"
+        thrown: error
       },
       io
     );
@@ -16709,6 +16859,7 @@ async function runPublicFixerResume(argv, env, io) {
 // src/public-cli/merger-run.ts
 import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
 import { join as join13, resolve as resolve6 } from "node:path";
+init_activation_ledger_topology();
 function buildModelArgs6(model) {
   if (model === void 0) return [];
   return [
@@ -17216,15 +17367,13 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
 }
 async function presentControlledFailure7(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
-    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
-    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
     ...session === void 0 ? {} : { session }
   });
   const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted);
@@ -17344,23 +17493,19 @@ async function dispatchAdmittedReviewer(input) {
         terminal: auditIncomplete
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure7(
       admitted,
       {
         timedOut: result2.timedOut,
         code: result2.code,
         stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : {
-          knownCause: knownFailure.cause,
-          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
-        }
+        ...knownFailure === void 0 ? {} : { knownFailure }
       },
       io
     );
@@ -17413,8 +17558,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
         timedOut: false,
         code: null,
         stderr: "",
-        thrown: error,
-        knownCause: "activation"
+        thrown: error
       },
       io
     );
@@ -17481,8 +17625,7 @@ async function runPublicReviewerResume(argv, env, io) {
         timedOut: false,
         code: null,
         stderr: "",
-        thrown: error,
-        knownCause: "activation"
+        thrown: error
       },
       io
     );

@@ -7,7 +7,6 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
-  knownFailureFromProviderStop,
   runExplicitInternalActivation,
   type ExplicitInternalKnownFailure,
   type ExplicitInternalPiRunner,
@@ -50,7 +49,8 @@ import {
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   presentStructuralRejection,
-  readSessionProviderStop,
+  resolveAuditedRunnerKnownFailure,
+  explicitInternalKnownFailureClassificationInput,
   settleJudgeFailureTerminalResult,
   trySettleJudgeTerminalResult,
   trySettleComplianceAuditIncompleteTerminalResult,
@@ -188,12 +188,7 @@ async function presentControlledFailure(
     code: number | null;
     stderr: string;
     thrown?: unknown;
-    knownCause?: ControlledFailureCause;
-    knownIdentity?: {
-      readonly name?: string;
-      readonly code?: string | number;
-    };
-    knownDiagnostic?: string;
+    knownFailure?: ExplicitInternalKnownFailure;
   },
   io: CliIo,
 ): Promise<{
@@ -206,7 +201,7 @@ async function presentControlledFailure(
   const session =
     !hasThrown &&
     !failureInput.timedOut &&
-    failureInput.knownCause === undefined
+    failureInput.knownFailure === undefined
       ? await inspectJudgeSession(admitted.sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
@@ -214,15 +209,7 @@ async function presentControlledFailure(
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...(failureInput.knownCause === undefined
-      ? {}
-      : { knownCause: failureInput.knownCause }),
-    ...(failureInput.knownIdentity === undefined
-      ? {}
-      : { knownIdentity: failureInput.knownIdentity }),
-    ...(failureInput.knownDiagnostic === undefined
-      ? {}
-      : { knownDiagnostic: failureInput.knownDiagnostic }),
+    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
     ...(session === undefined ? {} : { session }),
   });
 
@@ -368,36 +355,22 @@ async function dispatchAdmittedJudge(input: {
     }
 
     // Production-owned typed cause channel — never inferred from stderr wording.
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile,
-    );
-    const sessionProviderFailure =
-      sessionProviderStop === undefined
-        ? undefined
-        : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure =
       result.timedOut || result.code !== 0
         ? knownFailureForMissingProviderCredential(env.model, env.credentials)
         : undefined;
-    const knownFailure =
-      result.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure,
+    });
     return await presentControlledFailure(
       admitted,
       {
         timedOut: result.timedOut,
         code: result.code,
         stderr: result.stderr,
-        ...(knownFailure === undefined
-          ? {}
-          : {
-              knownCause: knownFailure.cause,
-              ...(knownFailure.identity === undefined
-                ? {}
-                : { knownIdentity: knownFailure.identity }),
-              ...(knownFailure.diagnostic === undefined
-                ? {}
-                : { knownDiagnostic: knownFailure.diagnostic }),
-            }),
+        ...(knownFailure === undefined ? {} : { knownFailure }),
       },
       io,
     );
