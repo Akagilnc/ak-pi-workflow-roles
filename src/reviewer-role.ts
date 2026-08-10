@@ -5,11 +5,12 @@ import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
+import { appendActiveSessionCustomEntry } from "./compliance-transport.ts";
 import { REVIEWER_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";
 import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
-import { assembleRuntimeReviewerReceipt, type RuntimeReviewerReceiptV2 } from "./reviewer-settlement.ts";
+import { assembleRuntimeReviewerReceipt } from "./reviewer-settlement.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
@@ -21,15 +22,6 @@ const reviewerOutputVariants = Type.Union([
   Type.Object({ status: Type.Literal("refused", { description: "Reviewer dispatch was lawfully refused." }), diagnostic: Type.String({ minLength: 1, description: "Diagnostic explaining the refusal." }) }, { additionalProperties: false }),
 ]);
 const reviewerOutputSchema = openToolObjectFromUnion(reviewerOutputVariants);
-/** @deprecated Materials no longer hand-delivered to auditor (#233). */
-export type ReviewerAuditInput = {
-  soul: string;
-  canonicalSkill: string;
-  record: ReviewerExecutionRecord;
-  candidate: RuntimeReviewerReceiptV2;
-  /** Optional caller prose retained only as provenance-marked audit evidence. */
-  callerProvenance?: string;
-};
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadCanonicalSkillBinding(name: "code-review"): Promise<AnyCanonicalSkillBinding>;
@@ -143,9 +135,14 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           // First-record-then-audit: candidate lands on the parent session books
           // before the auditor is spawned (zero hand-delivery).
           try {
-            (toolCtx.sessionManager as unknown as { appendCustomEntry(type: string, data?: unknown): string }).appendCustomEntry(
+            appendActiveSessionCustomEntry(
+              toolCtx,
               REVIEWER_CANDIDATE_ENTRY_TYPE,
               { version: 1, candidate },
+              {
+                unavailable: "reviewer candidate retention is unavailable",
+                failed: "reviewer candidate retention failed",
+              },
             );
           } catch (error) {
             hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id);

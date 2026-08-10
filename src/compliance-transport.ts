@@ -1,7 +1,10 @@
 import type { Api, AssistantMessage, Context, Model, Usage } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { runAuditorRole, type AuditorCompletion } from "./auditor-role.ts";
+import {
+  executeAuditorChild,
+  type AuditorCompletion,
+} from "./evidence-child-executor.ts";
 import type { DossierObservation } from "./dossier-resolution.ts";
 
 export type ComplianceCompletion = AuditorCompletion;
@@ -51,11 +54,39 @@ export type AuditorParentAttemptBinding = {
 export class ComplianceResponseRetentionError extends Error {
   constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
 }
-type ActiveSessionResponseAppender = { appendCustomEntry(customType: string, data?: unknown): string };
-function retainComplianceResponse(context: ExtensionContext, response: AssistantMessage): void {
+export type ActiveSessionResponseAppender = { appendCustomEntry(customType: string, data?: unknown): string };
+/** Unique owner for session custom-entry append with availability check and typed failure. */
+export function appendActiveSessionCustomEntry(
+  context: ExtensionContext,
+  customType: string,
+  data?: unknown,
+  labels: { unavailable?: string; failed?: string } = {},
+): string {
   const manager = context.sessionManager as unknown as Partial<ActiveSessionResponseAppender> | undefined;
-  if (typeof manager?.appendCustomEntry !== "function") throw new ComplianceResponseRetentionError("compliance response retention is unavailable");
-  try { manager.appendCustomEntry(COMPLIANCE_RESPONSE_ENTRY_TYPE, { version: 1, response }); } catch (error) { throw new ComplianceResponseRetentionError("compliance response retention failed", { cause: error }); }
+  if (typeof manager?.appendCustomEntry !== "function") {
+    throw new ComplianceResponseRetentionError(
+      labels.unavailable ?? "session custom entry append is unavailable",
+    );
+  }
+  try {
+    return manager.appendCustomEntry(customType, data);
+  } catch (error) {
+    throw new ComplianceResponseRetentionError(
+      labels.failed ?? "session custom entry append failed",
+      { cause: error },
+    );
+  }
+}
+function retainComplianceResponse(context: ExtensionContext, response: AssistantMessage): void {
+  appendActiveSessionCustomEntry(
+    context,
+    COMPLIANCE_RESPONSE_ENTRY_TYPE,
+    { version: 1, response },
+    {
+      unavailable: "compliance response retention is unavailable",
+      failed: "compliance response retention failed",
+    },
+  );
 }
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 export function readComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision {
@@ -94,7 +125,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     if (call === undefined || call.type !== "toolCall") throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
     return readComplianceCandidate(call.arguments, response.usage);
   }
-  const receipt = await runAuditorRole({
+  const receipt = await executeAuditorChild({
     tool: options.tool,
     systemPrompt: options.systemPrompt,
     prompt,

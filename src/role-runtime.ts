@@ -34,7 +34,7 @@ import {
   createCollectorRoleRuntime,
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
-import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
+import { createDoctorRoleRuntime } from "./doctor-role.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -48,14 +48,11 @@ import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, p
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
-  type JudgeAdjudicativeVerdict,
-  type SoulAuditInput,
   type SoulAuditResult,
 } from "./judge-role.ts";
 import {
   createReviewerRoleRuntime,
   type ReviewerActivation,
-  type ReviewerAuditInput,
 } from "./reviewer-role.ts";
 import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
@@ -134,28 +131,24 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
-export { runAuditorRole } from "./auditor-role.ts";
-export type { AuditorCompletion, AuditorDecisionTool } from "./auditor-role.ts";
+export { runAuditorRole, executeAuditorChild } from "./evidence-child-executor.ts";
+export type { AuditorCompletion, AuditorDecisionTool } from "./evidence-child-executor.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
   DOCTOR_OUTPUT_TOOL_NAME,
-  type DoctorAuditInput,
 } from "./doctor-role.ts";
 export type { DoctorCase, DoctorCaseCost, DoctorSubmission, DoctorOutput, DoctorFinding } from "./doctor-contracts.ts";
 export { validateDoctorSubmissionShape, validateDoctorOutput, DoctorEvidenceStore } from "./doctor-contracts.ts";
 export { loadDoctorCase } from "./doctor-evidence.ts";
 export {
   JUDGE_OUTPUT_TOOL_NAME,
-  type JudgeAdjudicativeVerdict,
   type JudgeVerdict,
-  type SoulAuditInput,
   type SoulAuditResult,
 } from "./judge-role.ts";
 export {
   AGENT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
-  type ReviewerAuditInput,
   type ReviewerIntent,
 } from "./reviewer-role.ts";
 export {
@@ -583,7 +576,6 @@ export function createRoleRuntimeExtension(
       pi,
       {
         loadSoul: dependencies.loadJudgeSoul,
-        transcriptFromContext: dependencies.transcriptFromContext,
         auditSoulCompliance: dependencies.auditSoulCompliance,
       },
       hostActions,

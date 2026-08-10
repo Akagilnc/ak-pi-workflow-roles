@@ -9,7 +9,7 @@ import { createAgentSession, DefaultResourceLoader, SettingsManager, } from "@ea
  * Single createAgentSession + Settings construction for all in-process children.
  */
 export async function openInProcessAgentSession(options) {
-    const settings = SettingsManager.inMemory(options.settings ?? { compaction: { enabled: false }, retry: { enabled: false } });
+    const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
     const createArgs = {
         cwd: options.cwd,
         model: options.model,
@@ -21,14 +21,10 @@ export async function openInProcessAgentSession(options) {
         ...(options.tools === undefined ? {} : { tools: options.tools }),
         ...(options.customTools === undefined ? {} : { customTools: options.customTools }),
     };
-    if (options.agentDir !== undefined || options.systemPrompt !== undefined) {
-        const { mkdtemp } = await import("node:fs/promises");
-        const { tmpdir } = await import("node:os");
-        const { join } = await import("node:path");
-        const agentDir = options.agentDir ?? (await mkdtemp(join(tmpdir(), "ak-in-process-child-")));
+    if (options.agentDir !== undefined) {
         const loader = new DefaultResourceLoader({
             cwd: options.cwd,
-            agentDir,
+            agentDir: options.agentDir,
             settingsManager: settings,
             noExtensions: true,
             noSkills: true,
@@ -38,8 +34,11 @@ export async function openInProcessAgentSession(options) {
             ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
         });
         await loader.reload();
-        createArgs.agentDir = agentDir;
+        createArgs.agentDir = options.agentDir;
         createArgs.resourceLoader = loader;
+    }
+    else if (options.systemPrompt !== undefined) {
+        throw new Error("openInProcessAgentSession requires agentDir when systemPrompt is set");
     }
     const { session } = await createAgentSession(createArgs);
     return {

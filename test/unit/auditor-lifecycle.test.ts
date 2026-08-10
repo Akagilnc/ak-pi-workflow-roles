@@ -16,7 +16,7 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 import {
   AuditorTurnLimitError,
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
-} from "../../src/auditor-role.ts";
+} from "../../src/evidence-child-executor.ts";
 import { createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 import {
   PackageOwnedToolIdleTimeoutError,
@@ -65,13 +65,11 @@ function parentWithJudgeSubjects(cwd: string): SessionManager {
 }
 
 test("auditor source has no tools allowlist and no second active-tools cage", () => {
-  const source = readFileSync(new URL("../../src/auditor-role.ts", import.meta.url), "utf8");
+  // Class 3 retires this source-text gate in favor of behavior assertions.
   const helper = readFileSync(new URL("../../src/evidence-child-executor.ts", import.meta.url), "utf8");
-  for (const text of [source, helper]) {
-    assert.equal(/\btools:\s*\[/.test(text), false, "must not hardcode a tools allowlist");
-    assert.equal(/setActiveTools\s*\(/.test(text), false, "must not install a second active-tools cage");
-    assert.equal(/bashCommands/.test(text), false, "must not cage bashCommands");
-  }
+  assert.equal(/\btools:\s*\[/.test(helper), false, "must not hardcode a tools allowlist");
+  assert.equal(/setActiveTools\s*\(/.test(helper), false, "must not install a second active-tools cage");
+  assert.equal(/bashCommands/.test(helper), false, "must not cage bashCommands");
 });
 
 test("auditor gathers evidence without projected materials and submits one decision", async () => {

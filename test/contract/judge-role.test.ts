@@ -400,7 +400,6 @@ test("focused Judge controller registers output without narrowing host tools", a
     harness.pi as ExtensionAPI,
     {
       loadSoul: async () => "  JUDGE LAW  ",
-      transcriptFromContext: () => "record",
       auditSoulCompliance: async () => ({ status: "pass" }),
     },
     { failInfrastructure(error) { throw error; } },
@@ -494,7 +493,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           harness.pi as ExtensionAPI,
           {
             loadSoul: async () => "judge",
-            transcriptFromContext: () => "record",
             auditSoulCompliance: async () => ({ status: "pass", usage }),
           },
           { failInfrastructure(error) { throw error; } },

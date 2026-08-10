@@ -16,6 +16,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 
 export type OpenInProcessAgentSessionOptions = {
   readonly cwd: string;
+  /** Required when loading a resource loader / systemPrompt. Callers own scratch lifecycle. */
   readonly agentDir?: string;
   readonly model: Model<Api>;
   readonly modelRuntime: ModelRuntime;
@@ -26,7 +27,6 @@ export type OpenInProcessAgentSessionOptions = {
   readonly noTools?: "all" | "builtin";
   /** Optional allowlist — omit for unrestricted Pi defaults (ADR 0064). */
   readonly tools?: string[];
-  readonly settings?: { compaction?: { enabled: boolean }; retry?: { enabled: boolean } };
 };
 
 /**
@@ -35,9 +35,7 @@ export type OpenInProcessAgentSessionOptions = {
 export async function openInProcessAgentSession(
   options: OpenInProcessAgentSessionOptions,
 ): Promise<{ session: Awaited<ReturnType<typeof createAgentSession>>["session"]; dispose(): void }> {
-  const settings = SettingsManager.inMemory(
-    options.settings ?? { compaction: { enabled: false }, retry: { enabled: false } },
-  );
+  const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
 
   const createArgs: Parameters<typeof createAgentSession>[0] = {
     cwd: options.cwd,
@@ -51,14 +49,10 @@ export async function openInProcessAgentSession(
     ...(options.customTools === undefined ? {} : { customTools: options.customTools }),
   };
 
-  if (options.agentDir !== undefined || options.systemPrompt !== undefined) {
-    const { mkdtemp } = await import("node:fs/promises");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-    const agentDir = options.agentDir ?? (await mkdtemp(join(tmpdir(), "ak-in-process-child-")));
+  if (options.agentDir !== undefined) {
     const loader = new DefaultResourceLoader({
       cwd: options.cwd,
-      agentDir,
+      agentDir: options.agentDir,
       settingsManager: settings,
       noExtensions: true,
       noSkills: true,
@@ -68,8 +62,10 @@ export async function openInProcessAgentSession(
       ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
     });
     await loader.reload();
-    createArgs.agentDir = agentDir;
+    createArgs.agentDir = options.agentDir;
     createArgs.resourceLoader = loader;
+  } else if (options.systemPrompt !== undefined) {
+    throw new Error("openInProcessAgentSession requires agentDir when systemPrompt is set");
   }
 
   const { session } = await createAgentSession(createArgs);
