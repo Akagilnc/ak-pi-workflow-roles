@@ -1,11 +1,11 @@
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.js";
-import { isReviewerPromptIdentity, sameReviewerPromptIdentity } from "./reviewer-prompt-identity.js";
+import { isReviewerPromptText, sameReviewerPromptText } from "./reviewer-prompt-identity.js";
 import { REVIEWER_PREFLIGHT_VIOLATIONS, } from "./reviewer-dispatch.js";
 export function projectAcceptedDispatch(dispatch) {
     return {
         source: "reviewer-dispatch", type: "accepted", identity: dispatch.identity,
         recipe: dispatch.recipe, input: dispatch.input, target: dispatch.targetSnapshot,
-        range: dispatch.range, bundle: dispatch.bundle, legs: dispatch.legs,
+        range: dispatch.range, legs: dispatch.legs,
     };
 }
 export function projectReviewerDispatchOutcome(ledger, dispatch, result) {
@@ -23,8 +23,8 @@ export function projectReviewerDispatchOutcome(ledger, dispatch, result) {
         if (actual === undefined)
             throw new Error(`Reviewer runner omitted ${leg.axis} result`);
         ledger.append(actual.status === "failed"
-            ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, diagnostic: actual.diagnostic, ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition }
-            : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, runtimeConstructionEvidence: actual.runtimeConstructionEvidence, workspaceDisposition: actual.workspaceDisposition });
+            ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, diagnostic: actual.diagnostic, workspaceDisposition: actual.workspaceDisposition }
+            : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, workspaceDisposition: actual.workspaceDisposition });
     }
 }
 function cloneFreeze(value) {
@@ -100,11 +100,11 @@ export function createReviewerExecutionLedger() {
             const axes = event.legs.map((leg) => leg.axis);
             if (axes[0] !== "standards" || (axes.length !== 1 && (axes.length !== 2 || axes[1] !== "spec")))
                 throw new Error("Accepted dispatch sibling axes disagree");
-            if (!isReviewerPromptIdentity(event.input.task))
-                throw new Error("Accepted task bytes, length, or SHA disagree");
+            if (!isReviewerPromptText(event.input.task))
+                throw new Error("Accepted task must be plain text");
             for (const leg of event.legs) {
-                if (!isReviewerPromptIdentity(leg.prompt))
-                    throw new Error("Accepted compiled prompt bytes, length, or SHA disagree");
+                if (!isReviewerPromptText(leg.prompt))
+                    throw new Error("Accepted compiled prompt must be plain text");
             }
             accepted = event;
             return;
@@ -136,13 +136,13 @@ export function createReviewerExecutionLedger() {
         const compiled = accepted.legs.find((leg) => leg.axis === event.axis);
         if (compiled === undefined)
             throw new Error(`Reviewer ${event.axis} was not an accepted leg`);
-        if (!sameReviewerPromptIdentity(event.prompt, compiled.prompt) || !isReviewerPromptIdentity(event.prompt))
-            throw new Error("Actual runner prompt does not exactly match compiled prompt bytes, length, and SHA");
+        if (!sameReviewerPromptText(event.prompt, compiled.prompt) || !isReviewerPromptText(event.prompt))
+            throw new Error("Actual runner prompt does not exactly match compiled prompt text");
         if (!sameReviewerPinnedTarget(event.target, accepted.target))
             throw new Error("Runner target does not match shared pinned target");
         if (event.status === "successful") {
-            if (typeof event.report !== "string" || event.report.length === 0 || event.failure !== undefined || event.runtimeConstructionEvidence === undefined)
-                throw new Error("Successful settlement requires a report and materialization evidence");
+            if (typeof event.report !== "string" || event.report.length === 0 || event.failure !== undefined)
+                throw new Error("Successful settlement requires a report");
         }
         else if (event.failure === undefined || event.report !== undefined) {
             throw new Error("Failed settlement requires a bounded failure classification and no report");

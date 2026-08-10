@@ -93,6 +93,9 @@ export function knownFailureForMissingProviderCredential(
   credentials: CredentialProviders | undefined,
 ): ExplicitInternalKnownFailure | undefined {
   if (model === undefined || credentials === undefined) return undefined;
+  // Only the public credential catalog is fail-closed here; offline/test providers
+  // are not represented in auth.json shape and must not be washed into MissingProviderCredential.
+  if (model.provider !== "openai-codex" && model.provider !== "xai") return undefined;
   if (!missingPublicProviderCredential(model.provider, credentials)) {
     return undefined;
   }
@@ -261,6 +264,24 @@ async function dispatchAdmittedJudge(input: {
 }> {
   const { admitted, env, io, extraArgs, lease } = input;
   try {
+    // Fail closed at the public credential seam before model dispatch: missing
+    // selected-provider auth must not be washed by ambient keys or zero-exit runs.
+    const missingCredential = knownFailureForMissingProviderCredential(
+      env.model,
+      env.credentials,
+    );
+    if (missingCredential !== undefined) {
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: 1,
+          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
+          knownFailure: missingCredential,
+        },
+        io,
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     // Attempt-scoped observation: drop any prior dispatch's 429 evidence so only
     // the current initial/resume attempt can qualify v1 resume.

@@ -5,7 +5,7 @@ import { InMemoryCredentialStore, type Api, type Model, type Provider, type Usag
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { childSessionManager } from "./activation-ledger-session.ts";
 import { prepareComplianceDispatch } from "./compliance-transport.ts";
-import type { ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 
 export type EvidenceChildFaultPoint = "child.reload" | "child.session";
 type ClassifiedReviewerError = Error & Readonly<{ evidenceChildFailure: "provider" | "child"; evidenceChildOriginal?: unknown }>;
@@ -114,10 +114,10 @@ export type EvidenceChildExecuteOptions = Readonly<{
 
 export async function executeEvidenceChild(
   workspace: string,
-  prompt: ReviewerPromptIdentity,
+  prompt: ReviewerPromptText,
   context: ExtensionContext,
   options: EvidenceChildExecuteOptions = {},
-): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptIdentity }> {
+): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptText }> {
   const signal = options.signal;
   const fault = options.fault;
   const childConfigDir = await mkdtemp(
@@ -177,8 +177,9 @@ export async function executeEvidenceChild(
   let primaryFailure: unknown;
   try {
     const delivered = prompt;
+    // delivered is plain prompt text (ADR 0031)
     try {
-      await session.prompt(delivered.text);
+      await session.prompt(delivered);
     } catch (error) {
       throw classifiedError(error, "provider");
     }

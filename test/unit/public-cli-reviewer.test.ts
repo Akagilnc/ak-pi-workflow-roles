@@ -23,7 +23,6 @@ import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
-import { compileMechanicalBundle, projectMechanicalBundleIdentity } from "../../src/reviewer-construction.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -84,17 +83,6 @@ function lawfulReviewerReceipt(
   status: "completed" | "refused" = "completed",
 ) {
   const skillText = "package code-review skill body\n";
-  const bundle = compileMechanicalBundle({
-    canonicalSkill: skillText,
-    task: "task",
-    range: {
-      base: "a",
-      target: "b",
-      diffCommand: "git diff a...b",
-      diffSha256: "1".repeat(64),
-      commits: ["b"],
-    },
-  }).bundle;
   const prompt = (axis: string) => ({ text: `${axis} prompt\n` });
   const reports = Object.fromEntries(
     axes.map((axis) => [axis, { text: `${axis} report` }]),
@@ -106,21 +94,6 @@ function lawfulReviewerReceipt(
         status: "successful",
         prompt: prompt(axis),
         workspaceDisposition: "deleted",
-        runtimeConstructionEvidence: {
-          leg: axis,
-          workspaceIdentity: `${axis}-workspace`,
-          manifestSha256: bundle.manifestSha256,
-          entries: bundle.entries.map(
-            ({ id, relativeClonePath, utf8Length, sha256 }) => ({
-              id,
-              relativeClonePath,
-              utf8Length,
-              sha256,
-              verified: true,
-              readable: true,
-            }),
-          ),
-        },
       },
     ]),
   );
@@ -136,7 +109,7 @@ function lawfulReviewerReceipt(
     outcomes,
     identities: {
       canonicalSkill: { text: skillText },
-      construction: { recipe: "reviewer-common-bundle-v1", bundle: projectMechanicalBundleIdentity(bundle) },
+      construction: { recipe: "reviewer-common-bundle-v1" },
       target: {
         repositoryRoot: "/repo",
         objectFormat: "sha1",
@@ -155,7 +128,7 @@ test("parseReviewerArgv accepts project/base and rejects Reviewer attachments", 
 
   assert.throws(
     () => parseReviewerArgv(["Review the branch since main."]),
-    /reviewer requires --base.*canonical code-review.*fixed point/i,
+    (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
   );
   assert.deepEqual(
     parseReviewerArgv([

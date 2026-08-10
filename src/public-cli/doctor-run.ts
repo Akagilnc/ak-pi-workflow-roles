@@ -169,6 +169,22 @@ async function dispatchAdmittedDoctor(input: {
 }> {
   const { admitted, env, io, extraArgs, lease } = input;
   try {
+    const missingCredential = knownFailureForMissingProviderCredential(
+      env.model,
+      env.credentials,
+    );
+    if (missingCredential !== undefined) {
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: 1,
+          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
+          knownFailure: missingCredential,
+        },
+        io,
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 

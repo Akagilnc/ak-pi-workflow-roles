@@ -334,7 +334,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   const root = packageRoot;
   const importSrc = (rel: string) => import(resolve(root, rel));
   {
-      const [judge, fixer, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, promptIdentity, terminating] = await Promise.all([
+      const [judge, fixer, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
         importSrc("src/judge-auditor.ts"),
         importSrc("src/fixer-auditor.ts"),
         importSrc("src/reviewer-auditor.ts"),
@@ -343,7 +343,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         importSrc("src/worker-role.ts"),
         importSrc("src/reviewer-role.ts"),
         importSrc("src/doctor-role.ts"),
-        importSrc("src/reviewer-prompt-identity.ts"),
         importSrc("src/package-contracts/terminating-tools.ts"),
       ]);
 
@@ -489,7 +488,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
             loadCapabilities: async () => capabilities,
             loadCanonicalSkillBinding: async () => ({
               name: "code-review",
-              snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: promptIdentity.reviewerPromptIdentity(skill) },
+              snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: Object.freeze({ text: skill }) },
               invocation: (request: string) => request,
               captureExpansion: () => undefined,
             }),

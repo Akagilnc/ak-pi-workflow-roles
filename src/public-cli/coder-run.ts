@@ -271,6 +271,25 @@ async function dispatchAdmittedCoder(input: {
 }> {
   const { admitted, env, io, extraArgs, lease, methodProvenance } = input;
   try {
+    const missingCredential = knownFailureForMissingProviderCredential(
+      env.model,
+      env.credentials,
+    );
+    if (missingCredential !== undefined) {
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: 1,
+          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
+          knownCause: missingCredential.cause,
+          ...(missingCredential.identity === undefined
+            ? {}
+            : { knownIdentity: missingCredential.identity }),
+        },
+        io,
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
