@@ -76,6 +76,33 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     await mkdir(piAgentDir, { recursive: true });
     const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
 
+    for (const name of ["pi-ai", "pi-coding-agent"]) {
+      await assert.rejects(
+        () => access(resolve(installed.npmRoot, "node_modules", "@earendil-works", name)),
+        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+        `${name} must be supplied by the real Pi host, not its package npm root`,
+      );
+    }
+    const source = `npm:@akagilnc/pi-workflow-roles@file:${installed.pack.tarball}`;
+    const repeated = await runPiSubprocess(["install", source], {
+      cwd: home,
+      timeoutMs: 120_000,
+      env: {
+        ...process.env,
+        HOME: home,
+        PI_CODING_AGENT_DIR: piAgentDir,
+        PI_OFFLINE: "1",
+      },
+    });
+    assert.equal(repeated.timedOut, false, repeated.stderr);
+    assert.equal(repeated.code, 0, repeated.stderr);
+    for (const name of ["pi-ai", "pi-coding-agent"]) {
+      await assert.rejects(
+        () => access(resolve(installed.npmRoot, "node_modules", "@earendil-works", name)),
+        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+      );
+    }
+
     await access(installed.akRoleBin);
     const realBin = await realpath(installed.akRoleBin);
     assert.equal(realBin.includes("@akagilnc/pi-workflow-roles"), true);

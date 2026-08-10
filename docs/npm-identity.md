@@ -98,14 +98,8 @@ Read-only probes only; no `npm publish`.
 - Project license: **Apache-2.0** (`package.json` `"license": "Apache-2.0"` + root `LICENSE` = complete Apache License 2.0 text).
 - Matt Pocock skills attribution: **separate** third-party notice in `THIRD_PARTY_NOTICES.md` (MIT). Not project license authority; not a dual-license expression.
 
-## Peer dependency ranges
+## Host peer dependencies
 
-Explicit ranges replace upstream Pi docs' `"*"` recommendation for bundled peers. Ticket #104 / #11 Finding 4 require upper-bound discipline because Pi/TypeBox minor bumps have broken extension APIs.
+Pi supplies `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `typebox`. Following Pi's package contract, all three are optional `"*"` peers; ordinary npm install therefore does not materialize a private Pi runtime. Development and typecheck use snapshots `pi-ai@0.84.1`, `pi-coding-agent@0.84.1`, and `typebox@1.3.8`.
 
-| peer | range | executable matrix |
-| --- | --- | --- |
-| `@earendil-works/pi-coding-agent` | `>=0.83.0 <=0.83.0` | `0.83.0` |
-| `@earendil-works/pi-ai` | `>=0.83.0 <=0.83.0` | `0.83.0` |
-| `typebox` | `>=1.3.7 <=1.3.8` | `1.3.7`, `1.3.8` |
-
-Distribution remains one Pi-managed npm copy (`pi install npm:<package>`), not a second global install. Packed metadata is verified via the repository `npm pack` seam (`getSharedIsolatedPack`). TypeBox matrix endpoints are executed by cold-installing that packed tarball with each pin as the consumer’s top-level `typebox` peer (`test/package/npm-identity-metadata.test.ts`), not by inspecting Pi’s nested dependency copies.
+The packed-artifact npm seam and a real `pi install` in an isolated home verify that host peers remain absent from the package install tree, including after a repeated install. Upgrade evidence is maintained in `docs/pi-0.84.1-capability-audit.md`.
