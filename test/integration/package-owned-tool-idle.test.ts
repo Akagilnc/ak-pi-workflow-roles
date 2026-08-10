@@ -23,17 +23,12 @@ import {
 } from "../../src/package-owned-tool-idle.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import {
+  flushEventLoopTurns,
   withActivationHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 
 const PACKAGE_TOOL = "ak_package_owned_idle";
-
-async function flushMicrotasks(times = 20): Promise<void> {
-  for (let i = 0; i < times; i += 1) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-}
 
 function toolResults(session: { messages: readonly { role?: string; toolName?: string }[] }, name: string) {
   return session.messages.filter(
@@ -132,16 +127,16 @@ test(
           },
         );
 
-        await flushMicrotasks();
+        await flushEventLoopTurns();
         assert.equal(executeCount, 1, "tool execute starts once");
 
         t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS - 1);
-        await flushMicrotasks();
+        await flushEventLoopTurns();
         assert.equal(toolResults(session, PACKAGE_TOOL).length, 0, "still pending one ms before budget");
         assert.equal(promptSettled, false, "session still awaits the tool");
 
         t.mock.timers.tick(1);
-        await flushMicrotasks(50);
+        await flushEventLoopTurns(50);
         assert.equal(
           toolResults(session, PACKAGE_TOOL).length,
           1,
@@ -224,17 +219,17 @@ test(
       ]);
 
       const promptDone = session.prompt("exercise progress reset");
-      await flushMicrotasks();
+      await flushEventLoopTurns();
       assert.ok(onUpdateRef, "tool received onUpdate");
 
       t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS - 1);
-      await flushMicrotasks();
+      await flushEventLoopTurns();
       assert.equal(toolResults(session, PACKAGE_TOOL).length, 0);
 
       // Empty/non-producing update must not reset the clock.
       onUpdateRef!({ content: [], details: undefined });
       t.mock.timers.tick(1);
-      await flushMicrotasks(20);
+      await flushEventLoopTurns(20);
       assert.equal(
         toolResults(session, PACKAGE_TOOL).length,
         1,
@@ -278,16 +273,16 @@ test(
       ]);
 
       const promptDone = session.prompt("exercise details-only reset");
-      await flushMicrotasks();
+      await flushEventLoopTurns();
       assert.ok(onUpdateRef, "tool received onUpdate");
 
       t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS - 1);
-      await flushMicrotasks();
+      await flushEventLoopTurns();
       onUpdateRef!({ content: [], details: { elapsedMs: 60_000 } });
-      await flushMicrotasks();
+      await flushEventLoopTurns();
 
       t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS - 1);
-      await flushMicrotasks();
+      await flushEventLoopTurns();
       assert.equal(
         toolResults(session, PACKAGE_TOOL).length,
         0,
@@ -295,7 +290,7 @@ test(
       );
 
       t.mock.timers.tick(1);
-      await flushMicrotasks(50);
+      await flushEventLoopTurns(50);
       await promptDone;
 
       const results = toolResults(session, PACKAGE_TOOL);
@@ -346,12 +341,12 @@ test(
       ]);
 
       const promptDone = session.prompt("exercise final clear");
-      await flushMicrotasks();
+      await flushEventLoopTurns();
       assert.ok(typeof release === "function");
 
       t.mock.timers.tick(1_000);
       release("ok");
-      await flushMicrotasks(20);
+      await flushEventLoopTurns(20);
       await promptDone;
 
       const results = toolResults(session, PACKAGE_TOOL);
@@ -364,7 +359,7 @@ test(
 
       // Advancing a full idle budget after final must not invent another result.
       t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
-      await flushMicrotasks(20);
+      await flushEventLoopTurns(20);
       assert.equal(toolResults(session, PACKAGE_TOOL).length, 1);
     });
 
@@ -400,17 +395,17 @@ test(
       ]);
 
       const promptDone = session.prompt("exercise late resolve suppression");
-      await flushMicrotasks();
+      await flushEventLoopTurns();
 
       t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
-      await flushMicrotasks(50);
+      await flushEventLoopTurns(50);
       await promptDone;
 
       assert.equal(toolResults(session, PACKAGE_TOOL).length, 1);
       assert.equal((toolResults(session, PACKAGE_TOOL)[0] as { isError?: boolean }).isError, true);
 
       release("late");
-      await flushMicrotasks(50);
+      await flushEventLoopTurns(50);
       assert.equal(
         toolResults(session, PACKAGE_TOOL).length,
         1,
