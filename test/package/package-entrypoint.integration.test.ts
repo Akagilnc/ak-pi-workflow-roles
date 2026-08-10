@@ -36,6 +36,7 @@ import {
   MERGER_INPUT_FLAG,
   MERGER_OUTPUT_TOOL_NAME,
   navigatorSessionDirectory,
+  resolveBookKeyFromGit,
   ROLE_FLAG,
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
   toolExecutionObservationRecordSchema,
@@ -52,6 +53,7 @@ import {
   getSharedIsolatedPack,
   loadRawPackageManifest,
   packageRoot,
+  persistActivationSessionFile,
   type RawPackageManifest,
   resolvePackageEntrypoint,
   runNodeSubprocess,
@@ -555,7 +557,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
     (await readFile(resolve(packageRoot, "souls/judge.md"), "utf8")).trim();
   await withActivationHome(
     { prefix: "ak-role-integration-" },
-    async ({ agentDir }) => {
+    async ({ home, agentDir }) => {
       const faux = fauxProvider({
         api: "ak-role-offline",
         provider: "ak-role-offline",
@@ -604,8 +606,21 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           },
         }),
       );
+      // Real parent manager: durable file/dir co-located under the hermetic
+      // activation ledger, cwd kept at packageRoot (ADR 0048 nested topology).
+      const parentSessionFile = persistActivationSessionFile({
+        home,
+        bookKey: resolveBookKeyFromGit(packageRoot),
+        name: "packaged-judge",
+        cwd: packageRoot,
+      });
+      const parentSessionManager = SessionManager.open(
+        parentSessionFile,
+        dirname(parentSessionFile),
+        packageRoot,
+      );
       await withInProcessPi({
-        activationLedgerSession: true,
+        sessionManager: parentSessionManager,
         cwd: packageRoot,
         agentDir,
         faux,
@@ -771,6 +786,26 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         const { isUuidV7 } = await import("../../src/uuidv7.ts");
         assert.equal(isUuidV7(nearest.data?.invocationId), true);
         assert.equal(String(nearest.data?.invocationId).includes(":"), false);
+
+        // Nested auditor JSONL stays under the parent session dir, not repo root.
+        const parentDir = sessionManager.getSessionDir();
+        assert.equal(sessionManager.getSessionFile(), parentSessionFile);
+        assert.equal(parentDir, dirname(parentSessionFile));
+        assert.equal(sessionManager.getHeader()?.cwd, packageRoot);
+        const auditorDir = join(parentDir, "auditor-roles");
+        const auditorFiles = (await readdir(auditorDir))
+          .filter((file) => file.endsWith(".jsonl"))
+          .sort();
+        assert.ok(auditorFiles.length >= 1, "nested auditor wrote under parent session dir");
+        const auditorHeader = JSON.parse(
+          (await readFile(join(auditorDir, auditorFiles[0]!), "utf8")).trim().split("\n")[0]!,
+        ) as { type?: string; cwd?: string };
+        assert.equal(auditorHeader.type, "session");
+        assert.equal(auditorHeader.cwd, packageRoot);
+        await assert.rejects(
+          () => access(resolve(packageRoot, "auditor-roles")),
+          (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+        );
       });
       } finally {
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
