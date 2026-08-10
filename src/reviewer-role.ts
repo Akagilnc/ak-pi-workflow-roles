@@ -86,20 +86,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
   let fixedBaseRevision: string | undefined;
   let fixedDispatchStarted = false;
   const ledger = createReviewerExecutionLedger();
-  const pendingTransport = new Map<string, string>();
-  const admittedToolCalls = new Set<string>();
-
-  const handleTransportTerminal = (event: { toolCallId: string; isError: boolean }) => {
-    const identity = pendingTransport.get(event.toolCallId);
-    pendingTransport.delete(event.toolCallId);
-    const admitted = admittedToolCalls.delete(event.toolCallId);
-    if (identity !== undefined && event.isError && !admitted) {
-      ledger.append(dispatcher?.acceptance === undefined
-        ? { source: "reviewer-transport", type: "transport-rejected", identity, violation: "schema", started: false }
-        : { source: "reviewer-transport", type: "closed-attempt", identity, reason: "transport-after-acceptance", started: false });
-    }
-  };
-
   pi.registerFlag("ak-review-task", { description: "Opaque Markdown review task assigned to the reviewer role", type: "string" });
   pi.registerFlag("ak-review-base", { description: "Fixed base revision for the pinned review target", type: "string" });
   pi.registerFlag("ak-review-scope-keys", { description: "Optional comma-separated exact class keys limiting Reviewer scope", type: "string" });
@@ -179,33 +165,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
 
     if (!registered) {
       registered = true;
-      pi.registerTool({ name: AGENT_TOOL_NAME, label: "Reviewer Dispatch", description: "Validate and irreversibly run one atomic Reviewer proposal.", promptSnippet: "Propose the atomic Reviewer dispatch", promptGuidelines: ["Correct rejected proposals; an accepted proposal is irreversible."], parameters: reviewerProposalSchema,
-        async execute(_id, proposal, signal, _update, toolCtx) {
-          admittedToolCalls.add(_id);
-          let result;
-          try { result = await dispatcher!.propose(proposal as ReviewerProposalV1, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
-          catch (error) {
-            if (acceptedDispatch !== undefined) {
-              const available = new Set(pi.getAllTools().map((tool) => tool.name));
-              pi.setActiveTools(available.has(REVIEWER_OUTPUT_TOOL_NAME) ? [REVIEWER_OUTPUT_TOOL_NAME] : []);
-              if (error instanceof ReviewerDispatchExecutionError) throw error;
-            }
-            hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx);
-          }
-          if (result.status === "accepted") {
-            const available = new Set(pi.getAllTools().map((tool) => tool.name));
-            pi.setActiveTools(available.has(REVIEWER_OUTPUT_TOOL_NAME) ? [REVIEWER_OUTPUT_TOOL_NAME] : []);
-          }
-          const text = result.status === "rejected"
-            ? `Reviewer proposal rejected: ${result.violations.join("; ")} — ${result.diagnostic}`
-            : result.status === "closed"
-              ? "Reviewer dispatch is already closed"
-              : "Reviewer dispatch accepted";
-          const details = result.status !== "accepted" ? result : {
-            status: result.status, identity: result.dispatch.identity,
-          };
-          return { content: [{ type: "text" as const, text }], details };
-        } });
       pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`], parameters: reviewerOutputSchema,
         async execute(id, parameters, signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
           if (!soul || task === undefined || !binding) throw new Error("Reviewer inputs were not loaded");
@@ -241,13 +200,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
             candidate,
           );
         } });
-      pi.on("tool_execution_start", (event) => {
-        if (event.toolName !== AGENT_TOOL_NAME) return;
-        const encoded = JSON.stringify(event.args) ?? "undefined";
-        pendingTransport.set(event.toolCallId, `transport-${sha256Hex(encoded)}`);
-      });
-      pi.on("tool_execution_end", handleTransportTerminal);
-      pi.on("tool_result", handleTransportTerminal);
       pi.on("input", (event) => { if (originalRequest !== undefined) return { action: "continue" as const }; originalRequest = event.text; return { action: "transform" as const, text: binding!.invocation(event.text), ...(event.images === undefined ? {} : { images: event.images }) }; });
       pi.on("before_agent_start", async (event, toolCtx) => {
         if (!fixedDispatchStarted) {
