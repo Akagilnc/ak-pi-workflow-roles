@@ -12,15 +12,13 @@ import {
   readJudgeAuditSubjects,
 } from "../../src/dossier-resolution.ts";
 
-test("missing AK_ROLE_RUN_DIR is missing-dossier", () => {
+test("absent AK_ROLE_RUN_DIR is bare-Pi ok, not missing-dossier", () => {
   const previous = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const result = resolveAuditDossier();
-    assert.deepEqual(result, {
-      status: "incomplete",
-      observation: { kind: "missing-dossier" },
-    });
+    assert.deepEqual(result, { status: "ok" });
+    assert.equal("runDirectory" in result && result.runDirectory !== undefined, false);
   } finally {
     if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previous;

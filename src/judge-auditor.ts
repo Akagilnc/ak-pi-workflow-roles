@@ -28,7 +28,8 @@ const auditDecisionTool = createComplianceDecisionTool(
 
 /**
  * Judge auditor: zero hand-delivered materials. Subjects recovered from the
- * parent-session books; dossier pointer is AK_ROLE_RUN_DIR.
+ * parent-session books. Public CLI injects AK_ROLE_RUN_DIR; bare Pi (ADR 0052)
+ * proceeds without that pointer and self-locates per soul.
  */
 export function createPiJudgeAuditor(
   runCompletion?: ComplianceCompletion,
