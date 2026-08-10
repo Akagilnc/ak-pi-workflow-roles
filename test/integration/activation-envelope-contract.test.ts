@@ -1171,12 +1171,18 @@ test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subpro
         return Value.Check(activationTraceRecordSchema, value) ? [value] : [];
       } catch { return []; }
     });
+    assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
+      { role: "fixer", stageId: "load-and-install", status: "failed" },
+    ]);
     const failed = traces.find((trace) => trace.status === "failed");
     assert.ok(failed && failed.status === "failed", "missing failed activation trace");
     assert.equal(failed.role, "fixer");
     assert.equal(failed.stageId, "load-and-install");
     assert.equal(failed.cause.identity, "AK_INVALID_FIX_PACKET");
+    assert.equal(failed.cause.name, "FixerPacketValidationError");
     assert.match(failed.cause.message, /Fixer prerequisites/);
+    if (typeof failed.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
+    assert.match(failed.cause.evidenceId, /^activation-cause-/);
   });
 });
 
