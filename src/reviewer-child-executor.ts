@@ -1,11 +1,9 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { executeEvidenceChild, type EvidenceChildFaultPoint } from "./evidence-child-executor.ts";
+import { executeEvidenceChild } from "./evidence-child-executor.ts";
 import type { AcceptedReviewerLeg } from "./reviewer-dispatch.ts";
 
-export type ReviewerExecutorFaultPoint = EvidenceChildFaultPoint;
 export type ReviewerChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
-  fault?(operation: ReviewerExecutorFaultPoint): void;
   credentialScratchParent?: string;
 }>;
 

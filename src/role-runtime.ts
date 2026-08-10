@@ -131,7 +131,7 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
-export { runAuditorRole, executeAuditorChild } from "./evidence-child-executor.ts";
+export { executeAuditorChild } from "./evidence-child-executor.ts";
 export type { AuditorCompletion, AuditorDecisionTool } from "./evidence-child-executor.ts";
 
 export {

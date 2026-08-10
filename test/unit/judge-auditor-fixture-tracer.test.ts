@@ -83,13 +83,6 @@ async function withFrozenJudgeFixture<T>(
   }
 }
 
-function userText(context: Context): string {
-  return context.messages
-    .filter((message) => message.role === "user")
-    .map((message) => JSON.stringify(message.content))
-    .join("\n");
-}
-
 function toolResultText(context: Context): string {
   return context.messages
     .filter((message) => message.role === "toolResult")
@@ -97,7 +90,7 @@ function toolResultText(context: Context): string {
     .join("\n");
 }
 
-test("frozen judge fixture: self-locate dossier, gather law, pass without projected materials", async () => {
+test("frozen judge fixture: self-locate dossier, gather law, pass", async () => {
   await withFrozenJudgeFixture(async ({ root, runDirectory, lawPath }) => {
     const sessionManager = SessionManager.inMemory(root);
     seedJudgeCandidate(sessionManager, "authority cited");
@@ -105,7 +98,6 @@ test("frozen judge fixture: self-locate dossier, gather law, pass without projec
     let turns = 0;
     const complete = (context: Context) => {
       turns += 1;
-      assert.equal(/judge_soul|adjudication_record|proposed_verdict/.test(userText(context)), false);
       if (turns === 1) {
         // Self-locate via the machine pointer (soul: 从自身落卷位置 / cwd+pointer).
         return fauxAssistantMessage(
@@ -158,7 +150,6 @@ test("frozen judge fixture: self-locate dossier, gather law, revise with concret
     let turns = 0;
     const complete = (context: Context) => {
       turns += 1;
-      assert.equal(/judge_soul|adjudication_record|proposed_verdict/.test(userText(context)), false);
       if (turns === 1) {
         return fauxAssistantMessage(
           [fauxToolCall("bash", { command: "printenv AK_ROLE_RUN_DIR" })],

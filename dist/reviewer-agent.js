@@ -70,7 +70,6 @@ export function createReviewerAgentRunner(dependencies = {}) {
                 try {
                     const child = await executeReviewerChild(workspace.path, leg, options.context, {
                         ...(options.signal === undefined ? {} : { signal: options.signal }),
-                        ...(dependencies.fault === undefined ? {} : { fault: dependencies.fault }),
                         ...(dependencies.credentialScratchParent === undefined
                             ? {}
                             : { credentialScratchParent: dependencies.credentialScratchParent }),
