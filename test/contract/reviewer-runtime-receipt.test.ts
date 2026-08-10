@@ -66,7 +66,6 @@ test("settlement preserves ledgered plain-text outcomes without materialization 
     intent: { status: "refused", diagnostic: "stopped" },
     canonicalSkillText: source.identities.canonicalSkill.text,
     record: {
-      transportRejections: [],
       rejections: [],
       results,
       accepted: {

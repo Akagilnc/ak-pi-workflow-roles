@@ -43,8 +43,6 @@ export type ReviewerLegResultEvidence = ReviewerLegResultEvidenceCommon & (
   | Readonly<{ status: "failed"; failure: ReviewerFailureClassification; diagnostic: string; report?: never; usage?: never }>
 );
 export type ReviewerEvidenceEvent =
-  | Readonly<{ source: "reviewer-transport"; type: "transport-rejected"; identity: string; violation: "schema"; started: false }>
-  | Readonly<{ source: "reviewer-transport"; type: "closed-attempt"; identity: string; reason: "transport-after-acceptance"; started: false }>
   | (Readonly<{ source: "reviewer-dispatch"; type: "rejected"; identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }>)
   | Readonly<{ source: "reviewer-dispatch"; type: "closed-attempt"; identity: string; reason: "acceptance-closed"; started: false }>
   | (Readonly<{ source: "reviewer-dispatch"; type: "accepted" }> & ReviewerAcceptedEvidence)
@@ -53,9 +51,8 @@ export type ReviewerEvidenceEvent =
   | Readonly<{ source: "reviewer-runtime"; type: "fatal"; diagnostics: string; cause: unknown; targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition }>;
 
 export type ReviewerExecutionRecord = Readonly<{
-  transportRejections: readonly Readonly<{ identity: string; violation: "schema"; started: false }>[];
   rejections: readonly Readonly<{ identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }>[];
-  closedAttempts?: readonly Readonly<{ identity: string; reason: "acceptance-closed" | "transport-after-acceptance"; started: false }>[];
+  closedAttempts?: readonly Readonly<{ identity: string; reason: "acceptance-closed"; started: false }>[];
   accepted?: ReviewerAcceptedEvidence;
   started?: Readonly<{ dispatchIdentity: string; cardinality: 1 | 2 }>;
   results: Readonly<Partial<Record<"standards" | "spec", ReviewerLegResultEvidence>>>;
@@ -114,9 +111,8 @@ function fatal(error: unknown): FatalEvidence {
 }
 
 export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
-  const transportRejections: Array<{ identity: string; violation: "schema"; started: false }> = [];
   const rejections: Array<{ identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }> = [];
-  const closedAttempts: Array<{ identity: string; reason: "acceptance-closed" | "transport-after-acceptance"; started: false }> = [];
+  const closedAttempts: Array<{ identity: string; reason: "acceptance-closed"; started: false }> = [];
   let accepted: ReviewerAcceptedEvidence | undefined;
   let started: { dispatchIdentity: string; cardinality: 1 | 2 } | undefined;
   const results: Partial<Record<"standards" | "spec", ReviewerLegResultEvidence>> = {};
@@ -124,20 +120,6 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
 
   function append(raw: ReviewerEvidenceEvent): void {
     const event = cloneFreeze(raw);
-    if (event.source === "reviewer-transport" && event.type === "transport-rejected") {
-      if (!hasExactEventShape(event, ["source", "type", "identity", "violation", "started"]) || event.violation !== "schema" || event.started !== false)
-        throw new Error("Transport rejection must contain only immutable bounded non-start evidence");
-      if (accepted !== undefined || started !== undefined) throw new Error("Transport rejection cannot follow an accepted dispatch");
-      transportRejections.push(cloneFreeze({ identity: event.identity, violation: event.violation, started: false }));
-      return;
-    }
-    if (event.source === "reviewer-transport" && event.type === "closed-attempt") {
-      if (!hasExactEventShape(event, ["source", "type", "identity", "reason", "started"]) || event.reason !== "transport-after-acceptance" || event.started !== false)
-        throw new Error("Closed transport attempt must contain only immutable bounded non-start evidence");
-      if (accepted === undefined) throw new Error("Closed transport attempt requires acceptance");
-      closedAttempts.push(cloneFreeze({ identity: event.identity, reason: event.reason, started: false }));
-      return;
-    }
     if (event.source === "reviewer-dispatch" && event.type === "rejected") {
       if (!hasExactEventShape(event, ["source", "type", "identity", "violations", "started"]) || event.started !== false ||
           event.violations.length === 0 || event.violations.some((code) => !REVIEWER_PREFLIGHT_VIOLATIONS.includes(code)))
@@ -218,7 +200,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       if (started === undefined || expected.some((axis) => results[axis] === undefined) || Object.keys(results).length !== expected.length)
         throw new Error("Reviewer refused after acceptance requires every expected leg terminal outcome");
     }
-    return cloneFreeze({ transportRejections, rejections, closedAttempts, ...(accepted === undefined ? {} : { accepted }), ...(started === undefined ? {} : { started }), results });
+    return cloneFreeze({ rejections, closedAttempts, ...(accepted === undefined ? {} : { accepted }), ...(started === undefined ? {} : { started }), results });
   }
   return Object.freeze({ append, recordInfrastructureFailure, recordForAudit });
 }
