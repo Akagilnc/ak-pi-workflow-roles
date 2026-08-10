@@ -24,10 +24,6 @@ import {
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import {
-  compileMechanicalBundle,
-  projectMechanicalBundleIdentity,
-} from "../../src/reviewer-construction.ts";
-import {
   extractCoderRoleOutcome,
   extractCollectorRoleOutcome,
   extractDoctorRoleOutcome,
@@ -64,18 +60,6 @@ function entry(
 
 function lawfulReviewerReceipt() {
   const skillText = "package code-review skill body\n";
-  const bundle = compileMechanicalBundle({
-    canonicalSkill: skillText,
-    task: "task",
-    range: {
-      base: "a",
-      target: "b",
-      diffCommand: "git diff a...b",
-      diffSha256: "1".repeat(64),
-      commits: ["b"],
-    },
-    materials: [],
-  }).bundle;
   const axes = ["standards", "spec"] as const;
   const prompt = (axis: string) => ({ text: `${axis} prompt\n` });
   return {
@@ -95,21 +79,6 @@ function lawfulReviewerReceipt() {
           status: "successful",
           prompt: prompt(axis),
           workspaceDisposition: "deleted",
-          runtimeConstructionEvidence: {
-            leg: axis,
-            workspaceIdentity: `${axis}-workspace`,
-            manifestSha256: bundle.manifestSha256,
-            entries: bundle.entries.map(
-              ({ id, relativeClonePath, utf8Length, sha256 }) => ({
-                id,
-                relativeClonePath,
-                utf8Length,
-                sha256,
-                verified: true,
-                readable: true,
-              }),
-            ),
-          },
         },
       ]),
     ),
@@ -117,7 +86,6 @@ function lawfulReviewerReceipt() {
       canonicalSkill: { text: skillText },
       construction: {
         recipe: "reviewer-common-bundle-v1",
-        bundle: projectMechanicalBundleIdentity(bundle),
       },
       target: {
         repositoryRoot: "/repo",

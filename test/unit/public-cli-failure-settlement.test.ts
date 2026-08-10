@@ -59,6 +59,7 @@ import {
   isChildDiagnosticHelpFooterLine,
   isLawfulTypedTerminalOutcome,
   readBoundAuditorKnownFailure,
+  readBoundEvidenceChildKnownFailure,
   resolveAuditedRunnerKnownFailure,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
@@ -2425,7 +2426,7 @@ test("fast four-role public wiring matrix settles an injected auditor provider s
   const argv = {
     judge: (project: string) => ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "audit provider stop"],
     fixer: (project: string) => ["--model", "openai-codex/faux-1:off", "fixer", "--project", project, "audit provider stop"],
-    reviewer: (project: string) => ["--model", "openai-codex/faux-1:off", "reviewer", "--project", project, "audit provider stop"],
+    reviewer: (project: string) => ["--model", "openai-codex/faux-1:off", "reviewer", "--project", project, "--base", "HEAD", "audit provider stop"],
     doctor: (project: string) => ["--model", "openai-codex/faux-1:off", "doctor", "--issue", "212", "--project", project, "audit provider stop"],
   } as const;
   for (const role of AUDITOR_SOUL_ROLES) await withTempHome(async (home) => {
@@ -2495,6 +2496,262 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
     assert.equal(retentionArtifact.details.retentionFailure.name, "ComplianceResponseRetentionError");
     assert.equal(retentionArtifact.details.retentionFailure.cause.code, "EISDIR");
+  });
+});
+
+test("bound evidence-child provider stop outranks generic activation wash", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "session.jsonl");
+    const childDir = join(sessionDir, "evidence-children");
+    await mkdir(childDir, { recursive: true });
+    // Real #236 no-task dispatch shape: parent never took a model turn; only
+    // fixed-axis evidence children retain the provider stop (usage limit, etc.).
+    await writeFile(sessionFile, [
+      { type: "session", id: "parent-session" },
+      { type: "custom", customType: "ak-navigator-invocation", data: { role: "reviewer" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    await writeFile(join(childDir, "2026-08-10T11-28-52-705Z_child.jsonl"), [
+      { type: "session", id: "child-session", parentSession: sessionFile },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "Codex error: The usage limit has been reached",
+          provider: "openai-codex",
+          model: "gpt-5.6-sol",
+        },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+    assert.deepEqual(await readBoundEvidenceChildKnownFailure(sessionFile), {
+      cause: "provider",
+      identity: { name: "ProviderStopError", code: "openai-codex" },
+      diagnostic: "Codex error: The usage limit has been reached",
+      details: {
+        provider: "openai-codex",
+        model: "gpt-5.6-sol",
+        secondaryEvidence: "evidence-child",
+      },
+    });
+    assert.deepEqual(
+      await resolveAuditedRunnerKnownFailure({
+        runner: undefined,
+        sessionFile,
+        credential: {
+          cause: "provider",
+          identity: { name: "MissingProviderCredential", code: "openai-codex" },
+        },
+      }),
+      {
+        cause: "provider",
+        identity: { name: "ProviderStopError", code: "openai-codex" },
+        diagnostic: "Codex error: The usage limit has been reached",
+        details: {
+          provider: "openai-codex",
+          model: "gpt-5.6-sol",
+          secondaryEvidence: "evidence-child",
+        },
+      },
+    );
+  });
+});
+
+test("public Reviewer no-task dispatch retains evidence-child provider identity", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      [
+        "--model",
+        "openai-codex/gpt-5.6-sol:medium",
+        "reviewer",
+        "--project",
+        project,
+        "--base",
+        "HEAD",
+      ],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-reviewer-evidence-child-provider-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          const childDir = join(sessionDir, "evidence-children");
+          await mkdir(childDir, { recursive: true });
+          await writeFile(
+            sessionFile,
+            [
+              JSON.stringify({ type: "session", id: "parent-session" }),
+              JSON.stringify({
+                type: "custom",
+                customType: "ak-navigator-invocation",
+                data: { role: "reviewer" },
+              }),
+            ].join("\n") + "\n",
+            "utf8",
+          );
+          await writeFile(
+            join(childDir, "leg-standards.jsonl"),
+            [
+              JSON.stringify({
+                type: "session",
+                id: "standards-session",
+                parentSession: sessionFile,
+              }),
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "assistant",
+                  stopReason: "error",
+                  errorMessage: "Codex error: The usage limit has been reached",
+                  provider: "openai-codex",
+                  model: "gpt-5.6-sol",
+                },
+              }),
+            ].join("\n") + "\n",
+            "utf8",
+          );
+          return {
+            code: 1,
+            // Generic extension wash — identity must come from evidence-children, not stderr.
+            stderr:
+              "Extension error (.../extensions/role-runtime.ts): Reviewer dispatch execution failed\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+      diagnosticEquals: "Codex error: The usage limit has been reached",
+      identityName: "ProviderStopError",
+      identityCode: "openai-codex",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(
+        terminal.roleOutcome.diagnostic,
+        "Codex error: The usage limit has been reached",
+      );
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      diagnostic: string;
+    };
+    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.diagnostic, "Codex error: The usage limit has been reached");
+  });
+});
+
+test("bound auditor provider failure outranks the parent abort it caused", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "parent.jsonl");
+    const childDir = join(sessionDir, "auditor-roles");
+    await mkdir(childDir, { recursive: true });
+    // Real retention race shape: parent ends with abort after the child
+    // already retained the richer auditor provider stop + identity.
+    await writeFile(sessionFile, [
+      { type: "session", id: "parent-session" },
+      { type: "message", id: "parent-user", message: { role: "user" } },
+      {
+        type: "message",
+        id: "parent-attempt",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "This operation was aborted",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    await writeFile(join(childDir, "child.jsonl"), [
+      { type: "session", id: "child-session", parentSession: sessionFile },
+      {
+        type: "custom",
+        customType: "ak_auditor_parent_attempt_binding",
+        data: {
+          version: 1,
+          parent: {
+            sessionId: "parent-session",
+            sessionFile,
+            attemptEntryId: "parent-attempt",
+          },
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "WebSocket error",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
+      {
+        type: "custom",
+        customType: "ak_auditor_compliance_failure",
+        data: {
+          parent: {
+            sessionId: "parent-session",
+            sessionFile,
+            attemptEntryId: "parent-attempt",
+          },
+          failure: {
+            cause: "provider",
+            diagnostic: "WebSocket error",
+            identity: { name: "faux-1", code: "openai-codex" },
+            details: {
+              provider: "openai-codex",
+              model: "faux-1",
+              retentionFailure: {
+                name: "ComplianceResponseRetentionError",
+                cause: { code: "EISDIR" },
+              },
+            },
+          },
+        },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+    assert.deepEqual(
+      await resolveAuditedRunnerKnownFailure({
+        runner: undefined,
+        sessionFile,
+        credential: {
+          cause: "provider",
+          identity: { name: "MissingProviderCredential", code: "openai-codex" },
+        },
+      }),
+      {
+        cause: "provider",
+        diagnostic: "WebSocket error",
+        identity: { name: "faux-1", code: "openai-codex" },
+        details: {
+          provider: "openai-codex",
+          model: "faux-1",
+          retentionFailure: {
+            name: "ComplianceResponseRetentionError",
+            cause: { code: "EISDIR" },
+          },
+        },
+      },
+    );
   });
 });
 

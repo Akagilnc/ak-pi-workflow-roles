@@ -23,7 +23,6 @@ import {
   type NavigatorPreparationSession,
 } from "../../src/navigator-attendance.ts";
 import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
-import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
 import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
@@ -75,7 +74,7 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
       path: tddPath,
       baseDir: tddBaseDir,
       body: tddBody,
-      snapshotIdentity: reviewerPromptIdentity(`---\nname: tdd\ndescription: test\n---\n\n${tddBody}`),
+      snapshotIdentity: Object.freeze({ text: `---\nname: tdd\ndescription: test\n---\n\n${tddBody}` }),
     },
     invocation(originalRequest) {
       return `/skill:tdd ${originalRequest}`;
@@ -221,8 +220,7 @@ test("stable factory registers the complete typed role flag set and stays inert 
     "ak-fixer-phase",
     "ak-coder-task",
     "ak-coder-phase",
-    "ak-review-task",
-    "ak-review-capabilities",
+    "ak-review-base",
     "ak-review-scope-keys",
     "ak-doctor-case",
     "ak-merger-input",

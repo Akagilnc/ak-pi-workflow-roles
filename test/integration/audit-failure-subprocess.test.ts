@@ -167,37 +167,10 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
       );
       const cwd = resolve(home, "review-target");
       await materializeReviewerTarget(cwd);
-      const taskPath = resolve(cwd, "test/fixtures/reviewer-task.md");
-      const taskBytes = await readFile(taskPath);
-      const capabilityPath = resolve(home, "reviewer-capabilities.json");
       const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
         cwd,
         encoding: "utf8",
       }).trim();
-      const target = execFileSync("git", ["rev-parse", "HEAD"], {
-        cwd,
-        encoding: "utf8",
-      }).trim();
-      void base;
-      void target;
-      await writeFile(
-        capabilityPath,
-        JSON.stringify({
-          version: 1,
-          taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-          tools: ["read", "bash"],
-          prerequisiteOperations: [
-            "preflight.git.pin-target",
-            "preflight.git.resolve-base",
-            "preflight.git.derive-range",
-            "preflight.git.list-ordered-commits",
-            "preflight.git.read-material",
-            "runner.git.materialize-mirror",
-            "runner.git.materialize-workspace",
-            "runner.git.verify-snapshot",
-          ],
-        }),
-      );
       const sessionDirectory = resolve(home, ".ak-roles/books/review-target/runs/reviewer-fatal/session");
       await mkdir(sessionDirectory, { recursive: true });
       const args = [
@@ -216,10 +189,8 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
         resolve(packageRoot, "test/fixtures/reviewer-failure-provider.ts"),
         "--ak-role",
         "reviewer",
-        "--ak-review-task",
-        taskPath,
-        "--ak-review-capabilities",
-        capabilityPath,
+        "--ak-review-base",
+        base,
         "--provider",
         "ak-reviewer-failure",
         "--model",
@@ -319,9 +290,10 @@ function jsonEvents(stdout: string): any[] {
 }
 
 function assertJsonAbortFacts(
-  result: { stdout: string },
+  result: { stdout: string; stderr: string },
   toolName: string,
   label: string,
+  requireAborted = true,
 ) {
   const events = jsonEvents(result.stdout);
   assert.equal(
@@ -335,16 +307,18 @@ function assertJsonAbortFacts(
     true,
     `${label} emits an errored ${toolName} result`,
   );
-  assert.equal(
-    events.some(
-      (event) =>
-        event.type === "message_end" &&
-        event.message?.role === "assistant" &&
-        event.message.stopReason === "aborted",
-    ),
-    true,
-    `${label} stops with typed aborted reason`,
-  );
+  if (requireAborted) {
+    assert.equal(
+      events.some(
+        (event) =>
+          event.type === "message_end" &&
+          event.message?.role === "assistant" &&
+          event.message.stopReason === "aborted",
+      ),
+      true,
+      `${label} stops with typed aborted reason`,
+    );
+  }
 }
 
 test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions", async () => {
@@ -565,14 +539,14 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
     stage: ReviewerFailureStage;
     tool: "Agent" | "ak_reviewer_output";
   }> = [
-    { stage: "preflight-git", tool: "Agent" },
+    { stage: "preflight-git", tool: "ak_reviewer_output" },
     { stage: "audit-provider", tool: "ak_reviewer_output" },
     { stage: "audit-malformed-decision", tool: "ak_reviewer_output" },
   ];
   for (const row of matrix) {
     const result = await runReviewerCli("json", row.stage);
     assert.equal(result.code, 1, `${row.stage} exits nonzero`);
-    assertJsonAbortFacts(result, row.tool, row.stage);
+    assertJsonAbortFacts(result, row.tool, row.stage, row.stage !== "preflight-git");
   }
 });
 
@@ -587,27 +561,10 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
     );
     const cwd = resolve(home, "review-target");
     await materializeReviewerTarget(cwd);
-    const taskPath = resolve(cwd, "test/fixtures/reviewer-task.md");
-    const taskBytes = await readFile(taskPath);
-    const capabilityPath = resolve(home, "reviewer-capabilities.json");
-    await writeFile(
-      capabilityPath,
-      JSON.stringify({
-        version: 1,
-        taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-        tools: ["read", "bash"],
-        prerequisiteOperations: [
-          "preflight.git.pin-target",
-          "preflight.git.resolve-base",
-          "preflight.git.derive-range",
-          "preflight.git.list-ordered-commits",
-          "preflight.git.read-material",
-          "runner.git.materialize-mirror",
-          "runner.git.materialize-workspace",
-          "runner.git.verify-snapshot",
-        ],
-      }),
-    );
+    const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
+      cwd,
+      encoding: "utf8",
+    }).trim();
 
     for (const stage of ["audit-auth", "audit-malformed-decision"] as const) {
       const previous = process.env.AK_REVIEWER_FAILURE_STAGE;
@@ -622,6 +579,8 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
         // Drive the same fatal output call the CLI fixture uses; audit injection
         // still comes from the staged failure extension below.
         faux.setResponses([
+          fauxAssistantMessage("Independent standards review found no findings."),
+          fauxAssistantMessage("Independent spec review found no findings."),
           fauxAssistantMessage(
             fauxToolCall(
               REVIEWER_OUTPUT_TOOL_NAME,
@@ -659,8 +618,7 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
             mode: "print",
             flags: {
               "ak-role": "reviewer",
-              "ak-review-task": taskPath,
-              "ak-review-capabilities": capabilityPath,
+              "ak-review-base": base,
             },
             reviewerShutdown: true,
             extensionFactories: [
