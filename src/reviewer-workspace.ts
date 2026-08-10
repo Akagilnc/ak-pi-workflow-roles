@@ -3,8 +3,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { materializeMechanicalBundle, type MaterializedBundleEvidenceV1 } from "./reviewer-bundle-materializer.ts";
-import type { PinnedMechanicalBundleV1 } from "./reviewer-construction.ts";
 import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs, sameReviewerPinnedTarget, sameReviewerRefs, type ReviewerRefEntry } from "./reviewer-git-snapshot.ts";
 import type { ReviewerTargetSnapshot, ReviewerWorkspaceDisposition } from "./reviewer-execution-ledger.ts";
 
@@ -14,10 +12,10 @@ export type ReviewerWorkspaceFaultPoint =
   | "workspace.before-create" | "workspace.init" | "workspace.fetch" | "workspace.verify";
 export type ReviewerWorkspaceDependencies = Readonly<{ fault?(operation: ReviewerWorkspaceFaultPoint): void }>;
 export type ReviewerWorkspaceError = Error & Readonly<{ reviewerFailure: "snapshot" | "workspace"; workspaceDisposition: ReviewerWorkspaceDisposition; targetSnapshot: ReviewerTargetSnapshot; preparedWorkspaces?: readonly ReviewerPreparedWorkspace[] }>;
-export type ReviewerPreparedWorkspace = Readonly<{ axis: "standards" | "spec"; path: string; target: ReviewerTargetSnapshot; evidence: MaterializedBundleEvidenceV1 }>;
+export type ReviewerPreparedWorkspace = Readonly<{ axis: "standards" | "spec"; path: string; target: ReviewerTargetSnapshot }>;
 export type ReviewerWorkspaceBatch = Readonly<{ target: ReviewerTargetSnapshot; workspaces: readonly ReviewerPreparedWorkspace[] }>;
 export type ReviewerWorkspaceOwner = {
-  prepare(target: ReviewerTargetSnapshot, axes: readonly ("standards" | "spec")[], bundle: PinnedMechanicalBundleV1, signal?: AbortSignal): Promise<ReviewerWorkspaceBatch>;
+  prepare(target: ReviewerTargetSnapshot, axes: readonly ("standards" | "spec")[], signal?: AbortSignal): Promise<ReviewerWorkspaceBatch>;
   dispose(workspace: ReviewerPreparedWorkspace): Promise<"deleted">;
   shutdown(): Promise<void>;
 };
@@ -87,13 +85,16 @@ async function prepareClone(snapshot: GitSnapshot, signal: AbortSignal | undefin
 export function createReviewerWorkspaceOwner(dependencies: ReviewerWorkspaceDependencies = {}): ReviewerWorkspaceOwner {
   let ownedSnapshot: GitSnapshot | undefined; let cleanupPromise: Promise<void> | undefined;
   return {
-    async prepare(target, axes, bundle, signal) {
+    async prepare(target, axes, signal) {
       const snapshot = await prepareSnapshot(target, signal, dependencies);
       ownedSnapshot = snapshot;
       const frozenTarget = Object.freeze({ repositoryRoot: snapshot.repositoryRoot, objectFormat: snapshot.objectFormat, targetHead: snapshot.targetHead, refs: Object.freeze({ ...snapshot.refs }) });
       const workspaces: ReviewerPreparedWorkspace[] = [];
       try {
-        for (const axis of axes) { const path = await prepareClone(snapshot, signal, dependencies); try { workspaces.push(Object.freeze({ axis, path, target: frozenTarget, evidence: await materializeMechanicalBundle(path, axis, bundle) })); } catch (error) { throw workspaceError(error, "workspace", { retained: path }, frozenTarget); } }
+        for (const axis of axes) {
+          const path = await prepareClone(snapshot, signal, dependencies);
+          workspaces.push(Object.freeze({ axis, path, target: frozenTarget }));
+        }
       } catch (error) {
         if (typeof error === "object" && error !== null) Object.assign(error, { preparedWorkspaces: Object.freeze([...workspaces]) });
         throw error;

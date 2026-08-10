@@ -1,35 +1,94 @@
-import { exactUtf8 } from "./exact-utf8.ts";
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
-import { acquireReviewerPinnedEvidence, createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerHostMaterial, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange, type ReviewerMaterialEvidence } from "./reviewer-pinned-git.ts";
-export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerHostMaterial, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange, type ReviewerMaterialEvidence } from "./reviewer-pinned-git.ts";
-import { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+import { immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget } from "./reviewer-pinned-git.ts";
+export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
+import { isReviewerPromptText, sameReviewerPromptText, type ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { sha256Hex } from "./sha256.ts";
-import { admitReviewerProposal, ReviewerAdmissionError, REVIEWER_CHILD_TOOLS, REVIEWER_PREREQUISITES, type MaterialSelection, type ReviewerCapabilitiesV1, type ReviewerCapabilityRequest, type ReviewerChildToolName, type ReviewerMaterialSource, type ReviewerPrerequisiteOperation, type ReviewerProposalV1 } from "./reviewer-admission.ts";
-export { REVIEWER_CHILD_TOOLS, REVIEWER_PREREQUISITES, type MaterialSelection, type ReviewerCapabilitiesV1, type ReviewerCapabilityRequest, type ReviewerChildToolName, type ReviewerMaterialSource, type ReviewerPrerequisiteOperation, type ReviewerProposalV1 } from "./reviewer-admission.ts";
-import { constructReviewerDispatch, ReviewerConstructionError, type ConstructedReviewerDispatch } from "./reviewer-construction.ts";
+import { constructReviewerDispatch, type ConstructedReviewerDispatch } from "./reviewer-construction.ts";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
 export { sha256Hex } from "./sha256.ts";
-export { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+export { isReviewerPromptText as isReviewerPromptIdentity, sameReviewerPromptText as sameReviewerPromptIdentity, type ReviewerPromptText as ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
 export type AcceptedReviewerLeg = ConstructedReviewerDispatch["legs"][number];
 export type AcceptedReviewerDispatch = ConstructedReviewerDispatch;
-export type AcceptedReviewerExecution = Readonly<{ identity:string;recipe:"reviewer-common-bundle-v1";targetSnapshot:ReviewerPinnedTarget;bundle:ConstructedReviewerDispatch["bundle"];prerequisiteOperations:readonly ReviewerPrerequisiteOperation[];legs:readonly AcceptedReviewerLeg[] }>;
-export const REVIEWER_PREFLIGHT_VIOLATIONS=["proposal-invalid","base-invalid","material-invalid","spec-invalid","capability-invalid","prerequisite-missing","range-invalid","prompt-identity-invalid","prompt-identity-mismatch","target-drift"] as const;
-export type ReviewerPreflightViolation=(typeof REVIEWER_PREFLIGHT_VIOLATIONS)[number];
-export type ReviewerRejectionEvidence=Readonly<{identity:string;violations:readonly ReviewerPreflightViolation[];started:false}>;
-export type ReviewerAcceptanceEvidence=Readonly<{identity:string;recipe:"reviewer-dispatch-v1";cardinality:1|2}>;
-export type ReviewerClosedAttemptEvidence=Readonly<{identity:string;reason:"acceptance-closed";started:false;cause?:unknown}>;
-export type ReviewerDispatchResult=Readonly<{status:"rejected";identity:string;violations:readonly ReviewerPreflightViolation[];diagnostic:string}>|Readonly<{status:"accepted";dispatch:AcceptedReviewerDispatch;results:unknown}>|Readonly<{status:"closed";identity:string;reason:"acceptance-closed";started:false;cause?:unknown}>;
-export type ReviewerDecisionEvidence=Readonly<{disposition:"rejected";identity:string;violations:readonly ReviewerPreflightViolation[];started:false}>|Readonly<{disposition:"accepted";identity:string;dispatch:AcceptedReviewerDispatch}>|Readonly<{disposition:"closed";identity:string;reason:"acceptance-closed";started:false}>;
-type DispatcherDependencies=Readonly<{task:Uint8Array;canonicalSkill:string;capabilities:ReviewerCapabilitiesV1;reader:ReviewerPinnedGitReader;hostTools:readonly string[];hostMaterials?:readonly ReviewerHostMaterial[];reviewScopeKeys?:readonly string[];run(execution:AcceptedReviewerExecution,invocation:unknown):Promise<unknown>;decisionEvidence?:(decision:ReviewerDecisionEvidence)=>void;compilePrompt?:(prompt:string,axis:"standards"|"spec",pass:1|2)=>ReviewerPromptIdentity;renderMaterial?:(evidence:ReviewerMaterialEvidence,axis:"standards"|"spec",pass:1|2)=>string}>;
-export class ReviewerPreflightError extends Error{constructor(readonly code:ReviewerPreflightViolation,readonly diagnostic=`${code} constraint failed`){super(`${code}: ${diagnostic}`)}}
-const frozen=<T extends string>(xs:readonly T[]):readonly T[]=>Object.freeze([...xs]);
-const exact=(v:unknown,keys:readonly string[]):v is Record<string,unknown>=>typeof v==="object"&&v!==null&&!Array.isArray(v)&&Object.keys(v).length===keys.length&&keys.every(k=>Object.hasOwn(v,k));
-export function toReviewerExecution(dispatch:AcceptedReviewerDispatch):AcceptedReviewerExecution{return Object.freeze({identity:dispatch.identity,recipe:dispatch.recipe,targetSnapshot:immutableReviewerPin(dispatch.targetSnapshot),bundle:dispatch.bundle,prerequisiteOperations:frozen(dispatch.prerequisiteOperations),legs:Object.freeze(dispatch.legs.map(l=>Object.freeze({axis:l.axis,prompt:Object.freeze({...l.prompt}),grant:Object.freeze({tools:frozen(l.grant.tools),bashCommands:frozen(l.grant.bashCommands),prerequisiteOperations:frozen(l.grant.prerequisiteOperations)})})))})}
-export function parseReviewerCapabilities(raw:Uint8Array,task:Uint8Array):ReviewerCapabilitiesV1{let value:unknown,text:string;try{text=exactUtf8(raw,"Reviewer capabilities");value=JSON.parse(text)}catch{throw new Error("Invalid Reviewer capabilities UTF-8 JSON")}if(!exact(value,["version","taskSha256","tools","prerequisiteOperations"]))throw new Error("Invalid Reviewer capabilities keys");const v=value as any;if(v.version!==1||typeof v.taskSha256!=="string"||!Array.isArray(v.tools)||!Array.isArray(v.prerequisiteOperations))throw new Error("Invalid Reviewer capabilities schema");if(!/^[0-9a-f]{64}$/.test(v.taskSha256)||v.taskSha256!==sha256Hex(task))throw new Error("Reviewer capabilities task digest mismatch");if(!v.tools.every((x:unknown)=>typeof x==="string"&&(REVIEWER_CHILD_TOOLS as readonly string[]).includes(x))||!v.prerequisiteOperations.every((x:unknown)=>typeof x==="string"&&(REVIEWER_PREREQUISITES as readonly string[]).includes(x))||new Set(v.tools).size!==v.tools.length||new Set(v.prerequisiteOperations).size!==v.prerequisiteOperations.length)throw new Error("Reviewer capabilities contain unknown or duplicate values");return Object.freeze({version:1,taskSha256:v.taskSha256,document:reviewerPromptIdentity(text),tools:frozen(v.tools as ReviewerChildToolName[]),prerequisiteOperations:frozen(v.prerequisiteOperations as ReviewerPrerequisiteOperation[])})}
-const identity=(proposal:unknown):string=>{try{const serialized=JSON.stringify(proposal);if(serialized===undefined)throw new TypeError("Reviewer proposal is not serializable");return sha256Hex(serialized)}catch(error){throw new Error("Reviewer proposal identity cannot be constructed",{cause:error})}};
-const preflight=(error:unknown):ReviewerPreflightError|undefined=>error instanceof ReviewerPreflightError?error:error instanceof ReviewerAdmissionError||error instanceof ReviewerConstructionError||error instanceof ReviewerCorrectablePreflightError?new ReviewerPreflightError(error.code,error.diagnostic):undefined;
-export function createReviewerDispatcher(d:DispatcherDependencies){const task=Uint8Array.from(d.task),target=immutableReviewerPin(d.reader.pin),host=frozen(d.hostTools);let accepted:ReviewerAcceptanceEvidence|undefined,fatal:unknown,accepting=false;const rejections:ReviewerRejectionEvidence[]=[],closedAttempts:ReviewerClosedAttemptEvidence[]=[];
- const close=(id:string,cause?:unknown):ReviewerDispatchResult=>{const e={identity:id,reason:"acceptance-closed" as const,started:false as const};if(cause!==undefined)Object.defineProperty(e,"cause",{value:cause,enumerable:false});Object.freeze(e);d.decisionEvidence?.(Object.freeze({disposition:"closed",...e}));closedAttempts.push(e);return Object.freeze({status:"closed" as const,...e})};
- const reject=(id:string,e:ReviewerPreflightError):ReviewerDispatchResult=>{const evidence=Object.freeze({identity:id,violations:Object.freeze([e.code]),started:false as const});d.decisionEvidence?.(Object.freeze({disposition:"rejected",...evidence}));rejections.push(evidence);return Object.freeze({status:"rejected" as const,identity:id,violations:evidence.violations,diagnostic:e.diagnostic})};
- return Object.freeze({get rejections(){return Object.freeze([...rejections])},get acceptance(){return accepted},get closedAttempts(){return Object.freeze([...closedAttempts])},async propose(proposal:ReviewerProposalV1,invocation?:unknown):Promise<ReviewerDispatchResult>{const id=identity(proposal);if(fatal!==undefined)throw fatal;if(accepted||accepting)return close(id);let dispatch:AcceptedReviewerDispatch;try{const admitted=admitReviewerProposal(proposal,d.capabilities,host);const evidence=await acquireReviewerPinnedEvidence(d.reader,target,admitted,d.hostMaterials);let taskText:string;try{taskText=exactUtf8(task,"Reviewer task")}catch{throw new ReviewerPreflightError("prompt-identity-invalid", "Reviewer task must be valid UTF-8 before prompt identity compilation")}dispatch=constructReviewerDispatch({identity:id,taskText,canonicalSkill:d.canonicalSkill,capabilityDocument:d.capabilities.document,target,admitted,evidence,...(d.reviewScopeKeys===undefined?{}:{reviewScopeKeys:d.reviewScopeKeys}),...(d.compilePrompt===undefined?{}:{compilePrompt:d.compilePrompt})});}catch(error){if(accepted||accepting)return close(id,error);const p=preflight(error);if(p)return reject(id,p);fatal=error;throw error}if(accepted||accepting)return close(id);try{if(!sameReviewerPinnedTarget(await d.reader.snapshot(),target))throw new ReviewerPreflightError("target-drift", "pinned target snapshot changed before child execution")}catch(error){if(accepted||accepting)return close(id,error);const p=preflight(error);if(p)return reject(id,p);fatal=error;throw error}if(accepted||accepting)return close(id);d.decisionEvidence?.(Object.freeze({disposition:"accepted",identity:id,dispatch}));accepting=true;accepted=Object.freeze({identity:id,recipe:"reviewer-dispatch-v1",cardinality:dispatch.legs.length as 1|2});const results=await d.run(toReviewerExecution(dispatch),invocation);return Object.freeze({status:"accepted",dispatch,results})}})}
+export type AcceptedReviewerExecution = Readonly<{
+  identity: string;
+  recipe: "reviewer-common-bundle-v1";
+  targetSnapshot: ReviewerPinnedTarget;
+  legs: readonly AcceptedReviewerLeg[];
+}>;
+export const REVIEWER_PREFLIGHT_VIOLATIONS = ["base-invalid", "range-invalid", "prompt-identity-invalid", "target-drift"] as const;
+export type ReviewerPreflightViolation = (typeof REVIEWER_PREFLIGHT_VIOLATIONS)[number];
+export type ReviewerDispatchResult =
+  | Readonly<{ status: "rejected"; identity: string; violations: readonly ReviewerPreflightViolation[]; diagnostic: string }>
+  | Readonly<{ status: "accepted"; dispatch: AcceptedReviewerDispatch; results: unknown }>;
+export type ReviewerDecisionEvidence =
+  | Readonly<{ disposition: "rejected"; identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }>
+  | Readonly<{ disposition: "accepted"; identity: string; dispatch: AcceptedReviewerDispatch }>;
+type DispatcherDependencies = Readonly<{
+  canonicalSkill: string;
+  reader: ReviewerPinnedGitReader;
+  reviewScopeKeys?: readonly string[];
+  run(execution: AcceptedReviewerExecution, invocation: unknown): Promise<unknown>;
+  decisionEvidence?(decision: ReviewerDecisionEvidence): void;
+}>;
+export class ReviewerPreflightError extends Error {
+  constructor(readonly code: ReviewerPreflightViolation, readonly diagnostic = `${code} constraint failed`) {
+    super(`${code}: ${diagnostic}`);
+  }
+}
+export function toReviewerExecution(dispatch: AcceptedReviewerDispatch): AcceptedReviewerExecution {
+  return Object.freeze({
+    identity: dispatch.identity,
+    recipe: dispatch.recipe,
+    targetSnapshot: immutableReviewerPin(dispatch.targetSnapshot),
+    legs: Object.freeze(dispatch.legs.map((l) => Object.freeze({ axis: l.axis, prompt: l.prompt }))),
+  });
+}
+const preflight = (error: unknown): ReviewerPreflightError | undefined => {
+  if (error instanceof ReviewerPreflightError) return error;
+  if (error instanceof ReviewerCorrectablePreflightError) {
+    return new ReviewerPreflightError(error.code as ReviewerPreflightViolation, error.diagnostic);
+  }
+  return undefined;
+};
+export function createReviewerDispatcher(d: DispatcherDependencies) {
+  const target = immutableReviewerPin(d.reader.pin);
+  let started = false;
+  return Object.freeze({
+    async dispatch(baseRevision: string, invocation?: unknown): Promise<ReviewerDispatchResult> {
+      if (started) throw new Error("Reviewer fixed dispatch can start exactly once");
+      const identity = sha256Hex(JSON.stringify({
+        baseRevision,
+        target: target.targetHead,
+        canonicalSkill: sha256Hex(d.canonicalSkill),
+      }));
+      let dispatch: AcceptedReviewerDispatch;
+      try {
+        const base = await d.reader.resolve(baseRevision);
+        const range = await d.reader.range(base);
+        dispatch = constructReviewerDispatch({
+          identity,
+          canonicalSkill: d.canonicalSkill,
+          target,
+          range,
+          ...(d.reviewScopeKeys === undefined ? {} : { reviewScopeKeys: d.reviewScopeKeys }),
+        });
+        if (!sameReviewerPinnedTarget(await d.reader.snapshot(), target)) {
+          throw new ReviewerPreflightError("target-drift", "pinned target snapshot changed before child execution");
+        }
+      } catch (error) {
+        const p = preflight(error);
+        if (!p) throw error;
+        d.decisionEvidence?.(Object.freeze({ disposition: "rejected", identity, violations: Object.freeze([p.code]), started: false }));
+        return Object.freeze({ status: "rejected", identity, violations: Object.freeze([p.code]), diagnostic: p.diagnostic });
+      }
+      started = true;
+      d.decisionEvidence?.(Object.freeze({ disposition: "accepted", identity, dispatch }));
+      const results = await d.run(toReviewerExecution(dispatch), invocation);
+      return Object.freeze({ status: "accepted", dispatch, results });
+    },
+  });
+}
+
+export type { ReviewerPromptText };
+export { isReviewerPromptText, sameReviewerPromptText };

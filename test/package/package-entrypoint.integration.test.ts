@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -258,7 +257,7 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       } as any;
       const inputs = {
         judge: { soul: "caller judge soul", transcript: "judge record", verdict: { judgeStatus: "converged" } },
-        reviewer: { soul: "caller reviewer soul", canonicalSkill: "skill", task: "task", record: {}, candidate: {} },
+        reviewer: { soul: "caller reviewer soul", canonicalSkill: "skill", record: {}, candidate: {} },
         doctor: { soul: "caller doctor soul", patient: { version: 1, identity: { issueNumber: 58, runsPath: ".ak/work/issues/58/runs" }, evidence: [], cost: { invocations: { total: 0, sources: [] }, bytes: 0 } }, readRecord: [], testimony: { status: "refused", reason: "missing", missingEvidence: [] } },
       } as const;
       const roles = [
@@ -330,7 +329,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   const root = packageRoot;
   const importSrc = (rel: string) => import(resolve(root, rel));
   {
-      const [judge, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, promptIdentity, terminating] = await Promise.all([
+      const [judge, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
         importSrc("src/judge-auditor.ts"),
         importSrc("src/reviewer-auditor.ts"),
         importSrc("src/doctor-auditor.ts"),
@@ -338,7 +337,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         importSrc("src/worker-role.ts"),
         importSrc("src/reviewer-role.ts"),
         importSrc("src/doctor-role.ts"),
-        importSrc("src/reviewer-prompt-identity.ts"),
         importSrc("src/package-contracts/terminating-tools.ts"),
       ]);
 
@@ -348,13 +346,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         evidence: [],
         cost: { invocations: { total: 0, sources: [] }, bytes: 0 },
       };
-      const taskBytes = new TextEncoder().encode("review task\n");
-      const capabilities = new TextEncoder().encode(JSON.stringify({
-        version: 1,
-        taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-        tools: ["read"],
-        prerequisiteOperations: ["preflight.git.pin-target"],
-      }));
       const skill = "canonical review skill";
       const escalation = {
         status: "escalate" as const,
@@ -439,7 +430,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         const harness = role === "fixer"
           ? makeHarness({ "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" })
           : role === "reviewer"
-            ? makeHarness({ "ak-review-task": "/task", "ak-review-capabilities": "/capabilities" })
+            ? makeHarness({ "ak-review-base": "review-base" })
             : role === "doctor"
               ? makeHarness({ "ak-doctor-case": "/case" })
               : makeHarness();
@@ -477,16 +468,13 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           const pin = { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "target", refs: {} };
           runtime = reviewerRole.createReviewerRoleRuntime(harness.pi, {
             loadSoul: async () => "reviewer law",
-            loadTask: async () => taskBytes,
-            loadCapabilities: async () => capabilities,
             loadCanonicalSkillBinding: async () => ({
               name: "code-review",
-              snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: promptIdentity.reviewerPromptIdentity(skill) },
+              snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: Object.freeze({ text: skill }) },
               invocation: (request: string) => request,
-              captureExpansion: () => undefined,
+              captureExpansion: () => ({ name: "code-review" as const, location: "/skill", content: skill }),
             }),
             createPinnedGitReader: async () => ({ pin, snapshot: async () => pin, resolve: async () => "base", range: async () => ({ base: "base", target: "target", diffCommand: "git diff base...target", diffSha256: "a".repeat(64), commits: ["target"] }), material: async () => new TextEncoder().encode("material") }),
-            hostTools: () => ["read"],
             runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
             auditCompliance,
           }, { failInfrastructure(error: unknown) { throw error; } });

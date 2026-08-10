@@ -12,9 +12,9 @@ export type AuditorDecisionTool = { name: string; description: string; parameter
 
 
 export async function runAuditorRole(options: { systemPrompt: string; serializedInput: string; tool: AuditorDecisionTool; roleLabel: string; context: ExtensionContext; signal?: AbortSignal; runCompletion?: AuditorCompletion; retainResponse?(response: AssistantMessage): void }): Promise<{ decision: unknown; response: AssistantMessage }> {
-  const [{ createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager }, { childSessionManager }] = await Promise.all([
+  const [{ createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager }, { createRecordSession }] = await Promise.all([
     import("@earendil-works/pi-coding-agent"),
-    import("./activation-ledger-session.ts"),
+    import("./sitian-record-entry.ts"),
   ]);
   const activeModel = options.context.model;
   if (activeModel === undefined) throw new Error(`${options.roleLabel} requires an active model`);
@@ -46,7 +46,11 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
     const parentHeader = parentSessionManager?.getHeader?.();
     const parentSessionFile = parentSessionManager?.getSessionFile?.();
     const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
-    const auditorSessionManager = childSessionManager(parentSessionManager, cwd, "auditor-roles");
+    const auditorSessionManager = createRecordSession({
+      cwd,
+      kind: "auditor-roles",
+      ...(parentSessionManager === undefined ? {} : { parent: parentSessionManager }),
+    });
     const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: ["read", "grep", "find", "ls", "bash", "write", "edit", tool.name], customTools: [tool], sessionManager: auditorSessionManager, settingsManager: settings });
     const binding: AuditorParentAttemptBinding = {
       version: 1,

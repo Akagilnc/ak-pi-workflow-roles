@@ -12,7 +12,6 @@ import {
   type CanonicalSkillEvidence,
   type CanonicalSkillName,
 } from "../canonical-skill-binding.ts";
-import { reviewerPromptIdentity } from "../reviewer-prompt-identity.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -43,7 +42,7 @@ export async function loadPackagedCanonicalSkillBinding<
     path: material.skillPath,
     baseDir: dirname(material.skillPath),
     body: material.body,
-    snapshotIdentity: reviewerPromptIdentity(material.raw),
+    snapshotIdentity: Object.freeze({ text: material.raw }),
   });
 
   const binding: CanonicalSkillBinding<Name> = {

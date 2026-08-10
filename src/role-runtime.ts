@@ -55,9 +55,10 @@ import {
 } from "./judge-role.ts";
 import {
   createReviewerRoleRuntime,
+  type ReviewerActivation,
   type ReviewerAuditInput,
 } from "./reviewer-role.ts";
-import type { AcceptedReviewerExecution, ReviewerHostMaterial, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
@@ -191,7 +192,7 @@ export type {
   ReviewerUsage,
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
-export type { AcceptedReviewerDispatch, AcceptedReviewerExecution, ReviewerHostMaterial, ReviewerMaterialSource, ReviewerPinnedGitReader, ReviewerProposalV1 } from "./reviewer-dispatch.ts";
+export type { AcceptedReviewerDispatch, AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 export type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 export type { CollectorReceipt } from "./collector-receipt.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
@@ -212,7 +213,7 @@ type ActivationRuntime = {
   judge: { activate(): Promise<void> };
   fixer: WorkerArmable;
   coder: WorkerArmable;
-  reviewer: { activate(context: ExtensionContext): Promise<void> };
+  reviewer: { activate(context: ExtensionContext): Promise<ReviewerActivation> };
   collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
   merger(): Promise<void>;
@@ -223,7 +224,11 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "judge": return { id: "load-and-install", run: async () => runtime.judge.activate() };
     case "fixer": return { id: "load-and-install", run: async () => runtime.fixer.activate() };
     case "coder": return { id: "load-and-install", run: async () => runtime.coder.activate(runtime.context) };
-    case "reviewer": return { id: "load-and-install", run: async () => runtime.reviewer.activate(runtime.context) };
+    case "reviewer": return { id: "load-install-and-dispatch", run: async () => {
+      const activation = await runtime.reviewer.activate(runtime.context);
+      const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, { context: runtime.context });
+      if (result.status !== "accepted") throw new Error(`Fixed Reviewer dispatch was not accepted: ${result.status}`);
+    } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
@@ -301,11 +306,7 @@ export type RoleRuntimeDependencies = {
   loadCoderSoul?(): Promise<string>;
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
-  loadReviewerTask?(path: string): Promise<Uint8Array>;
-  loadReviewerCapabilities?(path: string): Promise<Uint8Array>;
   createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
-  loadReviewerHostMaterials?(): Promise<readonly ReviewerHostMaterial[]>;
-  reviewerHostTools?: readonly string[];
   loadCollectorSoul?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
@@ -637,22 +638,10 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadReviewerSoul();
         },
-        async loadTask(path) {
-          if (dependencies.loadReviewerTask === undefined) throw new Error("Reviewer runtime dependencies are not configured");
-          return dependencies.loadReviewerTask(path);
-        },
-        async loadCapabilities(path) {
-          if (dependencies.loadReviewerCapabilities === undefined) throw new Error("Reviewer runtime dependencies are not configured");
-          return dependencies.loadReviewerCapabilities(path);
-        },
         async createPinnedGitReader() {
           if (dependencies.createReviewerPinnedGitReader === undefined) throw new Error("Reviewer runtime dependencies are not configured");
           return dependencies.createReviewerPinnedGitReader();
         },
-        ...(dependencies.loadReviewerHostMaterials === undefined
-          ? {}
-          : { loadHostMaterials: dependencies.loadReviewerHostMaterials }),
-        hostTools() { return dependencies.reviewerHostTools ?? ["read", "grep", "find", "ls", "bash", "write", "edit"]; },
         async loadCanonicalSkillBinding(name) {
           if (dependencies.loadCanonicalSkillBinding === undefined) {
             throw new Error("Reviewer runtime dependencies are not configured");
