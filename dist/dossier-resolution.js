@@ -11,12 +11,17 @@ export const REVIEWER_CANDIDATE_ENTRY_TYPE = "ak_reviewer_audit_candidate";
 export const DOCTOR_CANDIDATE_ENTRY_TYPE = "ak_doctor_audit_candidate";
 /**
  * Resolve the per-run dossier pointer injected by the public CLI.
- * Concurrent runs in one worktree stay isolated because the pointer is per-process.
+ *
+ * Absent pointer = bare Pi internal seam (ADR 0052): audit proceeds; the model
+ * self-locates the dossier from its own fall-volume position per soul. Public CLI
+ * always injects the pointer — only then does the machine validate the path.
+ * Concurrent runs stay isolated because a present pointer is per-process.
  */
 export function resolveAuditDossier(env = process.env) {
     const raw = env[AUDIT_RUN_DIR_ENV];
+    // Bare Pi activation seam: no machine gate when the pointer was never injected.
     if (typeof raw !== "string" || raw.trim() === "") {
-        return { status: "incomplete", observation: { kind: "missing-dossier" } };
+        return { status: "ok" };
     }
     const runDirectory = resolve(raw);
     try {

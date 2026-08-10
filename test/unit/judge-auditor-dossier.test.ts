@@ -47,9 +47,37 @@ function seedJudgeSubjects(sessionManager: SessionManager): void {
   });
 }
 
-test("judge auditor returns missing-dossier without AK_ROLE_RUN_DIR and never calls the model", async () => {
+test("judge auditor bare-Pi seam proceeds without AK_ROLE_RUN_DIR when subjects are on the books", async () => {
   const previous = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
+  let calls = 0;
+  try {
+    const sessionManager = SessionManager.inMemory();
+    seedJudgeSubjects(sessionManager);
+    const auditor = createPiJudgeAuditor(async () => {
+      calls += 1;
+      return fauxAssistantMessage(
+        fauxToolCall(JUDGE_AUDIT_TOOL_NAME, {
+          status: "pass",
+          violations: [],
+          conflicts: [],
+          decisionGate: null,
+        }),
+        { stopReason: "toolUse" },
+      );
+    });
+    const decision = await auditor({ context: auditContext(sessionManager) });
+    assert.equal(decision.status, "pass");
+    assert.equal(calls, 1);
+  } finally {
+    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previous;
+  }
+});
+
+test("judge auditor returns missing-dossier when AK_ROLE_RUN_DIR points at a nonexistent path", async () => {
+  const previous = process.env.AK_ROLE_RUN_DIR;
+  process.env.AK_ROLE_RUN_DIR = join(tmpdir(), "ak-missing-run-dir-does-not-exist");
   let calls = 0;
   try {
     const auditor = createPiJudgeAuditor(async () => {

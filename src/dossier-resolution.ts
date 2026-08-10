@@ -21,7 +21,11 @@ export type MissingSubjectObservation = {
 };
 export type DossierObservation = MissingDossierObservation | MissingSubjectObservation;
 
-export type DossierOk = { readonly status: "ok"; readonly runDirectory: string };
+export type DossierOk = {
+  readonly status: "ok";
+  /** Present only when public CLI injected a validated AK_ROLE_RUN_DIR. */
+  readonly runDirectory?: string;
+};
 export type DossierIncomplete = {
   readonly status: "incomplete";
   readonly observation: DossierObservation;
@@ -37,12 +41,17 @@ export type SubjectResolution = SubjectOk | SubjectIncomplete;
 
 /**
  * Resolve the per-run dossier pointer injected by the public CLI.
- * Concurrent runs in one worktree stay isolated because the pointer is per-process.
+ *
+ * Absent pointer = bare Pi internal seam (ADR 0052): audit proceeds; the model
+ * self-locates the dossier from its own fall-volume position per soul. Public CLI
+ * always injects the pointer — only then does the machine validate the path.
+ * Concurrent runs stay isolated because a present pointer is per-process.
  */
 export function resolveAuditDossier(env: NodeJS.ProcessEnv = process.env): DossierResolution {
   const raw = env[AUDIT_RUN_DIR_ENV];
+  // Bare Pi activation seam: no machine gate when the pointer was never injected.
   if (typeof raw !== "string" || raw.trim() === "") {
-    return { status: "incomplete", observation: { kind: "missing-dossier" } };
+    return { status: "ok" };
   }
   const runDirectory = resolve(raw);
   try {
