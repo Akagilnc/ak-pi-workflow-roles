@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -441,7 +442,23 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(timedOutWithProvider.diagnostic, "rate limited");
   assert.equal(timedOutWithProvider.identity?.name, "ProviderStopError");
   assert.equal(timedOutWithProvider.identity?.code, "openai-codex");
-  assert.equal(timedOutWithProvider.details?.timedOut, true);
+  assert.deepEqual(timedOutWithProvider.details, {
+    code: null,
+    timedOut: true,
+  });
+
+  const reservedKnownDetails = classifyPostAdmissionFailure({
+    timedOut: false,
+    code: 1,
+    stderr: "",
+    knownCause: "provider",
+    knownDiagnostic: "upstream unavailable",
+    knownDetails: { code: 99, timedOut: true, provider: "xai" },
+  });
+  assert.deepEqual(reservedKnownDetails.details, {
+    provider: "xai",
+    code: 1,
+  });
 
   // AC5: `throw undefined` is a present exception — not missing thrown / activation / output.
   const thrownUndefined = classifyPostAdmissionFailure({
@@ -2307,7 +2324,13 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
   const marker = join(home, "parent-judge.txt");
   const extension = join(home, "provider-judge.ts");
   let requestCount = 0;
-  const server = createServer(async (request, response) => {
+  let tracerFailure: unknown;
+  let restoreParent: (() => Promise<void>) | undefined;
+  let restoreInterval: ReturnType<typeof setInterval> | undefined;
+  const retainFailure = (error: unknown) => {
+    if (tracerFailure === undefined) tracerFailure = error;
+  };
+  const handleRequest = async (request: IncomingMessage, response: ServerResponse) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as any;
@@ -2320,24 +2343,33 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
       await rename(parentFile, backup);
       await mkdir(parentFile);
       let restored = false;
-      const restoreParent = async () => {
+      restoreParent = async () => {
         if (restored) return;
         restored = true;
-        clearInterval(restore);
+        if (restoreInterval !== undefined) clearInterval(restoreInterval);
         await rm(parentFile, { recursive: true, force: true });
         await rename(backup, parentFile);
       };
-      const restore = setInterval(async () => {
-        try {
-          const childDir = join(parentFile, "..", "auditor-roles");
-          const names = await (await import("node:fs/promises")).readdir(childDir);
-          for (const name of names) {
-            const text = await readFile(join(childDir, name), "utf8");
-            if (text.includes("ak_auditor_compliance_failure")) await restoreParent();
+      restoreInterval = setInterval(() => {
+        void (async () => {
+          try {
+            const childDir = join(parentFile, "..", "auditor-roles");
+            const names = await (await import("node:fs/promises")).readdir(childDir);
+            for (const name of names) {
+              const text = await readFile(join(childDir, name), "utf8");
+              if (text.includes("ak_auditor_compliance_failure")) await restoreParent?.();
+            }
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return;
+            retainFailure(error);
+            try {
+              await restoreParent?.();
+            } catch (restoreError) {
+              retainFailure(restoreError);
+            }
           }
-        } catch {}
+        })();
       }, 5);
-      setTimeout(() => { void restoreParent(); }, 2_000);
       response.writeHead(500, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: { message: "WebSocket error" } }));
       return;
@@ -2349,6 +2381,12 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
     response.write(`data: ${JSON.stringify(payload)}\n\n`);
     response.write(`data: ${JSON.stringify({ ...payload, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`);
     response.end("data: [DONE]\n\n");
+  };
+  const server = createServer((request, response) => {
+    void handleRequest(request, response).catch((error) => {
+      retainFailure(error);
+      response.destroy(error instanceof Error ? error : new Error(String(error)));
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -2364,7 +2402,23 @@ export default function (pi) {
   pi.on("session_start", (_event, ctx) => writeFileSync(${JSON.stringify(marker)}, ctx.sessionManager.getSessionFile(), "utf8"));
 }
 `, "utf8");
-  return { extension, close: async () => { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); } };
+  return {
+    extension,
+    close: async () => {
+      if (restoreInterval !== undefined) clearInterval(restoreInterval);
+      try {
+        await restoreParent?.();
+      } catch (error) {
+        retainFailure(error);
+      }
+      try {
+        await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      } catch (error) {
+        retainFailure(error);
+      }
+      if (tracerFailure !== undefined) throw tracerFailure;
+    },
+  };
 }
 
 test("fast four-role public wiring matrix settles an injected auditor provider stop", async () => {

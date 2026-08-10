@@ -368,13 +368,15 @@ export function classifyPostAdmissionFailure(input: {
       input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
         ? input.knownDiagnostic
         : conciseChildDiagnostic(input.stderr, fallback);
+    const { code: _knownCode, timedOut: _knownTimedOut, ...knownDetails } =
+      input.knownDetails ?? {};
     return {
       cause: input.knownCause,
       diagnostic,
       details: {
+        ...knownDetails,
         code: input.code,
         ...(input.timedOut ? { timedOut: true as const } : {}),
-        ...(input.knownDetails ?? {}),
       },
       ...(input.knownIdentity === undefined
         ? {}
