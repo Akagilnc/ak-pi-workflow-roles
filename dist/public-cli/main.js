@@ -13202,6 +13202,38 @@ async function readSessionProviderStop(sessionFile) {
     return void 0;
   }
 }
+async function readBoundEvidenceChildKnownFailure(sessionFile) {
+  const childDirectory = join7(dirname5(sessionFile), "evidence-children");
+  let names;
+  try {
+    names = await readdir3(childDirectory);
+  } catch (error) {
+    if (isMissingPathError2(error)) return void 0;
+    throw sessionReadFailure(error, "failed to read bound evidence-child session directory");
+  }
+  for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
+    let entries;
+    try {
+      entries = await readBoundSessionEntries(join7(childDirectory, file));
+    } catch (error) {
+      throw sessionReadFailure(error, "failed to read discovered evidence-child session");
+    }
+    const header = entries.find((entry) => entry.type === "session");
+    if (!isRecord4(header) || header.parentSession !== sessionFile) continue;
+    const stop = extractSessionProviderStop(entries);
+    if (stop === void 0) continue;
+    const primary = knownFailureFromProviderStop(stop);
+    return {
+      ...primary,
+      details: {
+        ...stop.provider === void 0 ? {} : { provider: stop.provider },
+        ...stop.model === void 0 ? {} : { model: stop.model },
+        secondaryEvidence: "evidence-child"
+      }
+    };
+  }
+  return void 0;
+}
 async function readBoundAuditorKnownFailure(sessionFile) {
   let parentEntries;
   try {
@@ -13279,6 +13311,17 @@ async function resolveAuditedRunnerKnownFailure(input) {
     if (auditorFailure !== void 0) return auditorFailure;
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
+    return {
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name
+    };
+  }
+  try {
+    const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
+    if (evidenceChildFailure !== void 0) return evidenceChildFailure;
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound evidence-child failure");
     return {
       cause: "session",
       identity: thrownIdentity(failure),
