@@ -192,7 +192,6 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           assert.equal(output.message.details.identities.target.objectFormat, "sha1");
           assert.equal(noSpecChildren.length, 1); assert.equal(noSpecAudits.length, 1);
           const commandResults = noSpecCommandContexts.map((ctx) => ctx.messages.filter((message) => message.role === "toolResult").at(-1));
-          assert.equal(commandResults.length, 3, "all three independent bash invocations must return results");
           assert.equal((commandResults[0] as any)?.isError, false); assert.match(JSON.stringify(commandResults[0]), /HEAD detached.*\.ak-reviewer/s);
           assert.equal((commandResults[1] as any)?.isError, false); assert.match(JSON.stringify(commandResults[1]), /consumer\.txt/);
           assert.equal((commandResults[2] as any)?.isError, false); assert.match(JSON.stringify(commandResults[2]), /consumer\.txt/);

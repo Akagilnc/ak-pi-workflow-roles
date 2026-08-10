@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   readFileSync,
@@ -49,8 +50,14 @@ test(
       };
 
       const output: string[] = [];
+      const lastReviewerChange = execFileSync(
+        "git",
+        ["log", "-1", "--format=%H", "--", "src/reviewer-construction.ts"],
+        { cwd: packageRoot, encoding: "utf8" },
+      ).trim();
+      assert.match(lastReviewerChange, /^[0-9a-f]{40}$/);
       const success = await runPublicReviewer(
-        ["--project", packageRoot, "--base", "HEAD~1", "--attach", attachmentSource, "Review the fixed point."],
+        ["--project", packageRoot, "--base", `${lastReviewerChange}^`, "--attach", attachmentSource, "Review the fixed point."],
         {
           ...common,
           createRunId: () => "reviewer-production-success",
