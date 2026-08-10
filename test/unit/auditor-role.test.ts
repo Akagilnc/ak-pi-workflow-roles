@@ -8,9 +8,16 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context } from "
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
+import { PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS } from "../../src/package-owned-tool-idle.ts";
 
-test("independent auditor gathers evidence and submits one decision", async () => {
+test("independent auditor gathers evidence and submits one decision with one custom-tool idle timer", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-behavior-"));
+  const originalSetTimeout = globalThis.setTimeout;
+  let idleTimers = 0;
+  globalThis.setTimeout = ((callback: (...args: any[]) => void, delay?: number, ...args: any[]) => {
+    if (delay === PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS) idleTimers += 1;
+    return originalSetTimeout(callback, delay, ...args);
+  }) as typeof globalThis.setTimeout;
   try {
     await writeFile(join(cwd, "evidence.txt"), "court evidence: accepted\n");
     const sessionManager = SessionManager.inMemory(cwd);
@@ -46,7 +53,9 @@ test("independent auditor gathers evidence and submits one decision", async () =
     assert.equal(decision.status, "pass");
     assert.equal(turns, 2);
     assert.equal(decisions, 1);
+    assert.equal(idleTimers, 1, "auditor custom tool is wrapped exactly once at installation");
   } finally {
+    globalThis.setTimeout = originalSetTimeout;
     await rm(cwd, { recursive: true, force: true });
   }
 });

@@ -15,12 +15,13 @@ import {
   defineTool,
   type AgentToolUpdateCallback,
   type ExtensionAPI,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
 import {
   PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
-  registerPackageOwnedTool,
 } from "../../src/package-owned-tool-idle.ts";
+import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import {
   withActivationHome,
   withInProcessPi,
@@ -41,7 +42,7 @@ function toolResults(session: { messages: readonly { role?: string; toolName?: s
 }
 
 async function withPackageToolSession<T>(
-  tool: Parameters<typeof registerPackageOwnedTool>[1],
+  tool: ToolDefinition<any, any, any>,
   run: (fixture: {
     session: Awaited<Parameters<Parameters<typeof withInProcessPi>[1]>[0]>["session"];
     faux: ReturnType<typeof fauxProvider>;
@@ -65,7 +66,14 @@ async function withPackageToolSession<T>(
       flags: {},
       extensionFactories: [
         (pi: ExtensionAPI) => {
-          registerPackageOwnedTool(pi, tool);
+          // Production tracer: role-runtime installs package registration, then an
+          // ordinary package extension registers through pi.registerTool.
+          createRoleRuntimeExtension({
+            loadJudgeSoul: async () => "judge",
+            transcriptFromContext: () => "",
+            auditSoulCompliance: async () => ({ status: "pass" }),
+          })(pi);
+          pi.registerTool(tool);
         },
       ],
     }, async ({ session }) => run({ session, faux }));
@@ -134,6 +142,11 @@ test(
 
         t.mock.timers.tick(1);
         await flushMicrotasks(50);
+        assert.equal(
+          toolResults(session, PACKAGE_TOOL).length,
+          1,
+          "production role-runtime registration installs the timeout wrapper",
+        );
         await promptDone;
 
         const timeoutResults = toolResults(session, PACKAGE_TOOL);
@@ -173,7 +186,7 @@ test(
 );
 
 test(
-  "producing update at 182999ms resets idle window; empty update does not",
+  "meaningful details-only update at 182999ms resets idle window; empty placeholder does not",
   { timeout: 30_000 },
   async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
@@ -232,7 +245,9 @@ test(
       await promptDone;
     });
 
-    // Fresh session: producing update resets, so full new 183000ms is required.
+    // Fresh session: meaningful details-only activity resets, so a full new
+    // 183000ms silence window is required. Observation-plane content semantics
+    // are intentionally tested elsewhere and remain unchanged.
     onUpdateRef = undefined;
     const gate2 = new Promise<void>((resolve) => {
       release = resolve;
@@ -262,13 +277,13 @@ test(
         () => fauxAssistantMessage("continued after reset timeout"),
       ]);
 
-      const promptDone = session.prompt("exercise producing reset");
+      const promptDone = session.prompt("exercise details-only reset");
       await flushMicrotasks();
       assert.ok(onUpdateRef, "tool received onUpdate");
 
       t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS - 1);
       await flushMicrotasks();
-      onUpdateRef!({ content: [{ type: "text", text: "chunk" }], details: { n: 1 } });
+      onUpdateRef!({ content: [], details: { elapsedMs: 60_000 } });
       await flushMicrotasks();
 
       t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS - 1);
@@ -276,7 +291,7 @@ test(
       assert.equal(
         toolResults(session, PACKAGE_TOOL).length,
         0,
-        "producing update resets the idle window",
+        "meaningful details-only update resets the idle window",
       );
 
       t.mock.timers.tick(1);
