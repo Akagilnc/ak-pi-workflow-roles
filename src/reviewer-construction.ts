@@ -2,8 +2,7 @@ import { exactUtf8 } from "./exact-utf8.ts";
 import { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import { sha256Hex } from "./sha256.ts";
 import { reviewerScopePrompt } from "./reviewer-scope-prompt.ts";
-import type { AdmittedReviewerProposal, ReviewerPrerequisiteOperation } from "./reviewer-admission.ts";
-import type { ReviewerFrozenEvidence, ReviewerPinnedTarget } from "./reviewer-pinned-git.ts";
+import type { ReviewerPinnedTarget, ReviewerRange } from "./reviewer-pinned-git.ts";
 
 export const REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
   recipeId: "reviewer-common-bundle",
@@ -87,7 +86,7 @@ export function reviewerAxisMethodAdapter(axis: ReviewerAxis, materialReferences
     ...(materialReferences.length === 0 ? [] : ["Typed material reads required for this leg:", ...materialReferences.map((reference) => `Read-and-verify: ${JSON.stringify(reference)}`)]),
   ].join("\n");
 }
-export type MechanicalBundleOrigin = "canonical-skill" | "pinned-target" | "host-input" | "derived-range" | "runtime-recipe";
+export type MechanicalBundleOrigin = "canonical-skill" | "derived-range" | "runtime-recipe";
 export type PinnedMechanicalBundleEntryV1 = Readonly<{
   id: string; relativeClonePath: string; origin: MechanicalBundleOrigin;
   sourceIdentity: string; bytes: string; utf8Length: number; sha256: string;
@@ -116,8 +115,7 @@ function manifestBytes(entries: readonly (PinnedMechanicalBundleEntryV1 | Omit<P
 export function compileMechanicalBundle(input: {
   canonicalSkill: string;
   task: string;
-  range: { base: string; target: string; diffCommand: string; diffSha256: string; commits: readonly string[] };
-  materials: readonly { id: string; repositoryPath: string; source?: "pinned-git" | "host-input"; sourcePath?: string; text: string; sha256: string }[];
+  range: ReviewerRange;
 }): { canonicalSkill: CanonicalSkillIdentity; construction: ReviewerConstructionIdentity; bundle: PinnedMechanicalBundleV1 } {
   const skillIdentity = reviewerPromptIdentity(input.canonicalSkill);
   const canonicalSkill = Object.freeze({ sha256: skillIdentity.sha256, utf8Length: skillIdentity.utf8Length, snapshotIdentity: skillIdentity });
@@ -125,7 +123,6 @@ export function compileMechanicalBundle(input: {
     entry("canonical-skill", ".ak-reviewer/materials/canonical-skill.md", "canonical-skill", skillIdentity.sha256, input.canonicalSkill),
     entry("opaque-task", ".ak-reviewer/materials/task.md", "runtime-recipe", sha256Hex(input.task), input.task),
     entry("review-range", ".ak-reviewer/materials/range.json", "derived-range", input.range.diffSha256, JSON.stringify(input.range, null, 2) + "\n"),
-    ...input.materials.map((item) => entry(`material-${item.id}`, `.ak-reviewer/materials/selected/${item.id}.md`, item.source === "host-input" ? "host-input" : "pinned-target", `${item.source === "host-input" ? `host-input:${item.sourcePath}` : `pinned-git:${item.repositoryPath}@${input.range.target}`}@${item.sha256}`, item.text)),
   ]);
   const paths = entries.map((item) => item.relativeClonePath.normalize("NFC"));
   if (new Set(paths).size !== paths.length) throw new Error("Mechanical bundle path collision");
@@ -133,18 +130,18 @@ export function compileMechanicalBundle(input: {
   return { canonicalSkill, construction: REVIEWER_CONSTRUCTION_RECIPE, bundle };
 }
 export type ConstructedReviewerLeg = Readonly<{ axis:"standards"|"spec"; prompt:ReviewerPromptIdentity }>;
-export type ConstructedReviewerDispatch = Readonly<{ identity:string; recipe:"reviewer-common-bundle-v1"; input:Readonly<{task:ReviewerPromptIdentity;canonicalSkill:CanonicalSkillIdentity;construction:ReviewerConstructionIdentity;capabilityDocument:ReviewerPromptIdentity}>; targetSnapshot:ReviewerPinnedTarget; prerequisiteOperations:readonly ReviewerPrerequisiteOperation[]; range:ReviewerFrozenEvidence["range"]; materials:ReviewerFrozenEvidence["materials"]; relevanceHints?:AdmittedReviewerProposal["relevanceHints"]; bundle:PinnedMechanicalBundleV1; legs:readonly ConstructedReviewerLeg[] }>;
+export type ConstructedReviewerDispatch = Readonly<{ identity:string; recipe:"reviewer-common-bundle-v1"; input:Readonly<{task:ReviewerPromptIdentity;canonicalSkill:CanonicalSkillIdentity;construction:ReviewerConstructionIdentity}>; targetSnapshot:ReviewerPinnedTarget; range:ReviewerRange; bundle:PinnedMechanicalBundleV1; legs:readonly ConstructedReviewerLeg[] }>;
 export type ReviewerPromptCompiler = (prompt:string,axis:"standards"|"spec",pass:1|2)=>ReviewerPromptIdentity;
 
 /** Deterministic compiler: admitted immutable policy plus frozen evidence in, dispatch bytes out. */
-export function constructReviewerDispatch(input:{identity:string;taskText:string;canonicalSkill:string;capabilityDocument:ReviewerPromptIdentity;target:ReviewerPinnedTarget;admitted:AdmittedReviewerProposal;evidence:ReviewerFrozenEvidence;reviewScopeKeys?:readonly string[];compilePrompt?:ReviewerPromptCompiler}):ConstructedReviewerDispatch {
-  const task=reviewerPromptIdentity(input.taskText); const compiled=compileMechanicalBundle({canonicalSkill:input.canonicalSkill,task:input.taskText,range:input.evidence.range,materials:input.evidence.materials});
-  const common=[`Task-SHA256: ${task.sha256}`,`Target: ${input.evidence.range.target}`,`Base: ${input.evidence.range.base}`,`Diff: ${input.evidence.range.diffCommand}`,reviewerScopePrompt(input.reviewScopeKeys),`Recipe: ${compiled.construction.recipeId}@${compiled.construction.version}`,`Bundle-Manifest-SHA256: ${compiled.bundle.manifestSha256}`,bundlePromptReferences(compiled.bundle)].join("\n");
-  const axes:Array<{axis:"standards"|"spec"}>=[{axis:"standards"},...(input.admitted.specGrant?[{axis:"spec" as const}]:[])];
+export function constructReviewerDispatch(input:{identity:string;taskText:string;canonicalSkill:string;target:ReviewerPinnedTarget;range:ReviewerRange;reviewScopeKeys?:readonly string[];compilePrompt?:ReviewerPromptCompiler}):ConstructedReviewerDispatch {
+  const task=reviewerPromptIdentity(input.taskText); const compiled=compileMechanicalBundle({canonicalSkill:input.canonicalSkill,task:input.taskText,range:input.range});
+  const common=[`Task-SHA256: ${task.sha256}`,`Target: ${input.range.target}`,`Base: ${input.range.base}`,`Diff: ${input.range.diffCommand}`,reviewerScopePrompt(input.reviewScopeKeys),`Recipe: ${compiled.construction.recipeId}@${compiled.construction.version}`,`Bundle-Manifest-SHA256: ${compiled.bundle.manifestSha256}`,bundlePromptReferences(compiled.bundle)].join("\n");
+  const axes:Array<{axis:"standards"|"spec"}>=[{axis:"standards"},{axis:"spec"}];
   const compile=input.compilePrompt??((text:string)=>reviewerPromptIdentity(text)); const materialReferences=compiled.bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256 })); const build=(x:typeof axes[number],pass:1|2)=>compile(`${common}\n${reviewerAxisMethodAdapter(x.axis, materialReferences)}\n`,x.axis,pass);
   const first=axes.map(x=>build(x,1)),second=axes.map(x=>build(x,2));
   for(let i=0;i<first.length;i++){if(!isReviewerPromptIdentity(first[i]!)||!isReviewerPromptIdentity(second[i]!))throw new ReviewerConstructionError("prompt-identity-invalid");if(!sameReviewerPromptIdentity(first[i]!,second[i]!))throw new ReviewerConstructionError("prompt-identity-mismatch");}
-  return Object.freeze({identity:input.identity,recipe:"reviewer-common-bundle-v1",input:Object.freeze({task,canonicalSkill:compiled.canonicalSkill,construction:compiled.construction,capabilityDocument:input.capabilityDocument}),targetSnapshot:input.target,prerequisiteOperations:input.admitted.prerequisiteOperations,range:input.evidence.range,materials:input.evidence.materials,...(input.admitted.relevanceHints===undefined?{}:{relevanceHints:input.admitted.relevanceHints}),bundle:compiled.bundle,legs:Object.freeze(axes.map((x,i)=>Object.freeze({...x,prompt:first[i]!}))) });
+  return Object.freeze({identity:input.identity,recipe:"reviewer-common-bundle-v1",input:Object.freeze({task,canonicalSkill:compiled.canonicalSkill,construction:compiled.construction}),targetSnapshot:input.target,range:input.range,bundle:compiled.bundle,legs:Object.freeze(axes.map((x,i)=>Object.freeze({...x,prompt:first[i]!}))) });
 }
 export class ReviewerConstructionError extends Error {
   constructor(

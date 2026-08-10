@@ -67,7 +67,6 @@ import {
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
-import { AGENT_TOOL_NAME } from "../../src/reviewer-role.ts";
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
 
@@ -134,7 +133,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
         ...base,
         loadReviewerSoul: law,
         loadReviewerTask: async () => reviewTask,
-        loadReviewerCapabilities: async () => reviewCaps,
         createReviewerPinnedGitReader: async () => {
           const pin = {
             repositoryRoot: fixtureRoot,
@@ -153,7 +151,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
               diffSha256: "2".repeat(64),
               commits: [oid("9")],
             }),
-            material: async () => new TextEncoder().encode("material"),
           };
         },
         loadCanonicalSkillBinding: async (name) => {
@@ -247,7 +244,7 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
     case "reviewer":
       return {
         "ak-review-task": "/lawful/review-task.md",
-        "ak-review-capabilities": "/lawful/review-caps.md",
+        "ak-review-base": "main~1",
       };
     case "collector":
       writeFileSync(legsPath, `${JSON.stringify({
@@ -359,7 +356,6 @@ test("seven packaged terminating tools expose the provider-open registration inv
 
 test("remaining support tools expose their actual registration inventory", async () => {
   const cases = [
-    { role: "reviewer", name: AGENT_TOOL_NAME, fields: ["version", "base", "materials", "relevanceHints", "spec", "required"] },
     { role: "doctor", name: DOCTOR_EVIDENCE_TOOL_NAME, fields: ["evidenceId", "offset", "limit"] },
     { role: "navigator", name: NAVIGATOR_PREPARE_TOOL_NAME, fields: [] },
   ] as const;

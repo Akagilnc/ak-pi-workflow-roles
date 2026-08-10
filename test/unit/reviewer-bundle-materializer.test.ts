@@ -17,12 +17,6 @@ const make = () =>
       diffSha256: "1".repeat(64),
       commits: ["B"],
     },
-    materials: [{
-      id: "m",
-      repositoryPath: "M.md",
-      text: "material\n",
-      sha256: "2".repeat(64),
-    }],
   }).bundle;
 
 async function root() {
@@ -59,38 +53,7 @@ test("materializer rejects digest and manifest mutation atomically", async () =>
   }
 });
 
-test("materializer rejects traversal, absolute paths, collisions, and symlink parents", async () => {
-  // Hostile paths must be built through compile so the manifest stays valid
-  // and confinement (not digest mismatch) is the rejecting gate.
-  const r = await root();
-  try {
-    for (const id of ["../../../escape", "/absolute", "foo/../../../escape"]) {
-      const hostile = compileMechanicalBundle({
-        canonicalSkill: "skill\n",
-        task: "task\n",
-        range: {
-          base: "A",
-          target: "B",
-          diffCommand: "git diff A...B",
-          diffSha256: "1".repeat(64),
-          commits: ["B"],
-        },
-        materials: [{
-          id,
-          repositoryPath: "M.md",
-          text: "material\n",
-          sha256: "2".repeat(64),
-        }],
-      }).bundle;
-      await assert.rejects(
-        materializeMechanicalBundle(r, "standards", hostile),
-        /Mechanical bundle path is not confined/,
-      );
-    }
-  } finally {
-    await rm(r, { recursive: true, force: true });
-  }
-
+test("materializer rejects a symlinked bundle parent", async () => {
   const symlinkRoot = await root();
   try {
     await mkdir(join(symlinkRoot, "outside"));

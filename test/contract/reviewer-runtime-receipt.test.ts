@@ -15,7 +15,7 @@ import { sha256Hex } from "../../src/sha256.ts";
 const prompt = (axis: string) => ({ text: `${axis} prompt\n` });
 function receipt(axes: readonly ("standards" | "spec")[] = ["standards"], status: "completed" | "refused" = "completed") {
   const skillText = "skill\n";
-  const bundle = compileMechanicalBundle({ canonicalSkill: skillText, task: "task", range: { base: "a", target: "b", diffCommand: "git diff a...b", diffSha256: "1".repeat(64), commits: ["b"] }, materials: [] }).bundle;
+  const bundle = compileMechanicalBundle({ canonicalSkill: skillText, task: "task", range: { base: "a", target: "b", diffCommand: "git diff a...b", diffSha256: "1".repeat(64), commits: ["b"] } }).bundle;
   const reports = Object.fromEntries(axes.map(axis => [axis, { text: `${axis} report` }]));
   const outcomes = Object.fromEntries(axes.map(axis => [axis, { status: "successful", prompt: prompt(axis), workspaceDisposition: "deleted", runtimeConstructionEvidence: { leg: axis, workspaceIdentity: `${axis}-workspace`, manifestSha256: bundle.manifestSha256, entries: bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256, verified: true, readable: true })) } }]));
   return { version: 2, status, ...(status === "refused" ? { diagnostic: "stopped" } : {}), acceptedBatch: { identity: "dispatch", legs: axes.map(axis => ({ axis, prompt: prompt(axis) })) }, reports, outcomes, identities: { canonicalSkill: { text: skillText }, construction: { recipe: "reviewer-common-bundle-v1", bundle: projectMechanicalBundleIdentity(bundle) }, target: { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "a".repeat(40), refs: { tag: { objectId: "b".repeat(40), peeledCommitId: null } } } } };
@@ -73,39 +73,10 @@ test("actual materializer readback evidence is accepted by the terminal receipt 
   const root = await mkdtemp(join(tmpdir(), "reviewer-receipt-materializer-"));
   try {
     const value = receipt() as any;
-    const materializerBundle = compileMechanicalBundle({ canonicalSkill: "skill\n", task: "task", range: { base: "a", target: "b", diffCommand: "git diff a...b", diffSha256: "1".repeat(64), commits: ["b"] }, materials: [] }).bundle;
+    const materializerBundle = compileMechanicalBundle({ canonicalSkill: "skill\n", task: "task", range: { base: "a", target: "b", diffCommand: "git diff a...b", diffSha256: "1".repeat(64), commits: ["b"] } }).bundle;
     const evidence = await materializeMechanicalBundle(root, "standards", materializerBundle);
     value.outcomes.standards.runtimeConstructionEvidence = evidence;
     validateRuntimeReviewerReceipt(value);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("terminal receipt retains host material identity facts without host bytes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "reviewer-receipt-host-"));
-  try {
-    const secret = "HOST AUTHORITY SECRET\\n";
-    const bundle = compileMechanicalBundle({
-      canonicalSkill: "skill\\n",
-      task: "task",
-      range: { base: "a", target: "b", diffCommand: "git diff a...b", diffSha256: "1".repeat(64), commits: ["b"] },
-      materials: [{ id: "authority", repositoryPath: "CLAUDE.md", source: "host-input", sourcePath: "/run/attachments/authority.md", text: secret, sha256: sha256Hex(secret) }],
-    }).bundle;
-    const evidence = await materializeMechanicalBundle(root, "standards", bundle);
-    const assembled = assembleRuntimeReviewerReceipt({
-      intent: { status: "completed" },
-      canonicalSkillText: "skill\\n",
-      record: {
-        transportRejections: [], rejections: [],
-        accepted: { identity: "dispatch", input: { canonicalSkill: { snapshotIdentity: { text: "skill\\n" } } }, legs: [{ axis: "standards", prompt: { text: "prompt" } }], recipe: "reviewer-common-bundle-v1", bundle, target: receipt().identities.target },
-        started: { dispatchIdentity: "dispatch", cardinality: 1 },
-        results: { standards: { status: "successful", report: "report", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, prompt: { text: "prompt" }, target: receipt().identities.target, workspaceDisposition: "deleted", runtimeConstructionEvidence: evidence } },
-      } as any,
-    });
-    assert.equal(JSON.stringify(assembled).includes(secret), false);
-    assert.equal((assembled.identities.construction?.bundle.entries[3] as any).sourceIdentity.includes("/run/attachments/authority.md"), true);
-    validateRuntimeReviewerReceipt(assembled);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

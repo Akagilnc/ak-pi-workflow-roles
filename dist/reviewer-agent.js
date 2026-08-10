@@ -2,7 +2,6 @@ import { isReviewerPromptIdentity } from "./reviewer-prompt-identity.js";
 import { executeReviewerChild } from "./reviewer-child-executor.js";
 import { createReviewerWorkspaceOwner } from "./reviewer-workspace.js";
 import { normalizeReviewerFailureDiagnostic } from "./reviewer-failure-diagnostic.js";
-const RUNNER_PREREQUISITES = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"];
 export class ReviewerDispatchExecutionError extends Error {
     outcome;
     constructor(outcome) {
@@ -28,9 +27,6 @@ export function createReviewerAgentRunner(dependencies = {}) {
             for (const leg of dispatch.legs)
                 if (!isReviewerPromptIdentity(leg.prompt))
                     throw new Error("Accepted Reviewer prompt evidence mismatch");
-            for (const operation of RUNNER_PREREQUISITES)
-                if (!dispatch.prerequisiteOperations.includes(operation))
-                    throw new Error(`Missing accepted runner prerequisite: ${operation}`);
             let batch;
             try {
                 batch = await workspaceOwner.prepare(dispatch.targetSnapshot, dispatch.legs.map(l => l.axis), dispatch.bundle, options.signal);

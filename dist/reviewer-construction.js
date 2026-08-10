@@ -80,7 +80,6 @@ export function compileMechanicalBundle(input) {
         entry("canonical-skill", ".ak-reviewer/materials/canonical-skill.md", "canonical-skill", skillIdentity.sha256, input.canonicalSkill),
         entry("opaque-task", ".ak-reviewer/materials/task.md", "runtime-recipe", sha256Hex(input.task), input.task),
         entry("review-range", ".ak-reviewer/materials/range.json", "derived-range", input.range.diffSha256, JSON.stringify(input.range, null, 2) + "\n"),
-        ...input.materials.map((item) => entry(`material-${item.id}`, `.ak-reviewer/materials/selected/${item.id}.md`, item.source === "host-input" ? "host-input" : "pinned-target", `${item.source === "host-input" ? `host-input:${item.sourcePath}` : `pinned-git:${item.repositoryPath}@${input.range.target}`}@${item.sha256}`, item.text)),
     ]);
     const paths = entries.map((item) => item.relativeClonePath.normalize("NFC"));
     if (new Set(paths).size !== paths.length)
@@ -91,9 +90,9 @@ export function compileMechanicalBundle(input) {
 /** Deterministic compiler: admitted immutable policy plus frozen evidence in, dispatch bytes out. */
 export function constructReviewerDispatch(input) {
     const task = reviewerPromptIdentity(input.taskText);
-    const compiled = compileMechanicalBundle({ canonicalSkill: input.canonicalSkill, task: input.taskText, range: input.evidence.range, materials: input.evidence.materials });
-    const common = [`Task-SHA256: ${task.sha256}`, `Target: ${input.evidence.range.target}`, `Base: ${input.evidence.range.base}`, `Diff: ${input.evidence.range.diffCommand}`, reviewerScopePrompt(input.reviewScopeKeys), `Recipe: ${compiled.construction.recipeId}@${compiled.construction.version}`, `Bundle-Manifest-SHA256: ${compiled.bundle.manifestSha256}`, bundlePromptReferences(compiled.bundle)].join("\n");
-    const axes = [{ axis: "standards" }, ...(input.admitted.specGrant ? [{ axis: "spec" }] : [])];
+    const compiled = compileMechanicalBundle({ canonicalSkill: input.canonicalSkill, task: input.taskText, range: input.range });
+    const common = [`Task-SHA256: ${task.sha256}`, `Target: ${input.range.target}`, `Base: ${input.range.base}`, `Diff: ${input.range.diffCommand}`, reviewerScopePrompt(input.reviewScopeKeys), `Recipe: ${compiled.construction.recipeId}@${compiled.construction.version}`, `Bundle-Manifest-SHA256: ${compiled.bundle.manifestSha256}`, bundlePromptReferences(compiled.bundle)].join("\n");
+    const axes = [{ axis: "standards" }, { axis: "spec" }];
     const compile = input.compilePrompt ?? ((text) => reviewerPromptIdentity(text));
     const materialReferences = compiled.bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256 }));
     const build = (x, pass) => compile(`${common}\n${reviewerAxisMethodAdapter(x.axis, materialReferences)}\n`, x.axis, pass);
@@ -104,7 +103,7 @@ export function constructReviewerDispatch(input) {
         if (!sameReviewerPromptIdentity(first[i], second[i]))
             throw new ReviewerConstructionError("prompt-identity-mismatch");
     }
-    return Object.freeze({ identity: input.identity, recipe: "reviewer-common-bundle-v1", input: Object.freeze({ task, canonicalSkill: compiled.canonicalSkill, construction: compiled.construction, capabilityDocument: input.capabilityDocument }), targetSnapshot: input.target, prerequisiteOperations: input.admitted.prerequisiteOperations, range: input.evidence.range, materials: input.evidence.materials, ...(input.admitted.relevanceHints === undefined ? {} : { relevanceHints: input.admitted.relevanceHints }), bundle: compiled.bundle, legs: Object.freeze(axes.map((x, i) => Object.freeze({ ...x, prompt: first[i] }))) });
+    return Object.freeze({ identity: input.identity, recipe: "reviewer-common-bundle-v1", input: Object.freeze({ task, canonicalSkill: compiled.canonicalSkill, construction: compiled.construction }), targetSnapshot: input.target, range: input.range, bundle: compiled.bundle, legs: Object.freeze(axes.map((x, i) => Object.freeze({ ...x, prompt: first[i] }))) });
 }
 export class ReviewerConstructionError extends Error {
     code;

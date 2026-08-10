@@ -546,7 +546,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
       const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
       assert.equal(flagValue(args, "--ak-role"), "reviewer");
       assert.equal(args.includes("--ak-review-task"), true);
-      assert.equal(args.includes("--ak-review-capabilities"), true);
+      assert.equal(args.includes("--ak-review-base"), true);
       const skill = flagValue(args, "--skill");
       assert.ok(skill);
       assert.equal(

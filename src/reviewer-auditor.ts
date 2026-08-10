@@ -49,8 +49,6 @@ export function createPiReviewerAuditor(
         "<opaque_review_task>", input.task, "</opaque_review_task>",
         "<structured_execution_record>", JSON.stringify(input.record),
         "</structured_execution_record>",
-        "<typed_material_and_coverage_facts>", JSON.stringify(readiness.materials),
-        "</typed_material_and_coverage_facts>",
         "<candidate_receipt>", JSON.stringify(input.candidate),
         "</candidate_receipt>",
       ].join("\n"),

@@ -5,8 +5,7 @@ export function projectAcceptedDispatch(dispatch) {
     return {
         source: "reviewer-dispatch", type: "accepted", identity: dispatch.identity,
         recipe: dispatch.recipe, input: dispatch.input, target: dispatch.targetSnapshot,
-        prerequisiteOperations: dispatch.prerequisiteOperations,
-        range: dispatch.range, materials: dispatch.materials, bundle: dispatch.bundle, legs: dispatch.legs,
+        range: dispatch.range, bundle: dispatch.bundle, legs: dispatch.legs,
     };
 }
 export function projectReviewerDispatchOutcome(ledger, dispatch, result) {
@@ -81,7 +80,7 @@ export function createReviewerExecutionLedger() {
         if (event.source === "reviewer-dispatch" && event.type === "rejected") {
             if (!hasExactEventShape(event, ["source", "type", "identity", "violations", "started"]) || event.started !== false ||
                 event.violations.length === 0 || event.violations.some((code) => !REVIEWER_PREFLIGHT_VIOLATIONS.includes(code)))
-                throw new Error("Rejected proposal must contain only closed bounded non-start evidence");
+                throw new Error("Rejected dispatch must contain only closed bounded non-start evidence");
             if (accepted !== undefined || started !== undefined)
                 throw new Error("Rejection cannot follow an accepted dispatch");
             rejections.push(cloneFreeze({ identity: event.identity, violations: event.violations, started: false }));
@@ -103,12 +102,6 @@ export function createReviewerExecutionLedger() {
                 throw new Error("Accepted dispatch sibling axes disagree");
             if (!isReviewerPromptIdentity(event.input.task))
                 throw new Error("Accepted task bytes, length, or SHA disagree");
-            if (!isReviewerPromptIdentity(event.input.capabilityDocument))
-                throw new Error("Accepted capability document bytes, length, or SHA disagree");
-            for (const material of event.materials) {
-                if (!isReviewerPromptIdentity(material))
-                    throw new Error("Accepted material bytes, length, or SHA disagree");
-            }
             for (const leg of event.legs) {
                 if (!isReviewerPromptIdentity(leg.prompt))
                     throw new Error("Accepted compiled prompt bytes, length, or SHA disagree");

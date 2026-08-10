@@ -1,8 +1,8 @@
 /**
- * Public Reviewer Role run: admit → derive capabilities → explicit Internal
+ * Public Reviewer Role run: admit → explicit Internal
  * activate → settle Terminal result (#111).
  * Package-owned adapted code-review method is forced; users never submit
- * capability packets. Controlled-failure settlement reuses #107.
+ * extra packets. Controlled-failure settlement reuses #107.
  */
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -138,7 +138,7 @@ export function buildReviewerActivationExtraArgs(
 }
 
 /**
- * Reopen the exact Reviewer Pi session for resume. Preserves derived capabilities
+ * Reopen the exact Reviewer Pi session for resume. Preserves fixed Reviewer inputs
  * and package code-review binding; does not resubmit the original instruction.
  */
 export function buildReviewerResumeActivationExtraArgs(
@@ -465,7 +465,7 @@ export async function runPublicReviewer(
 
 /**
  * Resume a previously admitted Reviewer Role run after a typed HTTP 429.
- * Restores task/capabilities/session identity; model override is temporary.
+ * Restores task/base/session identity; model override is temporary.
  */
 export async function runPublicReviewerResume(
   argv: readonly string[],

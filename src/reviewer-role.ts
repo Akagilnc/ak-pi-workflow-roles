@@ -1,4 +1,3 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
@@ -8,19 +7,7 @@ import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { reviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import { exactUtf8 } from "./exact-utf8.ts";
-import {
-  createReviewerDispatcher,
-  sha256Hex,
-  parseReviewerCapabilities,
-  REVIEWER_CHILD_TOOLS,
-  REVIEWER_PREREQUISITES,
-  type AcceptedReviewerDispatch,
-  type AcceptedReviewerExecution,
-  type ReviewerCapabilitiesV1,
-  type ReviewerHostMaterial,
-  type ReviewerPinnedGitReader,
-  type ReviewerProposalV1,
-} from "./reviewer-dispatch.ts";
+import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { assembleRuntimeReviewerReceipt, type RuntimeReviewerReceiptV2 } from "./reviewer-settlement.ts";
@@ -30,19 +17,6 @@ export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
 export const AGENT_TOOL_NAME = "Agent";
 
-const requestSchema = Type.Object({
-  tools: Type.Array(StringEnum(REVIEWER_CHILD_TOOLS), { uniqueItems: true }),
-  prerequisiteOperations: Type.Array(StringEnum(REVIEWER_PREREQUISITES), { uniqueItems: true }),
-}, { additionalProperties: true });
-const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }), source: Type.Optional(StringEnum(["pinned-git", "host-input"] as const)), sourcePath: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: true });
-export const reviewerProposalSchema = Type.Object({
-  version: Type.Literal(1, { description: "Reviewer proposal contract version." }),
-  base: Type.Object({ revision: Type.String({ minLength: 1 }) }, { additionalProperties: true, description: "Pinned base revision for the review range." }),
-  materials: Type.Array(materialSchema, { description: "Pinned materials admitted to the review." }),
-  relevanceHints: Type.Optional(Type.Object({ standards: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })), spec: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })) }, { additionalProperties: true, description: "Optional hints identifying relevant standards and specification material." })),
-  spec: Type.Object({ state: StringEnum(["established", "not-established"] as const) }, { additionalProperties: true, description: "Whether an established specification governs the review." }),
-  required: Type.Object({ standards: requestSchema, spec: Type.Optional(requestSchema) }, { additionalProperties: true, description: "Tools and prerequisite operations required for each review axis." }),
-}, { additionalProperties: true });
 const reviewerOutputVariants = Type.Union([
   Type.Object({ status: Type.Literal("completed", { description: "Reviewer dispatch completed." }) }, { additionalProperties: false }),
   Type.Object({ status: Type.Literal("refused", { description: "Reviewer dispatch was lawfully refused." }), diagnostic: Type.String({ minLength: 1, description: "Diagnostic explaining the refusal." }) }, { additionalProperties: false }),
@@ -52,11 +26,8 @@ export type ReviewerAuditInput = { soul: string; canonicalSkill: string; task: s
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadTask(path: string): Promise<Uint8Array>;
-  loadCapabilities(path: string): Promise<Uint8Array>;
   loadCanonicalSkillBinding(name: "code-review"): Promise<AnyCanonicalSkillBinding>;
   createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
-  hostTools(): readonly string[];
-  loadHostMaterials?(): Promise<readonly ReviewerHostMaterial[]>;
   runDispatch(execution: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
   compilePrompt?(prompt: string, axis: "standards" | "spec", pass: 1 | 2): ReturnType<typeof reviewerPromptIdentity>;
   shutdownAgent?(): Promise<void>;
@@ -75,7 +46,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
   let soul: string | undefined;
   let taskBytes: Uint8Array | undefined;
   let task: string | undefined;
-  let capabilities: ReviewerCapabilitiesV1 | undefined;
   let binding: CanonicalSkillBinding<"code-review"> | undefined;
   let reader: ReviewerPinnedGitReader | undefined;
   let dispatcher: ReturnType<typeof createReviewerDispatcher> | undefined;
@@ -113,13 +83,10 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     taskBytes = Uint8Array.from(await dependencies.loadTask(taskPath));
     task = exactUtf8(taskBytes, "Reviewer task");
     if (!task.trim()) throw new Error("Reviewer task is empty");
-    const capabilityText = JSON.stringify({ version: 1, taskSha256: sha256Hex(taskBytes), tools: REVIEWER_CHILD_TOOLS, prerequisiteOperations: REVIEWER_PREREQUISITES });
-    capabilities = parseReviewerCapabilities(new TextEncoder().encode(capabilityText), taskBytes);
     const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
     if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
     binding = loaded;
     reader = await dependencies.createPinnedGitReader();
-    const hostMaterials = await dependencies.loadHostMaterials?.() ?? [];
 
     let acceptedDispatch: AcceptedReviewerDispatch | undefined;
     const executeAndProjectDispatch = async (execution: AcceptedReviewerExecution, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
@@ -143,10 +110,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     dispatcher = createReviewerDispatcher({
       task: taskBytes,
       canonicalSkill: binding.snapshot.raw,
-      capabilities,
       reader,
-      hostTools: dependencies.hostTools(),
-      ...(hostMaterials.length === 0 ? {} : { hostMaterials }),
       ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
       ...(dependencies.compilePrompt === undefined ? {} : { compilePrompt: dependencies.compilePrompt }),
       decisionEvidence(decision) {
@@ -154,8 +118,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           if (decision.disposition === "accepted") {
             ledger.append(projectAcceptedDispatch(decision.dispatch));
             acceptedDispatch = decision.dispatch;
-          } else if (decision.disposition === "rejected") ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: decision.identity, violations: decision.violations, started: false });
-          else ledger.append({ source: "reviewer-dispatch", type: "closed-attempt", identity: decision.identity, reason: decision.reason, started: false });
+          } else ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: decision.identity, violations: decision.violations, started: false });
         } catch (error) {
           throw ledger.recordInfrastructureFailure(error);
         }
@@ -204,14 +167,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       pi.on("before_agent_start", async (event, toolCtx) => {
         if (!fixedDispatchStarted) {
           fixedDispatchStarted = true;
-          const unrestricted = Object.freeze({ tools: REVIEWER_CHILD_TOOLS.filter((tool) => dependencies.hostTools().includes(tool)), prerequisiteOperations: REVIEWER_PREREQUISITES });
-          const result = await dispatcher!.propose({
-            version: 1,
-            base: { revision: fixedBaseRevision! },
-            materials: [],
-            spec: { state: "established" },
-            required: { standards: unrestricted, spec: unrestricted },
-          }, { context: toolCtx });
+          const result = await dispatcher!.dispatch(fixedBaseRevision!, { context: toolCtx });
           if (result.status !== "accepted") throw new Error(`Fixed Reviewer dispatch was not accepted: ${result.status}`);
           const available = new Set(pi.getAllTools().map((tool) => tool.name));
           pi.setActiveTools(available.has(REVIEWER_OUTPUT_TOOL_NAME) ? [REVIEWER_OUTPUT_TOOL_NAME] : []);
