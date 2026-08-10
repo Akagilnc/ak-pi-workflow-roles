@@ -44,6 +44,7 @@ import {
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
 import { activationTraceRecordSchema, type ActivationTraceRecord } from "../../src/activation-trace.ts";
+import { childSessionManager } from "../../src/activation-ledger-session.ts";
 import {
   buildDispatchStubFact,
   reconcileInvocation,
@@ -1080,6 +1081,17 @@ test("ledger append rejects cross-book directory symlink without writing the tar
     );
     assert.equal(readFileSync(targetLedger, "utf8"), "");
   });
+});
+
+test("durable child sessions fall back to the parent principal directory", () => {
+  const root = mkdtempSync(join(tmpdir(), "ak-child-session-root-"));
+  try {
+    const parentSession = join(root, "session.jsonl");
+    const child = childSessionManager({ getSessionFile: () => parentSession, getSessionDir: () => "" }, root, "auditor-roles");
+    assert.equal(child.getSessionDir(), join(root, "auditor-roles"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("ledger append and durable session admission reject symlink component escapes", async () => {

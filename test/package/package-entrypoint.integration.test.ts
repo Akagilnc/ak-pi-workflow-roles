@@ -1901,7 +1901,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
             throw new Error("packaged Judge escalation tool result is missing");
           }
           const toolResult = result.message;
-          assert.equal(toolResult.isError, false);
+          assert.equal(toolResult.isError, false, JSON.stringify(toolResult.details));
           // Audit face + delivered judge verdict retained together (ADR 0055).
           assert.equal(toolResult.details.kind, "audit_escalation");
           assert.deepEqual(toolResult.details.conflicts, [
