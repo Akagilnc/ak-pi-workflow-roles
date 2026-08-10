@@ -1652,8 +1652,8 @@ export function buildDoctorTransportPrompt(
 
 /**
  * Parse Reviewer-specific argv after the `reviewer` token.
- * Common Invocation flags: --attach / --project. Role-specific: optional --base.
- * Users never submit capability packets on the public surface.
+ * Public flags: --project and optional --base.
+ * Reviewer gathers its own evidence; users submit neither attachments nor capability packets.
  */
 export function parseReviewerArgv(
   args: readonly string[],
@@ -1669,16 +1669,6 @@ export function parseReviewerArgv(
     if (token === "--") {
       positional.push(...tokens);
       break;
-    }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length)),
-      );
-      continue;
     }
     if (token === "--project") {
       project = requireOptionPath("--project", tokens.shift());
