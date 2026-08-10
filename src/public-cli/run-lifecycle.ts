@@ -452,8 +452,6 @@ type LoadedAdmittedRequestFields = {
   readonly packetPath?: string;
   readonly prerequisitesPath?: string;
   readonly prerequisites?: readonly FixerPrerequisite[];
-  readonly capabilitiesPath?: string;
-  readonly taskSha256?: string;
   readonly baseRevision?: string;
   readonly mergerInputPath?: string;
   readonly derived?: DerivedMergerEnvelope;
@@ -496,8 +494,6 @@ async function loadResumableRunRecord(
   let packetPath: string | undefined;
   let prerequisitesPath: string | undefined;
   let prerequisites: readonly FixerPrerequisite[] | undefined;
-  let capabilitiesPath: string | undefined;
-  let taskSha256: string | undefined;
   let baseRevision: string | undefined;
   let mergerInputPath: string | undefined;
   let derived: DerivedMergerEnvelope | undefined;
@@ -533,18 +529,6 @@ async function loadResumableRunRecord(
       }
       if (Array.isArray(record.prerequisites)) {
         prerequisites = record.prerequisites as FixerPrerequisite[];
-      }
-      if (
-        typeof record.capabilitiesPath === "string" &&
-        record.capabilitiesPath.trim() !== ""
-      ) {
-        capabilitiesPath = record.capabilitiesPath;
-      }
-      if (
-        typeof record.taskSha256 === "string" &&
-        record.taskSha256.trim() !== ""
-      ) {
-        taskSha256 = record.taskSha256;
       }
       if (
         typeof record.baseRevision === "string" &&
@@ -600,8 +584,6 @@ async function loadResumableRunRecord(
       ...(packetPath === undefined ? {} : { packetPath }),
       ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
       ...(prerequisites === undefined ? {} : { prerequisites }),
-      ...(capabilitiesPath === undefined ? {} : { capabilitiesPath }),
-      ...(taskSha256 === undefined ? {} : { taskSha256 }),
       ...(baseRevision === undefined ? {} : { baseRevision }),
       ...(mergerInputPath === undefined ? {} : { mergerInputPath }),
       ...(derived === undefined ? {} : { derived }),
@@ -783,8 +765,8 @@ export async function loadResumableFixerRun(
  * Used by public resume dispatch to pick the role-correct seat and path.
  */
 /**
- * Load a resumable Reviewer run for resume. Task, adapter-derived capabilities,
- * and optional base revision are restored from the admitted request (#111).
+ * Load a resumable Reviewer run for resume. Task and optional fixed base
+ * are restored from the admitted request (#111).
  */
 export async function loadResumableReviewerRun(
   home: string,
@@ -800,18 +782,6 @@ export async function loadResumableReviewerRun(
   if (taskPath === undefined) {
     throw new CliUsageError(
       `role run admitted reviewer task path is missing: ${runId}`,
-    );
-  }
-  const capabilitiesPath = loaded.admittedFields.capabilitiesPath;
-  if (capabilitiesPath === undefined) {
-    throw new CliUsageError(
-      `role run admitted reviewer capabilities path is missing: ${runId}`,
-    );
-  }
-  const taskSha256 = loaded.admittedFields.taskSha256;
-  if (taskSha256 === undefined) {
-    throw new CliUsageError(
-      `role run admitted reviewer task digest is missing: ${runId}`,
     );
   }
   if (loaded.admittedFields.instruction.trim() === "") {
@@ -832,8 +802,6 @@ export async function loadResumableReviewerRun(
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
-    capabilitiesPath,
-    taskSha256,
     ...(loaded.admittedFields.baseRevision === undefined
       ? {}
       : { baseRevision: loaded.admittedFields.baseRevision }),

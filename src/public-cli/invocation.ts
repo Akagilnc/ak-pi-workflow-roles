@@ -37,10 +37,6 @@ import {
   type FixerPrerequisite,
 } from "../package-contracts/fixer-packet.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
-import {
-  REVIEWER_CHILD_TOOLS,
-  REVIEWER_PREREQUISITES,
-} from "../reviewer-admission.ts";
 import { createProductionMergerGitState } from "../merger-git-state.ts";
 import type { MergerGitState } from "../merger-git-state.ts";
 import {
@@ -140,10 +136,6 @@ export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
   readonly role: "reviewer";
   /** Durable task file path consumed by internal --ak-review-task. */
   readonly taskPath: string;
-  /** Adapter-derived capability grant path for --ak-review-capabilities. */
-  readonly capabilitiesPath: string;
-  /** Exact task bytes digest bound into the derived capability document. */
-  readonly taskSha256: string;
   /** Optional caller-supplied base revision hint for proposal base.revision. */
   readonly baseRevision?: string;
 };
@@ -1700,31 +1692,6 @@ export function parseReviewerArgv(
   };
 }
 
-/**
- * Derive the closed Reviewer capability grant from exact task bytes.
- * Ceiling is the package host tool/prerequisite set; callers never submit packets.
- */
-export function deriveReviewerCapabilitiesFromTask(
-  taskBytes: Uint8Array,
-): {
-  readonly taskSha256: string;
-  readonly text: string;
-  readonly bytes: Uint8Array;
-} {
-  const taskSha256 = sha256Hex(taskBytes);
-  const text = `${JSON.stringify({
-    version: 1,
-    taskSha256,
-    tools: [...REVIEWER_CHILD_TOOLS],
-    prerequisiteOperations: [...REVIEWER_PREREQUISITES],
-  })}\n`;
-  return {
-    taskSha256,
-    text,
-    bytes: new TextEncoder().encode(text),
-  };
-}
-
 /** Compose durable task markdown from the public instruction + optional base. */
 export function composeReviewerTaskText(
   instruction: string,
@@ -1755,8 +1722,7 @@ export type AdmitReviewerInvocationOptions = {
 
 /**
  * Admit a Reviewer Role run on the common Invocation request plus optional base.
- * Adapter derives task-bound capabilities; users do not submit capability packets.
- * Pinning remains Reviewer proposal/preflight authority after activation.
+ * Reviewer receives a fixed base and gathers its own evidence after activation.
  */
 export async function admitReviewerInvocation(
   options: AdmitReviewerInvocationOptions,
@@ -1807,11 +1773,6 @@ export async function admitReviewerInvocation(
   );
   const taskPath = join(runDirectory, "task.md");
   await writeFile(taskPath, taskText, "utf8");
-  const taskBytes = new TextEncoder().encode(taskText);
-  const derived = deriveReviewerCapabilitiesFromTask(taskBytes);
-  const capabilitiesPath = join(runDirectory, "capabilities.json");
-  await writeFile(capabilitiesPath, derived.text, "utf8");
-
   const admitted = {
     role: "reviewer" as const,
     runId,
@@ -1823,8 +1784,6 @@ export async function admitReviewerInvocation(
     instruction,
     instructionEmpty: false,
     taskPath,
-    capabilitiesPath,
-    taskSha256: derived.taskSha256,
     ...(options.baseRevision === undefined
       ? {}
       : { baseRevision: options.baseRevision }),
@@ -1857,8 +1816,6 @@ export async function admitReviewerInvocation(
     sessionFile,
     admittedRequestPath,
     taskPath,
-    capabilitiesPath,
-    taskSha256: derived.taskSha256,
     ...(options.baseRevision === undefined
       ? {}
       : { baseRevision: options.baseRevision }),
@@ -1867,7 +1824,7 @@ export async function admitReviewerInvocation(
 
 /**
  * Build the Pi prompt transport for an admitted Reviewer request.
- * Task + capabilities already live on disk for internal flags; prompt carries
+ * Task already lives on disk for the internal flag; prompt carries
  * the instruction, optional base hint, and frozen Attachment paths.
  */
 export function buildReviewerTransportPrompt(
