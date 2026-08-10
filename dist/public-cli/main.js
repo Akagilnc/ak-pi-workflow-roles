@@ -15597,7 +15597,7 @@ async function dispatchAdmittedJudge(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === void 0) {
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -15903,7 +15903,7 @@ async function dispatchAdmittedCoder(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === void 0) {
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -16405,7 +16405,7 @@ async function dispatchAdmittedDoctor(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === void 0) {
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -16681,7 +16681,7 @@ async function dispatchAdmittedFixer(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === void 0) {
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -17471,7 +17471,7 @@ async function dispatchAdmittedReviewer(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === void 0) {
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {

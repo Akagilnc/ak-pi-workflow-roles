@@ -22,7 +22,7 @@ export class ReviewerPreflightError extends Error {
 }
 const frozen = (xs) => Object.freeze([...xs]);
 const exact = (v, keys) => typeof v === "object" && v !== null && !Array.isArray(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
-export function toReviewerExecution(dispatch) { return Object.freeze({ identity: dispatch.identity, recipe: dispatch.recipe, targetSnapshot: immutableReviewerPin(dispatch.targetSnapshot), bundle: dispatch.bundle, prerequisiteOperations: frozen(dispatch.prerequisiteOperations), legs: Object.freeze(dispatch.legs.map(l => Object.freeze({ axis: l.axis, prompt: Object.freeze({ ...l.prompt }), grant: Object.freeze({ tools: frozen(l.grant.tools), bashCommands: frozen(l.grant.bashCommands), prerequisiteOperations: frozen(l.grant.prerequisiteOperations) }) }))) }); }
+export function toReviewerExecution(dispatch) { return Object.freeze({ identity: dispatch.identity, recipe: dispatch.recipe, targetSnapshot: immutableReviewerPin(dispatch.targetSnapshot), bundle: dispatch.bundle, prerequisiteOperations: frozen(dispatch.prerequisiteOperations), legs: Object.freeze(dispatch.legs.map(l => Object.freeze({ axis: l.axis, prompt: Object.freeze({ ...l.prompt }), grant: Object.freeze({ tools: frozen(l.grant.tools), prerequisiteOperations: frozen(l.grant.prerequisiteOperations) }) }))) }); }
 export function parseReviewerCapabilities(raw, task) { let value, text; try {
     text = exactUtf8(raw, "Reviewer capabilities");
     value = JSON.parse(text);

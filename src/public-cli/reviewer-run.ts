@@ -325,7 +325,7 @@ async function dispatchAdmittedReviewer(input: {
         io,
       );
     }
-    if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === undefined) {
+    if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
       await markRunTerminal(admitted.runDirectory).catch(() => undefined);
       io.stdout(formatTerminalResult(lawful));
       return {
