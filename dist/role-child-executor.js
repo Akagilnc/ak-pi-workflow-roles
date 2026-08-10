@@ -181,11 +181,20 @@ export async function executeAuditorChild(options) {
         let turns = 0;
         let boundaryResponse;
         let evidenceToolFailure;
+        let retentionFailure;
+        let retainedResponse;
         const evidenceToolNames = new Set(AUDITOR_EVIDENCE_TOOLS);
         const unsubscribe = session.subscribe((event) => {
             if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
                 turns += 1;
-                if (turns >= AUDITOR_TURN_LIMIT)
+                retainedResponse = event.message;
+                try {
+                    options.retainResponse?.(event.message);
+                }
+                catch (error) {
+                    retentionFailure = error;
+                }
+                if (turns >= AUDITOR_TURN_LIMIT && boundaryResponse === undefined)
                     boundaryResponse = event.message;
             }
             // Let every evidence tool in the boundary turn settle before stopping.
@@ -194,7 +203,7 @@ export async function executeAuditorChild(options) {
                     const evidenceCallIds = new Set(boundaryResponse.content.flatMap((part) => part.type === "toolCall" && evidenceToolNames.has(part.name) ? [part.id] : []));
                     evidenceToolFailure = [...session.messages].reverse().find((message) => message.role === "toolResult" && evidenceCallIds.has(message.toolCallId) && message.isError);
                 }
-                if (decision !== undefined || boundaryResponse !== undefined)
+                if (decision !== undefined || boundaryResponse !== undefined || retentionFailure !== undefined)
                     void session.abort();
             }
         });
@@ -216,8 +225,12 @@ export async function executeAuditorChild(options) {
             }
             if (options.signal?.aborted)
                 throw options.signal.reason;
-            if (streamFailure !== undefined)
+            if (streamFailure !== undefined) {
+                if (retentionFailure !== undefined && typeof streamFailure === "object" && streamFailure !== null) {
+                    Object.assign(streamFailure, { retentionFailure });
+                }
                 throw streamFailure;
+            }
             if (decisionToolFailure !== undefined)
                 throw decisionToolFailure;
             if (decision !== undefined) {
@@ -229,6 +242,8 @@ export async function executeAuditorChild(options) {
             }
             if (evidenceToolFailure !== undefined)
                 throw evidenceToolFailure;
+            if (retentionFailure !== undefined && retainedResponse?.stopReason !== "error")
+                throw retentionFailure;
             if (boundaryResponse !== undefined && decision === undefined) {
                 if (boundaryResponse.stopReason === "error" || boundaryResponse.stopReason === "aborted")
                     throw boundaryResponse;
@@ -242,7 +257,12 @@ export async function executeAuditorChild(options) {
             if (response === undefined)
                 throw new Error(`${options.roleLabel} exited without a terminal response`);
             try {
-                options.retainResponse?.(response);
+                if (retentionFailure !== undefined)
+                    throw retentionFailure;
+                // A terminal response is normally retained by message_end. Keep the
+                // fallback for providers that complete without emitting that event.
+                if (retainedResponse === undefined)
+                    options.retainResponse?.(response);
             }
             catch (retentionFailure) {
                 if (response.stopReason !== "error")

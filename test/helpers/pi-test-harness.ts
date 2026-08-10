@@ -656,19 +656,6 @@ async function withProcessGlobalLock<T>(scenario: () => Promise<T>): Promise<T> 
   }
 }
 
-export async function withClearedRoleRunDirectory<T>(scenario: () => Promise<T>): Promise<T> {
-  return withProcessGlobalLock(async () => {
-    const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-    delete process.env.AK_ROLE_RUN_DIR;
-    try {
-      return await scenario();
-    } finally {
-      if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-      else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-    }
-  });
-}
-
 export async function withHermeticHome<T>(
   options: { prefix?: string },
   scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
