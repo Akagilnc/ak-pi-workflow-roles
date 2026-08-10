@@ -13,7 +13,6 @@ import {
 } from "@earendil-works/pi-ai";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger.ts";
-import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
 import {
   packageRoot,
   runPiSubprocess,
@@ -477,17 +476,6 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
   );
 });
 
-test("fatal Fixer audit infrastructure failure aborts print and JSON without a receipt", async () => {
-  // Fixer-specific process proof (distinct from the Judge survivor): exit code +
-  // typed isError/stopReason on ak_fixer_output.
-  for (const mode of ["print", "json"] as const) {
-    const result = await runFixerAuditFailureCli({ mode });
-    assertAuditAbortWithoutReceipt(result, `fixer/${mode}`);
-    if (mode === "json") {
-      assertJsonAbortFacts(result, "ak_fixer_output", mode);
-    }
-  }
-});
 
 test("coder apply without skill expansion rejects completed as non-receipt", async () => {
   // #109: TDD is package-owned (empty home is fine). Process-level negative keeps
