@@ -1,5 +1,7 @@
 import { Type } from "typebox";
 import { runAuditorRole } from "./auditor-role.js";
+import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch, } from "./role-child-executor.js";
+export { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch, } from "./role-child-executor.js";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
 // Transport must retain malformed candidates so they can settle as typed
@@ -8,19 +10,7 @@ export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ des
 export function createComplianceDecisionTool(name, description) {
     return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) { return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true }; } };
 }
-export async function prepareComplianceDispatch(model, context, label) {
-    const resolution = await context.modelRegistry.getProviderAuth(model.provider).catch((error) => { throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); });
-    if (resolution === undefined)
-        throw new Error(`${label} authentication failed: provider is not configured: ${model.provider}`);
-    const auth = await context.modelRegistry.getApiKeyAndHeaders(model);
-    if (!auth.ok)
-        throw new Error(`${label} authentication failed: ${auth.error}`);
-    const env = auth.env ?? resolution.env;
-    return { model: resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model, auth: { ...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }), ...(auth.headers === undefined ? {} : { headers: auth.headers }), ...(env === undefined ? {} : { env }) } };
-}
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
-export const AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
-export const AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
 export class ComplianceResponseRetentionError extends Error {
     constructor(message, options) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
 }

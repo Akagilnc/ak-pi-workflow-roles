@@ -1857,36 +1857,38 @@ test("packaged judge escalation emits one typed human decision", async () => {
           flags: { "ak-role": "judge" },
           noTools: "builtin",
         }, async ({ session, sessionManager }) => {
-          faux.setResponses([
-            fauxAssistantMessage(
-              fauxToolCall(
-                JUDGE_OUTPUT_TOOL_NAME,
-                { judgeStatus: "converged" },
-                { id: "escalating-judge" },
-              ),
-              { stopReason: "toolUse" },
-            ),
-            fauxAssistantMessage(
-              fauxToolCall(
-                SOUL_AUDIT_TOOL_NAME,
-                {
-                  status: "escalate",
-                  violations: [],
-                  conflicts: ["Soul authority conflicts with controlling authority"],
-                  decisionGate: {
-                    question: "Which authority governs this verdict?",
-                    options: ["Soul", "Controlling authority"],
+          const response = (context: Context) => {
+            const tools = new Set(context.tools?.map((tool) => tool.name));
+            if (tools.has(SOUL_AUDIT_TOOL_NAME)) {
+              return fauxAssistantMessage(
+                fauxToolCall(
+                  SOUL_AUDIT_TOOL_NAME,
+                  {
+                    status: "escalate",
+                    violations: [],
+                    conflicts: ["Soul authority conflicts with controlling authority"],
+                    decisionGate: {
+                      question: "Which authority governs this verdict?",
+                      options: ["Soul", "Controlling authority"],
+                    },
                   },
-                },
-                { id: "audit-escalation" },
-              ),
+                  { id: "audit-escalation" },
+                ),
+                { stopReason: "toolUse" },
+              );
+            }
+            if (tools.has(NAVIGATOR_PREPARE_TOOL_NAME)) {
+              return fauxAssistantMessage(
+                fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [] }, { id: "navigator-after-escalation" }),
+                { stopReason: "toolUse" },
+              );
+            }
+            return fauxAssistantMessage(
+              fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "escalating-judge" }),
               { stopReason: "toolUse" },
-            ),
-            fauxAssistantMessage(
-              fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [] }, { id: "navigator-after-escalation" }),
-              { stopReason: "toolUse" },
-            ),
-          ]);
+            );
+          };
+          faux.setResponses([response, response, response]);
           await session.prompt("Exercise packaged audit escalation.");
 
           const result = sessionManager
