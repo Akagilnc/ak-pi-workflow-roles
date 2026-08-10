@@ -181,11 +181,19 @@ export async function executeAuditorChild(options: AuditorRoleOptions): Promise<
     let turns = 0;
     let boundaryResponse: AssistantMessage | undefined;
     let evidenceToolFailure: unknown;
+    let retentionFailure: unknown;
+    let retainedResponse: AssistantMessage | undefined;
     const evidenceToolNames = new Set<string>(AUDITOR_EVIDENCE_TOOLS);
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
         turns += 1;
-        if (turns >= AUDITOR_TURN_LIMIT) boundaryResponse = event.message;
+        retainedResponse = event.message;
+        try {
+          options.retainResponse?.(event.message);
+        } catch (error) {
+          retentionFailure = error;
+        }
+        if (turns >= AUDITOR_TURN_LIMIT && boundaryResponse === undefined) boundaryResponse = event.message;
       }
       // Let every evidence tool in the boundary turn settle before stopping.
       if (event.type === "turn_end") {
@@ -193,7 +201,7 @@ export async function executeAuditorChild(options: AuditorRoleOptions): Promise<
           const evidenceCallIds = new Set(boundaryResponse.content.flatMap((part) => part.type === "toolCall" && evidenceToolNames.has(part.name) ? [part.id] : []));
           evidenceToolFailure = [...session.messages].reverse().find((message) => message.role === "toolResult" && evidenceCallIds.has(message.toolCallId) && message.isError);
         }
-        if (decision !== undefined || boundaryResponse !== undefined) void session.abort();
+        if (decision !== undefined || boundaryResponse !== undefined || retentionFailure !== undefined) void session.abort();
       }
     });
     const abort = () => { void session.abort(); };
@@ -207,7 +215,12 @@ export async function executeAuditorChild(options: AuditorRoleOptions): Promise<
         throw error;
       }
       if (options.signal?.aborted) throw options.signal.reason;
-      if (streamFailure !== undefined) throw streamFailure;
+      if (streamFailure !== undefined) {
+        if (retentionFailure !== undefined && typeof streamFailure === "object" && streamFailure !== null) {
+          Object.assign(streamFailure, { retentionFailure });
+        }
+        throw streamFailure;
+      }
       if (decisionToolFailure !== undefined) throw decisionToolFailure;
       if (decision !== undefined) {
         const decisionResponse = [...session.messages].reverse().find((message): message is AssistantMessage => message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
@@ -217,6 +230,7 @@ export async function executeAuditorChild(options: AuditorRoleOptions): Promise<
         }
       }
       if (evidenceToolFailure !== undefined) throw evidenceToolFailure;
+      if (retentionFailure !== undefined && retainedResponse?.stopReason !== "error") throw retentionFailure;
       if (boundaryResponse !== undefined && decision === undefined) {
         if (boundaryResponse.stopReason === "error" || boundaryResponse.stopReason === "aborted") throw boundaryResponse;
         const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
@@ -228,7 +242,10 @@ export async function executeAuditorChild(options: AuditorRoleOptions): Promise<
         : assistants.find((message) => message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
       if (response === undefined) throw new Error(`${options.roleLabel} exited without a terminal response`);
       try {
-        options.retainResponse?.(response);
+        if (retentionFailure !== undefined) throw retentionFailure;
+        // A terminal response is normally retained by message_end. Keep the
+        // fallback for providers that complete without emitting that event.
+        if (retainedResponse === undefined) options.retainResponse?.(response);
       } catch (retentionFailure) {
         if (response.stopReason !== "error") throw retentionFailure;
         const failure = new Error(response.errorMessage?.trim() || "provider failure", { cause: retentionFailure }) as Error & {

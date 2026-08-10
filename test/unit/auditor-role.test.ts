@@ -11,6 +11,12 @@ import { AUDITOR_TURN_LIMIT, DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES, AuditorTurnLim
 import { ComplianceResponseRetentionError, createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError } from "../../src/stream-idle-guard.ts";
 
+function retainedComplianceResponses(sessionManager: SessionManager): AssistantMessage[] {
+  return sessionManager.getEntries()
+    .filter((entry) => entry.type === "custom" && entry.customType === "ak_compliance_response")
+    .map((entry) => ((entry as { data: { response: AssistantMessage } }).data.response));
+}
+
 function auditorContext(cwd: string, provider: Provider, options: { model?: Model<any>; sessionManager?: SessionManager } = {}): ExtensionContext {
   return {
     cwd,
@@ -33,10 +39,11 @@ test("constant unknown tools receive error results and exhaust at a finite typed
       seen.push(context);
       return fauxAssistantMessage([fauxToolCall("ak_other_decision", { status: "pass" })], { stopReason: "toolUse" });
     }));
-    const context = auditorContext(cwd, faux.provider, { model: faux.getModel() });
+    const sessionManager = SessionManager.inMemory(cwd);
+    const context = auditorContext(cwd, faux.provider, { model: faux.getModel(), sessionManager });
     const tool = createComplianceDecisionTool("ak_test_auditor_decision", "Submit the decision.");
     await assert.rejects(
-      runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool, roleLabel: "Test auditor", context }),
+      runComplianceAudit({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool, roleLabel: "Test auditor", invalidDecisionLabel: "invalid", context }),
       (error: unknown) => {
         assert.ok(error instanceof AuditorTurnLimitError);
         assert.equal(error.limit, AUDITOR_TURN_LIMIT);
@@ -46,6 +53,7 @@ test("constant unknown tools receive error results and exhaust at a finite typed
       },
     );
     assert.equal(seen.length, AUDITOR_TURN_LIMIT);
+    assert.equal(retainedComplianceResponses(sessionManager).length, AUDITOR_TURN_LIMIT);
     for (const nextTurn of seen.slice(1)) {
       const result = nextTurn.messages.find((message) => message.role === "toolResult" && message.toolName === "ak_other_decision");
       assert.ok(result && result.role === "toolResult");
@@ -60,13 +68,14 @@ test("provider and decision-tool failures on the limit turn retain their origina
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-boundary-cause-"));
   try {
     const faux = fauxProvider({ provider: "audit-boundary-cause" });
-    const context = auditorContext(cwd, faux.provider, { model: faux.getModel() });
+    const sessionManager = SessionManager.inMemory(cwd);
+    const context = auditorContext(cwd, faux.provider, { model: faux.getModel(), sessionManager });
     const unknown = () => fauxAssistantMessage([fauxToolCall("ak_other_decision", {})], { stopReason: "toolUse" });
 
     const providerFailure = fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider failed at boundary" });
     faux.setResponses([...Array.from({ length: AUDITOR_TURN_LIMIT - 1 }, unknown), providerFailure]);
     await assert.rejects(
-      runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: createComplianceDecisionTool("ak_boundary_provider", "Submit."), roleLabel: "Test auditor", context }),
+      runComplianceAudit({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: createComplianceDecisionTool("ak_boundary_provider", "Submit."), roleLabel: "Test auditor", invalidDecisionLabel: "invalid", context }),
       (error: unknown) => {
         assert.ok(!(error instanceof AuditorTurnLimitError));
         assert.equal((error as { role?: unknown }).role, "assistant");
@@ -75,6 +84,7 @@ test("provider and decision-tool failures on the limit turn retain their origina
         return true;
       },
     );
+    assert.deepEqual(retainedComplianceResponses(sessionManager).at(-1)?.content, providerFailure.content);
 
     const toolFailure = new Error("decision execution failed at boundary");
     const baseTool = createComplianceDecisionTool("ak_boundary_tool", "Submit.");
@@ -96,8 +106,9 @@ test("provider and decision-tool failures on the limit turn retain their origina
           ...(includeDecision ? [fauxToolCall(baseTool.name, { status: "pass" })] : []),
         ], { stopReason: "toolUse" }),
       ]);
+      const retainedBefore = retainedComplianceResponses(sessionManager).length;
       await assert.rejects(
-        runAuditorRole({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: baseTool, roleLabel: "Test auditor", context }),
+        runComplianceAudit({ systemPrompt: "Decide.", serializedInput: "Inspect.", tool: baseTool, roleLabel: "Test auditor", invalidDecisionLabel: "invalid", context }),
         (error: unknown) => {
           assert.ok(!(error instanceof AuditorTurnLimitError));
           assert.equal((error as { role?: unknown }).role, "toolResult");
@@ -106,6 +117,7 @@ test("provider and decision-tool failures on the limit turn retain their origina
           return true;
         },
       );
+      assert.equal(retainedComplianceResponses(sessionManager).length - retainedBefore, AUDITOR_TURN_LIMIT);
     }
   } finally {
     await rm(cwd, { recursive: true, force: true });
