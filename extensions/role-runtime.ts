@@ -252,7 +252,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadCoderSoul: () => readFile(coderSoulPath, "utf8"),
     loadCoderTask: (path) => readFile(path, "utf8"),
     loadReviewerSoul: () => readFile(reviewerSoulPath, "utf8"),
-    loadReviewerTask: (path) => readFile(path),
     createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
     loadCollectorSoul: () => readFile(collectorSoulPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),

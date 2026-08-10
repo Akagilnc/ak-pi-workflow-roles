@@ -765,8 +765,8 @@ export async function loadResumableFixerRun(
  * Used by public resume dispatch to pick the role-correct seat and path.
  */
 /**
- * Load a resumable Reviewer run for resume. Task and optional fixed base
- * are restored from the admitted request (#111).
+ * Load a resumable Reviewer run for resume. Fixed base is restored from the
+ * admitted request; caller instruction remains optional provenance only.
  */
 export async function loadResumableReviewerRun(
   home: string,
@@ -778,15 +778,10 @@ export async function loadResumableReviewerRun(
       `role run ${runId} belongs to ${loaded.run.role}, not reviewer`,
     );
   }
-  const taskPath = loaded.admittedFields.taskPath;
-  if (taskPath === undefined) {
+  const baseRevision = loaded.admittedFields.baseRevision;
+  if (baseRevision === undefined || baseRevision.trim() === "") {
     throw new CliUsageError(
-      `role run admitted reviewer task path is missing: ${runId}`,
-    );
-  }
-  if (loaded.admittedFields.instruction.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted reviewer task is blank: ${runId}`,
+      `role run admitted reviewer base revision is missing: ${runId}`,
     );
   }
   const admitted: AdmittedReviewerInvocation = {
@@ -795,16 +790,13 @@ export async function loadResumableReviewerRun(
     bookKey: loaded.run.bookKey,
     projectRoot: loaded.run.projectRoot,
     instruction: loaded.admittedFields.instruction,
-    instructionEmpty: false,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
-    taskPath,
-    ...(loaded.admittedFields.baseRevision === undefined
-      ? {}
-      : { baseRevision: loaded.admittedFields.baseRevision }),
+    baseRevision,
   };
   return {
     admitted,

@@ -2874,10 +2874,10 @@ export async function publishReviewerArtifacts(
         sessionDirectory,
         sessionFile: admitted.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
-        taskPath: admitted.taskPath,
-        ...(admitted.baseRevision === undefined
+        baseRevision: admitted.baseRevision,
+        ...(admitted.instructionEmpty
           ? {}
-          : { baseRevision: admitted.baseRevision }),
+          : { callerProvenance: admitted.instruction }),
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
           frozenPath: a.frozenPath,

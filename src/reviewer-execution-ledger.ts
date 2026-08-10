@@ -158,8 +158,8 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       const axes = event.legs.map((leg) => leg.axis);
       if (axes[0] !== "standards" || (axes.length !== 1 && (axes.length !== 2 || axes[1] !== "spec")))
         throw new Error("Accepted dispatch sibling axes disagree");
-      if (!isReviewerPromptText(event.input.task))
-        throw new Error("Accepted task must be plain text");
+      if (!isReviewerPromptText(event.input.canonicalSkill))
+        throw new Error("Accepted canonical Skill must be plain text");
       for (const leg of event.legs) {
         if (!isReviewerPromptText(leg.prompt))
           throw new Error("Accepted compiled prompt must be plain text");

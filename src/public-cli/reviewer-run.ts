@@ -30,6 +30,10 @@ import {
   type SeatModelConfig,
 } from "./config.ts";
 import {
+  missingCredentialPreDispatchFailure,
+  postRunMissingCredentialFailure,
+} from "./public-run-credentials.ts";
+import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
   isSessionPrincipalAvailable,
@@ -66,7 +70,6 @@ import type {
   ControlledFailureCause,
   TerminalResult,
 } from "./terminal.ts";
-import { knownFailureForMissingProviderCredential } from "./judge-run.ts";
 
 export type ReviewerRunEnv = {
   home: string;
@@ -126,10 +129,8 @@ export function buildReviewerActivationExtraArgs(
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "reviewer",
-    "--ak-review-task",
-    admitted.taskPath,
     "--ak-review-base",
-    requireAdmittedReviewerBase(admitted),
+    admitted.baseRevision,
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -138,16 +139,9 @@ export function buildReviewerActivationExtraArgs(
 }
 
 /**
- * Reopen the exact Reviewer Pi session for resume. Preserves fixed Reviewer inputs
- * and package code-review binding; does not resubmit the original instruction.
+ * Reopen the exact Reviewer Pi session for resume. Preserves fixed Reviewer base
+ * and package code-review binding; never resubmits caller instruction as control.
  */
-function requireAdmittedReviewerBase(admitted: AdmittedReviewerInvocation): string {
-  if (admitted.baseRevision === undefined || admitted.baseRevision.trim() === "") {
-    throw new CliUsageError("Reviewer run lacks the caller-selected fixed review point");
-  }
-  return admitted.baseRevision;
-}
-
 export function buildReviewerResumeActivationExtraArgs(
   admitted: AdmittedReviewerInvocation,
   options: {
@@ -174,10 +168,8 @@ export function buildReviewerResumeActivationExtraArgs(
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "reviewer",
-    "--ak-review-task",
-    admitted.taskPath,
     "--ak-review-base",
-    requireAdmittedReviewerBase(admitted),
+    admitted.baseRevision,
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -262,19 +254,14 @@ async function dispatchAdmittedReviewer(input: {
 }> {
   const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
   try {
-    const missingCredential = knownFailureForMissingProviderCredential(
+    const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
       env.credentials,
     );
     if (missingCredential !== undefined) {
       return await presentControlledFailure(
         admitted,
-        {
-          timedOut: false,
-          code: 1,
-          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
-          knownFailure: missingCredential,
-        },
+        missingCredential,
         io,
       );
     }
@@ -373,10 +360,11 @@ async function dispatchAdmittedReviewer(input: {
       };
     }
 
-    const credentialFailure =
-      result.timedOut || result.code !== 0
-        ? knownFailureForMissingProviderCredential(env.model, env.credentials)
-        : undefined;
+    const credentialFailure = postRunMissingCredentialFailure(
+      result,
+      env.model,
+      env.credentials,
+    );
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result.knownFailure,
       sessionFile: admitted.sessionFile,
@@ -410,7 +398,7 @@ export async function runPublicReviewer(
   parseReviewerArgv: (args: readonly string[]) => {
     instruction: string;
     attachmentPaths: string[];
-    baseRevision?: string;
+    baseRevision: string;
     project?: string;
   },
 ): Promise<{
@@ -426,9 +414,7 @@ export async function runPublicReviewer(
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
-      ...(parsed.baseRevision === undefined
-        ? {}
-        : { baseRevision: parsed.baseRevision }),
+      baseRevision: parsed.baseRevision,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
     });

@@ -167,36 +167,10 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
       );
       const cwd = resolve(home, "review-target");
       await materializeReviewerTarget(cwd);
-      const taskPath = resolve(cwd, "test/fixtures/reviewer-task.md");
-      const taskBytes = await readFile(taskPath);
-      const capabilityPath = resolve(home, "reviewer-capabilities.json");
       const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
         cwd,
         encoding: "utf8",
       }).trim();
-      const target = execFileSync("git", ["rev-parse", "HEAD"], {
-        cwd,
-        encoding: "utf8",
-      }).trim();
-      void target;
-      await writeFile(
-        capabilityPath,
-        JSON.stringify({
-          version: 1,
-          taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-          tools: ["read", "bash"],
-          prerequisiteOperations: [
-            "preflight.git.pin-target",
-            "preflight.git.resolve-base",
-            "preflight.git.derive-range",
-            "preflight.git.list-ordered-commits",
-            "preflight.git.read-material",
-            "runner.git.materialize-mirror",
-            "runner.git.materialize-workspace",
-            "runner.git.verify-snapshot",
-          ],
-        }),
-      );
       const sessionDirectory = resolve(home, ".ak-roles/books/review-target/runs/reviewer-fatal/session");
       await mkdir(sessionDirectory, { recursive: true });
       const args = [
@@ -215,8 +189,6 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
         resolve(packageRoot, "test/fixtures/reviewer-failure-provider.ts"),
         "--ak-role",
         "reviewer",
-        "--ak-review-task",
-        taskPath,
         "--ak-review-base",
         base,
         "--provider",
@@ -589,31 +561,10 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
     );
     const cwd = resolve(home, "review-target");
     await materializeReviewerTarget(cwd);
-    const taskPath = resolve(cwd, "test/fixtures/reviewer-task.md");
-    const taskBytes = await readFile(taskPath);
     const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
       cwd,
       encoding: "utf8",
     }).trim();
-    const capabilityPath = resolve(home, "reviewer-capabilities.json");
-    await writeFile(
-      capabilityPath,
-      JSON.stringify({
-        version: 1,
-        taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-        tools: ["read", "bash"],
-        prerequisiteOperations: [
-          "preflight.git.pin-target",
-          "preflight.git.resolve-base",
-          "preflight.git.derive-range",
-          "preflight.git.list-ordered-commits",
-          "preflight.git.read-material",
-          "runner.git.materialize-mirror",
-          "runner.git.materialize-workspace",
-          "runner.git.verify-snapshot",
-        ],
-      }),
-    );
 
     for (const stage of ["audit-auth", "audit-malformed-decision"] as const) {
       const previous = process.env.AK_REVIEWER_FAILURE_STAGE;
@@ -667,7 +618,6 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
             mode: "print",
             flags: {
               "ak-role": "reviewer",
-              "ak-review-task": taskPath,
               "ak-review-base": base,
             },
             reviewerShutdown: true,

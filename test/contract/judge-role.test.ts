@@ -220,7 +220,6 @@ test("stable factory registers the complete typed role flag set and stays inert 
     "ak-fixer-phase",
     "ak-coder-task",
     "ak-coder-phase",
-    "ak-review-task",
     "ak-review-base",
     "ak-review-scope-keys",
     "ak-doctor-case",
