@@ -632,6 +632,46 @@ export async function readSessionProviderStop(
   }
 }
 
+/**
+ * Recover a provider stop from Reviewer fixed-axis evidence children bound to this parent.
+ * Dispatch runs during activation before the parent model turn; leg failures leave durable
+ * stops under session/evidence-children/ and must not wash into generic activation.
+ */
+export async function readBoundEvidenceChildKnownFailure(
+  sessionFile: string,
+): Promise<ExplicitInternalKnownFailure | undefined> {
+  const childDirectory = join(dirname(sessionFile), "evidence-children");
+  let names: string[];
+  try {
+    names = await readdir(childDirectory);
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw sessionReadFailure(error, "failed to read bound evidence-child session directory");
+  }
+  for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
+    let entries: SessionEntry[];
+    try {
+      entries = await readBoundSessionEntries(join(childDirectory, file));
+    } catch (error) {
+      throw sessionReadFailure(error, "failed to read discovered evidence-child session");
+    }
+    const header = entries.find((entry) => entry.type === "session");
+    if (!isRecord(header) || header.parentSession !== sessionFile) continue;
+    const stop = extractSessionProviderStop(entries);
+    if (stop === undefined) continue;
+    const primary = knownFailureFromProviderStop(stop)!;
+    return {
+      ...primary,
+      details: {
+        ...(stop.provider === undefined ? {} : { provider: stop.provider }),
+        ...(stop.model === undefined ? {} : { model: stop.model }),
+        secondaryEvidence: "evidence-child",
+      },
+    };
+  }
+  return undefined;
+}
+
 /** Recover a provider stop from the auditor child bound to the current parent attempt. */
 export async function readBoundAuditorKnownFailure(
   sessionFile: string,
@@ -715,13 +755,25 @@ export async function resolveAuditedRunnerKnownFailure(input: {
 }): Promise<ExplicitInternalKnownFailure | undefined> {
   if (input.runner !== undefined) return input.runner;
   // Bound auditor evidence outranks a parent abort that the auditor path itself
-  // caused (retention EISDIR race). Parent stop remains the fallback when no
-  // current-attempt auditor failure is recoverable; credential is last.
+  // caused (retention EISDIR race). Reviewer axis evidence-children are next:
+  // fixed two-axis dispatch fails during activation with only child stops durable.
+  // Parent stop remains the fallback; credential is last.
   try {
     const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
     if (auditorFailure !== undefined) return auditorFailure;
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
+    return {
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name,
+    };
+  }
+  try {
+    const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
+    if (evidenceChildFailure !== undefined) return evidenceChildFailure;
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound evidence-child failure");
     return {
       cause: "session",
       identity: thrownIdentity(failure),

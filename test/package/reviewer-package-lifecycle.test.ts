@@ -41,6 +41,7 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
       const stdout: string[] = [];
       const stderr: string[] = [];
 
+      // #236 no-caller-instruction path: fixed base alone must launch real two-axis dispatch.
       const reviewer = await runAkRole(
         [
           "reviewer",
@@ -52,7 +53,6 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
           fixture,
           "--base",
           "review-base",
-          "Review the fixed target against review-base.",
         ],
         {
           packageRoot: installedRoot,

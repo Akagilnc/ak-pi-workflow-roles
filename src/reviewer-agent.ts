@@ -13,7 +13,22 @@ export type ReviewerLegRunResult = ReviewerSuccessfulLegRunResult | ReviewerFail
 type Envelope<L> = Readonly<{ identity: string; target: ReviewerTargetSnapshot; legs: Readonly<L> }>;
 export type ReviewerDispatchRunResult = Envelope<{ standards: ReviewerLegRunResult; spec?: never }> | Envelope<{ standards: ReviewerLegRunResult; spec: ReviewerLegRunResult }>;
 export type ReviewerSuccessfulDispatchRunResult = Envelope<{ standards: ReviewerSuccessfulLegRunResult; spec?: never }> | Envelope<{ standards: ReviewerSuccessfulLegRunResult; spec: ReviewerSuccessfulLegRunResult }>;
-export class ReviewerDispatchExecutionError extends Error { constructor(readonly outcome: ReviewerDispatchRunResult) { super("Reviewer dispatch execution failed"); this.name = "ReviewerDispatchExecutionError"; } }
+function reviewerDispatchFailureMessage(outcome: ReviewerDispatchRunResult): string {
+  const diagnostics = [...new Set(
+    Object.values(outcome.legs)
+      .filter((leg): leg is ReviewerFailedLegRunResult => leg?.status === "failed")
+      .map((leg) => leg.diagnostic.trim())
+      .filter((diagnostic) => diagnostic.length > 0),
+  )];
+  if (diagnostics.length === 0) return "Reviewer dispatch execution failed";
+  return diagnostics.length === 1 ? diagnostics[0]! : diagnostics.join("; ");
+}
+export class ReviewerDispatchExecutionError extends Error {
+  constructor(readonly outcome: ReviewerDispatchRunResult) {
+    super(reviewerDispatchFailureMessage(outcome));
+    this.name = "ReviewerDispatchExecutionError";
+  }
+}
 export type ReviewerAgentRunner = { run(dispatch: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>; shutdown(): Promise<void> };
 export type ReviewerAgentFaultPoint = ReviewerWorkspaceFaultPoint | ReviewerExecutorFaultPoint;
 type Dependencies = Readonly<{

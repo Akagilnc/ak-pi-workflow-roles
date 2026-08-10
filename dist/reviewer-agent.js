@@ -2,10 +2,19 @@ import { isReviewerPromptText } from "./reviewer-prompt-identity.js";
 import { executeReviewerChild } from "./reviewer-child-executor.js";
 import { createReviewerWorkspaceOwner } from "./reviewer-workspace.js";
 import { normalizeReviewerFailureDiagnostic } from "./reviewer-failure-diagnostic.js";
+function reviewerDispatchFailureMessage(outcome) {
+    const diagnostics = [...new Set(Object.values(outcome.legs)
+            .filter((leg) => leg?.status === "failed")
+            .map((leg) => leg.diagnostic.trim())
+            .filter((diagnostic) => diagnostic.length > 0))];
+    if (diagnostics.length === 0)
+        return "Reviewer dispatch execution failed";
+    return diagnostics.length === 1 ? diagnostics[0] : diagnostics.join("; ");
+}
 export class ReviewerDispatchExecutionError extends Error {
     outcome;
     constructor(outcome) {
-        super("Reviewer dispatch execution failed");
+        super(reviewerDispatchFailureMessage(outcome));
         this.outcome = outcome;
         this.name = "ReviewerDispatchExecutionError";
     }
