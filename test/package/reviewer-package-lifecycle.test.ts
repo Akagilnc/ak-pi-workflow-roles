@@ -46,6 +46,7 @@ test("installed npm tarball runs the fixed two-axis Reviewer lifecycle", async (
       const faux = fauxProvider({ api: "package-reviewer", provider: "package-reviewer", tokenSize: { min: 1000, max: 1000 } });
       const children: Context[] = [];
       const audits: Context[] = [];
+      let frozenReviewerReceipt: unknown;
       faux.setResponses([
         (context) => { children.push(context); return fauxAssistantMessage("Standards finding count: 0."); },
         (context) => { children.push(context); return fauxAssistantMessage("Spec: fixed target satisfies the stated behavior."); },
@@ -63,6 +64,7 @@ test("installed npm tarball runs the fixed two-axis Reviewer lifecycle", async (
           const output = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "output") as any;
           assert.equal(output.message.isError, false);
           assert.equal(output.message.details.status, "completed");
+          frozenReviewerReceipt = structuredClone(output.message.details);
           assert.deepEqual(output.message.details.acceptedBatch.legs.map((leg: any) => leg.axis), ["standards", "spec"]);
           assert.equal(output.message.details.reports.standards.text, "Standards finding count: 0.");
           assert.equal(output.message.details.reports.spec.text, "Spec: fixed target satisfies the stated behavior.");
@@ -76,7 +78,8 @@ test("installed npm tarball runs the fixed two-axis Reviewer lifecycle", async (
           fauxAssistantMessage(fauxToolCall("ak_soul_audit_decision", { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }),
         ]);
         await withInProcessPi({ activationLedgerSession: true, cwd: nestedCwd, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")], noExtensions: true, systemPrompt: "PACKAGED JUDGE", mode: "print", flags: { "ak-role": "judge" } }, async ({ session, sessionManager }) => {
-          await session.prompt(`Adjudicate this auditor-accepted Reviewer result: ${audits.length} semantic audit passed; Standards finding count: 0; Spec satisfied.`);
+          assert.ok(frozenReviewerReceipt);
+          await session.prompt(`Adjudicate this exact auditor-accepted frozen Reviewer receipt:\n${JSON.stringify(frozenReviewerReceipt)}`);
           const judged = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "judge-output") as any;
           assert.equal(judged.message.isError, false);
           assert.equal(judged.message.details.judgeStatus, "converged");

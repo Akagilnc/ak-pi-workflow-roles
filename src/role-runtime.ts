@@ -54,6 +54,7 @@ import {
 } from "./judge-role.ts";
 import {
   createReviewerRoleRuntime,
+  type ReviewerActivation,
   type ReviewerAuditInput,
 } from "./reviewer-role.ts";
 import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
@@ -210,7 +211,7 @@ type ActivationRuntime = {
   judge: { activate(): Promise<void> };
   fixer: { activate(): Promise<void> };
   coder: { activate(context: ExtensionContext): Promise<void> };
-  reviewer: { activate(context: ExtensionContext): Promise<void>; dispatchFixed(context: ExtensionContext): Promise<void> };
+  reviewer: { activate(context: ExtensionContext): Promise<ReviewerActivation> };
   collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
   merger(): Promise<void>;
@@ -222,8 +223,9 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "fixer": return { id: "load-and-install", run: async () => runtime.fixer.activate() };
     case "coder": return { id: "load-and-install", run: async () => runtime.coder.activate(runtime.context) };
     case "reviewer": return { id: "load-install-and-dispatch", run: async () => {
-      await runtime.reviewer.activate(runtime.context);
-      await runtime.reviewer.dispatchFixed(runtime.context);
+      const activation = await runtime.reviewer.activate(runtime.context);
+      const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, { context: runtime.context });
+      if (result.status !== "accepted") throw new Error(`Fixed Reviewer dispatch was not accepted: ${result.status}`);
     } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
