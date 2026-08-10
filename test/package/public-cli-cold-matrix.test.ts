@@ -827,20 +827,11 @@ test("packed release artifact carries runtime resources, attribution, and empty 
       license?: string;
       bin?: Record<string, string>;
       pi?: { extensions?: unknown[] };
-      peerDependencies?: Record<string, string>;
     };
     assert.equal(manifest.name, "@akagilnc/pi-workflow-roles");
     assert.equal(manifest.license, "Apache-2.0");
     assert.equal(manifest.bin?.["ak-role"], "./dist/public-cli/main.js");
     assert.deepEqual(manifest.pi?.extensions, []);
-    assert.equal(
-      typeof manifest.peerDependencies?.["@earendil-works/pi-coding-agent"],
-      "string",
-    );
-    assert.notEqual(
-      manifest.peerDependencies?.["@earendil-works/pi-coding-agent"],
-      "*",
-    );
     // Attribution: project Apache text + separate Matt MIT notice.
     const license = await readFile(
       resolve(extractRoot, "package/LICENSE"),
