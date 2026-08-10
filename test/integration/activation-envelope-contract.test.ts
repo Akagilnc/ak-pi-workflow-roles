@@ -1230,6 +1230,11 @@ test("tool-execution observation contract retains reader-required events and out
   assert.equal(TOOL_EXECUTION_UPDATE_THROTTLE_MS, 30_000);
   assert.equal(TOOL_EXECUTION_UPDATE_HEARTBEAT, "output-driven");
   assert.equal(isProducingToolUpdate({ content: [], details: undefined }), false);
+  assert.equal(
+    isProducingToolUpdate({ content: [], details: { elapsedMs: 60_000 } }),
+    false,
+    "observation-plane heartbeat remains content-driven",
+  );
   assert.equal(isProducingToolUpdate({ content: [{ type: "text", text: "" }] }), false);
   assert.equal(isProducingToolUpdate({ content: [{ type: "text", text: "chunk" }] }), true);
   for (const record of [
@@ -1261,6 +1266,7 @@ test("observation face emits start/end always, throttles producing updates per t
 
   await face.onStart({ toolCallId: "a", toolName: "bash" });
   await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [] } });
+  await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [], details: { elapsedMs: 60_000 } } });
   await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [{ type: "text", text: "one" }] } });
   mono = 10_000;
   await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [{ type: "text", text: "two" }] } });

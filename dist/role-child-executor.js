@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAssistantMessageEventStream, InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
 export const AUDITOR_TURN_LIMIT = 8;
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
@@ -148,7 +149,10 @@ export async function executeAuditorChild(options) {
         const cwd = options.context.cwd ?? process.cwd();
         const loader = new DefaultResourceLoader({ cwd, agentDir: scratch, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt });
         await loader.reload();
-        const tool = { ...options.tool, label: options.roleLabel, async execute(...args) {
+        const tool = wrapPackageOwnedToolDefinition({
+            ...options.tool,
+            label: options.roleLabel,
+            async execute(...args) {
                 if (decision !== undefined)
                     throw new Error("Auditor decision was submitted more than once");
                 try {
@@ -160,7 +164,8 @@ export async function executeAuditorChild(options) {
                     decisionToolFailure = error;
                     throw error;
                 }
-            } };
+            },
+        });
         const parentSessionManager = options.context.sessionManager;
         const parentHeader = parentSessionManager?.getHeader?.();
         const parentSessionFile = parentSessionManager?.getSessionFile?.();

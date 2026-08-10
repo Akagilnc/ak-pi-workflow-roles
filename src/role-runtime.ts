@@ -21,6 +21,7 @@ import {
   writeToolExecutionObservationRecord,
   type ToolExecutionObservationWriter,
 } from "./tool-execution-observation.ts";
+import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -399,6 +400,8 @@ export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
+    // #102: one shared package-owned tool registration surface for all role runtimes.
+    installPackageOwnedToolRegistration(pi);
     pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
 
     let admitted = false;
