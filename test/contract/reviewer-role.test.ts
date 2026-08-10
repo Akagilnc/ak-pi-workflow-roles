@@ -63,6 +63,7 @@ test("activation dispatches both fixed-target axes without a model proposal", as
   reviewerHarness.flags["ak-review-base"]="main~1";
   await reviewerHarness.runtime.activate();
   assert.deepEqual(reviewerHarness.activeTools,[REVIEWER_OUTPUT_TOOL_NAME]);
+  assert.equal(reviewerHarness.tools.has(AGENT_TOOL_NAME),false);
   reviewerHarness.handlers.get("input")({text:"review"});
   await reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"},{} as ExtensionContext);
   assert.equal(reviewerHarness.starts,1);
