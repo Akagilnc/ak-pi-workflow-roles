@@ -5,7 +5,8 @@
 // runs ordinary files first under default Node file parallelism.
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
-import { constants as osConstants } from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
+import { constants as osConstants, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
 const HEAVYWEIGHT_MANIFEST = Object.freeze([
@@ -116,7 +117,7 @@ function fail(message) {
   process.exit(1);
 }
 
-function runNodeTest(files, { concurrency } = {}) {
+async function runNodeTest(files, { concurrency } = {}) {
   if (files.length === 0) return Promise.resolve(0);
 
   const args = ["--import", "tsx", "--test"];
@@ -125,28 +126,33 @@ function runNodeTest(files, { concurrency } = {}) {
   }
   args.push(...files);
 
-  // Resolve `node` from PATH so lawful tests may intercept children via an
-  // isolated PATH seam. No test-only env hook is accepted here.
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn("node", args, {
-      cwd: root,
-      stdio: "inherit",
-      env: Object.fromEntries(
-        Object.entries(process.env).filter(([name]) => name !== "AK_ROLE_RUN_DIR"),
-      ),
+  // Keep cwd at the repository for git-backed tests, but give role sessions a
+  // scheduler-owned location so test children cannot fall back to repo-root.
+  const runDirectory = await mkdtemp(join(tmpdir(), "ak-test-all-role-run-"));
+  try {
+    // Resolve `node` from PATH so lawful tests may intercept children via an
+    // isolated PATH seam. No test-only env hook is accepted here.
+    return await new Promise((resolvePromise, reject) => {
+      const child = spawn("node", args, {
+        cwd: root,
+        stdio: "inherit",
+        env: { ...process.env, AK_ROLE_RUN_DIR: runDirectory },
+      });
+      child.on("error", reject);
+      child.on("exit", (code, signal) => {
+        if (signal) {
+          // Preserve signal identity as the conventional 128 + signo status
+          // (e.g. SIGTERM => 143) rather than washing to generic 1.
+          const signo = osConstants.signals[signal];
+          resolvePromise(typeof signo === "number" ? 128 + signo : 1);
+          return;
+        }
+        resolvePromise(code ?? 1);
+      });
     });
-    child.on("error", reject);
-    child.on("exit", (code, signal) => {
-      if (signal) {
-        // Preserve signal identity as the conventional 128 + signo status
-        // (e.g. SIGTERM => 143) rather than washing to generic 1.
-        const signo = osConstants.signals[signal];
-        resolvePromise(typeof signo === "number" ? 128 + signo : 1);
-        return;
-      }
-      resolvePromise(code ?? 1);
-    });
-  });
+  } finally {
+    await rm(runDirectory, { recursive: true, force: true });
+  }
 }
 
 const discovered = discoverTestFiles(root);
