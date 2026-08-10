@@ -52,7 +52,6 @@ function fatal(error) {
     });
 }
 export function createReviewerExecutionLedger() {
-    const transportRejections = [];
     const rejections = [];
     const closedAttempts = [];
     let accepted;
@@ -61,22 +60,6 @@ export function createReviewerExecutionLedger() {
     let infrastructureFailure;
     function append(raw) {
         const event = cloneFreeze(raw);
-        if (event.source === "reviewer-transport" && event.type === "transport-rejected") {
-            if (!hasExactEventShape(event, ["source", "type", "identity", "violation", "started"]) || event.violation !== "schema" || event.started !== false)
-                throw new Error("Transport rejection must contain only immutable bounded non-start evidence");
-            if (accepted !== undefined || started !== undefined)
-                throw new Error("Transport rejection cannot follow an accepted dispatch");
-            transportRejections.push(cloneFreeze({ identity: event.identity, violation: event.violation, started: false }));
-            return;
-        }
-        if (event.source === "reviewer-transport" && event.type === "closed-attempt") {
-            if (!hasExactEventShape(event, ["source", "type", "identity", "reason", "started"]) || event.reason !== "transport-after-acceptance" || event.started !== false)
-                throw new Error("Closed transport attempt must contain only immutable bounded non-start evidence");
-            if (accepted === undefined)
-                throw new Error("Closed transport attempt requires acceptance");
-            closedAttempts.push(cloneFreeze({ identity: event.identity, reason: event.reason, started: false }));
-            return;
-        }
         if (event.source === "reviewer-dispatch" && event.type === "rejected") {
             if (!hasExactEventShape(event, ["source", "type", "identity", "violations", "started"]) || event.started !== false ||
                 event.violations.length === 0 || event.violations.some((code) => !REVIEWER_PREFLIGHT_VIOLATIONS.includes(code)))
@@ -171,7 +154,7 @@ export function createReviewerExecutionLedger() {
             if (started === undefined || expected.some((axis) => results[axis] === undefined) || Object.keys(results).length !== expected.length)
                 throw new Error("Reviewer refused after acceptance requires every expected leg terminal outcome");
         }
-        return cloneFreeze({ transportRejections, rejections, closedAttempts, ...(accepted === undefined ? {} : { accepted }), ...(started === undefined ? {} : { started }), results });
+        return cloneFreeze({ rejections, closedAttempts, ...(accepted === undefined ? {} : { accepted }), ...(started === undefined ? {} : { started }), results });
     }
     return Object.freeze({ append, recordInfrastructureFailure, recordForAudit });
 }
