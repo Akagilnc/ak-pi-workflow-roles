@@ -5,7 +5,6 @@ import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
-import { exactUtf8 } from "./exact-utf8.ts";
 import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
@@ -21,10 +20,16 @@ const reviewerOutputVariants = Type.Union([
   Type.Object({ status: Type.Literal("refused", { description: "Reviewer dispatch was lawfully refused." }), diagnostic: Type.String({ minLength: 1, description: "Diagnostic explaining the refusal." }) }, { additionalProperties: false }),
 ]);
 const reviewerOutputSchema = openToolObjectFromUnion(reviewerOutputVariants);
-export type ReviewerAuditInput = { soul: string; canonicalSkill: string; task: string; record: ReviewerExecutionRecord; candidate: RuntimeReviewerReceiptV2 };
+export type ReviewerAuditInput = {
+  soul: string;
+  canonicalSkill: string;
+  record: ReviewerExecutionRecord;
+  candidate: RuntimeReviewerReceiptV2;
+  /** Optional caller prose retained only as provenance-marked audit evidence. */
+  callerProvenance?: string;
+};
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
-  loadTask(path: string): Promise<Uint8Array>;
   loadCanonicalSkillBinding(name: "code-review"): Promise<AnyCanonicalSkillBinding>;
   createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
   runDispatch(execution: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
@@ -47,8 +52,6 @@ export type ReviewerActivation = Readonly<{
 
 export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: ReviewerRoleDependencies, hostActions: ReviewerRoleHostActions): { activate(ctx?: ExtensionContext): Promise<ReviewerActivation> } {
   let soul: string | undefined;
-  let taskBytes: Uint8Array | undefined;
-  let task: string | undefined;
   let binding: CanonicalSkillBinding<"code-review"> | undefined;
   let reader: ReviewerPinnedGitReader | undefined;
   let dispatcher: ReturnType<typeof createReviewerDispatcher> | undefined;
@@ -58,7 +61,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
   let reviewScopeKeys: readonly string[] | undefined;
   let fixedBaseRevision: string | undefined;
   const ledger = createReviewerExecutionLedger();
-  pi.registerFlag("ak-review-task", { description: "Opaque Markdown review task assigned to the reviewer role", type: "string" });
   pi.registerFlag("ak-review-base", { description: "Fixed base revision for the pinned review target", type: "string" });
   pi.registerFlag("ak-review-scope-keys", { description: "Optional comma-separated exact class keys limiting Reviewer scope", type: "string" });
 
@@ -77,14 +79,9 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       }
       reviewScopeKeys = parsed;
     }
-    const taskPath = pi.getFlag("ak-review-task");
     const baseRevision = pi.getFlag("ak-review-base");
-    if (typeof taskPath !== "string" || !taskPath.trim()) throw new Error("Reviewer role requires --ak-review-task");
     if (typeof baseRevision !== "string" || !baseRevision.trim()) throw new Error("Reviewer role requires --ak-review-base");
     fixedBaseRevision = baseRevision;
-    taskBytes = Uint8Array.from(await dependencies.loadTask(taskPath));
-    task = exactUtf8(taskBytes, "Reviewer task");
-    if (!task.trim()) throw new Error("Reviewer task is empty");
     const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
     if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
     binding = loaded;
@@ -110,7 +107,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       }
     };
     dispatcher = createReviewerDispatcher({
-      task: taskBytes,
       canonicalSkill: binding.snapshot.raw,
       reader,
       ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
@@ -131,7 +127,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       registered = true;
       pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`], parameters: reviewerOutputSchema,
         async execute(id, parameters, signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
-          if (!soul || task === undefined || !binding) throw new Error("Reviewer inputs were not loaded");
+          if (!soul || !binding) throw new Error("Reviewer inputs were not loaded");
           requireSoleReviewerOutputCall(id, toolCtx);
           const output = validateReviewerIntent(parameters);
           if (output.status === "completed" && !expansionCaptured) throw new Error("Reviewer completed requires canonical Skill expansion capture");
@@ -143,7 +139,14 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
             canonicalSkillText: binding.snapshot.raw,
           });
           let audit: ComplianceDecision;
-          try { audit = await dependencies.auditCompliance({ soul, canonicalSkill: binding.snapshot.raw, task, record, candidate }, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
+          try {
+            audit = await dependencies.auditCompliance({
+              soul,
+              canonicalSkill: binding.snapshot.raw,
+              record,
+              candidate,
+            }, { context: toolCtx, ...(signal === undefined ? {} : { signal }) });
+          }
           catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
           return disposeComplianceDecision<AgentToolResult<unknown>>(
             audit,
@@ -173,7 +176,8 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           }
           expansionCaptured = true;
         }
-        return { systemPrompt: `${event.systemPrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>\n\n<review_task>\n${task}\n</review_task>` };
+        // Soul only — caller instruction is never injected as semantic control.
+        return { systemPrompt: `${event.systemPrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>` };
       });
       pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });
     }

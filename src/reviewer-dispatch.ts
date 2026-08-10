@@ -1,4 +1,3 @@
-import { exactUtf8 } from "./exact-utf8.ts";
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget } from "./reviewer-pinned-git.ts";
 export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
@@ -26,7 +25,6 @@ export type ReviewerDecisionEvidence =
   | Readonly<{ disposition: "rejected"; identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }>
   | Readonly<{ disposition: "accepted"; identity: string; dispatch: AcceptedReviewerDispatch }>;
 type DispatcherDependencies = Readonly<{
-  task: Uint8Array;
   canonicalSkill: string;
   reader: ReviewerPinnedGitReader;
   reviewScopeKeys?: readonly string[];
@@ -54,26 +52,22 @@ const preflight = (error: unknown): ReviewerPreflightError | undefined => {
   return undefined;
 };
 export function createReviewerDispatcher(d: DispatcherDependencies) {
-  const task = Uint8Array.from(d.task);
   const target = immutableReviewerPin(d.reader.pin);
   let started = false;
   return Object.freeze({
     async dispatch(baseRevision: string, invocation?: unknown): Promise<ReviewerDispatchResult> {
       if (started) throw new Error("Reviewer fixed dispatch can start exactly once");
-      let taskText: string;
-      try {
-        taskText = exactUtf8(task, "Reviewer task");
-      } catch {
-        throw new ReviewerPreflightError("prompt-identity-invalid", "Reviewer task must be valid UTF-8");
-      }
-      const identity = sha256Hex(JSON.stringify({ task: sha256Hex(task), baseRevision, target: target.targetHead }));
+      const identity = sha256Hex(JSON.stringify({
+        baseRevision,
+        target: target.targetHead,
+        canonicalSkill: sha256Hex(d.canonicalSkill),
+      }));
       let dispatch: AcceptedReviewerDispatch;
       try {
         const base = await d.reader.resolve(baseRevision);
         const range = await d.reader.range(base);
         dispatch = constructReviewerDispatch({
           identity,
-          taskText,
           canonicalSkill: d.canonicalSkill,
           target,
           range,

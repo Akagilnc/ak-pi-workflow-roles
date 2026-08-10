@@ -134,10 +134,8 @@ export type AdmittedDoctorInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
   readonly role: "reviewer";
-  /** Durable task file path consumed by internal --ak-review-task. */
-  readonly taskPath: string;
-  /** Optional caller-supplied base revision hint for proposal base.revision. */
-  readonly baseRevision?: string;
+  /** Required fixed base revision for the pinned review target (ADR 0037). */
+  readonly baseRevision: string;
 };
 
 /** Mechanical envelope derived from the active ordinary two-parent merge. */
@@ -237,10 +235,11 @@ export type ParseDoctorArgvResult = {
 };
 
 export type ParseReviewerArgvResult = {
+  /** Optional caller prose retained only as admitted provenance. */
   instruction: string;
   attachmentPaths: string[];
-  /** Optional semantic base revision for the fixed review target. */
-  baseRevision?: string;
+  /** Required fixed base revision for the pinned review target. */
+  baseRevision: string;
   project?: string;
 };
 
@@ -1695,37 +1694,20 @@ export function parseReviewerArgv(
   };
 }
 
-/** Compose durable task markdown from the public instruction + optional base. */
-export function composeReviewerTaskText(
-  instruction: string,
-  baseRevision?: string,
-): string {
-  const lines: string[] = [instruction];
-  if (baseRevision !== undefined) {
-    lines.push("");
-    lines.push(
-      `Base revision for the fixed review target: ${baseRevision}`,
-    );
-    lines.push(
-      "Use this exact revision as proposal base.revision unless preflight proves it unusable.",
-    );
-  }
-  return lines.join("\n");
-}
-
 export type AdmitReviewerInvocationOptions = {
   home: string;
   cwd: string;
+  /** Optional caller prose retained only as admitted provenance — never semantic control. */
   instruction: string;
   attachmentPaths: readonly string[];
-  baseRevision?: string;
+  baseRevision: string;
   project?: string;
   createRunId?: () => string;
 };
 
 /**
- * Admit a Reviewer Role run on the common Invocation request plus optional base.
- * Reviewer receives a fixed base and gathers its own evidence after activation.
+ * Admit a Reviewer Role run on the fixed base only.
+ * Caller instruction is optional provenance; Reviewer acquires issue/authority independently.
  */
 export async function admitReviewerInvocation(
   options: AdmitReviewerInvocationOptions,
@@ -1733,14 +1715,7 @@ export async function admitReviewerInvocation(
   if (options.project !== undefined) {
     requireOptionPath("--project", options.project);
   }
-  const instruction = options.instruction;
-  if (instruction.trim() === "") {
-    throw new CliUsageError("reviewer requires a nonblank task instruction");
-  }
-  if (
-    options.baseRevision !== undefined &&
-    options.baseRevision.trim() === ""
-  ) {
+  if (options.baseRevision.trim() === "") {
     throw new CliUsageError("--base requires a nonempty revision");
   }
 
@@ -1759,6 +1734,7 @@ export async function admitReviewerInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
+  // Public parse already rejects attachments; keep freeze loop for structural symmetry.
   const attachments: FrozenAttachment[] = [];
   for (let i = 0; i < options.attachmentPaths.length; i += 1) {
     attachments.push(
@@ -1770,12 +1746,8 @@ export async function admitReviewerInvocation(
     );
   }
 
-  const taskText = composeReviewerTaskText(
-    instruction,
-    options.baseRevision,
-  );
-  const taskPath = join(runDirectory, "task.md");
-  await writeFile(taskPath, taskText, "utf8");
+  const instruction = options.instruction;
+  const instructionEmpty = instruction.trim() === "";
   const admitted = {
     role: "reviewer" as const,
     runId,
@@ -1785,11 +1757,8 @@ export async function admitReviewerInvocation(
     sessionDirectory,
     sessionFile,
     instruction,
-    instructionEmpty: false,
-    taskPath,
-    ...(options.baseRevision === undefined
-      ? {}
-      : { baseRevision: options.baseRevision }),
+    instructionEmpty,
+    baseRevision: options.baseRevision,
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
       frozenPath: a.frozenPath,
@@ -1812,42 +1781,27 @@ export async function admitReviewerInvocation(
     bookKey,
     projectRoot,
     instruction,
-    instructionEmpty: false,
+    instructionEmpty,
     attachments,
     runDirectory,
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
-    taskPath,
-    ...(options.baseRevision === undefined
-      ? {}
-      : { baseRevision: options.baseRevision }),
+    baseRevision: options.baseRevision,
   };
 }
 
 /**
  * Build the Pi prompt transport for an admitted Reviewer request.
- * Task already lives on disk for the internal flag; prompt carries
- * the instruction, optional base hint, and frozen Attachment paths.
+ * Semantic input is fixed base only — caller instruction stays provenance on disk.
  */
 export function buildReviewerTransportPrompt(
   admitted: AdmittedReviewerInvocation,
 ): string {
-  const lines: string[] = [admitted.instruction];
-  if (admitted.baseRevision !== undefined) {
-    lines.push("");
-    lines.push(
-      `Admitted base revision: ${admitted.baseRevision}`,
-    );
-  }
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return lines.join("\n");
+  return [
+    `Base revision for the fixed review target: ${admitted.baseRevision}`,
+    "Use this exact revision as the fixed review point.",
+  ].join("\n");
 }
 
 /**

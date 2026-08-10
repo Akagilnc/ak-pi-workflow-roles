@@ -19,10 +19,13 @@ import {
   type AdmittedJudgeInvocation,
 } from "./invocation.ts";
 import {
-  missingPublicProviderCredential,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
+import {
+  missingCredentialPreDispatchFailure,
+  postRunMissingCredentialFailure,
+} from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
@@ -83,30 +86,6 @@ export type JudgeRunEnv = {
   timeoutMs?: number;
 };
 
-/**
- * Production-owned provider failure when the selected public seat provider has
- * no configured credential. Cause/identity come from CredentialProviders, not
- * stderr wording. Runner-supplied knownFailure still wins over this annotation.
- */
-export function knownFailureForMissingProviderCredential(
-  model: SeatModelConfig | undefined,
-  credentials: CredentialProviders | undefined,
-): ExplicitInternalKnownFailure | undefined {
-  if (model === undefined || credentials === undefined) return undefined;
-  // Only the public credential catalog is fail-closed here; offline/test providers
-  // are not represented in auth.json shape and must not be washed into MissingProviderCredential.
-  if (model.provider !== "openai-codex" && model.provider !== "xai") return undefined;
-  if (!missingPublicProviderCredential(model.provider, credentials)) {
-    return undefined;
-  }
-  return {
-    cause: "provider",
-    identity: {
-      name: "MissingProviderCredential",
-      code: model.provider,
-    },
-  };
-}
 
 function buildModelArgs(model: SeatModelConfig | undefined): string[] {
   if (model === undefined) return [];
@@ -266,19 +245,14 @@ async function dispatchAdmittedJudge(input: {
   try {
     // Fail closed at the public credential seam before model dispatch: missing
     // selected-provider auth must not be washed by ambient keys or zero-exit runs.
-    const missingCredential = knownFailureForMissingProviderCredential(
+    const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
       env.credentials,
     );
     if (missingCredential !== undefined) {
       return await presentControlledFailure(
         admitted,
-        {
-          timedOut: false,
-          code: 1,
-          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
-          knownFailure: missingCredential,
-        },
+        missingCredential,
         io,
       );
     }
@@ -376,10 +350,11 @@ async function dispatchAdmittedJudge(input: {
     }
 
     // Production-owned typed cause channel — never inferred from stderr wording.
-    const credentialFailure =
-      result.timedOut || result.code !== 0
-        ? knownFailureForMissingProviderCredential(env.model, env.credentials)
-        : undefined;
+    const credentialFailure = postRunMissingCredentialFailure(
+      result,
+      env.model,
+      env.credentials,
+    );
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result.knownFailure,
       sessionFile: admitted.sessionFile,

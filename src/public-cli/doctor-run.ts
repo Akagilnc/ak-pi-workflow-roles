@@ -24,6 +24,10 @@ import {
   type SeatModelConfig,
 } from "./config.ts";
 import {
+  missingCredentialPreDispatchFailure,
+  postRunMissingCredentialFailure,
+} from "./public-run-credentials.ts";
+import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
   markRunAdmitted,
@@ -51,7 +55,6 @@ import type {
   ControlledFailureCause,
   TerminalResult,
 } from "./terminal.ts";
-import { knownFailureForMissingProviderCredential } from "./judge-run.ts";
 
 export type DoctorRunEnv = {
   home: string;
@@ -169,19 +172,14 @@ async function dispatchAdmittedDoctor(input: {
 }> {
   const { admitted, env, io, extraArgs, lease } = input;
   try {
-    const missingCredential = knownFailureForMissingProviderCredential(
+    const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
       env.credentials,
     );
     if (missingCredential !== undefined) {
       return await presentControlledFailure(
         admitted,
-        {
-          timedOut: false,
-          code: 1,
-          stderr: `Missing credential for provider ${String(missingCredential.identity?.code ?? "unknown")}`,
-          knownFailure: missingCredential,
-        },
+        missingCredential,
         io,
       );
     }
@@ -273,10 +271,11 @@ async function dispatchAdmittedDoctor(input: {
       };
     }
 
-    const credentialFailure =
-      result.timedOut || result.code !== 0
-        ? knownFailureForMissingProviderCredential(env.model, env.credentials)
-        : undefined;
+    const credentialFailure = postRunMissingCredentialFailure(
+      result,
+      env.model,
+      env.credentials,
+    );
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result.knownFailure,
       sessionFile: admitted.sessionFile,

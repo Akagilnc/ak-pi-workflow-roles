@@ -102,18 +102,6 @@ afterEach(() => { process.exitCode = originalExitCode; });
 function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typeof createRoleRuntimeExtension>[0] {
   const law = async () => "LAW";
   const oid = (ch: string) => ch.repeat(40);
-  const reviewTask = new TextEncoder().encode("Review the fixed point.\n");
-  const reviewOps = [
-    "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range",
-    "preflight.git.list-ordered-commits", "preflight.git.read-material",
-    "runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot",
-  ] as const;
-  const reviewCaps = new TextEncoder().encode(JSON.stringify({
-    version: 1,
-    taskSha256: sha256Hex(reviewTask),
-    tools: ["read", "bash"],
-    prerequisiteOperations: [...reviewOps],
-  }));
   const base = {
     loadJudgeSoul: law,
     transcriptFromContext: () => "",
@@ -132,7 +120,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
       return {
         ...base,
         loadReviewerSoul: law,
-        loadReviewerTask: async () => reviewTask,
         createReviewerPinnedGitReader: async () => {
           const pin = {
             repositoryRoot: fixtureRoot,
@@ -274,7 +261,6 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
       return { "ak-coder-phase": "plan", "ak-coder-task": "/lawful/task.md" };
     case "reviewer":
       return {
-        "ak-review-task": "/lawful/review-task.md",
         "ak-review-base": "main~1",
       };
     case "collector":

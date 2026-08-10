@@ -1,6 +1,6 @@
 /**
- * #111 public Reviewer path — common Invocation, optional fixed base,
- * package code-review provenance + typed expansion evidence.
+ * #111 / #236 public Reviewer path — fixed base + package code-review only.
+ * Caller instruction is optional provenance, never semantic control.
  */
 import assert from "node:assert/strict";
 import {
@@ -27,7 +27,6 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitReviewerInvocation,
-  composeReviewerTaskText,
   parseReviewerArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -122,7 +121,7 @@ function lawfulReviewerReceipt(
   };
 }
 
-test("parseReviewerArgv accepts project/base and rejects Reviewer attachments", () => {
+test("parseReviewerArgv requires base and accepts optional provenance instruction", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
@@ -145,61 +144,57 @@ test("parseReviewerArgv accepts project/base and rejects Reviewer attachments", 
       project: "/tmp/p",
     },
   );
+  assert.deepEqual(parseReviewerArgv(["--base", "HEAD~1"]), {
+    instruction: "",
+    attachmentPaths: [],
+    baseRevision: "HEAD~1",
+  });
   assert.throws(() => parseReviewerArgv(["--unknown-flag"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--base", "", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--project", "", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach", "spec.md", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach=spec.md", "task"]), isUsage);
-  // Capability packets are not a public surface.
 });
 
-test("admitReviewerInvocation persists only the task and fixed base", async () => {
+test("admitReviewerInvocation persists fixed base; caller text is provenance only", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
+    const blank = await admitReviewerInvocation({
+      home,
+      cwd: project,
+      instruction: "   ",
+      attachmentPaths: [],
+      baseRevision: "origin/main",
+      createRunId: () => "run-reviewer-blank",
+    });
+    assert.equal(blank.instructionEmpty, true);
+    assert.equal(blank.baseRevision, "origin/main");
+    assert.equal("taskPath" in blank, false);
     await assert.rejects(
-      () =>
-        admitReviewerInvocation({
-          home,
-          cwd: project,
-          instruction: "   ",
-          attachmentPaths: [],
-        }),
-      (error: unknown) =>
-        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
+      () => access(join(blank.runDirectory, "task.md")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
 
-    const source = join(home, "issue.md");
-    await writeFile(source, "originating-spec-v1", "utf8");
     const admitted = await admitReviewerInvocation({
       home,
       cwd: project,
       instruction: "Review the work since the base revision.",
-      attachmentPaths: [source],
+      attachmentPaths: [],
       baseRevision: "origin/main",
       createRunId: () => "run-reviewer-admit-001",
     });
     assert.equal(admitted.role, "reviewer");
     assert.equal(admitted.instruction, "Review the work since the base revision.");
+    assert.equal(admitted.instructionEmpty, false);
     assert.equal(admitted.baseRevision, "origin/main");
-    assert.equal(admitted.attachments.length, 1);
-    assert.equal(
-      await readFile(admitted.attachments[0]!.frozenPath, "utf8"),
-      "originating-spec-v1",
+    assert.equal("taskPath" in admitted, false);
+    await assert.rejects(
+      () => access(join(admitted.runDirectory, "task.md")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
-
-    const taskText = await readFile(admitted.taskPath, "utf8");
-    assert.equal(
-      taskText,
-      composeReviewerTaskText(
-        "Review the work since the base revision.",
-        "origin/main",
-      ),
-    );
-    assert.match(taskText, /Base revision for the fixed review target: origin\/main/);
-
 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(
@@ -217,12 +212,14 @@ test("admitReviewerInvocation persists only the task and fixed base", async () =
       await readFile(admitted.admittedRequestPath, "utf8"),
     ) as Record<string, unknown>;
     assert.equal(persisted.role, "reviewer");
-    assert.equal("taskSha256" in persisted, false);
     assert.equal(persisted.baseRevision, "origin/main");
+    assert.equal(persisted.instruction, "Review the work since the base revision.");
+    assert.equal("taskPath" in persisted, false);
+    assert.equal("taskSha256" in persisted, false);
   });
 });
 
-test("buildReviewerActivationExtraArgs forces package code-review and fixed base", async () => {
+test("buildReviewerActivationExtraArgs forces package code-review and fixed base only", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -241,16 +238,13 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     assert.equal(args.includes("--skill"), true);
     assert.equal(args.includes("--ak-role"), true);
     assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
-    assert.equal(args[args.indexOf("--ak-review-task") + 1], admitted.taskPath);
+    assert.equal(args.includes("--ak-review-task"), false);
     assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
     assert.equal(
-      args.some(
-        (a) =>
-          a.includes(admitted.instruction) &&
-          a.includes("Admitted base revision: HEAD~1"),
-      ),
+      args.some((a) => a.includes("Base revision for the fixed review target: HEAD~1")),
       true,
     );
+    assert.equal(args.some((a) => a.includes(admitted.instruction)), false);
     assert.equal(args.some((a) => a.includes(".agents/skills")), false);
 
     const resume = buildReviewerResumeActivationExtraArgs(admitted, {
@@ -258,6 +252,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     });
     assert.equal(resume.includes("--skill"), true);
     assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
+    assert.equal(resume.includes("--ak-review-task"), false);
     assert.equal(resume.includes(admitted.instruction), false);
     assert.equal(resume[resume.indexOf("--ak-review-base") + 1], "HEAD~1");
   });
@@ -283,7 +278,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     );
     const skillPath = resolvePackagedMethodSkillPath(packageRoot, "code-review");
     const receipt = lawfulReviewerReceipt(["standards", "spec"]);
-    const expansion = `<skill name="code-review" location="${material.skillPath}">\n${material.body}\n</skill>\n\nReview standards and spec axes.`;
+    const expansion = `<skill name="code-review" location="${material.skillPath}">\n${material.body}\n</skill>\n\nBase revision for the fixed review target: main\nUse this exact revision as the fixed review point.`;
     const sessionLines = [
       JSON.stringify({
         type: "message",
@@ -338,7 +333,6 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal(invocations[0]?.name, "code-review");
     assert.equal(invocations[0]?.location, material.skillPath);
 
-    // Ambient home path never counts as package expansion evidence.
     const ambient = extractReviewerMethodInvocations(
       [
         {
@@ -369,8 +363,6 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal(terminal.runId, "run-reviewer-settle-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-    // #177 S2: reviewer axis report text is legally withheld from decisiveFacts;
-    // the durable receipt on the report artifact carries the full reports map.
     const reviewerReportBody = await readFile(
       terminal.artifacts.find((a) => a.kind === "report")!.path,
       "utf8",
@@ -387,6 +379,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       ),
     ) as Record<string, unknown> & {
       baseRevision?: string;
+      callerProvenance?: string;
       methodProvenance: {
         name: string;
         packageAdaptation: string;
@@ -401,33 +394,17 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       methodInvocationObserved: boolean;
       methodInvocations: Array<{ name: string; location: string }>;
     };
+    assert.equal("taskPath" in evidence, false);
     assert.equal("taskSha256" in evidence, false);
     assert.equal(evidence.baseRevision, "main");
+    assert.equal(evidence.callerProvenance, "Review standards and spec axes.");
     assert.equal(evidence.methodProvenance.name, "code-review");
     assert.equal(
       evidence.methodProvenance.packageAdaptation,
       "reviewer-no-setup-fixed-target-two-axis",
     );
-    assert.equal(
-      evidence.methodProvenance.upstream.repository,
-      "https://github.com/mattpocock/skills",
-    );
-    assert.equal(evidence.methodProvenance.upstream.attribution, "mattpocock/skills");
-    assert.equal(
-      evidence.methodProvenance.upstream.path,
-      "skills/engineering/code-review",
-    );
-    assert.equal(
-      evidence.methodProvenance.upstream.commit,
-      material.provenance.upstream.commit,
-    );
-    assert.equal(
-      evidence.methodProvenance.files["SKILL.md"]?.sha256,
-      material.provenance.files["SKILL.md"]!.sha256,
-    );
     assert.equal(evidence.methodInvocationObserved, true);
     assert.equal(evidence.methodInvocations.length, 1);
-    assert.equal(evidence.methodInvocations[0]!.name, "code-review");
     const evidenceText = JSON.stringify(evidence);
     assert.equal(evidenceText.includes(".agents/skills"), false);
   });
@@ -452,26 +429,11 @@ test("package code-review method stays usable without Matt setup and forbids gov
   assert.equal(material.skillPath.includes(".agents/skills"), false);
 });
 
-test("ak-role reviewer admits fixed base/task and rejects blank task", async () => {
+test("ak-role reviewer admits fixed base without requiring caller task", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-
-    {
-      const { io, stderr } = captureIo();
-      const result = await runAkRole(["reviewer", "   "], {
-        packageRoot,
-        home,
-        cwd: project,
-        io,
-        piRunner: async () => {
-          throw new Error("must not dispatch");
-        },
-      });
-      assert.equal(result.exitCode, 2);
-      assert.equal(stderr.join("").length > 0, true);
-    }
 
     {
       const { io, stdout } = captureIo();
@@ -483,13 +445,12 @@ test("ak-role reviewer admits fixed base/task and rejects blank task", async () 
           project,
           "--base",
           "HEAD~1",
-          "Review the latest commit on both axes.",
         ],
         {
           packageRoot,
           home,
           cwd: project,
-          createRunId: () => "run-cli-reviewer-ok",
+          createRunId: () => "run-cli-reviewer-blank-ok",
           io,
           piRunner: async (args) => {
             captured = [...args];
@@ -504,7 +465,7 @@ test("ak-role reviewer admits fixed base/task and rejects blank task", async () 
               packageRoot,
               "code-review",
             );
-            const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>\n\nReview the latest commit on both axes.`;
+            const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>\n\nBase revision for the fixed review target: HEAD~1\nUse this exact revision as the fixed review point.`;
             const receipt = lawfulReviewerReceipt(["standards", "spec"]);
             await writeFile(
               sessionFile,
@@ -539,18 +500,13 @@ test("ak-role reviewer admits fixed base/task and rejects blank task", async () 
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "reviewer");
       assert.equal(captured!.includes("--skill"), true);
+      assert.equal(captured!.includes("--ak-review-task"), false);
       assert.equal(result.terminal?.roleOutcome.role, "reviewer");
       assert.equal(
         result.terminal?.roleOutcome.kind === "accepted"
           ? result.terminal.roleOutcome.status
           : undefined,
         "completed",
-      );
-      assert.deepEqual(
-        result.terminal?.roleOutcome.kind === "accepted"
-          ? result.terminal.roleOutcome.decisiveFacts.axes
-          : undefined,
-        ["standards", "spec"],
       );
 
       const bookKey = resolveBookKeyFromGit(project);
@@ -560,11 +516,13 @@ test("ak-role reviewer admits fixed base/task and rejects blank task", async () 
         "books",
         bookKey,
         "runs",
-        "run-cli-reviewer-ok@reviewer",
+        "run-cli-reviewer-blank-ok@reviewer",
       );
       await access(join(runDirectory, "admitted-request.json"));
-      await access(join(runDirectory, "task.md"));
-      // Adapter never writes Matt setup / governance files into the project.
+      await assert.rejects(
+        () => access(join(runDirectory, "task.md")),
+        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+      );
       const projectEntries = await readdir(project);
       assert.equal(projectEntries.includes("docs"), false);
       assert.equal(projectEntries.includes(".agents"), false);
@@ -573,9 +531,101 @@ test("ak-role reviewer admits fixed base/task and rejects blank task", async () 
       ) as {
         methodInvocationObserved: boolean;
         methodProvenance: { name: string };
+        callerProvenance?: string;
       };
       assert.equal(evidence.methodProvenance.name, "code-review");
       assert.equal(evidence.methodInvocationObserved, true);
+      assert.equal("callerProvenance" in evidence, false);
+    }
+
+    {
+      const { io, stdout } = captureIo();
+      let captured: string[] | undefined;
+      const result = await runAkRole(
+        [
+          "reviewer",
+          "--project",
+          project,
+          "--base",
+          "HEAD~1",
+          "Review the latest commit on both axes.",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-cli-reviewer-ok",
+          io,
+          piRunner: async (args) => {
+            captured = [...args];
+            const sessionIdx = args.indexOf("--session");
+            const sessionFile = args[sessionIdx + 1]!;
+            await mkdir(join(sessionFile, ".."), { recursive: true });
+            const material = await loadPackagedMethodSkillMaterial(
+              packageRoot,
+              "code-review",
+            );
+            const skillPath = resolvePackagedMethodSkillPath(
+              packageRoot,
+              "code-review",
+            );
+            const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>\n\nBase revision for the fixed review target: HEAD~1\nUse this exact revision as the fixed review point.`;
+            const receipt = lawfulReviewerReceipt(["standards", "spec"]);
+            await writeFile(
+              sessionFile,
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "user",
+                  content: [{ type: "text", text: expansion }],
+                },
+              })}\n${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "ok1",
+                  toolName: REVIEWER_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: receipt,
+                },
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
+      assert.equal(captured!.includes("--ak-review-task"), false);
+      assert.equal(
+        captured!.some((a) => a.includes("Review the latest commit on both axes.")),
+        false,
+      );
+      const bookKey = resolveBookKeyFromGit(project);
+      const evidence = JSON.parse(
+        await readFile(
+          join(
+            home,
+            ".ak-roles",
+            "books",
+            bookKey,
+            "runs",
+            "run-cli-reviewer-ok@reviewer",
+            "artifacts",
+            "evidence.json",
+          ),
+          "utf8",
+        ),
+      ) as { callerProvenance?: string };
+      assert.equal(
+        evidence.callerProvenance,
+        "Review the latest commit on both axes.",
+      );
     }
   });
 });
@@ -632,9 +682,10 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as Record<string, unknown> & { role: string; taskPath: string; baseRevision?: string };
+    ) as Record<string, unknown> & { role: string; baseRevision?: string };
     assert.equal(admitted.role, "reviewer");
     assert.equal(admitted.baseRevision, "main");
+    assert.equal("taskPath" in admitted, false);
     assert.equal("taskSha256" in admitted, false);
 
     const { io, stdout } = captureIo();
@@ -648,8 +699,8 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       piRunner: async (args) => {
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
-        assert.equal(args[args.indexOf("--ak-review-task") + 1], admitted.taskPath);
-            assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
+        assert.equal(args.includes("--ak-review-task"), false);
+        assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
@@ -662,7 +713,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
           packageRoot,
           "code-review",
         );
-        const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>\n\n${instruction}`;
+        const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>\n\nBase revision for the fixed review target: main\nUse this exact revision as the fixed review point.`;
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
           `${JSON.stringify({

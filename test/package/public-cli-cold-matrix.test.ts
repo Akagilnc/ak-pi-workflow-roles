@@ -545,7 +545,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
       assertNoDeferredSlice("reviewer", `${result.stdout}\n${result.stderr}`);
       const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
       assert.equal(flagValue(args, "--ak-role"), "reviewer");
-      assert.equal(args.includes("--ak-review-task"), true);
+      assert.equal(args.includes("--ak-review-task"), false);
       assert.equal(args.includes("--ak-review-base"), true);
       const skill = flagValue(args, "--skill");
       assert.ok(skill);

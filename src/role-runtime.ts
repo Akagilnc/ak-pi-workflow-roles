@@ -304,7 +304,6 @@ export type RoleRuntimeDependencies = {
   loadCoderSoul?(): Promise<string>;
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
-  loadReviewerTask?(path: string): Promise<Uint8Array>;
   createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
   loadCollectorSoul?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
@@ -646,10 +645,6 @@ export function createRoleRuntimeExtension(
             throw new Error("reviewer soul loader is not configured");
           }
           return dependencies.loadReviewerSoul();
-        },
-        async loadTask(path) {
-          if (dependencies.loadReviewerTask === undefined) throw new Error("Reviewer runtime dependencies are not configured");
-          return dependencies.loadReviewerTask(path);
         },
         async createPinnedGitReader() {
           if (dependencies.createReviewerPinnedGitReader === undefined) throw new Error("Reviewer runtime dependencies are not configured");

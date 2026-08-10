@@ -46,7 +46,13 @@ export function createPiReviewerAuditor(
         "<reviewer_soul>", input.soul, "</reviewer_soul>",
         "<canonical_code_review_skill>", input.canonicalSkill,
         "</canonical_code_review_skill>",
-        "<opaque_review_task>", input.task, "</opaque_review_task>",
+        ...(input.callerProvenance === undefined || input.callerProvenance.trim() === ""
+          ? []
+          : [
+              "<caller_provenance provenance-only=\"true\">",
+              input.callerProvenance,
+              "</caller_provenance>",
+            ]),
         "<structured_execution_record>", JSON.stringify(input.record),
         "</structured_execution_record>",
         "<candidate_receipt>", JSON.stringify(input.candidate),
