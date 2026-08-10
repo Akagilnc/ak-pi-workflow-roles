@@ -26,8 +26,26 @@ async function findPiExecutable(pathValue) {
   }
   throw new Error("cannot deploy Codex fast patch: pi executable is not on PATH");
 }
+async function resolvePiCliPath(piExecutable) {
+  const marker = "AK_PI_CLI_ENTRY=";
+  const probeSource = `process.stdout.write(${JSON.stringify(marker)} + encodeURIComponent(process.argv[1] ?? "") + "\\n")`;
+  const probeUrl = `data:text/javascript,${encodeURIComponent(probeSource)}`;
+  const nodeOptions = [
+    process.env.NODE_OPTIONS,
+    `--import=${probeUrl}`
+  ].filter(Boolean).join(" ");
+  const { stdout } = await execFileAsync(piExecutable, ["--version"], {
+    env: { ...process.env, NODE_OPTIONS: nodeOptions },
+    maxBuffer: 10 * 1024 * 1024
+  });
+  const entry = stdout.split("\n").find((line) => line.startsWith(marker))?.slice(marker.length);
+  if (entry === void 0 || entry === "") {
+    throw new Error("cannot deploy Codex fast patch: pi did not expose its Node CLI entrypoint");
+  }
+  return await realpath(decodeURIComponent(entry));
+}
 async function resolveGlobalPiAiRoot(piExecutable) {
-  const piCli = await realpath(piExecutable);
+  const piCli = await resolvePiCliPath(piExecutable);
   const codingAgentRoot = dirname(dirname(piCli));
   const codingManifest = JSON.parse(
     await readFile(join(codingAgentRoot, "package.json"), "utf8")
@@ -100,7 +118,7 @@ async function deployCodexFastPatch(options) {
       `cannot deploy Codex fast patch: ${piAiRoot} has unknown bytes (neither pristine ${CODEX_FAST_PATCH_PI_VERSION} nor already applied)`
     );
   }
-  await execFileAsync("git", ["apply", patchPath], {
+  await execFileAsync("patch", ["-p1", "-i", patchPath], {
     cwd: piAiRoot,
     maxBuffer: 10 * 1024 * 1024
   });
