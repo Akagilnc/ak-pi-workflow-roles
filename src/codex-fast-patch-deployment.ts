@@ -113,15 +113,11 @@ async function gitBlobIdentity(root: string, relativePath: string): Promise<stri
 
 export async function deployCodexFastPatch(options: {
   packageRoot: string;
-  path?: string;
-  piExecutable?: string;
 }): Promise<CodexFastPatchDeployment> {
   const patchPath = resolve(options.packageRoot, CODEX_FAST_PATCH_RELATIVE);
   await access(patchPath);
   const patchIdentity = readPatchIdentity(await readFile(patchPath, "utf8"));
-  const piExecutable =
-    options.piExecutable ??
-    (await findPiExecutable(options.path ?? process.env.PATH ?? ""));
+  const piExecutable = await findPiExecutable(process.env.PATH ?? "");
   const piAiRoot = await resolveGlobalPiAiRoot(piExecutable);
   const piAiManifest = JSON.parse(
     await readFile(join(piAiRoot, "package.json"), "utf8"),

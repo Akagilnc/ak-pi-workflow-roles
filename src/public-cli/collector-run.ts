@@ -269,9 +269,7 @@ async function dispatchAdmittedCollector(input: {
         ? undefined
         : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure =
-      result.timedOut || result.code !== 0
-        ? knownFailureForMissingProviderCredential(env.model, env.credentials)
-        : undefined;
+      knownFailureForMissingProviderCredential(env.model, env.credentials);
     const knownFailure =
       result.knownFailure ??
       (infrastructureFailure === undefined

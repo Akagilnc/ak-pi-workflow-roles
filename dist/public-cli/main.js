@@ -15597,7 +15597,7 @@ async function dispatchAdmittedJudge(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -15620,7 +15620,7 @@ async function dispatchAdmittedJudge(input) {
         terminal: auditIncomplete
       };
     }
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const credentialFailure = knownFailureForMissingProviderCredential(env.model, env.credentials);
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
@@ -15903,7 +15903,7 @@ async function dispatchAdmittedCoder(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -15916,7 +15916,7 @@ async function dispatchAdmittedCoder(input) {
       admitted.sessionFile
     );
     const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const credentialFailure = knownFailureForMissingProviderCredential(env.model, env.credentials);
     const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
     return await presentControlledFailure2(
       admitted,
@@ -16218,7 +16218,7 @@ async function dispatchAdmittedCollector(input) {
       admitted.sessionFile
     );
     const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const credentialFailure = knownFailureForMissingProviderCredential(env.model, env.credentials);
     const knownFailure = result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
       cause: infrastructureFailure.cause,
       diagnostic: infrastructureFailure.diagnostic,
@@ -16405,7 +16405,7 @@ async function dispatchAdmittedDoctor(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -16428,7 +16428,7 @@ async function dispatchAdmittedDoctor(input) {
         terminal: auditIncomplete
       };
     }
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const credentialFailure = knownFailureForMissingProviderCredential(env.model, env.credentials);
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
@@ -16681,7 +16681,7 @@ async function dispatchAdmittedFixer(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -16704,7 +16704,7 @@ async function dispatchAdmittedFixer(input) {
         terminal: auditIncomplete
       };
     }
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const credentialFailure = knownFailureForMissingProviderCredential(env.model, env.credentials);
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
@@ -17047,7 +17047,7 @@ async function dispatchAdmittedMerger(input) {
       admitted.sessionFile
     );
     const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const credentialFailure = knownFailureForMissingProviderCredential(env.model, env.credentials);
     const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
     return await presentControlledFailure6(
       admitted,
@@ -17471,7 +17471,7 @@ async function dispatchAdmittedReviewer(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -17494,7 +17494,7 @@ async function dispatchAdmittedReviewer(input) {
         terminal: auditIncomplete
       };
     }
-    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const credentialFailure = knownFailureForMissingProviderCredential(env.model, env.credentials);
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
