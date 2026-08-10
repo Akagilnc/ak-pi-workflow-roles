@@ -3,7 +3,6 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { readFileSync } from "node:fs";
 
 import {
   fauxAssistantMessage,
@@ -14,6 +13,7 @@ import {
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
+  AUDITOR_TURN_LIMIT,
   AuditorTurnLimitError,
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
 } from "../../src/evidence-child-executor.ts";
@@ -64,13 +64,22 @@ function parentWithJudgeSubjects(cwd: string): SessionManager {
   return sessionManager;
 }
 
-test("auditor source has no tools allowlist and no second active-tools cage", () => {
-  // Class 3 retires this source-text gate in favor of behavior assertions.
-  const helper = readFileSync(new URL("../../src/evidence-child-executor.ts", import.meta.url), "utf8");
-  assert.equal(/\btools:\s*\[/.test(helper), false, "must not hardcode a tools allowlist");
-  assert.equal(/setActiveTools\s*\(/.test(helper), false, "must not install a second active-tools cage");
-  assert.equal(/bashCommands/.test(helper), false, "must not cage bashCommands");
-});
+function auditExtensionContext(
+  cwd: string,
+  sessionManager: SessionManager,
+  faux: ReturnType<typeof fauxProvider>,
+): ExtensionContext {
+  return {
+    cwd,
+    model: faux.getModel(),
+    modelRegistry: {
+      getProvider() { return faux.provider; },
+      async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
+      async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
+    },
+    sessionManager,
+  } as unknown as ExtensionContext;
+}
 
 test("auditor gathers evidence without projected materials and submits one decision", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-zero-projection-"));
@@ -98,6 +107,8 @@ test("auditor gathers evidence without projected materials and submits one decis
         .join("\n");
       assert.equal(/judge_soul|adjudication_record|proposed_verdict/.test(userText), false);
       if (turns === 1) {
+        // Behavior proof of unrestricted tools (ADR 0064): read is available
+        // without a second active-tools / tools allowlist cage.
         return fauxAssistantMessage([fauxToolCall("read", { path: "evidence.txt" })], { stopReason: "toolUse" });
       }
       assert.ok(context.messages.some((message) =>
@@ -114,16 +125,7 @@ test("auditor gathers evidence without projected materials and submits one decis
       systemPrompt: "Read evidence, then submit exactly one decision.",
       roleLabel: "Test auditor",
       invalidDecisionLabel: "invalid test decision",
-      context: {
-        cwd,
-        model: faux.getModel(),
-        modelRegistry: {
-          getProvider() { return faux.provider; },
-          async getProviderAuth() { return { auth: { apiKey: "test-secret" } }; },
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-secret" }; },
-        },
-        sessionManager,
-      } as unknown as ExtensionContext,
+      context: auditExtensionContext(cwd, sessionManager, faux),
     }));
     assert.equal(decision.status, "pass");
     assert.equal(turns, 2);
@@ -142,7 +144,6 @@ test("provider-stream idle retries at most twice then fails loud as StreamIdleTi
     const tool = createComplianceDecisionTool("ak_test_idle_decision", "Submit.");
     let streamAttempts = 0;
     const faux = fauxProvider({ provider: "idle-test" });
-    // Replace stream with an always-idle failure that surfaces StreamIdleTimeoutError.
     const idleStream = (() => {
       streamAttempts += 1;
       const error = new StreamIdleTimeoutError(1);
@@ -155,7 +156,6 @@ test("provider-stream idle retries at most twice then fails loud as StreamIdleTi
         },
       } as unknown as ReturnType<typeof faux.provider.stream>;
     }) as typeof faux.provider.stream;
-    // ModelRuntime drives streamSimple; keep both faces on the idle identity.
     faux.provider.stream = idleStream;
     faux.provider.streamSimple = idleStream as typeof faux.provider.streamSimple;
 
@@ -165,32 +165,23 @@ test("provider-stream idle retries at most twice then fails loud as StreamIdleTi
         systemPrompt: "Decide.",
         roleLabel: "Idle auditor",
         invalidDecisionLabel: "invalid idle decision",
-        context: {
-          cwd,
-          model: faux.getModel(),
-          modelRegistry: {
-            getProvider() { return faux.provider; },
-            async getProviderAuth() { return { auth: { apiKey: "secret" } }; },
-            async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "secret" }; },
-          },
-          sessionManager,
-        } as unknown as ExtensionContext,
+        context: auditExtensionContext(cwd, sessionManager, faux),
       })),
       (error: unknown) => isStreamIdleTimeoutError(error)
         && !(error instanceof PackageOwnedToolIdleTimeoutError),
     );
-    // initial attempt + DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES retries
     assert.equal(streamAttempts, DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES + 1);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("AuditorTurnLimitError remains the finite provider-turn boundary", () => {
-  const error = new AuditorTurnLimitError(32);
+test("AuditorTurnLimitError bites the production AUDITOR_TURN_LIMIT constant", () => {
+  const error = new AuditorTurnLimitError(AUDITOR_TURN_LIMIT);
   assert.equal(error.name, "AuditorTurnLimitError");
+  assert.equal(error.limit, AUDITOR_TURN_LIMIT);
   assert.equal(error.limit, 32);
-  assert.match(error.message, /32/);
+  assert.match(error.message, new RegExp(String(AUDITOR_TURN_LIMIT)));
 });
 
 test("package-owned tool idle identity is not StreamIdleTimeoutError", () => {

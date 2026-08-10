@@ -1409,6 +1409,22 @@ export function extractComplianceAuditIncompleteRoleOutcome(
       outputToolName,
     );
     if (roleCall === undefined) continue;
+    // Preflight missing-dossier / missing-subject never contacts the provider, so
+    // there is no retained auditor response — the role tool details are the audit.
+    const details = message.details;
+    if (
+      isComplianceAuditIncomplete(details)
+      && (details.observation.kind === "missing-dossier"
+        || details.observation.kind === "missing-subject")
+    ) {
+      return {
+        outcome: buildAuditIncompleteTerminalOutcome({
+          role,
+          roleCandidate: roleCall.candidate,
+          audit: details,
+        }),
+      };
+    }
     const retained = boundRetainedAuditResponse(
       entries,
       roleCall.callIndex,
