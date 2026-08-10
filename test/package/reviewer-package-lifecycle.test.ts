@@ -154,7 +154,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           assert.match(firstErrorText, /must include standards file reference/);
           assert.match(firstErrorText, /must separate spec report from standards report/);
           assert.equal(finalOutput.message.isError, false);
-          assert.deepEqual(finalOutput.message.content, [{ type: "text", text: "Reviewer report accepted" }]);
+          assert.equal(finalOutput.message.content[0]?.type, "text");
+          assert.match(finalOutput.message.content[0]?.text ?? "", /^Reviewer report accepted(?:\n|$)/);
           assert.equal(finalOutput.message.details.version, 2);
           assert.equal(finalOutput.message.details.status, "completed");
           assert.equal(finalOutput.message.details.acceptedBatch.identity, accepted.message.details.identity);

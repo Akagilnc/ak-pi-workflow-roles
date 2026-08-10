@@ -213,52 +213,15 @@ async function observeWireBehavior(piAiRoot: string, home: string) {
   }
 }
 
-test("packed deployment CLI resolves a package-manager shell shim to the Pi package", async () => {
-  const root = await mkdtemp(resolve(tmpdir(), "ak-fast-patch-shim-"));
-  await withPrimaryAwareCleanup(
-    async () => {
-      const bin = await installDeploymentCli(root);
-      const host = await createPristinePiHost(resolve(root, "host"), {
-        shellShim: true,
-      });
-      const deployed = await runDeployment(bin, host.piBin);
-      assert.equal(deployed.code, 0, deployed.stderr);
-      assert.equal(
-        (await readFile(resolve(host.piAiRoot, PATCHED_RELATIVE), "utf8"))
-          .includes("codexFastSwitchEnabled"),
-        true,
-      );
-    },
-    async () => rm(root, { recursive: true, force: true }),
-  );
-});
-
-test("packed deployment CLI applies below an unrelated ancestor Git worktree", async () => {
-  const root = await mkdtemp(resolve(tmpdir(), "ak-fast-patch-ancestor-git-"));
-  await withPrimaryAwareCleanup(
-    async () => {
-      const bin = await installDeploymentCli(root);
-      const host = await createPristinePiHost(resolve(root, "host"), {
-        ancestorGit: true,
-      });
-      const deployed = await runDeployment(bin, host.piBin);
-      assert.equal(deployed.code, 0, deployed.stderr);
-      assert.equal(
-        (await readFile(resolve(host.piAiRoot, PATCHED_RELATIVE), "utf8"))
-          .includes("codexFastSwitchEnabled"),
-        true,
-      );
-    },
-    async () => rm(root, { recursive: true, force: true }),
-  );
-});
-
 test("packed deployment CLI applies the 0.84.1 patch idempotently, rejects unknown bytes, and changes only eligible wire requests", async () => {
   const root = await mkdtemp(resolve(tmpdir(), "ak-fast-patch-deploy-"));
   await withPrimaryAwareCleanup(
     async () => {
       const bin = await installDeploymentCli(root);
-      const pristine = await createPristinePiHost(resolve(root, "pristine"));
+      const pristine = await createPristinePiHost(resolve(root, "pristine"), {
+        shellShim: true,
+        ancestorGit: true,
+      });
       const first = await runDeployment(bin, pristine.piBin);
       assert.equal(first.code, 0, first.stderr);
       assert.match(first.stdout, /applied/i);

@@ -329,7 +329,7 @@ async function dispatchAdmittedJudge(input: {
         io,
       );
     }
-    if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome) && knownFailureForMissingProviderCredential(env.model, env.credentials) === undefined) {
       await markRunTerminal(admitted.runDirectory).catch(() => undefined);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -356,9 +356,7 @@ async function dispatchAdmittedJudge(input: {
 
     // Production-owned typed cause channel — never inferred from stderr wording.
     const credentialFailure =
-      result.timedOut || result.code !== 0
-        ? knownFailureForMissingProviderCredential(env.model, env.credentials)
-        : undefined;
+      knownFailureForMissingProviderCredential(env.model, env.credentials);
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result.knownFailure,
       sessionFile: admitted.sessionFile,

@@ -128,4 +128,4 @@ pi --no-extensions \
 - stdout 丢 `/dev/null`——session 文件才是正本，stdout 是无上限副本面；仪表挂 `stderr.log` 与 session 文件；
 - `stderr.log` 与 `invocation.json` 落在同次 `runs/` 目录，如上例。
 
-Codex fast 档：安装或升级 Pi 0.84.1 后运行一次 `ak-deploy-codex-fast-patch`。开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：`echo "fast_mode = off" > ~/.pi-codex-fast`（或删文件）。修改后无需重启，下一个请求即生效。Fast 档价格高于默认档。
+Codex fast 档：开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：`echo "fast_mode = off" > ~/.pi-codex-fast`（或删文件）。修改后无需重启，下一个请求即生效。Fast 档价格高于默认档。

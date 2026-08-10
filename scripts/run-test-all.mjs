@@ -131,7 +131,9 @@ function runNodeTest(files, { concurrency } = {}) {
     const child = spawn("node", args, {
       cwd: root,
       stdio: "inherit",
-      env: process.env,
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(([name]) => name !== "AK_ROLE_RUN_DIR"),
+      ),
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
