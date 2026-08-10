@@ -4,9 +4,10 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { activationBookDirectory, ensureRealDirectoryTree, errnoCode, errorText, pathContainedIn, } from "./activation-ledger-topology.js";
 export function childSessionManager(parent, cwd, childDirectory) {
     const parentSession = parent?.getSessionFile();
-    return parentSession === undefined
-        ? SessionManager.inMemory(cwd)
-        : SessionManager.create(cwd, join(parent.getSessionDir(), childDirectory), { parentSession });
+    if (parentSession === undefined)
+        return SessionManager.inMemory(cwd);
+    const parentDirectory = parent.getSessionDir();
+    return SessionManager.create(cwd, join(parentDirectory === "" ? dirname(parentSession) : parentDirectory, childDirectory), { parentSession });
 }
 /**
  * Typed missing durable session principal. Callers discriminate with instanceof/code;
