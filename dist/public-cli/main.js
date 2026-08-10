@@ -226,6 +226,78 @@ var init_activation_ledger_topology = __esm({
   }
 });
 
+// src/activation-ledger-git.ts
+import { execFileSync } from "node:child_process";
+import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
+function envWithoutGitDiscovery(base = process.env) {
+  const env = { ...base };
+  for (const key of GIT_DISCOVERY_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
+}
+function isGitSpawnInfrastructureError(error) {
+  if (error === null || typeof error !== "object" || !("code" in error)) return false;
+  const code = error.code;
+  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
+}
+function gitChildExitedNonzero(error) {
+  if (error === null || typeof error !== "object" || !("status" in error)) return false;
+  const status = error.status;
+  return typeof status === "number" && status !== 0;
+}
+function resolveBookKeyFromGit(cwd) {
+  let commonDir;
+  try {
+    commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: envWithoutGitDiscovery()
+    }).trim();
+  } catch (error) {
+    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
+      throw error;
+    }
+    const err = error;
+    const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
+    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
+  }
+  if (commonDir.length === 0) {
+    throw new Error("git rev-parse --git-common-dir returned an empty path");
+  }
+  const absoluteCommon = isAbsolute2(commonDir) ? commonDir : resolve2(cwd, commonDir);
+  const hostDirectory = basename2(absoluteCommon) === ".git" ? dirname3(absoluteCommon) : absoluteCommon;
+  const bookKey = basename2(hostDirectory);
+  if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
+    throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
+  }
+  return bookKey;
+}
+var GIT_DISCOVERY_ENV_KEYS, ActivationGitRepositoryRequiredError;
+var init_activation_ledger_git = __esm({
+  "src/activation-ledger-git.ts"() {
+    "use strict";
+    GIT_DISCOVERY_ENV_KEYS = [
+      "GIT_DIR",
+      "GIT_COMMON_DIR",
+      "GIT_WORK_TREE",
+      "GIT_CEILING_DIRECTORIES",
+      "GIT_DISCOVERY_ACROSS_FILESYSTEM"
+    ];
+    ActivationGitRepositoryRequiredError = class extends Error {
+      code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
+      constructor(detail, options) {
+        super(
+          `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "ActivationGitRepositoryRequiredError";
+      }
+    };
+  }
+});
+
 // src/public-cli/main.ts
 import { dirname as dirname6, join as join16 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -9548,6 +9620,7 @@ async function runExplicitInternalActivation(options) {
 
 // src/public-cli/invocation.ts
 init_activation_ledger_topology();
+init_activation_ledger_git();
 import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat,
@@ -9557,72 +9630,6 @@ import {
   writeFile as writeFile2
 } from "node:fs/promises";
 import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve4, sep as sep3 } from "node:path";
-
-// src/activation-ledger-git.ts
-import { execFileSync } from "node:child_process";
-import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
-var GIT_DISCOVERY_ENV_KEYS = [
-  "GIT_DIR",
-  "GIT_COMMON_DIR",
-  "GIT_WORK_TREE",
-  "GIT_CEILING_DIRECTORIES",
-  "GIT_DISCOVERY_ACROSS_FILESYSTEM"
-];
-function envWithoutGitDiscovery(base = process.env) {
-  const env = { ...base };
-  for (const key of GIT_DISCOVERY_ENV_KEYS) {
-    delete env[key];
-  }
-  return env;
-}
-var ActivationGitRepositoryRequiredError = class extends Error {
-  code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
-  constructor(detail, options) {
-    super(
-      `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
-      options?.cause === void 0 ? void 0 : { cause: options.cause }
-    );
-    this.name = "ActivationGitRepositoryRequiredError";
-  }
-};
-function isGitSpawnInfrastructureError(error) {
-  if (error === null || typeof error !== "object" || !("code" in error)) return false;
-  const code = error.code;
-  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
-}
-function gitChildExitedNonzero(error) {
-  if (error === null || typeof error !== "object" || !("status" in error)) return false;
-  const status = error.status;
-  return typeof status === "number" && status !== 0;
-}
-function resolveBookKeyFromGit(cwd) {
-  let commonDir;
-  try {
-    commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: envWithoutGitDiscovery()
-    }).trim();
-  } catch (error) {
-    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
-      throw error;
-    }
-    const err = error;
-    const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
-    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
-  }
-  if (commonDir.length === 0) {
-    throw new Error("git rev-parse --git-common-dir returned an empty path");
-  }
-  const absoluteCommon = isAbsolute2(commonDir) ? commonDir : resolve2(cwd, commonDir);
-  const hostDirectory = basename2(absoluteCommon) === ".git" ? dirname3(absoluteCommon) : absoluteCommon;
-  const bookKey = basename2(hostDirectory);
-  if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
-    throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
-  }
-  return bookKey;
-}
 
 // src/doctor-evidence.ts
 import { readdir, readFile as readFile2, realpath, stat } from "node:fs/promises";
@@ -16880,9 +16887,10 @@ async function runPublicFixerResume(argv, env, io) {
 }
 
 // src/public-cli/merger-run.ts
+init_activation_ledger_git();
+init_activation_ledger_topology();
 import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
 import { join as join13, resolve as resolve6 } from "node:path";
-init_activation_ledger_topology();
 function buildModelArgs6(model) {
   if (model === void 0) return [];
   return [
