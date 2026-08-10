@@ -258,10 +258,17 @@ async function runCoderSkillFailureCli(
           "---\nname: tdd\ndescription: empty fixture\n---\n\n",
         );
       }
+      // Temp git worktree so production arm never mutates the real package checkout.
+      const work = resolve(home, "work");
+      await mkdir(work, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: work });
+      execFileSync("git", ["config", "user.email", "coder-skill@test.local"], { cwd: work });
+      execFileSync("git", ["config", "user.name", "Coder Skill"], { cwd: work });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: work });
       const sessionDirectory = resolve(
         home,
         ".ak-roles/books",
-        resolveBookKeyFromGit(packageRoot),
+        resolveBookKeyFromGit(work),
         "runs/coder-skill-fatal/session",
       );
       await mkdir(sessionDirectory, { recursive: true });
@@ -290,7 +297,7 @@ async function runCoderSkillFailureCli(
         ...(mode === "print" ? ["-p", "Apply."] : ["--mode", "json", "Apply."]),
       ];
       return runPiSubprocess(args, {
-        cwd: packageRoot,
+        cwd: work,
         env: {
           ...process.env,
           HOME: home,
