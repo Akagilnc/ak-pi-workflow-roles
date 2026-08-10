@@ -196,14 +196,21 @@ export type NavigatorContextProjection = {
  * settlement (family #224/#226/#227). One table for all seats — not per-role guards.
  *
  * Merger closes delivery. It is only consistent immediately after judge converged.
- * Fresh accepted work from any other seat must not skip to merger (ADR 0061 keeps
- * advice free-form; this only suppresses self-contradictory typed emission).
+ * Fresh accepted work from any other seat must not skip to merger.
+ *
+ * Unfinished is an open handoff (ADR 0050): recommending judge would send half-done
+ * work to audit. Machine criterion anchors only status=unfinished — refused and
+ * partially_completed remain settled terminals whose judge path stays lawful.
+ * Positive continuation is free-form via rebind + status-matched candidates
+ * (ADR 0010/0061); this only suppresses self-contradictory typed emission.
  */
 export function navigatorAdviceConsistentWithSettlement(
   next: NavigatorRouteTarget,
   settlement: NavigatorSettlement,
 ): boolean {
   if (settlement.kind !== "accepted") return true;
+  // #227: open unfinished handoff must not be typed as next=judge.
+  if (settlement.status === "unfinished" && next.role === "judge") return false;
   if (next.role !== "merger") return true;
   return settlement.role === "judge" && settlement.status === "converged";
 }
