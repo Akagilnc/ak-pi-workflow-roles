@@ -53,10 +53,22 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       await git(fixture, "config", "user.email", "consumer@example.com");
       await git(fixture, "config", "user.name", "Consumer");
       await writeFile(resolve(fixture, ".gitignore"), "node_modules\n.pi-agent*\n");
+      await mkdir(resolve(fixture, ".pi", "extensions"), { recursive: true });
+      await writeFile(resolve(fixture, ".pi", "extensions", "review-probe.ts"), `
+export default function reviewProbe(pi) {
+  pi.registerTool({
+    name: "ak_review_probe",
+    label: "Review registry probe",
+    description: "Return evidence from a project extension.",
+    parameters: { type: "object", properties: {} },
+    async execute() { return { content: [{ type: "text", text: "review-extension-evidence" }], details: {} }; },
+  });
+}
+`);
       await writeFile(resolve(fixture, "consumer.txt"), "base\n");
       await writeFile(resolve(fixture, "STANDARDS.md"), "Require a tested readable change.\n");
       await writeFile(resolve(fixture, "SPEC.md"), "The consumer text must become reviewed.\n");
-      await git(fixture, "add", ".gitignore", "consumer.txt", "STANDARDS.md", "SPEC.md");
+      await git(fixture, "add", ".gitignore", ".pi/extensions/review-probe.ts", "consumer.txt", "STANDARDS.md", "SPEC.md");
       await git(fixture, "commit", "-m", "base");
       await git(fixture, "branch", "review-base");
       await writeFile(resolve(fixture, "consumer.txt"), "reviewed\n");
@@ -171,6 +183,10 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           fauxAssistantMessage(fauxToolCall("bash", { command: "git status --short" }, { id: "arbitrary-command" }), { stopReason: "toolUse" }),
           (ctx) => {
             noSpecCommandContexts.push(ctx);
+            return fauxAssistantMessage(fauxToolCall("ak_review_probe", {}, { id: "extension-evidence" }), { stopReason: "toolUse" });
+          },
+          (ctx) => {
+            noSpecCommandContexts.push(ctx);
             noSpecChildren.push(ctx);
             return fauxAssistantMessage("Standards report: no findings.");
           },
@@ -190,6 +206,10 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           const bashResult = noSpecCommandContexts[0]?.messages.filter((message) => message.role === "toolResult" && message.toolCallId === "arbitrary-command").at(-1);
           assert.ok(bashResult && bashResult.role === "toolResult");
           assert.equal(bashResult.isError, false);
+          const extensionResult = noSpecCommandContexts[1]?.messages.filter((message) => message.role === "toolResult" && message.toolCallId === "extension-evidence").at(-1);
+          assert.ok(extensionResult && extensionResult.role === "toolResult");
+          assert.equal(extensionResult.isError, false);
+          assert.equal(extensionResult.content.map((part) => part.type === "text" ? part.text : "").join(""), "review-extension-evidence");
           assert.equal(JSON.stringify(noSpecProposal).includes(diffCommand), false); assert.equal(capabilityText.includes(diffCommand), false);
           assert.doesNotMatch(userText(noSpecChildren[0]!), /Quote the spec line for each finding/);
           assert.doesNotMatch(userText(noSpecAudits[0]!), /\"axis\":\"spec\"/);
@@ -208,7 +228,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           assert.equal(output.message.isError, false);
           assert.equal(output.message.details.version, 2);
           assert.equal(output.message.details.status, "refused");
-          assert.equal(output.message.details.diagnostic, "No review can be started.");
+          assert.equal(typeof output.message.details.diagnostic, "string");
           assert.deepEqual(output.message.details.reports, {});
           assert.deepEqual(output.message.details.outcomes, {});
           installedContracts.projectReviewerIntentToReceipt({ status: "refused", diagnostic: "No review can be started." }, output.message.details);

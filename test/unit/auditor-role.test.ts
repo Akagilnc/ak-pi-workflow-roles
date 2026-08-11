@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -388,12 +388,23 @@ test("independent auditor gathers evidence and submits one decision", async () =
   }
 });
 
-test("auditor enables non-default native evidence tools and a sole terminating decision tool", async () => {
-  // Pi defaults to read/bash/edit/write when tools is omitted. ADR 0064 requires the
-  // full registry (including grep/find/ls) plus the decision tool — prove via grep.
+test("auditor enables runtime-added evidence tools and a sole terminating decision tool", async () => {
+  // ADR 0064 requires the live registry, including tools added by project extensions.
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-unrestricted-tools-"));
   try {
-    await writeFile(join(cwd, "probe.txt"), "probe-marker\n");
+    const extensionDir = join(cwd, ".pi", "extensions");
+    await mkdir(extensionDir, { recursive: true });
+    await writeFile(join(extensionDir, "registry-probe.ts"), `
+export default function registryProbe(pi) {
+  pi.registerTool({
+    name: "ak_registry_probe",
+    label: "Registry probe",
+    description: "Return extension evidence.",
+    parameters: { type: "object", properties: {} },
+    async execute() { return { content: [{ type: "text", text: "extension-evidence" }], details: {} }; },
+  });
+}
+`);
     const faux = fauxProvider({ provider: "audit-unrestricted-tools" });
     const baseTool = createComplianceDecisionTool("ak_unrestricted_decision", "Submit the decision.");
     let decisions = 0;
@@ -405,21 +416,21 @@ test("auditor enables non-default native evidence tools and a sole terminating d
       },
     };
     faux.setResponses([
-      fauxAssistantMessage([fauxToolCall("grep", { pattern: "probe-marker", path: "." })], { stopReason: "toolUse" }),
+      fauxAssistantMessage([fauxToolCall("ak_registry_probe", {})], { stopReason: "toolUse" }),
       (context: Context) => {
-        const grepResult = [...context.messages].reverse().find((message) => message.role === "toolResult" && message.toolName === "grep");
-        assert.ok(grepResult && grepResult.role === "toolResult");
-        const text = Array.isArray(grepResult.content)
-          ? grepResult.content.map((part) => (part.type === "text" ? part.text : "")).join("")
-          : String(grepResult.content ?? "");
-        // A registered tool returns a real result; an allowlist miss yields "Unknown tool".
-        assert.equal(/unknown tool/i.test(text), false);
+        const probeResult = [...context.messages].reverse().find((message) => message.role === "toolResult" && message.toolName === "ak_registry_probe");
+        assert.ok(probeResult && probeResult.role === "toolResult");
+        const text = Array.isArray(probeResult.content)
+          ? probeResult.content.map((part) => (part.type === "text" ? part.text : "")).join("")
+          : String(probeResult.content ?? "");
+        assert.equal(probeResult.isError, false);
+        assert.equal(text, "extension-evidence");
         return fauxAssistantMessage([fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })], { stopReason: "toolUse" });
       },
     ]);
     const result = await runAuditorRole({
       systemPrompt: "Inspect with any needed tool, then decide once.",
-      serializedInput: "Use grep then decide.",
+      serializedInput: "Use the project extension evidence tool then decide.",
       tool,
       roleLabel: "Test auditor",
       context: auditorContext(cwd, faux.provider, { model: faux.getModel() }),
