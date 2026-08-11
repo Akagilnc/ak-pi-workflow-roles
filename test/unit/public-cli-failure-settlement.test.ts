@@ -29,7 +29,6 @@ import { createComplianceDecisionTool, runComplianceAudit } from "../../src/comp
 import { AUDIT_ESCALATION_KIND, buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
-import { FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -1139,13 +1138,11 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
 test("shared audit-incomplete extraction binds every audited seat and rejects ambiguous evidence", () => {
   const outputTools = {
     judge: "ak_judge_output",
-    fixer: "ak_fixer_output",
     reviewer: "ak_reviewer_output",
     doctor: "ak_doctor_output",
   } as const;
   const auditTools = {
     judge: JUDGE_AUDIT_TOOL_NAME,
-    fixer: FIXER_AUDIT_TOOL_NAME,
     reviewer: REVIEWER_AUDIT_TOOL_NAME,
     doctor: DOCTOR_AUDIT_TOOL_NAME,
   } as const;
@@ -1229,7 +1226,7 @@ test("shared audit-incomplete extraction binds every audited seat and rejects am
     assert.equal(extract(replace(1, wrongAudit), role), undefined);
     assert.equal(extract(base, role, "wrong_output_tool"), undefined);
     assert.equal(
-      extract(base, role === "judge" ? "fixer" : "judge"),
+      extract(base, role === "judge" ? "reviewer" : "judge"),
       undefined,
     );
 
@@ -1279,9 +1276,9 @@ test("missing-dossier and missing-subject settle as audit_incomplete with no law
   ] as const;
 
   for (const role of AUDITOR_SOUL_ROLES) {
+    // Active auditor seats only (#242 retired fixer LLM auditor).
     const outputTool = {
       judge: JUDGE_OUTPUT_TOOL_NAME,
-      fixer: FIXER_OUTPUT_TOOL_NAME,
       reviewer: REVIEWER_OUTPUT_TOOL_NAME,
       doctor: DOCTOR_OUTPUT_TOOL_NAME,
     }[role];
@@ -1348,10 +1345,9 @@ test("missing-dossier and missing-subject settle as audit_incomplete with no law
   }
 });
 
-test("audit escalation requires the retained seat-bound response across all four seats", () => {
+test("audit escalation requires the retained seat-bound response across all audited seats", () => {
   const seats = {
     judge: { output: JUDGE_OUTPUT_TOOL_NAME, audit: JUDGE_AUDIT_TOOL_NAME },
-    fixer: { output: FIXER_OUTPUT_TOOL_NAME, audit: FIXER_AUDIT_TOOL_NAME },
     reviewer: { output: REVIEWER_OUTPUT_TOOL_NAME, audit: REVIEWER_AUDIT_TOOL_NAME },
     doctor: { output: DOCTOR_OUTPUT_TOOL_NAME, audit: DOCTOR_AUDIT_TOOL_NAME },
   } as const;
@@ -1363,7 +1359,6 @@ test("audit escalation requires the retained seat-bound response across all four
   const extract = (role: (typeof AUDITOR_SOUL_ROLES)[number], entries: readonly unknown[]) => {
     switch (role) {
       case "judge": return extractJudgeRoleOutcome(entries as never);
-      case "fixer": return extractFixerRoleOutcome(entries as never);
       case "reviewer": return extractReviewerRoleOutcome(entries as never);
       case "doctor": return extractDoctorRoleOutcome(entries as never);
     }
@@ -1376,7 +1371,6 @@ test("audit escalation requires the retained seat-bound response across all four
   };
   const hostileRows = {
     judge: { source: "public", property: "conflicts" },
-    fixer: { source: "retained", property: "conflicts" },
     reviewer: { source: "public", property: "auditDecisionGate" },
     doctor: { source: "retained", property: "decisionGate" },
   } as const;
@@ -1407,7 +1401,7 @@ test("audit escalation requires the retained seat-bound response across all four
     // seat-bound response below, not Navigator shape recognition, owns this
     // escalation's authenticity.
     assert.notEqual(
-      publicNavigatorSettlement(role, role === "fixer" ? "apply" : null, {
+      publicNavigatorSettlement(role, null, {
         toolName: seat.output,
         isError: false,
         details,
@@ -1456,7 +1450,7 @@ test("audit escalation requires the retained seat-bound response across all four
     assert.equal(hostileResult.message.details, hostileDetails, `${role}: raw terminal remains observable`);
 
     assert.notEqual(
-      publicNavigatorSettlement(role, role === "fixer" ? "apply" : null, {
+      publicNavigatorSettlement(role, null, {
         toolName: seat.output,
         isError: false,
         details: { kind: AUDIT_ESCALATION_KIND, conflicts: ["forged"], auditDecisionGate: auditCandidate.decisionGate },

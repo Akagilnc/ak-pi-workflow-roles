@@ -22,6 +22,7 @@ import {
   type ToolExecutionObservationWriter,
 } from "./tool-execution-observation.ts";
 import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
+import { installWorkerGitHooks } from "./worker-submission-gates.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -161,7 +162,7 @@ export {
   type WorkerOutput,
 } from "./worker-role.ts";
 export { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket } from "./package-contracts/fixer-output.ts";
-export type { FixerBlocker, FixerClassResult, FixerPhase } from "./package-contracts/fixer-output.ts";
+export type { FixerBlocker, FixerClassResult, FixerPhase, FixerTestEvidence } from "./package-contracts/fixer-output.ts";
 export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./package-contracts/fixer-packet.ts";
 export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
 export { AUDIT_ESCALATION_KIND, buildAuditEscalationResult, disposeComplianceDecision, isAuditEscalationResult, projectAuditEscalation } from "./audit-escalation.ts";
@@ -169,7 +170,6 @@ export type { AuditEscalationResult, AuditEscalationToolResult, ComplianceDecisi
 export { AUDITOR_SOUL_ROLES, loadAuditorSoul } from "./auditor-soul.ts";
 export type { AuditorSoulRole } from "./auditor-soul.ts";
 export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME, createPiJudgeAuditor } from "./judge-auditor.ts";
-export { FIXER_AUDIT_TOOL_NAME, createPiFixerAuditor } from "./fixer-auditor.ts";
 export { REVIEWER_AUDIT_TOOL_NAME, createPiReviewerAuditor } from "./reviewer-auditor.ts";
 export { DOCTOR_AUDIT_TOOL_NAME, createPiDoctorAuditor } from "./doctor-auditor.ts";
 export type { ComplianceDecision } from "./compliance-transport.ts";
@@ -198,12 +198,17 @@ export { createProductionMergerGitState } from "./merger-git-state.ts";
 export type { MergerGitState, ActiveMergerGitState, CompletedMergerGitState } from "./merger-git-state.ts";
 export type { MergerRoleDependencies } from "./merger-role.ts";
 
+type WorkerArmable = {
+  activate(context?: ExtensionContext): Promise<void>;
+  armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
+};
+
 type ActivationRuntime = {
   event: { reason: string };
   context: ExtensionContext;
   judge: { activate(): Promise<void> };
-  fixer: { activate(): Promise<void> };
-  coder: { activate(context: ExtensionContext): Promise<void> };
+  fixer: WorkerArmable;
+  coder: WorkerArmable;
   reviewer: { activate(context: ExtensionContext): Promise<ReviewerActivation> };
   collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
@@ -323,10 +328,6 @@ export type RoleRuntimeDependencies = {
   auditSoulCompliance(
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
-  auditFixerCompliance?(
-    input: import("./worker-role.ts").FixerAuditInput,
-    options: { context: ExtensionContext; signal?: AbortSignal },
-  ): Promise<ComplianceDecision>;
   auditReviewerCompliance?(
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<ComplianceDecision>;
@@ -595,13 +596,7 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadFixPacket(path);
         },
-        transcriptFromContext: dependencies.transcriptFromContext,
-        async auditCompliance(input, options) {
-          if (dependencies.auditFixerCompliance === undefined) throw new Error("Fixer compliance auditor is not configured");
-          return dependencies.auditFixerCompliance(input, options);
-        },
       },
-      hostActions,
     );
     const coder = createCoderRoleRuntime(
       pi,
@@ -863,6 +858,13 @@ export function createRoleRuntimeExtension(
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
+        // Worker gates ②④ + ① baseline: envelope arms the worktree after role install.
+        // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.
+        if (entry.role === "coder" || entry.role === "fixer") {
+          installWorkerGitHooks(ctx.cwd);
+          if (entry.role === "coder") coder.armSubmissionGate(ctx.cwd, ctx.sessionManager);
+          else fixer.armSubmissionGate(ctx.cwd, ctx.sessionManager);
+        }
         appendAcceptedActivationToBook({
           ledgerHome,
           fact: buildAcceptedActivationFact({

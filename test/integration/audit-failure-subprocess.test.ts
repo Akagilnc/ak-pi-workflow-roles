@@ -13,7 +13,6 @@ import {
 } from "@earendil-works/pi-ai";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger.ts";
-import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
 import {
   packageRoot,
   runPiSubprocess,
@@ -230,10 +229,17 @@ async function runCoderSkillFailureCli(
           "---\nname: tdd\ndescription: empty fixture\n---\n\n",
         );
       }
+      // Temp git worktree so production arm never mutates the real package checkout.
+      const work = resolve(home, "work");
+      await mkdir(work, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: work });
+      execFileSync("git", ["config", "user.email", "coder-skill@test.local"], { cwd: work });
+      execFileSync("git", ["config", "user.name", "Coder Skill"], { cwd: work });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: work });
       const sessionDirectory = resolve(
         home,
         ".ak-roles/books",
-        resolveBookKeyFromGit(packageRoot),
+        resolveBookKeyFromGit(work),
         "runs/coder-skill-fatal/session",
       );
       await mkdir(sessionDirectory, { recursive: true });
@@ -262,7 +268,7 @@ async function runCoderSkillFailureCli(
         ...(mode === "print" ? ["-p", "Apply."] : ["--mode", "json", "Apply."]),
       ];
       return runPiSubprocess(args, {
-        cwd: packageRoot,
+        cwd: work,
         env: {
           ...process.env,
           HOME: home,
@@ -451,17 +457,6 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
   );
 });
 
-test("fatal Fixer audit infrastructure failure aborts print and JSON without a receipt", async () => {
-  // Fixer-specific process proof (distinct from the Judge survivor): exit code +
-  // typed isError/stopReason on ak_fixer_output.
-  for (const mode of ["print", "json"] as const) {
-    const result = await runFixerAuditFailureCli({ mode });
-    assertAuditAbortWithoutReceipt(result, `fixer/${mode}`);
-    if (mode === "json") {
-      assertJsonAbortFacts(result, "ak_fixer_output", mode);
-    }
-  }
-});
 
 test("coder apply without skill expansion rejects completed as non-receipt", async () => {
   // #109: TDD is package-owned (empty home is fine). Process-level negative keeps
