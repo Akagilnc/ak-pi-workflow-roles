@@ -121,9 +121,9 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
       "public bin must ship Reviewer receipt validation before lawful settlement",
     );
     assert.equal(
-      committedText.includes("ak-review-capabilities"),
+      committedText.includes("ak-review-base"),
       true,
-      "public bin must pin adapter-derived reviewer capabilities on activation",
+      "public bin must pin the Reviewer base on activation",
     );
     // #114 public Merger adapter + package merge-only method must ship in the installed bin.
     assert.equal(

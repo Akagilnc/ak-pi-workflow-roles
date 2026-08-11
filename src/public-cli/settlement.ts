@@ -10,7 +10,6 @@ import { dirname, join } from "node:path";
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
-import { FIXER_AUDIT_TOOL_NAME } from "../fixer-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
 import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure } from "./explicit-internal.ts";
@@ -632,6 +631,46 @@ export async function readSessionProviderStop(
   }
 }
 
+/**
+ * Recover a provider stop from Reviewer fixed-axis evidence children bound to this parent.
+ * Dispatch runs during activation before the parent model turn; leg failures leave durable
+ * stops under session/evidence-children/ and must not wash into generic activation.
+ */
+export async function readBoundEvidenceChildKnownFailure(
+  sessionFile: string,
+): Promise<ExplicitInternalKnownFailure | undefined> {
+  const childDirectory = join(dirname(sessionFile), "evidence-children");
+  let names: string[];
+  try {
+    names = await readdir(childDirectory);
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw sessionReadFailure(error, "failed to read bound evidence-child session directory");
+  }
+  for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
+    let entries: SessionEntry[];
+    try {
+      entries = await readBoundSessionEntries(join(childDirectory, file));
+    } catch (error) {
+      throw sessionReadFailure(error, "failed to read discovered evidence-child session");
+    }
+    const header = entries.find((entry) => entry.type === "session");
+    if (!isRecord(header) || header.parentSession !== sessionFile) continue;
+    const stop = extractSessionProviderStop(entries);
+    if (stop === undefined) continue;
+    const primary = knownFailureFromProviderStop(stop)!;
+    return {
+      ...primary,
+      details: {
+        ...(stop.provider === undefined ? {} : { provider: stop.provider }),
+        ...(stop.model === undefined ? {} : { model: stop.model }),
+        secondaryEvidence: "evidence-child",
+      },
+    };
+  }
+  return undefined;
+}
+
 /** Recover a provider stop from the auditor child bound to the current parent attempt. */
 export async function readBoundAuditorKnownFailure(
   sessionFile: string,
@@ -714,10 +753,13 @@ export async function resolveAuditedRunnerKnownFailure(input: {
   credential: ExplicitInternalKnownFailure | undefined;
 }): Promise<ExplicitInternalKnownFailure | undefined> {
   if (input.runner !== undefined) return input.runner;
-  const parentStop = await readSessionProviderStop(input.sessionFile);
-  if (parentStop !== undefined) return knownFailureFromProviderStop(parentStop);
+  // Bound auditor evidence outranks a parent abort that the auditor path itself
+  // caused (retention EISDIR race). Reviewer axis evidence-children are next:
+  // fixed two-axis dispatch fails during activation with only child stops durable.
+  // Parent stop remains the fallback; credential is last.
   try {
-    return (await readBoundAuditorKnownFailure(input.sessionFile)) ?? input.credential;
+    const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
+    if (auditorFailure !== undefined) return auditorFailure;
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
     return {
@@ -726,6 +768,21 @@ export async function resolveAuditedRunnerKnownFailure(input: {
       diagnostic: failure.message || failure.name,
     };
   }
+  try {
+    const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
+    if (evidenceChildFailure !== undefined) return evidenceChildFailure;
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound evidence-child failure");
+    return {
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name,
+    };
+  }
+  const parentStop = await readSessionProviderStop(input.sessionFile);
+  return parentStop === undefined
+    ? input.credential
+    : knownFailureFromProviderStop(parentStop);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1090,6 +1147,10 @@ function isComplianceAuditIncomplete(value: unknown): value is ComplianceAuditIn
   if (!isRecord(value) || value.status !== "audit-incomplete") return false;
   const observation = value.observation;
   if (!isRecord(observation)) return false;
+  if (observation.kind === "missing-dossier") return true;
+  if (observation.kind === "missing-subject") {
+    return typeof observation.subject === "string" && observation.subject.length > 0;
+  }
   if (observation.kind === "object-status-unreadable") {
     return observation.status === "missing" || observation.status === "unknown";
   }
@@ -1112,8 +1173,6 @@ function auditToolNameForRole(
   switch (role) {
     case "judge":
       return JUDGE_AUDIT_TOOL_NAME;
-    case "fixer":
-      return FIXER_AUDIT_TOOL_NAME;
     case "reviewer":
       return REVIEWER_AUDIT_TOOL_NAME;
     case "doctor":
@@ -1127,8 +1186,6 @@ function outputToolNameForAuditedRole(
   switch (role) {
     case "judge":
       return JUDGE_OUTPUT_TOOL_NAME;
-    case "fixer":
-      return FIXER_OUTPUT_TOOL_NAME;
     case "reviewer":
       return REVIEWER_OUTPUT_TOOL_NAME;
     case "doctor":
@@ -1347,6 +1404,22 @@ export function extractComplianceAuditIncompleteRoleOutcome(
       outputToolName,
     );
     if (roleCall === undefined) continue;
+    // Preflight missing-dossier / missing-subject never contacts the provider, so
+    // there is no retained auditor response — the role tool details are the audit.
+    // details already narrowed by isComplianceAuditIncomplete at the loop gate.
+    const details = message.details;
+    if (
+      details.observation.kind === "missing-dossier"
+      || details.observation.kind === "missing-subject"
+    ) {
+      return {
+        outcome: buildAuditIncompleteTerminalOutcome({
+          role,
+          roleCandidate: roleCall.candidate,
+          audit: details,
+        }),
+      };
+    }
     const retained = boundRetainedAuditResponse(
       entries,
       roleCall.callIndex,
@@ -1494,11 +1567,9 @@ export async function trySettleComplianceAuditIncompleteTerminalResult(
   const outputToolName =
     admitted.role === "judge"
       ? JUDGE_OUTPUT_TOOL_NAME
-      : admitted.role === "fixer"
-        ? FIXER_OUTPUT_TOOL_NAME
-        : admitted.role === "reviewer"
-          ? REVIEWER_OUTPUT_TOOL_NAME
-          : DOCTOR_OUTPUT_TOOL_NAME;
+      : admitted.role === "reviewer"
+        ? REVIEWER_OUTPUT_TOOL_NAME
+        : DOCTOR_OUTPUT_TOOL_NAME;
   const entries = await readLawfulSettlementEntries(admitted);
   if (entries === undefined) return undefined;
   const extracted = extractComplianceAuditIncompleteRoleOutcome(
@@ -2275,20 +2346,13 @@ export async function publishFixerArtifacts(
   ];
 }
 
-/** Lawful Fixer accepted / audit_escalation outcome extracted from session. */
-export type LawfulFixerRoleOutcome =
-  | {
-      kind: "accepted";
-      role: "fixer";
-      status: string;
-      decisiveFacts: Readonly<Record<string, unknown>>;
-    }
-  | {
-      kind: "audit_escalation";
-      role: "fixer";
-      status: "audit_escalation";
-      decisiveFacts: Readonly<Record<string, unknown>>;
-    };
+/** Lawful Fixer accepted outcome extracted from session (no LLM auditor after #242). */
+export type LawfulFixerRoleOutcome = {
+  kind: "accepted";
+  role: "fixer";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
 
 export function extractFixerRoleOutcome(
   entries: readonly SessionEntry[],
@@ -2302,24 +2366,7 @@ export function extractFixerRoleOutcome(
     if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "fixer",
-      FIXER_OUTPUT_TOOL_NAME,
-    );
-    // #107 owns generic audit presentation; hand off only a bound escalation.
-    if (escalation !== undefined) {
-      return {
-        outcome: {
-          kind: "audit_escalation",
-          role: "fixer",
-          status: "audit_escalation",
-          decisiveFacts: { ...escalation.details },
-        },
-      };
-    }
+    // Residual audit_escalation faces are not lawful Fixer terminals after #242.
     if (isUnboundAuditEscalationFace(details)) continue;
     try {
       validateAcceptedDetails(FIXER_OUTPUT_TOOL_NAME, details);
@@ -2827,8 +2874,8 @@ export function extractReviewerMethodInvocations(
 
 /**
  * Publish lawful Reviewer success Artifacts on the shared #106 success interface.
- * Evidence records package code-review provenance, adapter-derived capabilities,
- * and typed expansion observation without ambient home Skill paths.
+ * Evidence records package code-review provenance and typed expansion
+ * observation without ambient home Skill paths.
  */
 export async function publishReviewerArtifacts(
   admitted: AdmittedReviewerInvocation,
@@ -2868,12 +2915,10 @@ export async function publishReviewerArtifacts(
         sessionDirectory,
         sessionFile: admitted.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
-        taskPath: admitted.taskPath,
-        capabilitiesPath: admitted.capabilitiesPath,
-        taskSha256: admitted.taskSha256,
-        ...(admitted.baseRevision === undefined
+        baseRevision: admitted.baseRevision,
+        ...(admitted.instructionEmpty
           ? {}
-          : { baseRevision: admitted.baseRevision }),
+          : { callerProvenance: admitted.instruction }),
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
           frozenPath: a.frozenPath,

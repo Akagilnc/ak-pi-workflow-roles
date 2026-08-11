@@ -18,6 +18,7 @@ import {
   NAVIGATOR_TARGETS,
   type NavigatorCandidate,
   type NavigatorPreparationSession,
+  navigatorAdviceConsistentWithSettlement,
   navigatorSessionDirectory,
   navigatorSubjectKey,
   navigatorSubjectKeyForInput,
@@ -913,6 +914,472 @@ test("dispose during pending createSession drains the created session without pr
   await cleanupTempDir(root);
 });
 
+test("navigatorAdviceConsistentWithSettlement: merger only after judge converged", () => {
+  const merger = { role: "merger" as const, phase: null };
+  const judge = { role: "judge" as const, phase: null };
+  // Single shared table (#224/#226/#227) — merger closes delivery.
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(merger, { kind: "accepted", role: "judge", phase: null, status: "converged" }),
+    true,
+  );
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(merger, { kind: "accepted", role: "collector", phase: null }),
+    false,
+    "#224: collector accepted must not skip to merger",
+  );
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(merger, { kind: "accepted", role: "judge", phase: null, status: "continue" }),
+    false,
+  );
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(merger, { kind: "accepted", role: "fixer", phase: "apply", status: "completed" }),
+    false,
+  );
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(merger, { kind: "accepted", role: "reviewer", phase: null, status: "completed" }),
+    false,
+  );
+  // Non-merger advice is not gated by this table (ADR 0061 free-form).
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(judge, { kind: "accepted", role: "collector", phase: null }),
+    true,
+  );
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(merger, { kind: "human_decision", role: "judge", phase: null, status: "escalate" }),
+    true,
+  );
+});
+
+test("navigatorAdviceConsistentWithSettlement: unfinished must not skip to judge", () => {
+  const judge = { role: "judge" as const, phase: null };
+  const fixerApply = { role: "fixer" as const, phase: "apply" as const };
+  // #227 row: machine criterion anchors only status=unfinished (not a blanket "completed-only→judge").
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(judge, { kind: "accepted", role: "fixer", phase: "apply", status: "unfinished" }),
+    false,
+    "#227: fixer unfinished + next=judge is inconsistent",
+  );
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(judge, { kind: "accepted", role: "coder", phase: "apply", status: "unfinished" }),
+    false,
+    "#227: coder unfinished + next=judge is inconsistent",
+  );
+  // Positive continuation is free-form (no hardcoded route); unfinished→fixer apply stays consistent.
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(fixerApply, { kind: "accepted", role: "fixer", phase: "apply", status: "unfinished" }),
+    true,
+  );
+  // refused / partially_completed are settled terminals (ADR 0050); judge audit path stays lawful.
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(judge, { kind: "accepted", role: "fixer", phase: "apply", status: "refused" }),
+    true,
+    "#227: refused + next=judge remains consistent",
+  );
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(judge, { kind: "accepted", role: "fixer", phase: "apply", status: "partially_completed" }),
+    true,
+    "#227: partially_completed + next=judge remains consistent",
+  );
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(judge, { kind: "accepted", role: "fixer", phase: "apply", status: "completed" }),
+    true,
+  );
+});
+
+test("#224/#226/#227 frozen scenarios: stale speculative advice rebinds once to settlement-consistent next", async () => {
+  // Row A: #224 navigator invocation id. Row B: ticket-known fixer run id (not a navigator invocation id),
+  // fed as attendance invocationId so the freeze pin survives the settle→rebind seam.
+  // Row C/D: #226 judge continue accident + converged control — settle input from
+  // publicNavigatorSettlement projection (not a hand-crafted literal); #224/#227 keep approved literals.
+  const rows = [
+    {
+      label: "#224 collector accepted",
+      role: "collector" as const,
+      phase: null,
+      subjectKey: "/Users/akagilnc/WorkSpace/Ming_LLM-558/.ak/work",
+      // Frozen work subject = legs manifest only (case prepare context).
+      subject: JSON.stringify({
+        legs: [
+          { id: "sourcery", expectedAuthors: ["sourcery-ai[bot]"] },
+          { id: "gemini", expectedAuthors: ["gemini-code-assist[bot]"] },
+          { id: "codex", expectedAuthors: ["chatgpt-codex-connector[bot]"] },
+          { id: "cursor", expectedAuthors: ["cursor[bot]"] },
+        ],
+      }),
+      authority: JSON.stringify({
+        legs: [
+          { id: "sourcery", expectedAuthors: ["sourcery-ai[bot]"] },
+          { id: "gemini", expectedAuthors: ["gemini-code-assist[bot]"] },
+          { id: "codex", expectedAuthors: ["chatgpt-codex-connector[bot]"] },
+          { id: "cursor", expectedAuthors: ["cursor[bot]"] },
+        ],
+      }),
+      loadRoutePlaybook: async () => "collector → 大理寺；旧收敛不盖新材料",
+      invocationId: "019fe954-f995-7c1a-ae42-98c5740429f0",
+      staleToolCallId: "stale-merger",
+      staleCandidate: {
+        next: { role: "merger" as const, phase: null },
+        reason: "大理寺已收敛，当前只剩四路审查腿的汇总与交付收口；进入合并官即可，避免重复实现或复审。",
+      },
+      // Approved literal settle input (#224).
+      settlement: { kind: "accepted" as const, role: "collector" as const, phase: null },
+      projectJudgeStatus: undefined,
+      expectsRebind: true,
+      rebindSettlementMessage: "rebind prepare must carry the just-accepted settlement",
+      rebindToolCallId: "rebind-judge",
+      rebindCandidate: {
+        next: { role: "judge" as const, phase: null },
+        reason: "collector 已收齐 current-head 材料，接力大理寺裁决；既往 converged 不替代本轮线上 findings。",
+      },
+      expectedDisposition: "recommendation" as const,
+      expectedNext: { role: "judge" as const, phase: null },
+      expectedCommand: "ak-role judge",
+      forbiddenNextRole: "merger" as const,
+      expectedPrompts: 2,
+      promptsMessage: "stale merger forces exactly one settlement-bound rebind",
+    },
+    {
+      label: "#227 fixer unfinished",
+      role: "fixer" as const,
+      phase: "apply" as const,
+      subjectKey: "/Users/akagilnc/WorkSpace/Ming_LLM/.ak/work",
+      // Frozen work subject mirrors issue #558 / PR #1168 repair packet context.
+      subject: JSON.stringify({
+        issue: 558,
+        pr: 1168,
+        findings: 10,
+        remainingScope: "functionality, tests, full suite, self-check, and commit still open",
+      }),
+      authority: JSON.stringify({
+        issue: 558,
+        repairSurface: "10-class finding fix packet",
+      }),
+      loadRoutePlaybook: async () => "unfinished 是可续交棒，不得把半成品送大理寺",
+      // 019fe97d-f778-716f-b528-53236e0503a0 is the ticket-known fixer run id, not a navigator invocation id.
+      invocationId: "019fe97d-f778-716f-b528-53236e0503a0",
+      staleToolCallId: "stale-judge",
+      staleCandidate: {
+        next: { role: "judge" as const, phase: null },
+        reason: "下一步回大理寺核验",
+      },
+      // Approved literal settle input (#227).
+      settlement: { kind: "accepted" as const, role: "fixer" as const, phase: "apply" as const, status: "unfinished" as const },
+      projectJudgeStatus: undefined,
+      expectsRebind: true,
+      rebindSettlementMessage: "rebind prepare must carry the just-accepted unfinished settlement",
+      rebindToolCallId: "rebind-continue-fixer",
+      rebindCandidate: {
+        // Status-matched candidate (existing seam) — positive continuation, not hardcoded route.
+        matches: { role: "fixer" as const, phase: "apply" as const, kind: "accepted" as const, statuses: ["unfinished" as const] },
+        next: { role: "fixer" as const, phase: "apply" as const },
+        reason: "fixer unfinished 仍有 remainingScope；续派修内司 apply，不得把半成品送大理寺。",
+      },
+      expectedDisposition: "recommendation" as const,
+      expectedNext: { role: "fixer" as const, phase: "apply" as const },
+      expectedCommand: "ak-role fixer apply",
+      forbiddenNextRole: "judge" as const,
+      expectedPrompts: 2,
+      promptsMessage: "stale judge forces exactly one settlement-bound rebind",
+    },
+    {
+      label: "#226 judge continue (frozen accident)",
+      role: "judge" as const,
+      phase: null,
+      subjectKey: "/Users/akagilnc/WorkSpace/Ming_LLM-557/.ak/work",
+      // Navigator invocation id from session.jsonl line 72 (E1: was mislabeled 71).
+      invocationId: "019fe96d-2a14-7e0e-be03-ee9da3a81708",
+      subject: JSON.stringify({
+        issue: 557,
+        pr: 1167,
+        remainingFinding: "initial_roster_strict_shape_boundary_incomplete",
+        classCount: 1,
+      }),
+      authority: JSON.stringify({
+        issue: 557,
+        judgeStatus: "continue",
+        openP2: ["initial_roster_strict_shape_boundary_incomplete"],
+      }),
+      loadRoutePlaybook: async () => "judge continue 仍有真实 P2，不得按 converged 跳 merger",
+      staleToolCallId: "stale-merger",
+      // Accident shape: navigator recommended merger despite judgeStatus=continue.
+      staleCandidate: {
+        next: { role: "merger" as const, phase: null },
+        reason: "R3 已结束且四类修复与全量/自查证据已完成，当前无新增真实 P2+ 信号；按 converged 路径进入合并收尾，避免重开已排除范围。",
+      },
+      // Expected projected shape only — settle input comes from publicNavigatorSettlement.
+      settlement: { kind: "accepted" as const, role: "judge" as const, phase: null, status: "continue" as const },
+      projectJudgeStatus: "continue" as const,
+      expectsRebind: true,
+      rebindSettlementMessage: "rebind prepare must carry the projected settlement",
+      rebindToolCallId: "rebind-continue-judge",
+      rebindCandidate: {
+        // Free-form consistent continuation via status-matched candidate (not a hardcoded route).
+        matches: { role: "judge" as const, phase: null, kind: "accepted" as const, statuses: ["continue" as const] },
+        next: { role: "fixer" as const, phase: "apply" as const },
+        reason: "judgeStatus=continue 与 open P2 仍在；不得 typed 发射 next=merger。",
+      },
+      expectedDisposition: "recommendation" as const,
+      expectedNext: { role: "fixer" as const, phase: "apply" as const },
+      expectedCommand: "ak-role fixer apply",
+      forbiddenNextRole: "merger" as const,
+      expectedPrompts: 2,
+      promptsMessage: "stale merger forces exactly one settlement-bound rebind",
+    },
+    {
+      label: "#226 judge converged control",
+      role: "judge" as const,
+      phase: null,
+      subjectKey: "/Users/akagilnc/WorkSpace/Ming_LLM-557/.ak/work",
+      // Counterfactual control reuses the accident navigator invocation id (not a converged run id),
+      // fed as attendance invocationId so the freeze pin survives the settle seam — same borrowing
+      // pattern as Row B's fixer run id.
+      invocationId: "019fe96d-2a14-7e0e-be03-ee9da3a81708",
+      subject: JSON.stringify({ issue: 557, pr: 1167, judgeStatus: "converged" }),
+      authority: JSON.stringify({ issue: 557, judgeStatus: "converged" }),
+      loadRoutePlaybook: async () => "judge converged 后 merger 收口仍放行",
+      staleToolCallId: "speculative-converged",
+      staleCandidate: {
+        next: { role: "merger" as const, phase: null },
+        reason: "judge converged；合并收尾放行",
+      },
+      // Expected projected shape only — settle input comes from publicNavigatorSettlement.
+      settlement: { kind: "accepted" as const, role: "judge" as const, phase: null, status: "converged" as const },
+      projectJudgeStatus: "converged" as const,
+      expectsRebind: false,
+      rebindSettlementMessage: "consistent converged advice must not rebind",
+      rebindToolCallId: "rebind-unused",
+      rebindCandidate: {
+        next: { role: "merger" as const, phase: null },
+        reason: "unused — expectsRebind false",
+      },
+      expectedDisposition: "recommendation" as const,
+      expectedNext: { role: "merger" as const, phase: null },
+      expectedCommand: "ak-role merger",
+      forbiddenNextRole: undefined,
+      expectedPrompts: 1,
+      promptsMessage: "consistent merger advice must not force rebind",
+    },
+  ] as const;
+
+  for (const row of rows) {
+    const root = await mkdtemp(join(tmpdir(), "navigator-frozen-"));
+    try {
+      const setting = join(root, "model.json");
+      await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+      const harness = sessionHarness();
+      const events: any[] = [];
+
+      // #226 rows: real entry judge tool result → publicNavigatorSettlement → settle input.
+      // #224/#227 rows: keep approved settlement literals.
+      const settlement = row.projectJudgeStatus !== undefined
+        ? (() => {
+            const projected = publicNavigatorSettlement("judge", null, {
+              toolName: JUDGE_OUTPUT_TOOL_NAME,
+              isError: false,
+              details: { judgeStatus: row.projectJudgeStatus },
+            });
+            assert.ok(projected, `${row.label}: projection must yield settlement`);
+            assert.deepEqual(projected, row.settlement, `${row.label}: projected settlement shape`);
+            return projected;
+          })()
+        : row.settlement;
+
+      const nav = createNavigatorAttendance({
+        context: context(),
+        role: row.role,
+        phase: row.phase,
+        subjectKey: row.subjectKey,
+        sessionDir: join(root, "session"),
+        subject: row.subject,
+        authority: row.authority,
+        loadSoul: async () => "route judgment",
+        loadRoutePlaybook: row.loadRoutePlaybook,
+        loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
+        createSession: harness.factory,
+        modelSettingPath: setting,
+        invocationId: row.invocationId,
+        onEvent: async (event) => { events.push(event); },
+      });
+
+      // Speculative prepare (before terminal) — case shape: unconditional stale next.
+      nav.prepare();
+      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(harness.retainedContext().currentSettlement, undefined, `${row.label}: speculative prepare has no currentSettlement`);
+      await harness.tool().execute(
+        row.staleToolCallId,
+        { candidates: [row.staleCandidate] },
+        undefined,
+        undefined,
+        {} as never,
+      );
+      harness.release();
+
+      // Settle; contradiction rebinds once with currentSettlement (skipped when already consistent).
+      const settling = nav.settle(settlement);
+      if (row.expectsRebind) {
+        while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.deepEqual(
+          harness.retainedContext().currentSettlement,
+          settlement,
+          `${row.label}: ${row.rebindSettlementMessage}`,
+        );
+        await harness.tool().execute(
+          row.rebindToolCallId,
+          { candidates: [row.rebindCandidate] },
+          undefined,
+          undefined,
+          {} as never,
+        );
+        harness.release();
+      }
+      await settling;
+
+      assert.equal(events.length, 1, row.label);
+      assert.equal(events[0]?.disposition, row.expectedDisposition, row.label);
+      assert.deepEqual(events[0]?.next, row.expectedNext, row.label);
+      assert.equal(events[0]?.command, row.expectedCommand, row.label);
+      assert.equal(events[0]?.invocationId, row.invocationId, row.label);
+      if (row.forbiddenNextRole !== undefined) {
+        assert.notEqual(events[0]?.next?.role, row.forbiddenNextRole, row.label);
+      }
+      assert.equal(harness.prompts(), row.expectedPrompts, `${row.label}: ${row.promptsMessage}`);
+    } catch (error) {
+      await cleanupTempDir(root, error);
+      throw error;
+    }
+    await cleanupTempDir(root);
+  }
+});
+
+test("fixer refused or partially_completed may still recommend next=judge without rebind", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-227-settled-judge-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    for (const status of ["refused", "partially_completed"] as const) {
+      const harness = sessionHarness();
+      const events: any[] = [];
+      const nav = createNavigatorAttendance({
+        context: context(),
+        role: "fixer",
+        phase: "apply",
+        subjectKey: `/repo/.ak/work/${status}`,
+        sessionDir: join(root, status),
+        subject: `settled ${status}`,
+        authority: `settled ${status}`,
+        loadSoul: async () => "route judgment",
+        loadRoleHelp: async () => "help",
+        createSession: harness.factory,
+        modelSettingPath: setting,
+        onEvent: async (event) => { events.push(event); },
+      });
+      nav.prepare();
+      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+      await harness.tool().execute(
+        `speculative-judge-${status}`,
+        {
+          candidates: [{
+            matches: { role: "fixer", phase: "apply", kind: "accepted", statuses: [status] },
+            next: { role: "judge", phase: null },
+            reason: `${status} is a settled terminal; judge audit path stays lawful`,
+          }],
+        },
+        undefined,
+        undefined,
+        {} as never,
+      );
+      harness.release();
+      await nav.settle({ kind: "accepted", role: "fixer", phase: "apply", status });
+      assert.equal(events.length, 1, status);
+      assert.equal(events[0]?.disposition, "recommendation", status);
+      assert.deepEqual(events[0]?.next, { role: "judge", phase: null }, status);
+      assert.equal(harness.prompts(), 1, `${status}: consistent advice must not force rebind`);
+    }
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
+});
+
+test("settlement-bound rebind that still contradicts accepted settlement becomes typed unavailable", async () => {
+  const rows = [
+    {
+      label: "still picks merger",
+      role: "collector" as const,
+      phase: null,
+      subject: "collect materials",
+      authority: "collect materials",
+      staleRole: "merger" as const,
+      settlement: { kind: "accepted" as const, role: "collector" as const, phase: null },
+      rebindReason: "still think merge",
+    },
+    {
+      label: "still picks judge after unfinished",
+      role: "fixer" as const,
+      phase: "apply" as const,
+      subject: "finish remaining findings",
+      authority: "finish remaining findings",
+      staleRole: "judge" as const,
+      settlement: { kind: "accepted" as const, role: "fixer" as const, phase: "apply" as const, status: "unfinished" as const },
+      rebindReason: "still think judge",
+    },
+  ] as const;
+
+  for (const row of rows) {
+    const root = await mkdtemp(join(tmpdir(), "navigator-still-contradicts-"));
+    try {
+      const setting = join(root, "model.json");
+      await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+      const harness = sessionHarness();
+      const events: any[] = [];
+      const nav = createNavigatorAttendance({
+        context: context(),
+        role: row.role,
+        phase: row.phase,
+        subjectKey: "/repo/.ak/work",
+        sessionDir: join(root, "session"),
+        subject: row.subject,
+        authority: row.authority,
+        loadSoul: async () => "route judgment",
+        loadRoleHelp: async () => "help",
+        createSession: harness.factory,
+        modelSettingPath: setting,
+        onEvent: async (event) => { events.push(event); },
+      });
+      nav.prepare();
+      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+      await harness.tool().execute(
+        `speculative-${row.staleRole}`,
+        { candidates: [{ next: { role: row.staleRole } }] },
+        undefined,
+        undefined,
+        {} as never,
+      );
+      harness.release();
+      const settling = nav.settle(row.settlement);
+      while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
+      await harness.tool().execute(
+        `rebind-still-${row.staleRole}`,
+        { candidates: [{ next: { role: row.staleRole }, reason: row.rebindReason }] },
+        undefined,
+        undefined,
+        {} as never,
+      );
+      harness.release();
+      await settling;
+      assert.equal(events.length, 1, row.label);
+      assert.equal(events[0]?.disposition, "unavailable", row.label);
+      assert.equal(events[0]?.next, undefined, row.label);
+      assert.match(String(events[0]?.unavailableReason ?? ""), /contradicts the accepted settlement/, row.label);
+    } catch (error) {
+      await cleanupTempDir(root, error);
+      throw error;
+    }
+    await cleanupTempDir(root);
+  }
+});
+
 test("status-specific route candidates outrank generics regardless of declaration order", () => {
   const route = [{ role: "fixer" as const, phase: "apply" as const }, { role: "judge" as const, phase: null }];
   const generic = candidate({
@@ -1046,6 +1513,8 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
   assert.equal(resolveNavigatorAuthorityMaterial("", undefined), undefined);
 
   const root = await mkdtemp(join(tmpdir(), "navigator-input-authority-"));
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  delete process.env.AK_ROLE_RUN_DIR;
   try {
     const workRoot = resolve(root, ".ak/work/issues/91");
     await mkdir(workRoot, { recursive: true });
@@ -1312,6 +1781,7 @@ test("advice command derives phase token from registry metadata for every packag
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
     // Command ownership is registry phases on normalized next — no parallel role-name list.
+    // Settlement must be terminal-consistent with next (shared #224 table): merger only after judge converged.
     for (const entry of PACKAGED_ROLE_REGISTRY) {
       for (const phase of entry.phases) {
         const harness = sessionHarness();
@@ -1327,7 +1797,10 @@ test("advice command derives phase token from registry metadata for every packag
           {} as never,
         );
         harness.release();
-        await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+        const settlement = entry.role === "merger"
+          ? { kind: "accepted" as const, role: "judge", phase: null, status: "converged" }
+          : { kind: "accepted" as const, role: "coder", phase: "apply" as const, status: "completed" };
+        await nav.settle(settlement);
         assert.equal(events[0]?.disposition, "recommendation", entry.role);
         assert.deepEqual(events[0]?.next, { role: entry.role, phase });
         const expected = phase === null ? `ak-role ${entry.role}` : `ak-role ${entry.role} ${phase}`;

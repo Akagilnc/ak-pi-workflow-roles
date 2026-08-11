@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import type {
   AssistantMessage,
-  Context,
-  ProviderStreamOptions,
   Usage,
 } from "@earendil-works/pi-ai";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 
 const usage = {
   input: 10,
@@ -40,6 +42,29 @@ function auditResponse(
   };
 }
 
+function seedSubjects(sessionManager: SessionManager): void {
+  sessionManager.appendMessage({
+    role: "user",
+    content: "OWNER ASSIGNMENT",
+    timestamp: Date.now(),
+  });
+  sessionManager.appendMessage({
+    role: "assistant",
+    content: [{
+      type: "toolCall",
+      id: "v1",
+      name: JUDGE_OUTPUT_TOOL_NAME,
+      arguments: { judgeStatus: "converged" },
+    }],
+    api: "openai-responses",
+    provider: "test",
+    model: "test",
+    usage,
+    stopReason: "toolUse",
+    timestamp: Date.now(),
+  });
+}
+
 function auditContext(
   resolution:
     | {
@@ -57,9 +82,11 @@ function auditContext(
   authError?: Error,
 ) {
   const model = { provider: "test", id: "auditor" };
+  const sessionManager = SessionManager.inMemory();
+  seedSubjects(sessionManager);
   return {
     model,
-    sessionManager: SessionManager.inMemory(),
+    sessionManager,
     modelRegistry: {
       async getProviderAuth(received: unknown) {
         assert.equal(received, model.provider);
@@ -86,20 +113,25 @@ function auditContext(
   } as unknown as ExtensionContext;
 }
 
-const auditInput = {
-  soul: "THE JUDGE LAW",
-  transcript: "THE ADJUDICATION RECORD",
-  verdict: { judgeStatus: "converged" as const },
-};
-
 test("Pi judge auditor preserves authentication failures", async () => {
-  const context = auditContext(undefined, new Error("login expired"));
-  const auditor = createPiJudgeAuditor(async () =>
-    auditResponse({ status: "pass", violations: [], conflicts: [], decisionGate: null }),
-  );
+  const root = await mkdtemp(join(tmpdir(), "ak-judge-auth-"));
+  const runDirectory = join(root, "run");
+  await mkdir(runDirectory);
+  const previous = process.env.AK_ROLE_RUN_DIR;
+  process.env.AK_ROLE_RUN_DIR = runDirectory;
+  try {
+    const context = auditContext(undefined, new Error("login expired"));
+    const auditor = createPiJudgeAuditor(async () =>
+      auditResponse({ status: "pass", violations: [], conflicts: [], decisionGate: null }),
+    );
 
-  await assert.rejects(
-    auditor(auditInput, { context }),
-    /authentication failed: login expired/,
-  );
+    await assert.rejects(
+      auditor({ context }),
+      /authentication failed: login expired/,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
 });

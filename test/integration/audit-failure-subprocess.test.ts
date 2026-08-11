@@ -13,7 +13,6 @@ import {
 } from "@earendil-works/pi-ai";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger.ts";
-import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
 import {
   packageRoot,
   runPiSubprocess,
@@ -167,36 +166,10 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
       );
       const cwd = resolve(home, "review-target");
       await materializeReviewerTarget(cwd);
-      const taskPath = resolve(cwd, "test/fixtures/reviewer-task.md");
-      const taskBytes = await readFile(taskPath);
-      const capabilityPath = resolve(home, "reviewer-capabilities.json");
       const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
         cwd,
         encoding: "utf8",
       }).trim();
-      const target = execFileSync("git", ["rev-parse", "HEAD"], {
-        cwd,
-        encoding: "utf8",
-      }).trim();
-      void base;
-      void target;
-      await writeFile(
-        capabilityPath,
-        JSON.stringify({
-          version: 1,
-          taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-          prerequisiteOperations: [
-            "preflight.git.pin-target",
-            "preflight.git.resolve-base",
-            "preflight.git.derive-range",
-            "preflight.git.list-ordered-commits",
-            "preflight.git.read-material",
-            "runner.git.materialize-mirror",
-            "runner.git.materialize-workspace",
-            "runner.git.verify-snapshot",
-          ],
-        }),
-      );
       const sessionDirectory = resolve(home, ".ak-roles/books/review-target/runs/reviewer-fatal/session");
       await mkdir(sessionDirectory, { recursive: true });
       const args = [
@@ -215,10 +188,8 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
         resolve(packageRoot, "test/fixtures/reviewer-failure-provider.ts"),
         "--ak-role",
         "reviewer",
-        "--ak-review-task",
-        taskPath,
-        "--ak-review-capabilities",
-        capabilityPath,
+        "--ak-review-base",
+        base,
         "--provider",
         "ak-reviewer-failure",
         "--model",
@@ -258,10 +229,17 @@ async function runCoderSkillFailureCli(
           "---\nname: tdd\ndescription: empty fixture\n---\n\n",
         );
       }
+      // Temp git worktree so production arm never mutates the real package checkout.
+      const work = resolve(home, "work");
+      await mkdir(work, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: work });
+      execFileSync("git", ["config", "user.email", "coder-skill@test.local"], { cwd: work });
+      execFileSync("git", ["config", "user.name", "Coder Skill"], { cwd: work });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: work });
       const sessionDirectory = resolve(
         home,
         ".ak-roles/books",
-        resolveBookKeyFromGit(packageRoot),
+        resolveBookKeyFromGit(work),
         "runs/coder-skill-fatal/session",
       );
       await mkdir(sessionDirectory, { recursive: true });
@@ -290,7 +268,7 @@ async function runCoderSkillFailureCli(
         ...(mode === "print" ? ["-p", "Apply."] : ["--mode", "json", "Apply."]),
       ];
       return runPiSubprocess(args, {
-        cwd: packageRoot,
+        cwd: work,
         env: {
           ...process.env,
           HOME: home,
@@ -302,27 +280,12 @@ async function runCoderSkillFailureCli(
   );
 }
 
-function assertAuditIncompleteSettlement(
+function assertAuditAbortWithoutReceipt(
   result: { code: number | null; stdout: string; stderr: string; timedOut: boolean },
-  toolName: string,
-  mode: "print" | "json",
+  label: string,
 ) {
-  assert.equal(result.timedOut, false, `${mode} subprocess did not time out`);
-  assert.equal(result.code, 0, `${mode} settles audit-incomplete without aborting`);
-  const toolEnd = result.stderr
-    .split("\n")
-    .filter((line) => line.trim().startsWith("{"))
-    .map((line) => JSON.parse(line) as any)
-    .find((event) => event.event === "tool_execution_end" && event.toolName === toolName);
-  assert.equal(toolEnd?.isError, false, `${mode} accepts the typed audit-incomplete settlement`);
-  if (mode === "json") {
-    const output = jsonEvents(result.stdout).find(
-      (event) => event.type === "message_end" && event.message?.role === "toolResult" && event.message.toolName === toolName,
-    );
-    assert.equal(output?.message?.isError, false);
-    assert.equal(output?.message?.details?.status, "audit-incomplete");
-    assert.deepEqual(output?.message?.details?.observation, { kind: "non-object-arguments", type: "undefined" });
-  }
+  assert.equal(result.timedOut, false, `${label} subprocess did not time out`);
+  assert.equal(result.code, 1, `${label} exits nonzero`);
 }
 
 function jsonEvents(stdout: string): any[] {
@@ -333,9 +296,10 @@ function jsonEvents(stdout: string): any[] {
 }
 
 function assertJsonAbortFacts(
-  result: { stdout: string },
+  result: { stdout: string; stderr: string },
   toolName: string,
   label: string,
+  requireAborted = true,
 ) {
   const events = jsonEvents(result.stdout);
   assert.equal(
@@ -349,29 +313,35 @@ function assertJsonAbortFacts(
     true,
     `${label} emits an errored ${toolName} result`,
   );
-  assert.equal(
-    events.some(
-      (event) =>
-        event.type === "message_end" &&
-        event.message?.role === "assistant" &&
-        event.message.stopReason === "aborted",
-    ),
-    true,
-    `${label} stops with typed aborted reason`,
-  );
+  if (requireAborted) {
+    assert.equal(
+      events.some(
+        (event) =>
+          event.type === "message_end" &&
+          event.message?.role === "assistant" &&
+          event.message.stopReason === "aborted",
+      ),
+      true,
+      `${label} stops with typed aborted reason`,
+    );
+  }
 }
 
-test("unreadable Judge audit settles as typed incomplete in print and JSON CLI actions", async () => {
+test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions", async () => {
   for (const mode of ["print", "json"] as const) {
-    assertAuditIncompleteSettlement(await runCli(mode), "ak_judge_output", mode);
+    const result = await runCli(mode);
+    assertAuditAbortWithoutReceipt(result, mode);
+    if (mode === "json") {
+      assertJsonAbortFacts(result, "ak_judge_output", mode);
+    }
   }
 });
 
-test("unreadable Judge audit drains one healthy packaged Navigator before typed incomplete settlement", async () => {
+test("fatal Judge audit failure drains one healthy packaged Navigator without advice", async () => {
   // Process boundary required: process-release evidence is emitted on process exit.
   const result = await runHealthyNavigatorAuditFailureCli("json");
   assert.equal(result.timedOut, false, "subprocess did not time out");
-  assert.equal(result.code, 0, "subprocess settles audit-incomplete without aborting");
+  assert.equal(result.code, 1, "subprocess exits nonzero");
   const evidenceLine = result.stderr
     .split("\n")
     .find((line) => line.startsWith("AUDIT_FAILURE_EVIDENCE="));
@@ -401,9 +371,8 @@ test("unreadable Judge audit drains one healthy packaged Navigator before typed 
       failedOutputCorrelation: boolean;
     };
   };
-  assert.equal(evidence.providerCalls, 3, "Judge, auditor, and Navigator share the fixture provider");
   assert.equal(evidence.navigatorCalls, 1);
-  assert.equal(evidence.navigator.settlementKind, "accepted");
+  assert.equal(evidence.navigator.settlementKind, "role_infrastructure_failure");
   const timestamp = (value: string, label: string) => {
     const parsed = Date.parse(value);
     assert.ok(Number.isFinite(parsed), `${label} must be an ISO timestamp`);
@@ -433,31 +402,37 @@ test("unreadable Judge audit drains one healthy packaged Navigator before typed 
     settledAt <= inputReleasedAt && inputReleasedAt <= processReleasedAt,
     "input and process release must follow the drained Navigator settlement",
   );
-  assert.equal(evidence.role.failedOutput.toolCallId, "fatal-judge");
-  assert.equal(evidence.role.failedOutput.toolName, "ak_judge_output");
-  assert.equal(evidence.role.failedOutput.isError, false);
-  assert.equal(evidence.role.failedOutput.details.status, "audit-incomplete");
-  assert.deepEqual(evidence.role.failedOutput.details.observation, { kind: "non-object-arguments", type: "undefined" });
+  assert.deepEqual(evidence.role.failedOutput, {
+    toolCallId: "fatal-judge",
+    toolName: "ak_judge_output",
+    isError: true,
+    // Shared lifecycle persists the typed infra fact so exact-session restart
+    // classifies this terminal as durable completion (not a retryable isError).
+    details: {
+      kind: "role_infrastructure_failure",
+      source: "shared-role-lifecycle",
+      reasonCode: "host_failure",
+    },
+  });
   assert.equal(
     evidence.role.failedOutputCorrelation,
     true,
-    "settlement must correlate the exact Judge output call",
+    "failure must correlate the exact Judge output call",
   );
   assert.equal(evidence.navigator.releaseAfterDrain, true);
   const events = result.stdout
     .split("\n")
     .filter((line) => line.trim().startsWith("{"))
     .map((line) => JSON.parse(line) as any);
-  const settledOutputs = events.filter(
+  const failedOutputs = events.filter(
     (event) =>
       event.type === "message_end" &&
       event.message?.role === "toolResult" &&
       event.message.toolName === "ak_judge_output" &&
       event.message.toolCallId === "fatal-judge",
   );
-  assert.equal(settledOutputs.length, 1, "must report exactly the incomplete Judge output call");
-  assert.equal(settledOutputs[0].message.isError, false);
-  assert.equal(settledOutputs[0].message.details.status, "audit-incomplete");
+  assert.equal(failedOutputs.length, 1, "must report exactly the failed Judge output call");
+  assert.equal(failedOutputs[0].message.isError, true);
   assert.equal(
     events.some(
       (event) =>
@@ -465,7 +440,7 @@ test("unreadable Judge audit drains one healthy packaged Navigator before typed 
         event.message?.role === "assistant" &&
         event.message.stopReason === "aborted",
     ),
-    false,
+    true,
   );
   // JSON stream emits message_end with role=custom; session principal uses custom_message.
   const attendance = events.filter(
@@ -475,18 +450,13 @@ test("unreadable Judge audit drains one healthy packaged Navigator before typed 
         event.message?.customType === "ak-navigator-attendance") ||
       (event.type === "custom_message" && event.customType === "ak-navigator-attendance"),
   );
-  assert.equal(attendance.length, 1, "audit-incomplete emits the drained typed recommendation");
+  assert.equal(attendance.length, 1, "infrastructure failure emits affirmative typed no-advice");
   assert.equal(
     attendance[0]?.message?.details?.disposition ?? attendance[0]?.details?.disposition,
-    "recommendation",
+    "no-advice",
   );
 });
 
-test("unreadable Fixer audit settles as typed incomplete in print and JSON", async () => {
-  for (const mode of ["print", "json"] as const) {
-    assertAuditIncompleteSettlement(await runFixerAuditFailureCli({ mode }), "ak_fixer_output", mode);
-  }
-});
 
 test("coder apply without skill expansion rejects completed as non-receipt", async () => {
   // #109: TDD is package-owned (empty home is fine). Process-level negative keeps
@@ -564,14 +534,14 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
     stage: ReviewerFailureStage;
     tool: "Agent" | "ak_reviewer_output";
   }> = [
-    { stage: "preflight-git", tool: "Agent" },
+    { stage: "preflight-git", tool: "ak_reviewer_output" },
     { stage: "audit-provider", tool: "ak_reviewer_output" },
     { stage: "audit-malformed-decision", tool: "ak_reviewer_output" },
   ];
   for (const row of matrix) {
     const result = await runReviewerCli("json", row.stage);
     assert.equal(result.code, 1, `${row.stage} exits nonzero`);
-    assertJsonAbortFacts(result, row.tool, row.stage);
+    assertJsonAbortFacts(result, row.tool, row.stage, row.stage !== "preflight-git");
   }
 });
 
@@ -586,26 +556,10 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
     );
     const cwd = resolve(home, "review-target");
     await materializeReviewerTarget(cwd);
-    const taskPath = resolve(cwd, "test/fixtures/reviewer-task.md");
-    const taskBytes = await readFile(taskPath);
-    const capabilityPath = resolve(home, "reviewer-capabilities.json");
-    await writeFile(
-      capabilityPath,
-      JSON.stringify({
-        version: 1,
-        taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-        prerequisiteOperations: [
-          "preflight.git.pin-target",
-          "preflight.git.resolve-base",
-          "preflight.git.derive-range",
-          "preflight.git.list-ordered-commits",
-          "preflight.git.read-material",
-          "runner.git.materialize-mirror",
-          "runner.git.materialize-workspace",
-          "runner.git.verify-snapshot",
-        ],
-      }),
-    );
+    const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
+      cwd,
+      encoding: "utf8",
+    }).trim();
 
     for (const stage of ["audit-auth", "audit-malformed-decision"] as const) {
       const previous = process.env.AK_REVIEWER_FAILURE_STAGE;
@@ -620,6 +574,8 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
         // Drive the same fatal output call the CLI fixture uses; audit injection
         // still comes from the staged failure extension below.
         faux.setResponses([
+          fauxAssistantMessage("Independent standards review found no findings."),
+          fauxAssistantMessage("Independent spec review found no findings."),
           fauxAssistantMessage(
             fauxToolCall(
               REVIEWER_OUTPUT_TOOL_NAME,
@@ -657,8 +613,7 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
             mode: "print",
             flags: {
               "ak-role": "reviewer",
-              "ak-review-task": taskPath,
-              "ak-review-capabilities": capabilityPath,
+              "ak-review-base": base,
             },
             reviewerShutdown: true,
             extensionFactories: [

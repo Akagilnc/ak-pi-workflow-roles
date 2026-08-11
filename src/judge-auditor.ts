@@ -7,7 +7,11 @@ import {
   type ComplianceDecision,
 } from "./compliance-transport.ts";
 import { loadAuditorSoul } from "./auditor-soul.ts";
-import type { SoulAuditInput } from "./judge-role.ts";
+import {
+  readJudgeAuditSubjects,
+  resolveAuditDossier,
+  toAuditIncomplete,
+} from "./dossier-resolution.ts";
 
 export const JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
 export const SOUL_AUDIT_TOOL_NAME = JUDGE_AUDIT_TOOL_NAME;
@@ -19,31 +23,31 @@ export type JudgeAuditOptions = {
 
 const auditDecisionTool = createComplianceDecisionTool(
   JUDGE_AUDIT_TOOL_NAME,
-  "Return whether the proposed verdict demonstrably follows the supplied judge soul.",
+  "Return whether the proposed verdict demonstrably follows the judge soul and dossier evidence.",
 );
 
+/**
+ * Judge auditor: zero hand-delivered materials. Subjects recovered from the
+ * parent-session books. Public CLI injects AK_ROLE_RUN_DIR; bare Pi (ADR 0052)
+ * proceeds without that pointer and self-locates per soul.
+ */
 export function createPiJudgeAuditor(
   runCompletion?: ComplianceCompletion,
-): (input: SoulAuditInput, options: JudgeAuditOptions) => Promise<ComplianceDecision> {
-  return async (input, options) =>
-    runComplianceAudit({
+): (options: JudgeAuditOptions) => Promise<ComplianceDecision> {
+  return async (options) => {
+    const dossier = resolveAuditDossier();
+    if (dossier.status === "incomplete") return toAuditIncomplete(dossier.observation);
+    const subjects = readJudgeAuditSubjects(options.context);
+    if (subjects.status === "incomplete") return toAuditIncomplete(subjects.observation);
+
+    return runComplianceAudit({
       tool: auditDecisionTool,
       systemPrompt: await loadAuditorSoul("judge"),
-      serializedInput: [
-        "<judge_soul>",
-        input.soul,
-        "</judge_soul>",
-        "<adjudication_record>",
-        input.transcript,
-        "</adjudication_record>",
-        "<proposed_verdict>",
-        JSON.stringify(input.verdict),
-        "</proposed_verdict>",
-      ].join("\n"),
       roleLabel: "Soul compliance audit",
       invalidDecisionLabel: "invalid soul audit decision",
       ...(runCompletion === undefined ? {} : { runCompletion }),
       context: options.context,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
+  };
 }
