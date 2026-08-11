@@ -101,13 +101,62 @@ export async function createInheritedRuntime(options) {
             for (let attempt = 0;; attempt += 1) {
                 const idle = createStreamIdleGuard(options.signal === undefined ? {} : { parentSignal: options.signal });
                 try {
+                    const requestSignal = request?.signal;
+                    const streamSignal = requestSignal === undefined
+                        ? idle.signal
+                        : AbortSignal.any([idle.signal, requestSignal]);
                     const inheritedRequest = {
                         ...(request ?? {}),
                         ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }),
-                        signal: idle.signal,
+                        signal: streamSignal,
                     };
                     if (options.runCompletion !== undefined) {
-                        const response = await waitForStream(options.runCompletion(model, context, inheritedRequest), idle.signal);
+                        await new Promise((resolve) => setImmediate(resolve));
+                        if (streamSignal.aborted)
+                            throw abortReason(streamSignal);
+                        const completed = await waitForStream(options.runCompletion(model, context, inheritedRequest), streamSignal);
+                        const response = {
+                            ...completed,
+                            api: model.api,
+                            provider: model.provider,
+                            model: model.id,
+                        };
+                        if (response.stopReason === "pending") {
+                            throw new Error(`${options.label} completion ended without a stop reason`);
+                        }
+                        if (response.stopReason === "error" || response.stopReason === "aborted") {
+                            wrapped.push({ type: "error", reason: response.stopReason, error: response });
+                        }
+                        else {
+                            const partial = { ...response, content: [], stopReason: "pending" };
+                            wrapped.push({ type: "start", partial: { ...partial } });
+                            await new Promise((resolve) => queueMicrotask(resolve));
+                            for (const [contentIndex, part] of response.content.entries()) {
+                                if (part.type === "toolCall") {
+                                    partial.content = [...partial.content, { ...part, arguments: {} }];
+                                    wrapped.push({ type: "toolcall_start", contentIndex, partial: { ...partial } });
+                                    wrapped.push({ type: "toolcall_delta", contentIndex, delta: JSON.stringify(part.arguments), partial: { ...partial } });
+                                    partial.content[contentIndex] = part;
+                                    wrapped.push({ type: "toolcall_end", contentIndex, toolCall: part, partial: { ...partial } });
+                                    await new Promise((resolve) => queueMicrotask(resolve));
+                                }
+                                else if (part.type === "thinking") {
+                                    partial.content = [...partial.content, { type: "thinking", thinking: "" }];
+                                    wrapped.push({ type: "thinking_start", contentIndex, partial: { ...partial } });
+                                    wrapped.push({ type: "thinking_delta", contentIndex, delta: part.thinking, partial: { ...partial } });
+                                    partial.content[contentIndex] = part;
+                                    wrapped.push({ type: "thinking_end", contentIndex, content: part.thinking, partial: { ...partial } });
+                                }
+                                else {
+                                    partial.content = [...partial.content, { type: "text", text: "" }];
+                                    wrapped.push({ type: "text_start", contentIndex, partial: { ...partial } });
+                                    wrapped.push({ type: "text_delta", contentIndex, delta: part.text, partial: { ...partial } });
+                                    partial.content[contentIndex] = part;
+                                    wrapped.push({ type: "text_end", contentIndex, content: part.text, partial: { ...partial } });
+                                }
+                            }
+                            wrapped.push({ type: "done", reason: response.stopReason, message: response });
+                        }
                         wrapped.end(response);
                         return;
                     }
@@ -130,6 +179,22 @@ export async function createInheritedRuntime(options) {
                     return;
                 }
                 catch (error) {
+                    if (request?.signal?.aborted) {
+                        const response = {
+                            role: "assistant",
+                            content: [],
+                            api: model.api,
+                            provider: model.provider,
+                            model: model.id,
+                            usage: emptyUsage(),
+                            stopReason: "aborted",
+                            errorMessage: "Auditor session aborted",
+                            timestamp: Date.now(),
+                        };
+                        wrapped.push({ type: "error", reason: "aborted", error: response });
+                        wrapped.end(response);
+                        return;
+                    }
                     const failure = isStreamIdleTimeoutError(idle.signal.reason) ? idle.signal.reason : error;
                     if (options.idleRetry === true
                         && isStreamIdleTimeoutError(failure)
