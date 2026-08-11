@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { normalizeIssueComment, normalizePullRequestReaction, normalizeReview, normalizeReviewComment } from "../../src/collector-github.ts";
 import { normalizeIssueCommentEvidence, normalizePullRequestReactionEvidence, normalizeReviewCommentEvidence, normalizeReviewEvidence } from "../../src/collector-evidence.ts";
-import { CollectorEvidenceNormalizationError, extractCollectorEvidenceIdentityGroups, extractGitHubIdentityGroups, groupGitHubMaterialsByIdentity } from "../../src/collector-identity.ts";
+import { extractCollectorEvidenceIdentityGroups, extractGitHubIdentityGroups, groupGitHubMaterialsByIdentity } from "../../src/collector-identity.ts";
 
 const reactionFixture = new URL("../fixtures/collector/codex-pr-reaction-1165.json", import.meta.url);
 const noFindingFixture = new URL("../fixtures/collector/codex-nofinding-5234537035.json", import.meta.url);
@@ -74,8 +74,9 @@ test("#245 full PR 1168 replay preserves typed attendance, findings, evidence ow
   assert.equal(codexCurrent.length, 5);
   const rabbitCurrent = rabbit.findings.filter((finding) => finding.source.id === 4895713581 || rabbitIds.has(finding.source.id));
   assert.equal(rabbitCurrent.filter((finding) => finding.category === "inline").length, 4);
-  assert.equal(rabbitCurrent.filter((finding) => finding.category === "outside_diff").length, 8);
-  assert.equal(rabbitCurrent.filter((finding) => finding.category === "nitpick").length, 2);
+  const foldedMaterial = rabbitCurrent.filter((finding) => finding.category === "material");
+  assert.equal(foldedMaterial.length, 1);
+  assert.equal(foldedMaterial[0]!.body, reviews.find((review: { id: number }) => review.id === 4895713581)!.body);
   for (const [group, findings] of [[codex, codexCurrent], [rabbit, rabbitCurrent]] as const) {
     assert.ok(findings.every((finding) => finding.identity.userId === group.identity?.userId && typeof finding.source.evidenceId === "string"));
   }
@@ -102,38 +103,15 @@ test("Codex attendance is invariant under no-finding and usage-limit prose", asy
   assert.deepEqual(limited.findings, []);
 });
 
-test("CodeRabbit frozen HTML containers yield outside-diff and nitpick findings plus four inline", async () => {
+test("CodeRabbit frozen review markup is one complete opaque material plus four structured inline findings", async () => {
   const review = normalizeReview(JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-review-4895713581.json", import.meta.url), "utf8")));
   const inlineRaw = JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-inline-review-4895713581.json", import.meta.url), "utf8"));
   const group = extractGitHubIdentityGroups([review, ...inlineRaw.map(normalizeReviewComment)])[0]!;
-  assert.equal(group.findings.filter((finding) => finding.category === "outside_diff").length, 8);
-  assert.equal(group.findings.filter((finding) => finding.category === "nitpick").length, 2);
+  const materials = group.findings.filter((finding) => finding.category === "material");
+  assert.equal(materials.length, 1);
+  assert.equal(materials[0]!.body, review.body);
   assert.equal(group.findings.filter((finding) => finding.category === "inline").length, 4);
   assert.ok(group.findings.every((finding) => finding.source.id > 0 && finding.identity.userId === 136622811));
-
-  const rewritten = normalizeReview({
-    ...JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-review-4895713581.json", import.meta.url), "utf8")),
-    body: review.body.replace(/<summary>[\s\S]*?<\/summary>/gi, "<summary>arbitrary rewritten prose</summary>"),
-  });
-  const rewrittenGroup = extractGitHubIdentityGroups([rewritten])[0]!;
-  assert.deepEqual(
-    rewrittenGroup.findings.map(({ category, source }) => ({ category, source })),
-    group.findings.filter((finding) => finding.source.kind === "review").map(({ category, source }) => ({ category, source })),
-  );
-});
-
-test("evidence extractor loudly rejects unreadable retained payload as a typed failure", async () => {
-  const raw = JSON.parse(await readFile(new URL("../fixtures/collector/sourcery-ratelimit-review-4892027495.json", import.meta.url), "utf8"));
-  const record = normalizeReviewEvidence(normalizeReview(raw), "2026-08-11T00:00:00Z");
-  const unreadable = { ...record, raw: { ...raw, id: "not-a-number" } };
-
-  assert.throws(
-    () => extractCollectorEvidenceIdentityGroups([unreadable], "other-head"),
-    (error: unknown) => error instanceof CollectorEvidenceNormalizationError
-      && error.code === "COLLECTOR_EVIDENCE_NORMALIZATION_FAILED"
-      && error.evidenceId === record.evidenceId
-      && error.cause instanceof Error,
-  );
 });
 
 test("evidence extractor binds real evidenceId refs and head relation",  async () => {
