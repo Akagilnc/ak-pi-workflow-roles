@@ -20,6 +20,15 @@ export type GitHubMachineIdentity = {
   appId?: number;
 };
 
+export type GitHubPullRequestReaction = {
+  id: number;
+  userLogin: string | null;
+  machineIdentity?: GitHubMachineIdentity | null;
+  content: string;
+  createdAt: string;
+  raw: unknown;
+};
+
 export type GitHubReview = {
   id: number;
   nodeId?: string;
@@ -242,6 +251,18 @@ export function normalizePullRequest(raw: unknown): GitHubPullRequest {
     headOid: head["sha"],
     ...(typeof raw["updated_at"] === "string" ? { updatedAt: raw["updated_at"] } : {}),
     url: htmlUrl,
+    raw,
+  };
+}
+
+export function normalizePullRequestReaction(raw: unknown): GitHubPullRequestReaction {
+  if (!isRecord(raw)) throw new Error("GitHub reaction payload must be an object");
+  return {
+    id: requireNumber(raw["id"], "reaction.id"),
+    userLogin: optionalUserLogin(raw["user"]),
+    machineIdentity: machineIdentity(raw),
+    content: requireString(raw["content"], "reaction.content"),
+    createdAt: requireString(raw["created_at"], "reaction.created_at"),
     raw,
   };
 }
