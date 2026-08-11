@@ -19,10 +19,13 @@ import {
   type AdmittedJudgeInvocation,
 } from "./invocation.ts";
 import {
-  missingPublicProviderCredential,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
+import {
+  missingCredentialPreDispatchFailure,
+  postRunMissingCredentialFailure,
+} from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
@@ -83,27 +86,6 @@ export type JudgeRunEnv = {
   timeoutMs?: number;
 };
 
-/**
- * Production-owned provider failure when the selected public seat provider has
- * no configured credential. Cause/identity come from CredentialProviders, not
- * stderr wording. Runner-supplied knownFailure still wins over this annotation.
- */
-export function knownFailureForMissingProviderCredential(
-  model: SeatModelConfig | undefined,
-  credentials: CredentialProviders | undefined,
-): ExplicitInternalKnownFailure | undefined {
-  if (model === undefined || credentials === undefined) return undefined;
-  if (!missingPublicProviderCredential(model.provider, credentials)) {
-    return undefined;
-  }
-  return {
-    cause: "provider",
-    identity: {
-      name: "MissingProviderCredential",
-      code: model.provider,
-    },
-  };
-}
 
 function buildModelArgs(model: SeatModelConfig | undefined): string[] {
   if (model === undefined) return [];
@@ -261,6 +243,19 @@ async function dispatchAdmittedJudge(input: {
 }> {
   const { admitted, env, io, extraArgs, lease } = input;
   try {
+    // Fail closed at the public credential seam before model dispatch: missing
+    // selected-provider auth must not be washed by ambient keys or zero-exit runs.
+    const missingCredential = missingCredentialPreDispatchFailure(
+      env.model,
+      env.credentials,
+    );
+    if (missingCredential !== undefined) {
+      return await presentControlledFailure(
+        admitted,
+        missingCredential,
+        io,
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     // Attempt-scoped observation: drop any prior dispatch's 429 evidence so only
     // the current initial/resume attempt can qualify v1 resume.
@@ -355,8 +350,11 @@ async function dispatchAdmittedJudge(input: {
     }
 
     // Production-owned typed cause channel — never inferred from stderr wording.
-    const credentialFailure =
-      knownFailureForMissingProviderCredential(env.model, env.credentials);
+    const credentialFailure = postRunMissingCredentialFailure(
+      result,
+      env.model,
+      env.credentials,
+    );
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result.knownFailure,
       sessionFile: admitted.sessionFile,

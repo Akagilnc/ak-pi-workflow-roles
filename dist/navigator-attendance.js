@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { createAgentSession, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
@@ -13,8 +13,10 @@ import {
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
 import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.js";
+import { openInProcessAgentSession } from "./in-process-session.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
+import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
@@ -82,6 +84,12 @@ function navigatorProviderFailure(message, source, cause = source) {
 function navigatorUnavailableError(source, error, cause = source) {
   const message = error instanceof Error ? error.message : String(error);
   return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
+}
+function navigatorAdviceConsistentWithSettlement(next, settlement) {
+  if (settlement.kind !== "accepted") return true;
+  if (settlement.status === "unfinished" && next.role === "judge") return false;
+  if (next.role !== "merger") return true;
+  return settlement.role === "judge" && settlement.status === "converged";
 }
 const prepareSchema = Type.Object({}, { additionalProperties: true });
 const ROUTE_ENTRY = "ak-navigator-route";
@@ -226,7 +234,7 @@ function parseNavigatorModelSetting(value) {
   return { provider, model, thinkingLevel: suffix === "max" ? "max" : "off" };
 }
 function createNavigatorPrepareTool(onOutput) {
-  return {
+  return wrapPackageOwnedToolDefinition({
     name: NAVIGATOR_PREPARE_TOOL_NAME,
     label: "Navigator preparation",
     description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
@@ -235,7 +243,7 @@ function createNavigatorPrepareTool(onOutput) {
       onOutput(value);
       return { content: [{ type: "text", text: "Navigator preparation accepted" }], details: value, terminate: true };
     }
-  };
+  });
 }
 function selectNavigatorCandidate(candidates, settlement) {
   if (settlement.kind !== "accepted") return void 0;
@@ -343,7 +351,10 @@ function createNavigatorAttendance(options) {
     };
   };
   let routePlaybookSettlement;
+  let prepareBoundSettlement;
   const prepare = async () => {
+    const boundSettlement = prepareBoundSettlement;
+    prepareBoundSettlement = void 0;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
     if (contextError !== void 0) throw navigatorUnavailableError("context", contextError);
@@ -462,6 +473,7 @@ ${text}
       subject,
       authority,
       currentRole: { role: options.role, phase: options.phase },
+      ...boundSettlement === void 0 ? {} : { currentSettlement: boundSettlement },
       priorRoute: exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target)) ? prior.route.map((target) => ({ role: target.role, phase: target.phase })) : null,
       publicSettlementHistory,
       liveRoleHelp: help
@@ -487,12 +499,22 @@ ${authority}
       `<current_role>
 ${JSON.stringify({ role: options.role, phase: options.phase })}
 </current_role>`,
+      ...boundSettlement === void 0 ? [] : [
+        `<current_settlement>
+${JSON.stringify(boundSettlement)}
+</current_settlement>`,
+        "The current role has just reached this typed settlement. Recommend the next packaged role AFTER this settlement.",
+        "public_settlement_history is prior background only \u2014 a prior terminal does not consume or replace the work this settlement just produced."
+      ],
       `<prior_route>
 ${JSON.stringify(prior ?? null)}
 </prior_route>`,
       `<public_settlement_history>
 ${JSON.stringify(projection.publicSettlementHistory)}
 </public_settlement_history>`,
+      ...boundSettlement === void 0 ? [
+        "Preparation is speculative while the current role still runs. Prefer candidates[].matches keyed to plausible accepted outcomes of the current role; prior history must not substitute for the current role's work."
+      ] : [],
       `<live_role_help>
 ${helpContext}
 </live_role_help>`,
@@ -621,9 +643,17 @@ ${helpContext}
     } else {
       try {
         if (sessionReady !== void 0) await sessionReady;
-        const prepared = await preparation;
+        let prepared = await preparation;
         session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
-        const selected = selectNavigatorCandidate(prepared, settlement);
+        let selected = selectNavigatorCandidate(prepared, settlement);
+        if (selected?.next !== void 0 && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)) {
+          prepareBoundSettlement = settlement;
+          prepared = await prepare();
+          selected = selectNavigatorCandidate(prepared, settlement);
+          if (selected?.next !== void 0 && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)) {
+            throw new Error("Navigator advice contradicts the accepted settlement");
+          }
+        }
         if (selected?.next === void 0) {
           throw new Error("Navigator prepared no machine-usable next direction");
         }
@@ -857,15 +887,14 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
     } catch (error) {
       throw navigatorUnavailableError("session", error);
     }
-    let created;
+    let opened;
     try {
-      created = await createAgentSession({
+      opened = await openInProcessAgentSession({
         cwd: context.cwd,
         model,
         modelRuntime,
         thinkingLevel: parsed.thinkingLevel,
         sessionManager: SessionManager.continueRecent(context.cwd, sessionDir),
-        settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
         noTools: "all",
         tools: [NAVIGATOR_PREPARE_TOOL_NAME],
         customTools: [tool]
@@ -873,23 +902,23 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
     } catch (error) {
       throw navigatorUnavailableError("session", error);
     }
-    if (created.session.thinkingLevel !== parsed.thinkingLevel) {
-      created.session.dispose();
+    if (opened.session.thinkingLevel !== parsed.thinkingLevel) {
+      opened.dispose();
       throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${parsed.thinkingLevel} is unavailable for ${configured}`);
     }
     return {
       prompt: async (text) => {
         try {
-          await created.session.prompt(text);
+          await opened.session.prompt(text);
         } catch (error) {
           throw navigatorUnavailableError("transport", error);
         }
       },
       providerFailure: () => providerFailure,
       appendEntry: (customType, data) => {
-        created.session.sessionManager.appendCustomEntry(customType, data);
+        opened.session.sessionManager.appendCustomEntry(customType, data);
       },
-      entries: () => created.session.sessionManager.getEntries(),
+      entries: () => opened.session.sessionManager.getEntries(),
       setModel: async (next, thinkingLevel) => {
         let nextParsed;
         try {
@@ -909,17 +938,17 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
         if (!nextAuth.ok) throw new NavigatorUnavailableError("auth", nextAuth.error);
         try {
           modelRuntime.registerNativeProvider(instrumentProvider(nextProvider));
-          await created.session.setModel(nextModel);
-          created.session.setThinkingLevel(thinkingLevel);
+          await opened.session.setModel(nextModel);
+          opened.session.setThinkingLevel(thinkingLevel);
         } catch (error) {
           throw navigatorUnavailableError("session", error);
         }
-        if (created.session.thinkingLevel !== nextParsed.thinkingLevel || created.session.thinkingLevel !== thinkingLevel) {
+        if (opened.session.thinkingLevel !== nextParsed.thinkingLevel || opened.session.thinkingLevel !== thinkingLevel) {
           throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${thinkingLevel} is unavailable for ${next}`);
         }
       },
-      getThinkingLevel: () => created.session.thinkingLevel,
-      dispose: () => created.session.dispose()
+      getThinkingLevel: () => opened.session.thinkingLevel,
+      dispose: () => opened.dispose()
     };
   };
 }
@@ -947,6 +976,7 @@ export {
   createNavigatorPrepareTool,
   decorateSettlementWithNavigation,
   formatNavigatorReport,
+  navigatorAdviceConsistentWithSettlement,
   navigatorModelSettingPath,
   navigatorProviderFailure,
   navigatorProviderFailureFromError,

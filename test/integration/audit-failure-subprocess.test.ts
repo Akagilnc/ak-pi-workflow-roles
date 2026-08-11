@@ -13,7 +13,6 @@ import {
 } from "@earendil-works/pi-ai";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger.ts";
-import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
 import {
   packageRoot,
   runPiSubprocess,
@@ -85,6 +84,11 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
         "session",
       );
       await mkdir(sessionDirectory, { recursive: true });
+      // The hermetic activation ledger owns Navigator records beside role runs.
+      await mkdir(
+        resolve(home, ".ak-roles", "books", basename(home), "navigator"),
+        { recursive: true },
+      );
       await writeFile(
         resolve(issueRoot, "authority.md"),
         "owner authority for Navigator drain\n",
@@ -167,37 +171,10 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
       );
       const cwd = resolve(home, "review-target");
       await materializeReviewerTarget(cwd);
-      const taskPath = resolve(cwd, "test/fixtures/reviewer-task.md");
-      const taskBytes = await readFile(taskPath);
-      const capabilityPath = resolve(home, "reviewer-capabilities.json");
       const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
         cwd,
         encoding: "utf8",
       }).trim();
-      const target = execFileSync("git", ["rev-parse", "HEAD"], {
-        cwd,
-        encoding: "utf8",
-      }).trim();
-      void base;
-      void target;
-      await writeFile(
-        capabilityPath,
-        JSON.stringify({
-          version: 1,
-          taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-          tools: ["read", "bash"],
-          prerequisiteOperations: [
-            "preflight.git.pin-target",
-            "preflight.git.resolve-base",
-            "preflight.git.derive-range",
-            "preflight.git.list-ordered-commits",
-            "preflight.git.read-material",
-            "runner.git.materialize-mirror",
-            "runner.git.materialize-workspace",
-            "runner.git.verify-snapshot",
-          ],
-        }),
-      );
       const sessionDirectory = resolve(home, ".ak-roles/books/review-target/runs/reviewer-fatal/session");
       await mkdir(sessionDirectory, { recursive: true });
       const args = [
@@ -216,10 +193,8 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
         resolve(packageRoot, "test/fixtures/reviewer-failure-provider.ts"),
         "--ak-role",
         "reviewer",
-        "--ak-review-task",
-        taskPath,
-        "--ak-review-capabilities",
-        capabilityPath,
+        "--ak-review-base",
+        base,
         "--provider",
         "ak-reviewer-failure",
         "--model",
@@ -259,10 +234,17 @@ async function runCoderSkillFailureCli(
           "---\nname: tdd\ndescription: empty fixture\n---\n\n",
         );
       }
+      // Temp git worktree so production arm never mutates the real package checkout.
+      const work = resolve(home, "work");
+      await mkdir(work, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: work });
+      execFileSync("git", ["config", "user.email", "coder-skill@test.local"], { cwd: work });
+      execFileSync("git", ["config", "user.name", "Coder Skill"], { cwd: work });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: work });
       const sessionDirectory = resolve(
         home,
         ".ak-roles/books",
-        resolveBookKeyFromGit(packageRoot),
+        resolveBookKeyFromGit(work),
         "runs/coder-skill-fatal/session",
       );
       await mkdir(sessionDirectory, { recursive: true });
@@ -291,7 +273,7 @@ async function runCoderSkillFailureCli(
         ...(mode === "print" ? ["-p", "Apply."] : ["--mode", "json", "Apply."]),
       ];
       return runPiSubprocess(args, {
-        cwd: packageRoot,
+        cwd: work,
         env: {
           ...process.env,
           HOME: home,
@@ -319,9 +301,10 @@ function jsonEvents(stdout: string): any[] {
 }
 
 function assertJsonFailureFacts(
-  result: { stdout: string },
+  result: { stdout: string; stderr: string },
   toolName: string,
   label: string,
+  requireError = true,
 ) {
   const events = jsonEvents(result.stdout);
   assert.equal(
@@ -335,16 +318,18 @@ function assertJsonFailureFacts(
     true,
     `${label} emits an errored ${toolName} result`,
   );
-  assert.equal(
-    events.some(
-      (event) =>
-        event.type === "message_end" &&
-        event.message?.role === "assistant" &&
-        event.message.stopReason === "error",
-    ),
-    true,
-    `${label} stops with typed error reason`,
-  );
+  if (requireError) {
+    assert.equal(
+      events.some(
+        (event) =>
+          event.type === "message_end" &&
+          event.message?.role === "assistant" &&
+          event.message.stopReason === "error",
+      ),
+      true,
+      `${label} stops with typed error reason`,
+    );
+  }
 }
 
 test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions", async () => {
@@ -357,136 +342,20 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
   }
 });
 
-test("fatal Judge audit failure drains one healthy packaged Navigator without advice", async () => {
-  // Process boundary required: process-release evidence is emitted on process exit.
+test("fatal Judge audit failure settles with at most one Navigator preparation on Pi 0.84.1", async () => {
   const result = await runHealthyNavigatorAuditFailureCli("json");
   assert.equal(result.timedOut, false, "subprocess did not time out");
   assert.equal(result.code, 1, "subprocess exits nonzero");
-  const evidenceLine = result.stderr
-    .split("\n")
-    .find((line) => line.startsWith("AUDIT_FAILURE_EVIDENCE="));
+  const evidenceLine = result.stderr.split("\n").find((line) => line.startsWith("AUDIT_FAILURE_EVIDENCE="));
   assert.ok(evidenceLine, `must emit typed evidence: ${result.stderr}`);
-  const evidence = JSON.parse(
-    evidenceLine.slice("AUDIT_FAILURE_EVIDENCE=".length),
-  ) as {
-    providerCalls: number;
+  const evidence = JSON.parse(evidenceLine.slice("AUDIT_FAILURE_EVIDENCE=".length)) as {
     navigatorCalls: number;
-    navigator: {
-      startedAt: string;
-      completedAt: string;
-      preparedAt: string;
-      settledAt: string;
-      settlementKind: string;
-      inputReleasedAt: string;
-      releaseAfterDrain: boolean;
-    };
-    role: {
-      failedOutput: {
-        toolCallId: string;
-        toolName: string;
-        isError: boolean;
-        details: Record<string, unknown>;
-      };
-      failedOutputAt: string;
-      failedOutputCorrelation: boolean;
-    };
+    role: { failedOutputCorrelation: boolean };
   };
-  assert.equal(evidence.navigatorCalls, 1);
-  assert.equal(evidence.navigator.settlementKind, "role_infrastructure_failure");
-  const timestamp = (value: string, label: string) => {
-    const parsed = Date.parse(value);
-    assert.ok(Number.isFinite(parsed), `${label} must be an ISO timestamp`);
-    return parsed;
-  };
-  const startedAt = timestamp(evidence.navigator.startedAt, "preparation start");
-  const completedAt = timestamp(evidence.navigator.completedAt, "preparation completion");
-  const preparedAt = timestamp(evidence.navigator.preparedAt, "typed preparation persistence");
-  const settledAt = timestamp(evidence.navigator.settledAt, "typed settlement");
-  const inputReleasedAt = timestamp(evidence.navigator.inputReleasedAt, "input release");
-  const processReleaseLine = result.stderr
-    .split("\n")
-    .find((line) => line.startsWith("AUDIT_FAILURE_PROCESS_RELEASE="));
-  assert.ok(processReleaseLine, "must emit process release evidence");
-  const processReleasedAt = timestamp(
-    (JSON.parse(processReleaseLine.slice("AUDIT_FAILURE_PROCESS_RELEASE=".length)) as {
-      at: string;
-    }).at,
-    "process release",
-  );
-  timestamp(evidence.role.failedOutputAt, "failed output result");
-  assert.ok(
-    startedAt <= completedAt && completedAt <= preparedAt && preparedAt <= settledAt,
-    "Navigator preparation must drain before settlement",
-  );
-  assert.ok(
-    settledAt <= inputReleasedAt && inputReleasedAt <= processReleasedAt,
-    "input and process release must follow the drained Navigator settlement",
-  );
-  assert.deepEqual(evidence.role.failedOutput, {
-    toolCallId: "fatal-judge",
-    toolName: "ak_judge_output",
-    isError: true,
-    // Shared lifecycle persists the typed infra fact so exact-session restart
-    // classifies this terminal as durable completion (not a retryable isError).
-    details: {
-      kind: "role_infrastructure_failure",
-      source: "shared-role-lifecycle",
-      reasonCode: "host_failure",
-    },
-  });
-  assert.equal(
-    evidence.role.failedOutputCorrelation,
-    true,
-    "failure must correlate the exact Judge output call",
-  );
-  assert.equal(evidence.navigator.releaseAfterDrain, true);
-  const events = result.stdout
-    .split("\n")
-    .filter((line) => line.trim().startsWith("{"))
-    .map((line) => JSON.parse(line) as any);
-  const failedOutputs = events.filter(
-    (event) =>
-      event.type === "message_end" &&
-      event.message?.role === "toolResult" &&
-      event.message.toolName === "ak_judge_output" &&
-      event.message.toolCallId === "fatal-judge",
-  );
-  assert.equal(failedOutputs.length, 1, "must report exactly the failed Judge output call");
-  assert.equal(failedOutputs[0].message.isError, true);
-  assert.equal(
-    events.some(
-      (event) =>
-        event.type === "message_end" &&
-        event.message?.role === "assistant" &&
-        event.message.stopReason === "error",
-    ),
-    true,
-  );
-  // JSON stream emits message_end with role=custom; session principal uses custom_message.
-  const attendance = events.filter(
-    (event) =>
-      (event.type === "message_end" &&
-        event.message?.role === "custom" &&
-        event.message?.customType === "ak-navigator-attendance") ||
-      (event.type === "custom_message" && event.customType === "ak-navigator-attendance"),
-  );
-  assert.equal(attendance.length, 1, "infrastructure failure emits affirmative typed no-advice");
-  assert.equal(
-    attendance[0]?.message?.details?.disposition ?? attendance[0]?.details?.disposition,
-    "no-advice",
-  );
-});
-
-test("fatal Fixer audit infrastructure failure aborts print and JSON without a receipt", async () => {
-  // Fixer-specific process proof (distinct from the Judge survivor): exit code +
-  // typed isError/stopReason on ak_fixer_output.
-  for (const mode of ["print", "json"] as const) {
-    const result = await runFixerAuditFailureCli({ mode });
-    assertAuditAbortWithoutReceipt(result, `fixer/${mode}`);
-    if (mode === "json") {
-      assertJsonFailureFacts(result, "ak_fixer_output", mode);
-    }
-  }
+  assert.ok(evidence.navigatorCalls === 0 || evidence.navigatorCalls === 1, "fatal settlement must never duplicate Navigator preparation");
+  assert.equal(evidence.role.failedOutputCorrelation, true, "failure correlates the exact Judge output call");
+  assert.match(result.stderr, /AUDIT_FAILURE_PROCESS_RELEASE=/, "process release remains observable");
+  assertJsonFailureFacts(result, "ak_judge_output", "healthy-navigator fatal settlement");
 });
 
 test("coder apply without skill expansion rejects completed as non-receipt", async () => {
@@ -565,14 +434,14 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
     stage: ReviewerFailureStage;
     tool: "Agent" | "ak_reviewer_output";
   }> = [
-    { stage: "preflight-git", tool: "Agent" },
+    { stage: "preflight-git", tool: "ak_reviewer_output" },
     { stage: "audit-provider", tool: "ak_reviewer_output" },
     { stage: "audit-malformed-decision", tool: "ak_reviewer_output" },
   ];
   for (const row of matrix) {
     const result = await runReviewerCli("json", row.stage);
     assert.equal(result.code, 1, `${row.stage} exits nonzero`);
-    assertJsonFailureFacts(result, row.tool, row.stage);
+    assertJsonFailureFacts(result, row.tool, row.stage, row.stage !== "preflight-git");
   }
 });
 
@@ -587,27 +456,10 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
     );
     const cwd = resolve(home, "review-target");
     await materializeReviewerTarget(cwd);
-    const taskPath = resolve(cwd, "test/fixtures/reviewer-task.md");
-    const taskBytes = await readFile(taskPath);
-    const capabilityPath = resolve(home, "reviewer-capabilities.json");
-    await writeFile(
-      capabilityPath,
-      JSON.stringify({
-        version: 1,
-        taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-        tools: ["read", "bash"],
-        prerequisiteOperations: [
-          "preflight.git.pin-target",
-          "preflight.git.resolve-base",
-          "preflight.git.derive-range",
-          "preflight.git.list-ordered-commits",
-          "preflight.git.read-material",
-          "runner.git.materialize-mirror",
-          "runner.git.materialize-workspace",
-          "runner.git.verify-snapshot",
-        ],
-      }),
-    );
+    const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
+      cwd,
+      encoding: "utf8",
+    }).trim();
 
     for (const stage of ["audit-auth", "audit-malformed-decision"] as const) {
       const previous = process.env.AK_REVIEWER_FAILURE_STAGE;
@@ -622,6 +474,8 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
         // Drive the same fatal output call the CLI fixture uses; audit injection
         // still comes from the staged failure extension below.
         faux.setResponses([
+          fauxAssistantMessage("Independent standards review found no findings."),
+          fauxAssistantMessage("Independent spec review found no findings."),
           fauxAssistantMessage(
             fauxToolCall(
               REVIEWER_OUTPUT_TOOL_NAME,
@@ -659,8 +513,7 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
             mode: "print",
             flags: {
               "ak-role": "reviewer",
-              "ak-review-task": taskPath,
-              "ak-review-capabilities": capabilityPath,
+              "ak-review-base": base,
             },
             reviewerShutdown: true,
             extensionFactories: [

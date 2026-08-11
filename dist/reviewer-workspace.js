@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { materializeMechanicalBundle } from "./reviewer-bundle-materializer.js";
 import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs, sameReviewerPinnedTarget, sameReviewerRefs } from "./reviewer-git-snapshot.js";
 export class ReviewerProcessError extends Error {
     command;
@@ -123,7 +122,7 @@ export function createReviewerWorkspaceOwner(dependencies = {}) {
     let ownedSnapshot;
     let cleanupPromise;
     return {
-        async prepare(target, axes, bundle, signal) {
+        async prepare(target, axes, signal) {
             const snapshot = await prepareSnapshot(target, signal, dependencies);
             ownedSnapshot = snapshot;
             const frozenTarget = Object.freeze({ repositoryRoot: snapshot.repositoryRoot, objectFormat: snapshot.objectFormat, targetHead: snapshot.targetHead, refs: Object.freeze({ ...snapshot.refs }) });
@@ -131,12 +130,7 @@ export function createReviewerWorkspaceOwner(dependencies = {}) {
             try {
                 for (const axis of axes) {
                     const path = await prepareClone(snapshot, signal, dependencies);
-                    try {
-                        workspaces.push(Object.freeze({ axis, path, target: frozenTarget, evidence: await materializeMechanicalBundle(path, axis, bundle) }));
-                    }
-                    catch (error) {
-                        throw workspaceError(error, "workspace", { retained: path }, frozenTarget);
-                    }
+                    workspaces.push(Object.freeze({ axis, path, target: frozenTarget }));
                 }
             }
             catch (error) {

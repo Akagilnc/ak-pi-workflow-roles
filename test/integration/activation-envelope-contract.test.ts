@@ -55,7 +55,6 @@ import {
   samplePull,
   sampleUser,
 } from "../helpers/fake-github-transport.ts";
-import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
 import {
   activationBookKeyFor,
   machineLedgerHome,
@@ -63,11 +62,12 @@ import {
   persistActivationSessionFile,
   readAcceptedActivationFacts,
   runNodeSubprocess,
+  runPiSubprocess,
   withActivationHome,
+  withHermeticHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
-import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
-import { AGENT_TOOL_NAME } from "../../src/reviewer-role.ts";
+
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
 
@@ -103,18 +103,6 @@ afterEach(() => { process.exitCode = originalExitCode; });
 function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typeof createRoleRuntimeExtension>[0] {
   const law = async () => "LAW";
   const oid = (ch: string) => ch.repeat(40);
-  const reviewTask = new TextEncoder().encode("Review the fixed point.\n");
-  const reviewOps = [
-    "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range",
-    "preflight.git.list-ordered-commits", "preflight.git.read-material",
-    "runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot",
-  ] as const;
-  const reviewCaps = new TextEncoder().encode(JSON.stringify({
-    version: 1,
-    taskSha256: sha256Hex(reviewTask),
-    tools: ["read", "bash"],
-    prerequisiteOperations: [...reviewOps],
-  }));
   const base = {
     loadJudgeSoul: law,
     transcriptFromContext: () => "",
@@ -133,8 +121,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
       return {
         ...base,
         loadReviewerSoul: law,
-        loadReviewerTask: async () => reviewTask,
-        loadReviewerCapabilities: async () => reviewCaps,
         createReviewerPinnedGitReader: async () => {
           const pin = {
             repositoryRoot: fixtureRoot,
@@ -153,7 +139,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
               diffSha256: "2".repeat(64),
               commits: [oid("9")],
             }),
-            material: async () => new TextEncoder().encode("material"),
           };
         },
         loadCanonicalSkillBinding: async (name) => {
@@ -165,14 +150,45 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
               path: "/skill",
               baseDir: "/",
               body: raw,
-              snapshotIdentity: reviewerPromptIdentity(raw),
+              snapshotIdentity: Object.freeze({ text: raw }),
             },
             invocation: (original: string) => `/skill:${name} ${original}`,
             captureExpansion: () => undefined,
           };
         },
-        runReviewerDispatch: async () => {
-          throw new Error("dispatch unused during activation");
+        // Activation stage owns fixed two-axis dispatch (issue #236 lifecycle).
+        runReviewerDispatch: async (execution) => {
+          const pin = {
+            repositoryRoot: fixtureRoot,
+            objectFormat: "sha1" as const,
+            targetHead: oid("9"),
+            refs: { "refs/heads/main": { objectId: oid("9"), peeledCommitId: oid("9") } },
+          };
+          const usage = {
+            input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          };
+          const standardsLeg = execution.legs.find((leg) => leg.axis === "standards");
+          const specLeg = execution.legs.find((leg) => leg.axis === "spec");
+          if (standardsLeg === undefined || specLeg === undefined) {
+            throw new Error("fixture expects fixed two-axis dispatch");
+          }
+          const success = (prompt: string) => Object.freeze({
+            status: "successful" as const,
+            report: "ok",
+            usage,
+            target: pin,
+            prompt,
+            workspaceDisposition: "deleted" as const,
+          });
+          return Object.freeze({
+            identity: execution.identity,
+            target: pin,
+            legs: Object.freeze({
+              standards: success(standardsLeg.prompt),
+              spec: success(specLeg.prompt),
+            }),
+          });
         },
       };
     case "collector":
@@ -246,8 +262,7 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
       return { "ak-coder-phase": "plan", "ak-coder-task": "/lawful/task.md" };
     case "reviewer":
       return {
-        "ak-review-task": "/lawful/review-task.md",
-        "ak-review-capabilities": "/lawful/review-caps.md",
+        "ak-review-base": "main~1",
       };
     case "collector":
       writeFileSync(legsPath, `${JSON.stringify({
@@ -277,7 +292,7 @@ test("seven packaged terminating tools expose the provider-open registration inv
   const declaredFields = (role: string): readonly string[] => {
     switch (role) {
       case "coder": return ["status", "report", "remainingScope"];
-      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults"];
+      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence"];
       case "reviewer": return ["status", "diagnostic"];
       case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"];
       case "collector": return ["legs"];
@@ -359,7 +374,6 @@ test("seven packaged terminating tools expose the provider-open registration inv
 
 test("remaining support tools expose their actual registration inventory", async () => {
   const cases = [
-    { role: "reviewer", name: AGENT_TOOL_NAME, fields: ["version", "base", "materials", "relevanceHints", "spec", "required"] },
     { role: "doctor", name: DOCTOR_EVIDENCE_TOOL_NAME, fields: ["evidenceId", "offset", "limit"] },
     { role: "navigator", name: NAVIGATOR_PREPARE_TOOL_NAME, fields: [] },
   ] as const;
@@ -1135,29 +1149,54 @@ test("ledger append and durable session admission reject symlink component escap
 });
 
 test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subprocess before provider dispatch", async () => {
-  // Shared CLI harness with audit-failure-subprocess (same extension pair + provider + hermetic home).
-  const result = await runFixerAuditFailureCli({
-    packet: "Apply the assigned repair.\n",
-    prerequisites: { prerequisites: [] },
-    timeoutMs: 15_000,
-    prefix: "ak-fixer-activation-incident-",
+  // Real CLI subprocess via existing harness; no audit-leg revival — call-count fixture only.
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const { resolve } = await import("node:path");
+  await withHermeticHome({ prefix: "ak-fixer-activation-incident-" }, async ({ home, agentDir }) => {
+    const instructions = resolve(home, "instructions.md");
+    const prerequisites = resolve(home, "prerequisites.json");
+    await writeFile(instructions, "Apply the assigned repair.\n");
+    await writeFile(prerequisites, JSON.stringify({ prerequisites: [] }));
+    const sessionDirectory = resolve(
+      home, ".ak-roles", "books", resolveBookKeyFromGit(packageRoot), "runs", "fixer-act", "session",
+    );
+    await mkdir(sessionDirectory, { recursive: true });
+    const result = await runPiSubprocess([
+      "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+      "--session-dir", sessionDirectory,
+      "-e", resolve(packageRoot, "extensions/role-runtime.ts"),
+      "-e", resolve(packageRoot, "test/fixtures/coder-success-provider.ts"),
+      "--ak-role", "fixer", "--ak-fixer-phase", "apply",
+      "--ak-fix-packet", instructions,
+      "--ak-fixer-prerequisites", prerequisites,
+      "--provider", "ak-coder-offline", "--model", "faux-1", "-p", "Apply.",
+    ], {
+      cwd: packageRoot,
+      timeoutMs: 15_000,
+      env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" },
+    });
+    assert.equal(result.timedOut, false, "malformed prerequisites subprocess did not time out");
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /CODER_SUCCESS_PROVIDER_CALLS=0/);
+    const traces = result.stderr.split("\n").flatMap((line) => {
+      try {
+        const value = JSON.parse(line) as ActivationTraceRecord;
+        return Value.Check(activationTraceRecordSchema, value) ? [value] : [];
+      } catch { return []; }
+    });
+    assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
+      { role: "fixer", stageId: "load-and-install", status: "failed" },
+    ]);
+    const failed = traces.find((trace) => trace.status === "failed");
+    assert.ok(failed && failed.status === "failed", "missing failed activation trace");
+    assert.equal(failed.role, "fixer");
+    assert.equal(failed.stageId, "load-and-install");
+    assert.equal(failed.cause.identity, "AK_INVALID_FIX_PACKET");
+    assert.equal(failed.cause.name, "FixerPacketValidationError");
+    assert.match(failed.cause.message, /Fixer prerequisites/);
+    if (typeof failed.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
+    assert.match(failed.cause.evidenceId, /^activation-cause-/);
   });
-  assert.equal(result.timedOut, false, "malformed prerequisites subprocess did not time out");
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=0/);
-  const traces = result.stderr.split("\n").flatMap((line) => {
-    try { const value = JSON.parse(line) as ActivationTraceRecord; return Value.Check(activationTraceRecordSchema, value) ? [value] : []; }
-    catch { return []; }
-  });
-  assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
-    { role: "fixer", stageId: "load-and-install", status: "failed" },
-  ]);
-  const failed = traces[0];
-  assert.ok(failed?.status === "failed");
-  assert.ok(["AK_INVALID_FIX_PACKET", "FixerPacketValidationError"].includes(failed.cause.identity));
-  assert.equal(failed.cause.name, "FixerPacketValidationError");
-  if (typeof failed.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
-  assert.match(failed.cause.evidenceId, /^activation-cause-/);
 });
 
 
@@ -1218,6 +1257,11 @@ test("tool-execution observation contract retains reader-required events and out
   assert.equal(TOOL_EXECUTION_UPDATE_THROTTLE_MS, 30_000);
   assert.equal(TOOL_EXECUTION_UPDATE_HEARTBEAT, "output-driven");
   assert.equal(isProducingToolUpdate({ content: [], details: undefined }), false);
+  assert.equal(
+    isProducingToolUpdate({ content: [], details: { elapsedMs: 60_000 } }),
+    false,
+    "observation-plane heartbeat remains content-driven",
+  );
   assert.equal(isProducingToolUpdate({ content: [{ type: "text", text: "" }] }), false);
   assert.equal(isProducingToolUpdate({ content: [{ type: "text", text: "chunk" }] }), true);
   for (const record of [
@@ -1249,6 +1293,7 @@ test("observation face emits start/end always, throttles producing updates per t
 
   await face.onStart({ toolCallId: "a", toolName: "bash" });
   await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [] } });
+  await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [], details: { elapsedMs: 60_000 } } });
   await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [{ type: "text", text: "one" }] } });
   mono = 10_000;
   await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [{ type: "text", text: "two" }] } });

@@ -21,6 +21,8 @@ import {
   writeToolExecutionObservationRecord,
   type ToolExecutionObservationWriter,
 } from "./tool-execution-observation.ts";
+import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
+import { installWorkerGitHooks } from "./worker-submission-gates.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -33,7 +35,7 @@ import {
   createCollectorRoleRuntime,
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
-import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
+import { createDoctorRoleRuntime } from "./doctor-role.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -47,15 +49,13 @@ import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, p
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
-  type JudgeAdjudicativeVerdict,
-  type SoulAuditInput,
   type SoulAuditResult,
 } from "./judge-role.ts";
 import {
   createReviewerRoleRuntime,
-  type ReviewerAuditInput,
+  type ReviewerActivation,
 } from "./reviewer-role.ts";
-import type { AcceptedReviewerExecution, ReviewerHostMaterial, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
@@ -132,28 +132,24 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
-export { runAuditorRole } from "./auditor-role.ts";
-export type { AuditorCompletion, AuditorDecisionTool } from "./auditor-role.ts";
+export { executeAuditorChild } from "./evidence-child-executor.ts";
+export type { AuditorCompletion, AuditorDecisionTool } from "./evidence-child-executor.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
   DOCTOR_OUTPUT_TOOL_NAME,
-  type DoctorAuditInput,
 } from "./doctor-role.ts";
 export type { DoctorCase, DoctorCaseCost, DoctorSubmission, DoctorOutput, DoctorFinding } from "./doctor-contracts.ts";
 export { validateDoctorSubmissionShape, validateDoctorOutput, DoctorEvidenceStore } from "./doctor-contracts.ts";
 export { loadDoctorCase } from "./doctor-evidence.ts";
 export {
   JUDGE_OUTPUT_TOOL_NAME,
-  type JudgeAdjudicativeVerdict,
   type JudgeVerdict,
-  type SoulAuditInput,
   type SoulAuditResult,
 } from "./judge-role.ts";
 export {
   AGENT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
-  type ReviewerAuditInput,
   type ReviewerIntent,
 } from "./reviewer-role.ts";
 export {
@@ -166,7 +162,7 @@ export {
   type WorkerOutput,
 } from "./worker-role.ts";
 export { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket } from "./package-contracts/fixer-output.ts";
-export type { FixerBlocker, FixerClassResult, FixerPhase } from "./package-contracts/fixer-output.ts";
+export type { FixerBlocker, FixerClassResult, FixerPhase, FixerTestEvidence } from "./package-contracts/fixer-output.ts";
 export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./package-contracts/fixer-packet.ts";
 export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
 export { AUDIT_ESCALATION_KIND, buildAuditEscalationResult, disposeComplianceDecision, isAuditEscalationResult, projectAuditEscalation } from "./audit-escalation.ts";
@@ -174,7 +170,6 @@ export type { AuditEscalationResult, AuditEscalationToolResult, ComplianceDecisi
 export { AUDITOR_SOUL_ROLES, loadAuditorSoul } from "./auditor-soul.ts";
 export type { AuditorSoulRole } from "./auditor-soul.ts";
 export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME, createPiJudgeAuditor } from "./judge-auditor.ts";
-export { FIXER_AUDIT_TOOL_NAME, createPiFixerAuditor } from "./fixer-auditor.ts";
 export { REVIEWER_AUDIT_TOOL_NAME, createPiReviewerAuditor } from "./reviewer-auditor.ts";
 export { DOCTOR_AUDIT_TOOL_NAME, createPiDoctorAuditor } from "./doctor-auditor.ts";
 export type { ComplianceDecision } from "./compliance-transport.ts";
@@ -190,7 +185,7 @@ export type {
   ReviewerUsage,
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
-export type { AcceptedReviewerDispatch, AcceptedReviewerExecution, ReviewerHostMaterial, ReviewerMaterialSource, ReviewerPinnedGitReader, ReviewerProposalV1 } from "./reviewer-dispatch.ts";
+export type { AcceptedReviewerDispatch, AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 export type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 export type { CollectorReceipt } from "./collector-receipt.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
@@ -203,13 +198,18 @@ export { createProductionMergerGitState } from "./merger-git-state.ts";
 export type { MergerGitState, ActiveMergerGitState, CompletedMergerGitState } from "./merger-git-state.ts";
 export type { MergerRoleDependencies } from "./merger-role.ts";
 
+type WorkerArmable = {
+  activate(context?: ExtensionContext): Promise<void>;
+  armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
+};
+
 type ActivationRuntime = {
   event: { reason: string };
   context: ExtensionContext;
   judge: { activate(): Promise<void> };
-  fixer: { activate(): Promise<void> };
-  coder: { activate(context: ExtensionContext): Promise<void> };
-  reviewer: { activate(context: ExtensionContext): Promise<void> };
+  fixer: WorkerArmable;
+  coder: WorkerArmable;
+  reviewer: { activate(context: ExtensionContext): Promise<ReviewerActivation> };
   collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
   merger(): Promise<void>;
@@ -220,7 +220,11 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "judge": return { id: "load-and-install", run: async () => runtime.judge.activate() };
     case "fixer": return { id: "load-and-install", run: async () => runtime.fixer.activate() };
     case "coder": return { id: "load-and-install", run: async () => runtime.coder.activate(runtime.context) };
-    case "reviewer": return { id: "load-and-install", run: async () => runtime.reviewer.activate(runtime.context) };
+    case "reviewer": return { id: "load-install-and-dispatch", run: async () => {
+      const activation = await runtime.reviewer.activate(runtime.context);
+      const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, { context: runtime.context });
+      if (result.status !== "accepted") throw new Error(`Fixed Reviewer dispatch was not accepted: ${result.status}`);
+    } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
@@ -298,11 +302,7 @@ export type RoleRuntimeDependencies = {
   loadCoderSoul?(): Promise<string>;
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
-  loadReviewerTask?(path: string): Promise<Uint8Array>;
-  loadReviewerCapabilities?(path: string): Promise<Uint8Array>;
   createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
-  loadReviewerHostMaterials?(): Promise<readonly ReviewerHostMaterial[]>;
-  reviewerHostTools?: readonly string[];
   loadCollectorSoul?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
@@ -311,7 +311,7 @@ export type RoleRuntimeDependencies = {
   loadMergerInput?(path: string): Promise<unknown>;
   mergerGitState?: MergerRoleDependencies["gitState"];
   createMergerGitState?(repositoryRoot: string): MergerRoleDependencies["gitState"];
-  auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
+  auditDoctorCompliance?(options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
   createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
@@ -326,15 +326,9 @@ export type RoleRuntimeDependencies = {
   shutdownReviewerAgent?(): Promise<void>;
   transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
-    input: SoulAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
-  auditFixerCompliance?(
-    input: import("./worker-role.ts").FixerAuditInput,
-    options: { context: ExtensionContext; signal?: AbortSignal },
-  ): Promise<ComplianceDecision>;
   auditReviewerCompliance?(
-    input: ReviewerAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<ComplianceDecision>;
   activationClock?(): string;
@@ -399,6 +393,8 @@ export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
+    // #102: one shared package-owned tool registration surface for all role runtimes.
+    installPackageOwnedToolRegistration(pi);
     pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
 
     let admitted = false;
@@ -581,7 +577,6 @@ export function createRoleRuntimeExtension(
       pi,
       {
         loadSoul: dependencies.loadJudgeSoul,
-        transcriptFromContext: dependencies.transcriptFromContext,
         auditSoulCompliance: dependencies.auditSoulCompliance,
       },
       hostActions,
@@ -601,13 +596,7 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadFixPacket(path);
         },
-        transcriptFromContext: dependencies.transcriptFromContext,
-        async auditCompliance(input, options) {
-          if (dependencies.auditFixerCompliance === undefined) throw new Error("Fixer compliance auditor is not configured");
-          return dependencies.auditFixerCompliance(input, options);
-        },
       },
-      hostActions,
     );
     const coder = createCoderRoleRuntime(
       pi,
@@ -642,22 +631,10 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadReviewerSoul();
         },
-        async loadTask(path) {
-          if (dependencies.loadReviewerTask === undefined) throw new Error("Reviewer runtime dependencies are not configured");
-          return dependencies.loadReviewerTask(path);
-        },
-        async loadCapabilities(path) {
-          if (dependencies.loadReviewerCapabilities === undefined) throw new Error("Reviewer runtime dependencies are not configured");
-          return dependencies.loadReviewerCapabilities(path);
-        },
         async createPinnedGitReader() {
           if (dependencies.createReviewerPinnedGitReader === undefined) throw new Error("Reviewer runtime dependencies are not configured");
           return dependencies.createReviewerPinnedGitReader();
         },
-        ...(dependencies.loadReviewerHostMaterials === undefined
-          ? {}
-          : { loadHostMaterials: dependencies.loadReviewerHostMaterials }),
-        hostTools() { return dependencies.reviewerHostTools ?? ["read", "grep", "find", "ls", "bash", "write", "edit"]; },
         async loadCanonicalSkillBinding(name) {
           if (dependencies.loadCanonicalSkillBinding === undefined) {
             throw new Error("Reviewer runtime dependencies are not configured");
@@ -671,11 +648,11 @@ export function createRoleRuntimeExtension(
         ...(dependencies.shutdownReviewerAgent === undefined
           ? {}
           : { shutdownAgent: dependencies.shutdownReviewerAgent }),
-        async auditCompliance(input, options) {
+        async auditCompliance(options) {
           if (dependencies.auditReviewerCompliance === undefined) {
             throw new Error("Reviewer runtime dependencies are not configured");
           }
-          return dependencies.auditReviewerCompliance(input, options);
+          return dependencies.auditReviewerCompliance(options);
         },
       },
       hostActions,
@@ -683,7 +660,7 @@ export function createRoleRuntimeExtension(
     const doctor = createDoctorRoleRuntime(pi, {
       async loadSoul() { if (!dependencies.loadDoctorSoul) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorSoul(); },
       async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
-      async auditCompliance(input, options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(input, options); },
+      async auditCompliance(options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(options); },
     }, hostActions);
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(pi, {
@@ -881,6 +858,13 @@ export function createRoleRuntimeExtension(
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
+        // Worker gates ②④ + ① baseline: envelope arms the worktree after role install.
+        // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.
+        if (entry.role === "coder" || entry.role === "fixer") {
+          installWorkerGitHooks(ctx.cwd);
+          if (entry.role === "coder") coder.armSubmissionGate(ctx.cwd, ctx.sessionManager);
+          else fixer.armSubmissionGate(ctx.cwd, ctx.sessionManager);
+        }
         appendAcceptedActivationToBook({
           ledgerHome,
           fact: buildAcceptedActivationFact({

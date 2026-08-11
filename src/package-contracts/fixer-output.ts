@@ -10,6 +10,12 @@ const authorityBlockerSchema = Type.Object({ cause: Type.Literal("authority_viol
 const prerequisiteBlockerSchema = Type.Object({ cause: Type.Literal("prerequisite_unmet"), prerequisiteId: Type.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }), evidence: nonblankTransportString });
 const blockerSchema = Type.Union([authorityBlockerSchema, prerequisiteBlockerSchema]);
 const exceptionSchema = Type.Object({ where: nonblankTransportString, reason: nonblankTransportString });
+/** ⑥ test evidence slip — require submit when diff has test changes; machine does not check existence/completeness/coverage. */
+const testEvidenceSchema = Type.Object({
+  contract: Type.String({ minLength: 1, description: "Contract the test change proves." }),
+  minimumNecessaryCost: Type.String({ minLength: 1, description: "One-line minimum necessary cost of the test change." }),
+  measuredDuration: Type.String({ minLength: 1, description: "Measured duration of the focused verification run." }),
+}, { description: "Test evidence slip (submit when diff includes test changes; machine does not verify)." });
 const completedClassResultSchema = Type.Object({
   name: nonblankTransportString,
   disposition: Type.Literal("completed"),
@@ -29,15 +35,16 @@ const completedClassResultsSchema = Type.Array(completedClassResultSchema, { min
 const fixerOutputVariants = Type.Union([
   Type.Object({ status: Type.Literal("planned", { description: "Plan-phase proposal outcome." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }) }),
   Type.Object({ status: Type.Literal("refused", { description: "Lawfully refused outcome." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: Type.String({ minLength: 1, description: "Work that cannot lawfully be performed." }), blocker: Type.Unsafe({ ...blockerSchema, description: "Lawful blocker preventing completion." }) }),
-  Type.Object({ status: Type.Literal("unfinished", { description: "Honest unfinished apply outcome." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: Type.String({ minLength: 1, description: "Work remaining after this invocation." }), classResults: Type.Optional(Type.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })) }),
-  Type.Object({ status: Type.Literal("completed", { description: "All assigned classes completed." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }) }),
+  Type.Object({ status: Type.Literal("unfinished", { description: "Honest unfinished apply outcome." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: Type.String({ minLength: 1, description: "Work remaining after this invocation." }), classResults: Type.Optional(Type.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })), testEvidence: Type.Optional(testEvidenceSchema) }),
+  Type.Object({ status: Type.Literal("completed", { description: "All assigned classes completed." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }), testEvidence: Type.Optional(testEvidenceSchema) }),
   Type.Object({ status: Type.Literal("refused", { description: "All assigned classes lawfully refused." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "Per-class refusal settlements." }) }),
-  Type.Object({ status: Type.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }) }),
+  Type.Object({ status: Type.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }), testEvidence: Type.Optional(testEvidenceSchema) }),
 ]);
 export const fixerOutputSchema = openToolObjectFromUnion(fixerOutputVariants);
 
 export type FixerBlocker = Static<typeof blockerSchema>;
 export type FixerClassResult = Static<typeof classResultSchema>;
+export type FixerTestEvidence = Static<typeof testEvidenceSchema>;
 export type FixerOutput = Static<typeof fixerOutputVariants>;
 export type FixerPhase = "plan" | "apply";
 

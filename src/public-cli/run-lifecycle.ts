@@ -452,8 +452,6 @@ type LoadedAdmittedRequestFields = {
   readonly packetPath?: string;
   readonly prerequisitesPath?: string;
   readonly prerequisites?: readonly FixerPrerequisite[];
-  readonly capabilitiesPath?: string;
-  readonly taskSha256?: string;
   readonly baseRevision?: string;
   readonly mergerInputPath?: string;
   readonly derived?: DerivedMergerEnvelope;
@@ -496,8 +494,6 @@ async function loadResumableRunRecord(
   let packetPath: string | undefined;
   let prerequisitesPath: string | undefined;
   let prerequisites: readonly FixerPrerequisite[] | undefined;
-  let capabilitiesPath: string | undefined;
-  let taskSha256: string | undefined;
   let baseRevision: string | undefined;
   let mergerInputPath: string | undefined;
   let derived: DerivedMergerEnvelope | undefined;
@@ -533,18 +529,6 @@ async function loadResumableRunRecord(
       }
       if (Array.isArray(record.prerequisites)) {
         prerequisites = record.prerequisites as FixerPrerequisite[];
-      }
-      if (
-        typeof record.capabilitiesPath === "string" &&
-        record.capabilitiesPath.trim() !== ""
-      ) {
-        capabilitiesPath = record.capabilitiesPath;
-      }
-      if (
-        typeof record.taskSha256 === "string" &&
-        record.taskSha256.trim() !== ""
-      ) {
-        taskSha256 = record.taskSha256;
       }
       if (
         typeof record.baseRevision === "string" &&
@@ -600,8 +584,6 @@ async function loadResumableRunRecord(
       ...(packetPath === undefined ? {} : { packetPath }),
       ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
       ...(prerequisites === undefined ? {} : { prerequisites }),
-      ...(capabilitiesPath === undefined ? {} : { capabilitiesPath }),
-      ...(taskSha256 === undefined ? {} : { taskSha256 }),
       ...(baseRevision === undefined ? {} : { baseRevision }),
       ...(mergerInputPath === undefined ? {} : { mergerInputPath }),
       ...(derived === undefined ? {} : { derived }),
@@ -783,8 +765,8 @@ export async function loadResumableFixerRun(
  * Used by public resume dispatch to pick the role-correct seat and path.
  */
 /**
- * Load a resumable Reviewer run for resume. Task, adapter-derived capabilities,
- * and optional base revision are restored from the admitted request (#111).
+ * Load a resumable Reviewer run for resume. Fixed base is restored from the
+ * admitted request; caller instruction remains optional provenance only.
  */
 export async function loadResumableReviewerRun(
   home: string,
@@ -796,27 +778,10 @@ export async function loadResumableReviewerRun(
       `role run ${runId} belongs to ${loaded.run.role}, not reviewer`,
     );
   }
-  const taskPath = loaded.admittedFields.taskPath;
-  if (taskPath === undefined) {
+  const baseRevision = loaded.admittedFields.baseRevision;
+  if (baseRevision === undefined || baseRevision.trim() === "") {
     throw new CliUsageError(
-      `role run admitted reviewer task path is missing: ${runId}`,
-    );
-  }
-  const capabilitiesPath = loaded.admittedFields.capabilitiesPath;
-  if (capabilitiesPath === undefined) {
-    throw new CliUsageError(
-      `role run admitted reviewer capabilities path is missing: ${runId}`,
-    );
-  }
-  const taskSha256 = loaded.admittedFields.taskSha256;
-  if (taskSha256 === undefined) {
-    throw new CliUsageError(
-      `role run admitted reviewer task digest is missing: ${runId}`,
-    );
-  }
-  if (loaded.admittedFields.instruction.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted reviewer task is blank: ${runId}`,
+      `role run admitted reviewer base revision is missing: ${runId}`,
     );
   }
   const admitted: AdmittedReviewerInvocation = {
@@ -825,18 +790,13 @@ export async function loadResumableReviewerRun(
     bookKey: loaded.run.bookKey,
     projectRoot: loaded.run.projectRoot,
     instruction: loaded.admittedFields.instruction,
-    instructionEmpty: false,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
-    taskPath,
-    capabilitiesPath,
-    taskSha256,
-    ...(loaded.admittedFields.baseRevision === undefined
-      ? {}
-      : { baseRevision: loaded.admittedFields.baseRevision }),
+    baseRevision,
   };
   return {
     admitted,

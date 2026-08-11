@@ -1,5 +1,7 @@
 import { Type } from "typebox";
-import { runAuditorRole } from "./auditor-role.js";
+import { executeAuditorChild, } from "./evidence-child-executor.js";
+/** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
+export const AUDITOR_DOSSIER_PROMPT = "Audit the current run dossier.";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
 // Transport must retain malformed candidates so they can settle as typed
@@ -24,16 +26,24 @@ export const AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_fail
 export class ComplianceResponseRetentionError extends Error {
     constructor(message, options) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
 }
-function retainComplianceResponse(context, response) {
+/** Unique owner for session custom-entry append with availability check and typed failure. */
+export function appendActiveSessionCustomEntry(context, customType, data, labels = {}) {
     const manager = context.sessionManager;
-    if (typeof manager?.appendCustomEntry !== "function")
-        throw new ComplianceResponseRetentionError("compliance response retention is unavailable");
+    if (typeof manager?.appendCustomEntry !== "function") {
+        throw new ComplianceResponseRetentionError(labels.unavailable ?? "session custom entry append is unavailable");
+    }
     try {
-        manager.appendCustomEntry(COMPLIANCE_RESPONSE_ENTRY_TYPE, { version: 1, response });
+        return manager.appendCustomEntry(customType, data);
     }
     catch (error) {
-        throw new ComplianceResponseRetentionError("compliance response retention failed", { cause: error });
+        throw new ComplianceResponseRetentionError(labels.failed ?? "session custom entry append failed", { cause: error });
     }
+}
+function retainComplianceResponse(context, response) {
+    appendActiveSessionCustomEntry(context, COMPLIANCE_RESPONSE_ENTRY_TYPE, { version: 1, response }, {
+        unavailable: "compliance response retention is unavailable",
+        failed: "compliance response retention failed",
+    });
 }
 function readListField(value) { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 export function readComplianceCandidate(arguments_, usage) {
@@ -50,6 +60,7 @@ export function readComplianceCandidate(arguments_, usage) {
     return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === undefined ? "missing" : "unknown" }, candidate: arguments_, ...(usage === undefined ? {} : { usage }) };
 }
 export async function runComplianceAudit(options) {
+    const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
     // The injected completion seam is deterministic unit infrastructure; the
     // ordinary provider path below still crosses the independent Pi role.
     if (options.runCompletion !== undefined) {
@@ -57,7 +68,7 @@ export async function runComplianceAudit(options) {
         if (model === undefined)
             throw new Error(`${options.roleLabel} requires an active model`);
         const dispatch = await prepareComplianceDispatch(model, options.context, options.roleLabel);
-        const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: options.serializedInput }], timestamp: Date.now() }], tools: [options.tool] };
+        const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }], tools: [options.tool] };
         const response = await options.runCompletion(dispatch.model, context, { ...dispatch.auth, ...(options.signal === undefined ? {} : { signal: options.signal }) });
         retainComplianceResponse(options.context, response);
         const call = [...response.content].reverse().find((part) => part.type === "toolCall" && part.name === options.tool.name);
@@ -65,6 +76,14 @@ export async function runComplianceAudit(options) {
             throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
         return readComplianceCandidate(call.arguments, response.usage);
     }
-    const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, retainResponse: (response) => retainComplianceResponse(options.context, response), ...(options.signal === undefined ? {} : { signal: options.signal }) });
+    const receipt = await executeAuditorChild({
+        tool: options.tool,
+        systemPrompt: options.systemPrompt,
+        prompt,
+        roleLabel: options.roleLabel,
+        context: options.context,
+        retainResponse: (response) => retainComplianceResponse(options.context, response),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
     return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }

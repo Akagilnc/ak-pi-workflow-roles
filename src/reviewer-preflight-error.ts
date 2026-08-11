@@ -1,7 +1,6 @@
 export const REVIEWER_CORRECTABLE_PREFLIGHT_CODES = [
   "base-invalid",
   "range-invalid",
-  "material-invalid",
 ] as const;
 
 export type ReviewerCorrectablePreflightCode = (typeof REVIEWER_CORRECTABLE_PREFLIGHT_CODES)[number];
