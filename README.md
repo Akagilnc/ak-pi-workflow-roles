@@ -37,7 +37,7 @@ Receipts are typed, so callers compose roles without parsing prose; ordering and
 
 ## Call the roles
 
-Most roles accept `--attach <file>` (repeatable, frozen at admission); Reviewer instead gathers review evidence independently. All roles accept `--project <path>`. An instruction is optional for judge, collector, and doctor, and required nonblank for coder, fixer, reviewer, and merger.
+Most roles accept `--attach <file>` (repeatable, frozen at admission), but Reviewer does not. Reviewer requires `--base <revision>` to select the fixed point, and its review materials are acquired through the package-owned bundle mechanism rather than caller attachments. All roles accept `--project <path>`. An instruction is optional for judge, collector, and doctor, and required nonblank for coder, fixer, reviewer, and merger.
 
 ```bash
 # judge — adjudicate the supplied materials; infers its burden, no burden flag
@@ -50,7 +50,8 @@ ak-role coder apply --attach ./plan.md "Implement the approved slice."
 
 # reviewer — fixed-target two-axis review (Standards + Spec)
 ak-role reviewer --base main "Review the branch against the governing issue and repository authority."
-# --base is a hint; completed ≠ approved — read the findings in the Terminal
+# --base is required and pins the fixed point; Reviewer does not accept --attach
+# completed ≠ approved — read the findings in the Terminal
 
 # collector — GitHub PR review evidence; github.com only, needs gh auth; one-shot
 ak-role collector --pr 42 --leg codex:CodexBot --leg cursor:cursor-bot,cursor-bot-2
