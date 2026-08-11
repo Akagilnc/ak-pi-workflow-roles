@@ -187,7 +187,7 @@ setInterval(() => {}, 1000);
       home,
       agentDir: join(home, ".pi", "agent"),
       timeoutMs: 750,
-      env: { PI_BINARY: stub },
+      env: isolatedTestProcessEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, ".pi", "agent") }),
     });
     await waitForFile(ready, resultPromise);
     t.mock.timers.tick(750);
