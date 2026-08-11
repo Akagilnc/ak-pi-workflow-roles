@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import { executeAuditorChild, } from "./evidence-child-executor.js";
+import { createAuditorDossierTool } from "./auditor-dossier-tool.js";
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
 export const AUDITOR_DOSSIER_PROMPT = "Audit the current run dossier.";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
@@ -63,6 +64,7 @@ export async function runComplianceAudit(options) {
     const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
     const receipt = await executeAuditorChild({
         tool: options.tool,
+        dossierTool: createAuditorDossierTool(options.runDirectory),
         systemPrompt: options.systemPrompt,
         prompt,
         roleLabel: options.roleLabel,

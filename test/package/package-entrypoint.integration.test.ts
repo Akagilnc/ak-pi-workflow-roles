@@ -258,12 +258,14 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       } as any;
 // Judge/reviewer/doctor auditors take zero hand-delivered materials (#233).
       // Fixer LLM auditor retired (#242) — active auditor seats only.
-      // Seed parent-session subjects + AK_ROLE_RUN_DIR so dossier preflight passes.
+      // Seed the real run record shape; the locator binds from the parent record,
+      // never from an environment-variable convention.
       const runDirectory = resolve(installedRoot, "fixture-run");
-      await mkdir(runDirectory, { recursive: true });
-      const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-      process.env.AK_ROLE_RUN_DIR = runDirectory;
-      try {
+      await mkdir(resolve(runDirectory, "session"), { recursive: true });
+      await mkdir(resolve(runDirectory, "attachments"));
+      await mkdir(resolve(runDirectory, "artifacts"));
+      await writeFile(resolve(runDirectory, "admitted-request.json"), "{}\n");
+      context.sessionManager = SessionManager.open(resolve(runDirectory, "session/session.jsonl"));
       context.sessionManager.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
       context.sessionManager.appendMessage({
         role: "assistant",
@@ -285,6 +287,8 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         const completion: ComplianceCompletion = async (_model, request) => {
           calls += 1;
           prompt = request.systemPrompt ?? "";
+          const locator = request.tools?.find((tool) => tool.name === "ak_get_run_dossier");
+          assert.ok(locator, `${role.name} must expose the shared dossier locator`);
           return fauxAssistantMessage(fauxToolCall(role.toolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
         };
         await role.run(completion);
@@ -331,10 +335,6 @@ test("cold-installed package audits active auditor seats from editable Souls", a
           await rm(role.soulPath, { recursive: true, force: true });
           await writeFile(role.soulPath, original, "utf8");
         }
-      }
-      } finally {
-        if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-        else process.env.AK_ROLE_RUN_DIR = previousRunDir;
       }
       });
     },

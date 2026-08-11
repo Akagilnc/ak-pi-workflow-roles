@@ -1,193 +1,79 @@
-/**
- * Shortest real tracer for judge-lane audit (#233 acceptance):
- * self-locate from the machine pointer, gather frozen law, pass and revise.
- * Does not mock internal helpers as the system under test.
- */
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context } from "@earendil-works/pi-ai";
-import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { packageRoot, runPiSubprocess, withColdInstalledPackage } from "../helpers/pi-test-harness.ts";
 
-import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
-
-function seedJudgeCandidate(sessionManager: SessionManager, note: string): void {
-  sessionManager.appendMessage({
-    role: "user",
-    content: "OWNER: adjudicate issue 233 against the frozen law in the run dossier",
-    timestamp: Date.now(),
-  });
-  sessionManager.appendMessage({
-    role: "assistant",
-    content: [{
-      type: "toolCall",
-      id: "verdict-1",
-      name: JUDGE_OUTPUT_TOOL_NAME,
-      arguments: { judgeStatus: "converged", note },
-    }],
-    api: "openai-responses",
-    provider: "fixture",
-    model: "fixture",
-    usage: {
-      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-    stopReason: "toolUse",
-    timestamp: Date.now(),
-  });
+function seedProject(project: string): void {
+  execFileSync("git", ["init", "-b", "main"], { cwd: project });
+  execFileSync("git", ["config", "user.email", "tracer@test.local"], { cwd: project });
+  execFileSync("git", ["config", "user.name", "Dossier Tracer"], { cwd: project });
+  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
 }
 
-function auditContext(
-  cwd: string,
-  sessionManager: SessionManager,
-  provider: ReturnType<typeof fauxProvider>,
-): ExtensionContext {
-  return {
-    cwd,
-    model: provider.getModel(),
-    modelRegistry: {
-      getProvider() { return provider.provider; },
-      async getProviderAuth() { return { auth: { apiKey: "fixture" } }; },
-      async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "fixture" }; },
-    },
-    sessionManager,
-  } as unknown as ExtensionContext;
-}
-
-async function withFrozenJudgeFixture<T>(
-  run: (input: {
-    root: string;
-    runDirectory: string;
-    lawPath: string;
-  }) => Promise<T>,
-): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "ak-judge-fixture-tracer-"));
-  const runDirectory = join(root, "run-frozen-judge");
-  await mkdir(runDirectory);
-  // Frozen target lives inside the run dossier — model must self-locate, not
-  // read a cwd-root convenience path that skips dossier resolution.
-  const lawPath = join(runDirectory, "LAW.md");
-  await writeFile(lawPath, "Judge must cite authority before converge.\n");
-  const previous = process.env.AK_ROLE_RUN_DIR;
-  process.env.AK_ROLE_RUN_DIR = runDirectory;
+async function runPackagedTracer(marker: string): Promise<{ runDirectory: string; trace: any[] }> {
+  const home = await mkdtemp(join(tmpdir(), `ak-dossier-${marker}-`));
   try {
-    return await run({ root, runDirectory, lawPath });
+    return await withColdInstalledPackage(home, async ({ installedRoot }) => {
+      const project = join(home, "work");
+      await mkdir(project, { recursive: true });
+      seedProject(project);
+      const attachment = join(home, "evidence.txt");
+      await writeFile(attachment, `attachment-${marker}\n`);
+      const agentDir = join(home, ".pi", "agent");
+      await mkdir(agentDir, { recursive: true });
+      await writeFile(join(agentDir, "navigator-model.json"), JSON.stringify({ model: "ak-dossier-tracer/faux-1" }));
+      const { runAkRole } = await import(resolve(installedRoot, "src/public-cli/cli.ts"));
+      const provider = resolve(packageRoot, "test/fixtures/auditor-dossier-tracer-provider.ts");
+      const tracePath = join(home, "auditor-trace.jsonl");
+      const runId = `run-${marker}`;
+      const errors: string[] = [];
+      const result = await runAkRole([
+        "judge", "--model", "ak-dossier-tracer/faux-1", "--thinking", "off",
+        "--attach", attachment, "--project", project, `request-${marker}`,
+      ], {
+        packageRoot: installedRoot,
+        home,
+        agentDir,
+        cwd: project,
+        createRunId: () => runId,
+        judgeExtraPiArgs: ["-e", provider],
+        judgeTimeoutMs: 90_000,
+        io: { stdout() {}, stderr(text: string) { errors.push(text); } },
+        piRunner: async (args: string[], options: any) => {
+          const child = await runPiSubprocess(args, {
+            cwd: options.cwd,
+            timeoutMs: options.timeoutMs,
+            env: { ...options.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", AK_DOSSIER_TRACER_MARKER: marker, AK_DOSSIER_TRACER_TRACE: tracePath },
+          });
+          return { ...child, args: [...args] };
+        },
+      });
+      assert.equal(result.exitCode, 0, errors.join(""));
+      const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs", `${runId}@judge`);
+      const trace = (await readFile(tracePath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      assert.equal(trace[0]?.tool, "ak_get_run_dossier", "auditor must call the run-bound locator first");
+      const readPaths = trace.filter((entry) => entry.tool === "read").map((entry) => entry.path);
+      assert.deepEqual(readPaths.slice(0, 2), [join(runDirectory, "admitted-request.json"), join(runDirectory, "session", "session.jsonl")]);
+      assert.equal(readPaths.length, 3);
+      assert.ok(readPaths[2].startsWith(`${join(runDirectory, "attachments")}/`));
+      return { runDirectory, trace };
+    });
   } finally {
-    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previous;
-    await rm(root, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
   }
 }
 
-function toolResultText(context: Context): string {
-  return context.messages
-    .filter((message) => message.role === "toolResult")
-    .map((message) => JSON.stringify(message.content))
-    .join("\n");
-}
-
-test("frozen judge fixture: self-locate dossier, gather law, pass", async () => {
-  await withFrozenJudgeFixture(async ({ root, runDirectory, lawPath }) => {
-    const sessionManager = SessionManager.inMemory(root);
-    seedJudgeCandidate(sessionManager, "authority cited");
-
-    let turns = 0;
-    const complete = (context: Context) => {
-      turns += 1;
-      if (turns === 1) {
-        // Self-locate via the machine pointer (soul: 从自身落卷位置 / cwd+pointer).
-        return fauxAssistantMessage(
-          [fauxToolCall("bash", { command: "printenv AK_ROLE_RUN_DIR" })],
-          { stopReason: "toolUse" },
-        );
-      }
-      if (turns === 2) {
-        assert.ok(
-          toolResultText(context).includes(runDirectory),
-          "auditor must observe the run dossier pointer before reading law",
-        );
-        return fauxAssistantMessage(
-          [fauxToolCall("read", { path: lawPath })],
-          { stopReason: "toolUse" },
-        );
-      }
-      assert.ok(
-        toolResultText(context).includes("cite authority"),
-        "auditor must have read the frozen law target from the run dossier",
-      );
-      return fauxAssistantMessage(
-        [fauxToolCall(JUDGE_AUDIT_TOOL_NAME, {
-          status: "pass",
-          violations: [],
-          conflicts: [],
-          decisionGate: null,
-        })],
-        { stopReason: "toolUse" },
-      );
-    };
-
-    const faux = fauxProvider({ provider: "judge-fixture-pass" });
-    faux.setResponses([complete, complete, complete]);
-
-    const decision = await createPiJudgeAuditor()({
-      context: auditContext(root, sessionManager, faux),
-    });
-
-    assert.equal(decision.status, "pass");
-    assert.equal(turns, 3);
-  });
+test("cold-installed public judge auditor locates and reads its real run dossier", { timeout: 120_000 }, async () => {
+  await runPackagedTracer("single");
 });
 
-test("frozen judge fixture: self-locate dossier, gather law, revise with concrete violation", async () => {
-  await withFrozenJudgeFixture(async ({ root, runDirectory, lawPath }) => {
-    const sessionManager = SessionManager.inMemory(root);
-    seedJudgeCandidate(sessionManager, "no authority");
-
-    let turns = 0;
-    const complete = (context: Context) => {
-      turns += 1;
-      if (turns === 1) {
-        return fauxAssistantMessage(
-          [fauxToolCall("bash", { command: "printenv AK_ROLE_RUN_DIR" })],
-          { stopReason: "toolUse" },
-        );
-      }
-      if (turns === 2) {
-        assert.ok(toolResultText(context).includes(runDirectory));
-        return fauxAssistantMessage(
-          [fauxToolCall("read", { path: lawPath })],
-          { stopReason: "toolUse" },
-        );
-      }
-      assert.ok(toolResultText(context).includes("cite authority"));
-      return fauxAssistantMessage(
-        [fauxToolCall(JUDGE_AUDIT_TOOL_NAME, {
-          status: "revise",
-          violations: ["candidate note lacks authority citation required by LAW.md"],
-          conflicts: [],
-          decisionGate: null,
-        })],
-        { stopReason: "toolUse" },
-      );
-    };
-
-    const faux = fauxProvider({ provider: "judge-fixture-revise" });
-    faux.setResponses([complete, complete, complete]);
-
-    const decision = await createPiJudgeAuditor()({
-      context: auditContext(root, sessionManager, faux),
-    });
-
-    assert.equal(decision.status, "revise");
-    if (decision.status === "revise") {
-      assert.deepEqual(decision.violations, [
-        "candidate note lacks authority citation required by LAW.md",
-      ]);
-    }
-    assert.equal(turns, 3);
-  });
+test("two independent packaged Pi processes cannot cross auditor dossiers", { timeout: 180_000 }, async () => {
+  const [a, b] = await Promise.all([runPackagedTracer("parallel-a"), runPackagedTracer("parallel-b")]);
+  assert.equal(JSON.stringify(a.trace).includes(b.runDirectory), false);
+  assert.equal(JSON.stringify(b.trace).includes(a.runDirectory), false);
 });
