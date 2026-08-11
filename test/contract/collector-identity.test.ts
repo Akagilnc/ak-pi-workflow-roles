@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { normalizeIssueComment, normalizePullRequestReaction, normalizeReview, normalizeReviewComment } from "../../src/collector-github.ts";
-import { normalizeReviewCommentEvidence, normalizeReviewEvidence } from "../../src/collector-evidence.ts";
+import { normalizeIssueCommentEvidence, normalizePullRequestReactionEvidence, normalizeReviewCommentEvidence, normalizeReviewEvidence } from "../../src/collector-evidence.ts";
 import { extractCollectorEvidenceIdentityGroups, extractGitHubIdentityGroups, groupGitHubMaterialsByIdentity } from "../../src/collector-identity.ts";
 
 const reactionFixture = new URL("../fixtures/collector/codex-pr-reaction-1165.json", import.meta.url);
@@ -29,6 +29,24 @@ test("real GitHub bytes group attendance by machine user and App identity", asyn
     displayLogin: "chatgpt-codex-connector[bot]",
     materials: [{ kind: "issue_comment", id: 5234537035 }],
   }]);
+});
+
+test("real Codex reaction and App comment preserve the richest machine identity in either order", async () => {
+  const reactionRaw = JSON.parse(await readFile(reactionFixture, "utf8"))[0];
+  const commentRaw = JSON.parse(await readFile(noFindingFixture, "utf8"));
+  const observedAt = "2026-08-11T00:00:00Z";
+  const reaction = normalizePullRequestReactionEvidence(normalizePullRequestReaction(reactionRaw), observedAt);
+  const comment = normalizeIssueCommentEvidence(normalizeIssueComment(commentRaw), observedAt);
+
+  for (const records of [[reaction, comment], [comment, reaction]]) {
+    const groups = extractCollectorEvidenceIdentityGroups(records, "target-head");
+    assert.equal(groups.length, 1);
+    assert.deepEqual(groups[0]!.identity, { userType: "Bot", userId: 199175422, appId: 1144995 });
+    assert.deepEqual(groups[0]!.materials.map(({ kind, id }) => ({ kind, id })).sort((a, b) => a.id - b.id), [
+      { kind: "reaction", id: 445776942 },
+      { kind: "issue_comment", id: 5234537035 },
+    ]);
+  }
 });
 
 test("#245 full PR 1168 replay preserves typed attendance, findings, evidence ownership, and head relation", async () => {

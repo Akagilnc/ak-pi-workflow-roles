@@ -47,9 +47,20 @@ function materialKind(material: GitHubIdentityMaterial): CollectorIdentityGroup[
 function identityKey(identity: GitHubMachineIdentity | null): string {
   if (identity === null) return "unassigned";
   // GitHub omits App metadata on some surfaces (notably review comments).
-  // The stable user type/id pair is the grouping identity; appId is retained
-  // when observed but must not split one actor across transport surfaces.
+  // The stable user ID is the grouping identity; richer observed structure is
+  // merged below and must not split one actor across transport surfaces.
   return String(identity.userId);
+}
+
+function mergeMachineIdentity(
+  current: GitHubMachineIdentity | null,
+  observed: GitHubMachineIdentity | null,
+): GitHubMachineIdentity | null {
+  if (current === null) return observed;
+  if (observed === null) return current;
+  if (current.appId === undefined && observed.appId !== undefined) return observed;
+  if (current.appId !== undefined && observed.appId === undefined) return current;
+  return observed.userType < current.userType ? observed : current;
 }
 
 /** Group observed GitHub materials only by API machine identity fields. */
@@ -68,6 +79,8 @@ export function groupGitHubMaterialsByIdentity(
         materials: [],
       };
       groups.set(key, group);
+    } else {
+      group.identity = mergeMachineIdentity(group.identity, identity);
     }
     group.materials.push({ kind: materialKind(material), id: material.id });
   }
@@ -180,6 +193,7 @@ export function extractCollectorEvidenceIdentityGroups(
     if (existing === undefined) {
       groups.set(key, extracted);
     } else {
+      existing.identity = mergeMachineIdentity(existing.identity, extracted.identity);
       existing.materials.push(...extracted.materials);
       existing.findings.push(...extracted.findings);
     }
