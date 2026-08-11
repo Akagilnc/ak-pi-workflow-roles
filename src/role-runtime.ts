@@ -303,7 +303,6 @@ export type RoleRuntimeDependencies = {
   loadReviewerCapabilities?(path: string): Promise<Uint8Array>;
   createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
   loadReviewerHostMaterials?(): Promise<readonly ReviewerHostMaterial[]>;
-  reviewerHostTools?: readonly string[];
   loadCollectorSoul?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
@@ -660,7 +659,6 @@ export function createRoleRuntimeExtension(
         ...(dependencies.loadReviewerHostMaterials === undefined
           ? {}
           : { loadHostMaterials: dependencies.loadReviewerHostMaterials }),
-        hostTools() { return dependencies.reviewerHostTools ?? ["read", "grep", "find", "ls", "bash", "write", "edit"]; },
         async loadCanonicalSkillBinding(name) {
           if (dependencies.loadCanonicalSkillBinding === undefined) {
             throw new Error("Reviewer runtime dependencies are not configured");

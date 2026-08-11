@@ -23,7 +23,7 @@ import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
-import { REVIEWER_CHILD_TOOLS, REVIEWER_PREREQUISITES } from "../../src/reviewer-admission.ts";
+import { REVIEWER_PREREQUISITES } from "../../src/reviewer-admission.ts";
 import { compileMechanicalBundle, projectMechanicalBundleIdentity } from "../../src/reviewer-construction.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -236,7 +236,6 @@ test("admitReviewerInvocation derives task-bound capabilities and freezes attach
     const capabilities = JSON.parse(capabilitiesRaw) as {
       version: number;
       taskSha256: string;
-      tools: string[];
       prerequisiteOperations: string[];
     };
     assert.equal(capabilities.version, 1);
@@ -245,7 +244,7 @@ test("admitReviewerInvocation derives task-bound capabilities and freezes attach
       admitted.taskSha256,
       sha256Hex(new TextEncoder().encode(taskText)),
     );
-    assert.deepEqual(capabilities.tools, [...REVIEWER_CHILD_TOOLS]);
+    assert.equal("tools" in capabilities, false);
     assert.deepEqual(capabilities.prerequisiteOperations, [
       ...REVIEWER_PREREQUISITES,
     ]);

@@ -4,8 +4,8 @@ import { acquireReviewerPinnedEvidence, createReviewerPinnedGitReader, immutable
 export { createReviewerPinnedGitReader, immutableReviewerPin } from "./reviewer-pinned-git.js";
 import { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIdentity } from "./reviewer-prompt-identity.js";
 import { sha256Hex } from "./sha256.js";
-import { admitReviewerProposal, ReviewerAdmissionError, REVIEWER_CHILD_TOOLS, REVIEWER_PREREQUISITES } from "./reviewer-admission.js";
-export { REVIEWER_CHILD_TOOLS, REVIEWER_PREREQUISITES } from "./reviewer-admission.js";
+import { admitReviewerProposal, ReviewerAdmissionError, REVIEWER_PREREQUISITES } from "./reviewer-admission.js";
+export { REVIEWER_PREREQUISITES } from "./reviewer-admission.js";
 import { constructReviewerDispatch, ReviewerConstructionError } from "./reviewer-construction.js";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.js";
 export { sha256Hex } from "./sha256.js";
@@ -22,18 +22,18 @@ export class ReviewerPreflightError extends Error {
 }
 const frozen = (xs) => Object.freeze([...xs]);
 const exact = (v, keys) => typeof v === "object" && v !== null && !Array.isArray(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
-export function toReviewerExecution(dispatch) { return Object.freeze({ identity: dispatch.identity, recipe: dispatch.recipe, targetSnapshot: immutableReviewerPin(dispatch.targetSnapshot), bundle: dispatch.bundle, prerequisiteOperations: frozen(dispatch.prerequisiteOperations), legs: Object.freeze(dispatch.legs.map(l => Object.freeze({ axis: l.axis, prompt: Object.freeze({ ...l.prompt }), grant: Object.freeze({ tools: frozen(l.grant.tools), bashCommands: frozen(l.grant.bashCommands), prerequisiteOperations: frozen(l.grant.prerequisiteOperations) }) }))) }); }
+export function toReviewerExecution(dispatch) { return Object.freeze({ identity: dispatch.identity, recipe: dispatch.recipe, targetSnapshot: immutableReviewerPin(dispatch.targetSnapshot), bundle: dispatch.bundle, prerequisiteOperations: frozen(dispatch.prerequisiteOperations), legs: Object.freeze(dispatch.legs.map(l => Object.freeze({ axis: l.axis, prompt: Object.freeze({ ...l.prompt }), grant: Object.freeze({ prerequisiteOperations: frozen(l.grant.prerequisiteOperations) }) }))) }); }
 export function parseReviewerCapabilities(raw, task) { let value, text; try {
     text = exactUtf8(raw, "Reviewer capabilities");
     value = JSON.parse(text);
 }
 catch {
     throw new Error("Invalid Reviewer capabilities UTF-8 JSON");
-} if (!exact(value, ["version", "taskSha256", "tools", "prerequisiteOperations"]))
-    throw new Error("Invalid Reviewer capabilities keys"); const v = value; if (v.version !== 1 || typeof v.taskSha256 !== "string" || !Array.isArray(v.tools) || !Array.isArray(v.prerequisiteOperations))
+} if (!exact(value, ["version", "taskSha256", "prerequisiteOperations"]))
+    throw new Error("Invalid Reviewer capabilities keys"); const v = value; if (v.version !== 1 || typeof v.taskSha256 !== "string" || !Array.isArray(v.prerequisiteOperations))
     throw new Error("Invalid Reviewer capabilities schema"); if (!/^[0-9a-f]{64}$/.test(v.taskSha256) || v.taskSha256 !== sha256Hex(task))
-    throw new Error("Reviewer capabilities task digest mismatch"); if (!v.tools.every((x) => typeof x === "string" && REVIEWER_CHILD_TOOLS.includes(x)) || !v.prerequisiteOperations.every((x) => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || new Set(v.tools).size !== v.tools.length || new Set(v.prerequisiteOperations).size !== v.prerequisiteOperations.length)
-    throw new Error("Reviewer capabilities contain unknown or duplicate values"); return Object.freeze({ version: 1, taskSha256: v.taskSha256, document: reviewerPromptIdentity(text), tools: frozen(v.tools), prerequisiteOperations: frozen(v.prerequisiteOperations) }); }
+    throw new Error("Reviewer capabilities task digest mismatch"); if (!v.prerequisiteOperations.every((x) => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || new Set(v.prerequisiteOperations).size !== v.prerequisiteOperations.length)
+    throw new Error("Reviewer capabilities contain unknown or duplicate values"); return Object.freeze({ version: 1, taskSha256: v.taskSha256, document: reviewerPromptIdentity(text), prerequisiteOperations: frozen(v.prerequisiteOperations) }); }
 const identity = (proposal) => { try {
     const serialized = JSON.stringify(proposal);
     if (serialized === undefined)
@@ -45,7 +45,7 @@ catch (error) {
 } };
 const preflight = (error) => error instanceof ReviewerPreflightError ? error : error instanceof ReviewerAdmissionError || error instanceof ReviewerConstructionError || error instanceof ReviewerCorrectablePreflightError ? new ReviewerPreflightError(error.code, error.diagnostic) : undefined;
 export function createReviewerDispatcher(d) {
-    const task = Uint8Array.from(d.task), target = immutableReviewerPin(d.reader.pin), host = frozen(d.hostTools);
+    const task = Uint8Array.from(d.task), target = immutableReviewerPin(d.reader.pin);
     let accepted, fatal, accepting = false;
     const rejections = [], closedAttempts = [];
     const close = (id, cause) => { const e = { identity: id, reason: "acceptance-closed", started: false }; if (cause !== undefined)
@@ -54,7 +54,7 @@ export function createReviewerDispatcher(d) {
     return Object.freeze({ get rejections() { return Object.freeze([...rejections]); }, get acceptance() { return accepted; }, get closedAttempts() { return Object.freeze([...closedAttempts]); }, async propose(proposal, invocation) { const id = identity(proposal); if (fatal !== undefined)
             throw fatal; if (accepted || accepting)
             return close(id); let dispatch; try {
-            const admitted = admitReviewerProposal(proposal, d.capabilities, host);
+            const admitted = admitReviewerProposal(proposal, d.capabilities);
             const evidence = await acquireReviewerPinnedEvidence(d.reader, target, admitted, d.hostMaterials);
             let taskText;
             try {

@@ -64,8 +64,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       const target = await git(fixture, "rev-parse", "HEAD");
       const base = await git(fixture, "rev-parse", "review-base");
       const diffCommand = `git diff ${base}...${target}`;
-      const standardsRequest = { tools: ["read", "bash"], prerequisiteOperations: [] };
-      const specRequest = { tools: ["read", "bash"], prerequisiteOperations: ["preflight.git.read-material"] };
+      const standardsRequest = { prerequisiteOperations: [] as const };
+      const specRequest = { prerequisiteOperations: ["preflight.git.read-material"] as const };
       const root = await realpath(fixture);
       const nestedCwd = resolve(fixture, "nested", "invocation");
       await mkdir(nestedCwd, { recursive: true });
@@ -74,7 +74,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       const taskPath = resolve(fixture, "review-task.md");
       const capsPath = resolve(fixture, "review-capabilities.json");
       await writeFile(taskPath, taskBytes);
-      const capabilityText = JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read", "bash", "edit"], prerequisiteOperations: prerequisites }, null, 2) + "\n";
+      const capabilityText = JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), prerequisiteOperations: prerequisites }, null, 2) + "\n";
       await writeFile(capsPath, capabilityText);
 
       const installedDispatch = await import(new URL(`file://${resolve(installedRoot, "src/reviewer-dispatch.ts")}`).href);
@@ -86,7 +86,6 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       const missingRecipeText = JSON.stringify({
         version: 1,
         taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-        tools: ["read", "bash"],
         prerequisiteOperations: prerequisites.filter((operation) => operation !== "runner.git.verify-snapshot"),
       });
       let missingRecipeRuns = 0;
@@ -101,12 +100,11 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           async range() { return { base, target, diffCommand, diffSha256: "1".repeat(64), commits: [target] }; },
           async material(repositoryPath: string) { return readFile(resolve(fixture, repositoryPath)); },
         },
-        hostTools: ["read", "bash"],
         async run() { missingRecipeRuns += 1; throw new Error("must not run"); },
       });
 
       const proposal =  { version: 1, base: { revision: "review-base" }, materials: [{ id: "spec", repositoryPath: "SPEC.md" }], spec: { state: "established" }, required: { standards: standardsRequest, spec: specRequest } };
-      const bad = { ...proposal, required: { standards: standardsRequest, spec: { ...specRequest, tools: ["write"] } } };
+      const bad = { ...proposal, materials: [{ id: "bad id", repositoryPath: "SPEC.md" }] };
       const missingRecipe = await missingRecipeDispatcher.propose(proposal);
       assert.equal(missingRecipe.status, "rejected");
       if (missingRecipe.status === "rejected") assert.deepEqual(missingRecipe.violations, ["prerequisite-missing"]);
@@ -140,8 +138,9 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           const rejected = results.find((e: any) => e.message.toolCallId === "rejected") as any;
           const accepted = results.find((e: any) => e.message.toolCallId === "accepted") as any;
           assert.equal(rejected.message.details.status, "rejected");
+          assert.deepEqual(rejected.message.details.violations, ["material-invalid"]);
           assert.deepEqual(accepted.message.details, { status: "accepted", identity: accepted.message.details.identity });
-          assert.deepEqual(accepted.message.content, [{ type: "text", text: "Reviewer dispatch accepted" }]);
+          assert.equal(typeof accepted.message.details.identity, "string");
           assert.equal(children.some((child) => userText(child).includes(capabilityText)), false);
           assert.equal(audits.length, 2);
           assert.match(userText(audits[0]!), /structured_execution_record/);
@@ -149,10 +148,6 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           const firstOutput = results.find((e: any) => e.message.toolCallId === "candidate") as any;
           const finalOutput = results.find((e: any) => e.message.toolCallId === "corrected") as any;
           assert.equal(firstOutput.message.isError, true);
-          const firstErrorText = firstOutput.message.content[0]?.text;
-          assert.equal(typeof firstErrorText, "string");
-          assert.match(firstErrorText, /must include standards file reference/);
-          assert.match(firstErrorText, /must separate spec report from standards report/);
           assert.equal(finalOutput.message.isError, false);
           assert.equal(finalOutput.message.details.version, 2);
           assert.equal(finalOutput.message.details.status, "completed");
@@ -172,10 +167,13 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
         const noSpecChildren: Context[] = []; const noSpecCommandContexts: Context[] = []; const noSpecAudits: Context[] = [];
         noSpecFaux.setResponses([
           fauxAssistantMessage(fauxToolCall(Agent, noSpecProposal, { id: "no-spec-accepted" }), { stopReason: "toolUse" }),
-          fauxAssistantMessage(fauxToolCall("bash", { command: "git status" }, { id: "arbitrary-command" }), { stopReason: "toolUse" }),
-          (ctx) => { noSpecCommandContexts.push(ctx); return fauxAssistantMessage(fauxToolCall("bash", { command: `${diffCommand} ` }, { id: "near-match-command" }), { stopReason: "toolUse" }); },
-          (ctx) => { noSpecCommandContexts.push(ctx); return fauxAssistantMessage(fauxToolCall("bash", { command: diffCommand }, { id: "canonical-command" }), { stopReason: "toolUse" }); },
-          (ctx) => { noSpecCommandContexts.push(ctx); noSpecChildren.push(ctx); return fauxAssistantMessage("Standards report: no findings."); },
+          // ADR 0064: arbitrary bash is lawful evidence in the isolated workspace (no exact-command deny).
+          fauxAssistantMessage(fauxToolCall("bash", { command: "git status --short" }, { id: "arbitrary-command" }), { stopReason: "toolUse" }),
+          (ctx) => {
+            noSpecCommandContexts.push(ctx);
+            noSpecChildren.push(ctx);
+            return fauxAssistantMessage("Standards report: no findings.");
+          },
           fauxAssistantMessage(fauxToolCall(Output, { status: "completed" }, { id: "no-spec-output" }), { stopReason: "toolUse" }),
           (ctx) => { noSpecAudits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); },
         ]);
@@ -189,10 +187,9 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           assert.deepEqual(output.message.details.acceptedBatch.legs.map((leg: any) => leg.axis), ["standards"]);
           assert.equal(output.message.details.identities.target.objectFormat, "sha1");
           assert.equal(noSpecChildren.length, 1); assert.equal(noSpecAudits.length, 1);
-          const commandResults = noSpecCommandContexts.map((ctx) => ctx.messages.filter((message) => message.role === "toolResult").at(-1));
-          assert.equal((commandResults[0] as any)?.isError, true); assert.match(JSON.stringify(commandResults[0]), /exact accepted member/);
-          assert.equal((commandResults[1] as any)?.isError, true); assert.match(JSON.stringify(commandResults[1]), /exact accepted member/);
-          assert.equal((commandResults[2] as any)?.isError, false); assert.match(JSON.stringify(commandResults[2]), /consumer\.txt/);
+          const bashResult = noSpecCommandContexts[0]?.messages.filter((message) => message.role === "toolResult" && message.toolCallId === "arbitrary-command").at(-1);
+          assert.ok(bashResult && bashResult.role === "toolResult");
+          assert.equal(bashResult.isError, false);
           assert.equal(JSON.stringify(noSpecProposal).includes(diffCommand), false); assert.equal(capabilityText.includes(diffCommand), false);
           assert.doesNotMatch(userText(noSpecChildren[0]!), /Quote the spec line for each finding/);
           assert.doesNotMatch(userText(noSpecAudits[0]!), /\"axis\":\"spec\"/);

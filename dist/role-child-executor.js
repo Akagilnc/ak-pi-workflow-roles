@@ -6,7 +6,6 @@ import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
 export const AUDITOR_TURN_LIMIT = 8;
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
-export const AUDITOR_EVIDENCE_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
 export class AuditorTurnLimitError extends Error {
     limit;
     observedTurns;
@@ -147,7 +146,10 @@ export async function executeAuditorChild(options) {
     try {
         const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
         const cwd = options.context.cwd ?? process.cwd();
-        const loader = new DefaultResourceLoader({ cwd, agentDir: scratch, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt });
+        // ADR 0064: evidence roles have unrestricted tools. Do not close extension
+        // sources or pass a fixed tools allowlist (omitting tools degrades to Pi's
+        // default four). Enable every tool the real session registry exposes.
+        const loader = new DefaultResourceLoader({ cwd, agentDir: scratch, settingsManager: settings, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt });
         await loader.reload();
         const tool = wrapPackageOwnedToolDefinition({
             ...options.tool,
@@ -171,7 +173,9 @@ export async function executeAuditorChild(options) {
         const parentSessionFile = parentSessionManager?.getSessionFile?.();
         const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
         const auditorSessionManager = childSessionManager(parentSessionManager, cwd, "auditor-roles");
-        const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, tools: [...AUDITOR_EVIDENCE_TOOLS, tool.name], customTools: [tool], sessionManager: auditorSessionManager, settingsManager: settings });
+        const { session } = await createAgentSession({ cwd, agentDir: scratch, model: dispatch.model, thinkingLevel: options.context.thinkingLevel ?? "off", modelRuntime: runtime, resourceLoader: loader, customTools: [tool], sessionManager: auditorSessionManager, settingsManager: settings });
+        const registeredToolNames = session.getAllTools().map((entry) => entry.name);
+        session.setActiveToolsByName(registeredToolNames);
         const binding = {
             version: 1,
             parent: {
@@ -188,7 +192,9 @@ export async function executeAuditorChild(options) {
         let evidenceToolFailure;
         let retentionFailure;
         let retainedResponse;
-        const evidenceToolNames = new Set(AUDITOR_EVIDENCE_TOOLS);
+        // Evidence failure identity is derived from whichever non-decision tools the
+        // live registry actually enabled — never from a package-fixed allowlist.
+        const evidenceToolNames = new Set(registeredToolNames.filter((name) => name !== tool.name));
         const findEvidenceToolFailure = (response) => {
             const evidenceCallIds = new Set(response.content.flatMap((part) => part.type === "toolCall" && evidenceToolNames.has(part.name) ? [part.id] : []));
             return [...session.messages].reverse().find((message) => message.role === "toolResult" && evidenceCallIds.has(message.toolCallId) && message.isError);

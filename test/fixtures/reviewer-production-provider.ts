@@ -48,7 +48,7 @@ export default function reviewerProductionProvider(pi: ExtensionAPI): void {
             sourcePath,
           }],
           spec: { state: "not-established" },
-          required: { standards: { tools: ["read"], prerequisiteOperations: allPrerequisites } },
+          required: { standards: { prerequisiteOperations: allPrerequisites } },
         }, { id: "production-agent" }),
         { stopReason: "toolUse" },
       );

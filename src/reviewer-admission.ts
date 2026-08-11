@@ -1,15 +1,14 @@
 import type { ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
-export const REVIEWER_CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"] as const;
 export const REVIEWER_PREREQUISITES = [
   "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range",
   "preflight.git.list-ordered-commits", "preflight.git.read-material",
   "runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot",
 ] as const;
-export type ReviewerChildToolName = (typeof REVIEWER_CHILD_TOOLS)[number];
 export type ReviewerPrerequisiteOperation = (typeof REVIEWER_PREREQUISITES)[number];
 export type ReviewerMaterialSource = "pinned-git" | "host-input";
-export type ReviewerCapabilityRequest = Readonly<{ tools: readonly ReviewerChildToolName[]; prerequisiteOperations: readonly ReviewerPrerequisiteOperation[] }>;
+/** Axis prerequisite request. Tool rights are not granted here (ADR 0064). */
+export type ReviewerCapabilityRequest = Readonly<{ prerequisiteOperations: readonly ReviewerPrerequisiteOperation[] }>;
 export type ReviewerCapabilitiesV1 = ReviewerCapabilityRequest & Readonly<{ version: 1; taskSha256: string; document: ReviewerPromptIdentity }>;
 export type MaterialSelection = Readonly<{ id: string; repositoryPath: string; source: ReviewerMaterialSource; sourcePath?: string }>;
 export type ReviewerProposalV1 = Readonly<{ version: 1; base: Readonly<{ revision: string }>; materials: readonly (Readonly<{ id: string; repositoryPath: string; source?: ReviewerMaterialSource; sourcePath?: string }>)[]; relevanceHints?: Readonly<{ standards?: readonly string[]; spec?: readonly string[] }>; spec: Readonly<{ state: "established" | "not-established" }>; required: Readonly<{ standards: ReviewerCapabilityRequest; spec?: ReviewerCapabilityRequest }> }>;
@@ -25,15 +24,17 @@ const fail = (code: ReviewerAdmissionError["code"], diagnostic: string): never =
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const unique = (xs: readonly unknown[]) => new Set(xs).size === xs.length;
 const frozen = <T extends string>(xs: readonly T[]): readonly T[] => Object.freeze([...xs]);
-const immutableRequest = (r: ReviewerCapabilityRequest): ReviewerCapabilityRequest => Object.freeze({ tools:frozen(r.tools), prerequisiteOperations:frozen(r.prerequisiteOperations) });
-function request(value: unknown, ceiling: ReviewerCapabilitiesV1, hostTools: readonly string[]): ReviewerCapabilityRequest {
+const immutableRequest = (r: ReviewerCapabilityRequest): ReviewerCapabilityRequest => Object.freeze({ prerequisiteOperations: frozen(r.prerequisiteOperations) });
+function request(value: unknown, ceiling: ReviewerCapabilitiesV1): ReviewerCapabilityRequest {
   if (!record(value)) fail("capability-invalid", "required capability request must be an object");
-  const {tools,prerequisiteOperations}=value as Record<string, unknown>;
-  if (!Array.isArray(tools)||!Array.isArray(prerequisiteOperations)||!tools.every(x=>typeof x==="string"&&(REVIEWER_CHILD_TOOLS as readonly string[]).includes(x))||!prerequisiteOperations.every(x=>typeof x==="string"&&(REVIEWER_PREREQUISITES as readonly string[]).includes(x))||!unique(tools)||!unique(prerequisiteOperations)||tools.some(x=>!ceiling.tools.includes(x as ReviewerChildToolName)||!hostTools.includes(x))||prerequisiteOperations.some(x=>!ceiling.prerequisiteOperations.includes(x as ReviewerPrerequisiteOperation))) fail("capability-invalid", "required.tools/prerequisiteOperations must be unique, known, and within the capability and host ceilings");
-  return immutableRequest({tools:tools as ReviewerChildToolName[],prerequisiteOperations:prerequisiteOperations as ReviewerPrerequisiteOperation[]});
+  const { prerequisiteOperations } = value as Record<string, unknown>;
+  if (!Array.isArray(prerequisiteOperations) || !prerequisiteOperations.every((x) => typeof x === "string" && (REVIEWER_PREREQUISITES as readonly string[]).includes(x)) || !unique(prerequisiteOperations) || prerequisiteOperations.some((x) => !ceiling.prerequisiteOperations.includes(x as ReviewerPrerequisiteOperation))) {
+    fail("capability-invalid", "required.prerequisiteOperations must be unique, known, and within the capability ceiling");
+  }
+  return immutableRequest({ prerequisiteOperations: prerequisiteOperations as ReviewerPrerequisiteOperation[] });
 }
 const SAFE_ID=/^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-export function admitReviewerProposal(proposal: unknown, ceiling: ReviewerCapabilitiesV1, hostTools: readonly string[]): AdmittedReviewerProposal {
+export function admitReviewerProposal(proposal: unknown, ceiling: ReviewerCapabilitiesV1): AdmittedReviewerProposal {
   if(!record(proposal)||proposal.version!==1) fail("proposal-invalid", "proposal.version must equal 1");
   const p=proposal as Record<string, unknown>;
   if(!record(p.base)||typeof p.base.revision!=="string"||!p.base.revision) fail("base-invalid", "base.revision must be a nonempty string");
@@ -59,7 +60,7 @@ export function admitReviewerProposal(proposal: unknown, ceiling: ReviewerCapabi
   let relevanceHints: AdmittedReviewerProposal["relevanceHints"];
   if(p.relevanceHints!==undefined){if(!record(p.relevanceHints))fail("material-invalid", "relevanceHints must be an object");const hints=p.relevanceHints as Record<string, unknown>;for(const hs of [hints.standards,hints.spec])if(hs!==undefined&&(!Array.isArray(hs)||!hs.every(x=>typeof x==="string")||!unique(hs)))fail("material-invalid", "relevanceHints axes must contain unique strings");relevanceHints=Object.freeze({...(hints.standards===undefined?{}:{standards:frozen(hints.standards as string[])}),...(hints.spec===undefined?{}:{spec:frozen(hints.spec as string[])})});}
   for(const op of REVIEWER_PREREQUISITES.filter(x=>x.startsWith("preflight."))) if(!ceiling.prerequisiteOperations.includes(op)) fail("prerequisite-missing", `capability prerequisiteOperations is missing ${op}`);
-  const standardsGrant=request(required.standards,ceiling,hostTools); const specGrant=spec.state==="established"?request(required.spec,ceiling,hostTools):undefined;
+  const standardsGrant=request(required.standards,ceiling); const specGrant=spec.state==="established"?request(required.spec,ceiling):undefined;
   const runner=REVIEWER_PREREQUISITES.filter(x=>x.startsWith("runner.")); for(const op of runner)if(!ceiling.prerequisiteOperations.includes(op))fail("prerequisite-missing", `capability prerequisiteOperations is missing ${op}`);
   return Object.freeze({baseRevision:base.revision as string,materials:Object.freeze(materials),...(relevanceHints===undefined?{}:{relevanceHints}),standardsGrant,...(specGrant?{specGrant}:{}),prerequisiteOperations:frozen([...new Set([...standardsGrant.prerequisiteOperations,...(specGrant?.prerequisiteOperations??[]),...runner])])});
 }
