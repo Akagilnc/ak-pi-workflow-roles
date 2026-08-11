@@ -3,9 +3,14 @@
  * Ordinary Pi package auto-registration does not load the role runtime; only
  * this adapter (or an intentional developer `pi -e`) crosses that boundary.
  */
-import { spawn } from "node:child_process";
-import { join } from "node:path";
+import { execFile, spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { access, realpath } from "node:fs/promises";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { platform } from "node:process";
+import { promisify } from "node:util";
 
+import { recordLaunchedPiIdentity } from "./invocation.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
 import type { ControlledFailureCause } from "./terminal.ts";
 
@@ -82,6 +87,8 @@ export type ExplicitInternalPiResult = {
   timedOut: boolean;
   /** Full argv passed to the Pi process (includes explicit -e load). */
   args: string[];
+  /** Canonical identity of the executable selected and launched by this runner. */
+  piIdentity?: { executable: string; version: string };
   /**
    * Production-owned typed failure channel. Set only when the runner already
    * knows the cause without stderr-prose inference. Settlement trusts this over
@@ -128,16 +135,54 @@ export type ExplicitInternalPiRunner = (
   },
 ) => Promise<ExplicitInternalPiResult>;
 
-/** Default runner: resolve `pi` on PATH (or PI_BINARY) for one subprocess. */
+const execFileAsync = promisify(execFile);
+
+async function resolveSelectedPi(command: string, cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
+  // Match child_process.spawn lookup: path-like commands and every relative or
+  // empty PATH entry are interpreted from the child's cwd. When PATH is absent,
+  // Node uses the platform search default rather than an empty search list.
+  const searchPath = env.PATH ?? (platform === "win32" ? (process.env.PATH ?? "") : "/usr/bin:/bin");
+  const candidates = isAbsolute(command) || command.includes("/")
+    ? [resolve(cwd, command)]
+    : searchPath.split(delimiter).map((dir) => resolve(cwd, dir, command));
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.X_OK);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") continue;
+      throw error;
+    }
+    // Once a candidate qualifies, canonicalization failures are real filesystem
+    // failures, not evidence that PATH contained no executable.
+    return await realpath(candidate);
+  }
+  throw new Error(`Pi executable not found: ${command}`);
+}
+
+async function selectedPiIdentity(command: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{ executable: string; version: string }> {
+  const executable = await resolveSelectedPi(command, cwd, env);
+  const { stdout } = await execFileAsync(executable, ["--version"], {
+    cwd,
+    env,
+    encoding: "utf8",
+  });
+  const version = stdout.trim();
+  if (version === "") throw new Error(`Pi executable returned an empty version: ${executable}`);
+  return { executable, version };
+}
+
+/** Default runner: canonically select `pi` on PATH (or PI_BINARY) and launch that exact file. */
 export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
   args,
   options,
 ) => {
   const command = options.env.PI_BINARY ?? "pi";
+  const piIdentity = await selectedPiIdentity(command, options.cwd, options.env);
   return await new Promise((resolveResult, reject) => {
     // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
     // evidence). Do not pipe or accumulate it. stderr stays piped for diagnostics.
-    const child = spawn(command, [...args], {
+    const child = spawn(piIdentity.executable, [...args], {
       cwd: options.cwd,
       env: options.env,
       stdio: ["ignore", "ignore", "pipe"],
@@ -156,7 +201,14 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
     };
     // The spawn event is the child-process readiness seam. Start the caller's
     // budget only after the child is actually created, not while spawn is pending.
-    child.once("spawn", armTimeoutAfterChildReady);
+    let identityRecorded: Promise<void> = Promise.resolve();
+    child.once("spawn", () => {
+      armTimeoutAfterChildReady();
+      const runDirectory = options.env.AK_ROLE_RUN_DIR;
+      if (typeof runDirectory === "string" && runDirectory !== "") {
+        identityRecorded = recordLaunchedPiIdentity(runDirectory, piIdentity);
+      }
+    });
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });
@@ -166,12 +218,16 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
     });
     child.on("close", (code) => {
       if (timer !== undefined) clearTimeout(timer);
-      resolveResult({
-        code,
-        stderr,
-        timedOut,
-        args: [...args],
-      });
+      void identityRecorded.then(
+        () => resolveResult({
+          code,
+          stderr,
+          timedOut,
+          args: [...args],
+          piIdentity,
+        }),
+        reject,
+      );
     });
   });
 };

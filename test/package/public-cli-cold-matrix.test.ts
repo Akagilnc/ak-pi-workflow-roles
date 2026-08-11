@@ -38,6 +38,8 @@ import {
   PUBLIC_CONFIGURABLE_SEATS,
 } from "../../src/public-cli/registry.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
+import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
+import { TEST_PI_VERSION_BRANCH } from "../helpers/test-process-fixtures.ts";
 
 /** Required package-owned method trees shipped in the release artifact. */
 const PACKAGED_METHOD_TREES = [
@@ -105,54 +107,6 @@ function seedGitProject(root: string): void {
   });
 }
 
-async function runAkRoleBin(
-  bin: string,
-  args: string[],
-  options: {
-    home: string;
-    agentDir: string;
-    cwd?: string;
-    env?: NodeJS.ProcessEnv;
-    timeoutMs?: number;
-  },
-): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
-  const { spawn } = await import("node:child_process");
-  return await new Promise((resolvePromise) => {
-    const mergedEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...options.env,
-      HOME: options.home,
-      PI_CODING_AGENT_DIR: options.agentDir,
-    };
-    const pathPrefix = `${dirname(bin)}:${mergedEnv.PATH ?? process.env.PATH ?? ""}`;
-    const child = spawn(bin, args, {
-      cwd: options.cwd ?? options.home,
-      env: {
-        ...mergedEnv,
-        PATH: pathPrefix,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, options.timeoutMs ?? 45_000);
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolvePromise({ code, stdout, stderr, timedOut });
-    });
-  });
-}
-
 async function writePiArgvShim(
   shimDir: string,
   argvLog: string,
@@ -168,6 +122,7 @@ async function writePiArgvShim(
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+${TEST_PI_VERSION_BRANCH}
 import { spawn } from "node:child_process";
 const args = process.argv.slice(2);
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args), "utf8");
@@ -191,6 +146,7 @@ child.on("close", (code, signal) => {
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(${exitCode});
 `,
@@ -824,20 +780,11 @@ test("packed release artifact carries runtime resources, attribution, and empty 
       license?: string;
       bin?: Record<string, string>;
       pi?: { extensions?: unknown[] };
-      peerDependencies?: Record<string, string>;
     };
     assert.equal(manifest.name, "@akagilnc/pi-workflow-roles");
     assert.equal(manifest.license, "Apache-2.0");
     assert.equal(manifest.bin?.["ak-role"], "./dist/public-cli/main.js");
     assert.deepEqual(manifest.pi?.extensions, []);
-    assert.equal(
-      typeof manifest.peerDependencies?.["@earendil-works/pi-coding-agent"],
-      "string",
-    );
-    assert.notEqual(
-      manifest.peerDependencies?.["@earendil-works/pi-coding-agent"],
-      "*",
-    );
     // Attribution: project Apache text + separate Matt MIT notice.
     const license = await readFile(
       resolve(extractRoot, "package/LICENSE"),

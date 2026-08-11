@@ -19,10 +19,12 @@ type ParkedChild = ChildProcess & { stdin: NonNullable<ChildProcess["stdin"]> };
 
 const liveChildren = new Set<ParkedChild>();
 
-afterEach(() => {
-  for (const child of liveChildren) {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+afterEach(async () => {
+  const cleanup = [...liveChildren];
+  for (const child of cleanup) {
+    if (child.exitCode === null && child.signalCode === null) child.stdin.end();
   }
+  await Promise.all(cleanup.map((child) => waitForExit(child)));
   liveChildren.clear();
 });
 
