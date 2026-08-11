@@ -1,0 +1,51 @@
+# Publishes every main merge to the npm registry so `pi update --extensions`
+# (unversioned npm source) always pulls the latest build. The version is
+# stamped at publish time as 0.1.<commit-count> — monotonic per merge, no
+# write-back commit, no version-line conflicts between parallel PRs.
+# Requires the NPM_TOKEN repository secret (npm automation token owning the
+# @akagilnc scope); without it the job skips loudly instead of failing.
+name: publish-registry
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Skip when NPM_TOKEN is absent
+        id: gate
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN secret is not set — skipping publish." >> "$GITHUB_STEP_SUMMARY"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install
+        if: steps.gate.outputs.publish == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Stamp version and publish
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION="0.1.$(git rev-list --count HEAD)"
+          npm version "$VERSION" --no-git-tag-version
+          npm publish --access public
+          echo "Published @akagilnc/pi-workflow-roles@$VERSION" >> "$GITHUB_STEP_SUMMARY"
