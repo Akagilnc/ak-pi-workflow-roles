@@ -8959,6 +8959,11 @@ var authorityBlockerSchema = typebox_exports.Object({ cause: typebox_exports.Lit
 var prerequisiteBlockerSchema = typebox_exports.Object({ cause: typebox_exports.Literal("prerequisite_unmet"), prerequisiteId: typebox_exports.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }), evidence: nonblankTransportString });
 var blockerSchema = typebox_exports.Union([authorityBlockerSchema, prerequisiteBlockerSchema]);
 var exceptionSchema = typebox_exports.Object({ where: nonblankTransportString, reason: nonblankTransportString });
+var testEvidenceSchema = typebox_exports.Object({
+  contract: typebox_exports.String({ minLength: 1, description: "Contract the test change proves." }),
+  minimumNecessaryCost: typebox_exports.String({ minLength: 1, description: "One-line minimum necessary cost of the test change." }),
+  measuredDuration: typebox_exports.String({ minLength: 1, description: "Measured duration of the focused verification run." })
+}, { description: "Test evidence slip (submit when diff includes test changes; machine does not verify)." });
 var completedClassResultSchema = typebox_exports.Object({
   name: nonblankTransportString,
   disposition: typebox_exports.Literal("completed"),
@@ -8977,10 +8982,10 @@ var completedClassResultsSchema = typebox_exports.Array(completedClassResultSche
 var fixerOutputVariants = typebox_exports.Union([
   typebox_exports.Object({ status: typebox_exports.Literal("planned", { description: "Plan-phase proposal outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }) }),
   typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "Lawfully refused outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work that cannot lawfully be performed." }), blocker: typebox_exports.Unsafe({ ...blockerSchema, description: "Lawful blocker preventing completion." }) }),
-  typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "Honest unfinished apply outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work remaining after this invocation." }), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })) }),
-  typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "All assigned classes completed." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }) }),
+  typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "Honest unfinished apply outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work remaining after this invocation." }), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
+  typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "All assigned classes completed." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
   typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "All assigned classes lawfully refused." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class refusal settlements." }) }),
-  typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }) })
+  typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) })
 ]);
 var fixerOutputSchema = openToolObjectFromUnion(fixerOutputVariants);
 function validateFixerOutput(value, _phase) {
@@ -12462,13 +12467,11 @@ import { dirname as dirname5, join as join7 } from "node:path";
 import { fileURLToPath } from "node:url";
 var AUDITOR_SOUL_ROLES = [
   "judge",
-  "fixer",
   "reviewer",
   "doctor"
 ];
 var auditorSoulPaths = Object.freeze({
   judge: fileURLToPath(new URL("../souls/judge-auditor.md", import.meta.url)),
-  fixer: fileURLToPath(new URL("../souls/fixer-auditor.md", import.meta.url)),
   reviewer: fileURLToPath(
     new URL("../souls/reviewer-auditor.md", import.meta.url)
   ),
@@ -12526,10 +12529,6 @@ function readComplianceCandidate(arguments_, usage) {
 // src/doctor-auditor.ts
 var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
 var tool = createComplianceDecisionTool(DOCTOR_AUDIT_TOOL_NAME, "Return whether the proposed Doctor testimony demonstrably follows the supplied Doctor Soul and frozen evidence record. Completed receipts are later augmented with runtime-owned cost; empty findings are valid.");
-
-// src/fixer-auditor.ts
-var FIXER_AUDIT_TOOL_NAME = "ak_fixer_audit_decision";
-var tool2 = createComplianceDecisionTool(FIXER_AUDIT_TOOL_NAME, "Decide whether the Fixer candidate demonstrably complies with its supplied law and assignment.");
 
 // src/judge-auditor.ts
 var JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
@@ -13633,8 +13632,6 @@ function auditToolNameForRole(role) {
   switch (role) {
     case "judge":
       return JUDGE_AUDIT_TOOL_NAME;
-    case "fixer":
-      return FIXER_AUDIT_TOOL_NAME;
     case "reviewer":
       return REVIEWER_AUDIT_TOOL_NAME;
     case "doctor":
@@ -13645,8 +13642,6 @@ function outputToolNameForAuditedRole(role) {
   switch (role) {
     case "judge":
       return JUDGE_OUTPUT_TOOL_NAME;
-    case "fixer":
-      return FIXER_OUTPUT_TOOL_NAME;
     case "reviewer":
       return REVIEWER_OUTPUT_TOOL_NAME;
     case "doctor":
@@ -13906,7 +13901,7 @@ async function trySettleComplianceAuditIncompleteTerminalResult(admitted) {
   if (!AUDITOR_SOUL_ROLES.includes(admitted.role)) {
     return void 0;
   }
-  const outputToolName = admitted.role === "judge" ? JUDGE_OUTPUT_TOOL_NAME : admitted.role === "fixer" ? FIXER_OUTPUT_TOOL_NAME : admitted.role === "reviewer" ? REVIEWER_OUTPUT_TOOL_NAME : DOCTOR_OUTPUT_TOOL_NAME;
+  const outputToolName = admitted.role === "judge" ? JUDGE_OUTPUT_TOOL_NAME : admitted.role === "reviewer" ? REVIEWER_OUTPUT_TOOL_NAME : DOCTOR_OUTPUT_TOOL_NAME;
   const entries = await readLawfulSettlementEntries(admitted);
   if (entries === void 0) return void 0;
   const extracted = extractComplianceAuditIncompleteRoleOutcome(
@@ -14447,23 +14442,6 @@ function extractFixerRoleOutcome(entries) {
     if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "fixer",
-      FIXER_OUTPUT_TOOL_NAME
-    );
-    if (escalation !== void 0) {
-      return {
-        outcome: {
-          kind: "audit_escalation",
-          role: "fixer",
-          status: "audit_escalation",
-          decisiveFacts: { ...escalation.details }
-        }
-      };
-    }
     if (isUnboundAuditEscalationFace(details)) continue;
     try {
       validateAcceptedDetails(FIXER_OUTPUT_TOOL_NAME, details);
