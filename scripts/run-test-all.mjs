@@ -131,11 +131,13 @@ function runNodeTest(files, { concurrency } = {}) {
     const child = spawn("node", args, {
       cwd: root,
       stdio: "inherit",
-      env: Object.fromEntries(
-        Object.entries(process.env).filter(
-          ([name]) => name !== "AK_ROLE_RUN_DIR" && name !== "PI_CODING_AGENT_DIR",
-        ),
-      ),
+      // Right-hand masks survive any downstream ambient-env remerge; spawn
+      // naturally omits undefined values from the child environment.
+      env: {
+        ...process.env,
+        AK_ROLE_RUN_DIR: undefined,
+        PI_CODING_AGENT_DIR: undefined,
+      },
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {

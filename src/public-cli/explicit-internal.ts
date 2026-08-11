@@ -7,6 +7,7 @@ import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { platform } from "node:process";
 import { promisify } from "node:util";
 
 import { recordLaunchedPiIdentity } from "./invocation.ts";
@@ -136,10 +137,14 @@ export type ExplicitInternalPiRunner = (
 
 const execFileAsync = promisify(execFile);
 
-async function resolveSelectedPi(command: string, env: NodeJS.ProcessEnv): Promise<string> {
+async function resolveSelectedPi(command: string, cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
+  // Match child_process.spawn lookup: path-like commands and every relative or
+  // empty PATH entry are interpreted from the child's cwd. When PATH is absent,
+  // Node uses the platform search default rather than an empty search list.
+  const searchPath = env.PATH ?? (platform === "win32" ? (process.env.PATH ?? "") : "/usr/bin:/bin");
   const candidates = isAbsolute(command) || command.includes("/")
-    ? [resolve(command)]
-    : (env.PATH ?? "").split(delimiter).filter(Boolean).map((dir) => resolve(dir, command));
+    ? [resolve(cwd, command)]
+    : searchPath.split(delimiter).map((dir) => resolve(cwd, dir, command));
   for (const candidate of candidates) {
     try {
       await access(candidate, constants.X_OK);
@@ -155,9 +160,10 @@ async function resolveSelectedPi(command: string, env: NodeJS.ProcessEnv): Promi
   throw new Error(`Pi executable not found: ${command}`);
 }
 
-async function selectedPiIdentity(command: string, env: NodeJS.ProcessEnv): Promise<{ executable: string; version: string }> {
-  const executable = await resolveSelectedPi(command, env);
+async function selectedPiIdentity(command: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{ executable: string; version: string }> {
+  const executable = await resolveSelectedPi(command, cwd, env);
   const { stdout } = await execFileAsync(executable, ["--version"], {
+    cwd,
     env,
     encoding: "utf8",
   });
@@ -172,7 +178,7 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
   options,
 ) => {
   const command = options.env.PI_BINARY ?? "pi";
-  const piIdentity = await selectedPiIdentity(command, options.env);
+  const piIdentity = await selectedPiIdentity(command, options.cwd, options.env);
   return await new Promise((resolveResult, reject) => {
     // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
     // evidence). Do not pipe or accumulate it. stderr stays piped for diagnostics.

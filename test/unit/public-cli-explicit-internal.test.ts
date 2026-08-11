@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import test from "node:test";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -66,6 +66,45 @@ test("default runner preserves unexpected executable filesystem failures", async
       }),
       (error: NodeJS.ErrnoException) => error.code === "ELOOP" && !error.message.includes("Pi executable not found"),
     );
+  });
+});
+
+test("default runner resolves PI_BINARY and PATH with the child cwd semantics", async () => {
+  await withTempHome(async (home) => {
+    const childCwd = join(home, "child");
+    const bin = join(childCwd, "bin");
+    await mkdir(bin, { recursive: true });
+    const pi = join(bin, "pi");
+    await writeExecutableStub(pi, `#!${process.execPath}\nprocess.exit(0);\n`);
+
+    const cases = [
+      { name: "relative PI_BINARY", command: "bin/pi", path: "/no/such/path", expected: pi },
+      { name: "relative PATH entry", command: "pi", path: "bin", expected: pi },
+      { name: "empty PATH entry", command: "pi", path: `${delimiter}missing`, expected: join(childCwd, "pi") },
+    ] as const;
+    await symlink(pi, join(childCwd, "pi"));
+    for (const scenario of cases) {
+      const result = await defaultExplicitInternalPiRunner([], {
+        cwd: childCwd,
+        env: isolatedTestProcessEnv({
+          env: { PATH: scenario.path, PI_BINARY: scenario.command },
+          home,
+          agentDir: join(home, ".pi", "agent"),
+        }),
+      });
+      assert.equal(result.code, 0, scenario.name);
+      assert.equal(result.piIdentity?.executable, await realpath(scenario.expected), scenario.name);
+      assert.equal(result.piIdentity?.version, "test-pi-1.0.0", scenario.name);
+    }
+
+    if (process.platform !== "win32") {
+      const result = await defaultExplicitInternalPiRunner(["-c", "true"], {
+        cwd: childCwd,
+        env: isolatedTestProcessEnv({ env: { PI_BINARY: "bash" }, home, agentDir: join(home, ".pi", "agent") }),
+      });
+      assert.equal(result.code, 0, "missing PATH uses Node's platform default");
+      assert.match(result.piIdentity?.version ?? "", /bash/i);
+    }
   });
 });
 
@@ -158,6 +197,52 @@ setInterval(() => {}, 1000);
     assert.notEqual(result.code, 0);
     assert.equal(await readFile(signalFile, "utf8"), "SIGTERM");
     assert.equal((await readFile(join(sessionDir, "session.jsonl"), "utf8")), sessionLine);
+  });
+});
+
+test("explicit activation masks ambient ledger and machine Pi home after env remerge", async () => {
+  await withTempHome(async (home) => {
+    const machineRun = join(home, "machine-run");
+    const machineAgent = join(home, "machine-agent");
+    const testAgent = join(home, "test-agent");
+    const invocation = join(machineRun, "invocation.json");
+    const machineMarker = join(machineAgent, "marker");
+    const observed = join(home, "observed.json");
+    await mkdir(machineRun, { recursive: true });
+    await mkdir(machineAgent, { recursive: true });
+    await writeFile(invocation, "outer-invocation", "utf8");
+    await writeFile(machineMarker, "machine-home", "utf8");
+    const stub = join(home, "env-child.mjs");
+    await writeExecutableStub(stub, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ run: process.env.AK_ROLE_RUN_DIR, agent: process.env.PI_CODING_AGENT_DIR }));
+process.exit(0);
+`);
+
+    const previousRun = process.env.AK_ROLE_RUN_DIR;
+    const previousAgent = process.env.PI_CODING_AGENT_DIR;
+    process.env.AK_ROLE_RUN_DIR = machineRun;
+    process.env.PI_CODING_AGENT_DIR = machineAgent;
+    try {
+      const isolated = isolatedTestProcessEnv({ env: { PI_BINARY: stub }, home, agentDir: testAgent });
+      const result = await runExplicitInternalActivation({
+        packageRoot,
+        cwd: home,
+        home,
+        agentDir: testAgent,
+        env: isolated,
+      });
+      assert.equal(result.code, 0);
+    } finally {
+      if (previousRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = previousRun;
+      if (previousAgent === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgent;
+    }
+
+    assert.deepEqual(JSON.parse(await readFile(observed, "utf8")), { agent: testAgent });
+    assert.equal(await readFile(invocation, "utf8"), "outer-invocation");
+    assert.equal(await readFile(machineMarker, "utf8"), "machine-home");
   });
 });
 
