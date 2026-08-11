@@ -194,6 +194,24 @@ async function writeRoleInvocationLedger(
   );
 }
 
+/** Add the identity returned by the production Pi launch seam to its existing ledger page. */
+export async function recordLaunchedPiIdentity(
+  runDirectory: string,
+  identity: { executable: string; version: string },
+): Promise<void> {
+  const ledgerPath = join(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile(ledgerPath, "utf8")) as Record<string, unknown>;
+  await writeFile(
+    ledgerPath,
+    `${JSON.stringify({
+      ...current,
+      piExecutable: identity.executable,
+      piVersion: identity.version,
+    }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 export type ParseJudgeArgvResult = {
   instruction: string;
   attachmentPaths: string[];

@@ -3,9 +3,13 @@
  * Ordinary Pi package auto-registration does not load the role runtime; only
  * this adapter (or an intentional developer `pi -e`) crosses that boundary.
  */
-import { spawn } from "node:child_process";
-import { join } from "node:path";
+import { execFile, spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { access, realpath } from "node:fs/promises";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { promisify } from "node:util";
 
+import { recordLaunchedPiIdentity } from "./invocation.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
 import type { ControlledFailureCause } from "./terminal.ts";
 
@@ -82,6 +86,8 @@ export type ExplicitInternalPiResult = {
   timedOut: boolean;
   /** Full argv passed to the Pi process (includes explicit -e load). */
   args: string[];
+  /** Canonical identity of the executable selected and launched by this runner. */
+  piIdentity?: { executable: string; version: string };
   /**
    * Production-owned typed failure channel. Set only when the runner already
    * knows the cause without stderr-prose inference. Settlement trusts this over
@@ -128,16 +134,45 @@ export type ExplicitInternalPiRunner = (
   },
 ) => Promise<ExplicitInternalPiResult>;
 
-/** Default runner: resolve `pi` on PATH (or PI_BINARY) for one subprocess. */
+const execFileAsync = promisify(execFile);
+
+async function resolveSelectedPi(command: string, env: NodeJS.ProcessEnv): Promise<string> {
+  const candidates = isAbsolute(command) || command.includes("/")
+    ? [resolve(command)]
+    : (env.PATH ?? "").split(delimiter).filter(Boolean).map((dir) => resolve(dir, command));
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.X_OK);
+      return await realpath(candidate);
+    } catch {
+      // Continue through PATH in selection order.
+    }
+  }
+  throw new Error(`Pi executable not found: ${command}`);
+}
+
+async function selectedPiIdentity(command: string, env: NodeJS.ProcessEnv): Promise<{ executable: string; version: string }> {
+  const executable = await resolveSelectedPi(command, env);
+  const { stdout } = await execFileAsync(executable, ["--version"], {
+    env,
+    encoding: "utf8",
+  });
+  const version = stdout.trim();
+  if (version === "") throw new Error(`Pi executable returned an empty version: ${executable}`);
+  return { executable, version };
+}
+
+/** Default runner: canonically select `pi` on PATH (or PI_BINARY) and launch that exact file. */
 export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
   args,
   options,
 ) => {
   const command = options.env.PI_BINARY ?? "pi";
+  const piIdentity = await selectedPiIdentity(command, options.env);
   return await new Promise((resolveResult, reject) => {
     // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
     // evidence). Do not pipe or accumulate it. stderr stays piped for diagnostics.
-    const child = spawn(command, [...args], {
+    const child = spawn(piIdentity.executable, [...args], {
       cwd: options.cwd,
       env: options.env,
       stdio: ["ignore", "ignore", "pipe"],
@@ -156,7 +191,14 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
     };
     // The spawn event is the child-process readiness seam. Start the caller's
     // budget only after the child is actually created, not while spawn is pending.
-    child.once("spawn", armTimeoutAfterChildReady);
+    let identityRecorded: Promise<void> = Promise.resolve();
+    child.once("spawn", () => {
+      armTimeoutAfterChildReady();
+      const runDirectory = options.env.AK_ROLE_RUN_DIR;
+      if (typeof runDirectory === "string" && runDirectory !== "") {
+        identityRecorded = recordLaunchedPiIdentity(runDirectory, piIdentity);
+      }
+    });
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });
@@ -166,12 +208,16 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
     });
     child.on("close", (code) => {
       if (timer !== undefined) clearTimeout(timer);
-      resolveResult({
-        code,
-        stderr,
-        timedOut,
-        args: [...args],
-      });
+      void identityRecorded.then(
+        () => resolveResult({
+          code,
+          stderr,
+          timedOut,
+          args: [...args],
+          piIdentity,
+        }),
+        reject,
+      );
     });
   });
 };
