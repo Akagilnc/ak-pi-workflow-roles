@@ -110,24 +110,7 @@ function lawfulCollectorReceipt() {
     finalObservationTime: "2026-01-01T00:01:00.000Z",
     finalSnapshotId: "snap-1",
     targetHead: "b".repeat(40),
-    reports: [
-      {
-        kind: "terminal-fact",
-        legId: "codex",
-        terminalStatus: "missing",
-        report: "no review",
-        windowRelation: "current",
-        evidenceRefs: ["snap-1"],
-      },
-    ],
-    legs: [
-      {
-        legId: "codex",
-        status: "missing",
-        rationale: "no qualifying review",
-        evidenceRefs: ["snap-1"],
-      },
-    ],
+    groups: [],
     requestAttempts: [],
     snapshots: [
       {

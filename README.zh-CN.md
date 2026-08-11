@@ -54,7 +54,8 @@ ak-role reviewer --base main --attach ./issue.md "Review the branch."
 
 # 门下省——GitHub PR 收证；仅 github.com，需 gh 已认证；一次性
 ak-role collector --pr 42 --repo owner/repository
-# leg 语法 id:author[,author...]；repo 默认取 origin，--repo owner/repo 覆盖
+ak-role collector --pr 42 --request-manifest ./requests.json
+# 无配置时仅观察；可选 request manifest 为 {requests:[{id,body}]}；repo 默认取 origin
 
 # 修内司——缮修所指 findings；phase 默认 apply，或显式 plan
 ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."

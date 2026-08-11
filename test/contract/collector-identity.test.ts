@@ -76,7 +76,7 @@ test("Codex frozen inline review yields five identity-owned findings with eviden
   assert.ok(group.findings.every((finding) => finding.identity.userId === 199175422 && finding.source.kind === "review_comment"));
 });
 
-test("Codex no-finding and usage-limit bytes distinguish empty findings from degraded attendance", async () => {
+test("Codex attendance is invariant under no-finding and usage-limit prose", async () => {
   const load = async (name: string) => normalizeIssueComment(JSON.parse(await readFile(new URL(`../fixtures/collector/${name}`, import.meta.url), "utf8")));
   const noFinding = extractGitHubIdentityGroups([await load("codex-nofinding-5234537035.json")])[0]!;
   const limited = extractGitHubIdentityGroups([await load("codex-usagelimit-5244073043.json")])[0]!;
@@ -85,7 +85,7 @@ test("Codex no-finding and usage-limit bytes distinguish empty findings from deg
   assert.equal(noFinding.degraded, false);
   assert.equal(limited.attendance, true);
   assert.deepEqual(limited.findings, []);
-  assert.equal(limited.degraded, true);
+  assert.equal(limited.degraded, false);
 });
 
 test("CodeRabbit frozen HTML containers yield outside-diff and nitpick findings plus four inline", async () => {
@@ -96,16 +96,26 @@ test("CodeRabbit frozen HTML containers yield outside-diff and nitpick findings 
   assert.equal(group.findings.filter((finding) => finding.category === "nitpick").length, 2);
   assert.equal(group.findings.filter((finding) => finding.category === "inline").length, 4);
   assert.ok(group.findings.every((finding) => finding.source.id > 0 && finding.identity.userId === 136622811));
+
+  const rewritten = normalizeReview({
+    ...JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-review-4895713581.json", import.meta.url), "utf8")),
+    body: review.body.replace(/<summary>[\s\S]*?<\/summary>/gi, "<summary>arbitrary rewritten prose</summary>"),
+  });
+  const rewrittenGroup = extractGitHubIdentityGroups([rewritten])[0]!;
+  assert.deepEqual(
+    rewrittenGroup.findings.map(({ category, source }) => ({ category, source })),
+    group.findings.filter((finding) => finding.source.kind === "review").map(({ category, source }) => ({ category, source })),
+  );
 });
 
-test("evidence extractor binds real evidenceId refs and head relation", async () => {
+test("evidence extractor binds real evidenceId refs and head relation",  async () => {
   const raw = JSON.parse(await readFile(new URL("../fixtures/collector/sourcery-ratelimit-review-4892027495.json", import.meta.url), "utf8"));
   const record = normalizeReviewEvidence(normalizeReview(raw), "2026-08-11T00:00:00Z");
   const group = extractCollectorEvidenceIdentityGroups([record], "other-head")[0]!;
 
   assert.deepEqual(group.identity, { userType: "Bot", userId: 58596630 });
   assert.equal(group.attendance, true);
-  assert.equal(group.degraded, true);
+  assert.equal(group.degraded, false);
   assert.deepEqual(group.findings, []);
   assert.deepEqual(group.materials, [{
     kind: "review",
@@ -113,6 +123,20 @@ test("evidence extractor binds real evidenceId refs and head relation", async ()
     evidenceId: record.evidenceId,
     headRelation: "prior",
   }]);
+});
+
+test("historical versions of one GitHub record retain their own evidence closure", async () => {
+  const raw = JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-review-4895713581.json", import.meta.url), "utf8"));
+  const prior = normalizeReviewEvidence(normalizeReview(raw), "2026-08-11T00:00:00Z");
+  const current = normalizeReviewEvidence(normalizeReview({ ...raw, commit_id: "f".repeat(40), body: `${raw.body}\nupdated` }), "2026-08-11T00:01:00Z");
+  const groups = extractCollectorEvidenceIdentityGroups([prior, current], current.commitOid!);
+  const materials = groups[0]!.materials;
+  assert.deepEqual(materials.map(({ evidenceId, headRelation }) => ({ evidenceId, headRelation })), [
+    { evidenceId: prior.evidenceId, headRelation: "prior" },
+    { evidenceId: current.evidenceId, headRelation: "current" },
+  ]);
+  assert.ok(groups[0]!.findings.some((finding) => finding.source.evidenceId === prior.evidenceId));
+  assert.ok(groups[0]!.findings.some((finding) => finding.source.evidenceId === current.evidenceId));
 });
 
 test("machine identity ignores display changes, separates user IDs, and leaves tombstones unassigned", () => {
