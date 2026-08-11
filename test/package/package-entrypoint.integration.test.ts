@@ -414,17 +414,18 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
       const makeHarness = (flags: Record<string, string> = {}) => {
         const tools = new Map<string, any>();
         const handlers = new Map<string, any>();
-        let activeTools: string[] = [];
+        const hostTools = ["read", "write", "grep", "find", "bash"];
+        let activeTools: string[] = [...hostTools];
         const pi = {
           registerFlag() {},
           getFlag(name: string) { return flags[name]; },
           registerTool(tool: any) { tools.set(tool.name, tool); },
-          getAllTools() { return [...tools.keys()].map((name) => ({ name })); },
+          getAllTools() { return [...hostTools, ...tools.keys()].map((name) => ({ name })); },
           setActiveTools(names: string[]) { activeTools = [...names]; },
           getActiveTools() { return activeTools; },
           on(name: string, handler: any) { handlers.set(name, handler); },
         };
-        return { pi, tools, handlers };
+        return { pi, tools, handlers, activeTools: () => [...activeTools] };
       };
       const outputContext = (name: string, id: string, arguments_: Record<string, unknown> = {}) => {
         const sessionManager = SessionManager.inMemory();
@@ -526,6 +527,13 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         }
         const retriable = createRole(role, revise);
         await retriable.runtime.activate();
+        if (role === "reviewer") {
+          assert.deepEqual(
+            retriable.harness.activeTools(),
+            ["read", "write", "grep", "find", "bash"],
+            "Reviewer activation must preserve Pi's evidence tool surface",
+          );
+        }
         const tool = retriable.harness.tools.get(toolName);
         assert.ok(tool);
         await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-revise`, outputs[role] as Record<string, unknown>)), /violation|violates its|closed contract/);
@@ -796,6 +804,29 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         const { isUuidV7 } = await import("../../src/uuidv7.ts");
         assert.equal(isUuidV7(nearest.data?.invocationId), true);
         assert.equal(String(nearest.data?.invocationId).includes(":"), false);
+
+        // Nested auditor JSONL stays under the parent session dir, not repo root.
+        // activationLedgerSession supplies real file+dir topology (ADR 0048).
+        const parentSessionFile = sessionManager.getSessionFile();
+        const parentDir = sessionManager.getSessionDir();
+        assert.equal(typeof parentSessionFile, "string");
+        assert.ok(String(parentSessionFile).length > 0);
+        assert.equal(parentDir, dirname(parentSessionFile!));
+        assert.equal(sessionManager.getHeader()?.cwd, packageRoot);
+        const auditorDir = join(parentDir, "auditor-roles");
+        const auditorFiles = (await readdir(auditorDir))
+          .filter((file) => file.endsWith(".jsonl"))
+          .sort();
+        assert.ok(auditorFiles.length >= 1, "nested auditor wrote under parent session dir");
+        const auditorHeader = JSON.parse(
+          (await readFile(join(auditorDir, auditorFiles[0]!), "utf8")).trim().split("\n")[0]!,
+        ) as { type?: string; cwd?: string };
+        assert.equal(auditorHeader.type, "session");
+        assert.equal(auditorHeader.cwd, packageRoot);
+        await assert.rejects(
+          () => access(resolve(packageRoot, "auditor-roles")),
+          (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+        );
       });
       } finally {
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

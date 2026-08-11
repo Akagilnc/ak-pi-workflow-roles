@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { access, chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import { access, chmod, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -16,6 +16,8 @@ import {
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
 } from "../../src/public-cli/registry.ts";
+import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
+import { TEST_PI_VERSION_BRANCH } from "../helpers/test-process-fixtures.ts";
 
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root });
@@ -26,55 +28,88 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-async function runAkRoleBin(
-  bin: string,
-  args: string[],
-  options: { home: string; agentDir: string; env?: NodeJS.ProcessEnv },
-): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
-  const { spawn } = await import("node:child_process");
-  return await new Promise((resolvePromise) => {
-    const mergedEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...options.env,
-      HOME: options.home,
-      PI_CODING_AGENT_DIR: options.agentDir,
-    };
-    // Keep caller PATH overrides (e.g. pi argv shim) after the installed bin dir.
-    const pathPrefix = `${dirname(bin)}:${mergedEnv.PATH ?? process.env.PATH ?? ""}`;
-    const child = spawn(bin, args, {
-      cwd: options.home,
-      env: {
-        ...mergedEnv,
-        PATH: pathPrefix,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, 30_000);
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolvePromise({ code, stdout, stderr, timedOut });
-    });
-  });
-}
-
 test("isolated Pi home installs packed artifact and discovers ak-role via private npm bin", async () => {
   await withHermeticHome({ prefix: "ak-public-cli-bin-" }, async ({ home, agentDir }) => {
     // Use a Pi-shaped agent dir under the hermetic home (not the harness default .pi-agent label).
     const piAgentDir = resolve(home, ".pi", "agent");
     await mkdir(piAgentDir, { recursive: true });
     const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
+
+    const assertHostPeersAbsent = async (): Promise<void> => {
+      for (const name of ["pi-ai", "pi-coding-agent"]) {
+        await assert.rejects(
+          () => access(resolve(installed.npmRoot, "node_modules", "@earendil-works", name)),
+          (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+          `${name} must be supplied by the real Pi host, not its package npm root`,
+        );
+      }
+      const listed = spawnSync("npm", ["ls", "--json", "--depth=0"], {
+        cwd: installed.npmRoot,
+        encoding: "utf8",
+      });
+      assert.notEqual(listed.stdout, "", listed.stderr);
+      const tree = JSON.parse(listed.stdout) as { dependencies?: Record<string, unknown> };
+      assert.ok(tree.dependencies?.["@akagilnc/pi-workflow-roles"]);
+      assert.equal(tree.dependencies?.["@earendil-works/pi-ai"], undefined);
+      assert.equal(tree.dependencies?.["@earendil-works/pi-coding-agent"], undefined);
+    };
+    await assertHostPeersAbsent();
+
+    const project = resolve(home, "identity-work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const machinePiOnPath = execFileSync("sh", ["-c", "command -v pi"], {
+      encoding: "utf8",
+    }).trim();
+    const hostPiExecutable = await realpath(machinePiOnPath);
+    const hostPiVersion = execFileSync(hostPiExecutable, ["--version"], { encoding: "utf8" }).trim();
+    const traceInvocationIdentity = async (): Promise<void> => {
+      // Coder with no credentials reaches its documented activation-failure
+      // terminal without consulting a model provider.
+      const run = await runAkRoleBin(
+        installed.akRoleBin,
+        ["coder", "plan", "--project", project, "Trace the selected Pi identity."],
+        {
+          home,
+          agentDir: piAgentDir,
+          env: { PI_OFFLINE: "1" },
+        },
+      );
+      assert.equal(run.timedOut, false, run.stderr);
+      assert.equal(run.code, 1, run.stderr);
+      const runsRoot = resolve(home, ".ak-roles", "books", "identity-work", "runs");
+      const names = (await readdir(runsRoot)).filter((name) => name.endsWith("@coder")).sort();
+      const runRoot = resolve(runsRoot, names.at(-1)!);
+      const invocation = JSON.parse(
+        await readFile(resolve(runRoot, "invocation.json"), "utf8"),
+      ) as { piExecutable?: string; piVersion?: string };
+      assert.equal(invocation.piExecutable, hostPiExecutable);
+      assert.equal(invocation.piVersion, hostPiVersion);
+      const errorArtifact = JSON.parse(
+        await readFile(resolve(runRoot, "artifacts", "error.json"), "utf8"),
+      ) as { kind?: string; role?: string; cause?: string };
+      assert.equal(errorArtifact.kind, "error");
+      assert.equal(errorArtifact.role, "coder");
+      assert.equal(errorArtifact.cause, "activation");
+    };
+    await traceInvocationIdentity();
+
+    const source = `npm:@akagilnc/pi-workflow-roles@file:${installed.pack.tarball}`;
+    const repeated = await runPiSubprocess(["install", source], {
+      cwd: home,
+      timeoutMs: 120_000,
+      env: {
+        ...process.env,
+        HOME: home,
+        PI_CODING_AGENT_DIR: piAgentDir,
+        PI_OFFLINE: "1",
+      },
+    });
+    assert.equal(repeated.timedOut, false, repeated.stderr);
+    assert.equal(repeated.code, 0, repeated.stderr);
+    await assertHostPeersAbsent();
+    await traceInvocationIdentity();
+    await assertHostPeersAbsent();
 
     await access(installed.akRoleBin);
     const realBin = await realpath(installed.akRoleBin);
@@ -200,6 +235,7 @@ test("ordinary Pi startup does not register Internal --ak-role; ak-role explicit
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+${TEST_PI_VERSION_BRANCH}
 import { spawn } from "node:child_process";
 const args = process.argv.slice(2);
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args), "utf8");
@@ -302,6 +338,7 @@ test("installed ak-role coder admits plan/apply and binds package-owned tdd with
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,
@@ -343,6 +380,7 @@ process.exit(1);
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,
@@ -410,6 +448,7 @@ test("installed ak-role collector admits a PR without observer declarations", as
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,
@@ -454,6 +493,7 @@ process.exit(1);
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(overrideLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,
@@ -546,6 +586,7 @@ test("installed ak-role fixer admits plan/apply and binds package diagnosing-bug
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,
@@ -595,6 +636,7 @@ process.exit(1);
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,
