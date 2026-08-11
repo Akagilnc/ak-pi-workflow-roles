@@ -19,13 +19,15 @@
 - **模型自报(Model self-report)**:角色在回执中声明、但未由拥有该事实的生产接缝现场观察的值。自报可留在叙事报告供人参考,不得伪装成 commit、Git 状态、计时等机械事实或进入统计真源。
 - **Judge(大理寺)**:只判卷、不改码、不 commit 的裁决角色。canonical 名;`verify` 是上一代编排器的席位旧名,**历史别名,退役中**。
 - **Fixer(修内司)**:以 `plan`(只规划)或 `apply`(施工)阶段处理调用方提供的修理包；apply 按 finding 结算为完成或合法拒绝，混合结算称 `partially_completed`，不是未完进度；另有只表示本次调用未结清的 `unfinished` 交棒，定义见 README Fixer。
-- **Coder(将作监)**:以 `plan`/`apply` 两阶段完成首次实现或据理拒绝派单的角色。apply 经 Pi 原生 `/skill:tdd` 调用 canonical Matt TDD;自查三连证据留在 report 供调用方处置,两者都不进入 Soul。apply 可用 `unfinished` 携带非空 typed `remainingScope` 交出未结清范围；这是可续交棒而非失败,不豁免验收。Coder 回执不以新 commit 为无条件前提,拒绝可零 commit 直接交调用方处置。
+- **Coder(将作监)**:以 `plan`/`apply` 两阶段完成首次实现或据理拒绝派单的角色。apply 经 Pi 原生 `/skill:tdd` 调用 canonical Matt TDD;自查三连证据留在 report 供调用方处置,两者都不进入 Soul。apply 可用 `unfinished` 携带非空 typed `remainingScope` 交出未结清范围；这是可续交棒而非失败,不豁免验收。Coder 回执不以新 commit 为无条件前提（ADR 0024）；`completed` 零 commit 仅触发防忘提醒闸一次（ADR 0066），`planned`/`refused`/`unfinished` 零 commit 合法。拒绝可零 commit 直接交调用方处置。
 - **未完终态(Unfinished)**:两个 worker 角色 apply 阶段的合法交卷状态,只陈述「本次角色调用未结清」这一事实——不诊断原因,不规定调用者的下一步。它是**可续的交棒,不是失败,也不是验收结论**:既不表达基础设施故障(那走非零退出),也不豁免任何验收。规范见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。#72 的 #75/#76 两条施工腿均已装配。
 - **Reviewer(御史台)**:围绕一个固定目标形成独立、可追溯代码评审的角色;不修复、不发布、不路由、不作最终裁决。经 Pi 原生 `/skill:code-review` 使用外部 canonical 方法,回执只表达 `completed` 或 `refused`,不表达批准、合并或流转语义。
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
 - **Collector(门下省)**:单次调用内独立观察外部 GitHub PR 评审腿、可选请求、判定收集终态并提交自包含回执的角色;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`,无默认腿清单。
 - **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的配置腿是外部 GitHub 作者集合,与 Reviewer 内部 Agent 腿不同。
 - **Soul 审刑院(Soul-compliance audit)**:独立的实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」；不再限于复核大理寺的程序或既给材料。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md),现行职掌见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)。
+- **卷宗(Dossier)**:一次 run 在候簿记录之家里的全部既落账材料；卷宗即真源,无投影副本。定位靠机器注入的 typed 指针(`cwd` 与 `AK_ROLE_RUN_DIR`),禁 latest-run/mtime/全局扫描猜测。
+- **先立卷后审卷**:被审对象必先落账,审计只从账上读；手递手传料非法。缺卷或缺被审对象响亮 typed `audit-incomplete`(`missing-dossier` / `missing-subject`),public CLI 无合法 Receipt。
 - **绑定(Binding)**:等待真实调用方拉动的未来机械校验能力。当前包既不提供 `targetHead` 绑定输入,也不提供对应的 fail-closed 绑定闸。
 - **Navigator(游奕使)**:由共享角色生命周期自动旁听包角色结算的独立领航席；依据工作 subject、controlling authority 与自身路线记忆建议最低成本且安全的下一包角色/phase，并在首次或路线变化时给出完整简洁路线。不裁决、不授权、不执行，普通建议允许调用者偏离；角色推理、工具轨迹和施工细节不进入其上下文。
 - **路书(Route playbook)**:游奕使用于专业判断的一组非约束参考路线，按工作性质、风险与复杂度展示常见推进方式；既不规定游奕使必须照走，也不约束调用者采用建议。_Avoid_:默认工作流、路由表、自动编排规则。

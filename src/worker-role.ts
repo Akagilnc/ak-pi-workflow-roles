@@ -6,8 +6,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
-import { disposeComplianceDecision } from "./audit-escalation.ts";
-import type { ComplianceDecision } from "./compliance-transport.ts";
 
 import type {
   AnyCanonicalSkillBinding,
@@ -28,6 +26,7 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "./package-contracts/fixer-packet.ts";
+import { createWorkerSubmissionGate } from "./worker-submission-gates.ts";
 
 export {
   CODER_OUTPUT_TOOL_NAME,
@@ -106,12 +105,9 @@ export type WorkerRoleHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
 };
 
-export type FixerAuditInput = Readonly<{ soul: string; packet: FixerInvocationInput; phase: FixerPhase; transcript: string; candidate: FixerOutput }>;
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadPacket(path: string): Promise<string>;
-  transcriptFromContext?(ctx: ExtensionContext): string;
-  auditCompliance?(input: FixerAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
 };
 
 export type CoderRoleDependencies = {
@@ -120,6 +116,12 @@ export type CoderRoleDependencies = {
   loadCanonicalSkillBinding?(
     name: "tdd",
   ): Promise<AnyCanonicalSkillBinding>;
+};
+
+export type WorkerRoleRuntime = {
+  activate(ctx?: ExtensionContext): Promise<void>;
+  /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Parent feeds sitian durability. */
+  armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -164,12 +166,12 @@ function requireSingletonSubmissionCall(
 export function createFixerRoleRuntime(
   pi: ExtensionAPI,
   dependencies: FixerRoleDependencies,
-  hostActions?: WorkerRoleHostActions,
-): { activate(): Promise<void> } {
+): WorkerRoleRuntime {
   let soul: string | undefined;
   let packet: FixerInvocationInput | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
+  const submissionGate = createWorkerSubmissionGate();
 
   pi.registerFlag(
     FIXER_FLAG_DEFINITIONS.packet.name,
@@ -220,12 +222,13 @@ export function createFixerRoleRuntime(
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "Fixer Output",
           description:
-            "Submit the plan refusal, apply settlement, or honest unfinished handover for compliance audit.",
+            "Submit the plan refusal, apply settlement, or honest unfinished handover.",
           promptSnippet: "Submit the final fixer report",
           promptGuidelines: [
             `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
             `${FIXER_OUTPUT_TOOL_NAME} reports only lawful assignment blockers; infrastructure failures abort.`,
             "plan permits planned|refused; apply permits completed|refused|partially_completed|unfinished.",
+            "When the diff includes test changes, submit testEvidence: contract proven, one-line minimum necessary cost, measured duration.",
           ],
           parameters: fixerOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
@@ -239,36 +242,12 @@ export function createFixerRoleRuntime(
               ctx,
             );
             const output = deepFreeze(validateFixerOutputForPacket(parameters, phase, packet));
-            if (dependencies.transcriptFromContext === undefined || dependencies.auditCompliance === undefined) {
-              const error = new Error("Fixer compliance auditor is not configured");
-              if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx, toolCallId);
-              throw error;
-            }
-            let audit: ComplianceDecision;
-            try {
-              const auditInput = Object.freeze({ soul: soul!, packet, phase, transcript: dependencies.transcriptFromContext(ctx), candidate: output });
-              audit = await dependencies.auditCompliance(auditInput, { context: ctx, ...(_signal === undefined ? {} : { signal: _signal }) });
-            } catch (error) {
-              if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx, toolCallId);
-              throw error;
-            }
-            return disposeComplianceDecision<AgentToolResult<unknown>>(
-              audit,
-              {
-                pass: (usage) => ({
-                  content: [{ type: "text" as const, text: "Fixer report accepted" }],
-                  details: output,
-                  terminate: true as const,
-                  ...(usage === undefined ? {} : { usage }),
-                }),
-                revise: (violations) => {
-                  throw new Error(`Fixer output violates its law: ${violations.join("; ")}`);
-                },
-                escalate: (result) => result,
-                auditIncomplete: (result) => result,
-              },
-              output,
-            );
+            submissionGate.assertAcceptable(output.status);
+            return {
+              content: [{ type: "text" as const, text: "Fixer report accepted" }],
+              details: output,
+              terminate: true as const,
+            };
           },
         });
         pi.on("tool_call", (event) => {
@@ -292,6 +271,9 @@ export function createFixerRoleRuntime(
         });
       }
     },
+    armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }) {
+      submissionGate.arm(cwd, parent);
+    },
   };
 }
 
@@ -299,7 +281,7 @@ export function createCoderRoleRuntime(
   pi: ExtensionAPI,
   dependencies: CoderRoleDependencies,
   hostActions: WorkerRoleHostActions,
-): { activate(ctx?: ExtensionContext): Promise<void> } {
+): WorkerRoleRuntime {
   let soul: string | undefined;
   let task: string | undefined;
   let phase: WorkerPhase | undefined;
@@ -309,6 +291,7 @@ export function createCoderRoleRuntime(
   let expansionPending = false;
   let expansionCaptured = false;
   let lifecycleRegistered = false;
+  const submissionGate = createWorkerSubmissionGate();
 
   pi.registerFlag("ak-coder-task", {
     description: "Markdown task assigned to the coder role",
@@ -390,6 +373,7 @@ export function createCoderRoleRuntime(
                 "Coder completed requires the Matt tdd skill to be expanded through Pi /skill:tdd",
               );
             }
+            submissionGate.assertAcceptable(output.status);
             return {
               content: [{ type: "text" as const, text: "Coder report accepted" }],
               details: output,
@@ -442,6 +426,9 @@ export function createCoderRoleRuntime(
           };
         });
       }
+    },
+    armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }) {
+      submissionGate.arm(cwd, parent);
     },
   };
 }

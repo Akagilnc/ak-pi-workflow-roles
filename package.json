@@ -4,7 +4,9 @@
   "description": "Soul-bound workflow roles for Pi",
   "type": "module",
   "license": "Apache-2.0",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "bin": {
     "ak-role": "./dist/public-cli/main.js"
   },
@@ -24,7 +26,6 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "generate:tool-execution-observation-schema": "tsx scripts/generate-tool-execution-observation-schema.ts",
     "build": "tsx scripts/generate-tool-execution-observation-schema.ts && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
     "prepack": "npm run build",
     "test": "pnpm run test:all",
@@ -47,9 +48,15 @@
     "typebox": "*"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-ai": { "optional": true },
-    "@earendil-works/pi-coding-agent": { "optional": true },
-    "typebox": { "optional": true }
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.84.1",

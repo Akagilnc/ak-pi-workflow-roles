@@ -3,7 +3,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, SessionManager, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
@@ -15,8 +15,10 @@ import {
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
+import { openInProcessAgentSession } from "./in-process-session.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
+import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
@@ -183,10 +185,36 @@ export type NavigatorContextProjection = {
   subject: string;
   authority: string;
   currentRole: { role: string; phase: NavigatorPhase };
+  /** Present only on settlement-bound prepare; speculative prepare omits it. */
+  currentSettlement?: NavigatorSettlement;
   priorRoute: NavigatorRouteTarget[] | null;
   publicSettlementHistory: NavigatorSettlementFact[];
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
+
+/**
+ * Shared terminal-internal consistency for Navigator advice vs the just-accepted
+ * settlement (family #224/#226/#227). One table for all seats — not per-role guards.
+ *
+ * Merger closes delivery. It is only consistent immediately after judge converged.
+ * Fresh accepted work from any other seat must not skip to merger.
+ *
+ * Unfinished is an open handoff (ADR 0050): recommending judge would send half-done
+ * work to audit. Machine criterion anchors only status=unfinished — refused and
+ * partially_completed remain settled terminals whose judge path stays lawful.
+ * Positive continuation is free-form via rebind + status-matched candidates
+ * (ADR 0010/0061); this only suppresses self-contradictory typed emission.
+ */
+export function navigatorAdviceConsistentWithSettlement(
+  next: NavigatorRouteTarget,
+  settlement: NavigatorSettlement,
+): boolean {
+  if (settlement.kind !== "accepted") return true;
+  // #227: open unfinished handoff must not be typed as next=judge.
+  if (settlement.status === "unfinished" && next.role === "judge") return false;
+  if (next.role !== "merger") return true;
+  return settlement.role === "judge" && settlement.status === "converged";
+}
 
 // Provider admission is ADR 0060 object root only. Nested advisory shape
 // (candidates/next/route/matches/reason/command) is never a gate — every object
@@ -407,7 +435,7 @@ export function parseNavigatorModelSetting(value: string): { provider: string; m
 }
 
 export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => void): ToolDefinition {
-  return {
+  return wrapPackageOwnedToolDefinition({
     name: NAVIGATOR_PREPARE_TOOL_NAME,
     label: "Navigator preparation",
     description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
@@ -418,7 +446,7 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
       onOutput(value as PrepareOutput);
       return { content: [{ type: "text" as const, text: "Navigator preparation accepted" }], details: value, terminate: true as const };
     },
-  };
+  });
 }
 
 export function selectNavigatorCandidate(candidates: readonly NavigatorCandidate[], settlement: NavigatorSettlement): NavigatorCandidate | undefined {
@@ -566,10 +594,14 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     };
   };
   let routePlaybookSettlement: Promise<void> | undefined;
+  /** Settlement-bound prepare only; cleared at the start of each prepare body. */
+  let prepareBoundSettlement: NavigatorSettlement | undefined;
   const prepare = async (): Promise<NavigatorCandidate[]> => {
     // Exact principal is owned by shared lifecycle (or one mint per attendance).
     // Model/tool/advice paths cannot override it; role-session persistence is
     // pi.appendEntry at lifecycle start — not optional sessionManager probing.
+    const boundSettlement = prepareBoundSettlement;
+    prepareBoundSettlement = undefined;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
@@ -699,6 +731,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         subject,
         authority,
         currentRole: { role: options.role, phase: options.phase },
+        ...(boundSettlement === undefined ? {} : { currentSettlement: boundSettlement }),
         priorRoute: exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))
           ? prior.route.map((target) => ({ role: target.role as NavigatorTargetRole, phase: target.phase as NavigatorPhase }))
           : null,
@@ -716,8 +749,16 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         `<work_subject>\n${subject}\n</work_subject>`,
         `<controlling_authority>\n${authority}\n</controlling_authority>`,
         `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
+        ...(boundSettlement === undefined ? [] : [
+          `<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`,
+          "The current role has just reached this typed settlement. Recommend the next packaged role AFTER this settlement.",
+          "public_settlement_history is prior background only — a prior terminal does not consume or replace the work this settlement just produced.",
+        ]),
         `<prior_route>\n${JSON.stringify(prior ?? null)}\n</prior_route>`,
         `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
+        ...(boundSettlement === undefined ? [
+          "Preparation is speculative while the current role still runs. Prefer candidates[].matches keyed to plausible accepted outcomes of the current role; prior history must not substitute for the current role's work.",
+        ] : []),
         `<live_role_help>\n${helpContext}\n</live_role_help>`,
         `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call.`,
         "v1 requires a usable next direction: candidates[].next.role, with phase only when present and meaningful. route, matches, id, reason, and command are optional context — never retry to satisfy optional shape.",
@@ -842,9 +883,27 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       } else {
         try {
           if (sessionReady !== undefined) await sessionReady;
-          const prepared = await preparation;
+          let prepared = await preparation;
           session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
-          const selected = selectNavigatorCandidate(prepared, settlement);
+          let selected = selectNavigatorCandidate(prepared, settlement);
+          // Family #224/#226/#227 shared seam: speculative prepare runs before the
+          // current terminal exists and may treat prior history as decisive. When
+          // selected next contradicts this accepted settlement, discard it and
+          // re-prepare once bound to the settlement (single shared mechanism).
+          if (
+            selected?.next !== undefined
+            && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)
+          ) {
+            prepareBoundSettlement = settlement;
+            prepared = await prepare();
+            selected = selectNavigatorCandidate(prepared, settlement);
+            if (
+              selected?.next !== undefined
+              && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)
+            ) {
+              throw new Error("Navigator advice contradicts the accepted settlement");
+            }
+          }
           // Usable model/authority next only — never invent from settlement role/status, prior absence, or prose.
           if (selected?.next === undefined) {
             throw new Error("Navigator prepared no machine-usable next direction");
@@ -1108,37 +1167,37 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
     } catch (error) {
       throw navigatorUnavailableError("session", error);
     }
-    let created: Awaited<ReturnType<typeof createAgentSession>>;
+    let opened: Awaited<ReturnType<typeof openInProcessAgentSession>>;
     try {
-      created = await createAgentSession({
-      cwd: context.cwd,
-      model,
-      modelRuntime,
-      thinkingLevel: parsed.thinkingLevel,
-      sessionManager: SessionManager.continueRecent(context.cwd, sessionDir),
-      settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
-      noTools: "all",
-      tools: [NAVIGATOR_PREPARE_TOOL_NAME],
-      customTools: [tool],
-    });
+      // Shared in-process session open (#233) — same ModelRuntime module instance.
+      opened = await openInProcessAgentSession({
+        cwd: context.cwd,
+        model,
+        modelRuntime,
+        thinkingLevel: parsed.thinkingLevel,
+        sessionManager: SessionManager.continueRecent(context.cwd, sessionDir),
+        noTools: "all",
+        tools: [NAVIGATOR_PREPARE_TOOL_NAME],
+        customTools: [tool],
+      });
     } catch (error) {
       throw navigatorUnavailableError("session", error);
     }
-    if (created.session.thinkingLevel !== parsed.thinkingLevel) {
-      created.session.dispose();
+    if (opened.session.thinkingLevel !== parsed.thinkingLevel) {
+      opened.dispose();
       throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${parsed.thinkingLevel} is unavailable for ${configured}`);
     }
     return {
       prompt: async (text) => {
         try {
-          await created.session.prompt(text);
+          await opened.session.prompt(text);
         } catch (error) {
           throw navigatorUnavailableError("transport", error);
         }
       },
       providerFailure: () => providerFailure,
-      appendEntry: (customType, data) => { created.session.sessionManager.appendCustomEntry(customType, data); },
-      entries: () => created.session.sessionManager.getEntries(),
+      appendEntry: (customType, data) => { opened.session.sessionManager.appendCustomEntry(customType, data); },
+      entries: () => opened.session.sessionManager.getEntries(),
       setModel: async (next, thinkingLevel) => {
         let nextParsed: ReturnType<typeof parseNavigatorModelSetting>;
         try {
@@ -1159,17 +1218,17 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         try {
           // setModel replaces the registered provider id; keep the stream seam instrumented.
           modelRuntime.registerNativeProvider(instrumentProvider(nextProvider));
-          await created.session.setModel(nextModel);
-          created.session.setThinkingLevel(thinkingLevel);
+          await opened.session.setModel(nextModel);
+          opened.session.setThinkingLevel(thinkingLevel);
         } catch (error) {
           throw navigatorUnavailableError("session", error);
         }
-        if (created.session.thinkingLevel !== nextParsed.thinkingLevel || created.session.thinkingLevel !== thinkingLevel) {
+        if (opened.session.thinkingLevel !== nextParsed.thinkingLevel || opened.session.thinkingLevel !== thinkingLevel) {
           throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${thinkingLevel} is unavailable for ${next}`);
         }
       },
-      getThinkingLevel: () => created.session.thinkingLevel,
-      dispose: () => created.session.dispose(),
+      getThinkingLevel: () => opened.session.thinkingLevel,
+      dispose: () => opened.dispose(),
     };
   };
 }

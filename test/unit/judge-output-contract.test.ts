@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  projectJudgeVerdictForAudit,
-  type JudgeVerdict,
-} from "../../src/judge-role.ts";
 import { validateAcceptedJudgeDetails } from "../../src/package-contracts/judge-output.ts";
 
 
@@ -47,47 +43,4 @@ test("retained evidence and optional note are lawful on every judge status", () 
     assert.deepEqual(accepted, verdict);
     assert.equal(accepted.note, verdict.note);
   }
-});
-
-
-test("projectJudgeVerdictForAudit strips evidence on every status while retaining adjudicative fields and note", () => {
-  const verdicts: JudgeVerdict[] = [
-    { judgeStatus: "converged", note: "keep", evidence: { checks: ["converged"] } },
-    {
-      judgeStatus: "continue",
-      fix: { summary: "Repair the parser" },
-      classes: [{
-        name: "parser-contract",
-        owner: "parser",
-        boundary: "input parsing",
-        disposition: "repair malformed input handling",
-      }],
-      note: "advisories stay",
-      evidence: [],
-    },
-    {
-      judgeStatus: "escalate",
-      decisionGate: { question: "Which API?", options: ["A", "B"] },
-      evidence: null,
-    },
-  ];
-
-  assert.deepEqual(verdicts.map(projectJudgeVerdictForAudit), [
-    { judgeStatus: "converged", note: "keep" },
-    {
-      judgeStatus: "continue",
-      fix: { summary: "Repair the parser" },
-      classes: [{
-        name: "parser-contract",
-        owner: "parser",
-        boundary: "input parsing",
-        disposition: "repair malformed input handling",
-      }],
-      note: "advisories stay",
-    },
-    {
-      judgeStatus: "escalate",
-      decisionGate: { question: "Which API?", options: ["A", "B"] },
-    },
-  ]);
 });

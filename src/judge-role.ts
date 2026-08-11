@@ -18,20 +18,6 @@ import {
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
 
-export type JudgeAdjudicativeVerdict =
-  | { judgeStatus: "converged"; note?: string }
-  | {
-    judgeStatus: "continue";
-    fix: { summary: string };
-    classes: Extract<JudgeVerdict, { judgeStatus: "continue" }>["classes"];
-    note?: string;
-  }
-  | {
-    judgeStatus: "escalate";
-    decisionGate: { question: string; options: string[] };
-    note?: string;
-  };
-
 const judgeVerdictSchema = Type.Object(
   {
     judgeStatus: StringEnum(["converged", "continue", "escalate"] as const, { description: "Judge adjudication outcome discriminator." }),
@@ -65,19 +51,11 @@ const judgeVerdictSchema = Type.Object(
 
 type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
 
-export type SoulAuditInput = {
-  soul: string;
-  transcript: string;
-  verdict: JudgeAdjudicativeVerdict;
-};
-
 export type SoulAuditResult = ComplianceDecision;
 
 export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
-  transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
-    input: SoulAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
 };
@@ -86,36 +64,8 @@ export type JudgeRoleHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);
-}
-
-export function projectJudgeVerdictForAudit(
-  verdict: JudgeVerdict,
-): JudgeAdjudicativeVerdict {
-  if (verdict.judgeStatus === "converged") {
-    return {
-      judgeStatus: "converged",
-      ...(verdict.note === undefined ? {} : { note: verdict.note }),
-    };
-  }
-  if (verdict.judgeStatus === "continue") {
-    return {
-      judgeStatus: "continue",
-      fix: verdict.fix,
-      classes: verdict.classes,
-      ...(verdict.note === undefined ? {} : { note: verdict.note }),
-    };
-  }
-  return {
-    judgeStatus: "escalate",
-    decisionGate: verdict.decisionGate,
-    ...(verdict.note === undefined ? {} : { note: verdict.note }),
-  };
 }
 
 function requireSingletonSubmissionCall(
@@ -164,14 +114,11 @@ export function createJudgeRoleRuntime(
             if (soul === undefined) throw new Error("Judge soul was not loaded");
             requireSingletonSubmissionCall(toolCallId, ctx);
             const verdict = validateVerdict(parameters);
+            // Candidate verdict is already on the parent session books as this
+            // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
             let audit: SoulAuditResult;
             try {
               audit = await dependencies.auditSoulCompliance(
-                {
-                  soul,
-                  transcript: dependencies.transcriptFromContext(ctx),
-                  verdict: projectJudgeVerdictForAudit(verdict),
-                },
                 signal === undefined
                   ? { context: ctx }
                   : { context: ctx, signal },

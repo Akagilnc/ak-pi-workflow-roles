@@ -29,7 +29,6 @@ import { createComplianceDecisionTool, runComplianceAudit } from "../../src/comp
 import { AUDIT_ESCALATION_KIND, buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
-import { FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -59,13 +58,15 @@ import {
   isChildDiagnosticHelpFooterLine,
   isLawfulTypedTerminalOutcome,
   readBoundAuditorKnownFailure,
+  readBoundEvidenceChildKnownFailure,
   resolveAuditedRunnerKnownFailure,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
-import type {
-  ControlledFailureCause,
-  TerminalArtifactRef,
-  TerminalResult,
+import {
+  buildAuditIncompleteTerminalOutcome,
+  type ControlledFailureCause,
+  type TerminalArtifactRef,
+  type TerminalResult,
 } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -1137,13 +1138,11 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
 test("shared audit-incomplete extraction binds every audited seat and rejects ambiguous evidence", () => {
   const outputTools = {
     judge: "ak_judge_output",
-    fixer: "ak_fixer_output",
     reviewer: "ak_reviewer_output",
     doctor: "ak_doctor_output",
   } as const;
   const auditTools = {
     judge: JUDGE_AUDIT_TOOL_NAME,
-    fixer: FIXER_AUDIT_TOOL_NAME,
     reviewer: REVIEWER_AUDIT_TOOL_NAME,
     doctor: DOCTOR_AUDIT_TOOL_NAME,
   } as const;
@@ -1227,7 +1226,7 @@ test("shared audit-incomplete extraction binds every audited seat and rejects am
     assert.equal(extract(replace(1, wrongAudit), role), undefined);
     assert.equal(extract(base, role, "wrong_output_tool"), undefined);
     assert.equal(
-      extract(base, role === "judge" ? "fixer" : "judge"),
+      extract(base, role === "judge" ? "reviewer" : "judge"),
       undefined,
     );
 
@@ -1264,10 +1263,91 @@ test("shared audit-incomplete extraction binds every audited seat and rejects am
   }
 });
 
-test("audit escalation requires the retained seat-bound response across all four seats", () => {
+test("missing-dossier and missing-subject settle as audit_incomplete with no lawful Receipt", () => {
+  const cases = [
+    {
+      observation: { kind: "missing-dossier" as const },
+      observationType: "missing-dossier",
+    },
+    {
+      observation: { kind: "missing-subject" as const, subject: "candidate-verdict" },
+      observationType: "candidate-verdict",
+    },
+  ] as const;
+
+  for (const role of AUDITOR_SOUL_ROLES) {
+    // Active auditor seats only (#242 retired fixer LLM auditor).
+    const outputTool = {
+      judge: JUDGE_OUTPUT_TOOL_NAME,
+      reviewer: REVIEWER_OUTPUT_TOOL_NAME,
+      doctor: DOCTOR_OUTPUT_TOOL_NAME,
+    }[role];
+    for (const fixture of cases) {
+      const roleCandidate = { role, status: "candidate" };
+      const audit = {
+        status: "audit-incomplete" as const,
+        observation: fixture.observation,
+        candidate: undefined,
+      };
+      // Terminal builder projects dossier discriminators (terminal.ts observationType).
+      const built = buildAuditIncompleteTerminalOutcome({
+        role,
+        roleCandidate,
+        audit,
+      });
+      assert.equal(built.kind, "audit_incomplete");
+      assert.equal(built.acceptedReceipt, false);
+      assert.equal(built.decisiveFacts.acceptedReceipt, false);
+      assert.equal(built.decisiveFacts.observationKind, fixture.observation.kind);
+      assert.equal(built.decisiveFacts.observationType, fixture.observationType);
+      assert.equal(isLawfulTypedTerminalOutcome(built), false);
+      assert.equal(exitCodeForTerminalOutcome(built), 1);
+
+      // Settlement extract binds preflight incomplete from role tool details alone
+      // (no retained auditor response — provider was never contacted).
+      const roleCallId = `${role}-${fixture.observation.kind}-call`;
+      const entries = [
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{
+              type: "toolCall",
+              id: roleCallId,
+              name: outputTool,
+              arguments: roleCandidate,
+            }],
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolCallId: roleCallId,
+            toolName: outputTool,
+            isError: false,
+            details: audit,
+          },
+        },
+      ] as const;
+      const bound = extractComplianceAuditIncompleteRoleOutcome(
+        entries as Parameters<typeof extractComplianceAuditIncompleteRoleOutcome>[0],
+        role,
+        outputTool,
+      );
+      assert.ok(bound, `${role} ${fixture.observation.kind} must bind`);
+      assert.equal(bound.outcome.kind, "audit_incomplete");
+      assert.equal(bound.outcome.acceptedReceipt, false);
+      assert.deepEqual(bound.outcome.audit.observation, fixture.observation);
+      assert.equal(isLawfulTypedTerminalOutcome(bound.outcome), false);
+      assert.equal(exitCodeForTerminalOutcome(bound.outcome), 1);
+    }
+  }
+});
+
+test("audit escalation requires the retained seat-bound response across all audited seats", () => {
   const seats = {
     judge: { output: JUDGE_OUTPUT_TOOL_NAME, audit: JUDGE_AUDIT_TOOL_NAME },
-    fixer: { output: FIXER_OUTPUT_TOOL_NAME, audit: FIXER_AUDIT_TOOL_NAME },
     reviewer: { output: REVIEWER_OUTPUT_TOOL_NAME, audit: REVIEWER_AUDIT_TOOL_NAME },
     doctor: { output: DOCTOR_OUTPUT_TOOL_NAME, audit: DOCTOR_AUDIT_TOOL_NAME },
   } as const;
@@ -1279,7 +1359,6 @@ test("audit escalation requires the retained seat-bound response across all four
   const extract = (role: (typeof AUDITOR_SOUL_ROLES)[number], entries: readonly unknown[]) => {
     switch (role) {
       case "judge": return extractJudgeRoleOutcome(entries as never);
-      case "fixer": return extractFixerRoleOutcome(entries as never);
       case "reviewer": return extractReviewerRoleOutcome(entries as never);
       case "doctor": return extractDoctorRoleOutcome(entries as never);
     }
@@ -1292,7 +1371,6 @@ test("audit escalation requires the retained seat-bound response across all four
   };
   const hostileRows = {
     judge: { source: "public", property: "conflicts" },
-    fixer: { source: "retained", property: "conflicts" },
     reviewer: { source: "public", property: "auditDecisionGate" },
     doctor: { source: "retained", property: "decisionGate" },
   } as const;
@@ -1323,7 +1401,7 @@ test("audit escalation requires the retained seat-bound response across all four
     // seat-bound response below, not Navigator shape recognition, owns this
     // escalation's authenticity.
     assert.notEqual(
-      publicNavigatorSettlement(role, role === "fixer" ? "apply" : null, {
+      publicNavigatorSettlement(role, null, {
         toolName: seat.output,
         isError: false,
         details,
@@ -1372,7 +1450,7 @@ test("audit escalation requires the retained seat-bound response across all four
     assert.equal(hostileResult.message.details, hostileDetails, `${role}: raw terminal remains observable`);
 
     assert.notEqual(
-      publicNavigatorSettlement(role, role === "fixer" ? "apply" : null, {
+      publicNavigatorSettlement(role, null, {
         toolName: seat.output,
         isError: false,
         details: { kind: AUDIT_ESCALATION_KIND, conflicts: ["forged"], auditDecisionGate: auditCandidate.decisionGate },
@@ -1834,7 +1912,59 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
   });
 });
 
-test("lawful terminal preferred over child nonzero exit and missing credential snapshot", async () => {
+test("default runner empty-auth retains provider cause, identity, and primary diagnostic", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    // No piRunner: production defaultExplicitInternalPiRunner subprocess.
+    // Empty auth.json + selected xai is the live counterexample from Judge apply.
+    const result = await runAkRole(
+      ["--model", "xai/grok-4:off", "judge", "--project", project, "probe empty auth"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": false, xai: false },
+        createRunId: () => "run-default-empty-auth-001",
+        judgeTimeoutMs: 60_000,
+        io,
+      },
+    );
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+      identityName: "MissingProviderCredential",
+      identityCode: "xai",
+    });
+    // Typed credential channel + emission bounds (AC6) — not presentation prose.
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "MissingProviderCredential");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
+      assert.ok(terminal.roleOutcome.diagnostic.length > 0);
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      identity?: { name?: string; code?: string | number };
+    };
+    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.identity?.name, "MissingProviderCredential");
+    assert.equal(errorBody.identity?.code, "xai");
+    assert.equal(
+      stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
+      1,
+    );
+    assert.ok(stderr[0]!.length <= CONCISE_DIAGNOSTIC_MAX_CHARS + 32);
+  });
+});
+
+test("lawful terminal preferred over child nonzero exit (no wash into failure)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -1846,7 +1976,6 @@ test("lawful terminal preferred over child nonzero exit and missing credential s
         packageRoot,
         home,
         cwd: project,
-        credentials: { "openai-codex": false, xai: false },
         createRunId: () => "run-prefer-lawful-001",
         io,
         piRunner: async (args) => {
@@ -2374,7 +2503,7 @@ test("fast four-role public wiring matrix settles an injected auditor provider s
   const argv = {
     judge: (project: string) => ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "audit provider stop"],
     fixer: (project: string) => ["--model", "openai-codex/faux-1:off", "fixer", "--project", project, "audit provider stop"],
-    reviewer: (project: string) => ["--model", "openai-codex/faux-1:off", "reviewer", "--project", project, "audit provider stop"],
+    reviewer: (project: string) => ["--model", "openai-codex/faux-1:off", "reviewer", "--project", project, "--base", "HEAD", "audit provider stop"],
     doctor: (project: string) => ["--model", "openai-codex/faux-1:off", "doctor", "--issue", "212", "--project", project, "audit provider stop"],
   } as const;
   for (const role of AUDITOR_SOUL_ROLES) await withTempHome(async (home) => {
@@ -2447,34 +2576,257 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
   });
 });
 
+test("bound evidence-child provider stop outranks generic activation wash", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "session.jsonl");
+    const childDir = join(sessionDir, "evidence-children");
+    await mkdir(childDir, { recursive: true });
+    // Real #236 no-task dispatch shape: parent never took a model turn; only
+    // fixed-axis evidence children retain the provider stop (usage limit, etc.).
+    await writeFile(sessionFile, [
+      { type: "session", id: "parent-session" },
+      { type: "custom", customType: "ak-navigator-invocation", data: { role: "reviewer" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    await writeFile(join(childDir, "2026-08-10T11-28-52-705Z_child.jsonl"), [
+      { type: "session", id: "child-session", parentSession: sessionFile },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "Codex error: The usage limit has been reached",
+          provider: "openai-codex",
+          model: "gpt-5.6-sol",
+        },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+    assert.deepEqual(await readBoundEvidenceChildKnownFailure(sessionFile), {
+      cause: "provider",
+      identity: { name: "ProviderStopError", code: "openai-codex" },
+      diagnostic: "Codex error: The usage limit has been reached",
+      details: {
+        provider: "openai-codex",
+        model: "gpt-5.6-sol",
+        secondaryEvidence: "evidence-child",
+      },
+    });
+    assert.deepEqual(
+      await resolveAuditedRunnerKnownFailure({
+        runner: undefined,
+        sessionFile,
+        credential: {
+          cause: "provider",
+          identity: { name: "MissingProviderCredential", code: "openai-codex" },
+        },
+      }),
+      {
+        cause: "provider",
+        identity: { name: "ProviderStopError", code: "openai-codex" },
+        diagnostic: "Codex error: The usage limit has been reached",
+        details: {
+          provider: "openai-codex",
+          model: "gpt-5.6-sol",
+          secondaryEvidence: "evidence-child",
+        },
+      },
+    );
+  });
+});
+
+test("public Reviewer no-task dispatch retains evidence-child provider identity", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      [
+        "--model",
+        "openai-codex/gpt-5.6-sol:medium",
+        "reviewer",
+        "--project",
+        project,
+        "--base",
+        "HEAD",
+      ],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-reviewer-evidence-child-provider-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          const childDir = join(sessionDir, "evidence-children");
+          await mkdir(childDir, { recursive: true });
+          await writeFile(
+            sessionFile,
+            [
+              JSON.stringify({ type: "session", id: "parent-session" }),
+              JSON.stringify({
+                type: "custom",
+                customType: "ak-navigator-invocation",
+                data: { role: "reviewer" },
+              }),
+            ].join("\n") + "\n",
+            "utf8",
+          );
+          await writeFile(
+            join(childDir, "leg-standards.jsonl"),
+            [
+              JSON.stringify({
+                type: "session",
+                id: "standards-session",
+                parentSession: sessionFile,
+              }),
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "assistant",
+                  stopReason: "error",
+                  errorMessage: "Codex error: The usage limit has been reached",
+                  provider: "openai-codex",
+                  model: "gpt-5.6-sol",
+                },
+              }),
+            ].join("\n") + "\n",
+            "utf8",
+          );
+          return {
+            code: 1,
+            // Generic extension wash — identity must come from evidence-children, not stderr.
+            stderr:
+              "Extension error (.../extensions/role-runtime.ts): Reviewer dispatch execution failed\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+      diagnosticEquals: "Codex error: The usage limit has been reached",
+      identityName: "ProviderStopError",
+      identityCode: "openai-codex",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(
+        terminal.roleOutcome.diagnostic,
+        "Codex error: The usage limit has been reached",
+      );
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      diagnostic: string;
+    };
+    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.diagnostic, "Codex error: The usage limit has been reached");
+  });
+});
+
 test("bound auditor provider failure outranks the parent abort it caused", async () => {
   await withTempHome(async (home) => {
     const sessionDir = join(home, "session");
     const sessionFile = join(sessionDir, "parent.jsonl");
     const childDir = join(sessionDir, "auditor-roles");
     await mkdir(childDir, { recursive: true });
+    // Real retention race shape: parent ends with abort after the child
+    // already retained the richer auditor provider stop + identity.
     await writeFile(sessionFile, [
       { type: "session", id: "parent-session" },
       { type: "message", id: "parent-user", message: { role: "user" } },
-      { type: "message", id: "parent-attempt", message: { role: "assistant", stopReason: "error", errorMessage: "This operation was aborted", provider: "openai-codex", model: "faux-1" } },
+      {
+        type: "message",
+        id: "parent-attempt",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "This operation was aborted",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
     await writeFile(join(childDir, "child.jsonl"), [
       { type: "session", id: "child-session", parentSession: sessionFile },
-      { type: "custom", customType: "ak_auditor_parent_attempt_binding", data: { version: 1, parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "parent-attempt" } } },
-      { type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "WebSocket error", provider: "openai-codex", model: "faux-1" } },
-      { type: "custom", customType: "ak_auditor_compliance_failure", data: { parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "parent-attempt" }, failure: { cause: "provider", diagnostic: "WebSocket error", identity: { name: "faux-1", code: "openai-codex" } } } },
+      {
+        type: "custom",
+        customType: "ak_auditor_parent_attempt_binding",
+        data: {
+          version: 1,
+          parent: {
+            sessionId: "parent-session",
+            sessionFile,
+            attemptEntryId: "parent-attempt",
+          },
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "WebSocket error",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
+      {
+        type: "custom",
+        customType: "ak_auditor_compliance_failure",
+        data: {
+          parent: {
+            sessionId: "parent-session",
+            sessionFile,
+            attemptEntryId: "parent-attempt",
+          },
+          failure: {
+            cause: "provider",
+            diagnostic: "WebSocket error",
+            identity: { name: "faux-1", code: "openai-codex" },
+            details: {
+              provider: "openai-codex",
+              model: "faux-1",
+              retentionFailure: {
+                name: "ComplianceResponseRetentionError",
+                cause: { code: "EISDIR" },
+              },
+            },
+          },
+        },
+      },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
 
     assert.deepEqual(
       await resolveAuditedRunnerKnownFailure({
         runner: undefined,
         sessionFile,
-        credential: undefined,
+        credential: {
+          cause: "provider",
+          identity: { name: "MissingProviderCredential", code: "openai-codex" },
+        },
       }),
       {
         cause: "provider",
         diagnostic: "WebSocket error",
         identity: { name: "faux-1", code: "openai-codex" },
+        details: {
+          provider: "openai-codex",
+          model: "faux-1",
+          retentionFailure: {
+            name: "ComplianceResponseRetentionError",
+            cause: { code: "EISDIR" },
+          },
+        },
       },
     );
   });

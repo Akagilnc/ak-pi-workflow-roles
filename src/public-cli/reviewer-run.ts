@@ -1,8 +1,8 @@
 /**
- * Public Reviewer Role run: admit → derive capabilities → explicit Internal
+ * Public Reviewer Role run: admit → explicit Internal
  * activate → settle Terminal result (#111).
  * Package-owned adapted code-review method is forced; users never submit
- * capability packets. Controlled-failure settlement reuses #107.
+ * extra packets. Controlled-failure settlement reuses #107.
  */
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,6 +29,10 @@ import {
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
+import {
+  missingCredentialPreDispatchFailure,
+  postRunMissingCredentialFailure,
+} from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
@@ -66,7 +70,6 @@ import type {
   ControlledFailureCause,
   TerminalResult,
 } from "./terminal.ts";
-import { knownFailureForMissingProviderCredential } from "./judge-run.ts";
 
 export type ReviewerRunEnv = {
   home: string;
@@ -126,10 +129,8 @@ export function buildReviewerActivationExtraArgs(
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "reviewer",
-    "--ak-review-task",
-    admitted.taskPath,
-    "--ak-review-capabilities",
-    admitted.capabilitiesPath,
+    "--ak-review-base",
+    admitted.baseRevision,
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -138,8 +139,8 @@ export function buildReviewerActivationExtraArgs(
 }
 
 /**
- * Reopen the exact Reviewer Pi session for resume. Preserves derived capabilities
- * and package code-review binding; does not resubmit the original instruction.
+ * Reopen the exact Reviewer Pi session for resume. Preserves fixed Reviewer base
+ * and package code-review binding; never resubmits caller instruction as control.
  */
 export function buildReviewerResumeActivationExtraArgs(
   admitted: AdmittedReviewerInvocation,
@@ -167,10 +168,8 @@ export function buildReviewerResumeActivationExtraArgs(
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "reviewer",
-    "--ak-review-task",
-    admitted.taskPath,
-    "--ak-review-capabilities",
-    admitted.capabilitiesPath,
+    "--ak-review-base",
+    admitted.baseRevision,
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -255,6 +254,17 @@ async function dispatchAdmittedReviewer(input: {
 }> {
   const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
   try {
+    const missingCredential = missingCredentialPreDispatchFailure(
+      env.model,
+      env.credentials,
+    );
+    if (missingCredential !== undefined) {
+      return await presentControlledFailure(
+        admitted,
+        missingCredential,
+        io,
+      );
+    }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
@@ -350,8 +360,11 @@ async function dispatchAdmittedReviewer(input: {
       };
     }
 
-    const credentialFailure =
-      knownFailureForMissingProviderCredential(env.model, env.credentials);
+    const credentialFailure = postRunMissingCredentialFailure(
+      result,
+      env.model,
+      env.credentials,
+    );
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result.knownFailure,
       sessionFile: admitted.sessionFile,
@@ -385,7 +398,7 @@ export async function runPublicReviewer(
   parseReviewerArgv: (args: readonly string[]) => {
     instruction: string;
     attachmentPaths: string[];
-    baseRevision?: string;
+    baseRevision: string;
     project?: string;
   },
 ): Promise<{
@@ -401,9 +414,7 @@ export async function runPublicReviewer(
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
-      ...(parsed.baseRevision === undefined
-        ? {}
-        : { baseRevision: parsed.baseRevision }),
+      baseRevision: parsed.baseRevision,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
     });
@@ -463,7 +474,7 @@ export async function runPublicReviewer(
 
 /**
  * Resume a previously admitted Reviewer Role run after a typed HTTP 429.
- * Restores task/capabilities/session identity; model override is temporary.
+ * Restores task/base/session identity; model override is temporary.
  */
 export async function runPublicReviewerResume(
   argv: readonly string[],

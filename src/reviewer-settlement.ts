@@ -1,5 +1,4 @@
 import type { ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
-import { projectMechanicalBundleIdentity } from "./reviewer-construction.ts";
 import type { ReviewerIntent, RuntimeReviewerOutcome, RuntimeReviewerReceiptV2, VerbatimChildReport } from "./package-contracts/reviewer-output.ts";
 
 export type { RuntimeReviewerOutcome, RuntimeReviewerReceiptV2, VerbatimChildReport } from "./package-contracts/reviewer-output.ts";
@@ -10,8 +9,8 @@ function freeze<T>(value: T): T {
   return value;
 }
 
-function receiptPrompt(prompt: { text: string }): Readonly<{ text: string }> {
-  return Object.freeze({ text: prompt.text });
+function receiptPrompt(prompt: string): Readonly<{ text: string }> {
+  return Object.freeze({ text: prompt });
 }
 
 export function assembleRuntimeReviewerReceipt(input: {
@@ -30,7 +29,6 @@ export function assembleRuntimeReviewerReceipt(input: {
         status: "successful",
         prompt: receiptPrompt(result.prompt),
         workspaceDisposition: result.workspaceDisposition,
-        runtimeConstructionEvidence: result.runtimeConstructionEvidence,
       };
       reports[axis] = { text: result.report };
     } else {
@@ -40,12 +38,11 @@ export function assembleRuntimeReviewerReceipt(input: {
         workspaceDisposition: result.workspaceDisposition,
         failure: result.failure,
         diagnostic: result.diagnostic,
-        ...(result.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: result.runtimeConstructionEvidence }),
       };
     }
   }
   const accepted = input.record.accepted;
-  const skillText = accepted?.input.canonicalSkill.snapshotIdentity.text ?? input.canonicalSkillText;
+  const skillText = accepted?.input.canonicalSkill ?? input.canonicalSkillText;
   return freeze({
     version: 2,
     status: input.intent.status,
@@ -60,7 +57,7 @@ export function assembleRuntimeReviewerReceipt(input: {
     outcomes,
     identities: {
       canonicalSkill: { text: skillText },
-      ...(accepted === undefined ? {} : { construction: { recipe: accepted.recipe, bundle: projectMechanicalBundleIdentity(accepted.bundle) }, target: accepted.target }),
+      ...(accepted === undefined ? {} : { construction: { recipe: accepted.recipe }, target: accepted.target }),
     },
   });
 }
