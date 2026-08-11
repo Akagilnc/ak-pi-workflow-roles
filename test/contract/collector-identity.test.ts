@@ -72,11 +72,13 @@ test("#245 full PR 1168 replay preserves typed attendance, findings, evidence ow
   const rabbitIds = commentIdsFor(4895713581);
   const codexCurrent = codex.findings.filter((finding) => codexIds.has(finding.source.id));
   assert.equal(codexCurrent.length, 5);
-  const rabbitCurrent = rabbit.findings.filter((finding) => finding.source.id === 4895713581 || rabbitIds.has(finding.source.id));
+  const rabbitCurrent = rabbit.findings.filter((finding) => rabbitIds.has(finding.source.id));
   assert.equal(rabbitCurrent.filter((finding) => finding.category === "inline").length, 4);
-  const foldedMaterial = rabbitCurrent.filter((finding) => finding.category === "material");
-  assert.equal(foldedMaterial.length, 1);
-  assert.equal(foldedMaterial[0]!.body, reviews.find((review: { id: number }) => review.id === 4895713581)!.body);
+  assert.ok(!rabbit.findings.some((finding) => finding.source.id === 4895713581));
+  assert.equal(
+    rabbit.materials.find((material) => material.id === 4895713581)!.body,
+    reviews.find((review: { id: number }) => review.id === 4895713581)!.body,
+  );
   for (const [group, findings] of [[codex, codexCurrent], [rabbit, rabbitCurrent]] as const) {
     assert.ok(findings.every((finding) => finding.identity.userId === group.identity?.userId && typeof finding.source.evidenceId === "string"));
   }
@@ -103,15 +105,31 @@ test("Codex attendance is invariant under no-finding and usage-limit prose", asy
   assert.deepEqual(limited.findings, []);
 });
 
-test("CodeRabbit frozen review markup is one complete opaque material plus four structured inline findings", async () => {
+test("CodeRabbit frozen review body remains material and only structured inline objects become findings", async () => {
   const review = normalizeReview(JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-review-4895713581.json", import.meta.url), "utf8")));
   const inlineRaw = JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-inline-review-4895713581.json", import.meta.url), "utf8"));
   const group = extractGitHubIdentityGroups([review, ...inlineRaw.map(normalizeReviewComment)])[0]!;
-  const materials = group.findings.filter((finding) => finding.category === "material");
-  assert.equal(materials.length, 1);
-  assert.equal(materials[0]!.body, review.body);
+  assert.equal(group.materials.find((material) => material.id === review.id)!.body, review.body);
+  assert.ok(!group.findings.some((finding) => finding.source.id === review.id));
   assert.equal(group.findings.filter((finding) => finding.category === "inline").length, 4);
   assert.ok(group.findings.every((finding) => finding.source.id > 0 && finding.identity.userId === 136622811));
+});
+
+test("CodeRabbit LGTM review records attendance and material with zero findings", () => {
+  const review = normalizeReview({
+    id: 1,
+    body: "LGTM",
+    state: "APPROVED",
+    commit_id: "a".repeat(40),
+    submitted_at: "2026-08-11T00:00:00Z",
+    html_url: "https://example.test/review/1",
+    user: { login: "irrelevant[bot]", type: "Bot", id: 136622811 },
+  });
+  const group = extractGitHubIdentityGroups([review])[0]!;
+
+  assert.equal(group.attendance, true);
+  assert.deepEqual(group.findings, []);
+  assert.deepEqual(group.materials, [{ kind: "review", id: 1, body: "LGTM" }]);
 });
 
 test("evidence extractor binds real evidenceId refs and head relation",  async () => {
@@ -125,6 +143,7 @@ test("evidence extractor binds real evidenceId refs and head relation",  async (
   assert.deepEqual(group.materials, [{
     kind: "review",
     id: 4892027495,
+    body: record.body,
     evidenceId: record.evidenceId,
     headRelation: "prior",
   }]);
@@ -140,8 +159,8 @@ test("historical versions of one GitHub record retain their own evidence closure
     { evidenceId: prior.evidenceId, headRelation: "prior" },
     { evidenceId: current.evidenceId, headRelation: "current" },
   ]);
-  assert.ok(groups[0]!.findings.some((finding) => finding.source.evidenceId === prior.evidenceId));
-  assert.ok(groups[0]!.findings.some((finding) => finding.source.evidenceId === current.evidenceId));
+  assert.deepEqual(materials.map(({ body }) => body), [raw.body, `${raw.body}\nupdated`]);
+  assert.deepEqual(groups[0]!.findings, []);
 });
 
 test("machine identity ignores display changes, separates user IDs, and leaves tombstones unassigned", () => {
