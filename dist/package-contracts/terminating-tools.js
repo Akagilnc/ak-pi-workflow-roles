@@ -78,9 +78,7 @@ export function validateAcceptedDetails(toolName, details) {
         [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
         [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
     };
-    const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.legs) && candidate.legs.length > 0 &&
-        candidate.legs.every((leg) => leg !== null && typeof leg === "object" &&
-            ["valid", "unavailable", "missing"].includes(String(leg.status)));
+    const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
     const runtimeBindingMissing = (toolName === DOCTOR_OUTPUT_TOOL_NAME && discriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
         (toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2);
     if (runtimeBindingMissing || (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(discriminator)))) {
@@ -132,11 +130,6 @@ export function validateAcceptedLifecycle(toolName, argumentsValue, detailsValue
         throw new Error("accepted tool lifecycle details mismatch");
     return details;
 }
-const COLLECTOR_LEG_STATUS_RANK = {
-    missing: 0,
-    unavailable: 1,
-    valid: 2,
-};
 export function acceptedFacts(toolName, details) {
     switch (toolName) {
         case CODER_OUTPUT_TOOL_NAME:
@@ -148,14 +141,8 @@ export function acceptedFacts(toolName, details) {
             const output = details;
             return { status: output.status, ...(output.status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {}) };
         }
-        case COLLECTOR_OUTPUT_TOOL: {
-            const legs = details.legs;
-            const unique = [...new Set((Array.isArray(legs) ? legs : []).flatMap((leg) => leg !== null && typeof leg === "object" && ["valid", "unavailable", "missing"].includes(String(leg.status))
-                    ? [leg.status]
-                    : []))];
-            unique.sort((a, b) => COLLECTOR_LEG_STATUS_RANK[a] - COLLECTOR_LEG_STATUS_RANK[b]);
-            return { legStatuses: unique };
-        }
+        case COLLECTOR_OUTPUT_TOOL:
+            return { status: "collected" };
     }
 }
 /** Deep structural equality for lifecycle agreement checks. */

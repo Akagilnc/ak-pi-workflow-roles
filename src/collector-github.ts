@@ -632,17 +632,17 @@ export function createGhCollectorGitHubTransport(
 
 export function buildCollectorRequestMarker(input: {
   manifestDigest: string;
-  legId: string;
+  requestId: string;
   headOid: string;
 }): string {
   const prefix = input.manifestDigest.slice(0, 12);
-  return `<!-- ak-collector:v1 manifest=${prefix} leg=${input.legId} head=${input.headOid} -->`;
+  return `<!-- ak-collector:v1 manifest=${prefix} request=${input.requestId} head=${input.headOid} -->`;
 }
 
 export function buildCollectorRequestBody(input: {
   configuredBody: string;
   manifestDigest: string;
-  legId: string;
+  requestId: string;
   headOid: string;
 }): { body: string; marker: string } {
   const marker = buildCollectorRequestMarker(input);

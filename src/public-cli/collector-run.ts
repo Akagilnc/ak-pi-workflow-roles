@@ -1,5 +1,5 @@
 /**
- * Public Collector Role run: admit structured PR/legs → explicit Internal activate
+ * Public Collector Role run: admit a structured PR target → explicit Internal activate
  * → settle Terminal result (#112). One-shot; no resume path (Collector rejects
  * session resume/fork/reload). Failure settlement reuses the #107 shared owner.
  */
@@ -110,8 +110,6 @@ export function buildCollectorActivationExtraArgs(
     admitted.repository.display,
     "--ak-collector-pr",
     String(admitted.prNumber),
-    "--ak-collector-legs",
-    admitted.legsPath,
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -337,7 +335,6 @@ export async function runPublicCollector(
       home: env.home,
       cwd: env.cwd,
       prNumber: parsed.prNumber,
-      legs: parsed.legs,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
