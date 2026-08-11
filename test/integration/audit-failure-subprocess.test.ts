@@ -185,7 +185,6 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
         JSON.stringify({
           version: 1,
           taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-          tools: ["read", "bash"],
           prerequisiteOperations: [
             "preflight.git.pin-target",
             "preflight.git.resolve-base",
@@ -595,7 +594,6 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
       JSON.stringify({
         version: 1,
         taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-        tools: ["read", "bash"],
         prerequisiteOperations: [
           "preflight.git.pin-target",
           "preflight.git.resolve-base",

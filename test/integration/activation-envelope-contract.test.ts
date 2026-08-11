@@ -113,7 +113,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
   const reviewCaps = new TextEncoder().encode(JSON.stringify({
     version: 1,
     taskSha256: sha256Hex(reviewTask),
-    tools: ["read", "bash"],
     prerequisiteOperations: [...reviewOps],
   }));
   const base = {

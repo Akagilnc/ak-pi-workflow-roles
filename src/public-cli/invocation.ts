@@ -38,7 +38,6 @@ import {
 } from "../package-contracts/fixer-packet.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import {
-  REVIEWER_CHILD_TOOLS,
   REVIEWER_PREREQUISITES,
 } from "../reviewer-admission.ts";
 import { createProductionMergerGitState } from "../merger-git-state.ts";
@@ -1712,7 +1711,8 @@ export function parseReviewerArgv(
 
 /**
  * Derive the closed Reviewer capability grant from exact task bytes.
- * Ceiling is the package host tool/prerequisite set; callers never submit packets.
+ * Ceiling is the package snapshot-prerequisite set; callers never submit packets.
+ * Tool rights are unrestricted at runtime (ADR 0064) and are not granted here.
  */
 export function deriveReviewerCapabilitiesFromTask(
   taskBytes: Uint8Array,
@@ -1725,7 +1725,6 @@ export function deriveReviewerCapabilitiesFromTask(
   const text = `${JSON.stringify({
     version: 1,
     taskSha256,
-    tools: [...REVIEWER_CHILD_TOOLS],
     prerequisiteOperations: [...REVIEWER_PREREQUISITES],
   })}\n`;
   return {

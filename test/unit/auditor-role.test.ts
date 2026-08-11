@@ -387,3 +387,46 @@ test("independent auditor gathers evidence and submits one decision", async () =
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("auditor enables non-default native evidence tools and a sole terminating decision tool", async () => {
+  // Pi defaults to read/bash/edit/write when tools is omitted. ADR 0064 requires the
+  // full registry (including grep/find/ls) plus the decision tool — prove via grep.
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-unrestricted-tools-"));
+  try {
+    await writeFile(join(cwd, "probe.txt"), "probe-marker\n");
+    const faux = fauxProvider({ provider: "audit-unrestricted-tools" });
+    const baseTool = createComplianceDecisionTool("ak_unrestricted_decision", "Submit the decision.");
+    let decisions = 0;
+    const tool = {
+      ...baseTool,
+      async execute(...args: Parameters<typeof baseTool.execute>) {
+        decisions += 1;
+        return baseTool.execute(...args);
+      },
+    };
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("grep", { pattern: "probe-marker", path: "." })], { stopReason: "toolUse" }),
+      (context: Context) => {
+        const grepResult = [...context.messages].reverse().find((message) => message.role === "toolResult" && message.toolName === "grep");
+        assert.ok(grepResult && grepResult.role === "toolResult");
+        const text = Array.isArray(grepResult.content)
+          ? grepResult.content.map((part) => (part.type === "text" ? part.text : "")).join("")
+          : String(grepResult.content ?? "");
+        // A registered tool returns a real result; an allowlist miss yields "Unknown tool".
+        assert.equal(/unknown tool/i.test(text), false);
+        return fauxAssistantMessage([fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })], { stopReason: "toolUse" });
+      },
+    ]);
+    const result = await runAuditorRole({
+      systemPrompt: "Inspect with any needed tool, then decide once.",
+      serializedInput: "Use grep then decide.",
+      tool,
+      roleLabel: "Test auditor",
+      context: auditorContext(cwd, faux.provider, { model: faux.getModel() }),
+    });
+    assert.deepEqual(result.decision, { status: "pass", violations: [], conflicts: [], decisionGate: null });
+    assert.equal(decisions, 1);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

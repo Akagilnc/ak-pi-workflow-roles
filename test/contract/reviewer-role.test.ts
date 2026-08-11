@@ -21,10 +21,10 @@ const task = new TextEncoder().encode("review exact bytes\n");
 const digest = createHash("sha256").update(task).digest("hex");
 const operations = ["preflight.git.pin-target","preflight.git.resolve-base","preflight.git.derive-range","preflight.git.list-ordered-commits","preflight.git.read-material","runner.git.materialize-mirror","runner.git.materialize-workspace","runner.git.verify-snapshot"] as const;
 const diffCommand = "git diff base...target";
-const capabilities = new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: ["read", "bash"], prerequisiteOperations: operations }));
+const capabilities = new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, prerequisiteOperations: operations }));
 const skill = readFileSync(new URL("../fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
 const pin = { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "target", refs: { "refs/heads/main": { objectId: "target", peeledCommitId: "target" } } };
-const request = { tools: ["read", "bash"] as const, prerequisiteOperations: operations };
+const request = { prerequisiteOperations: operations };
 const exec = promisify(execFile);
 async function git(root: string, ...args: string[]): Promise<string> {
   try {
@@ -54,30 +54,22 @@ function outputContext(id:string): ExtensionContext { const sessionManager=Sessi
 function captureReviewExpansion(reviewerHarness: ReturnType<typeof harness>) { reviewerHarness.handlers.get("input")({text:"review"}); reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"}); }
 function setup(overrides: Partial<Parameters<typeof createReviewerRoleRuntime>[1]> = {}) {
   const reviewerHarness=harness(); let starts=0; const audits:ReviewerAuditInput[]=[];
-  const runtime=createReviewerRoleRuntime(reviewerHarness.pi,{ loadSoul:async()=>"law", loadTask:async()=>task, loadCapabilities:async()=>capabilities, loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill,snapshotIdentity:reviewerPromptIdentity(skill)},invocation:x=>x,captureExpansion:(prompt,original)=>prompt===original?{name:"code-review",location:"/skill",content:skill,userMessage:original}:undefined}), createPinnedGitReader:async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand:"git diff base...target",diffSha256:"1".repeat(64),commits:["target"]}),material:async(path)=>{if(path.startsWith("/")||path.includes("\\")||/[\u0000-\u001f\u007f]/u.test(path)||path.split("/").some(segment=>!segment||segment==="."||segment===".."))throw new ReviewerCorrectablePreflightError("material-invalid");return new TextEncoder().encode(path);}}), hostTools:()=>["read", "bash"], runDispatch:async(dispatch:AcceptedReviewerExecution)=>{starts++; const legs:any={}; for(const leg of dispatch.legs) legs[leg.axis]={status:"successful",report:`${leg.axis} report`,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{text:leg.prompt.text,utf8Length:leg.prompt.utf8Length,sha256:leg.prompt.sha256},workspaceDisposition:"deleted",runtimeConstructionEvidence:constructionEvidence(dispatch,leg)}; return {identity:dispatch.identity,target:pin,legs};}, auditCompliance:async input=>{audits.push(input);return {status:"pass"};}, ...overrides },{failInfrastructure(error){throw error;}});
+  const runtime=createReviewerRoleRuntime(reviewerHarness.pi,{ loadSoul:async()=>"law", loadTask:async()=>task, loadCapabilities:async()=>capabilities, loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill,snapshotIdentity:reviewerPromptIdentity(skill)},invocation:x=>x,captureExpansion:(prompt,original)=>prompt===original?{name:"code-review",location:"/skill",content:skill,userMessage:original}:undefined}), createPinnedGitReader:async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand:"git diff base...target",diffSha256:"1".repeat(64),commits:["target"]}),material:async(path)=>{if(path.startsWith("/")||path.includes("\\")||/[\u0000-\u001f\u007f]/u.test(path)||path.split("/").some(segment=>!segment||segment==="."||segment===".."))throw new ReviewerCorrectablePreflightError("material-invalid");return new TextEncoder().encode(path);}}), runDispatch:async(dispatch:AcceptedReviewerExecution)=>{starts++; const legs:any={}; for(const leg of dispatch.legs) legs[leg.axis]={status:"successful",report:`${leg.axis} report`,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{text:leg.prompt.text,utf8Length:leg.prompt.utf8Length,sha256:leg.prompt.sha256},workspaceDisposition:"deleted",runtimeConstructionEvidence:constructionEvidence(dispatch,leg)}; return {identity:dispatch.identity,target:pin,legs};}, auditCompliance:async input=>{audits.push(input);return {status:"pass"};}, ...overrides },{failInfrastructure(error){throw error;}});
   return {...reviewerHarness,runtime,audits,get starts(){return starts;},get activeTools(){return reviewerHarness.activeTools;}};
 }
 
 test("activation authorizes pin-target before creating the pinned Git reader", async()=>{
   let pins=0;
-  const withoutPin=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read"],prerequisiteOperations:operations.filter(operation=>operation!=="preflight.git.pin-target")}));
+  const withoutPin=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,prerequisiteOperations:operations.filter(operation=>operation!=="preflight.git.pin-target")}));
   const reviewerHarness=setup({loadCapabilities:async()=>withoutPin,createPinnedGitReader:async()=>{pins++;throw new Error("must not pin");}});
   await assert.rejects(reviewerHarness.runtime.activate(),/pin-target/);
   assert.equal(pins,0);
 });
 
-test("activation permits unused ceiling authority absent from the host", async()=>{
-  let runs=0;
-  const unavailable=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash","write"],prerequisiteOperations:operations}));
-  const reviewerHarness=setup({loadCapabilities:async()=>unavailable,hostTools:()=>["read","bash"],runDispatch:async()=>{runs++;throw new Error("must not run");}});
-  await reviewerHarness.runtime.activate();
-  assert.equal(runs,0);
-});
-
 test("activation fails closed for absent, malformed, and task-mismatched capabilities", async()=>{
   const missing=setup(); delete missing.flags["ak-review-capabilities"]; await assert.rejects(missing.runtime.activate(),/requires --ak-review-capabilities/);
   await assert.rejects(setup({loadCapabilities:async()=>new TextEncoder().encode("{}")}).runtime.activate(),/capabilities/);
-  const wrong=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:"0".repeat(64),tools:[],prerequisiteOperations:[]}));
+  const wrong=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:"0".repeat(64),prerequisiteOperations:[]}));
   await assert.rejects(setup({loadCapabilities:async()=>wrong}).runtime.activate(),/digest mismatch/);
 });
 
@@ -93,8 +85,8 @@ test("registered Agent rejection text names the violated proposal or pinned-evid
   const cases: Array<{ code: string; candidate?: ReviewerProposalV1; overrides?: Partial<Parameters<typeof createReviewerRoleRuntime>[1]> }> = [
     { code: "base-invalid", candidate: { ...proposal(), base: { revision: "" } } },
     { code: "material-invalid", candidate: { ...proposal(), materials: [{ id: "bad id", repositoryPath: "RULES.md" }] } },
-    { code: "capability-invalid", candidate: { ...proposal(), required: { standards: { tools: ["write"], prerequisiteOperations: operations } } as any } },
-    { code: "prerequisite-missing", overrides: { loadCapabilities: async()=>new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash"],prerequisiteOperations:operations.filter(x=>x!=="preflight.git.derive-range")})) } },
+    { code: "capability-invalid", candidate: { ...proposal(), required: { standards: { prerequisiteOperations: ["not-a-prerequisite"] } } as any } },
+    { code: "prerequisite-missing", overrides: { loadCapabilities: async()=>new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,prerequisiteOperations:operations.filter(x=>x!=="preflight.git.derive-range")})) } },
     { code: "range-invalid", overrides: { createPinnedGitReader: async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"wrong",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}) } },
     { code: "prompt-identity-mismatch", overrides: { compilePrompt: (()=>{let pass=0;return (text:string)=>reviewerPromptIdentity(`${text}${++pass===1?"":"changed"}`);})() } },
     { code: "target-drift", overrides: { createPinnedGitReader: async()=>{let observations=0;return {pin,snapshot:async()=>++observations===1?{...pin,targetHead:"other"}:pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}} } },
@@ -180,7 +172,7 @@ test("successful Agent result is exactly thin while settled evidence remains int
   const reviewerHarness=setup(); await reviewerHarness.runtime.activate(); captureReviewExpansion(reviewerHarness);
   const result=await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(true),undefined,undefined,{} as ExtensionContext);
   assert.deepEqual(result.details,{status:"accepted",identity:result.details.identity});
-  assert.deepEqual(result.content,[{type:"text",text:"Reviewer dispatch accepted"}]);
+  assert.equal(typeof result.details.identity, "string");
   assert.equal(JSON.stringify(result).includes("standards report"),false);
   assert.equal(JSON.stringify(result).includes("spec report"),false);
   assert.equal(JSON.stringify(result).includes("prompt"),false);

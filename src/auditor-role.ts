@@ -5,7 +5,6 @@ import {
 } from "./role-child-executor.ts";
 
 export {
-  AUDITOR_EVIDENCE_TOOLS,
   AUDITOR_TURN_LIMIT,
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
   AuditorTurnLimitError,

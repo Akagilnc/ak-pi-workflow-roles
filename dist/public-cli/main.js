@@ -10101,7 +10101,6 @@ async function loadCollectorManifest(path) {
 }
 
 // src/reviewer-admission.ts
-var REVIEWER_CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
 var REVIEWER_PREREQUISITES = [
   "preflight.git.pin-target",
   "preflight.git.resolve-base",
@@ -11358,7 +11357,6 @@ function deriveReviewerCapabilitiesFromTask(taskBytes) {
   const text = `${JSON.stringify({
     version: 1,
     taskSha256,
-    tools: [...REVIEWER_CHILD_TOOLS],
     prerequisiteOperations: [...REVIEWER_PREREQUISITES]
   })}
 `;

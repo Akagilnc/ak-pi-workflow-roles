@@ -1,4 +1,3 @@
-export const REVIEWER_CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
 export const REVIEWER_PREREQUISITES = [
     "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range",
     "preflight.git.list-ordered-commits", "preflight.git.read-material",
@@ -17,17 +16,18 @@ const fail = (code, diagnostic) => { throw new ReviewerAdmissionError(code, diag
 const record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const unique = (xs) => new Set(xs).size === xs.length;
 const frozen = (xs) => Object.freeze([...xs]);
-const immutableRequest = (r) => Object.freeze({ tools: frozen(r.tools), prerequisiteOperations: frozen(r.prerequisiteOperations) });
-function request(value, ceiling, hostTools) {
+const immutableRequest = (r) => Object.freeze({ prerequisiteOperations: frozen(r.prerequisiteOperations) });
+function request(value, ceiling) {
     if (!record(value))
         fail("capability-invalid", "required capability request must be an object");
-    const { tools, prerequisiteOperations } = value;
-    if (!Array.isArray(tools) || !Array.isArray(prerequisiteOperations) || !tools.every(x => typeof x === "string" && REVIEWER_CHILD_TOOLS.includes(x)) || !prerequisiteOperations.every(x => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || !unique(tools) || !unique(prerequisiteOperations) || tools.some(x => !ceiling.tools.includes(x) || !hostTools.includes(x)) || prerequisiteOperations.some(x => !ceiling.prerequisiteOperations.includes(x)))
-        fail("capability-invalid", "required.tools/prerequisiteOperations must be unique, known, and within the capability and host ceilings");
-    return immutableRequest({ tools: tools, prerequisiteOperations: prerequisiteOperations });
+    const { prerequisiteOperations } = value;
+    if (!Array.isArray(prerequisiteOperations) || !prerequisiteOperations.every((x) => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || !unique(prerequisiteOperations) || prerequisiteOperations.some((x) => !ceiling.prerequisiteOperations.includes(x))) {
+        fail("capability-invalid", "required.prerequisiteOperations must be unique, known, and within the capability ceiling");
+    }
+    return immutableRequest({ prerequisiteOperations: prerequisiteOperations });
 }
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-export function admitReviewerProposal(proposal, ceiling, hostTools) {
+export function admitReviewerProposal(proposal, ceiling) {
     if (!record(proposal) || proposal.version !== 1)
         fail("proposal-invalid", "proposal.version must equal 1");
     const p = proposal;
@@ -73,8 +73,8 @@ export function admitReviewerProposal(proposal, ceiling, hostTools) {
     for (const op of REVIEWER_PREREQUISITES.filter(x => x.startsWith("preflight.")))
         if (!ceiling.prerequisiteOperations.includes(op))
             fail("prerequisite-missing", `capability prerequisiteOperations is missing ${op}`);
-    const standardsGrant = request(required.standards, ceiling, hostTools);
-    const specGrant = spec.state === "established" ? request(required.spec, ceiling, hostTools) : undefined;
+    const standardsGrant = request(required.standards, ceiling);
+    const specGrant = spec.state === "established" ? request(required.spec, ceiling) : undefined;
     const runner = REVIEWER_PREREQUISITES.filter(x => x.startsWith("runner."));
     for (const op of runner)
         if (!ceiling.prerequisiteOperations.includes(op))

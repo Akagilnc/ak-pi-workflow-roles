@@ -12,7 +12,6 @@ import {
   createReviewerDispatcher,
   sha256Hex,
   parseReviewerCapabilities,
-  REVIEWER_CHILD_TOOLS,
   REVIEWER_PREREQUISITES,
   type AcceptedReviewerDispatch,
   type AcceptedReviewerExecution,
@@ -31,7 +30,6 @@ export type { ReviewerIntent };
 export const AGENT_TOOL_NAME = "Agent";
 
 const requestSchema = Type.Object({
-  tools: Type.Array(StringEnum(REVIEWER_CHILD_TOOLS), { uniqueItems: true }),
   prerequisiteOperations: Type.Array(StringEnum(REVIEWER_PREREQUISITES), { uniqueItems: true }),
 }, { additionalProperties: true });
 const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }), source: Type.Optional(StringEnum(["pinned-git", "host-input"] as const)), sourcePath: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: true });
@@ -41,7 +39,7 @@ export const reviewerProposalSchema = Type.Object({
   materials: Type.Array(materialSchema, { description: "Pinned materials admitted to the review." }),
   relevanceHints: Type.Optional(Type.Object({ standards: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })), spec: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })) }, { additionalProperties: true, description: "Optional hints identifying relevant standards and specification material." })),
   spec: Type.Object({ state: StringEnum(["established", "not-established"] as const) }, { additionalProperties: true, description: "Whether an established specification governs the review." }),
-  required: Type.Object({ standards: requestSchema, spec: Type.Optional(requestSchema) }, { additionalProperties: true, description: "Tools and prerequisite operations required for each review axis." }),
+  required: Type.Object({ standards: requestSchema, spec: Type.Optional(requestSchema) }, { additionalProperties: true, description: "Prerequisite operations required for each review axis." }),
 }, { additionalProperties: true });
 const reviewerOutputVariants = Type.Union([
   Type.Object({ status: Type.Literal("completed", { description: "Reviewer dispatch completed." }) }, { additionalProperties: false }),
@@ -55,7 +53,6 @@ export type ReviewerRoleDependencies = {
   loadCapabilities(path: string): Promise<Uint8Array>;
   loadCanonicalSkillBinding(name: "code-review"): Promise<AnyCanonicalSkillBinding>;
   createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
-  hostTools(): readonly string[];
   loadHostMaterials?(): Promise<readonly ReviewerHostMaterial[]>;
   runDispatch(execution: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
   compilePrompt?(prompt: string, axis: "standards" | "spec", pass: 1 | 2): ReturnType<typeof reviewerPromptIdentity>;
@@ -158,7 +155,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       canonicalSkill: binding.snapshot.raw,
       capabilities,
       reader,
-      hostTools: dependencies.hostTools(),
       ...(hostMaterials.length === 0 ? {} : { hostMaterials }),
       ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
       ...(dependencies.compilePrompt === undefined ? {} : { compilePrompt: dependencies.compilePrompt }),

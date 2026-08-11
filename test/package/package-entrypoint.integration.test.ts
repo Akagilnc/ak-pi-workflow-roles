@@ -357,7 +357,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
       const capabilities = new TextEncoder().encode(JSON.stringify({
         version: 1,
         taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-        tools: ["read"],
         prerequisiteOperations: ["preflight.git.pin-target"],
       }));
       const skill = "canonical review skill";
@@ -494,7 +493,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
               captureExpansion: () => undefined,
             }),
             createPinnedGitReader: async () => ({ pin, snapshot: async () => pin, resolve: async () => "base", range: async () => ({ base: "base", target: "target", diffCommand: "git diff base...target", diffSha256: "a".repeat(64), commits: ["target"] }), material: async () => new TextEncoder().encode("material") }),
-            hostTools: () => ["read"],
             runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
             auditCompliance,
           }, { failInfrastructure(error: unknown) { throw error; } });
