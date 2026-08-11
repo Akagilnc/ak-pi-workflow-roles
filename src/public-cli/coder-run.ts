@@ -12,7 +12,6 @@ import {
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
 import {
-  knownFailureFromProviderStop,
   runExplicitInternalActivation,
   type ExplicitInternalKnownFailure,
   type ExplicitInternalPiRunner,
@@ -59,7 +58,7 @@ import {
   presentFailureTerminal,
   presentStructuralRejection,
   explicitInternalKnownFailureClassificationInput,
-  readSessionProviderStop,
+  resolveAuditedRunnerKnownFailure,
   settleFailureTerminalResult,
   trySettleCoderTerminalResult,
 } from "./settlement.ts";
@@ -365,20 +364,16 @@ async function dispatchAdmittedCoder(input: {
       };
     }
 
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile,
-    );
-    const sessionProviderFailure =
-      sessionProviderStop === undefined
-        ? undefined
-        : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = postRunMissingCredentialFailure(
       result,
       env.model,
       env.credentials,
     );
-    const knownFailure =
-      result.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure,
+    });
     return await presentControlledFailure(
       admitted,
       {

@@ -17,9 +17,9 @@ import {
 
 export function childSessionManager(parent: { getSessionFile(): string | undefined; getSessionDir(): string } | undefined, cwd: string, childDirectory: string): SessionManager {
   const parentSession = parent?.getSessionFile();
-  if (parentSession === undefined) return SessionManager.inMemory(cwd);
-  const parentDirectory = parent!.getSessionDir();
-  return SessionManager.create(cwd, join(parentDirectory === "" ? dirname(parentSession) : parentDirectory, childDirectory), { parentSession });
+  return parentSession === undefined
+    ? SessionManager.inMemory(cwd)
+    : SessionManager.create(cwd, join(parent!.getSessionDir(), childDirectory), { parentSession });
 }
 
 /** Durable pointer to the authoritative Pi session file principal (ADR 0048/0049). */

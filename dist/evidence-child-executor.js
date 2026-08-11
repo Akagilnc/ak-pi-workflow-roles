@@ -16,12 +16,14 @@ export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
 export class AuditorTurnLimitError extends Error {
     limit;
     observedTurns;
-    constructor(limit, observedTurns) {
+    lastResponse;
+    constructor(limit, observedTurns, lastResponse) {
         super(observedTurns === undefined
             ? `Auditor exceeded ${limit} turns`
             : `Auditor exhausted its ${limit}-turn limit after ${observedTurns} provider turns`);
         this.limit = limit;
         this.observedTurns = observedTurns;
+        this.lastResponse = lastResponse;
         this.name = "AuditorTurnLimitError";
     }
 }
@@ -372,16 +374,22 @@ export async function executeAuditorChild(options) {
         });
         const cwd = options.context.cwd ?? process.cwd();
         let decision;
+        let decisionToolFailure;
         const tool = wrapPackageOwnedToolDefinition({
             ...options.tool,
             label: options.roleLabel,
             async execute(...args) {
                 if (decision !== undefined)
                     throw new Error("Auditor decision was submitted more than once");
-                // Record first so a second submit is rejected even if execute returns;
-                // compliance decision tools return and do not throw.
-                decision = args[1];
-                return options.tool.execute(...args);
+                try {
+                    const result = await options.tool.execute(...args);
+                    decision = args[1];
+                    return result;
+                }
+                catch (error) {
+                    decisionToolFailure = error;
+                    throw error;
+                }
             },
         });
         const parentSessionManager = options.context.sessionManager;
@@ -419,14 +427,30 @@ export async function executeAuditorChild(options) {
         // response could not later be tied to the current parent attempt.
         auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
         let turns = 0;
-        let turnError;
+        let boundaryResponse;
+        let retentionFailure;
+        let retainedResponse;
+        const registeredToolNames = new Set(session.getAllTools().map((entry) => entry.name));
+        const findToolFailure = (response) => {
+            const callIds = new Set(response.content.flatMap((part) => part.type === "toolCall" && part.name !== tool.name && registeredToolNames.has(part.name) ? [part.id] : []));
+            return [...session.messages].reverse().find((message) => message.role === "toolResult" && callIds.has(message.toolCallId) && message.isError);
+        };
         const unsubscribe = session.subscribe((event) => {
-            if (event.type === "message_end" && event.message.role === "assistant") {
+            if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
                 turns += 1;
-                if (turns > AUDITOR_TURN_LIMIT) {
-                    turnError = new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns);
-                    void session.abort();
+                retainedResponse = event.message;
+                try {
+                    options.retainResponse?.(event.message);
                 }
+                catch (error) {
+                    retentionFailure = error;
+                }
+                if (turns >= AUDITOR_TURN_LIMIT)
+                    boundaryResponse = event.message;
+            }
+            if (event.type === "turn_end" &&
+                (decision !== undefined || boundaryResponse !== undefined || retentionFailure !== undefined)) {
+                void session.abort();
             }
         });
         const abort = () => { void session.abort(); };
@@ -449,8 +473,25 @@ export async function executeAuditorChild(options) {
                 throw options.signal.reason;
             if (inherited.streamFailure !== undefined)
                 throw inherited.streamFailure;
-            if (turnError !== undefined)
-                throw turnError;
+            if (decisionToolFailure !== undefined)
+                throw decisionToolFailure;
+            const relevantResponse = decision === undefined
+                ? boundaryResponse
+                : [...session.messages].reverse().find((message) => message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
+            if (relevantResponse !== undefined) {
+                const toolFailure = findToolFailure(relevantResponse);
+                if (toolFailure !== undefined)
+                    throw toolFailure;
+            }
+            if (retentionFailure !== undefined && retainedResponse?.stopReason !== "error")
+                throw retentionFailure;
+            if (boundaryResponse !== undefined && decision === undefined) {
+                const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
+                throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
+                    stopReason: boundaryResponse.stopReason,
+                    toolNames,
+                });
+            }
             const assistants = [...session.messages]
                 .reverse()
                 .filter((message) => message.role === "assistant");
@@ -459,7 +500,10 @@ export async function executeAuditorChild(options) {
                 : assistants.find((message) => message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
             if (response !== undefined) {
                 try {
-                    options.retainResponse?.(response);
+                    if (retainedResponse === undefined)
+                        options.retainResponse?.(response);
+                    else if (retentionFailure !== undefined)
+                        throw retentionFailure;
                 }
                 catch (retentionFailure) {
                     if (response.stopReason !== "error")
