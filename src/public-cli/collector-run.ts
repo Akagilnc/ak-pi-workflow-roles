@@ -7,7 +7,6 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
-  knownFailureFromProviderStop,
   runExplicitInternalActivation,
   type ExplicitInternalKnownFailure,
   type ExplicitInternalPiRunner,
