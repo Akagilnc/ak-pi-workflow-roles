@@ -131,6 +131,65 @@ test("auditor gathers evidence and submits one decision", async () => {
   }
 });
 
+test("undefined decision candidate settles as typed audit-incomplete", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-undefined-decision-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const faux = fauxProvider({ provider: "undefined-decision-test" });
+    const tool = createComplianceDecisionTool("ak_undefined_decision", "Submit.");
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool,
+      systemPrompt: "Submit the candidate.",
+      roleLabel: "Undefined decision auditor",
+      invalidDecisionLabel: "invalid undefined decision",
+      runCompletion: async () => fauxAssistantMessage([{
+        type: "toolCall",
+        id: "undefined-decision-call",
+        name: tool.name,
+        arguments: undefined as unknown as Record<string, any>,
+      }], { stopReason: "toolUse" }),
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(decision.status, "audit-incomplete");
+    if (decision.status === "audit-incomplete") {
+      assert.deepEqual(decision.observation, { kind: "non-object-arguments", type: "undefined" });
+      assert.equal(decision.candidate, undefined);
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("injected completion preserves same-turn evidence failure identity", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-evidence-failure-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const faux = fauxProvider({ provider: "evidence-failure-test" });
+    const tool = createComplianceDecisionTool("ak_evidence_failure_decision", "Submit.");
+    await assert.rejects(
+      withRunDir(runDirectory, () => runComplianceAudit({
+        tool,
+        systemPrompt: "Read and decide.",
+        roleLabel: "Evidence failure auditor",
+        invalidDecisionLabel: "invalid evidence failure decision",
+        runCompletion: async () => fauxAssistantMessage([
+          fauxToolCall("read", { path: "missing-evidence.txt" }),
+          fauxToolCall(tool.name, { status: "pass" }),
+        ], { stopReason: "toolUse" }),
+        context: auditExtensionContext(cwd, sessionManager, faux),
+      })),
+      (error: unknown) => error instanceof Error
+        && (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("injected completion executes a same-turn evidence and decision batch exactly once", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-injected-decision-"));
   const runDirectory = join(cwd, "run");
