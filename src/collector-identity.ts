@@ -44,7 +44,10 @@ function materialKind(material: GitHubIdentityMaterial): CollectorIdentityGroup[
 
 function identityKey(identity: GitHubMachineIdentity | null): string {
   if (identity === null) return "unassigned";
-  return `${identity.userType}:${identity.userId}:${identity.appId ?? "none"}`;
+  // GitHub omits App metadata on some surfaces (notably review comments).
+  // The stable user type/id pair is the grouping identity; appId is retained
+  // when observed but must not split one actor across transport surfaces.
+  return `${identity.userType}:${identity.userId}`;
 }
 
 /** Group observed GitHub materials only by API machine identity fields. */

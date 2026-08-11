@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { normalizeIssueComment, normalizeReview, normalizeReviewComment } from "../../src/collector-github.ts";
-import { normalizeReviewEvidence } from "../../src/collector-evidence.ts";
+import { normalizeReviewCommentEvidence, normalizeReviewEvidence } from "../../src/collector-evidence.ts";
 import { extractCollectorEvidenceIdentityGroups, extractGitHubIdentityGroups, groupGitHubMaterialsByIdentity } from "../../src/collector-identity.ts";
 
 const noFindingFixture = new URL("../fixtures/collector/codex-nofinding-5234537035.json", import.meta.url);
@@ -18,6 +18,41 @@ test("real GitHub bytes group attendance by machine user and App identity", asyn
     displayLogin: "chatgpt-codex-connector[bot]",
     materials: [{ kind: "issue_comment", id: 5234537035 }],
   }]);
+});
+
+test("#245 full PR 1168 replay preserves typed attendance, findings, evidence ownership, and head relation", async () => {
+  const load = async (name: string) => JSON.parse(await readFile(new URL(`../fixtures/collector/${name}`, import.meta.url), "utf8"));
+  const reviews = (await load("pr-1168-reviews.json")).map(normalizeReview);
+  const comments = (await load("pr-1168-review-comments.json")).map(normalizeReviewComment);
+  assert.equal(reviews.length, 9);
+  assert.equal(comments.length, 33);
+
+  const observedAt = "2026-08-11T00:00:00Z";
+  const evidence = [
+    ...reviews.map((value: Parameters<typeof normalizeReviewEvidence>[0]) => normalizeReviewEvidence(value, observedAt)),
+    ...comments.map((value: Parameters<typeof normalizeReviewCommentEvidence>[0]) => normalizeReviewCommentEvidence(value, observedAt)),
+  ];
+  const groups = extractCollectorEvidenceIdentityGroups(evidence, "9207feb5e46322d14cda1bf625368c3c8a9227a8");
+  const codex = groups.find((group) => group.identity?.userType === "Bot" && group.identity.userId === 199175422)!;
+  const rabbit = groups.find((group) => group.identity?.userType === "Bot" && group.identity.userId === 136622811)!;
+  assert.equal(codex.attendance, true);
+  assert.equal(rabbit.attendance, true);
+
+  const commentIdsFor = (reviewId: number) => new Set(comments.filter((comment: { pullRequestReviewId: number }) => comment.pullRequestReviewId === reviewId).map((comment: { id: number }) => comment.id));
+  const codexIds = commentIdsFor(4895614344);
+  const rabbitIds = commentIdsFor(4895713581);
+  const codexCurrent = codex.findings.filter((finding) => codexIds.has(finding.source.id));
+  assert.equal(codexCurrent.length, 5);
+  const rabbitCurrent = rabbit.findings.filter((finding) => finding.source.id === 4895713581 || rabbitIds.has(finding.source.id));
+  assert.equal(rabbitCurrent.filter((finding) => finding.category === "inline").length, 4);
+  assert.equal(rabbitCurrent.filter((finding) => finding.category === "outside_diff").length, 8);
+  assert.equal(rabbitCurrent.filter((finding) => finding.category === "nitpick").length, 2);
+  for (const [group, findings] of [[codex, codexCurrent], [rabbit, rabbitCurrent]] as const) {
+    assert.ok(findings.every((finding) => finding.identity.userId === group.identity?.userId && typeof finding.source.evidenceId === "string"));
+  }
+  assert.ok(codex.materials.some((material) => material.id === 4895614344 && material.headRelation === "current"));
+  assert.ok(rabbit.materials.some((material) => material.id === 4895713581 && material.headRelation === "current"));
+  assert.ok([...codex.materials, ...rabbit.materials].some((material) => material.headRelation === "prior"));
 });
 
 test("Codex frozen inline review yields five identity-owned findings with evidence refs", async () => {
