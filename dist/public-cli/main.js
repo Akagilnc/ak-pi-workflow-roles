@@ -13351,17 +13351,6 @@ function typedFailedTerminatingToolKnownFailure(entries) {
 async function resolveAuditedRunnerKnownFailure(input) {
   if (input.runner !== void 0) return input.runner;
   try {
-    const terminatingFailure = typedFailedTerminatingToolKnownFailure(
-      await readBoundSessionEntries(input.sessionFile)
-    );
-    if (terminatingFailure !== void 0) return terminatingFailure;
-  } catch (error) {
-    if (!isMissingPathError2(error)) {
-      const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
-      return { cause: "session", identity: thrownIdentity(failure), diagnostic: failure.message || failure.name };
-    }
-  }
-  try {
     const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
     if (auditorFailure !== void 0) return auditorFailure;
   } catch (error) {
@@ -13371,6 +13360,17 @@ async function resolveAuditedRunnerKnownFailure(input) {
       identity: thrownIdentity(failure),
       diagnostic: failure.message || failure.name
     };
+  }
+  try {
+    const terminatingFailure = typedFailedTerminatingToolKnownFailure(
+      await readBoundSessionEntries(input.sessionFile)
+    );
+    if (terminatingFailure !== void 0) return terminatingFailure;
+  } catch (error) {
+    if (!isMissingPathError2(error)) {
+      const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
+      return { cause: "session", identity: thrownIdentity(failure), diagnostic: failure.message || failure.name };
+    }
   }
   try {
     const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
@@ -15608,16 +15608,16 @@ async function dispatchAdmittedCoder(input) {
         terminal: lawful
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
       env.model,
       env.credentials
     );
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure(
       admitted,
       {
@@ -15922,20 +15922,20 @@ async function dispatchAdmittedCollector(input) {
     const infrastructureFailure = await readCollectorInfrastructureFailure(
       admitted.sessionFile
     );
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
       env.model,
       env.credentials
     );
-    const knownFailure = result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
-      cause: infrastructureFailure.cause,
-      diagnostic: infrastructureFailure.diagnostic,
-      ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
-    }) ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
+        cause: infrastructureFailure.cause,
+        diagnostic: infrastructureFailure.diagnostic,
+        ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
+      }),
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure2(
       admitted,
       {
@@ -17098,16 +17098,16 @@ async function dispatchAdmittedMerger(input) {
         terminal: lawful
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
       env.model,
       env.credentials
     );
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure6(
       admitted,
       {

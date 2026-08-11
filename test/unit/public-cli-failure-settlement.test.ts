@@ -2545,7 +2545,7 @@ test("fast four-role public wiring matrix settles an injected auditor provider s
   });
 });
 
-test("Judge publicly prefers its failed typed output record across auditor retention failure", async () => {
+test("Judge publicly retains a real default-Pi auditor provider stop across retention failure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj-judge-retention");
     await mkdir(project, { recursive: true });
@@ -2568,11 +2568,11 @@ test("Judge publicly prefers its failed typed output record across auditor reten
       await tracer.close();
     }
     assert.notEqual(retentionResult.exitCode === 1 && retentionResult.terminal?.roleOutcome.kind === "failure" ? retentionResult.terminal.roleOutcome.cause : undefined, "timeout");
-    const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "output", identityName: "ak_judge_output" });
+    const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "provider", diagnosticIncludes: "WebSocket error", identityName: "faux-1", identityCode: "openai-codex" });
+    assert.equal((retentionSettlement.terminal.roleOutcome as any).decisiveFacts.secondaryEvidence.model, "faux-1");
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
-    assert.equal(retentionArtifact.details.kind, "role_infrastructure_failure");
-    assert.equal(retentionArtifact.details.source, "shared-role-lifecycle");
-    assert.equal(retentionArtifact.details.reasonCode, "host_failure");
+    assert.equal(retentionArtifact.details.retentionFailure.name, "ComplianceResponseRetentionError");
+    assert.equal(retentionArtifact.details.retentionFailure.cause.code, "EISDIR");
   });
 });
 
