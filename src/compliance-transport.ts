@@ -1,11 +1,10 @@
-import type { AssistantMessage, Context, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { runAuditorRole, type AuditorCompletion } from "./auditor-role.ts";
 import {
   AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
   AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
-  prepareComplianceDispatch,
 } from "./role-child-executor.ts";
 export {
   AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
@@ -51,19 +50,6 @@ export function readComplianceCandidate(arguments_: unknown, usage?: Usage): Com
 }
 
 export async function runComplianceAudit(options: { tool: ReturnType<typeof createComplianceDecisionTool>; systemPrompt: string; serializedInput: string; roleLabel: string; invalidDecisionLabel: string; runCompletion?: ComplianceCompletion; context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision> {
-  // The injected completion seam is deterministic unit infrastructure; the
-  // ordinary provider path below still crosses the independent Pi role.
-  if (options.runCompletion !== undefined) {
-    const model = options.context.model;
-    if (model === undefined) throw new Error(`${options.roleLabel} requires an active model`);
-    const dispatch = await prepareComplianceDispatch(model, options.context, options.roleLabel);
-    const context: Context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: options.serializedInput }], timestamp: Date.now() }], tools: [options.tool] };
-    const response = await options.runCompletion(dispatch.model, context, { ...dispatch.auth, ...(options.signal === undefined ? {} : { signal: options.signal }) });
-    retainComplianceResponse(options.context, response);
-    if (response.stopReason === "error" || response.stopReason === "aborted") throw response;
-    const call = [...response.content].reverse().find((part) => part.type === "toolCall" && part.name === options.tool.name);
-    return readComplianceCandidate(call?.type === "toolCall" ? call.arguments : undefined, response.usage);
-  }
-  const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, retainResponse: (response) => retainComplianceResponse(options.context, response), ...(options.signal === undefined ? {} : { signal: options.signal }) });
+  const receipt = await runAuditorRole({ tool: options.tool, systemPrompt: options.systemPrompt, serializedInput: options.serializedInput, roleLabel: options.roleLabel, context: options.context, retainResponse: (response) => retainComplianceResponse(options.context, response), ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }), ...(options.signal === undefined ? {} : { signal: options.signal }) });
   return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }

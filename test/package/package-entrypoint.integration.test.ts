@@ -251,7 +251,7 @@ test("cold-installed package audits all four roles from editable Souls", async (
       ]);
 
       const context = {
-        model: { provider: "installed-auditor", id: "installed-auditor", api: "openai-responses" },
+        model: fauxProvider({ provider: "installed-auditor" }).getModel(),
         modelRegistry: {
           async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
           async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
@@ -280,8 +280,9 @@ test("cold-installed package audits all four roles from editable Souls", async (
         };
         await role.run(completion);
         assert.equal(calls, 1, `${role.name} audit must make one decision call`);
-        assert.equal(prompt, await readFile(role.soulPath, "utf8"), `${role.name} must load its installed Soul on this call`);
-        return prompt;
+        const soul = await readFile(role.soulPath, "utf8");
+        assert.equal(prompt.startsWith(soul), true, `${role.name} must load its installed Soul on this call`);
+        return soul;
       };
 
       for (const role of roles) await run(role);
@@ -432,7 +433,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         });
         return {
           sessionManager,
-          model: { api: "openai-responses", provider: "installed-auditor", id: "installed-auditor" },
+          model: fauxProvider({ provider: "installed-auditor" }).getModel(),
           modelRegistry: {
             async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
             async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },

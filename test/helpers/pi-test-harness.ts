@@ -301,7 +301,11 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
         const { stdout } = await execFileAsync(
           "npm",
           ["pack", "--silent", "--json", "--pack-destination", packDestination],
-          { cwd: materialRoot, maxBuffer: 10 * 1024 * 1024 },
+          {
+            cwd: materialRoot,
+            env: { ...process.env, CI: "true" },
+            maxBuffer: 10 * 1024 * 1024,
+          },
         );
         const jsonStart = Math.max(stdout.lastIndexOf("\n["), stdout.startsWith("[") ? 0 : -1);
         const pack = JSON.parse(stdout.slice(jsonStart < 0 ? 0 : jsonStart + (jsonStart === 0 ? 0 : 1))) as Array<{
