@@ -15,304 +15,7 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// src/activation-ledger-topology.ts
-import {
-  lstatSync,
-  mkdirSync,
-  realpathSync,
-  statSync
-} from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { basename, dirname as dirname2, isAbsolute, join as join2, relative, resolve, sep } from "node:path";
-function resolveActivationLedgerHome(home = homedir2) {
-  const processHome = home();
-  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
-    throw new ActivationLedgerError(
-      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
-    );
-  }
-  return resolve(processHome, ".ak-roles");
-}
-function activationBookDirectory(ledgerHome, bookKey) {
-  return join2(ledgerHome, "books", bookKey);
-}
-function pathContainedIn(root, candidate) {
-  const rel = relative(root, candidate);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-function physicalPathIdentity(path) {
-  const absolute = resolve(path);
-  const missing = [];
-  let cursor = absolute;
-  while (true) {
-    try {
-      const real = realpathSync(cursor);
-      return missing.length === 0 ? real : join2(real, ...missing);
-    } catch (error) {
-      if (errnoCode(error) !== "ENOENT") {
-        return absolute;
-      }
-      const parent = dirname2(cursor);
-      if (parent === cursor) return absolute;
-      missing.unshift(basename(cursor));
-      cursor = parent;
-    }
-  }
-}
-function physicallyContainedIn(root, candidate) {
-  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
-}
-function errnoCode(error) {
-  return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
-}
-function errorText(error) {
-  if (!(error instanceof Error)) return String(error);
-  return error.message;
-}
-function assertPhysicalLedgerRoot(absoluteRoot) {
-  let st;
-  try {
-    st = lstatSync(absoluteRoot);
-  } catch (error) {
-    if (errnoCode(error) !== "ENOENT") {
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-  if (st === void 0) {
-    try {
-      mkdirSync(absoluteRoot, { recursive: true });
-    } catch (error) {
-      if (errnoCode(error) !== "EEXIST") {
-        throw new ActivationLedgerError(
-          `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
-          { cause: error }
-        );
-      }
-    }
-    try {
-      st = lstatSync(absoluteRoot);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-  if (st.isSymbolicLink()) {
-    throw new ActivationLedgerError(
-      `activation ledger home is a symbolic link: ${absoluteRoot}`
-    );
-  }
-  if (!st.isDirectory()) {
-    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
-  }
-}
-function ensureRealDirectoryTree(root, targetDir) {
-  if (!isAbsolute(root)) {
-    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
-  }
-  const absoluteRoot = resolve(root);
-  const absoluteTarget = resolve(targetDir);
-  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
-    throw new ActivationLedgerError(
-      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
-    );
-  }
-  assertPhysicalLedgerRoot(absoluteRoot);
-  let realRoot;
-  try {
-    realRoot = realpathSync(absoluteRoot);
-  } catch (error) {
-    throw new ActivationLedgerError(
-      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
-      { cause: error }
-    );
-  }
-  if (!statSync(realRoot).isDirectory()) {
-    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
-  }
-  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
-  if (rel === "") return realRoot;
-  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
-    throw new ActivationLedgerError(
-      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
-    );
-  }
-  let lexicalCursor = absoluteRoot;
-  for (const part of rel.split(sep)) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") {
-      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
-    }
-    lexicalCursor = join2(lexicalCursor, part);
-    let st;
-    try {
-      st = lstatSync(lexicalCursor);
-    } catch (error) {
-      if (errnoCode(error) !== "ENOENT") {
-        throw new ActivationLedgerError(
-          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
-          { cause: error }
-        );
-      }
-      try {
-        mkdirSync(lexicalCursor);
-      } catch (mkdirError) {
-        if (errnoCode(mkdirError) !== "EEXIST") {
-          throw new ActivationLedgerError(
-            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
-            { cause: mkdirError }
-          );
-        }
-      }
-      try {
-        st = lstatSync(lexicalCursor);
-      } catch (statError) {
-        throw new ActivationLedgerError(
-          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
-          { cause: statError }
-        );
-      }
-    }
-    if (st.isSymbolicLink()) {
-      throw new ActivationLedgerError(
-        `activation ledger path component is a symbolic link: ${lexicalCursor}`
-      );
-    }
-    if (!st.isDirectory()) {
-      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
-    }
-    let realCursor;
-    try {
-      realCursor = realpathSync(lexicalCursor);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
-      throw new ActivationLedgerError(
-        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`
-      );
-    }
-  }
-  try {
-    return realpathSync(absoluteTarget);
-  } catch (error) {
-    throw new ActivationLedgerError(
-      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
-      { cause: error }
-    );
-  }
-}
-var ActivationLedgerError;
-var init_activation_ledger_topology = __esm({
-  "src/activation-ledger-topology.ts"() {
-    "use strict";
-    ActivationLedgerError = class extends Error {
-      code = "AK_ACTIVATION_LEDGER";
-      constructor(message, options) {
-        super(
-          message,
-          options?.cause === void 0 ? void 0 : { cause: options.cause }
-        );
-        this.name = "ActivationLedgerError";
-      }
-    };
-  }
-});
-
-// src/activation-ledger-git.ts
-import { execFileSync } from "node:child_process";
-import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
-function envWithoutGitDiscovery(base = process.env) {
-  const env = { ...base };
-  for (const key of GIT_DISCOVERY_ENV_KEYS) {
-    delete env[key];
-  }
-  return env;
-}
-function isGitSpawnInfrastructureError(error) {
-  if (error === null || typeof error !== "object" || !("code" in error)) return false;
-  const code = error.code;
-  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
-}
-function gitChildExitedNonzero(error) {
-  if (error === null || typeof error !== "object" || !("status" in error)) return false;
-  const status = error.status;
-  return typeof status === "number" && status !== 0;
-}
-function resolveBookKeyFromGit(cwd) {
-  let commonDir;
-  try {
-    commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: envWithoutGitDiscovery()
-    }).trim();
-  } catch (error) {
-    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
-      throw error;
-    }
-    const err = error;
-    const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
-    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
-  }
-  if (commonDir.length === 0) {
-    throw new Error("git rev-parse --git-common-dir returned an empty path");
-  }
-  const absoluteCommon = isAbsolute2(commonDir) ? commonDir : resolve2(cwd, commonDir);
-  const hostDirectory = basename2(absoluteCommon) === ".git" ? dirname3(absoluteCommon) : absoluteCommon;
-  const bookKey = basename2(hostDirectory);
-  if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
-    throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
-  }
-  return bookKey;
-}
-var GIT_DISCOVERY_ENV_KEYS, ActivationGitRepositoryRequiredError;
-var init_activation_ledger_git = __esm({
-  "src/activation-ledger-git.ts"() {
-    "use strict";
-    GIT_DISCOVERY_ENV_KEYS = [
-      "GIT_DIR",
-      "GIT_COMMON_DIR",
-      "GIT_WORK_TREE",
-      "GIT_CEILING_DIRECTORIES",
-      "GIT_DISCOVERY_ACROSS_FILESYSTEM"
-    ];
-    ActivationGitRepositoryRequiredError = class extends Error {
-      code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
-      constructor(detail, options) {
-        super(
-          `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
-          options?.cause === void 0 ? void 0 : { cause: options.cause }
-        );
-        this.name = "ActivationGitRepositoryRequiredError";
-      }
-    };
-  }
-});
-
-// src/public-cli/main.ts
-import { dirname as dirname6, join as join16 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
-
-// src/public-cli/cli.ts
-import { homedir as homedir3 } from "node:os";
-import { join as join15 } from "node:path";
-
-// src/public-cli/config.ts
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-
 // src/package-contracts/collector-output.ts
-var COLLECTOR_OUTPUT_TOOL = "ak_collector_output";
 function safeGet(value, key) {
   if (typeof value !== "object" && typeof value !== "function" || value === null) return void 0;
   try {
@@ -367,9 +70,15 @@ function validateAcceptedCollectorReceipt(value) {
     evidenceRecords: records(safeGet(value, "evidenceRecords")).map((record4) => ({ evidenceId: safeGet(record4, "evidenceId"), kind: safeGet(record4, "kind"), versionId: safeGet(record4, "versionId"), contentDigest: safeGet(record4, "contentDigest"), firstObservedAt: safeGet(record4, "firstObservedAt"), raw: safeGet(record4, "raw") }))
   };
 }
+var COLLECTOR_OUTPUT_TOOL;
+var init_collector_output = __esm({
+  "src/package-contracts/collector-output.ts"() {
+    "use strict";
+    COLLECTOR_OUTPUT_TOOL = "ak_collector_output";
+  }
+});
 
 // src/package-contracts/judge-output.ts
-var JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
 function validateAcceptedJudgeDetails(verdict) {
   if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) throw new Error("Judge verdict has no execution discriminator");
   let judgeStatus;
@@ -381,9 +90,15 @@ function validateAcceptedJudgeDetails(verdict) {
   if (["converged", "continue", "escalate"].includes(String(judgeStatus))) return verdict;
   throw new Error("Judge verdict has no execution discriminator");
 }
+var JUDGE_OUTPUT_TOOL_NAME;
+var init_judge_output = __esm({
+  "src/package-contracts/judge-output.ts"() {
+    "use strict";
+    JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
+  }
+});
 
 // src/package-contracts/reviewer-output.ts
-var REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -435,74 +150,37 @@ function validateRuntimeReviewerReceipt(output) {
   }
   return output;
 }
-
-// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/memory.mjs
-var memory_exports = {};
-__export(memory_exports, {
-  Assign: () => Assign,
-  Clone: () => Clone,
-  Create: () => Create,
-  Discard: () => Discard,
-  Metrics: () => Metrics,
-  Update: () => Update
+var REVIEWER_OUTPUT_TOOL_NAME;
+var init_reviewer_output = __esm({
+  "src/package-contracts/reviewer-output.ts"() {
+    "use strict";
+    REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
+  }
 });
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/metrics.mjs
-var Metrics = {
-  assign: 0,
-  create: 0,
-  clone: 0,
-  discard: 0,
-  update: 0
-};
+var Metrics;
+var init_metrics = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/metrics.mjs"() {
+    Metrics = {
+      assign: 0,
+      create: 0,
+      clone: 0,
+      discard: 0,
+      update: 0
+    };
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/assign.mjs
 function Assign(left, right) {
   Metrics.assign += 1;
   return { ...left, ...right };
 }
-
-// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/guard.mjs
-var guard_exports = {};
-__export(guard_exports, {
-  Counted: () => Counted,
-  Entries: () => Entries,
-  EntriesRegExp: () => EntriesRegExp,
-  Every: () => Every,
-  EveryAll: () => EveryAll,
-  GraphemeCount: () => GraphemeCount2,
-  HasPropertyKey: () => HasPropertyKey,
-  IsArray: () => IsArray,
-  IsBigInt: () => IsBigInt,
-  IsBoolean: () => IsBoolean,
-  IsClassInstance: () => IsClassInstance,
-  IsConstructor: () => IsConstructor,
-  IsDeepEqual: () => IsDeepEqual,
-  IsEqual: () => IsEqual,
-  IsFunction: () => IsFunction,
-  IsGreaterEqualThan: () => IsGreaterEqualThan,
-  IsGreaterThan: () => IsGreaterThan,
-  IsInteger: () => IsInteger,
-  IsLessEqualThan: () => IsLessEqualThan,
-  IsLessThan: () => IsLessThan,
-  IsMaxLength: () => IsMaxLength2,
-  IsMinLength: () => IsMinLength2,
-  IsMultipleOf: () => IsMultipleOf,
-  IsNull: () => IsNull,
-  IsNumber: () => IsNumber,
-  IsObject: () => IsObject,
-  IsObjectNotArray: () => IsObjectNotArray,
-  IsString: () => IsString,
-  IsSymbol: () => IsSymbol,
-  IsUndefined: () => IsUndefined,
-  IsUnsafePropertyKey: () => IsUnsafePropertyKey,
-  IsValueLike: () => IsValueLike,
-  Keys: () => Keys,
-  ShiftLeft: () => ShiftLeft,
-  Some: () => Some,
-  SomeAll: () => SomeAll,
-  Symbols: () => Symbols,
-  Values: () => Values
+var init_assign = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/assign.mjs"() {
+    init_metrics();
+  }
 });
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/string.mjs
@@ -614,8 +292,53 @@ function IsMaxLengthFast(value, maxLength) {
   }
   return true;
 }
+var init_string = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/string.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/guard.mjs
+var guard_exports = {};
+__export(guard_exports, {
+  Counted: () => Counted,
+  Entries: () => Entries,
+  EntriesRegExp: () => EntriesRegExp,
+  Every: () => Every,
+  EveryAll: () => EveryAll,
+  GraphemeCount: () => GraphemeCount2,
+  HasPropertyKey: () => HasPropertyKey,
+  IsArray: () => IsArray,
+  IsBigInt: () => IsBigInt,
+  IsBoolean: () => IsBoolean,
+  IsClassInstance: () => IsClassInstance,
+  IsConstructor: () => IsConstructor,
+  IsDeepEqual: () => IsDeepEqual,
+  IsEqual: () => IsEqual,
+  IsFunction: () => IsFunction,
+  IsGreaterEqualThan: () => IsGreaterEqualThan,
+  IsGreaterThan: () => IsGreaterThan,
+  IsInteger: () => IsInteger,
+  IsLessEqualThan: () => IsLessEqualThan,
+  IsLessThan: () => IsLessThan,
+  IsMaxLength: () => IsMaxLength2,
+  IsMinLength: () => IsMinLength2,
+  IsMultipleOf: () => IsMultipleOf,
+  IsNull: () => IsNull,
+  IsNumber: () => IsNumber,
+  IsObject: () => IsObject,
+  IsObjectNotArray: () => IsObjectNotArray,
+  IsString: () => IsString,
+  IsSymbol: () => IsSymbol,
+  IsUndefined: () => IsUndefined,
+  IsUnsafePropertyKey: () => IsUnsafePropertyKey,
+  IsValueLike: () => IsValueLike,
+  Keys: () => Keys,
+  ShiftLeft: () => ShiftLeft,
+  Some: () => Some,
+  SomeAll: () => SomeAll,
+  Symbols: () => Symbols,
+  Values: () => Values
+});
 function IsArray(value) {
   return Array.isArray(value);
 }
@@ -778,6 +501,18 @@ function DeepEqualArray(left, right) {
 function IsDeepEqual(left, right) {
   return IsArray(left) ? DeepEqualArray(left, right) : IsObject(left) ? DeepEqualObject(left, right) : IsEqual(left, right);
 }
+var init_guard = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/guard.mjs"() {
+    init_string();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/emit.mjs
+var init_emit = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/emit.mjs"() {
+    init_guard();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/globals.mjs
 var globals_exports = {};
@@ -859,9 +594,30 @@ function IsSet(value) {
 function IsMap(value) {
   return value instanceof globalThis.Map;
 }
+var init_globals = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/globals.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/native.mjs
+var init_native = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/native.mjs"() {
+    init_guard();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/index.mjs
-var guard_default = guard_exports;
+var guard_default;
+var init_guard2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/guard/index.mjs"() {
+    init_emit();
+    init_globals();
+    init_native();
+    init_guard();
+    init_guard();
+    guard_default = guard_exports;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/clone.mjs
 function FromClassInstance(value) {
@@ -920,6 +676,12 @@ function Clone(value) {
   Metrics.clone += 1;
   return FromValue(value);
 }
+var init_clone = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/clone.mjs"() {
+    init_guard2();
+    init_metrics();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/settings/settings.mjs
 var settings_exports = {};
@@ -928,15 +690,6 @@ __export(settings_exports, {
   Reset: () => Reset,
   Set: () => Set2
 });
-var settings = {
-  immutableTypes: false,
-  maxErrors: 8,
-  useAcceleration: true,
-  exactOptionalPropertyTypes: false,
-  enumerableKind: false,
-  correctiveParse: false,
-  unionPrioritySort: true
-};
 function Reset() {
   settings.immutableTypes = false;
   settings.maxErrors = 8;
@@ -957,6 +710,28 @@ function Set2(options) {
 function Get() {
   return settings;
 }
+var settings;
+var init_settings = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/settings/settings.mjs"() {
+    init_guard2();
+    settings = {
+      immutableTypes: false,
+      maxErrors: 8,
+      useAcceleration: true,
+      exactOptionalPropertyTypes: false,
+      enumerableKind: false,
+      correctiveParse: false,
+      unionPrioritySort: true
+    };
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/settings/index.mjs
+var init_settings2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/settings/index.mjs"() {
+    init_settings();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/create.mjs
 function MergeHidden(left, right) {
@@ -980,6 +755,12 @@ function Create(hidden, enumerable, options = {}) {
   const withHidden = settings2.enumerableKind ? Merge(withOptions, hidden) : MergeHidden(withOptions, hidden);
   return settings2.immutableTypes ? Object.freeze(withHidden) : withHidden;
 }
+var init_create = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/create.mjs"() {
+    init_settings2();
+    init_metrics();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/discard.mjs
 function Discard(value, propertyKeys) {
@@ -994,6 +775,12 @@ function Discard(value, propertyKeys) {
   }
   return result2;
 }
+var init_discard = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/discard.mjs"() {
+    init_metrics();
+    init_clone();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/update.mjs
 function Update(current, hidden, enumerable) {
@@ -1018,6 +805,41 @@ function Update(current, hidden, enumerable) {
   }
   return result2;
 }
+var init_update = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/update.mjs"() {
+    init_settings2();
+    init_metrics();
+    init_clone();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/memory.mjs
+var memory_exports = {};
+__export(memory_exports, {
+  Assign: () => Assign,
+  Clone: () => Clone,
+  Create: () => Create,
+  Discard: () => Discard,
+  Metrics: () => Metrics,
+  Update: () => Update
+});
+var init_memory = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/memory.mjs"() {
+    init_assign();
+    init_clone();
+    init_create();
+    init_discard();
+    init_metrics();
+    init_update();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/index.mjs
+var init_memory2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/memory/index.mjs"() {
+    init_memory();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/schema.mjs
 function IsKind(value, kind) {
@@ -1026,6 +848,11 @@ function IsKind(value, kind) {
 function IsSchema(value) {
   return guard_exports.IsObject(value);
 }
+var init_schema = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/schema.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/deferred.mjs
 function Deferred(action, parameters, options) {
@@ -1034,6 +861,12 @@ function Deferred(action, parameters, options) {
 function IsDeferred(value) {
   return IsKind(value, "Deferred");
 }
+var init_deferred = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/deferred.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly/instantiate_add.mjs
 function AddReadonlyOperation(type) {
@@ -1047,6 +880,12 @@ function AddReadonlyInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return AddReadonlyAction(instantiatedType, options);
 }
+var init_instantiate_add = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly/instantiate_add.mjs"() {
+    init_memory2();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/optional/instantiate_add.mjs
 function AddOptionalOperation(type) {
@@ -1060,6 +899,12 @@ function AddOptionalInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return AddOptionalAction(instantiatedType, options);
 }
+var init_instantiate_add2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/optional/instantiate_add.mjs"() {
+    init_memory2();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/array.mjs
 function _Array_(items, options) {
@@ -1071,6 +916,12 @@ function IsArray2(value) {
 function ArrayOptions(type) {
   return memory_exports.Discard(type, ["~kind", "type", "items"]);
 }
+var init_array = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/array.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/constructor.mjs
 function Constructor(parameters, instanceType, options = {}) {
@@ -1082,6 +933,12 @@ function IsConstructor2(value) {
 function ConstructorOptions(type) {
   return memory_exports.Discard(type, ["~kind", "type", "parameters", "instanceType"]);
 }
+var init_constructor = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/constructor.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/function.mjs
 function _Function_(parameters, returnType, options = {}) {
@@ -1093,6 +950,12 @@ function IsFunction2(value) {
 function FunctionOptions(type) {
   return memory_exports.Discard(type, ["~kind", "type", "parameters", "returnType"]);
 }
+var init_function = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/function.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/ref.mjs
 function Ref(ref, options) {
@@ -1101,6 +964,12 @@ function Ref(ref, options) {
 function IsRef(value) {
   return IsKind(value, "Ref");
 }
+var init_ref = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/ref.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/generic.mjs
 function Generic(parameters, expression) {
@@ -1109,6 +978,12 @@ function Generic(parameters, expression) {
 function IsGeneric(value) {
   return IsKind(value, "Generic");
 }
+var init_generic = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/generic.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/any.mjs
 function Any(options) {
@@ -1117,15 +992,28 @@ function Any(options) {
 function IsAny(value) {
   return IsKind(value, "Any");
 }
+var init_any = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/any.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/never.mjs
-var NeverPattern = "(?!)";
 function Never(options) {
   return memory_exports.Create({ "~kind": "Never" }, { not: {} }, options);
 }
 function IsNever(value) {
   return IsKind(value, "Never");
 }
+var NeverPattern;
+var init_never = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/never.mjs"() {
+    init_memory2();
+    init_schema();
+    NeverPattern = "(?!)";
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_add_optional.mjs
 function AddOptionalDeferred(type, options = {}) {
@@ -1134,6 +1022,12 @@ function AddOptionalDeferred(type, options = {}) {
 function AddOptional(type, options = {}) {
   return AddOptionalAction(type, options);
 }
+var init_add_optional = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_add_optional.mjs"() {
+    init_deferred();
+    init_instantiate_add2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/_optional.mjs
 function Optional(type) {
@@ -1142,6 +1036,13 @@ function Optional(type) {
 function IsOptional(value) {
   return IsSchema(value) && guard_exports.HasPropertyKey(value, "~optional");
 }
+var init_optional = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/_optional.mjs"() {
+    init_guard2();
+    init_schema();
+    init_add_optional();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/properties.mjs
 function RequiredArray(properties) {
@@ -1153,6 +1054,12 @@ function PropertyKeys(properties) {
 function PropertyValues(properties) {
   return guard_exports.Values(properties);
 }
+var init_properties = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/properties.mjs"() {
+    init_guard2();
+    init_optional();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/object.mjs
 function _Object_(properties, options = {}) {
@@ -1166,6 +1073,13 @@ function IsObject2(value) {
 function ObjectOptions(type) {
   return memory_exports.Discard(type, ["~kind", "type", "properties", "required"]);
 }
+var init_object = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/object.mjs"() {
+    init_memory2();
+    init_schema();
+    init_properties();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/unknown.mjs
 function Unknown(options) {
@@ -1174,6 +1088,12 @@ function Unknown(options) {
 function IsUnknown(value) {
   return IsKind(value, "Unknown");
 }
+var init_unknown = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/unknown.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/cyclic.mjs
 function Cyclic($defs, $ref, options) {
@@ -1185,6 +1105,13 @@ function Cyclic($defs, $ref, options) {
 function IsCyclic(value) {
   return IsKind(value, "Cyclic");
 }
+var init_cyclic = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/cyclic.mjs"() {
+    init_guard2();
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/unsafe.mjs
 function Unsafe(schema) {
@@ -1193,6 +1120,12 @@ function Unsafe(schema) {
 function IsUnsafe(value) {
   return guard_exports.IsObjectNotArray(value) && guard_exports.HasPropertyKey(value, "~unsafe") && guard_exports.IsNull(value["~unsafe"]);
 }
+var init_unsafe = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/unsafe.mjs"() {
+    init_guard2();
+    init_memory2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/arguments/arguments.mjs
 var arguments_exports = {};
@@ -1204,6 +1137,17 @@ function Match(args, match) {
     throw Error("Invalid Arguments");
   })();
 }
+var init_arguments = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/arguments/arguments.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/arguments/index.mjs
+var init_arguments2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/arguments/index.mjs"() {
+    init_arguments();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/infer.mjs
 function Infer(...args) {
@@ -1216,6 +1160,14 @@ function Infer(...args) {
 function IsInfer(value) {
   return IsKind(value, "Infer");
 }
+var init_infer = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/infer.mjs"() {
+    init_arguments2();
+    init_memory2();
+    init_schema();
+    init_unknown();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/dependent.mjs
 function Dependent(if_, then_, else_, options = {}) {
@@ -1227,6 +1179,12 @@ function IsDependent(value) {
 function DependentOptions(type) {
   return memory_exports.Discard(type, ["~kind", "if", "then", "else"]);
 }
+var init_dependent = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/dependent.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/enum/typescript_enum_to_enum_values.mjs
 function IsTypeScriptEnumLike(value) {
@@ -1236,6 +1194,11 @@ function TypeScriptEnumToEnumValues(type) {
   const keys = guard_exports.Keys(type).filter((key) => isNaN(key));
   return keys.reduce((result2, key) => [...result2, type[key]], []);
 }
+var init_typescript_enum_to_enum_values = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/enum/typescript_enum_to_enum_values.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/enum.mjs
 function IsEnumValue(value) {
@@ -1248,6 +1211,15 @@ function Enum(value, options) {
 function IsEnum(value) {
   return IsKind(value, "Enum");
 }
+var init_enum = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/enum.mjs"() {
+    init_guard2();
+    init_memory2();
+    init_schema();
+    init_typescript_enum_to_enum_values();
+    init_typescript_enum_to_enum_values();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/intersect.mjs
 function Intersect(types, options = {}) {
@@ -1259,6 +1231,50 @@ function IsIntersect(value) {
 function IntersectOptions(type) {
   return memory_exports.Discard(type, ["~kind", "allOf"]);
 }
+var init_intersect = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/intersect.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/environment/evaluate.mjs
+var init_evaluate = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/environment/evaluate.mjs"() {
+    init_settings2();
+    init_guard2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/environment/environment.mjs
+var init_environment = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/environment/environment.mjs"() {
+    init_evaluate();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/environment/index.mjs
+var init_environment2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/environment/index.mjs"() {
+    init_environment();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/unreachable/unreachable.mjs
+function Unreachable() {
+  throw new Error("Unreachable");
+}
+var init_unreachable = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/unreachable/unreachable.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/unreachable/index.mjs
+var init_unreachable2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/unreachable/index.mjs"() {
+    init_unreachable();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/hashing/hash.mjs
 var hash_exports = {};
@@ -1266,13 +1282,6 @@ __export(hash_exports, {
   Hash: () => Hash,
   HashCode: () => HashCode
 });
-
-// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/unreachable/unreachable.mjs
-function Unreachable() {
-  throw new Error("Unreachable");
-}
-
-// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/hashing/hash.mjs
 function InstanceKeys(value) {
   const propertyKeys = /* @__PURE__ */ new Set();
   let current = value;
@@ -1288,32 +1297,6 @@ function InstanceKeys(value) {
 function IsIEEE754(value) {
   return typeof value === "number";
 }
-var ByteMarker;
-(function(ByteMarker2) {
-  ByteMarker2[ByteMarker2["Array"] = 0] = "Array";
-  ByteMarker2[ByteMarker2["BigInt"] = 1] = "BigInt";
-  ByteMarker2[ByteMarker2["Boolean"] = 2] = "Boolean";
-  ByteMarker2[ByteMarker2["Date"] = 3] = "Date";
-  ByteMarker2[ByteMarker2["Constructor"] = 4] = "Constructor";
-  ByteMarker2[ByteMarker2["Function"] = 5] = "Function";
-  ByteMarker2[ByteMarker2["Null"] = 6] = "Null";
-  ByteMarker2[ByteMarker2["Number"] = 7] = "Number";
-  ByteMarker2[ByteMarker2["Object"] = 8] = "Object";
-  ByteMarker2[ByteMarker2["RegExp"] = 9] = "RegExp";
-  ByteMarker2[ByteMarker2["String"] = 10] = "String";
-  ByteMarker2[ByteMarker2["Symbol"] = 11] = "Symbol";
-  ByteMarker2[ByteMarker2["TypeArray"] = 12] = "TypeArray";
-  ByteMarker2[ByteMarker2["Undefined"] = 13] = "Undefined";
-})(ByteMarker || (ByteMarker = {}));
-var Accumulator = BigInt("14695981039346656037");
-var [Prime, Size] = [BigInt("1099511628211"), BigInt(
-  "18446744073709551616"
-  /* 2 ^ 64 */
-)];
-var Bytes = Array.from({ length: 256 }).map((_, i) => BigInt(i));
-var F64 = new Float64Array(1);
-var F64In = new DataView(F64.buffer);
-var F64Out = new Uint8Array(F64.buffer);
 function FNV1A64_OP(byte) {
   Accumulator = Accumulator ^ Bytes[byte];
   Accumulator = Accumulator * Prime % Size;
@@ -1373,7 +1356,6 @@ function FromRegExp2(value) {
   FNV1A64_OP(ByteMarker.RegExp);
   FromString(value.toString());
 }
-var encoder = new TextEncoder();
 function FromString(value) {
   FNV1A64_OP(ByteMarker.String);
   for (const byte of encoder.encode(value)) {
@@ -1405,6 +1387,46 @@ function HashCode(value) {
 function Hash(value) {
   return HashCode(value).toString(16).padStart(16, "0");
 }
+var ByteMarker, Accumulator, Prime, Size, Bytes, F64, F64In, F64Out, encoder;
+var init_hash = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/hashing/hash.mjs"() {
+    init_unreachable2();
+    init_guard2();
+    (function(ByteMarker2) {
+      ByteMarker2[ByteMarker2["Array"] = 0] = "Array";
+      ByteMarker2[ByteMarker2["BigInt"] = 1] = "BigInt";
+      ByteMarker2[ByteMarker2["Boolean"] = 2] = "Boolean";
+      ByteMarker2[ByteMarker2["Date"] = 3] = "Date";
+      ByteMarker2[ByteMarker2["Constructor"] = 4] = "Constructor";
+      ByteMarker2[ByteMarker2["Function"] = 5] = "Function";
+      ByteMarker2[ByteMarker2["Null"] = 6] = "Null";
+      ByteMarker2[ByteMarker2["Number"] = 7] = "Number";
+      ByteMarker2[ByteMarker2["Object"] = 8] = "Object";
+      ByteMarker2[ByteMarker2["RegExp"] = 9] = "RegExp";
+      ByteMarker2[ByteMarker2["String"] = 10] = "String";
+      ByteMarker2[ByteMarker2["Symbol"] = 11] = "Symbol";
+      ByteMarker2[ByteMarker2["TypeArray"] = 12] = "TypeArray";
+      ByteMarker2[ByteMarker2["Undefined"] = 13] = "Undefined";
+    })(ByteMarker || (ByteMarker = {}));
+    Accumulator = BigInt("14695981039346656037");
+    [Prime, Size] = [BigInt("1099511628211"), BigInt(
+      "18446744073709551616"
+      /* 2 ^ 64 */
+    )];
+    Bytes = Array.from({ length: 256 }).map((_, i) => BigInt(i));
+    F64 = new Float64Array(1);
+    F64In = new DataView(F64.buffer);
+    F64Out = new Uint8Array(F64.buffer);
+    encoder = new TextEncoder();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/hashing/index.mjs
+var init_hashing = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/hashing/index.mjs"() {
+    init_hash();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/en_US.mjs
 function en_US(error) {
@@ -1476,35 +1498,320 @@ function en_US(error) {
       return "an unknown validation error occurred";
   }
 }
+var init_en_US = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/en_US.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/_config.mjs
-var locale = en_US;
 function Get2() {
   return locale;
 }
+var locale;
+var init_config = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/_config.mjs"() {
+    init_en_US();
+    locale = en_US;
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ar_001.mjs
+var init_ar_001 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ar_001.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/bn_BD.mjs
+var init_bn_BD = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/bn_BD.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/cs_CZ.mjs
+var init_cs_CZ = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/cs_CZ.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/de_DE.mjs
+var init_de_DE = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/de_DE.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/el_GR.mjs
+var init_el_GR = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/el_GR.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/es_419.mjs
+var init_es_419 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/es_419.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/es_AR.mjs
+var init_es_AR = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/es_AR.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/es_ES.mjs
+var init_es_ES = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/es_ES.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/es_MX.mjs
+var init_es_MX = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/es_MX.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/fa_IR.mjs
+var init_fa_IR = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/fa_IR.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/fil_PH.mjs
+var init_fil_PH = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/fil_PH.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/fr_CA.mjs
+var init_fr_CA = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/fr_CA.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/fr_FR.mjs
+var init_fr_FR = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/fr_FR.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ha_NG.mjs
+var init_ha_NG = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ha_NG.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/hi_IN.mjs
+var init_hi_IN = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/hi_IN.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/hu_HU.mjs
+var init_hu_HU = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/hu_HU.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/id_ID.mjs
+var init_id_ID = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/id_ID.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/it_IT.mjs
+var init_it_IT = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/it_IT.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ja_JP.mjs
+var init_ja_JP = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ja_JP.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ko_KR.mjs
+var init_ko_KR = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ko_KR.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ms_MY.mjs
+var init_ms_MY = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ms_MY.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/nl_NL.mjs
+var init_nl_NL = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/nl_NL.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/pl_PL.mjs
+var init_pl_PL = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/pl_PL.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/pt_BR.mjs
+var init_pt_BR = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/pt_BR.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/pt_PT.mjs
+var init_pt_PT = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/pt_PT.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ro_RO.mjs
+var init_ro_RO = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ro_RO.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ru_RU.mjs
+var init_ru_RU = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ru_RU.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/sv_SE.mjs
+var init_sv_SE = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/sv_SE.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/sw_TZ.mjs
+var init_sw_TZ = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/sw_TZ.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/th_TH.mjs
+var init_th_TH = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/th_TH.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/tr_TR.mjs
+var init_tr_TR = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/tr_TR.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/uk_UA.mjs
+var init_uk_UA = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/uk_UA.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ur_PK.mjs
+var init_ur_PK = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/ur_PK.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/vi_VN.mjs
+var init_vi_VN = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/vi_VN.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/yo_NG.mjs
+var init_yo_NG = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/yo_NG.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/zh_Hans.mjs
+var init_zh_Hans = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/zh_Hans.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/zh_Hant.mjs
+var init_zh_Hant = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/zh_Hant.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/_locale.mjs
+var init_locale = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/_locale.mjs"() {
+    init_config();
+    init_ar_001();
+    init_bn_BD();
+    init_cs_CZ();
+    init_de_DE();
+    init_el_GR();
+    init_en_US();
+    init_es_419();
+    init_es_AR();
+    init_es_ES();
+    init_es_MX();
+    init_fa_IR();
+    init_fil_PH();
+    init_fr_CA();
+    init_fr_CA();
+    init_fr_FR();
+    init_ha_NG();
+    init_hi_IN();
+    init_hu_HU();
+    init_id_ID();
+    init_it_IT();
+    init_ja_JP();
+    init_ko_KR();
+    init_ms_MY();
+    init_nl_NL();
+    init_pl_PL();
+    init_pt_BR();
+    init_pt_PT();
+    init_ro_RO();
+    init_ru_RU();
+    init_sv_SE();
+    init_sw_TZ();
+    init_th_TH();
+    init_tr_TR();
+    init_uk_UA();
+    init_ur_PK();
+    init_vi_VN();
+    init_yo_NG();
+    init_zh_Hans();
+    init_zh_Hant();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/index.mjs
+var init_locale2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/locale/index.mjs"() {
+    init_locale();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/system.mjs
+var init_system = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/system.mjs"() {
+    init_arguments2();
+    init_environment2();
+    init_hashing();
+    init_locale2();
+    init_memory2();
+    init_settings2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/index.mjs
+var init_system2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/system/index.mjs"() {
+    init_system();
+    init_system();
+    init_system();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/_codec.mjs
-var EncodeBuilder = class {
-  constructor(type, decode) {
-    this.type = type;
-    this.decode = decode;
-  }
-  Encode(callback) {
-    const type = this.type;
-    const decode = IsCodec(type) ? (value) => this.decode(type["~codec"].decode(value)) : this.decode;
-    const encode = IsCodec(type) ? (value) => type["~codec"].encode(callback(value)) : callback;
-    const codec = { decode, encode };
-    return memory_exports.Update(this.type, { "~codec": codec }, {});
-  }
-};
-var DecodeBuilder = class {
-  constructor(type) {
-    this.type = type;
-  }
-  Decode(callback) {
-    return new EncodeBuilder(this.type, callback);
-  }
-};
 function Codec(type) {
   return new DecodeBuilder(type);
 }
@@ -1521,6 +1828,35 @@ function Encode(type, callback) {
 function IsCodec(value) {
   return IsSchema(value) && guard_exports.HasPropertyKey(value, "~codec") && guard_exports.IsObject(value["~codec"]) && guard_exports.HasPropertyKey(value["~codec"], "encode") && guard_exports.HasPropertyKey(value["~codec"], "decode");
 }
+var EncodeBuilder, DecodeBuilder;
+var init_codec = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/_codec.mjs"() {
+    init_system2();
+    init_guard2();
+    init_schema();
+    EncodeBuilder = class {
+      constructor(type, decode) {
+        this.type = type;
+        this.decode = decode;
+      }
+      Encode(callback) {
+        const type = this.type;
+        const decode = IsCodec(type) ? (value) => this.decode(type["~codec"].decode(value)) : this.decode;
+        const encode = IsCodec(type) ? (value) => type["~codec"].encode(callback(value)) : callback;
+        const codec = { decode, encode };
+        return memory_exports.Update(this.type, { "~codec": codec }, {});
+      }
+    };
+    DecodeBuilder = class {
+      constructor(type) {
+        this.type = type;
+      }
+      Decode(callback) {
+        return new EncodeBuilder(this.type, callback);
+      }
+    };
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/_immutable.mjs
 function Immutable(type) {
@@ -1529,6 +1865,13 @@ function Immutable(type) {
 function IsImmutable(value) {
   return IsSchema(value) && guard_exports.HasPropertyKey(value, "~immutable");
 }
+var init_immutable = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/_immutable.mjs"() {
+    init_guard2();
+    init_schema();
+    init_add_immutable();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_add_readonly.mjs
 function AddReadonlyDeferred(type, options = {}) {
@@ -1537,6 +1880,12 @@ function AddReadonlyDeferred(type, options = {}) {
 function AddReadonly(type, options = {}) {
   return AddReadonlyAction(type, options);
 }
+var init_add_readonly = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_add_readonly.mjs"() {
+    init_deferred();
+    init_instantiate_add();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/_readonly.mjs
 function Readonly(type) {
@@ -1545,6 +1894,13 @@ function Readonly(type) {
 function IsReadonly(value) {
   return IsSchema(value) && guard_exports.HasPropertyKey(value, "~readonly");
 }
+var init_readonly = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/_readonly.mjs"() {
+    init_guard2();
+    init_schema();
+    init_add_readonly();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/_refine.mjs
 function RefineAdd(type, refinement) {
@@ -1564,15 +1920,30 @@ function IsRefinement(value) {
 function IsRefine(value) {
   return IsSchema(value) && guard_exports.HasPropertyKey(value, "~refine") && guard_exports.IsArray(value["~refine"]) && guard_exports.Every(value["~refine"], 0, (value2) => IsRefinement(value2));
 }
+var init_refine = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/_refine.mjs"() {
+    init_arguments2();
+    init_memory2();
+    init_guard2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/bigint.mjs
-var BigIntPattern = "-?(?:0|[1-9][0-9]*)n";
 function BigInt2(options) {
   return memory_exports.Create({ "~kind": "BigInt" }, { type: "bigint" }, options);
 }
 function IsBigInt2(value) {
   return IsKind(value, "BigInt");
 }
+var BigIntPattern;
+var init_bigint = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/bigint.mjs"() {
+    init_memory2();
+    init_schema();
+    BigIntPattern = "-?(?:0|[1-9][0-9]*)n";
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/boolean.mjs
 function Boolean2(options) {
@@ -1581,6 +1952,12 @@ function Boolean2(options) {
 function IsBoolean3(value) {
   return IsKind(value, "Boolean");
 }
+var init_boolean = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/boolean.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/identifier.mjs
 function Identifier(name) {
@@ -1589,28 +1966,30 @@ function Identifier(name) {
 function IsIdentifier(value) {
   return IsKind(value, "Identifier");
 }
+var init_identifier = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/identifier.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/integer.mjs
-var IntegerPattern = "-?(?:0|[1-9][0-9]*)";
 function Integer(options) {
   return memory_exports.Create({ "~kind": "Integer" }, { type: "integer" }, options);
 }
 function IsInteger2(value) {
   return IsKind(value, "Integer");
 }
+var IntegerPattern;
+var init_integer = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/integer.mjs"() {
+    init_memory2();
+    init_schema();
+    IntegerPattern = "-?(?:0|[1-9][0-9]*)";
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/literal.mjs
-var InvalidLiteralValue = class extends Error {
-  constructor(value) {
-    super(`Invalid Literal value`);
-    Object.defineProperty(this, "cause", {
-      value: { value },
-      writable: false,
-      configurable: false,
-      enumerable: false
-    });
-  }
-};
 function LiteralTypeName(value) {
   return guard_exports.IsBigInt(value) ? "bigint" : guard_exports.IsBoolean(value) ? "boolean" : guard_exports.IsNumber(value) ? "number" : guard_exports.IsString(value) ? "string" : (() => {
     throw new InvalidLiteralValue(value);
@@ -1637,6 +2016,25 @@ function IsLiteralString(value) {
 function IsLiteral(value) {
   return IsKind(value, "Literal");
 }
+var InvalidLiteralValue;
+var init_literal = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/literal.mjs"() {
+    init_memory2();
+    init_guard2();
+    init_schema();
+    InvalidLiteralValue = class extends Error {
+      constructor(value) {
+        super(`Invalid Literal value`);
+        Object.defineProperty(this, "cause", {
+          value: { value },
+          writable: false,
+          configurable: false,
+          enumerable: false
+        });
+      }
+    };
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/null.mjs
 function Null(options) {
@@ -1645,15 +2043,28 @@ function Null(options) {
 function IsNull2(value) {
   return IsKind(value, "Null");
 }
+var init_null = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/null.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/number.mjs
-var NumberPattern = "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?";
 function Number2(options) {
   return memory_exports.Create({ "~kind": "Number" }, { type: "number" }, options);
 }
 function IsNumber3(value) {
   return IsKind(value, "Number");
 }
+var NumberPattern;
+var init_number = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/number.mjs"() {
+    init_memory2();
+    init_schema();
+    NumberPattern = "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?";
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/symbol.mjs
 function Symbol2(options) {
@@ -1662,6 +2073,12 @@ function Symbol2(options) {
 function IsSymbol2(value) {
   return IsKind(value, "Symbol");
 }
+var init_symbol = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/symbol.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/parameter.mjs
 function Parameter(...args) {
@@ -1675,15 +2092,30 @@ function Parameter(...args) {
 function IsParameter(value) {
   return IsKind(value, "Parameter");
 }
+var init_parameter = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/parameter.mjs"() {
+    init_arguments2();
+    init_memory2();
+    init_schema();
+    init_unknown();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/string.mjs
-var StringPattern = ".*";
 function String2(options) {
   return memory_exports.Create({ "~kind": "String" }, { type: "string" }, options);
 }
 function IsString3(value) {
   return IsKind(value, "String");
 }
+var StringPattern;
+var init_string2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/string.mjs"() {
+    init_memory2();
+    init_schema();
+    StringPattern = ".*";
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/union.mjs
 function Union(anyOf, options = {}) {
@@ -1695,6 +2127,12 @@ function IsUnion(value) {
 function UnionOptions(type) {
   return memory_exports.Discard(type, ["~kind", "anyOf"]);
 }
+var init_union = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/union.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/patterns/pattern.mjs
 function ParsePatternIntoTypes(pattern) {
@@ -1702,6 +2140,12 @@ function ParsePatternIntoTypes(pattern) {
   const result2 = guard_exports.IsEqual(parsed.length, 2) ? parsed[0] : [];
   return result2;
 }
+var init_pattern = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/patterns/pattern.mjs"() {
+    init_guard2();
+    init_parser();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/is_finite.mjs
 function FromLiteral(_value) {
@@ -1721,11 +2165,23 @@ function IsTemplateLiteralFinite(types) {
   const result2 = FromTypes(types);
   return result2;
 }
+var init_is_finite = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/is_finite.mjs"() {
+    init_guard2();
+    init_literal();
+    init_union();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/create.mjs
 function TemplateLiteralCreate(pattern) {
   return memory_exports.Create({ ["~kind"]: "TemplateLiteral" }, { type: "string", pattern }, {});
 }
+var init_create2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/create.mjs"() {
+    init_memory2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/decode.mjs
 function FromLiteralPush(variants, value, result2 = []) {
@@ -1769,6 +2225,19 @@ function TemplateLiteralDecode(pattern) {
   const result2 = IsTemplateLiteral(decoded) ? String2() : decoded;
   return result2;
 }
+var init_decode = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/decode.mjs"() {
+    init_guard2();
+    init_unreachable2();
+    init_literal();
+    init_string2();
+    init_template_literal();
+    init_union();
+    init_pattern();
+    init_is_finite();
+    init_create2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/record_create.mjs
 function CreateRecord(key, value) {
@@ -1776,16 +2245,32 @@ function CreateRecord(key, value) {
   const patternProperties = { [key]: value };
   return memory_exports.Create({ ["~kind"]: "Record" }, { type, patternProperties });
 }
+var init_record_create = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/record_create.mjs"() {
+    init_memory2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_any.mjs
 function FromAnyKey(value) {
   return CreateRecord(StringKey, value);
 }
+var init_from_key_any = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_any.mjs"() {
+    init_record();
+    init_record_create();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_boolean.mjs
 function FromBooleanKey(value) {
   return _Object_({ true: value, false: value });
 }
+var init_from_key_boolean = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_boolean.mjs"() {
+    init_object();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/tuple.mjs
 function Tuple(types, options = {}) {
@@ -1798,6 +2283,12 @@ function IsTuple(value) {
 function TupleOptions(type) {
   return memory_exports.Discard(type, ["~kind", "type", "items", "minItems", "additionalItems"]);
 }
+var init_tuple = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/tuple.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly/instantiate_remove.mjs
 function RemoveReadonlyOperation(type) {
@@ -1811,6 +2302,12 @@ function RemoveReadonlyInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return RemoveReadonlyAction(instantiatedType, options);
 }
+var init_instantiate_remove = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly/instantiate_remove.mjs"() {
+    init_memory2();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_remove_readonly.mjs
 function RemoveReadonlyDeferred(type, options = {}) {
@@ -1819,6 +2316,12 @@ function RemoveReadonlyDeferred(type, options = {}) {
 function RemoveReadonly(type, options = {}) {
   return RemoveReadonlyAction(type, options);
 }
+var init_remove_readonly = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_remove_readonly.mjs"() {
+    init_deferred();
+    init_instantiate_remove();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/optional/instantiate_remove.mjs
 function RemoveOptionalOperation(type) {
@@ -1832,6 +2335,12 @@ function RemoveOptionalInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return RemoveOptionalAction(instantiatedType, options);
 }
+var init_instantiate_remove2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/optional/instantiate_remove.mjs"() {
+    init_memory2();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_remove_optional.mjs
 function RemoveOptionalDeferred(type, options = {}) {
@@ -1840,6 +2349,12 @@ function RemoveOptionalDeferred(type, options = {}) {
 function RemoveOptional(type, options = {}) {
   return RemoveOptionalAction(type, options);
 }
+var init_remove_optional = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_remove_optional.mjs"() {
+    init_deferred();
+    init_instantiate_remove2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/tuple/to_object.mjs
 function TupleElementsToProperties(types) {
@@ -1853,6 +2368,11 @@ function TupleToObject(type) {
   const result2 = _Object_(properties);
   return result2;
 }
+var init_to_object = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/tuple/to_object.mjs"() {
+    init_object();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/composite.mjs
 function IsReadonlyProperty(left, right) {
@@ -1887,12 +2407,36 @@ function Composite(left, right) {
   const properties = CompositeProperties(leftProperties, rightProperties);
   return _Object_(properties);
 }
+var init_composite = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/composite.mjs"() {
+    init_unreachable2();
+    init_guard2();
+    init_readonly();
+    init_optional();
+    init_object();
+    init_never();
+    init_tuple();
+    init_add_readonly();
+    init_add_optional();
+    init_remove_readonly();
+    init_remove_optional();
+    init_to_object();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/narrow.mjs
 function Narrow(left, right) {
   const result2 = Compare(left, right);
   return guard_exports.IsEqual(result2, ResultLeftInside) ? left : guard_exports.IsEqual(result2, ResultRightInside) ? right : guard_exports.IsEqual(result2, ResultEqual) ? right : Never();
 }
+var init_narrow = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/narrow.mjs"() {
+    init_guard2();
+    init_never();
+    init_compare();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/distribute.mjs
 function IsObjectLike(type) {
@@ -1922,6 +2466,18 @@ function DistributeUnion(types, distribution, result2 = []) {
 function Distribute(types, result2 = []) {
   return guard_exports.ShiftLeft(types, (left, right) => IsUnion(left) ? Distribute(right, DistributeUnion(left.anyOf, result2)) : Distribute(right, DistributeType(left, result2)), () => result2);
 }
+var init_distribute = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/distribute.mjs"() {
+    init_guard2();
+    init_union();
+    init_object();
+    init_tuple();
+    init_composite();
+    init_narrow();
+    init_evaluate2();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/exclude/operation.mjs
 function ExcludeType(left, right) {
@@ -1941,6 +2497,14 @@ function ExcludeOperation(left, right) {
   const result2 = EvaluateUnion(remaining);
   return result2;
 }
+var init_operation = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/exclude/operation.mjs"() {
+    init_union();
+    init_extends3();
+    init_evaluate2();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/evaluate.mjs
 function EvaluateDependent(if_, then_, else_) {
@@ -1976,6 +2540,22 @@ function EvaluateUnionFast(types) {
   const result2 = guard_exports.IsEqual(types.length, 1) ? types[0] : guard_exports.IsEqual(types.length, 0) ? Never() : Union(types);
   return result2;
 }
+var init_evaluate2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/evaluate.mjs"() {
+    init_guard2();
+    init_dependent();
+    init_enum();
+    init_literal();
+    init_intersect();
+    init_never();
+    init_template_literal();
+    init_union();
+    init_distribute();
+    init_broaden();
+    init_operation();
+    init_decode();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_enum.mjs
 function FromEnumKey(values, value) {
@@ -1983,12 +2563,24 @@ function FromEnumKey(values, value) {
   const result2 = FromKey(unionKey, value);
   return result2;
 }
+var init_from_key_enum = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_enum.mjs"() {
+    init_from_key();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_integer.mjs
 function FromIntegerKey(_key, value) {
   const result2 = CreateRecord(IntegerKey, value);
   return result2;
 }
+var init_from_key_integer = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_integer.mjs"() {
+    init_record();
+    init_record_create();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_intersect.mjs
 function FromIntersectKey(types, value) {
@@ -1996,22 +2588,47 @@ function FromIntersectKey(types, value) {
   const result2 = FromKey(evaluatedKey, value);
   return result2;
 }
+var init_from_key_intersect = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_intersect.mjs"() {
+    init_evaluate2();
+    init_from_key();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_literal.mjs
 function FromLiteralKey(key, value) {
   return guard_exports.IsString(key) || guard_exports.IsNumber(key) ? _Object_({ [key]: value }) : guard_exports.IsEqual(key, false) ? _Object_({ false: value }) : guard_exports.IsEqual(key, true) ? _Object_({ true: value }) : _Object_({});
 }
+var init_from_key_literal = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_literal.mjs"() {
+    init_guard2();
+    init_object();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_number.mjs
 function FromNumberKey(_key, value) {
   const result2 = CreateRecord(NumberKey, value);
   return result2;
 }
+var init_from_key_number = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_number.mjs"() {
+    init_record();
+    init_record_create();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_string.mjs
 function FromStringKey(key, value) {
   return guard_exports.HasPropertyKey(key, "pattern") && (guard_exports.IsString(key.pattern) || key.pattern instanceof RegExp) ? CreateRecord(key.pattern.toString(), value) : CreateRecord(StringKey, value);
 }
+var init_from_key_string = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_string.mjs"() {
+    init_guard2();
+    init_record();
+    init_record_create();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_template_literal.mjs
 function FromTemplateKey(pattern, value) {
@@ -2020,6 +2637,15 @@ function FromTemplateKey(pattern, value) {
   const result2 = finite ? FromKey(EvaluateTemplateLiteral(pattern), value) : CreateRecord(pattern, value);
   return result2;
 }
+var init_from_key_template_literal = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_template_literal.mjs"() {
+    init_from_key();
+    init_pattern();
+    init_is_finite();
+    init_evaluate2();
+    init_record_create();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/flatten.mjs
 function FlattenType(type) {
@@ -2031,6 +2657,11 @@ function Flatten(types) {
     return [...result2, ...FlattenType(type)];
   }, []);
 }
+var init_flatten = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/flatten.mjs"() {
+    init_union();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_union.mjs
 function StringOrNumberCheck(types) {
@@ -2054,12 +2685,51 @@ function FromUnionKey(types, value) {
   const record4 = TryBuildRecord(flattened, value);
   return IsSchema(record4) ? record4 : CreateObject(flattened, value);
 }
+var init_from_key_union = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key_union.mjs"() {
+    init_guard2();
+    init_schema();
+    init_literal();
+    init_number();
+    init_integer();
+    init_object();
+    init_string2();
+    init_record();
+    init_flatten();
+    init_record_create();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key.mjs
 function FromKey(key, value) {
   const result2 = IsAny(key) ? FromAnyKey(value) : IsBoolean3(key) ? FromBooleanKey(value) : IsEnum(key) ? FromEnumKey(key.enum, value) : IsInteger2(key) ? FromIntegerKey(key, value) : IsIntersect(key) ? FromIntersectKey(key.allOf, value) : IsLiteral(key) ? FromLiteralKey(key.const, value) : IsNumber3(key) ? FromNumberKey(key, value) : IsUnion(key) ? FromUnionKey(key.anyOf, value) : IsString3(key) ? FromStringKey(key, value) : IsTemplateLiteral(key) ? FromTemplateKey(key.pattern, value) : _Object_({});
   return result2;
 }
+var init_from_key = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key.mjs"() {
+    init_any();
+    init_boolean();
+    init_enum();
+    init_intersect();
+    init_integer();
+    init_literal();
+    init_number();
+    init_object();
+    init_string2();
+    init_template_literal();
+    init_union();
+    init_from_key_any();
+    init_from_key_boolean();
+    init_from_key_enum();
+    init_from_key_integer();
+    init_from_key_intersect();
+    init_from_key_literal();
+    init_from_key_number();
+    init_from_key_string();
+    init_from_key_template_literal();
+    init_from_key_union();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/instantiate.mjs
 function RecordAction(key, value, options) {
@@ -2071,11 +2741,16 @@ function RecordInstantiate(context, state, key, value, options) {
   const instantiatedValue = InstantiateType(context, state, value);
   return RecordAction(instantiatedKey, instantiatedValue, options);
 }
+var init_instantiate = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/instantiate.mjs"() {
+    init_memory2();
+    init_record();
+    init_from_key();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/record.mjs
-var IntegerKey = `^${IntegerPattern}$`;
-var NumberKey = `^${NumberPattern}$`;
-var StringKey = `^${StringPattern}$`;
 function RecordDeferred(key, value, options = {}) {
   return Deferred("Record", [key, value], options);
 }
@@ -2103,6 +2778,24 @@ function RecordValue(type) {
 function IsRecord(value) {
   return IsKind(value, "Record");
 }
+var IntegerKey, NumberKey, StringKey;
+var init_record = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/record.mjs"() {
+    init_memory2();
+    init_guard2();
+    init_schema();
+    init_integer();
+    init_number();
+    init_string2();
+    init_deferred();
+    init_decode();
+    init_record_create();
+    init_instantiate();
+    IntegerKey = `^${IntegerPattern}$`;
+    NumberKey = `^${NumberPattern}$`;
+    StringKey = `^${StringPattern}$`;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/rest.mjs
 function Rest(type) {
@@ -2111,6 +2804,18 @@ function Rest(type) {
 function IsRest(value) {
   return IsKind(value, "Rest");
 }
+var init_rest = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/rest.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/static.mjs
+var init_static = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/static.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/this.mjs
 function This(options) {
@@ -2119,6 +2824,12 @@ function This(options) {
 function IsThis(value) {
   return IsKind(value, "This");
 }
+var init_this = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/this.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/undefined.mjs
 function Undefined(options) {
@@ -2127,6 +2838,12 @@ function Undefined(options) {
 function IsUndefined2(value) {
   return IsKind(value, "Undefined");
 }
+var init_undefined = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/undefined.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/void.mjs
 function Void(options) {
@@ -2135,6 +2852,63 @@ function Void(options) {
 function IsVoid(value) {
   return IsKind(value, "Void");
 }
+var init_void = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/void.mjs"() {
+    init_memory2();
+    init_schema();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/index.mjs
+var init_types = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/index.mjs"() {
+    init_codec();
+    init_immutable();
+    init_optional();
+    init_readonly();
+    init_refine();
+    init_any();
+    init_array();
+    init_bigint();
+    init_boolean();
+    init_call();
+    init_constructor();
+    init_cyclic();
+    init_deferred();
+    init_enum();
+    init_function();
+    init_generic();
+    init_identifier();
+    init_dependent();
+    init_infer();
+    init_integer();
+    init_intersect();
+    init_literal();
+    init_never();
+    init_null();
+    init_number();
+    init_unknown();
+    init_symbol();
+    init_object();
+    init_parameter();
+    init_properties();
+    init_record();
+    init_ref();
+    init_rest();
+    init_schema();
+    init_static();
+    init_string2();
+    init_symbol();
+    init_template_literal();
+    init_this();
+    init_tuple();
+    init_undefined();
+    init_union();
+    init_unknown();
+    init_unsafe();
+    init_void();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/mapping.mjs
 function IntrinsicOrCall(ref, parameters) {
@@ -2143,15 +2917,6 @@ function IntrinsicOrCall(ref, parameters) {
 function Unreachable2() {
   throw Error("Unreachable");
 }
-var DelimitedDecode = (input, result2 = []) => {
-  return input.reduce((result3, left) => {
-    return guard_exports.IsArray(left) && guard_exports.IsEqual(left.length, 2) ? [...result3, left[0]] : [...result3, left];
-  }, []);
-};
-var Delimited = (input) => {
-  const [left, right] = input;
-  return DelimitedDecode([...left, ...right]);
-};
 function GenericParameterExtendsEqualsMapping(input) {
   return Parameter(input[0], input[2], input[4]);
 }
@@ -2573,6 +3338,31 @@ function ModuleMapping(input) {
 function ScriptMapping(input) {
   return input;
 }
+var DelimitedDecode, Delimited;
+var init_mapping = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/mapping.mjs"() {
+    init_memory2();
+    init_guard2();
+    init_types();
+    init_action();
+    DelimitedDecode = (input, result2 = []) => {
+      return input.reduce((result3, left) => {
+        return guard_exports.IsArray(left) && guard_exports.IsEqual(left.length, 2) ? [...result3, left[0]] : [...result3, left];
+      }, []);
+    };
+    Delimited = (input) => {
+      const [left, right] = input;
+      return DelimitedDecode([...left, ...right]);
+    };
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/guard.mjs
+var init_guard3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/guard.mjs"() {
+    init_guard();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/match.mjs
 function IsMatch(value) {
@@ -2581,6 +3371,11 @@ function IsMatch(value) {
 function Match2(input, ok, fail4) {
   return IsMatch(input) ? ok(input[0], input[1]) : fail4();
 }
+var init_match = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/match.mjs"() {
+    init_guard3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/take.mjs
 function TakeVariant(variant, input) {
@@ -2594,31 +3389,39 @@ function Take(variants, input) {
   }
   return [];
 }
+var init_take = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/take.mjs"() {
+    init_match();
+    init_guard3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/char.mjs
 function Range(start, end) {
   return Array.from({ length: end - start + 1 }, (_, i) => String.fromCharCode(start + i));
 }
-var Alpha = [
-  ...Range(97, 122),
-  // Lowercase
-  ...Range(65, 90)
-  // Uppercase
-];
-var Zero = "0";
-var NonZero = Range(49, 57);
-var Digit = [Zero, ...NonZero];
-var WhiteSpace = " ";
-var NewLine = "\n";
-var UnderScore = "_";
-var Dot = ".";
-var DollarSign = "$";
-var Hyphen = "-";
+var Alpha, Zero, NonZero, Digit, WhiteSpace, NewLine, UnderScore, Dot, DollarSign, Hyphen;
+var init_char = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/char.mjs"() {
+    Alpha = [
+      ...Range(97, 122),
+      // Lowercase
+      ...Range(65, 90)
+      // Uppercase
+    ];
+    Zero = "0";
+    NonZero = Range(49, 57);
+    Digit = [Zero, ...NonZero];
+    WhiteSpace = " ";
+    NewLine = "\n";
+    UnderScore = "_";
+    Dot = ".";
+    DollarSign = "$";
+    Hyphen = "-";
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/trim.mjs
-var LineComment = "//";
-var OpenComment = "/*";
-var CloseComment = "*/";
 function DiscardMultilineComment(input) {
   const index = input.indexOf(CloseComment);
   const result2 = IsEqual(index, -1) ? "" : input.slice(index + 2);
@@ -2640,11 +3443,27 @@ function Trim(input) {
   const trimmed = input.trimStart();
   return trimmed.startsWith(OpenComment) ? Trim(DiscardMultilineComment(trimmed.slice(2))) : trimmed.startsWith(LineComment) ? Trim(DiscardLineComment(trimmed.slice(2))) : trimmed;
 }
+var LineComment, OpenComment, CloseComment;
+var init_trim = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/trim.mjs"() {
+    init_guard3();
+    init_char();
+    LineComment = "//";
+    OpenComment = "/*";
+    CloseComment = "*/";
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/optional.mjs
 function Optional2(value, input) {
   return Match2(Take([value], input), (Optional4, Rest2) => [Optional4, Rest2], () => ["", input]);
 }
+var init_optional2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/optional.mjs"() {
+    init_match();
+    init_take();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/many.mjs
 function IsDiscard(discard, input) {
@@ -2653,12 +3472,17 @@ function IsDiscard(discard, input) {
 function Many(allowed, discard, input, result2 = "") {
   return Match2(Take(allowed, input), (Char, Rest2) => IsDiscard(discard, Char) ? Many(allowed, discard, Rest2, result2) : Many(allowed, discard, Rest2, `${result2}${Char}`), () => [result2, input]);
 }
+var init_many = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/internal/many.mjs"() {
+    init_match();
+    init_take();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/unsigned_integer.mjs
 function TakeNonZero(input) {
   return Take(NonZero, input);
 }
-var AllowedDigits = [...Digit, UnderScore];
 function TakeDigits(input) {
   return Many(AllowedDigits, [UnderScore], input);
 }
@@ -2673,6 +3497,20 @@ function TakeUnsignedInteger(input) {
 function UnsignedInteger(input) {
   return TakeUnsignedInteger(Trim(input));
 }
+var AllowedDigits;
+var init_unsigned_integer = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/unsigned_integer.mjs"() {
+    init_match();
+    init_trim();
+    init_take();
+    init_many();
+    init_char();
+    init_char();
+    init_char();
+    init_char();
+    AllowedDigits = [...Digit, UnderScore];
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/integer.mjs
 function TakeSign(input) {
@@ -2689,6 +3527,15 @@ function TakeSignedInteger(input) {
 function Integer2(input) {
   return TakeSignedInteger(Trim(input));
 }
+var init_integer2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/integer.mjs"() {
+    init_match();
+    init_trim();
+    init_optional2();
+    init_char();
+    init_unsigned_integer();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/bigint.mjs
 function TakeBigInt(input) {
@@ -2702,6 +3549,13 @@ function TakeBigInt(input) {
 function BigInt3(input) {
   return TakeBigInt(input);
 }
+var init_bigint2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/bigint.mjs"() {
+    init_match();
+    init_take();
+    init_integer2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/const.mjs
 function TakeConst(const_, input) {
@@ -2710,13 +3564,21 @@ function TakeConst(const_, input) {
 function Const(const_, input) {
   return IsEqual(const_, "") ? ["", input] : const_.startsWith(NewLine) ? TakeConst(const_, TrimWhitespace(input)) : const_.startsWith(WhiteSpace) ? TakeConst(const_, input) : TakeConst(const_, Trim(input));
 }
+var init_const = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/const.mjs"() {
+    init_guard3();
+    init_trim();
+    init_trim();
+    init_take();
+    init_char();
+    init_char();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/ident.mjs
-var Initial = [...Alpha, UnderScore, DollarSign];
 function TakeInitial(input) {
   return Take(Initial, input);
 }
-var Remaining = [...Initial, ...Digit];
 function TakeRemaining(input, result2 = "") {
   return Match2(Take(Remaining, input), (Remaining2, RemainingRest) => TakeRemaining(RemainingRest, `${result2}${Remaining2}`), () => [result2, input]);
 }
@@ -2731,9 +3593,22 @@ function TakeIdent(input) {
 function Ident(input) {
   return TakeIdent(Trim(input));
 }
+var Initial, Remaining;
+var init_ident = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/ident.mjs"() {
+    init_match();
+    init_trim();
+    init_take();
+    init_char();
+    init_char();
+    init_char();
+    init_char();
+    Initial = [...Alpha, UnderScore, DollarSign];
+    Remaining = [...Initial, ...Digit];
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/unsigned_number.mjs
-var AllowedDigits2 = [...Digit, UnderScore];
 function IsLeadingDot(input) {
   return IsMatch(Take([Dot], input));
 }
@@ -2767,6 +3642,20 @@ function TakeUnsignedNumber(input) {
 function UnsignedNumber(input) {
   return TakeUnsignedNumber(Trim(input));
 }
+var AllowedDigits2;
+var init_unsigned_number = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/unsigned_number.mjs"() {
+    init_guard3();
+    init_match();
+    init_trim();
+    init_take();
+    init_many();
+    init_char();
+    init_char();
+    init_unsigned_integer();
+    AllowedDigits2 = [...Digit, UnderScore];
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/number.mjs
 function TakeSign2(input) {
@@ -2783,6 +3672,22 @@ function TakeSignedNumber(input) {
 function Number3(input) {
   return TakeSignedNumber(Trim(input));
 }
+var init_number2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/number.mjs"() {
+    init_match();
+    init_trim();
+    init_optional2();
+    init_char();
+    init_unsigned_number();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/rest.mjs
+var init_rest2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/rest.mjs"() {
+    init_guard3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/until.mjs
 function TakeOne(input) {
@@ -2799,6 +3704,12 @@ function Until(end, input, result2 = "") {
     () => []
   );
 }
+var init_until = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/until.mjs"() {
+    init_match();
+    init_guard3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/span.mjs
 function MultiLine(start, end, input) {
@@ -2830,6 +3741,15 @@ function SingleLine(start, end, input) {
 function Span(start, end, multiLine, input) {
   return multiLine ? MultiLine(start, end, Trim(input)) : SingleLine(start, end, Trim(input));
 }
+var init_span = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/span.mjs"() {
+    init_match();
+    init_trim();
+    init_char();
+    init_take();
+    init_until();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/string.mjs
 function TakeInitial2(quotes, input) {
@@ -2844,144 +3764,184 @@ function TakeString(quotes, input) {
 function String3(quotes, input) {
   return TakeString(quotes, Trim(input));
 }
+var init_string3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/string.mjs"() {
+    init_match();
+    init_take();
+    init_trim();
+    init_span();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/until_1.mjs
 function Until_1(end, input) {
   return Match2(Until(end, input), (Until2, UntilRest) => IsEqual(Until2, "") ? [] : [Until2, UntilRest], () => []);
 }
+var init_until_1 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/until_1.mjs"() {
+    init_guard3();
+    init_match();
+    init_until();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/index.mjs
+var init_token = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/token/index.mjs"() {
+    init_bigint2();
+    init_const();
+    init_ident();
+    init_integer2();
+    init_number2();
+    init_rest2();
+    init_span();
+    init_string3();
+    init_unsigned_integer();
+    init_unsigned_number();
+    init_until_1();
+    init_until();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/parser.mjs
-var If = (result2, left, right = () => []) => result2.length === 2 ? left(result2) : right();
-var GenericParameterExtendsEquals = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("extends", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => If(Const("=", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [GenericParameterExtendsEqualsMapping(_0), input2]);
-var GenericParameterExtends = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("extends", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParameterExtendsMapping(_0), input2]);
-var GenericParameterEquals = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("=", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParameterEqualsMapping(_0), input2]);
-var GenericParameterIdentifier = (input) => If(Ident(input), ([_0, input2]) => [GenericParameterIdentifierMapping(_0), input2]);
-var GenericParameter = (input) => If(If(GenericParameterExtendsEquals(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterExtends(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterEquals(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterIdentifier(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [GenericParameterMapping(_0), input2]);
-var GenericParameterList_0 = (input, result2 = []) => If(If(GenericParameter(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => GenericParameterList_0(input2, [...result2, _0]), () => [result2, input]);
-var GenericParameterList = (input) => If(If(GenericParameterList_0(input), ([_0, input2]) => If(If(If(GenericParameter(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [GenericParameterListMapping(_0), input2]);
-var GenericParameters = (input) => If(If(Const("<", input), ([_0, input2]) => If(GenericParameterList(input2), ([_1, input3]) => If(Const(">", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParametersMapping(_0), input2]);
-var GenericCallArgumentList_0 = (input, result2 = []) => If(If(Type(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => GenericCallArgumentList_0(input2, [...result2, _0]), () => [result2, input]);
-var GenericCallArgumentList = (input) => If(If(GenericCallArgumentList_0(input), ([_0, input2]) => If(If(If(Type(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [GenericCallArgumentListMapping(_0), input2]);
-var GenericCallArguments = (input) => If(If(Const("<", input), ([_0, input2]) => If(GenericCallArgumentList(input2), ([_1, input3]) => If(Const(">", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericCallArgumentsMapping(_0), input2]);
-var GenericCall = (input) => If(If(Ident(input), ([_0, input2]) => If(GenericCallArguments(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [GenericCallMapping(_0), input2]);
-var OptionalSemiColon = (input) => If(If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [OptionalSemiColonMapping(_0), input2]);
-var KeywordString = (input) => If(Const("string", input), ([_0, input2]) => [KeywordStringMapping(_0), input2]);
-var KeywordNumber = (input) => If(Const("number", input), ([_0, input2]) => [KeywordNumberMapping(_0), input2]);
-var KeywordBoolean = (input) => If(Const("boolean", input), ([_0, input2]) => [KeywordBooleanMapping(_0), input2]);
-var KeywordUndefined = (input) => If(Const("undefined", input), ([_0, input2]) => [KeywordUndefinedMapping(_0), input2]);
-var KeywordNull = (input) => If(Const("null", input), ([_0, input2]) => [KeywordNullMapping(_0), input2]);
-var KeywordInteger = (input) => If(Const("integer", input), ([_0, input2]) => [KeywordIntegerMapping(_0), input2]);
-var KeywordBigInt = (input) => If(Const("bigint", input), ([_0, input2]) => [KeywordBigIntMapping(_0), input2]);
-var KeywordUnknown = (input) => If(Const("unknown", input), ([_0, input2]) => [KeywordUnknownMapping(_0), input2]);
-var KeywordAny = (input) => If(Const("any", input), ([_0, input2]) => [KeywordAnyMapping(_0), input2]);
-var KeywordObject = (input) => If(Const("object", input), ([_0, input2]) => [KeywordObjectMapping(_0), input2]);
-var KeywordNever = (input) => If(Const("never", input), ([_0, input2]) => [KeywordNeverMapping(_0), input2]);
-var KeywordSymbol = (input) => If(Const("symbol", input), ([_0, input2]) => [KeywordSymbolMapping(_0), input2]);
-var KeywordVoid = (input) => If(Const("void", input), ([_0, input2]) => [KeywordVoidMapping(_0), input2]);
-var KeywordThis = (input) => If(Const("this", input), ([_0, input2]) => [KeywordThisMapping(_0), input2]);
-var TemplateInterpolate = (input) => If(If(Const("${", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [TemplateInterpolateMapping(_0), input2]);
-var TemplateSpan = (input) => If(Until(["${", "`"], input), ([_0, input2]) => [TemplateSpanMapping(_0), input2]);
-var TemplateBody = (input) => If(If(If(TemplateSpan(input), ([_0, input2]) => If(TemplateInterpolate(input2), ([_1, input3]) => If(TemplateBody(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(TemplateSpan(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(TemplateSpan(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [TemplateBodyMapping(_0), input2]);
-var TemplateLiteralTypes = (input) => If(If(Const("`", input), ([_0, input2]) => If(TemplateBody(input2), ([_1, input3]) => If(Const("`", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [TemplateLiteralTypesMapping(_0), input2]);
-var TemplateLiteral = (input) => If(TemplateLiteralTypes(input), ([_0, input2]) => [TemplateLiteralMapping(_0), input2]);
-var Dependent2 = (input) => If(If(If(Const("if", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("then", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => If(Const("else", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_0, input2], () => If(If(Const("if", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("then", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [DependentMapping(_0), input2]);
-var LiteralBigInt = (input) => If(BigInt3(input), ([_0, input2]) => [LiteralBigIntMapping(_0), input2]);
-var LiteralBoolean = (input) => If(If(Const("true", input), ([_0, input2]) => [_0, input2], () => If(Const("false", input), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [LiteralBooleanMapping(_0), input2]);
-var LiteralNumber = (input) => If(Number3(input), ([_0, input2]) => [LiteralNumberMapping(_0), input2]);
-var LiteralString = (input) => If(String3(["'", '"'], input), ([_0, input2]) => [LiteralStringMapping(_0), input2]);
-var KeyOf = (input) => If(If(If(Const("keyof", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [KeyOfMapping(_0), input2]);
-var IndexArray_0 = (input, result2 = []) => If(If(If(Const("[", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(Const("[", input), ([_0, input2]) => If(Const("]", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => IndexArray_0(input2, [...result2, _0]), () => [result2, input]);
-var IndexArray = (input) => If(IndexArray_0(input), ([_0, input2]) => [IndexArrayMapping(_0), input2]);
-var Extends2 = (input) => If(If(If(Const("extends", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("?", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => If(Const(":", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExtendsMapping(_0), input2]);
-var Base = (input) => If(If(If(Const("(", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(KeywordString(input), ([_0, input2]) => [_0, input2], () => If(KeywordNumber(input), ([_0, input2]) => [_0, input2], () => If(KeywordBoolean(input), ([_0, input2]) => [_0, input2], () => If(KeywordUndefined(input), ([_0, input2]) => [_0, input2], () => If(KeywordNull(input), ([_0, input2]) => [_0, input2], () => If(KeywordInteger(input), ([_0, input2]) => [_0, input2], () => If(KeywordBigInt(input), ([_0, input2]) => [_0, input2], () => If(KeywordUnknown(input), ([_0, input2]) => [_0, input2], () => If(KeywordAny(input), ([_0, input2]) => [_0, input2], () => If(KeywordObject(input), ([_0, input2]) => [_0, input2], () => If(KeywordNever(input), ([_0, input2]) => [_0, input2], () => If(KeywordSymbol(input), ([_0, input2]) => [_0, input2], () => If(KeywordVoid(input), ([_0, input2]) => [_0, input2], () => If(KeywordThis(input), ([_0, input2]) => [_0, input2], () => If(LiteralBigInt(input), ([_0, input2]) => [_0, input2], () => If(LiteralBoolean(input), ([_0, input2]) => [_0, input2], () => If(LiteralNumber(input), ([_0, input2]) => [_0, input2], () => If(LiteralString(input), ([_0, input2]) => [_0, input2], () => If(TemplateLiteral(input), ([_0, input2]) => [_0, input2], () => If(Dependent2(input), ([_0, input2]) => [_0, input2], () => If(_Object_2(input), ([_0, input2]) => [_0, input2], () => If(_Tuple_(input), ([_0, input2]) => [_0, input2], () => If(_Constructor_(input), ([_0, input2]) => [_0, input2], () => If(_Function_2(input), ([_0, input2]) => [_0, input2], () => If(_Mapped_(input), ([_0, input2]) => [_0, input2], () => If(GenericCall(input), ([_0, input2]) => [_0, input2], () => If(Reference(input), ([_0, input2]) => [_0, input2], () => [])))))))))))))))))))))))))))), ([_0, input2]) => [BaseMapping(_0), input2]);
-var With = (input) => If(If(If(Const("with", input), ([_0, input2]) => If(WithObject(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [WithMapping(_0), input2]);
-var Factor = (input) => If(If(KeyOf(input), ([_0, input2]) => If(Base(input2), ([_1, input3]) => If(IndexArray(input3), ([_2, input4]) => If(Extends2(input4), ([_3, input5]) => If(With(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [FactorMapping(_0), input2]);
-var ExprTermTail = (input) => If(If(If(Const("&", input), ([_0, input2]) => If(Factor(input2), ([_1, input3]) => If(ExprTermTail(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExprTermTailMapping(_0), input2]);
-var ExprTerm = (input) => If(If(Factor(input), ([_0, input2]) => If(ExprTermTail(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprTermMapping(_0), input2]);
-var ExprTail = (input) => If(If(If(Const("|", input), ([_0, input2]) => If(ExprTerm(input2), ([_1, input3]) => If(ExprTail(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExprTailMapping(_0), input2]);
-var Expr = (input) => If(If(ExprTerm(input), ([_0, input2]) => If(ExprTail(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprMapping(_0), input2]);
-var ExprReadonly = (input) => If(If(Const("readonly", input), ([_0, input2]) => If(Expr(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprReadonlyMapping(_0), input2]);
-var ExprPipe = (input) => If(If(Const("|", input), ([_0, input2]) => If(Expr(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprPipeMapping(_0), input2]);
-var GenericType = (input) => If(If(GenericParameters(input), ([_0, input2]) => If(Const("=", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericTypeMapping(_0), input2]);
-var InferType = (input) => If(If(If(Const("infer", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const("extends", input3), ([_2, input4]) => If(Expr(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Const("infer", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [InferTypeMapping(_0), input2]);
-var Type = (input) => If(If(InferType(input), ([_0, input2]) => [_0, input2], () => If(ExprPipe(input), ([_0, input2]) => [_0, input2], () => If(ExprReadonly(input), ([_0, input2]) => [_0, input2], () => If(Expr(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [TypeMapping(_0), input2]);
-var PropertyKeyNumber = (input) => If(Number3(input), ([_0, input2]) => [PropertyKeyNumberMapping(_0), input2]);
-var PropertyKeyIdent = (input) => If(Ident(input), ([_0, input2]) => [PropertyKeyIdentMapping(_0), input2]);
-var PropertyKeyQuoted = (input) => If(String3(["'", '"'], input), ([_0, input2]) => [PropertyKeyQuotedMapping(_0), input2]);
-var PropertyKeyIndex = (input) => If(If(Const("[", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(If(KeywordInteger(input4), ([_02, input5]) => [_02, input5], () => If(KeywordNumber(input4), ([_02, input5]) => [_02, input5], () => If(KeywordString(input4), ([_02, input5]) => [_02, input5], () => If(KeywordSymbol(input4), ([_02, input5]) => [_02, input5], () => [])))), ([_3, input5]) => If(Const("]", input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [PropertyKeyIndexMapping(_0), input2]);
-var PropertyKey = (input) => If(If(PropertyKeyNumber(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyIdent(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyQuoted(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyIndex(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [PropertyKeyMapping(_0), input2]);
-var Readonly2 = (input) => If(If(If(Const("readonly", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ReadonlyMapping(_0), input2]);
-var Optional3 = (input) => If(If(If(Const("?", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [OptionalMapping(_0), input2]);
-var Property = (input) => If(If(Readonly2(input), ([_0, input2]) => If(PropertyKey(input2), ([_1, input3]) => If(Optional3(input3), ([_2, input4]) => If(Const(":", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [PropertyMapping(_0), input2]);
-var PropertyDelimiter = (input) => If(If(If(Const(",", input), ([_0, input2]) => If(Const("\n", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => If(Const("\n", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(",", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const("\n", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))))), ([_0, input2]) => [PropertyDelimiterMapping(_0), input2]);
-var PropertyList_0 = (input, result2 = []) => If(If(Property(input), ([_0, input2]) => If(PropertyDelimiter(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => PropertyList_0(input2, [...result2, _0]), () => [result2, input]);
-var PropertyList = (input) => If(If(PropertyList_0(input), ([_0, input2]) => If(If(If(Property(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [PropertyListMapping(_0), input2]);
-var Properties = (input) => If(If(Const("{", input), ([_0, input2]) => If(PropertyList(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [PropertiesMapping(_0), input2]);
-var _Object_2 = (input) => If(Properties(input), ([_0, input2]) => [_Object_Mapping(_0), input2]);
-var ElementNamed = (input) => If(If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Const("readonly", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Const("readonly", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [ElementNamedMapping(_0), input2]);
-var ElementReadonlyOptional = (input) => If(If(Const("readonly", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("?", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [ElementReadonlyOptionalMapping(_0), input2]);
-var ElementReadonly = (input) => If(If(Const("readonly", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ElementReadonlyMapping(_0), input2]);
-var ElementOptional = (input) => If(If(Type(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ElementOptionalMapping(_0), input2]);
-var ElementBase = (input) => If(If(ElementNamed(input), ([_0, input2]) => [_0, input2], () => If(ElementReadonlyOptional(input), ([_0, input2]) => [_0, input2], () => If(ElementReadonly(input), ([_0, input2]) => [_0, input2], () => If(ElementOptional(input), ([_0, input2]) => [_0, input2], () => If(Type(input), ([_0, input2]) => [_0, input2], () => []))))), ([_0, input2]) => [ElementBaseMapping(_0), input2]);
-var Element = (input) => If(If(If(Const("...", input), ([_0, input2]) => If(ElementBase(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(ElementBase(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ElementMapping(_0), input2]);
-var ElementList_0 = (input, result2 = []) => If(If(Element(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ElementList_0(input2, [...result2, _0]), () => [result2, input]);
-var ElementList = (input) => If(If(ElementList_0(input), ([_0, input2]) => If(If(If(Element(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ElementListMapping(_0), input2]);
-var _Tuple_ = (input) => If(If(Const("[", input), ([_0, input2]) => If(ElementList(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_Tuple_Mapping(_0), input2]);
-var ParameterReadonlyOptional = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Const("readonly", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [ParameterReadonlyOptionalMapping(_0), input2]);
-var ParameterReadonly = (input) => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Const("readonly", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [ParameterReadonlyMapping(_0), input2]);
-var ParameterOptional = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [ParameterOptionalMapping(_0), input2]);
-var ParameterType = (input) => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [ParameterTypeMapping(_0), input2]);
-var ParameterBase = (input) => If(If(ParameterReadonlyOptional(input), ([_0, input2]) => [_0, input2], () => If(ParameterReadonly(input), ([_0, input2]) => [_0, input2], () => If(ParameterOptional(input), ([_0, input2]) => [_0, input2], () => If(ParameterType(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [ParameterBaseMapping(_0), input2]);
-var Parameter2 = (input) => If(If(If(Const("...", input), ([_0, input2]) => If(ParameterBase(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(ParameterBase(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ParameterMapping(_0), input2]);
-var ParameterList_0 = (input, result2 = []) => If(If(Parameter2(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ParameterList_0(input2, [...result2, _0]), () => [result2, input]);
-var ParameterList = (input) => If(If(ParameterList_0(input), ([_0, input2]) => If(If(If(Parameter2(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ParameterListMapping(_0), input2]);
-var _Function_2 = (input) => If(If(Const("(", input), ([_0, input2]) => If(ParameterList(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => If(Const("=>", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [_Function_Mapping(_0), input2]);
-var _Constructor_ = (input) => If(If(Const("new", input), ([_0, input2]) => If(Const("(", input2), ([_1, input3]) => If(ParameterList(input3), ([_2, input4]) => If(Const(")", input4), ([_3, input5]) => If(Const("=>", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_Constructor_Mapping(_0), input2]);
-var MappedReadonly = (input) => If(If(If(Const("+", input), ([_0, input2]) => If(Const("readonly", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("-", input), ([_0, input2]) => If(Const("readonly", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("readonly", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [MappedReadonlyMapping(_0), input2]);
-var MappedOptional = (input) => If(If(If(Const("+", input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("-", input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("?", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [MappedOptionalMapping(_0), input2]);
-var MappedAs = (input) => If(If(If(Const("as", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [MappedAsMapping(_0), input2]);
-var _Mapped_ = (input) => If(If(Const("{", input), ([_0, input2]) => If(MappedReadonly(input2), ([_1, input3]) => If(Const("[", input3), ([_2, input4]) => If(Ident(input4), ([_3, input5]) => If(Const("in", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => If(MappedAs(input7), ([_6, input8]) => If(Const("]", input8), ([_7, input9]) => If(MappedOptional(input9), ([_8, input10]) => If(Const(":", input10), ([_9, input11]) => If(Type(input11), ([_10, input12]) => If(OptionalSemiColon(input12), ([_11, input13]) => If(Const("}", input13), ([_12, input14]) => [[_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12], input14]))))))))))))), ([_0, input2]) => [_Mapped_Mapping(_0), input2]);
-var Reference = (input) => If(Ident(input), ([_0, input2]) => [ReferenceMapping(_0), input2]);
-var WithBigInt = (input) => If(BigInt3(input), ([_0, input2]) => [WithBigIntMapping(_0), input2]);
-var WithNumber = (input) => If(Number3(input), ([_0, input2]) => [WithNumberMapping(_0), input2]);
-var WithBoolean = (input) => If(If(Const("true", input), ([_0, input2]) => [_0, input2], () => If(Const("false", input), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [WithBooleanMapping(_0), input2]);
-var WithString = (input) => If(String3(['"', "'"], input), ([_0, input2]) => [WithStringMapping(_0), input2]);
-var WithNull = (input) => If(Const("null", input), ([_0, input2]) => [WithNullMapping(_0), input2]);
-var WithUndefined = (input) => If(Const("undefined", input), ([_0, input2]) => [WithUndefinedMapping(_0), input2]);
-var WithProperty = (input) => If(If(PropertyKey(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(WithValue(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [WithPropertyMapping(_0), input2]);
-var WithPropertyList_0 = (input, result2 = []) => If(If(WithProperty(input), ([_0, input2]) => If(PropertyDelimiter(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => WithPropertyList_0(input2, [...result2, _0]), () => [result2, input]);
-var WithPropertyList = (input) => If(If(WithPropertyList_0(input), ([_0, input2]) => If(If(If(WithProperty(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [WithPropertyListMapping(_0), input2]);
-var WithObject = (input) => If(If(Const("{", input), ([_0, input2]) => If(WithPropertyList(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [WithObjectMapping(_0), input2]);
-var WithElementList_0 = (input, result2 = []) => If(If(WithValue(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => WithElementList_0(input2, [...result2, _0]), () => [result2, input]);
-var WithElementList = (input) => If(If(WithElementList_0(input), ([_0, input2]) => If(If(If(WithValue(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [WithElementListMapping(_0), input2]);
-var WithArray = (input) => If(If(Const("[", input), ([_0, input2]) => If(WithElementList(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [WithArrayMapping(_0), input2]);
-var WithValue = (input) => If(If(WithBigInt(input), ([_0, input2]) => [_0, input2], () => If(WithNumber(input), ([_0, input2]) => [_0, input2], () => If(WithBoolean(input), ([_0, input2]) => [_0, input2], () => If(WithString(input), ([_0, input2]) => [_0, input2], () => If(WithNull(input), ([_0, input2]) => [_0, input2], () => If(WithUndefined(input), ([_0, input2]) => [_0, input2], () => If(WithObject(input), ([_0, input2]) => [_0, input2], () => If(WithArray(input), ([_0, input2]) => [_0, input2], () => [])))))))), ([_0, input2]) => [WithValueMapping(_0), input2]);
-var PatternBigInt = (input) => If(Const("-?(?:0|[1-9][0-9]*)n", input), ([_0, input2]) => [PatternBigIntMapping(_0), input2]);
-var PatternString = (input) => If(Const(".*", input), ([_0, input2]) => [PatternStringMapping(_0), input2]);
-var PatternNumber = (input) => If(Const("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?", input), ([_0, input2]) => [PatternNumberMapping(_0), input2]);
-var PatternInteger = (input) => If(Const("-?(?:0|[1-9][0-9]*)", input), ([_0, input2]) => [PatternIntegerMapping(_0), input2]);
-var PatternNever = (input) => If(Const("(?!)", input), ([_0, input2]) => [PatternNeverMapping(_0), input2]);
-var PatternText = (input) => If(Until_1(["-?(?:0|[1-9][0-9]*)n", ".*", "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?", "-?(?:0|[1-9][0-9]*)", "(?!)", "(", ")", "$", "|"], input), ([_0, input2]) => [PatternTextMapping(_0), input2]);
-var PatternBase = (input) => If(If(PatternBigInt(input), ([_0, input2]) => [_0, input2], () => If(PatternString(input), ([_0, input2]) => [_0, input2], () => If(PatternNumber(input), ([_0, input2]) => [_0, input2], () => If(PatternInteger(input), ([_0, input2]) => [_0, input2], () => If(PatternNever(input), ([_0, input2]) => [_0, input2], () => If(PatternGroup(input), ([_0, input2]) => [_0, input2], () => If(PatternText(input), ([_0, input2]) => [_0, input2], () => []))))))), ([_0, input2]) => [PatternBaseMapping(_0), input2]);
-var PatternGroup = (input) => If(If(Const("(", input), ([_0, input2]) => If(PatternBody(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [PatternGroupMapping(_0), input2]);
-var PatternUnion = (input) => If(If(If(PatternTerm(input), ([_0, input2]) => If(Const("|", input2), ([_1, input3]) => If(PatternUnion(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(PatternTerm(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [PatternUnionMapping(_0), input2]);
-var PatternTerm = (input) => If(If(PatternBase(input), ([_0, input2]) => If(PatternBody(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [PatternTermMapping(_0), input2]);
-var PatternBody = (input) => If(If(PatternUnion(input), ([_0, input2]) => [_0, input2], () => If(PatternTerm(input), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [PatternBodyMapping(_0), input2]);
-var Pattern = (input) => If(If(Const("^", input), ([_0, input2]) => If(PatternBody(input2), ([_1, input3]) => If(Const("$", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [PatternMapping(_0), input2]);
-var InterfaceDeclarationHeritageList_0 = (input, result2 = []) => If(If(Type(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => InterfaceDeclarationHeritageList_0(input2, [...result2, _0]), () => [result2, input]);
-var InterfaceDeclarationHeritageList = (input) => If(If(InterfaceDeclarationHeritageList_0(input), ([_0, input2]) => If(If(If(Type(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [InterfaceDeclarationHeritageListMapping(_0), input2]);
-var InterfaceDeclarationHeritage = (input) => If(If(If(Const("extends", input), ([_0, input2]) => If(InterfaceDeclarationHeritageList(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [InterfaceDeclarationHeritageMapping(_0), input2]);
-var InterfaceDeclarationGeneric = (input) => If(If(Const("interface", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(GenericParameters(input3), ([_2, input4]) => If(InterfaceDeclarationHeritage(input4), ([_3, input5]) => If(Properties(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [InterfaceDeclarationGenericMapping(_0), input2]);
-var InterfaceDeclaration = (input) => If(If(Const("interface", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(InterfaceDeclarationHeritage(input3), ([_2, input4]) => If(Properties(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [InterfaceDeclarationMapping(_0), input2]);
-var TypeAliasDeclarationGeneric = (input) => If(If(Const("type", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(GenericParameters(input3), ([_2, input4]) => If(Const("=", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [TypeAliasDeclarationGenericMapping(_0), input2]);
-var TypeAliasDeclaration = (input) => If(If(Const("type", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const("=", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [TypeAliasDeclarationMapping(_0), input2]);
-var ExportKeyword = (input) => If(If(If(Const("export", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExportKeywordMapping(_0), input2]);
-var ModuleDeclarationDelimiter = (input) => If(If(If(Const(";", input), ([_0, input2]) => If(Const("\n", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const("\n", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [ModuleDeclarationDelimiterMapping(_0), input2]);
-var ModuleDeclarationList_0 = (input, result2 = []) => If(If(ModuleDeclaration(input), ([_0, input2]) => If(ModuleDeclarationDelimiter(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ModuleDeclarationList_0(input2, [...result2, _0]), () => [result2, input]);
-var ModuleDeclarationList = (input) => If(If(ModuleDeclarationList_0(input), ([_0, input2]) => If(If(If(ModuleDeclaration(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ModuleDeclarationListMapping(_0), input2]);
-var ModuleDeclaration = (input) => If(If(ExportKeyword(input), ([_0, input2]) => If(If(InterfaceDeclarationGeneric(input2), ([_02, input3]) => [_02, input3], () => If(InterfaceDeclaration(input2), ([_02, input3]) => [_02, input3], () => If(TypeAliasDeclarationGeneric(input2), ([_02, input3]) => [_02, input3], () => If(TypeAliasDeclaration(input2), ([_02, input3]) => [_02, input3], () => [])))), ([_1, input3]) => If(OptionalSemiColon(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [ModuleDeclarationMapping(_0), input2]);
-var Module = (input) => If(If(ModuleDeclaration(input), ([_0, input2]) => If(ModuleDeclarationList(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ModuleMapping(_0), input2]);
-var Script = (input) => If(If(Module(input), ([_0, input2]) => [_0, input2], () => If(GenericType(input), ([_0, input2]) => [_0, input2], () => If(Type(input), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [ScriptMapping(_0), input2]);
+var If, GenericParameterExtendsEquals, GenericParameterExtends, GenericParameterEquals, GenericParameterIdentifier, GenericParameter, GenericParameterList_0, GenericParameterList, GenericParameters, GenericCallArgumentList_0, GenericCallArgumentList, GenericCallArguments, GenericCall, OptionalSemiColon, KeywordString, KeywordNumber, KeywordBoolean, KeywordUndefined, KeywordNull, KeywordInteger, KeywordBigInt, KeywordUnknown, KeywordAny, KeywordObject, KeywordNever, KeywordSymbol, KeywordVoid, KeywordThis, TemplateInterpolate, TemplateSpan, TemplateBody, TemplateLiteralTypes, TemplateLiteral, Dependent2, LiteralBigInt, LiteralBoolean, LiteralNumber, LiteralString, KeyOf, IndexArray_0, IndexArray, Extends2, Base, With, Factor, ExprTermTail, ExprTerm, ExprTail, Expr, ExprReadonly, ExprPipe, GenericType, InferType, Type, PropertyKeyNumber, PropertyKeyIdent, PropertyKeyQuoted, PropertyKeyIndex, PropertyKey, Readonly2, Optional3, Property, PropertyDelimiter, PropertyList_0, PropertyList, Properties, _Object_2, ElementNamed, ElementReadonlyOptional, ElementReadonly, ElementOptional, ElementBase, Element, ElementList_0, ElementList, _Tuple_, ParameterReadonlyOptional, ParameterReadonly, ParameterOptional, ParameterType, ParameterBase, Parameter2, ParameterList_0, ParameterList, _Function_2, _Constructor_, MappedReadonly, MappedOptional, MappedAs, _Mapped_, Reference, WithBigInt, WithNumber, WithBoolean, WithString, WithNull, WithUndefined, WithProperty, WithPropertyList_0, WithPropertyList, WithObject, WithElementList_0, WithElementList, WithArray, WithValue, PatternBigInt, PatternString, PatternNumber, PatternInteger, PatternNever, PatternText, PatternBase, PatternGroup, PatternUnion, PatternTerm, PatternBody, Pattern, InterfaceDeclarationHeritageList_0, InterfaceDeclarationHeritageList, InterfaceDeclarationHeritage, InterfaceDeclarationGeneric, InterfaceDeclaration, TypeAliasDeclarationGeneric, TypeAliasDeclaration, ExportKeyword, ModuleDeclarationDelimiter, ModuleDeclarationList_0, ModuleDeclarationList, ModuleDeclaration, Module, Script;
+var init_parser = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/parser.mjs"() {
+    init_mapping();
+    init_token();
+    If = (result2, left, right = () => []) => result2.length === 2 ? left(result2) : right();
+    GenericParameterExtendsEquals = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("extends", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => If(Const("=", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [GenericParameterExtendsEqualsMapping(_0), input2]);
+    GenericParameterExtends = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("extends", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParameterExtendsMapping(_0), input2]);
+    GenericParameterEquals = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("=", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParameterEqualsMapping(_0), input2]);
+    GenericParameterIdentifier = (input) => If(Ident(input), ([_0, input2]) => [GenericParameterIdentifierMapping(_0), input2]);
+    GenericParameter = (input) => If(If(GenericParameterExtendsEquals(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterExtends(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterEquals(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterIdentifier(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [GenericParameterMapping(_0), input2]);
+    GenericParameterList_0 = (input, result2 = []) => If(If(GenericParameter(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => GenericParameterList_0(input2, [...result2, _0]), () => [result2, input]);
+    GenericParameterList = (input) => If(If(GenericParameterList_0(input), ([_0, input2]) => If(If(If(GenericParameter(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [GenericParameterListMapping(_0), input2]);
+    GenericParameters = (input) => If(If(Const("<", input), ([_0, input2]) => If(GenericParameterList(input2), ([_1, input3]) => If(Const(">", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParametersMapping(_0), input2]);
+    GenericCallArgumentList_0 = (input, result2 = []) => If(If(Type(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => GenericCallArgumentList_0(input2, [...result2, _0]), () => [result2, input]);
+    GenericCallArgumentList = (input) => If(If(GenericCallArgumentList_0(input), ([_0, input2]) => If(If(If(Type(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [GenericCallArgumentListMapping(_0), input2]);
+    GenericCallArguments = (input) => If(If(Const("<", input), ([_0, input2]) => If(GenericCallArgumentList(input2), ([_1, input3]) => If(Const(">", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericCallArgumentsMapping(_0), input2]);
+    GenericCall = (input) => If(If(Ident(input), ([_0, input2]) => If(GenericCallArguments(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [GenericCallMapping(_0), input2]);
+    OptionalSemiColon = (input) => If(If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [OptionalSemiColonMapping(_0), input2]);
+    KeywordString = (input) => If(Const("string", input), ([_0, input2]) => [KeywordStringMapping(_0), input2]);
+    KeywordNumber = (input) => If(Const("number", input), ([_0, input2]) => [KeywordNumberMapping(_0), input2]);
+    KeywordBoolean = (input) => If(Const("boolean", input), ([_0, input2]) => [KeywordBooleanMapping(_0), input2]);
+    KeywordUndefined = (input) => If(Const("undefined", input), ([_0, input2]) => [KeywordUndefinedMapping(_0), input2]);
+    KeywordNull = (input) => If(Const("null", input), ([_0, input2]) => [KeywordNullMapping(_0), input2]);
+    KeywordInteger = (input) => If(Const("integer", input), ([_0, input2]) => [KeywordIntegerMapping(_0), input2]);
+    KeywordBigInt = (input) => If(Const("bigint", input), ([_0, input2]) => [KeywordBigIntMapping(_0), input2]);
+    KeywordUnknown = (input) => If(Const("unknown", input), ([_0, input2]) => [KeywordUnknownMapping(_0), input2]);
+    KeywordAny = (input) => If(Const("any", input), ([_0, input2]) => [KeywordAnyMapping(_0), input2]);
+    KeywordObject = (input) => If(Const("object", input), ([_0, input2]) => [KeywordObjectMapping(_0), input2]);
+    KeywordNever = (input) => If(Const("never", input), ([_0, input2]) => [KeywordNeverMapping(_0), input2]);
+    KeywordSymbol = (input) => If(Const("symbol", input), ([_0, input2]) => [KeywordSymbolMapping(_0), input2]);
+    KeywordVoid = (input) => If(Const("void", input), ([_0, input2]) => [KeywordVoidMapping(_0), input2]);
+    KeywordThis = (input) => If(Const("this", input), ([_0, input2]) => [KeywordThisMapping(_0), input2]);
+    TemplateInterpolate = (input) => If(If(Const("${", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [TemplateInterpolateMapping(_0), input2]);
+    TemplateSpan = (input) => If(Until(["${", "`"], input), ([_0, input2]) => [TemplateSpanMapping(_0), input2]);
+    TemplateBody = (input) => If(If(If(TemplateSpan(input), ([_0, input2]) => If(TemplateInterpolate(input2), ([_1, input3]) => If(TemplateBody(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(TemplateSpan(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(TemplateSpan(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [TemplateBodyMapping(_0), input2]);
+    TemplateLiteralTypes = (input) => If(If(Const("`", input), ([_0, input2]) => If(TemplateBody(input2), ([_1, input3]) => If(Const("`", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [TemplateLiteralTypesMapping(_0), input2]);
+    TemplateLiteral = (input) => If(TemplateLiteralTypes(input), ([_0, input2]) => [TemplateLiteralMapping(_0), input2]);
+    Dependent2 = (input) => If(If(If(Const("if", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("then", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => If(Const("else", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_0, input2], () => If(If(Const("if", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("then", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [DependentMapping(_0), input2]);
+    LiteralBigInt = (input) => If(BigInt3(input), ([_0, input2]) => [LiteralBigIntMapping(_0), input2]);
+    LiteralBoolean = (input) => If(If(Const("true", input), ([_0, input2]) => [_0, input2], () => If(Const("false", input), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [LiteralBooleanMapping(_0), input2]);
+    LiteralNumber = (input) => If(Number3(input), ([_0, input2]) => [LiteralNumberMapping(_0), input2]);
+    LiteralString = (input) => If(String3(["'", '"'], input), ([_0, input2]) => [LiteralStringMapping(_0), input2]);
+    KeyOf = (input) => If(If(If(Const("keyof", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [KeyOfMapping(_0), input2]);
+    IndexArray_0 = (input, result2 = []) => If(If(If(Const("[", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(Const("[", input), ([_0, input2]) => If(Const("]", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => IndexArray_0(input2, [...result2, _0]), () => [result2, input]);
+    IndexArray = (input) => If(IndexArray_0(input), ([_0, input2]) => [IndexArrayMapping(_0), input2]);
+    Extends2 = (input) => If(If(If(Const("extends", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("?", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => If(Const(":", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExtendsMapping(_0), input2]);
+    Base = (input) => If(If(If(Const("(", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(KeywordString(input), ([_0, input2]) => [_0, input2], () => If(KeywordNumber(input), ([_0, input2]) => [_0, input2], () => If(KeywordBoolean(input), ([_0, input2]) => [_0, input2], () => If(KeywordUndefined(input), ([_0, input2]) => [_0, input2], () => If(KeywordNull(input), ([_0, input2]) => [_0, input2], () => If(KeywordInteger(input), ([_0, input2]) => [_0, input2], () => If(KeywordBigInt(input), ([_0, input2]) => [_0, input2], () => If(KeywordUnknown(input), ([_0, input2]) => [_0, input2], () => If(KeywordAny(input), ([_0, input2]) => [_0, input2], () => If(KeywordObject(input), ([_0, input2]) => [_0, input2], () => If(KeywordNever(input), ([_0, input2]) => [_0, input2], () => If(KeywordSymbol(input), ([_0, input2]) => [_0, input2], () => If(KeywordVoid(input), ([_0, input2]) => [_0, input2], () => If(KeywordThis(input), ([_0, input2]) => [_0, input2], () => If(LiteralBigInt(input), ([_0, input2]) => [_0, input2], () => If(LiteralBoolean(input), ([_0, input2]) => [_0, input2], () => If(LiteralNumber(input), ([_0, input2]) => [_0, input2], () => If(LiteralString(input), ([_0, input2]) => [_0, input2], () => If(TemplateLiteral(input), ([_0, input2]) => [_0, input2], () => If(Dependent2(input), ([_0, input2]) => [_0, input2], () => If(_Object_2(input), ([_0, input2]) => [_0, input2], () => If(_Tuple_(input), ([_0, input2]) => [_0, input2], () => If(_Constructor_(input), ([_0, input2]) => [_0, input2], () => If(_Function_2(input), ([_0, input2]) => [_0, input2], () => If(_Mapped_(input), ([_0, input2]) => [_0, input2], () => If(GenericCall(input), ([_0, input2]) => [_0, input2], () => If(Reference(input), ([_0, input2]) => [_0, input2], () => [])))))))))))))))))))))))))))), ([_0, input2]) => [BaseMapping(_0), input2]);
+    With = (input) => If(If(If(Const("with", input), ([_0, input2]) => If(WithObject(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [WithMapping(_0), input2]);
+    Factor = (input) => If(If(KeyOf(input), ([_0, input2]) => If(Base(input2), ([_1, input3]) => If(IndexArray(input3), ([_2, input4]) => If(Extends2(input4), ([_3, input5]) => If(With(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [FactorMapping(_0), input2]);
+    ExprTermTail = (input) => If(If(If(Const("&", input), ([_0, input2]) => If(Factor(input2), ([_1, input3]) => If(ExprTermTail(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExprTermTailMapping(_0), input2]);
+    ExprTerm = (input) => If(If(Factor(input), ([_0, input2]) => If(ExprTermTail(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprTermMapping(_0), input2]);
+    ExprTail = (input) => If(If(If(Const("|", input), ([_0, input2]) => If(ExprTerm(input2), ([_1, input3]) => If(ExprTail(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExprTailMapping(_0), input2]);
+    Expr = (input) => If(If(ExprTerm(input), ([_0, input2]) => If(ExprTail(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprMapping(_0), input2]);
+    ExprReadonly = (input) => If(If(Const("readonly", input), ([_0, input2]) => If(Expr(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprReadonlyMapping(_0), input2]);
+    ExprPipe = (input) => If(If(Const("|", input), ([_0, input2]) => If(Expr(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprPipeMapping(_0), input2]);
+    GenericType = (input) => If(If(GenericParameters(input), ([_0, input2]) => If(Const("=", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericTypeMapping(_0), input2]);
+    InferType = (input) => If(If(If(Const("infer", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const("extends", input3), ([_2, input4]) => If(Expr(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Const("infer", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [InferTypeMapping(_0), input2]);
+    Type = (input) => If(If(InferType(input), ([_0, input2]) => [_0, input2], () => If(ExprPipe(input), ([_0, input2]) => [_0, input2], () => If(ExprReadonly(input), ([_0, input2]) => [_0, input2], () => If(Expr(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [TypeMapping(_0), input2]);
+    PropertyKeyNumber = (input) => If(Number3(input), ([_0, input2]) => [PropertyKeyNumberMapping(_0), input2]);
+    PropertyKeyIdent = (input) => If(Ident(input), ([_0, input2]) => [PropertyKeyIdentMapping(_0), input2]);
+    PropertyKeyQuoted = (input) => If(String3(["'", '"'], input), ([_0, input2]) => [PropertyKeyQuotedMapping(_0), input2]);
+    PropertyKeyIndex = (input) => If(If(Const("[", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(If(KeywordInteger(input4), ([_02, input5]) => [_02, input5], () => If(KeywordNumber(input4), ([_02, input5]) => [_02, input5], () => If(KeywordString(input4), ([_02, input5]) => [_02, input5], () => If(KeywordSymbol(input4), ([_02, input5]) => [_02, input5], () => [])))), ([_3, input5]) => If(Const("]", input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [PropertyKeyIndexMapping(_0), input2]);
+    PropertyKey = (input) => If(If(PropertyKeyNumber(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyIdent(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyQuoted(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyIndex(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [PropertyKeyMapping(_0), input2]);
+    Readonly2 = (input) => If(If(If(Const("readonly", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ReadonlyMapping(_0), input2]);
+    Optional3 = (input) => If(If(If(Const("?", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [OptionalMapping(_0), input2]);
+    Property = (input) => If(If(Readonly2(input), ([_0, input2]) => If(PropertyKey(input2), ([_1, input3]) => If(Optional3(input3), ([_2, input4]) => If(Const(":", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [PropertyMapping(_0), input2]);
+    PropertyDelimiter = (input) => If(If(If(Const(",", input), ([_0, input2]) => If(Const("\n", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => If(Const("\n", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(",", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const("\n", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))))), ([_0, input2]) => [PropertyDelimiterMapping(_0), input2]);
+    PropertyList_0 = (input, result2 = []) => If(If(Property(input), ([_0, input2]) => If(PropertyDelimiter(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => PropertyList_0(input2, [...result2, _0]), () => [result2, input]);
+    PropertyList = (input) => If(If(PropertyList_0(input), ([_0, input2]) => If(If(If(Property(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [PropertyListMapping(_0), input2]);
+    Properties = (input) => If(If(Const("{", input), ([_0, input2]) => If(PropertyList(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [PropertiesMapping(_0), input2]);
+    _Object_2 = (input) => If(Properties(input), ([_0, input2]) => [_Object_Mapping(_0), input2]);
+    ElementNamed = (input) => If(If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Const("readonly", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Const("readonly", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [ElementNamedMapping(_0), input2]);
+    ElementReadonlyOptional = (input) => If(If(Const("readonly", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("?", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [ElementReadonlyOptionalMapping(_0), input2]);
+    ElementReadonly = (input) => If(If(Const("readonly", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ElementReadonlyMapping(_0), input2]);
+    ElementOptional = (input) => If(If(Type(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ElementOptionalMapping(_0), input2]);
+    ElementBase = (input) => If(If(ElementNamed(input), ([_0, input2]) => [_0, input2], () => If(ElementReadonlyOptional(input), ([_0, input2]) => [_0, input2], () => If(ElementReadonly(input), ([_0, input2]) => [_0, input2], () => If(ElementOptional(input), ([_0, input2]) => [_0, input2], () => If(Type(input), ([_0, input2]) => [_0, input2], () => []))))), ([_0, input2]) => [ElementBaseMapping(_0), input2]);
+    Element = (input) => If(If(If(Const("...", input), ([_0, input2]) => If(ElementBase(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(ElementBase(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ElementMapping(_0), input2]);
+    ElementList_0 = (input, result2 = []) => If(If(Element(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ElementList_0(input2, [...result2, _0]), () => [result2, input]);
+    ElementList = (input) => If(If(ElementList_0(input), ([_0, input2]) => If(If(If(Element(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ElementListMapping(_0), input2]);
+    _Tuple_ = (input) => If(If(Const("[", input), ([_0, input2]) => If(ElementList(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_Tuple_Mapping(_0), input2]);
+    ParameterReadonlyOptional = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Const("readonly", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [ParameterReadonlyOptionalMapping(_0), input2]);
+    ParameterReadonly = (input) => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Const("readonly", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [ParameterReadonlyMapping(_0), input2]);
+    ParameterOptional = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [ParameterOptionalMapping(_0), input2]);
+    ParameterType = (input) => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [ParameterTypeMapping(_0), input2]);
+    ParameterBase = (input) => If(If(ParameterReadonlyOptional(input), ([_0, input2]) => [_0, input2], () => If(ParameterReadonly(input), ([_0, input2]) => [_0, input2], () => If(ParameterOptional(input), ([_0, input2]) => [_0, input2], () => If(ParameterType(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [ParameterBaseMapping(_0), input2]);
+    Parameter2 = (input) => If(If(If(Const("...", input), ([_0, input2]) => If(ParameterBase(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(ParameterBase(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ParameterMapping(_0), input2]);
+    ParameterList_0 = (input, result2 = []) => If(If(Parameter2(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ParameterList_0(input2, [...result2, _0]), () => [result2, input]);
+    ParameterList = (input) => If(If(ParameterList_0(input), ([_0, input2]) => If(If(If(Parameter2(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ParameterListMapping(_0), input2]);
+    _Function_2 = (input) => If(If(Const("(", input), ([_0, input2]) => If(ParameterList(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => If(Const("=>", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [_Function_Mapping(_0), input2]);
+    _Constructor_ = (input) => If(If(Const("new", input), ([_0, input2]) => If(Const("(", input2), ([_1, input3]) => If(ParameterList(input3), ([_2, input4]) => If(Const(")", input4), ([_3, input5]) => If(Const("=>", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_Constructor_Mapping(_0), input2]);
+    MappedReadonly = (input) => If(If(If(Const("+", input), ([_0, input2]) => If(Const("readonly", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("-", input), ([_0, input2]) => If(Const("readonly", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("readonly", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [MappedReadonlyMapping(_0), input2]);
+    MappedOptional = (input) => If(If(If(Const("+", input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("-", input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("?", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [MappedOptionalMapping(_0), input2]);
+    MappedAs = (input) => If(If(If(Const("as", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [MappedAsMapping(_0), input2]);
+    _Mapped_ = (input) => If(If(Const("{", input), ([_0, input2]) => If(MappedReadonly(input2), ([_1, input3]) => If(Const("[", input3), ([_2, input4]) => If(Ident(input4), ([_3, input5]) => If(Const("in", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => If(MappedAs(input7), ([_6, input8]) => If(Const("]", input8), ([_7, input9]) => If(MappedOptional(input9), ([_8, input10]) => If(Const(":", input10), ([_9, input11]) => If(Type(input11), ([_10, input12]) => If(OptionalSemiColon(input12), ([_11, input13]) => If(Const("}", input13), ([_12, input14]) => [[_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12], input14]))))))))))))), ([_0, input2]) => [_Mapped_Mapping(_0), input2]);
+    Reference = (input) => If(Ident(input), ([_0, input2]) => [ReferenceMapping(_0), input2]);
+    WithBigInt = (input) => If(BigInt3(input), ([_0, input2]) => [WithBigIntMapping(_0), input2]);
+    WithNumber = (input) => If(Number3(input), ([_0, input2]) => [WithNumberMapping(_0), input2]);
+    WithBoolean = (input) => If(If(Const("true", input), ([_0, input2]) => [_0, input2], () => If(Const("false", input), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [WithBooleanMapping(_0), input2]);
+    WithString = (input) => If(String3(['"', "'"], input), ([_0, input2]) => [WithStringMapping(_0), input2]);
+    WithNull = (input) => If(Const("null", input), ([_0, input2]) => [WithNullMapping(_0), input2]);
+    WithUndefined = (input) => If(Const("undefined", input), ([_0, input2]) => [WithUndefinedMapping(_0), input2]);
+    WithProperty = (input) => If(If(PropertyKey(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(WithValue(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [WithPropertyMapping(_0), input2]);
+    WithPropertyList_0 = (input, result2 = []) => If(If(WithProperty(input), ([_0, input2]) => If(PropertyDelimiter(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => WithPropertyList_0(input2, [...result2, _0]), () => [result2, input]);
+    WithPropertyList = (input) => If(If(WithPropertyList_0(input), ([_0, input2]) => If(If(If(WithProperty(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [WithPropertyListMapping(_0), input2]);
+    WithObject = (input) => If(If(Const("{", input), ([_0, input2]) => If(WithPropertyList(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [WithObjectMapping(_0), input2]);
+    WithElementList_0 = (input, result2 = []) => If(If(WithValue(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => WithElementList_0(input2, [...result2, _0]), () => [result2, input]);
+    WithElementList = (input) => If(If(WithElementList_0(input), ([_0, input2]) => If(If(If(WithValue(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [WithElementListMapping(_0), input2]);
+    WithArray = (input) => If(If(Const("[", input), ([_0, input2]) => If(WithElementList(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [WithArrayMapping(_0), input2]);
+    WithValue = (input) => If(If(WithBigInt(input), ([_0, input2]) => [_0, input2], () => If(WithNumber(input), ([_0, input2]) => [_0, input2], () => If(WithBoolean(input), ([_0, input2]) => [_0, input2], () => If(WithString(input), ([_0, input2]) => [_0, input2], () => If(WithNull(input), ([_0, input2]) => [_0, input2], () => If(WithUndefined(input), ([_0, input2]) => [_0, input2], () => If(WithObject(input), ([_0, input2]) => [_0, input2], () => If(WithArray(input), ([_0, input2]) => [_0, input2], () => [])))))))), ([_0, input2]) => [WithValueMapping(_0), input2]);
+    PatternBigInt = (input) => If(Const("-?(?:0|[1-9][0-9]*)n", input), ([_0, input2]) => [PatternBigIntMapping(_0), input2]);
+    PatternString = (input) => If(Const(".*", input), ([_0, input2]) => [PatternStringMapping(_0), input2]);
+    PatternNumber = (input) => If(Const("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?", input), ([_0, input2]) => [PatternNumberMapping(_0), input2]);
+    PatternInteger = (input) => If(Const("-?(?:0|[1-9][0-9]*)", input), ([_0, input2]) => [PatternIntegerMapping(_0), input2]);
+    PatternNever = (input) => If(Const("(?!)", input), ([_0, input2]) => [PatternNeverMapping(_0), input2]);
+    PatternText = (input) => If(Until_1(["-?(?:0|[1-9][0-9]*)n", ".*", "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?", "-?(?:0|[1-9][0-9]*)", "(?!)", "(", ")", "$", "|"], input), ([_0, input2]) => [PatternTextMapping(_0), input2]);
+    PatternBase = (input) => If(If(PatternBigInt(input), ([_0, input2]) => [_0, input2], () => If(PatternString(input), ([_0, input2]) => [_0, input2], () => If(PatternNumber(input), ([_0, input2]) => [_0, input2], () => If(PatternInteger(input), ([_0, input2]) => [_0, input2], () => If(PatternNever(input), ([_0, input2]) => [_0, input2], () => If(PatternGroup(input), ([_0, input2]) => [_0, input2], () => If(PatternText(input), ([_0, input2]) => [_0, input2], () => []))))))), ([_0, input2]) => [PatternBaseMapping(_0), input2]);
+    PatternGroup = (input) => If(If(Const("(", input), ([_0, input2]) => If(PatternBody(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [PatternGroupMapping(_0), input2]);
+    PatternUnion = (input) => If(If(If(PatternTerm(input), ([_0, input2]) => If(Const("|", input2), ([_1, input3]) => If(PatternUnion(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(PatternTerm(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [PatternUnionMapping(_0), input2]);
+    PatternTerm = (input) => If(If(PatternBase(input), ([_0, input2]) => If(PatternBody(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [PatternTermMapping(_0), input2]);
+    PatternBody = (input) => If(If(PatternUnion(input), ([_0, input2]) => [_0, input2], () => If(PatternTerm(input), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [PatternBodyMapping(_0), input2]);
+    Pattern = (input) => If(If(Const("^", input), ([_0, input2]) => If(PatternBody(input2), ([_1, input3]) => If(Const("$", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [PatternMapping(_0), input2]);
+    InterfaceDeclarationHeritageList_0 = (input, result2 = []) => If(If(Type(input), ([_0, input2]) => If(Const(",", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => InterfaceDeclarationHeritageList_0(input2, [...result2, _0]), () => [result2, input]);
+    InterfaceDeclarationHeritageList = (input) => If(If(InterfaceDeclarationHeritageList_0(input), ([_0, input2]) => If(If(If(Type(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [InterfaceDeclarationHeritageListMapping(_0), input2]);
+    InterfaceDeclarationHeritage = (input) => If(If(If(Const("extends", input), ([_0, input2]) => If(InterfaceDeclarationHeritageList(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [InterfaceDeclarationHeritageMapping(_0), input2]);
+    InterfaceDeclarationGeneric = (input) => If(If(Const("interface", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(GenericParameters(input3), ([_2, input4]) => If(InterfaceDeclarationHeritage(input4), ([_3, input5]) => If(Properties(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [InterfaceDeclarationGenericMapping(_0), input2]);
+    InterfaceDeclaration = (input) => If(If(Const("interface", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(InterfaceDeclarationHeritage(input3), ([_2, input4]) => If(Properties(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [InterfaceDeclarationMapping(_0), input2]);
+    TypeAliasDeclarationGeneric = (input) => If(If(Const("type", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(GenericParameters(input3), ([_2, input4]) => If(Const("=", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [TypeAliasDeclarationGenericMapping(_0), input2]);
+    TypeAliasDeclaration = (input) => If(If(Const("type", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const("=", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [TypeAliasDeclarationMapping(_0), input2]);
+    ExportKeyword = (input) => If(If(If(Const("export", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExportKeywordMapping(_0), input2]);
+    ModuleDeclarationDelimiter = (input) => If(If(If(Const(";", input), ([_0, input2]) => If(Const("\n", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const("\n", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [ModuleDeclarationDelimiterMapping(_0), input2]);
+    ModuleDeclarationList_0 = (input, result2 = []) => If(If(ModuleDeclaration(input), ([_0, input2]) => If(ModuleDeclarationDelimiter(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ModuleDeclarationList_0(input2, [...result2, _0]), () => [result2, input]);
+    ModuleDeclarationList = (input) => If(If(ModuleDeclarationList_0(input), ([_0, input2]) => If(If(If(ModuleDeclaration(input2), ([_02, input3]) => [[_02], input3]), ([_02, input3]) => [_02, input3], () => If([[], input2], ([_02, input3]) => [_02, input3], () => [])), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ModuleDeclarationListMapping(_0), input2]);
+    ModuleDeclaration = (input) => If(If(ExportKeyword(input), ([_0, input2]) => If(If(InterfaceDeclarationGeneric(input2), ([_02, input3]) => [_02, input3], () => If(InterfaceDeclaration(input2), ([_02, input3]) => [_02, input3], () => If(TypeAliasDeclarationGeneric(input2), ([_02, input3]) => [_02, input3], () => If(TypeAliasDeclaration(input2), ([_02, input3]) => [_02, input3], () => [])))), ([_1, input3]) => If(OptionalSemiColon(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [ModuleDeclarationMapping(_0), input2]);
+    Module = (input) => If(If(ModuleDeclaration(input), ([_0, input2]) => If(ModuleDeclarationList(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ModuleMapping(_0), input2]);
+    Script = (input) => If(If(Module(input), ([_0, input2]) => [_0, input2], () => If(GenericType(input), ([_0, input2]) => [_0, input2], () => If(Type(input), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [ScriptMapping(_0), input2]);
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/patterns/template.mjs
 function ParseTemplateIntoTypes(template) {
@@ -2989,6 +3949,13 @@ function ParseTemplateIntoTypes(template) {
   const result2 = guard_exports.IsEqual(parsed.length, 2) ? parsed[0] : Unreachable();
   return result2;
 }
+var init_template = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/patterns/template.mjs"() {
+    init_unreachable2();
+    init_guard2();
+    init_parser();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/encode.mjs
 function JoinString(input) {
@@ -3046,6 +4013,24 @@ function TemplateLiteralEncode(types) {
   const result2 = TemplateLiteralCreate(pattern);
   return result2;
 }
+var init_encode = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/encode.mjs"() {
+    init_guard2();
+    init_enum();
+    init_literal();
+    init_union();
+    init_template_literal();
+    init_bigint();
+    init_string2();
+    init_number();
+    init_integer();
+    init_boolean();
+    init_never();
+    init_create2();
+    init_evaluate2();
+    init_instantiate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/instantiate.mjs
 function TemplateLiteralAction(types, options) {
@@ -3056,6 +4041,14 @@ function TemplateLiteralInstantiate(context, state, types, options) {
   const instantiatedTypes = InstantiateTypes(context, state, types);
   return TemplateLiteralAction(instantiatedTypes, options);
 }
+var init_instantiate2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/instantiate.mjs"() {
+    init_memory2();
+    init_template_literal();
+    init_encode();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/template_literal.mjs
 function TemplateLiteralDeferred(types, options = {}) {
@@ -3078,6 +4071,16 @@ function TemplateLiteral2(input, options = {}) {
 function IsTemplateLiteral(value) {
   return IsKind(value, "TemplateLiteral");
 }
+var init_template_literal = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/template_literal.mjs"() {
+    init_system();
+    init_guard2();
+    init_schema();
+    init_deferred();
+    init_template();
+    init_instantiate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/result.mjs
 var result_exports = {};
@@ -3115,6 +4118,12 @@ function IsExtendsTrueLike(value) {
 function Match3(result2, true_, false_) {
   return IsExtendsTrueLike(result2) ? true_(result2.inferred) : false_();
 }
+var init_result = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/result.mjs"() {
+    init_guard2();
+    init_memory2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/extends_right.mjs
 function ExtendsRightInfer(inferred, name, left, right) {
@@ -3143,11 +4152,38 @@ function ExtendsRightUnion(inferred, left, right) {
 function ExtendsRight(inferred, left, right) {
   return IsAny(right) ? ExtendsRightAny(inferred, left) : IsDependent(right) ? ExtendsRightDependent(inferred, left, right.if, right.then, right.else) : IsEnum(right) ? ExtendsRightEnum(inferred, left, right.enum) : IsInfer(right) ? ExtendsRightInfer(inferred, right.name, left, right.extends) : IsIntersect(right) ? ExtendsRightIntersect(inferred, left, right.allOf) : IsTemplateLiteral(right) ? ExtendsRightTemplateLiteral(inferred, left, right.pattern) : IsUnion(right) ? ExtendsRightUnion(inferred, left, right.anyOf) : IsUnknown(right) ? ExtendsTrue(inferred) : ExtendsFalse();
 }
+var init_extends_right = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/extends_right.mjs"() {
+    init_guard2();
+    init_memory2();
+    init_any();
+    init_dependent();
+    init_enum();
+    init_infer();
+    init_intersect();
+    init_template_literal();
+    init_union();
+    init_unknown();
+    init_extends_left();
+    init_result();
+    init_evaluate2();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/any.mjs
 function ExtendsAny(inferred, left, right) {
   return IsInfer(right) ? ExtendsRight(inferred, left, right) : IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : ExtendsUnion(inferred);
 }
+var init_any2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/any.mjs"() {
+    init_infer();
+    init_any();
+    init_unknown();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/array.mjs
 function ExtendsImmutable(left, right) {
@@ -3158,16 +4194,39 @@ function ExtendsImmutable(left, right) {
 function ExtendsArray(inferred, arrayLeft, left, right) {
   return IsArray2(right) ? ExtendsImmutable(arrayLeft, right) ? ExtendsLeft(inferred, left, right.items) : ExtendsFalse() : ExtendsRight(inferred, arrayLeft, right);
 }
+var init_array2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/array.mjs"() {
+    init_array();
+    init_immutable();
+    init_extends_right();
+    init_extends_left();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/bigint.mjs
 function ExtendsBigInt(inferred, left, right) {
   return IsBigInt2(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
 }
+var init_bigint3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/bigint.mjs"() {
+    init_bigint();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/boolean.mjs
 function ExtendsBoolean(inferred, left, right) {
   return IsBoolean3(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
 }
+var init_boolean2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/boolean.mjs"() {
+    init_boolean();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/parameters.mjs
 function ParameterCompare(inferred, left, leftRest, right, rightRest) {
@@ -3186,43 +4245,105 @@ function ParametersLeft(inferred, left, rightRest) {
 function ExtendsParameters(inferred, left, right) {
   return ParametersLeft(inferred, left, right);
 }
+var init_parameters = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/parameters.mjs"() {
+    init_guard2();
+    init_infer();
+    init_optional();
+    init_extends_left();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/return_type.mjs
 function ExtendsReturnType(inferred, left, right) {
   return IsVoid(right) ? ExtendsTrue(inferred) : ExtendsLeft(inferred, left, right);
 }
+var init_return_type = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/return_type.mjs"() {
+    init_void();
+    init_extends_left();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/constructor.mjs
 function ExtendsConstructor(inferred, parameters, returnType, right) {
   return IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : IsConstructor2(right) ? Match3(ExtendsParameters(inferred, parameters, right["parameters"]), (inferred2) => ExtendsReturnType(inferred2, returnType, right["instanceType"]), () => ExtendsFalse()) : ExtendsFalse();
 }
+var init_constructor2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/constructor.mjs"() {
+    init_any();
+    init_constructor();
+    init_unknown();
+    init_result();
+    init_parameters();
+    init_return_type();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/dependent.mjs
 function ExtendsDependent(inferred, if_, then_, else_, right) {
   return Match3(ExtendsLeft(inferred, if_, right), () => ExtendsLeft(inferred, then_, right), () => ExtendsLeft(inferred, else_, right));
 }
+var init_dependent2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/dependent.mjs"() {
+    init_extends_left();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/enum.mjs
 function ExtendsEnum(inferred, left, right) {
   const evaluated = EvaluateEnum(left);
   return ExtendsLeft(inferred, evaluated, right);
 }
+var init_enum2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/enum.mjs"() {
+    init_extends_left();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/function.mjs
 function ExtendsFunction(inferred, parameters, returnType, right) {
   return IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : IsFunction2(right) ? Match3(ExtendsParameters(inferred, parameters, right["parameters"]), (inferred2) => ExtendsReturnType(inferred2, returnType, right["returnType"]), () => ExtendsFalse()) : ExtendsFalse();
 }
+var init_function2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/function.mjs"() {
+    init_any();
+    init_function();
+    init_unknown();
+    init_result();
+    init_parameters();
+    init_return_type();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/integer.mjs
 function ExtendsInteger(inferred, left, right) {
   return IsInteger2(right) ? ExtendsTrue(inferred) : IsNumber3(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
 }
+var init_integer3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/integer.mjs"() {
+    init_integer();
+    init_number();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/intersect.mjs
 function ExtendsIntersect(inferred, left, right) {
   const evaluated = EvaluateIntersect(left);
   return ExtendsLeft(inferred, evaluated, right);
 }
+var init_intersect2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/intersect.mjs"() {
+    init_extends_left();
+    init_evaluate3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/literal.mjs
 function ExtendsLiteralValue(inferred, left, right) {
@@ -3243,21 +4364,55 @@ function ExtendsLiteralString(inferred, left, right) {
 function ExtendsLiteral(inferred, left, right) {
   return guard_exports.IsBigInt(left.const) ? ExtendsLiteralBigInt(inferred, left.const, right) : guard_exports.IsBoolean(left.const) ? ExtendsLiteralBoolean(inferred, left.const, right) : guard_exports.IsNumber(left.const) ? ExtendsLiteralNumber(inferred, left.const, right) : guard_exports.IsString(left.const) ? ExtendsLiteralString(inferred, left.const, right) : Unreachable();
 }
+var init_literal2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/literal.mjs"() {
+    init_guard2();
+    init_unreachable();
+    init_literal();
+    init_bigint();
+    init_boolean();
+    init_number();
+    init_string2();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/never.mjs
 function ExtendsNever(inferred, left, right) {
   return IsInfer(right) ? ExtendsRight(inferred, left, right) : ExtendsTrue(inferred);
 }
+var init_never2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/never.mjs"() {
+    init_infer();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/null.mjs
 function ExtendsNull(inferred, left, right) {
   return IsNull2(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
 }
+var init_null2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/null.mjs"() {
+    init_null();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/number.mjs
 function ExtendsNumber(inferred, left, right) {
   return IsNumber3(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
 }
+var init_number3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/number.mjs"() {
+    init_number();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/object.mjs
 function ExtendsPropertyOptional(inferred, left, right) {
@@ -3309,6 +4464,22 @@ function ExtendsObjectToRecord(inferred, properties, _pattern, value) {
 function ExtendsObject(inferred, left, right) {
   return IsRecord(right) ? ExtendsObjectToRecord(inferred, left, RecordPattern(right), RecordValue(right)) : IsObject2(right) ? ExtendsObjectToObject(inferred, left, right.properties) : ExtendsRight(inferred, _Object_(left), right);
 }
+var init_object2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/object.mjs"() {
+    init_unreachable2();
+    init_memory2();
+    init_guard2();
+    init_optional();
+    init_infer();
+    init_never();
+    init_object();
+    init_record();
+    init_union();
+    init_extends_left();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/record.mjs
 function FromObject3(inferred, properties) {
@@ -3320,22 +4491,53 @@ function FromRecord(inferred, _leftKey, leftValue, _rightKey, rightValue) {
 function ExtendsRecord(inferred, leftPattern, leftValue, right) {
   return IsRecord(right) ? FromRecord(inferred, RecordPatternToType(leftPattern), leftValue, RecordPatternToType(RecordPattern(right)), RecordValue(right)) : IsObject2(right) ? FromObject3(inferred, right.properties) : IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : ExtendsFalse();
 }
+var init_record2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/record.mjs"() {
+    init_guard2();
+    init_any();
+    init_unknown();
+    init_object();
+    init_record();
+    init_extends_left();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/string.mjs
 function ExtendsString(inferred, left, right) {
   return IsString3(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
 }
+var init_string4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/string.mjs"() {
+    init_string2();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/symbol.mjs
 function ExtendsSymbol(inferred, left, right) {
   return IsSymbol2(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
 }
+var init_symbol2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/symbol.mjs"() {
+    init_symbol();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/template_literal.mjs
 function ExtendsTemplateLiteral(inferred, left, right) {
   const evaluated = EvaluateTemplateLiteral(left);
   return ExtendsLeft(inferred, evaluated, right);
 }
+var init_template_literal2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/template_literal.mjs"() {
+    init_extends_left();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/inference.mjs
 function Inferrable(name, type) {
@@ -3361,6 +4563,21 @@ function InferUnionResult(inferred, name, left, right) {
   const results = TryInferResults(left, right);
   return guard_exports.IsArray(results) ? ExtendsTrue(memory_exports.Assign(inferred, { [name]: Union(results) })) : ExtendsFalse();
 }
+var init_inference = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/inference.mjs"() {
+    init_unreachable2();
+    init_memory2();
+    init_guard2();
+    init_array();
+    init_unknown();
+    init_tuple();
+    init_extends_left();
+    init_union();
+    init_infer();
+    init_rest();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/tuple.mjs
 function Reverse(types) {
@@ -3403,11 +4620,33 @@ function ExtendsTuple(inferred, left, right) {
   const instantiatedLeft = InstantiateElements(inferred, State([], []), left);
   return IsTuple(right) ? ExtendsTupleToTuple(inferred, instantiatedLeft, right.items) : IsArray2(right) ? ExtendsTupleToArray(inferred, instantiatedLeft, right.items) : ExtendsRight(inferred, Tuple(instantiatedLeft), right);
 }
+var init_tuple2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/tuple.mjs"() {
+    init_guard2();
+    init_schema();
+    init_array();
+    init_tuple();
+    init_extends_left();
+    init_extends_right();
+    init_result();
+    init_instantiate27();
+    init_instantiate27();
+    init_inference();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/undefined.mjs
 function ExtendsUndefined(inferred, left, right) {
   return IsVoid(right) ? ExtendsTrue(inferred) : IsUndefined2(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
 }
+var init_undefined2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/undefined.mjs"() {
+    init_undefined();
+    init_void();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/union.mjs
 function ExtendsUnionSome(inferred, type, unionTypes) {
@@ -3420,21 +4659,99 @@ function ExtendsUnion2(inferred, left, right) {
   const inferrable = TryInferable(right);
   return IsInferable(inferrable) ? InferUnionResult(inferred, inferrable.name, left, inferrable.type) : IsUnion(right) ? ExtendsUnionLeft(inferred, left, right.anyOf) : ExtendsUnionLeft(inferred, left, [right]);
 }
+var init_union2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/union.mjs"() {
+    init_guard2();
+    init_union();
+    init_extends_left();
+    init_result();
+    init_inference();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/unknown.mjs
 function ExtendsUnknown(inferred, left, right) {
   return IsInfer(right) ? ExtendsRight(inferred, left, right) : IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : ExtendsFalse();
 }
+var init_unknown2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/unknown.mjs"() {
+    init_any();
+    init_unknown();
+    init_infer();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/void.mjs
 function ExtendsVoid(inferred, left, right) {
   return IsVoid(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
 }
+var init_void2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/void.mjs"() {
+    init_void();
+    init_extends_right();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/extends_left.mjs
 function ExtendsLeft(inferred, left, right) {
   return IsAny(left) ? ExtendsAny(inferred, left, right) : IsArray2(left) ? ExtendsArray(inferred, left, left.items, right) : IsBigInt2(left) ? ExtendsBigInt(inferred, left, right) : IsBoolean3(left) ? ExtendsBoolean(inferred, left, right) : IsConstructor2(left) ? ExtendsConstructor(inferred, left.parameters, left.instanceType, right) : IsDependent(left) ? ExtendsDependent(inferred, left.if, left.then, left.else, right) : IsEnum(left) ? ExtendsEnum(inferred, left.enum, right) : IsFunction2(left) ? ExtendsFunction(inferred, left.parameters, left.returnType, right) : IsInteger2(left) ? ExtendsInteger(inferred, left, right) : IsIntersect(left) ? ExtendsIntersect(inferred, left.allOf, right) : IsLiteral(left) ? ExtendsLiteral(inferred, left, right) : IsNever(left) ? ExtendsNever(inferred, left, right) : IsNull2(left) ? ExtendsNull(inferred, left, right) : IsNumber3(left) ? ExtendsNumber(inferred, left, right) : IsObject2(left) ? ExtendsObject(inferred, left.properties, right) : IsRecord(left) ? ExtendsRecord(inferred, RecordPattern(left), RecordValue(left), right) : IsString3(left) ? ExtendsString(inferred, left, right) : IsSymbol2(left) ? ExtendsSymbol(inferred, left, right) : IsTemplateLiteral(left) ? ExtendsTemplateLiteral(inferred, left.pattern, right) : IsTuple(left) ? ExtendsTuple(inferred, left.items, right) : IsUndefined2(left) ? ExtendsUndefined(inferred, left, right) : IsUnion(left) ? ExtendsUnion2(inferred, left.anyOf, right) : IsUnknown(left) ? ExtendsUnknown(inferred, left, right) : IsVoid(left) ? ExtendsVoid(inferred, left, right) : ExtendsFalse();
 }
+var init_extends_left = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/extends_left.mjs"() {
+    init_any2();
+    init_array2();
+    init_bigint3();
+    init_boolean2();
+    init_constructor2();
+    init_dependent2();
+    init_enum2();
+    init_function2();
+    init_integer3();
+    init_intersect2();
+    init_literal2();
+    init_never2();
+    init_null2();
+    init_number3();
+    init_object2();
+    init_record2();
+    init_string4();
+    init_symbol2();
+    init_template_literal2();
+    init_tuple2();
+    init_undefined2();
+    init_union2();
+    init_unknown2();
+    init_void2();
+    init_any();
+    init_array();
+    init_bigint();
+    init_boolean();
+    init_constructor();
+    init_dependent();
+    init_enum();
+    init_function();
+    init_integer();
+    init_intersect();
+    init_literal();
+    init_never();
+    init_null();
+    init_number();
+    init_object();
+    init_record();
+    init_string2();
+    init_symbol();
+    init_template_literal();
+    init_tuple();
+    init_undefined();
+    init_unknown();
+    init_union();
+    init_void();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/interface/instantiate.mjs
 function InterfaceOperation(heritage, properties) {
@@ -3450,6 +4767,17 @@ function InterfaceInstantiate(context, state, heritage, properties, options) {
   const instantiatedProperties = InstantiateProperties(context, state, properties);
   return InterfaceAction(instantiatedHeritage, instantiatedProperties, options);
 }
+var init_instantiate3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/interface/instantiate.mjs"() {
+    init_memory2();
+    init_object();
+    init_evaluate2();
+    init_action();
+    init_instantiate27();
+    init_instantiate27();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/interface.mjs
 function InterfaceDeferred(heritage, properties, options = {}) {
@@ -3461,6 +4789,14 @@ function IsInterfaceDeferred(value) {
 function Interface(heritage, properties, options = {}) {
   return InterfaceAction(heritage, properties, options);
 }
+var init_interface = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/interface.mjs"() {
+    init_guard2();
+    init_schema();
+    init_deferred();
+    init_instantiate3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/check.mjs
 function FromRef(stack, context, ref) {
@@ -3480,6 +4816,22 @@ function CyclicCheck(stack, context, type) {
   const result2 = FromType3(stack, context, type);
   return result2;
 }
+var init_check = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/check.mjs"() {
+    init_guard2();
+    init_array();
+    init_constructor();
+    init_function();
+    init_intersect();
+    init_object();
+    init_properties();
+    init_record();
+    init_tuple();
+    init_union();
+    init_ref();
+    init_interface();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/candidates.mjs
 function ResolveCandidateKeys(context, keys) {
@@ -3492,6 +4844,12 @@ function CyclicCandidates(context) {
   const result2 = ResolveCandidateKeys(context, keys);
   return result2;
 }
+var init_candidates = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/candidates.mjs"() {
+    init_properties();
+    init_check();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/dependencies.mjs
 function FromRef2(context, ref, result2) {
@@ -3513,6 +4871,22 @@ function CyclicDependencies(context, key, type) {
   const result2 = FromType4(context, type, [key]);
   return result2;
 }
+var init_dependencies = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/dependencies.mjs"() {
+    init_unreachable2();
+    init_array();
+    init_constructor();
+    init_function();
+    init_intersect();
+    init_object();
+    init_properties();
+    init_record();
+    init_tuple();
+    init_union();
+    init_ref();
+    init_interface();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/extends.mjs
 function FromRef3(_ref) {
@@ -3537,6 +4911,22 @@ function CyclicAnyFromParameters(defs, ref) {
 function CyclicExtends(type) {
   return CyclicAnyFromParameters(type.$defs, type.$ref);
 }
+var init_extends = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/extends.mjs"() {
+    init_guard2();
+    init_any();
+    init_array();
+    init_constructor();
+    init_function();
+    init_intersect();
+    init_object();
+    init_record();
+    init_ref();
+    init_tuple();
+    init_union();
+    init_unknown();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/instantiate.mjs
 function CyclicInterface(context, heritage, properties) {
@@ -3559,6 +4949,19 @@ function InstantiateCyclic(context, ref, type) {
   const result2 = Cyclic(definitions, ref);
   return result2;
 }
+var init_instantiate4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/instantiate.mjs"() {
+    init_guard2();
+    init_cyclic();
+    init_object();
+    init_dependencies();
+    init_action();
+    init_instantiate27();
+    init_instantiate27();
+    init_instantiate27();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/target.mjs
 function Resolve(defs, ref) {
@@ -3568,6 +4971,24 @@ function CyclicTarget(defs, ref) {
   const result2 = Resolve(defs, ref);
   return result2;
 }
+var init_target = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/target.mjs"() {
+    init_never();
+    init_ref();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/index.mjs
+var init_cyclic2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/cyclic/index.mjs"() {
+    init_candidates();
+    init_check();
+    init_dependencies();
+    init_extends();
+    init_instantiate4();
+    init_target();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/extends.mjs
 function Canonical(type) {
@@ -3578,12 +4999,25 @@ function Extends(inferred, left, right) {
   const canonicalRight = Canonical(right);
   return ExtendsLeft(inferred, canonicalLeft, canonicalRight);
 }
+var init_extends2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/extends.mjs"() {
+    init_cyclic();
+    init_unknown();
+    init_unsafe();
+    init_extends_left();
+    init_cyclic2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/index.mjs
+var init_extends3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/extends/index.mjs"() {
+    init_extends2();
+    init_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/compare.mjs
-var ResultEqual = "equal";
-var ResultDisjoint = "disjoint";
-var ResultLeftInside = "left-inside";
-var ResultRightInside = "right-inside";
 function Compare(left, right) {
   const extendsCheck = [
     IsUnknown(left) ? result_exports.ExtendsFalse() : Extends({}, left, right),
@@ -3591,6 +5025,17 @@ function Compare(left, right) {
   ];
   return result_exports.IsExtendsTrueLike(extendsCheck[0]) && result_exports.IsExtendsTrueLike(extendsCheck[1]) ? ResultEqual : result_exports.IsExtendsTrueLike(extendsCheck[0]) && result_exports.IsExtendsFalse(extendsCheck[1]) ? ResultLeftInside : result_exports.IsExtendsFalse(extendsCheck[0]) && result_exports.IsExtendsTrueLike(extendsCheck[1]) ? ResultRightInside : ResultDisjoint;
 }
+var ResultEqual, ResultDisjoint, ResultLeftInside, ResultRightInside;
+var init_compare = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/compare.mjs"() {
+    init_unknown();
+    init_extends3();
+    ResultEqual = "equal";
+    ResultDisjoint = "disjoint";
+    ResultLeftInside = "left-inside";
+    ResultRightInside = "right-inside";
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/broaden.mjs
 function BroadFilter(type, types) {
@@ -3625,6 +5070,17 @@ function Broaden(types) {
   const flattened = Flatten(broadened);
   return flattened;
 }
+var init_broaden = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/broaden.mjs"() {
+    init_guard2();
+    init_any();
+    init_never();
+    init_object();
+    init_compare();
+    init_flatten();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/instantiate.mjs
 function EvaluateAction(type, options) {
@@ -3635,6 +5091,27 @@ function EvaluateInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return EvaluateAction(instantiatedType, options);
 }
+var init_instantiate5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/instantiate.mjs"() {
+    init_memory2();
+    init_instantiate27();
+    init_evaluate2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/index.mjs
+var init_evaluate3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/evaluate/index.mjs"() {
+    init_broaden();
+    init_compare();
+    init_composite();
+    init_distribute();
+    init_evaluate2();
+    init_flatten();
+    init_instantiate5();
+    init_narrow();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/call/distribute_arguments.mjs
 function CollectDistributionNames(expression, result2 = []) {
@@ -3671,6 +5148,14 @@ function DistributeArguments(parameters, arguments_, expression) {
   const zippedArguments = ZipDistributionArray(arguments_, distributionArray);
   return IsDeferred(expression) && guard_exports.IsEqual(expression.action, "Conditional") ? Distribute2(zippedArguments) : IsDeferred(expression) && guard_exports.IsEqual(expression.action, "Mapped") ? Distribute2(zippedArguments) : [arguments_];
 }
+var init_distribute_arguments = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/call/distribute_arguments.mjs"() {
+    init_guard2();
+    init_union();
+    init_deferred();
+    init_ref();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/call/resolve_target.mjs
 function FromNotResolvable() {
@@ -3691,6 +5176,13 @@ function FromType6(context, name, target, arguments_) {
 function ResolveTarget(context, target, arguments_) {
   return FromType6(context, "(anonymous)", target, arguments_);
 }
+var init_resolve_target = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/call/resolve_target.mjs"() {
+    init_generic();
+    init_ref();
+    init_never();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/call/resolve_arguments.mjs
 function AssertArgumentExtends(name, type, extends_) {
@@ -3715,6 +5207,16 @@ function BindParameters(context, state, parameters, arguments_) {
 function ResolveArgumentsContext(context, state, parameters, arguments_) {
   return BindParameters(context, state, parameters, arguments_);
 }
+var init_resolve_arguments = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/call/resolve_arguments.mjs"() {
+    init_guard2();
+    init_memory2();
+    init_instantiate27();
+    init_extends3();
+    init_infer();
+    init_call();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/call/instantiate.mjs
 function Peek(state) {
@@ -3747,6 +5249,21 @@ function CallInstantiate(context, state, target, arguments_) {
   const result2 = IsGeneric(type) ? IsTailCall(state, name) ? CallConstruct(Ref(name), instantiatedArguments) : CallImmediate(context, state, Ref(name), type.parameters, type.expression, instantiatedArguments) : CallConstruct(target, instantiatedArguments);
   return result2;
 }
+var init_instantiate6 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/call/instantiate.mjs"() {
+    init_guard2();
+    init_call();
+    init_ref();
+    init_generic();
+    init_evaluate3();
+    init_instantiate27();
+    init_instantiate27();
+    init_instantiate27();
+    init_distribute_arguments();
+    init_resolve_target();
+    init_resolve_arguments();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/call.mjs
 function CallConstruct(target, arguments_) {
@@ -3758,6 +5275,14 @@ function Call(target, arguments_) {
 function IsCall(value) {
   return IsKind(value, "Call");
 }
+var init_call = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/types/call.mjs"() {
+    init_memory2();
+    init_schema();
+    init_instantiate6();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/immutable/instantiate_remove.mjs
 function RemoveImmutableOperation(type) {
@@ -3771,16 +5296,33 @@ function RemoveImmutableInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return RemoveImmutableAction(instantiatedType, options);
 }
+var init_instantiate_remove3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/immutable/instantiate_remove.mjs"() {
+    init_memory2();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/mapping.mjs
 function ApplyMapping(mapping, value) {
   return mapping(value);
 }
+var init_mapping2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/mapping.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/from_literal.mjs
 function FromLiteral3(mapping, value) {
   return guard_exports.IsString(value) ? Literal(ApplyMapping(mapping, value)) : Literal(value);
 }
+var init_from_literal = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/from_literal.mjs"() {
+    init_guard2();
+    init_literal();
+    init_mapping2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/from_template_literal.mjs
 function FromTemplateLiteral(mapping, pattern) {
@@ -3788,17 +5330,39 @@ function FromTemplateLiteral(mapping, pattern) {
   const result2 = FromType7(mapping, evaluated);
   return result2;
 }
+var init_from_template_literal = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/from_template_literal.mjs"() {
+    init_from_type();
+    init_evaluate3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/from_union.mjs
 function FromUnion2(mapping, types) {
   const result2 = types.map((type) => FromType7(mapping, type));
   return Union(result2);
 }
+var init_from_union = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/from_union.mjs"() {
+    init_union();
+    init_from_type();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/from_type.mjs
 function FromType7(mapping, type) {
   return IsLiteral(type) ? FromLiteral3(mapping, type.const) : IsTemplateLiteral(type) ? FromTemplateLiteral(mapping, type.pattern) : IsUnion(type) ? FromUnion2(mapping, type.anyOf) : type;
 }
+var init_from_type = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/from_type.mjs"() {
+    init_literal();
+    init_template_literal();
+    init_union();
+    init_from_literal();
+    init_from_template_literal();
+    init_from_union();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/capitalize.mjs
 function CapitalizeDeferred(type, options = {}) {
@@ -3807,6 +5371,12 @@ function CapitalizeDeferred(type, options = {}) {
 function Capitalize(type, options = {}) {
   return CapitalizeAction(type, options);
 }
+var init_capitalize = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/capitalize.mjs"() {
+    init_deferred();
+    init_instantiate7();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/lowercase.mjs
 function LowercaseDeferred(type, options = {}) {
@@ -3815,6 +5385,12 @@ function LowercaseDeferred(type, options = {}) {
 function Lowercase(type, options = {}) {
   return LowercaseAction(type, options);
 }
+var init_lowercase = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/lowercase.mjs"() {
+    init_deferred();
+    init_instantiate7();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/uncapitalize.mjs
 function UncapitalizeDeferred(type, options = {}) {
@@ -3823,6 +5399,12 @@ function UncapitalizeDeferred(type, options = {}) {
 function Uncapitalize(type, options = {}) {
   return UncapitalizeAction(type, options);
 }
+var init_uncapitalize = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/uncapitalize.mjs"() {
+    init_deferred();
+    init_instantiate7();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/uppercase.mjs
 function UppercaseDeferred(type, options = {}) {
@@ -3831,12 +5413,14 @@ function UppercaseDeferred(type, options = {}) {
 function Uppercase(type, options = {}) {
   return UppercaseAction(type, options);
 }
+var init_uppercase = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/uppercase.mjs"() {
+    init_deferred();
+    init_instantiate7();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/instantiate.mjs
-var CapitalizeMapping = (input) => input[0].toUpperCase() + input.slice(1);
-var LowercaseMapping = (input) => input.toLowerCase();
-var UncapitalizeMapping = (input) => input[0].toLowerCase() + input.slice(1);
-var UppercaseMapping = (input) => input.toUpperCase();
 function CapitalizeAction(type, options) {
   const result2 = CanInstantiate([type]) ? memory_exports.Update(FromType7(CapitalizeMapping, type), {}, options) : CapitalizeDeferred(type, options);
   return result2;
@@ -3869,6 +5453,22 @@ function UppercaseInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return UppercaseAction(instantiatedType, options);
 }
+var CapitalizeMapping, LowercaseMapping, UncapitalizeMapping, UppercaseMapping;
+var init_instantiate7 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/instantiate.mjs"() {
+    init_memory2();
+    init_from_type();
+    init_instantiate27();
+    init_capitalize();
+    init_lowercase();
+    init_uncapitalize();
+    init_uppercase();
+    CapitalizeMapping = (input) => input[0].toUpperCase() + input.slice(1);
+    LowercaseMapping = (input) => input.toLowerCase();
+    UncapitalizeMapping = (input) => input[0].toLowerCase() + input.slice(1);
+    UppercaseMapping = (input) => input.toUpperCase();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/conditional.mjs
 function ConditionalDeferred(left, right, true_, false_, options = {}) {
@@ -3877,6 +5477,13 @@ function ConditionalDeferred(left, right, true_, false_, options = {}) {
 function Conditional(left, right, true_, false_, options = {}) {
   return ConditionalAction({}, State([], []), left, right, true_, false_, options);
 }
+var init_conditional = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/conditional.mjs"() {
+    init_deferred();
+    init_instantiate8();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/conditional/instantiate.mjs
 function ConditionalOperation(context, state, left, right, true_, false_) {
@@ -3892,6 +5499,22 @@ function ConditionalInstantiate(context, state, left, right, true_, false_, opti
   const instantiatedRight = InstantiateType(context, state, right);
   return ConditionalAction(context, state, instantiatedLeft, instantiatedRight, true_, false_, options);
 }
+var init_instantiate8 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/conditional/instantiate.mjs"() {
+    init_memory2();
+    init_union();
+    init_extends3();
+    init_instantiate27();
+    init_conditional();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/conditional/index.mjs
+var init_conditional2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/conditional/index.mjs"() {
+    init_instantiate8();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/constructor_parameters.mjs
 function ConstructorParametersDeferred(type, options = {}) {
@@ -3900,6 +5523,12 @@ function ConstructorParametersDeferred(type, options = {}) {
 function ConstructorParameters(type, options = {}) {
   return ConstructorParametersAction(type, options);
 }
+var init_constructor_parameters = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/constructor_parameters.mjs"() {
+    init_deferred();
+    init_instantiate9();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/constructor_parameters/instantiate.mjs
 function ConstructorParametersOperation(type) {
@@ -3916,6 +5545,17 @@ function ConstructorParametersInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return ConstructorParametersAction(instantiatedType, options);
 }
+var init_instantiate9 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/constructor_parameters/instantiate.mjs"() {
+    init_memory2();
+    init_constructor();
+    init_tuple();
+    init_constructor_parameters();
+    init_instantiate27();
+    init_instantiate27();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/exclude.mjs
 function ExcludeDeferred(left, right, options = {}) {
@@ -3924,6 +5564,12 @@ function ExcludeDeferred(left, right, options = {}) {
 function Exclude(left, right, options = {}) {
   return ExcludeAction(left, right, options);
 }
+var init_exclude = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/exclude.mjs"() {
+    init_deferred();
+    init_instantiate10();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/exclude/instantiate.mjs
 function ExcludeAction(left, right, options) {
@@ -3935,6 +5581,14 @@ function ExcludeInstantiate(context, state, left, right, options) {
   const instantiatedRight = InstantiateType(context, state, right);
   return ExcludeAction(instantiatedLeft, instantiatedRight, options);
 }
+var init_instantiate10 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/exclude/instantiate.mjs"() {
+    init_memory2();
+    init_instantiate27();
+    init_exclude();
+    init_operation();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/extract.mjs
 function ExtractDeferred(left, right, options = {}) {
@@ -3943,6 +5597,12 @@ function ExtractDeferred(left, right, options = {}) {
 function Extract(left, right, options = {}) {
   return ExtractAction(left, right, options);
 }
+var init_extract = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/extract.mjs"() {
+    init_deferred();
+    init_instantiate11();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/extract/operation.mjs
 function ExtractType(left, right) {
@@ -3962,6 +5622,14 @@ function ExtractOperation(left, right) {
   const result2 = EvaluateUnion(remaining);
   return result2;
 }
+var init_operation2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/extract/operation.mjs"() {
+    init_union();
+    init_extends3();
+    init_evaluate2();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/extract/instantiate.mjs
 function ExtractAction(left, right, options) {
@@ -3973,6 +5641,14 @@ function ExtractInstantiate(context, state, left, right, options) {
   const instantiatedRight = InstantiateType(context, state, right);
   return ExtractAction(instantiatedLeft, instantiatedRight, options);
 }
+var init_instantiate11 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/extract/instantiate.mjs"() {
+    init_memory2();
+    init_instantiate27();
+    init_extract();
+    init_operation2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/helpers/keys_to_indexer.mjs
 function KeysToLiterals(keys) {
@@ -3985,6 +5661,12 @@ function KeysToIndexer(keys) {
   const result2 = Union(literals);
   return result2;
 }
+var init_keys_to_indexer = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/helpers/keys_to_indexer.mjs"() {
+    init_literal();
+    init_union();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/indexed.mjs
 function IndexDeferred(type, indexer, options = {}) {
@@ -3994,6 +5676,14 @@ function Index(type, indexer_or_keys, options = {}) {
   const indexer = guard_exports.IsArray(indexer_or_keys) ? KeysToIndexer(indexer_or_keys) : indexer_or_keys;
   return IndexAction(type, indexer, options);
 }
+var init_indexed = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/indexed.mjs"() {
+    init_guard2();
+    init_deferred();
+    init_keys_to_indexer();
+    init_instantiate12();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_cyclic.mjs
 function FromCyclic(defs, ref) {
@@ -4001,6 +5691,12 @@ function FromCyclic(defs, ref) {
   const result2 = FromType8(target);
   return result2;
 }
+var init_from_cyclic = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_cyclic.mjs"() {
+    init_from_type2();
+    init_target();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_dependent.mjs
 function FromDependent(if_, then_, else_) {
@@ -4008,6 +5704,12 @@ function FromDependent(if_, then_, else_) {
   const result2 = FromType8(evaluated);
   return result2;
 }
+var init_from_dependent = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_dependent.mjs"() {
+    init_from_type2();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_intersect.mjs
 function CollapseIntersectProperties(left, right) {
@@ -4026,11 +5728,23 @@ function FromIntersect(types) {
     return CollapseIntersectProperties(result2, FromType8(left));
   }, {});
 }
+var init_from_intersect = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_intersect.mjs"() {
+    init_memory2();
+    init_guard2();
+    init_from_type2();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_object.mjs
 function FromObject4(properties) {
   return properties;
 }
+var init_from_object = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_object.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_tuple.mjs
 function FromTuple(types) {
@@ -4038,6 +5752,13 @@ function FromTuple(types) {
   const result2 = FromType8(object);
   return result2;
 }
+var init_from_tuple = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_tuple.mjs"() {
+    init_tuple();
+    init_to_object();
+    init_from_type2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_union.mjs
 function CollapseUnionProperties(left, right) {
@@ -4053,11 +5774,35 @@ function ReduceVariants(types, result2) {
 function FromUnion3(types) {
   return guard_exports.ShiftLeft(types, (left, right) => ReduceVariants(right, FromType8(left)), () => Unreachable());
 }
+var init_from_union2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_union.mjs"() {
+    init_guard2();
+    init_unreachable2();
+    init_evaluate2();
+    init_from_type2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_type.mjs
 function FromType8(type) {
   return IsCyclic(type) ? FromCyclic(type.$defs, type.$ref) : IsDependent(type) ? FromDependent(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect(type.allOf) : IsUnion(type) ? FromUnion3(type.anyOf) : IsTuple(type) ? FromTuple(type.items) : IsObject2(type) ? FromObject4(type.properties) : {};
 }
+var init_from_type2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/from_type.mjs"() {
+    init_cyclic();
+    init_dependent();
+    init_intersect();
+    init_object();
+    init_tuple();
+    init_union();
+    init_from_cyclic();
+    init_from_dependent();
+    init_from_intersect();
+    init_from_object();
+    init_from_tuple();
+    init_from_union2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/collapse.mjs
 function CollapseToObject(type) {
@@ -4065,13 +5810,31 @@ function CollapseToObject(type) {
   const result2 = _Object_(properties);
   return result2;
 }
+var init_collapse = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/collapse.mjs"() {
+    init_object();
+    init_from_type2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/index.mjs
+var init_object3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/object/index.mjs"() {
+    init_collapse();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/helpers/keys.mjs
-var integerKeyPattern = new RegExp("^(?:0|[1-9][0-9]*)$");
 function ConvertToIntegerKey(value) {
   const normal = `${value}`;
   return integerKeyPattern.test(normal) ? parseInt(normal) : value;
 }
+var integerKeyPattern;
+var init_keys = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/helpers/keys.mjs"() {
+    integerKeyPattern = new RegExp("^(?:0|[1-9][0-9]*)$");
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/from_array.mjs
 function NormalizeLiteral(value) {
@@ -4092,6 +5855,18 @@ function FromArray3(type, indexer) {
   );
   return result2;
 }
+var init_from_array = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/from_array.mjs"() {
+    init_guard2();
+    init_intersect();
+    init_union();
+    init_literal();
+    init_number();
+    init_never();
+    init_extends3();
+    init_keys();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_cyclic.mjs
 function FromCyclic2(defs, ref) {
@@ -4099,6 +5874,12 @@ function FromCyclic2(defs, ref) {
   const result2 = FromType9(target);
   return result2;
 }
+var init_from_cyclic2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_cyclic.mjs"() {
+    init_from_type3();
+    init_target();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_dependent.mjs
 function FromDependent2(if_, then_, else_) {
@@ -4106,6 +5887,12 @@ function FromDependent2(if_, then_, else_) {
   const result2 = FromType9(evaluated);
   return result2;
 }
+var init_from_dependent2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_dependent.mjs"() {
+    init_from_type3();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_enum.mjs
 function FromEnum(values) {
@@ -4113,6 +5900,12 @@ function FromEnum(values) {
   const result2 = FromType9(evaluated);
   return result2;
 }
+var init_from_enum = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_enum.mjs"() {
+    init_from_type3();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_intersect.mjs
 function FromIntersect2(types) {
@@ -4120,12 +5913,22 @@ function FromIntersect2(types) {
   const result2 = FromType9(evaluated);
   return result2;
 }
+var init_from_intersect2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_intersect.mjs"() {
+    init_evaluate2();
+    init_from_type3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_literal.mjs
 function FromLiteral4(value) {
   const result2 = [`${value}`];
   return result2;
 }
+var init_from_literal2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_literal.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_template_literal.mjs
 function FromTemplateLiteral2(pattern) {
@@ -4133,6 +5936,12 @@ function FromTemplateLiteral2(pattern) {
   const result2 = FromType9(evaluated);
   return result2;
 }
+var init_from_template_literal2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_template_literal.mjs"() {
+    init_from_type3();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_union.mjs
 function FromUnion4(types) {
@@ -4140,17 +5949,45 @@ function FromUnion4(types) {
     return [...result2, ...FromType9(left)];
   }, []);
 }
+var init_from_union3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_union.mjs"() {
+    init_from_type3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_type.mjs
 function FromType9(type) {
   return IsCyclic(type) ? FromCyclic2(type.$defs, type.$ref) : IsDependent(type) ? FromDependent2(type.if, type.then, type.else) : IsEnum(type) ? FromEnum(type.enum) : IsIntersect(type) ? FromIntersect2(type.allOf) : IsLiteral(type) ? FromLiteral4(type.const) : IsTemplateLiteral(type) ? FromTemplateLiteral2(type.pattern) : IsUnion(type) ? FromUnion4(type.anyOf) : [];
 }
+var init_from_type3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/from_type.mjs"() {
+    init_cyclic();
+    init_dependent();
+    init_enum();
+    init_intersect();
+    init_literal();
+    init_template_literal();
+    init_union();
+    init_from_cyclic2();
+    init_from_dependent2();
+    init_from_enum();
+    init_from_intersect2();
+    init_from_literal2();
+    init_from_template_literal2();
+    init_from_union3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/to_indexable_keys.mjs
 function ToIndexableKeys(type) {
   const result2 = FromType9(type);
   return result2;
 }
+var init_to_indexable_keys = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/to_indexable_keys.mjs"() {
+    init_from_type3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/this/expand_this.mjs
 function FromTypes5(properties, types) {
@@ -4163,6 +6000,18 @@ function ExpandThis(properties, type) {
   const result2 = FromType10(properties, type);
   return result2;
 }
+var init_expand_this = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/this/expand_this.mjs"() {
+    init_array();
+    init_constructor();
+    init_function();
+    init_intersect();
+    init_object();
+    init_tuple();
+    init_this();
+    init_union();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/from_object.mjs
 function IndexProperty(properties, key) {
@@ -4181,7 +6030,6 @@ function FromIndexer(properties, indexer) {
   const result2 = EvaluateUnion(variants);
   return result2;
 }
-var NumericKeyPattern = new RegExp(IntegerKey);
 function NumericKeys(keys) {
   const result2 = keys.filter((key) => NumericKeyPattern.test(key));
   return result2;
@@ -4197,6 +6045,19 @@ function FromObject5(properties, indexer) {
   const result2 = IsNumber3(indexer) ? FromIndexerNumber(properties) : FromIndexer(properties, indexer);
   return result2;
 }
+var NumericKeyPattern;
+var init_from_object2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/from_object.mjs"() {
+    init_number();
+    init_never();
+    init_properties();
+    init_evaluate2();
+    init_to_indexable_keys();
+    init_record();
+    init_expand_this();
+    NumericKeyPattern = new RegExp(IntegerKey);
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/array_indexer.mjs
 function ConvertLiteral(value) {
@@ -4208,6 +6069,14 @@ function ArrayIndexerTypes(types) {
 function FormatArrayIndexer(type) {
   return IsIntersect(type) ? Intersect(ArrayIndexerTypes(type.allOf)) : IsUnion(type) ? Union(ArrayIndexerTypes(type.anyOf)) : IsLiteral(type) ? ConvertLiteral(type.const) : type;
 }
+var init_array_indexer = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/array_indexer.mjs"() {
+    init_union();
+    init_intersect();
+    init_literal();
+    init_keys();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/from_tuple.mjs
 function IndexElementsWithIndexer(types, indexer) {
@@ -4230,11 +6099,33 @@ function FromTuple2(types, indexer) {
     IsLiteral(indexer) && guard_exports.IsEqual(indexer.const, "length") ? Literal(types.length) : IsNumber3(indexer) || IsInteger2(indexer) ? FromTupleWithoutIndexer(types) : FromTupleWithIndexer(types, indexer)
   );
 }
+var init_from_tuple2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/from_tuple.mjs"() {
+    init_guard2();
+    init_literal();
+    init_number();
+    init_integer();
+    init_evaluate2();
+    init_extends3();
+    init_array_indexer();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/from_type.mjs
 function FromType11(type, indexer) {
   return IsArray2(type) ? FromArray3(type.items, indexer) : IsObject2(type) ? FromObject5(type.properties, indexer) : IsTuple(type) ? FromTuple2(type.items, indexer) : Never();
 }
+var init_from_type4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/from_type.mjs"() {
+    init_array();
+    init_never();
+    init_object();
+    init_tuple();
+    init_from_array();
+    init_from_object2();
+    init_from_tuple2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/instantiate.mjs
 function NormalizeType(type) {
@@ -4250,6 +6141,19 @@ function IndexInstantiate(context, state, type, indexer, options) {
   const instantiatedIndexer = InstantiateType(context, state, indexer);
   return IndexAction(instantiatedType, instantiatedIndexer, options);
 }
+var init_instantiate12 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/instantiate.mjs"() {
+    init_memory2();
+    init_cyclic();
+    init_dependent();
+    init_intersect();
+    init_union();
+    init_instantiate27();
+    init_indexed();
+    init_object3();
+    init_from_type4();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/instance_type.mjs
 function InstanceTypeDeferred(type, options = {}) {
@@ -4258,6 +6162,12 @@ function InstanceTypeDeferred(type, options = {}) {
 function InstanceType(type, options = {}) {
   return InstanceTypeAction(type, options);
 }
+var init_instance_type = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/instance_type.mjs"() {
+    init_deferred();
+    init_instantiate13();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/instance_type/instantiate.mjs
 function InstanceTypeOperation(type) {
@@ -4271,6 +6181,15 @@ function InstanceTypeInstantiate(context, state, type, options = {}) {
   const instantiatedType = InstantiateType(context, state, type);
   return InstanceTypeAction(instantiatedType, options);
 }
+var init_instantiate13 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/instance_type/instantiate.mjs"() {
+    init_memory2();
+    init_constructor();
+    init_never();
+    init_instance_type();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/keyof.mjs
 function KeyOfDeferred(type, options = {}) {
@@ -4279,16 +6198,35 @@ function KeyOfDeferred(type, options = {}) {
 function KeyOf2(type, options = {}) {
   return KeyOfAction(type, options);
 }
+var init_keyof = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/keyof.mjs"() {
+    init_deferred();
+    init_instantiate14();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_any.mjs
 function FromAny() {
   return Union([Number2(), String2(), Symbol2()]);
 }
+var init_from_any = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_any.mjs"() {
+    init_number();
+    init_string2();
+    init_symbol();
+    init_union();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_array.mjs
 function FromArray4(_type) {
   return Number2();
 }
+var init_from_array2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_array.mjs"() {
+    init_number();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_object.mjs
 function FromPropertyKeys(keys) {
@@ -4303,22 +6241,57 @@ function FromObject6(properties) {
   const result2 = EvaluateUnionFast(variants);
   return result2;
 }
+var init_from_object3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_object.mjs"() {
+    init_unreachable2();
+    init_guard2();
+    init_literal();
+    init_keys();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_record.mjs
 function FromRecord2(type) {
   return RecordKey(type);
 }
+var init_from_record = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_record.mjs"() {
+    init_record();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_tuple.mjs
 function FromTuple3(types) {
   const result2 = types.map((_, index) => Literal(index));
   return EvaluateUnionFast(result2);
 }
+var init_from_tuple3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_tuple.mjs"() {
+    init_literal();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_type.mjs
 function FromType12(type) {
   return IsAny(type) ? FromAny() : IsArray2(type) ? FromArray4(type.items) : IsObject2(type) ? FromObject6(type.properties) : IsRecord(type) ? FromRecord2(type) : IsTuple(type) ? FromTuple3(type.items) : Never();
 }
+var init_from_type5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/from_type.mjs"() {
+    init_any();
+    init_array();
+    init_never();
+    init_object();
+    init_record();
+    init_tuple();
+    init_from_any();
+    init_from_array2();
+    init_from_object3();
+    init_from_record();
+    init_from_tuple3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/instantiate.mjs
 function NormalizeType2(type) {
@@ -4332,6 +6305,19 @@ function KeyOfInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return KeyOfAction(instantiatedType, options);
 }
+var init_instantiate14 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/instantiate.mjs"() {
+    init_memory2();
+    init_cyclic();
+    init_dependent();
+    init_intersect();
+    init_union();
+    init_keyof();
+    init_instantiate27();
+    init_object3();
+    init_from_type5();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/mapped.mjs
 function MappedDeferred(identifier, type, as, property, options = {}) {
@@ -4340,6 +6326,13 @@ function MappedDeferred(identifier, type, as, property, options = {}) {
 function Mapped(identifier, type, as, property, options = {}) {
   return MappedAction({}, State([], []), identifier, type, as, property, options);
 }
+var init_mapped = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/mapped.mjs"() {
+    init_deferred();
+    init_instantiate15();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/mapped/mapped_variants.mjs
 function FromTemplateLiteral3(pattern) {
@@ -4369,6 +6362,17 @@ function MappedVariants(type) {
   const result2 = FromType13(type);
   return result2;
 }
+var init_mapped_variants = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/mapped/mapped_variants.mjs"() {
+    init_guard2();
+    init_literal();
+    init_enum();
+    init_template_literal();
+    init_union();
+    init_evaluate2();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/mapped/mapped_operation.mjs
 function CanonicalAs(instantiatedAs) {
@@ -4399,6 +6403,18 @@ function MappedOperation(context, state, identifier, type, as, property) {
   const result2 = EvaluateIntersect(mappedObjects);
   return result2;
 }
+var init_mapped_operation = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/mapped/mapped_operation.mjs"() {
+    init_memory2();
+    init_literal();
+    init_object();
+    init_template_literal();
+    init_instantiate27();
+    init_evaluate2();
+    init_evaluate2();
+    init_mapped_variants();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/mapped/instantiate.mjs
 function MappedAction(context, state, identifier, type, as, property, options) {
@@ -4409,6 +6425,14 @@ function MappedInstantiate(context, state, identifier, type, as, property, optio
   const instantiatedType = InstantiateType(context, state, type);
   return MappedAction(context, state, identifier, instantiatedType, as, property, options);
 }
+var init_instantiate15 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/mapped/instantiate.mjs"() {
+    init_memory2();
+    init_mapped();
+    init_instantiate27();
+    init_mapped_operation();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/module/instantiate.mjs
 function InstantiateCyclics(context, declarations, cyclicKeys) {
@@ -4436,6 +6460,16 @@ function ModuleInstantiate(context, _state, declarations, options) {
   const instantiatedModule = InstantiateModule(context, declarations, options);
   return instantiatedModule;
 }
+var init_instantiate16 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/module/instantiate.mjs"() {
+    init_guard2();
+    init_memory2();
+    init_instantiate27();
+    init_candidates();
+    init_instantiate4();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/non_nullable.mjs
 function NonNullableDeferred(type, options = {}) {
@@ -4444,6 +6478,12 @@ function NonNullableDeferred(type, options = {}) {
 function NonNullable(type, options = {}) {
   return NonNullableAction(type, options);
 }
+var init_non_nullable = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/non_nullable.mjs"() {
+    init_deferred();
+    init_instantiate17();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/non_nullable/instantiate.mjs
 function NonNullableOperation(type) {
@@ -4458,6 +6498,17 @@ function NonNullableInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return NonNullableAction(instantiatedType, options);
 }
+var init_instantiate17 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/non_nullable/instantiate.mjs"() {
+    init_memory2();
+    init_null();
+    init_undefined();
+    init_union();
+    init_instantiate10();
+    init_non_nullable();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/omit.mjs
 function OmitDeferred(type, indexer, options = {}) {
@@ -4467,6 +6518,14 @@ function Omit(type, indexer_or_keys, options = {}) {
   const indexer = guard_exports.IsArray(indexer_or_keys) ? KeysToIndexer(indexer_or_keys) : indexer_or_keys;
   return OmitAction(type, indexer, options);
 }
+var init_omit = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/omit.mjs"() {
+    init_guard2();
+    init_deferred();
+    init_keys_to_indexer();
+    init_instantiate18();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/to_indexable.mjs
 function ToIndexable(type) {
@@ -4474,6 +6533,13 @@ function ToIndexable(type) {
   const result2 = IsObject2(collapsed) ? collapsed.properties : Unreachable();
   return result2;
 }
+var init_to_indexable = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexable/to_indexable.mjs"() {
+    init_unreachable2();
+    init_object();
+    init_object3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/omit/from_type.mjs
 function FromKeys(properties, keys) {
@@ -4489,6 +6555,14 @@ function FromType14(type, indexer) {
   const result2 = _Object_(omitted);
   return result2;
 }
+var init_from_type6 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/omit/from_type.mjs"() {
+    init_guard2();
+    init_object();
+    init_to_indexable_keys();
+    init_to_indexable();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/omit/instantiate.mjs
 function OmitAction(type, indexer, options) {
@@ -4500,6 +6574,14 @@ function OmitInstantiate(context, state, type, indexer, options) {
   const instantiatedIndexer = InstantiateType(context, state, indexer);
   return OmitAction(instantiatedType, instantiatedIndexer, options);
 }
+var init_instantiate18 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/omit/instantiate.mjs"() {
+    init_memory2();
+    init_omit();
+    init_instantiate27();
+    init_from_type6();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/parameters.mjs
 function ParametersDeferred(type, options = {}) {
@@ -4508,6 +6590,12 @@ function ParametersDeferred(type, options = {}) {
 function Parameters(type, options = {}) {
   return ParametersAction(type, options);
 }
+var init_parameters2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/parameters.mjs"() {
+    init_deferred();
+    init_instantiate19();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/parameters/instantiate.mjs
 function ParametersOperation(type) {
@@ -4524,6 +6612,17 @@ function ParametersInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return ParametersAction(instantiatedType, options);
 }
+var init_instantiate19 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/parameters/instantiate.mjs"() {
+    init_memory2();
+    init_function();
+    init_tuple();
+    init_parameters2();
+    init_instantiate27();
+    init_instantiate27();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/partial.mjs
 function PartialDeferred(type, options = {}) {
@@ -4532,6 +6631,12 @@ function PartialDeferred(type, options = {}) {
 function Partial(type, options = {}) {
   return PartialAction(type, options);
 }
+var init_partial = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/partial.mjs"() {
+    init_deferred();
+    init_instantiate20();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_cyclic.mjs
 function FromCyclic3(defs, ref) {
@@ -4540,6 +6645,14 @@ function FromCyclic3(defs, ref) {
   const result2 = Cyclic(memory_exports.Assign(defs, { [ref]: partial }), ref);
   return result2;
 }
+var init_from_cyclic3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_cyclic.mjs"() {
+    init_memory2();
+    init_cyclic();
+    init_from_type7();
+    init_target();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_dependent.mjs
 function FromDependent3(if_, then_, else_) {
@@ -4547,6 +6660,12 @@ function FromDependent3(if_, then_, else_) {
   const result2 = FromType15(evaluated);
   return result2;
 }
+var init_from_dependent3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_dependent.mjs"() {
+    init_from_type7();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_intersect.mjs
 function FromIntersect3(types) {
@@ -4554,12 +6673,24 @@ function FromIntersect3(types) {
   const result2 = FromType15(evaluated);
   return result2;
 }
+var init_from_intersect3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_intersect.mjs"() {
+    init_from_type7();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_union.mjs
 function FromUnion6(types) {
   const result2 = types.map((type) => FromType15(type));
   return Union(result2);
 }
+var init_from_union4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_union.mjs"() {
+    init_union();
+    init_from_type7();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_object.mjs
 function FromObject7(properties) {
@@ -4569,11 +6700,32 @@ function FromObject7(properties) {
   const result2 = _Object_(mapped);
   return result2;
 }
+var init_from_object4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_object.mjs"() {
+    init_guard2();
+    init_object();
+    init_add_optional();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_type.mjs
 function FromType15(type) {
   return IsCyclic(type) ? FromCyclic3(type.$defs, type.$ref) : IsDependent(type) ? FromDependent3(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect3(type.allOf) : IsUnion(type) ? FromUnion6(type.anyOf) : IsObject2(type) ? FromObject7(type.properties) : _Object_({});
 }
+var init_from_type7 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/from_type.mjs"() {
+    init_cyclic();
+    init_dependent();
+    init_intersect();
+    init_object();
+    init_union();
+    init_from_cyclic3();
+    init_from_dependent3();
+    init_from_intersect3();
+    init_from_union4();
+    init_from_object4();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/instantiate.mjs
 function PartialAction(type, options) {
@@ -4584,6 +6736,14 @@ function PartialInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return PartialAction(instantiatedType, options);
 }
+var init_instantiate20 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/instantiate.mjs"() {
+    init_memory2();
+    init_partial();
+    init_from_type7();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/pick.mjs
 function PickDeferred(type, indexer, options = {}) {
@@ -4593,6 +6753,14 @@ function Pick(type, indexer_or_keys, options = {}) {
   const indexer = guard_exports.IsArray(indexer_or_keys) ? KeysToIndexer(indexer_or_keys) : indexer_or_keys;
   return PickAction(type, indexer, options);
 }
+var init_pick = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/pick.mjs"() {
+    init_guard2();
+    init_deferred();
+    init_keys_to_indexer();
+    init_instantiate21();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/pick/from_type.mjs
 function FromKeys2(properties, keys) {
@@ -4608,6 +6776,15 @@ function FromType16(type, indexer) {
   const result2 = _Object_(applied);
   return result2;
 }
+var init_from_type8 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/pick/from_type.mjs"() {
+    init_memory2();
+    init_guard2();
+    init_object();
+    init_to_indexable_keys();
+    init_to_indexable();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/pick/instantiate.mjs
 function PickAction(type, indexer, options) {
@@ -4619,6 +6796,14 @@ function PickInstantiate(context, state, type, indexer, options) {
   const instantiatedIndexer = InstantiateType(context, state, indexer);
   return PickAction(instantiatedType, instantiatedIndexer, options);
 }
+var init_instantiate21 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/pick/instantiate.mjs"() {
+    init_memory2();
+    init_pick();
+    init_instantiate27();
+    init_from_type8();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/readonly_object.mjs
 function ReadonlyObjectDeferred(type, options = {}) {
@@ -4627,13 +6812,26 @@ function ReadonlyObjectDeferred(type, options = {}) {
 function ReadonlyObject(type, options = {}) {
   return ReadonlyObjectAction(type, options);
 }
-var ReadonlyType = ReadonlyObject;
+var ReadonlyType;
+var init_readonly_object = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/readonly_object.mjs"() {
+    init_deferred();
+    init_instantiate22();
+    ReadonlyType = ReadonlyObject;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_array.mjs
 function FromArray5(type) {
   const result2 = AddImmutable(_Array_(type));
   return result2;
 }
+var init_from_array3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_array.mjs"() {
+    init_array();
+    init_add_immutable();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_cyclic.mjs
 function FromCyclic4(defs, ref) {
@@ -4642,6 +6840,14 @@ function FromCyclic4(defs, ref) {
   const result2 = Cyclic(memory_exports.Assign(defs, { [ref]: partial }), ref);
   return result2;
 }
+var init_from_cyclic4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_cyclic.mjs"() {
+    init_memory2();
+    init_cyclic();
+    init_from_type9();
+    init_target();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_dependent.mjs
 function FromDependent4(if_, then_, else_) {
@@ -4649,6 +6855,12 @@ function FromDependent4(if_, then_, else_) {
   const result2 = FromType17(evaluated);
   return result2;
 }
+var init_from_dependent4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_dependent.mjs"() {
+    init_from_type9();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_intersect.mjs
 function FromIntersect4(types) {
@@ -4656,6 +6868,12 @@ function FromIntersect4(types) {
   const result2 = FromType17(evaluated);
   return result2;
 }
+var init_from_intersect4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_intersect.mjs"() {
+    init_from_type9();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_object.mjs
 function FromObject8(properties) {
@@ -4665,23 +6883,60 @@ function FromObject8(properties) {
   const result2 = _Object_(mapped);
   return result2;
 }
+var init_from_object5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_object.mjs"() {
+    init_guard2();
+    init_object();
+    init_add_readonly();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_tuple.mjs
 function FromTuple4(types) {
   const result2 = AddImmutable(Tuple(types));
   return result2;
 }
+var init_from_tuple4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_tuple.mjs"() {
+    init_tuple();
+    init_add_immutable();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_union.mjs
 function FromUnion7(types) {
   const result2 = types.map((type) => FromType17(type));
   return Union(result2);
 }
+var init_from_union5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_union.mjs"() {
+    init_union();
+    init_from_type9();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_type.mjs
 function FromType17(type) {
   return IsArray2(type) ? FromArray5(type.items) : IsCyclic(type) ? FromCyclic4(type.$defs, type.$ref) : IsDependent(type) ? FromDependent4(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect4(type.allOf) : IsObject2(type) ? FromObject8(type.properties) : IsTuple(type) ? FromTuple4(type.items) : IsUnion(type) ? FromUnion7(type.anyOf) : type;
 }
+var init_from_type9 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/from_type.mjs"() {
+    init_array();
+    init_cyclic();
+    init_dependent();
+    init_intersect();
+    init_object();
+    init_tuple();
+    init_union();
+    init_from_array3();
+    init_from_cyclic4();
+    init_from_dependent4();
+    init_from_intersect4();
+    init_from_object5();
+    init_from_tuple4();
+    init_from_union5();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/instantiate.mjs
 function ReadonlyObjectAction(type, options) {
@@ -4692,11 +6947,25 @@ function ReadonlyObjectInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return ReadonlyObjectAction(instantiatedType, options);
 }
+var init_instantiate22 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/instantiate.mjs"() {
+    init_memory2();
+    init_readonly_object();
+    init_from_type9();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/ref/instantiate.mjs
 function RefInstantiate(context, state, type, ref) {
   return state.visited.includes(ref) ? type : ref in context ? InstantiateType(context, State(state["callstack"], [...state["visited"], ref]), context[ref]) : type;
 }
+var init_instantiate23 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/ref/instantiate.mjs"() {
+    init_instantiate27();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_cyclic.mjs
 function FromCyclic5(defs, ref) {
@@ -4705,6 +6974,14 @@ function FromCyclic5(defs, ref) {
   const result2 = Cyclic(memory_exports.Assign(defs, { [ref]: partial }), ref);
   return result2;
 }
+var init_from_cyclic5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_cyclic.mjs"() {
+    init_memory2();
+    init_cyclic();
+    init_from_type10();
+    init_target();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_dependent.mjs
 function FromDependent5(if_, then_, else_) {
@@ -4712,6 +6989,12 @@ function FromDependent5(if_, then_, else_) {
   const result2 = FromType18(evaluated);
   return result2;
 }
+var init_from_dependent5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_dependent.mjs"() {
+    init_from_type10();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_intersect.mjs
 function FromIntersect5(types) {
@@ -4719,12 +7002,24 @@ function FromIntersect5(types) {
   const result2 = FromType18(evaluated);
   return result2;
 }
+var init_from_intersect5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_intersect.mjs"() {
+    init_from_type10();
+    init_evaluate2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_union.mjs
 function FromUnion8(types) {
   const result2 = types.map((type) => FromType18(type));
   return Union(result2);
 }
+var init_from_union6 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_union.mjs"() {
+    init_union();
+    init_from_type10();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_object.mjs
 function FromObject9(properties) {
@@ -4734,11 +7029,32 @@ function FromObject9(properties) {
   const result2 = _Object_(mapped);
   return result2;
 }
+var init_from_object6 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_object.mjs"() {
+    init_guard2();
+    init_object();
+    init_remove_optional();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_type.mjs
 function FromType18(type) {
   return IsCyclic(type) ? FromCyclic5(type.$defs, type.$ref) : IsDependent(type) ? FromDependent5(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect5(type.allOf) : IsUnion(type) ? FromUnion8(type.anyOf) : IsObject2(type) ? FromObject9(type.properties) : _Object_({});
 }
+var init_from_type10 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/from_type.mjs"() {
+    init_cyclic();
+    init_dependent();
+    init_intersect();
+    init_object();
+    init_union();
+    init_from_cyclic5();
+    init_from_dependent5();
+    init_from_intersect5();
+    init_from_union6();
+    init_from_object6();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/required.mjs
 function RequiredDeferred(type, options = {}) {
@@ -4747,6 +7063,12 @@ function RequiredDeferred(type, options = {}) {
 function Required(type, options = {}) {
   return RequiredAction(type, options);
 }
+var init_required = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/required.mjs"() {
+    init_deferred();
+    init_instantiate24();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/instantiate.mjs
 function RequiredAction(type, options) {
@@ -4757,6 +7079,14 @@ function RequiredInstantiate(context, state, type, options) {
   const instaniatedType = InstantiateType(context, state, type);
   return RequiredAction(instaniatedType, options);
 }
+var init_instantiate24 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/instantiate.mjs"() {
+    init_memory2();
+    init_from_type10();
+    init_required();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/return_type.mjs
 function ReturnTypeDeferred(type, options = {}) {
@@ -4765,6 +7095,12 @@ function ReturnTypeDeferred(type, options = {}) {
 function ReturnType(type, options = {}) {
   return ReturnTypeAction(type, options);
 }
+var init_return_type2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/return_type.mjs"() {
+    init_deferred();
+    init_instantiate25();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/return_type/instantiate.mjs
 function ReturnTypeOperation(type) {
@@ -4778,6 +7114,15 @@ function ReturnTypeInstantiate(context, state, type, options = {}) {
   const instantiatedType = InstantiateType(context, state, type);
   return ReturnTypeAction(instantiatedType, options);
 }
+var init_instantiate25 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/return_type/instantiate.mjs"() {
+    init_memory2();
+    init_function();
+    init_never();
+    init_return_type2();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/with.mjs
 function WithDeferred(type, options) {
@@ -4786,6 +7131,12 @@ function WithDeferred(type, options) {
 function With2(type, options) {
   return WithAction(type, options);
 }
+var init_with = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/with.mjs"() {
+    init_deferred();
+    init_instantiate26();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/with/instantiate.mjs
 function WithAction(type, options) {
@@ -4796,6 +7147,13 @@ function WithInstantiate(context, state, type, options) {
   const instaniatedType = InstantiateType(context, state, type);
   return WithAction(instaniatedType, options);
 }
+var init_instantiate26 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/with/instantiate.mjs"() {
+    init_memory2();
+    init_instantiate27();
+    init_with();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/rest/spread.mjs
 function SpreadElement(type) {
@@ -4808,6 +7166,22 @@ function RestSpread(types) {
   }, []);
   return result2;
 }
+var init_spread = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/rest/spread.mjs"() {
+    init_infer();
+    init_never();
+    init_rest();
+    init_ref();
+    init_tuple();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/rest/index.mjs
+var init_rest3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/rest/index.mjs"() {
+    init_spread();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/instantiate.mjs
 function State(callstack, visited2) {
@@ -4856,6 +7230,65 @@ function InstantiateType(context, state, type) {
 function Instantiate(context, type) {
   return InstantiateType(context, State([], []), type);
 }
+var init_instantiate27 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/instantiate.mjs"() {
+    init_guard2();
+    init_instantiate_add3();
+    init_instantiate_add();
+    init_instantiate_add2();
+    init_array();
+    init_constructor();
+    init_deferred();
+    init_function();
+    init_call();
+    init_dependent();
+    init_intersect();
+    init_object();
+    init_record();
+    init_tuple();
+    init_union();
+    init_ref();
+    init_rest();
+    init_instantiate_add3();
+    init_instantiate_remove3();
+    init_instantiate_add();
+    init_instantiate_remove();
+    init_instantiate_add2();
+    init_instantiate_remove2();
+    init_optional();
+    init_immutable();
+    init_readonly();
+    init_instantiate6();
+    init_instantiate7();
+    init_conditional2();
+    init_instantiate9();
+    init_instantiate5();
+    init_instantiate10();
+    init_instantiate11();
+    init_instantiate12();
+    init_instantiate13();
+    init_instantiate3();
+    init_instantiate14();
+    init_instantiate7();
+    init_instantiate15();
+    init_instantiate16();
+    init_instantiate17();
+    init_instantiate18();
+    init_instantiate19();
+    init_instantiate20();
+    init_instantiate21();
+    init_instantiate22();
+    init_instantiate();
+    init_instantiate23();
+    init_instantiate24();
+    init_instantiate25();
+    init_instantiate2();
+    init_instantiate7();
+    init_instantiate7();
+    init_instantiate26();
+    init_rest3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/immutable/instantiate_add.mjs
 function AddImmutableOperation(type) {
@@ -4869,6 +7302,12 @@ function AddImmutableInstantiate(context, state, type, options) {
   const instantiatedType = InstantiateType(context, state, type);
   return AddImmutableAction(instantiatedType, options);
 }
+var init_instantiate_add3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/immutable/instantiate_add.mjs"() {
+    init_memory2();
+    init_instantiate27();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_add_immutable.mjs
 function AddImmutableDeferred(type, options = {}) {
@@ -4877,6 +7316,20 @@ function AddImmutableDeferred(type, options = {}) {
 function AddImmutable(type, options = {}) {
   return AddImmutableAction(type, options);
 }
+var init_add_immutable = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_add_immutable.mjs"() {
+    init_deferred();
+    init_instantiate_add3();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_remove_immutable.mjs
+var init_remove_immutable = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/_remove_immutable.mjs"() {
+    init_deferred();
+    init_instantiate_remove3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/evaluate.mjs
 function EvaluateDeferred(type, options = {}) {
@@ -4885,6 +7338,12 @@ function EvaluateDeferred(type, options = {}) {
 function Evaluate(type, options = {}) {
   return EvaluateAction(type, options);
 }
+var init_evaluate4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/evaluate.mjs"() {
+    init_deferred();
+    init_instantiate5();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/module.mjs
 function ModuleDeferred(declarations, options = {}) {
@@ -4893,6 +7352,184 @@ function ModuleDeferred(declarations, options = {}) {
 function Module2(declarations, options = {}) {
   return ModuleInstantiate({}, State([], []), declarations, options);
 }
+var init_module = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/module.mjs"() {
+    init_deferred();
+    init_instantiate27();
+    init_instantiate16();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/index.mjs
+var init_action = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/action/index.mjs"() {
+    init_add_immutable();
+    init_add_readonly();
+    init_add_optional();
+    init_remove_immutable();
+    init_remove_readonly();
+    init_remove_optional();
+    init_capitalize();
+    init_conditional();
+    init_constructor_parameters();
+    init_evaluate4();
+    init_exclude();
+    init_extract();
+    init_indexed();
+    init_instance_type();
+    init_interface();
+    init_keyof();
+    init_lowercase();
+    init_mapped();
+    init_module();
+    init_non_nullable();
+    init_omit();
+    init_parameters2();
+    init_partial();
+    init_pick();
+    init_readonly_object();
+    init_required();
+    init_return_type2();
+    init_uncapitalize();
+    init_uppercase();
+    init_with();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/constructor_parameters/index.mjs
+var init_constructor_parameters2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/constructor_parameters/index.mjs"() {
+    init_instantiate9();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/enum/index.mjs
+var init_enum3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/enum/index.mjs"() {
+    init_typescript_enum_to_enum_values();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/exclude/index.mjs
+var init_exclude2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/exclude/index.mjs"() {
+    init_instantiate10();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/extract/index.mjs
+var init_extract2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/extract/index.mjs"() {
+    init_instantiate11();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/helpers/union.mjs
+var init_union3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/helpers/union.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/helpers/index.mjs
+var init_helpers = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/helpers/index.mjs"() {
+    init_keys_to_indexer();
+    init_keys();
+    init_union3();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/index.mjs
+var init_indexed2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/indexed/index.mjs"() {
+    init_instantiate12();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/instance_type/index.mjs
+var init_instance_type2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/instance_type/index.mjs"() {
+    init_instantiate13();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/interface/index.mjs
+var init_interface2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/interface/index.mjs"() {
+    init_instantiate3();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/index.mjs
+var init_intrinsics = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/intrinsics/index.mjs"() {
+    init_instantiate7();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/index.mjs
+var init_keyof2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/keyof/index.mjs"() {
+    init_instantiate14();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/mapped/index.mjs
+var init_mapped2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/mapped/index.mjs"() {
+    init_instantiate15();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/module/index.mjs
+var init_module2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/module/index.mjs"() {
+    init_instantiate16();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/non_nullable/index.mjs
+var init_non_nullable2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/non_nullable/index.mjs"() {
+    init_instantiate17();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/omit/index.mjs
+var init_omit2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/omit/index.mjs"() {
+    init_instantiate18();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/parameters/index.mjs
+var init_parameters3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/parameters/index.mjs"() {
+    init_instantiate19();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/patterns/index.mjs
+var init_patterns = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/patterns/index.mjs"() {
+    init_pattern();
+    init_template();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/index.mjs
+var init_partial2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/partial/index.mjs"() {
+    init_instantiate20();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/pick/index.mjs
+var init_pick2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/pick/index.mjs"() {
+    init_instantiate21();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/priority/priority.mjs
 function Comparer(left, right) {
@@ -4910,6 +7547,124 @@ function Priority(types) {
   const result2 = Sort(types);
   return result2;
 }
+var init_priority = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/priority/priority.mjs"() {
+    init_guard2();
+    init_compare();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/priority/index.mjs
+var init_priority2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/priority/index.mjs"() {
+    init_priority();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/index.mjs
+var init_readonly_object2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/readonly_object/index.mjs"() {
+    init_instantiate22();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/index.mjs
+var init_record3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/index.mjs"() {
+    init_instantiate();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/ref/index.mjs
+var init_ref2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/ref/index.mjs"() {
+    init_instantiate23();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/index.mjs
+var init_required2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/required/index.mjs"() {
+    init_instantiate24();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/return_type/index.mjs
+var init_return_type3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/return_type/index.mjs"() {
+    init_instantiate25();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/static.mjs
+var init_static2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/static.mjs"() {
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/is_pattern.mjs
+var init_is_pattern = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/is_pattern.mjs"() {
+    init_guard2();
+    init_pattern();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/index.mjs
+var init_template_literal3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/template_literal/index.mjs"() {
+    init_create2();
+    init_decode();
+    init_encode();
+    init_static2();
+    init_is_finite();
+    init_is_pattern();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/with/index.mjs
+var init_with2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/with/index.mjs"() {
+    init_instantiate26();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/index.mjs
+var init_engine = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/index.mjs"() {
+    init_instantiate27();
+    init_conditional2();
+    init_constructor_parameters2();
+    init_cyclic2();
+    init_enum3();
+    init_evaluate3();
+    init_exclude2();
+    init_extract2();
+    init_helpers();
+    init_indexed2();
+    init_instance_type2();
+    init_interface2();
+    init_intrinsics();
+    init_keyof2();
+    init_mapped2();
+    init_module2();
+    init_non_nullable2();
+    init_object3();
+    init_omit2();
+    init_parameters3();
+    init_patterns();
+    init_partial2();
+    init_pick2();
+    init_priority2();
+    init_readonly_object2();
+    init_record3();
+    init_ref2();
+    init_required2();
+    init_return_type3();
+    init_template_literal3();
+    init_with2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/script.mjs
 function Script2(...args) {
@@ -4922,6 +7677,24 @@ function Script2(...args) {
   const parsed = guard_exports.IsArray(result2) && guard_exports.IsEqual(result2.length, 2) ? InstantiateType(context, State([], []), result2[0]) : Never();
   return memory_exports.Update(parsed, {}, options);
 }
+var init_script = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/script.mjs"() {
+    init_arguments2();
+    init_memory2();
+    init_guard2();
+    init_types();
+    init_instantiate27();
+    init_instantiate27();
+    init_parser();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/index.mjs
+var init_script2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/script/index.mjs"() {
+    init_script();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/typebox.mjs
 var typebox_exports = {};
@@ -5044,11 +7817,100 @@ __export(typebox_exports, {
   Void: () => Void,
   With: () => With2
 });
+var init_typebox = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/typebox.mjs"() {
+    init_instantiate27();
+    init_extends3();
+    init_script2();
+    init_capitalize();
+    init_conditional();
+    init_constructor_parameters();
+    init_evaluate4();
+    init_exclude();
+    init_extract();
+    init_action();
+    init_instance_type();
+    init_interface();
+    init_keyof();
+    init_lowercase();
+    init_mapped();
+    init_module();
+    init_non_nullable();
+    init_omit();
+    init_parameters2();
+    init_partial();
+    init_pick();
+    init_readonly_object();
+    init_required();
+    init_return_type2();
+    init_uncapitalize();
+    init_uppercase();
+    init_with();
+    init_codec();
+    init_immutable();
+    init_optional();
+    init_readonly();
+    init_refine();
+    init_any();
+    init_array();
+    init_bigint();
+    init_boolean();
+    init_call();
+    init_constructor();
+    init_cyclic();
+    init_enum();
+    init_function();
+    init_generic();
+    init_identifier();
+    init_dependent();
+    init_infer();
+    init_integer();
+    init_intersect();
+    init_literal();
+    init_never();
+    init_null();
+    init_number();
+    init_object();
+    init_parameter();
+    init_record();
+    init_ref();
+    init_rest();
+    init_schema();
+    init_string2();
+    init_symbol();
+    init_template_literal();
+    init_this();
+    init_tuple();
+    init_undefined();
+    init_union();
+    init_unknown();
+    init_unsafe();
+    init_void();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/index.mjs
+var init_build = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/index.mjs"() {
+    init_action();
+    init_engine();
+    init_extends3();
+    init_script2();
+    init_types();
+    init_typebox();
+    init_typebox();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/_refine.mjs
 function IsRefine2(value) {
   return guard_exports.HasPropertyKey(value, "~refine") && guard_exports.IsArray(value["~refine"]) && guard_exports.Every(value["~refine"], 0, (value2) => guard_exports.IsObject(value2) && guard_exports.HasPropertyKey(value2, "check") && guard_exports.HasPropertyKey(value2, "error") && guard_exports.IsFunction(value2.check) && guard_exports.IsFunction(value2.error));
 }
+var init_refine2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/_refine.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/schema.mjs
 function IsSchemaObject(value) {
@@ -5060,106 +7922,242 @@ function IsSchemaBoolean(value) {
 function IsSchema2(value) {
   return IsSchemaObject(value) || IsSchemaBoolean(value);
 }
+var init_schema2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/schema.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/additionalItems.mjs
 function IsAdditionalItems(schema) {
   return guard_exports.HasPropertyKey(schema, "additionalItems") && IsSchema2(schema.additionalItems);
 }
+var init_additionalItems = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/additionalItems.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/additionalProperties.mjs
 function IsAdditionalProperties(schema) {
   return guard_exports.HasPropertyKey(schema, "additionalProperties") && IsSchema2(schema.additionalProperties);
 }
+var init_additionalProperties = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/additionalProperties.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/allOf.mjs
 function IsAllOf(schema) {
   return guard_exports.HasPropertyKey(schema, "allOf") && guard_exports.IsArray(schema.allOf) && schema.allOf.every((value) => IsSchema2(value));
 }
+var init_allOf = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/allOf.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/anchor.mjs
 function IsAnchor(schema) {
   return guard_exports.HasPropertyKey(schema, "$anchor") && guard_exports.IsString(schema.$anchor);
 }
+var init_anchor = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/anchor.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/anyOf.mjs
 function IsAnyOf(schema) {
   return guard_exports.HasPropertyKey(schema, "anyOf") && guard_exports.IsArray(schema.anyOf) && schema.anyOf.every((value) => IsSchema2(value));
 }
+var init_anyOf = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/anyOf.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/const.mjs
 function IsConst(value) {
   return guard_exports.HasPropertyKey(value, "const");
 }
+var init_const2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/const.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/contains.mjs
 function IsContains(schema) {
   return guard_exports.HasPropertyKey(schema, "contains") && IsSchema2(schema.contains);
 }
+var init_contains = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/contains.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/contentEncoding.mjs
+var init_contentEncoding = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/contentEncoding.mjs"() {
+    init_guard2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/contentMediaType.mjs
+var init_contentMediaType = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/contentMediaType.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/default.mjs
 function IsDefault(schema) {
   return guard_exports.HasPropertyKey(schema, "default");
 }
+var init_default = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/default.mjs"() {
+    init_guard2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/defs.mjs
+var init_defs = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/defs.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/dependencies.mjs
 function IsDependencies(schema) {
   return guard_exports.HasPropertyKey(schema, "dependencies") && guard_exports.IsObject(schema.dependencies) && Object.values(schema.dependencies).every((value) => IsSchema2(value) || guard_exports.IsArray(value) && value.every((value2) => guard_exports.IsString(value2)));
 }
+var init_dependencies2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/dependencies.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/dependentRequired.mjs
 function IsDependentRequired(schema) {
   return guard_exports.HasPropertyKey(schema, "dependentRequired") && guard_exports.IsObject(schema.dependentRequired) && Object.values(schema.dependentRequired).every((value) => guard_exports.IsArray(value) && value.every((value2) => guard_exports.IsString(value2)));
 }
+var init_dependentRequired = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/dependentRequired.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/dependentSchemas.mjs
 function IsDependentSchemas(schema) {
   return guard_exports.HasPropertyKey(schema, "dependentSchemas") && guard_exports.IsObject(schema.dependentSchemas) && Object.values(schema.dependentSchemas).every((value) => IsSchema2(value));
 }
+var init_dependentSchemas = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/dependentSchemas.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/dynamicAnchor.mjs
 function IsDynamicAnchor(schema) {
   return guard_exports.HasPropertyKey(schema, "$dynamicAnchor") && guard_exports.IsString(schema.$dynamicAnchor);
 }
+var init_dynamicAnchor = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/dynamicAnchor.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/dynamicRef.mjs
 function IsDynamicRef(schema) {
   return guard_exports.HasPropertyKey(schema, "$dynamicRef") && guard_exports.IsString(schema.$dynamicRef);
 }
+var init_dynamicRef = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/dynamicRef.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/else.mjs
 function IsElse(schema) {
   return guard_exports.HasPropertyKey(schema, "else") && IsSchema2(schema.else);
 }
+var init_else = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/else.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/enum.mjs
 function IsEnum2(schema) {
   return guard_exports.HasPropertyKey(schema, "enum") && guard_exports.IsArray(schema.enum);
 }
+var init_enum4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/enum.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/exclusiveMaximum.mjs
 function IsExclusiveMaximum(schema) {
   return guard_exports.HasPropertyKey(schema, "exclusiveMaximum") && (guard_exports.IsNumber(schema.exclusiveMaximum) || guard_exports.IsBigInt(schema.exclusiveMaximum));
 }
+var init_exclusiveMaximum = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/exclusiveMaximum.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/exclusiveMinimum.mjs
 function IsExclusiveMinimum(schema) {
   return guard_exports.HasPropertyKey(schema, "exclusiveMinimum") && (guard_exports.IsNumber(schema.exclusiveMinimum) || guard_exports.IsBigInt(schema.exclusiveMinimum));
 }
+var init_exclusiveMinimum = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/exclusiveMinimum.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/format.mjs
 function IsFormat(schema) {
   return guard_exports.HasPropertyKey(schema, "format") && guard_exports.IsString(schema.format);
 }
+var init_format = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/format.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/id.mjs
 function IsId(schema) {
   return guard_exports.HasPropertyKey(schema, "$id") && guard_exports.IsString(schema.$id);
 }
+var init_id = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/id.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/if.mjs
 function IsIf(schema) {
   return guard_exports.HasPropertyKey(schema, "if") && IsSchema2(schema.if);
 }
+var init_if = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/if.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/items.mjs
 function IsItems(schema) {
@@ -5170,96 +8168,198 @@ function IsItems(schema) {
 function IsItemsSized(schema) {
   return IsItems(schema) && guard_exports.IsArray(schema.items);
 }
+var init_items = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/items.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/maximum.mjs
 function IsMaximum(schema) {
   return guard_exports.HasPropertyKey(schema, "maximum") && (guard_exports.IsNumber(schema.maximum) || guard_exports.IsBigInt(schema.maximum));
 }
+var init_maximum = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/maximum.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/maxContains.mjs
 function IsMaxContains(schema) {
   return guard_exports.HasPropertyKey(schema, "maxContains") && guard_exports.IsNumber(schema.maxContains);
 }
+var init_maxContains = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/maxContains.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/maxItems.mjs
 function IsMaxItems(schema) {
   return guard_exports.HasPropertyKey(schema, "maxItems") && guard_exports.IsNumber(schema.maxItems);
 }
+var init_maxItems = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/maxItems.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/maxLength.mjs
 function IsMaxLength3(schema) {
   return guard_exports.HasPropertyKey(schema, "maxLength") && guard_exports.IsNumber(schema.maxLength);
 }
+var init_maxLength = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/maxLength.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/maxProperties.mjs
 function IsMaxProperties(schema) {
   return guard_exports.HasPropertyKey(schema, "maxProperties") && guard_exports.IsNumber(schema.maxProperties);
 }
+var init_maxProperties = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/maxProperties.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/minimum.mjs
 function IsMinimum(schema) {
   return guard_exports.HasPropertyKey(schema, "minimum") && (guard_exports.IsNumber(schema.minimum) || guard_exports.IsBigInt(schema.minimum));
 }
+var init_minimum = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/minimum.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/minContains.mjs
 function IsMinContains(schema) {
   return guard_exports.HasPropertyKey(schema, "minContains") && guard_exports.IsNumber(schema.minContains);
 }
+var init_minContains = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/minContains.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/minItems.mjs
 function IsMinItems(schema) {
   return guard_exports.HasPropertyKey(schema, "minItems") && guard_exports.IsNumber(schema.minItems);
 }
+var init_minItems = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/minItems.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/minLength.mjs
 function IsMinLength3(schema) {
   return guard_exports.HasPropertyKey(schema, "minLength") && guard_exports.IsNumber(schema.minLength);
 }
+var init_minLength = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/minLength.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/minProperties.mjs
 function IsMinProperties(schema) {
   return guard_exports.HasPropertyKey(schema, "minProperties") && guard_exports.IsNumber(schema.minProperties);
 }
+var init_minProperties = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/minProperties.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/multipleOf.mjs
 function IsMultipleOf2(schema) {
   return guard_exports.HasPropertyKey(schema, "multipleOf") && (guard_exports.IsNumber(schema.multipleOf) || guard_exports.IsBigInt(schema.multipleOf));
 }
+var init_multipleOf = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/multipleOf.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/not.mjs
 function IsNot(schema) {
   return guard_exports.HasPropertyKey(schema, "not") && IsSchema2(schema.not);
 }
+var init_not = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/not.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/oneOf.mjs
 function IsOneOf(schema) {
   return guard_exports.HasPropertyKey(schema, "oneOf") && guard_exports.IsArray(schema.oneOf) && schema.oneOf.every((value) => IsSchema2(value));
 }
+var init_oneOf = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/oneOf.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/pattern.mjs
 function IsPattern(schema) {
   return guard_exports.HasPropertyKey(schema, "pattern") && (guard_exports.IsString(schema.pattern) || schema.pattern instanceof RegExp);
 }
+var init_pattern2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/pattern.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/patternProperties.mjs
 function IsPatternProperties(schema) {
   return guard_exports.HasPropertyKey(schema, "patternProperties") && guard_exports.IsObject(schema.patternProperties) && Object.values(schema.patternProperties).every((value) => IsSchema2(value));
 }
+var init_patternProperties = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/patternProperties.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/prefixItems.mjs
 function IsPrefixItems(schema) {
   return guard_exports.HasPropertyKey(schema, "prefixItems") && guard_exports.IsArray(schema.prefixItems) && schema.prefixItems.every((schema2) => IsSchema2(schema2));
 }
+var init_prefixItems = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/prefixItems.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/properties.mjs
 function IsProperties(schema) {
   return guard_exports.HasPropertyKey(schema, "properties") && guard_exports.IsObject(schema.properties) && Object.values(schema.properties).every((value) => IsSchema2(value));
 }
+var init_properties2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/properties.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/propertyNames.mjs
 function IsPropertyNames(schema) {
   return guard_exports.HasPropertyKey(schema, "propertyNames") && (guard_exports.IsObject(schema.propertyNames) || IsSchema2(schema.propertyNames));
 }
+var init_propertyNames = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/propertyNames.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/recursiveAnchor.mjs
 function IsRecursiveAnchor(schema) {
@@ -5268,117 +8368,237 @@ function IsRecursiveAnchor(schema) {
 function IsRecursiveAnchorTrue(schema) {
   return IsRecursiveAnchor(schema) && guard_exports.IsEqual(schema.$recursiveAnchor, true);
 }
+var init_recursiveAnchor = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/recursiveAnchor.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/recursiveRef.mjs
 function IsRecursiveRef(schema) {
   return guard_exports.HasPropertyKey(schema, "$recursiveRef") && guard_exports.IsString(schema.$recursiveRef);
 }
+var init_recursiveRef = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/recursiveRef.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/ref.mjs
 function IsRef2(schema) {
   return guard_exports.HasPropertyKey(schema, "$ref") && guard_exports.IsString(schema.$ref);
 }
+var init_ref3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/ref.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/required.mjs
 function IsRequired(schema) {
   return guard_exports.HasPropertyKey(schema, "required") && guard_exports.IsArray(schema.required) && schema.required.every((value) => guard_exports.IsString(value));
 }
+var init_required3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/required.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/then.mjs
 function IsThen(schema) {
   return guard_exports.HasPropertyKey(schema, "then") && IsSchema2(schema.then);
 }
+var init_then = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/then.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/type.mjs
 function IsType(schema) {
   return guard_exports.HasPropertyKey(schema, "type") && (guard_exports.IsString(schema.type) || guard_exports.IsArray(schema.type) && schema.type.every((value) => guard_exports.IsString(value)));
 }
+var init_type = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/type.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/uniqueItems.mjs
 function IsUniqueItems(schema) {
   return guard_exports.HasPropertyKey(schema, "uniqueItems") && guard_exports.IsBoolean(schema.uniqueItems);
 }
+var init_uniqueItems = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/uniqueItems.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/unevaluatedItems.mjs
 function IsUnevaluatedItems(schema) {
   return guard_exports.HasPropertyKey(schema, "unevaluatedItems") && IsSchema2(schema.unevaluatedItems);
 }
+var init_unevaluatedItems = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/unevaluatedItems.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/unevaluatedProperties.mjs
 function IsUnevaluatedProperties(schema) {
   return guard_exports.HasPropertyKey(schema, "unevaluatedProperties") && IsSchema2(schema.unevaluatedProperties);
 }
+var init_unevaluatedProperties = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/unevaluatedProperties.mjs"() {
+    init_guard2();
+    init_schema2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/index.mjs
+var init_types2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/types/index.mjs"() {
+    init_refine2();
+    init_additionalItems();
+    init_additionalProperties();
+    init_allOf();
+    init_anchor();
+    init_anyOf();
+    init_const2();
+    init_contains();
+    init_contentEncoding();
+    init_contentMediaType();
+    init_default();
+    init_defs();
+    init_dependencies2();
+    init_dependentRequired();
+    init_dependentSchemas();
+    init_dynamicAnchor();
+    init_dynamicRef();
+    init_else();
+    init_enum4();
+    init_exclusiveMaximum();
+    init_exclusiveMinimum();
+    init_format();
+    init_id();
+    init_if();
+    init_items();
+    init_maximum();
+    init_maxContains();
+    init_maxItems();
+    init_maxLength();
+    init_maxProperties();
+    init_minimum();
+    init_minContains();
+    init_minItems();
+    init_minLength();
+    init_minProperties();
+    init_multipleOf();
+    init_not();
+    init_oneOf();
+    init_pattern2();
+    init_patternProperties();
+    init_prefixItems();
+    init_properties2();
+    init_propertyNames();
+    init_recursiveAnchor();
+    init_recursiveRef();
+    init_ref3();
+    init_required3();
+    init_schema2();
+    init_then();
+    init_type();
+    init_uniqueItems();
+    init_unevaluatedItems();
+    init_unevaluatedProperties();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_context.mjs
-var CheckContext = class {
-  constructor() {
-    const indices = /* @__PURE__ */ new Set();
-    const keys = /* @__PURE__ */ new Set();
-    this.stack = [{ indices, keys }];
+var CheckContext, ErrorContext, AccumulatedErrorContext;
+var init_context = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_context.mjs"() {
+    init_types2();
+    init_guard2();
+    CheckContext = class {
+      constructor() {
+        const indices = /* @__PURE__ */ new Set();
+        const keys = /* @__PURE__ */ new Set();
+        this.stack = [{ indices, keys }];
+      }
+      // ----------------------------------------------------------------
+      // Stack
+      // ----------------------------------------------------------------
+      Push() {
+        const indices = /* @__PURE__ */ new Set();
+        const keys = /* @__PURE__ */ new Set();
+        this.stack.push({ indices, keys });
+        return true;
+      }
+      Pop() {
+        this.stack.pop();
+        return true;
+      }
+      // ----------------------------------------------------------------
+      // Top
+      // ----------------------------------------------------------------
+      AddIndex(index) {
+        this.GetIndices().add(index);
+        return true;
+      }
+      AddKey(key) {
+        this.GetKeys().add(key);
+        return true;
+      }
+      GetIndices() {
+        const top = this.stack[this.stack.length - 1];
+        return top.indices;
+      }
+      GetKeys() {
+        const top = this.stack[this.stack.length - 1];
+        return top.keys;
+      }
+      Merge(results) {
+        for (const context of results) {
+          context.GetIndices().forEach((value) => this.GetIndices().add(value));
+          context.GetKeys().forEach((value) => this.GetKeys().add(value));
+        }
+        return true;
+      }
+    };
+    ErrorContext = class extends CheckContext {
+      constructor(callback) {
+        super();
+        this.callback = callback;
+      }
+      AddError(error) {
+        this.callback(error);
+        return false;
+      }
+    };
+    AccumulatedErrorContext = class extends ErrorContext {
+      constructor() {
+        super((error) => this.errors.push(error));
+        this.errors = [];
+      }
+      AddError(error) {
+        this.errors.push(error);
+        return false;
+      }
+      GetErrors() {
+        return this.errors;
+      }
+    };
   }
-  // ----------------------------------------------------------------
-  // Stack
-  // ----------------------------------------------------------------
-  Push() {
-    const indices = /* @__PURE__ */ new Set();
-    const keys = /* @__PURE__ */ new Set();
-    this.stack.push({ indices, keys });
-    return true;
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_externals.mjs
+var init_externals = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_externals.mjs"() {
   }
-  Pop() {
-    this.stack.pop();
-    return true;
-  }
-  // ----------------------------------------------------------------
-  // Top
-  // ----------------------------------------------------------------
-  AddIndex(index) {
-    this.GetIndices().add(index);
-    return true;
-  }
-  AddKey(key) {
-    this.GetKeys().add(key);
-    return true;
-  }
-  GetIndices() {
-    const top = this.stack[this.stack.length - 1];
-    return top.indices;
-  }
-  GetKeys() {
-    const top = this.stack[this.stack.length - 1];
-    return top.keys;
-  }
-  Merge(results) {
-    for (const context of results) {
-      context.GetIndices().forEach((value) => this.GetIndices().add(value));
-      context.GetKeys().forEach((value) => this.GetKeys().add(value));
-    }
-    return true;
-  }
-};
-var ErrorContext = class extends CheckContext {
-  constructor(callback) {
-    super();
-    this.callback = callback;
-  }
-  AddError(error) {
-    this.callback(error);
-    return false;
-  }
-};
-var AccumulatedErrorContext = class extends ErrorContext {
-  constructor() {
-    super((error) => this.errors.push(error));
-    this.errors = [];
-  }
-  AddError(error) {
-    this.errors.push(error);
-    return false;
-  }
-  GetErrors() {
-    return this.errors;
-  }
-};
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_refine.mjs
 function CheckRefine(_stack, _context, schema, value) {
@@ -5394,6 +8614,18 @@ function ErrorRefine(_stack, context, schemaPath, instancePath, schema, value) {
     });
   });
 }
+var init_refine3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_refine.mjs"() {
+    init_externals();
+    init_guard2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_unique.mjs
+var init_unique = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_unique.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/additionalItems.mjs
 function IsValid(schema) {
@@ -5417,6 +8649,14 @@ function ErrorAdditionalItems(stack, context, schemaPath, instancePath, schema, 
   });
   return isAdditionalItems;
 }
+var init_additionalItems2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/additionalItems.mjs"() {
+    init_types2();
+    init_unique();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/additionalProperties.mjs
 function GetPropertyKeyAsPattern(key) {
@@ -5457,6 +8697,24 @@ function ErrorAdditionalProperties(stack, context, schemaPath, instancePath, sch
     params: { additionalProperties }
   });
 }
+var init_additionalProperties2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/additionalProperties.mjs"() {
+    init_types2();
+    init_externals();
+    init_unique();
+    init_context();
+    init_guard2();
+    init_schema3();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_reducer.mjs
+var init_reducer = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_reducer.mjs"() {
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/allOf.mjs
 function CheckAllOf(stack, context, schema, value) {
@@ -5481,6 +8739,14 @@ function ErrorAllOf(stack, context, schemaPath, instancePath, schema, value) {
     failedContexts.forEach((failed) => failed.GetErrors().forEach((error) => context.AddError(error)));
   return isAllOf;
 }
+var init_allOf2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/allOf.mjs"() {
+    init_context();
+    init_reducer();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/anyOf.mjs
 function CheckAnyOf(stack, context, schema, value) {
@@ -5510,6 +8776,14 @@ function ErrorAnyOf(stack, context, schemaPath, instancePath, schema, value) {
     params: {}
   });
 }
+var init_anyOf2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/anyOf.mjs"() {
+    init_context();
+    init_reducer();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/boolean.mjs
 function CheckSchemaBoolean(_stack, _context, schema, _value) {
@@ -5523,6 +8797,11 @@ function ErrorSchemaBoolean(stack, context, schemaPath, instancePath, schema, va
     params: {}
   });
 }
+var init_boolean3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/boolean.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/const.mjs
 function CheckConst(_stack, _context, schema, value) {
@@ -5536,6 +8815,12 @@ function ErrorConst(stack, context, schemaPath, instancePath, schema, value) {
     params: { allowedValue: schema.const }
   });
 }
+var init_const3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/const.mjs"() {
+    init_externals();
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/contains.mjs
 function IsValid2(schema) {
@@ -5556,6 +8841,14 @@ function ErrorContains(stack, context, schemaPath, instancePath, schema, value) 
     params: { minContains: 1 }
   });
 }
+var init_contains2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/contains.mjs"() {
+    init_types2();
+    init_unique();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/dependencies.mjs
 function CheckDependencies(stack, context, schema, value) {
@@ -5578,6 +8871,12 @@ function ErrorDependencies(stack, context, schemaPath, instancePath, schema, val
   });
   return isLength || isEvery;
 }
+var init_dependencies3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/dependencies.mjs"() {
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/dependentRequired.mjs
 function CheckDependentRequired(_stack, _context, schema, value) {
@@ -5599,6 +8898,11 @@ function ErrorDependentRequired(_stack, context, schemaPath, instancePath, schem
   });
   return isLength || isEveryEntry;
 }
+var init_dependentRequired2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/dependentRequired.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/dependentSchemas.mjs
 function CheckDependentSchemas(stack, context, schema, value) {
@@ -5616,6 +8920,12 @@ function ErrorDependentSchemas(stack, context, schemaPath, instancePath, schema,
   });
   return isLength || isEvery;
 }
+var init_dependentSchemas2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/dependentSchemas.mjs"() {
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/dynamicRef.mjs
 function CheckDynamicRef(stack, context, schema, value) {
@@ -5626,6 +8936,13 @@ function ErrorDynamicRef(stack, context, _schemaPath, instancePath, schema, valu
   const target = stack.DynamicRef(schema) ?? false;
   return IsSchema2(target) && ErrorSchema(stack, context, "#", instancePath, target, value);
 }
+var init_dynamicRef2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/dynamicRef.mjs"() {
+    init_functions();
+    init_types2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/enum.mjs
 function CheckEnum(_stack, _context, schema, value) {
@@ -5639,6 +8956,12 @@ function ErrorEnum(stack, context, schemaPath, instancePath, schema, value) {
     params: { allowedValues: schema.enum }
   });
 }
+var init_enum5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/enum.mjs"() {
+    init_externals();
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/exclusiveMaximum.mjs
 function CheckExclusiveMaximum(_stack, _context, schema, value) {
@@ -5652,6 +8975,11 @@ function ErrorExclusiveMaximum(stack, context, schemaPath, instancePath, schema,
     params: { comparison: "<", limit: schema.exclusiveMaximum }
   });
 }
+var init_exclusiveMaximum2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/exclusiveMaximum.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/exclusiveMinimum.mjs
 function CheckExclusiveMinimum(_stack, _context, schema, value) {
@@ -5665,43 +8993,13 @@ function ErrorExclusiveMinimum(stack, context, schemaPath, instancePath, schema,
     params: { comparison: ">", limit: schema.exclusiveMinimum }
   });
 }
-
-// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/format.mjs
-var format_exports = {};
-__export(format_exports, {
-  Clear: () => Clear,
-  Entries: () => Entries2,
-  Get: () => Get3,
-  Has: () => Has,
-  IsDate: () => IsDate2,
-  IsDateTime: () => IsDateTime,
-  IsDuration: () => IsDuration,
-  IsEmail: () => IsEmail,
-  IsHostname: () => IsHostname,
-  IsIPv4: () => IsIPv4,
-  IsIPv6: () => IsIPv6,
-  IsIdnEmail: () => IsIdnEmail,
-  IsIdnHostname: () => IsIdnHostname,
-  IsIri: () => IsIri,
-  IsIriReference: () => IsIriReference,
-  IsJsonPointer: () => IsJsonPointer,
-  IsJsonPointerUriFragment: () => IsJsonPointerUriFragment,
-  IsRegex: () => IsRegex,
-  IsRelativeJsonPointer: () => IsRelativeJsonPointer,
-  IsTime: () => IsTime,
-  IsUri: () => IsUri,
-  IsUriReference: () => IsUriReference,
-  IsUriTemplate: () => IsUriTemplate,
-  IsUrl: () => IsUrl,
-  IsUuid: () => IsUuid,
-  Reset: () => Reset2,
-  Set: () => Set3,
-  Test: () => Test
+var init_exclusiveMinimum2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/exclusiveMinimum.mjs"() {
+    init_guard2();
+  }
 });
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/date.mjs
-var DAYS = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-var DATE = /^(\d\d\d\d)-(\d\d)-(\d\d)$/;
 function IsLeapYear(year) {
   return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
 }
@@ -5714,9 +9012,15 @@ function IsDate2(value) {
   const day = +matches[3];
   return month >= 1 && month <= 12 && day >= 1 && day <= (month === 2 && IsLeapYear(year) ? 29 : DAYS[month]);
 }
+var DAYS, DATE;
+var init_date = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/date.mjs"() {
+    DAYS = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    DATE = /^(\d\d\d\d)-(\d\d)-(\d\d)$/;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/time.mjs
-var TIME = /^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(?:Z|([+-])(\d\d):(\d\d))?$/i;
 function IsTime(value, strictTimeZone = true) {
   const matches = TIME.exec(value);
   if (!matches)
@@ -5738,33 +9042,48 @@ function IsTime(value, strictTimeZone = true) {
   const utcHr = hr - tzH * tzSign - (utcMin < 0 ? 1 : 0);
   return (utcHr === 23 || utcHr === -1) && (utcMin === 59 || utcMin === -1) && sec < 61;
 }
+var TIME;
+var init_time = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/time.mjs"() {
+    TIME = /^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(?:Z|([+-])(\d\d):(\d\d))?$/i;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/date_time.mjs
 function IsDateTime(value, strictTimeZone = true) {
   const dateTime = value.split(/T/i);
   return dateTime.length === 2 && IsDate2(dateTime[0]) && IsTime(dateTime[1], strictTimeZone);
 }
+var init_date_time = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/date_time.mjs"() {
+    init_date();
+    init_time();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/duration.mjs
-var Duration = /^P((\d+Y(\d+M(\d+D)?)?|\d+M(\d+D)?|\d+D)(T(\d+H(\d+M(\d+S)?)?|\d+M(\d+S)?|\d+S))?|T(\d+H(\d+M(\d+S)?)?|\d+M(\d+S)?|\d+S)|\d+W)$/;
 function IsDuration(value) {
   return Duration.test(value);
 }
+var Duration;
+var init_duration = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/duration.mjs"() {
+    Duration = /^P((\d+Y(\d+M(\d+D)?)?|\d+M(\d+D)?|\d+D)(T(\d+H(\d+M(\d+S)?)?|\d+M(\d+S)?|\d+S))?|T(\d+H(\d+M(\d+S)?)?|\d+M(\d+S)?|\d+S)|\d+W)$/;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/email.mjs
-var Email = /^(?!.*\.\.)[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
 function IsEmail(value) {
   return Email.test(value);
 }
+var Email;
+var init_email = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/email.mjs"() {
+    Email = /^(?!.*\.\.)[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/_puny.mjs
-var PUNYCODE_BASE = 36;
-var PUNYCODE_TMIN = 1;
-var PUNYCODE_TMAX = 26;
-var PUNYCODE_SKEW = 38;
-var PUNYCODE_DAMP = 700;
-var PUNYCODE_INITIAL_BIAS = 72;
-var PUNYCODE_INITIAL_N = 128;
 function Adapt(delta, numPoints, firstTime) {
   delta = firstTime ? Math.floor(delta / PUNYCODE_DAMP) : delta >> 1;
   delta += Math.floor(delta / numPoints);
@@ -5823,6 +9142,19 @@ function Decode2(value) {
   }
   return globalThis.String.fromCodePoint(...output);
 }
+var PUNYCODE_BASE, PUNYCODE_TMIN, PUNYCODE_TMAX, PUNYCODE_SKEW, PUNYCODE_DAMP, PUNYCODE_INITIAL_BIAS, PUNYCODE_INITIAL_N;
+var init_puny = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/_puny.mjs"() {
+    init_unreachable2();
+    PUNYCODE_BASE = 36;
+    PUNYCODE_TMIN = 1;
+    PUNYCODE_TMAX = 26;
+    PUNYCODE_SKEW = 38;
+    PUNYCODE_DAMP = 700;
+    PUNYCODE_INITIAL_BIAS = 72;
+    PUNYCODE_INITIAL_N = 128;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/_idna.mjs
 function IsNonspacingMark(cp) {
@@ -5837,62 +9169,6 @@ function IsEnclosingMark(cp) {
 function IsCombiningMark2(cp) {
   return IsNonspacingMark(cp) || IsSpacingCombiningMark(cp) || IsEnclosingMark(cp);
 }
-var RFC5892_DISALLOWED = /* @__PURE__ */ new Set([
-  1600,
-  // ARABIC TATWEEL
-  2042,
-  // NKO LAJANYALAN
-  12334,
-  // HANGUL SINGLE DOT TONE MARK
-  12335,
-  // HANGUL DOUBLE DOT TONE MARK
-  12337,
-  // VERTICAL KANA REPEAT MARK
-  12338,
-  // VERTICAL KANA REPEAT WITH VOICED ITERATION MARK
-  12339,
-  // VERTICAL KANA REPEAT MARK UPPER HALF
-  12340,
-  // VERTICAL KANA REPEAT WITH VOICED ITERATION MARK UPPER HALF
-  12341,
-  // VERTICAL KANA REPEAT MARK LOWER HALF
-  12347
-  // VERTICAL IDEOGRAPHIC ITERATION MARK
-]);
-var VIRAMA_CPS = /* @__PURE__ */ new Set([
-  2381,
-  2509,
-  2637,
-  2765,
-  2893,
-  3021,
-  3149,
-  3277,
-  3387,
-  3388,
-  3405,
-  3530,
-  6980,
-  7082,
-  7083,
-  43456,
-  69702,
-  69759,
-  69817,
-  69939,
-  69940,
-  70080,
-  70197,
-  70477,
-  70722,
-  70850,
-  71103,
-  71231,
-  71350,
-  72767,
-  73028,
-  73029
-]);
 function IsGreek(cp) {
   return new RegExp("\\p{Script=Greek}", "u").test(String.fromCodePoint(cp));
 }
@@ -6020,6 +9296,69 @@ function IsLabel(value) {
     return false;
   return IsPuny(value) ? IsPunyLabel(value) : IsAsciiLabel(value);
 }
+var RFC5892_DISALLOWED, VIRAMA_CPS;
+var init_idna = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/_idna.mjs"() {
+    init_unreachable2();
+    init_puny();
+    RFC5892_DISALLOWED = /* @__PURE__ */ new Set([
+      1600,
+      // ARABIC TATWEEL
+      2042,
+      // NKO LAJANYALAN
+      12334,
+      // HANGUL SINGLE DOT TONE MARK
+      12335,
+      // HANGUL DOUBLE DOT TONE MARK
+      12337,
+      // VERTICAL KANA REPEAT MARK
+      12338,
+      // VERTICAL KANA REPEAT WITH VOICED ITERATION MARK
+      12339,
+      // VERTICAL KANA REPEAT MARK UPPER HALF
+      12340,
+      // VERTICAL KANA REPEAT WITH VOICED ITERATION MARK UPPER HALF
+      12341,
+      // VERTICAL KANA REPEAT MARK LOWER HALF
+      12347
+      // VERTICAL IDEOGRAPHIC ITERATION MARK
+    ]);
+    VIRAMA_CPS = /* @__PURE__ */ new Set([
+      2381,
+      2509,
+      2637,
+      2765,
+      2893,
+      3021,
+      3149,
+      3277,
+      3387,
+      3388,
+      3405,
+      3530,
+      6980,
+      7082,
+      7083,
+      43456,
+      69702,
+      69759,
+      69817,
+      69939,
+      69940,
+      70080,
+      70197,
+      70477,
+      70722,
+      70850,
+      71103,
+      71231,
+      71350,
+      72767,
+      73028,
+      73029
+    ]);
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/hostname.mjs
 function IsHostname(value) {
@@ -6033,12 +9372,22 @@ function IsHostname(value) {
   }
   return true;
 }
+var init_hostname = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/hostname.mjs"() {
+    init_idna();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/idn_email.mjs
-var IdnEmail = /^(?!.*\.\.)[\p{L}\p{N}!#$%&'*+/=?^_`{|}~-]+(?:\.[\p{L}\p{N}!#$%&'*+/=?^_`{|}~-]+)*@[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?)*$/iu;
 function IsIdnEmail(value) {
   return IdnEmail.test(value);
 }
+var IdnEmail;
+var init_idn_email = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/idn_email.mjs"() {
+    IdnEmail = /^(?!.*\.\.)[\p{L}\p{N}!#$%&'*+/=?^_`{|}~-]+(?:\.[\p{L}\p{N}!#$%&'*+/=?^_`{|}~-]+)*@[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?)*$/iu;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/idn_hostname.mjs
 function IsIdnHostname(value) {
@@ -6053,6 +9402,11 @@ function IsIdnHostname(value) {
   }
   return true;
 }
+var init_idn_hostname = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/idn_hostname.mjs"() {
+    init_idna();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/ipv4.mjs
 function IsIPv4Internal(value, start, end) {
@@ -6083,6 +9437,10 @@ function IsIPv4Internal(value, start, end) {
 function IsIPv4(value) {
   return IsIPv4Internal(value, 0, value.length);
 }
+var init_ipv4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/ipv4.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/ipv6.mjs
 function InRange(ch) {
@@ -6141,6 +9499,11 @@ function IsIPv6(value) {
   }
   return compressed ? groups <= 7 : groups === 8;
 }
+var init_ipv6 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/ipv6.mjs"() {
+    init_ipv4();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/iri_reference.mjs
 function TryUrl(value) {
@@ -6180,6 +9543,10 @@ function IsIriReference(value) {
     return TryUrl(value);
   }
 }
+var init_iri_reference = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/iri_reference.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/iri.mjs
 function IsIri(value) {
@@ -6190,18 +9557,32 @@ function IsIri(value) {
     return false;
   }
 }
+var init_iri = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/iri.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/json_pointer_uri_fragment.mjs
-var JsonPointerUriFragment = /^#(?:\/(?:[a-z0-9_\-.!$&'()*+,;:=@]|%[0-9a-f]{2}|~0|~1)*)*$/i;
 function IsJsonPointerUriFragment(value) {
   return JsonPointerUriFragment.test(value);
 }
+var JsonPointerUriFragment;
+var init_json_pointer_uri_fragment = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/json_pointer_uri_fragment.mjs"() {
+    JsonPointerUriFragment = /^#(?:\/(?:[a-z0-9_\-.!$&'()*+,;:=@]|%[0-9a-f]{2}|~0|~1)*)*$/i;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/json_pointer.mjs
-var JsonPointer = /^(?:\/(?:[^~/]|~0|~1)*)*$/;
 function IsJsonPointer(value) {
   return JsonPointer.test(value);
 }
+var JsonPointer;
+var init_json_pointer = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/json_pointer.mjs"() {
+    JsonPointer = /^(?:\/(?:[^~/]|~0|~1)*)*$/;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/regex.mjs
 function IsRegex(value) {
@@ -6215,24 +9596,43 @@ function IsRegex(value) {
     return false;
   }
 }
+var init_regex = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/regex.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/relative_json_pointer.mjs
-var RelativeJsonPointer = /^(?:0|[1-9][0-9]*)(?:#|(?:\/(?:[^~/]|~0|~1)*)*)$/;
 function IsRelativeJsonPointer(value) {
   return RelativeJsonPointer.test(value);
 }
+var RelativeJsonPointer;
+var init_relative_json_pointer = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/relative_json_pointer.mjs"() {
+    RelativeJsonPointer = /^(?:0|[1-9][0-9]*)(?:#|(?:\/(?:[^~/]|~0|~1)*)*)$/;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/uri_reference.mjs
-var UriReference = /^(?!.*[^\x00-\x7F])(?!.*\\)(?:(?:[a-z][a-z0-9+\-.]*:)?(?:\/\/[^\s[\]{}<>^`|]*)?|[^\s[\]{}<>^`|]*)(?:\?[^\s[\]{}<>^`|]*)?(?:#[^\s[\]{}<>^`|]*)?$/i;
 function IsUriReference(value) {
   return UriReference.test(value);
 }
+var UriReference;
+var init_uri_reference = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/uri_reference.mjs"() {
+    UriReference = /^(?!.*[^\x00-\x7F])(?!.*\\)(?:(?:[a-z][a-z0-9+\-.]*:)?(?:\/\/[^\s[\]{}<>^`|]*)?|[^\s[\]{}<>^`|]*)(?:\?[^\s[\]{}<>^`|]*)?(?:#[^\s[\]{}<>^`|]*)?$/i;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/uri_template.mjs
-var UriTemplate = /^(?:(?:[^\x00-\x20"'<>%\\^`{|}]|%[0-9a-f]{2})|\{[+#./;?&=,!@|]?(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?(?:,(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?)*\})*$/i;
 function IsUriTemplate(value) {
   return UriTemplate.test(value);
 }
+var UriTemplate;
+var init_uri_template = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/uri_template.mjs"() {
+    UriTemplate = /^(?:(?:[^\x00-\x20"'<>%\\^`{|}]|%[0-9a-f]{2})|\{[+#./;?&=,!@|]?(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?(?:,(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?)*\})*$/i;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/uri.mjs
 function IsAlpha(ch) {
@@ -6348,21 +9748,34 @@ function IsUri(value) {
   }
   return true;
 }
+var init_uri = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/uri.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/url.mjs
-var Url = /^(?:https?|ftp):\/\/(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z0-9\u{00a1}-\u{ffff}]+-)*[a-z0-9\u{00a1}-\u{ffff}]+)(?:\.(?:[a-z0-9\u{00a1}-\u{ffff}]+-)*[a-z0-9\u{00a1}-\u{ffff}]+)*(?:\.(?:[a-z\u{00a1}-\u{ffff}]{2,})))(?::\d{2,5})?(?:\/[^\s]*)?$/iu;
 function IsUrl(value) {
   return Url.test(value);
 }
+var Url;
+var init_url = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/url.mjs"() {
+    Url = /^(?:https?|ftp):\/\/(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z0-9\u{00a1}-\u{ffff}]+-)*[a-z0-9\u{00a1}-\u{ffff}]+)(?:\.(?:[a-z0-9\u{00a1}-\u{ffff}]+-)*[a-z0-9\u{00a1}-\u{ffff}]+)*(?:\.(?:[a-z\u{00a1}-\u{ffff}]{2,})))(?::\d{2,5})?(?:\/[^\s]*)?$/iu;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/uuid.mjs
-var Uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 function IsUuid(value) {
   return Uuid.test(value);
 }
+var Uuid;
+var init_uuid = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/uuid.mjs"() {
+    Uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/_registry.mjs
-var formats = /* @__PURE__ */ new Map();
 function Clear() {
   formats.clear();
 }
@@ -6405,7 +9818,102 @@ function Reset2() {
   formats.set("url", IsUrl);
   formats.set("uuid", IsUuid);
 }
-Reset2();
+var formats;
+var init_registry = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/_registry.mjs"() {
+    init_date_time();
+    init_date();
+    init_duration();
+    init_email();
+    init_hostname();
+    init_idn_email();
+    init_idn_hostname();
+    init_ipv4();
+    init_ipv6();
+    init_iri_reference();
+    init_iri();
+    init_json_pointer_uri_fragment();
+    init_json_pointer();
+    init_regex();
+    init_relative_json_pointer();
+    init_time();
+    init_uri_reference();
+    init_uri_template();
+    init_uri();
+    init_url();
+    init_uuid();
+    formats = /* @__PURE__ */ new Map();
+    Reset2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/format.mjs
+var format_exports = {};
+__export(format_exports, {
+  Clear: () => Clear,
+  Entries: () => Entries2,
+  Get: () => Get3,
+  Has: () => Has,
+  IsDate: () => IsDate2,
+  IsDateTime: () => IsDateTime,
+  IsDuration: () => IsDuration,
+  IsEmail: () => IsEmail,
+  IsHostname: () => IsHostname,
+  IsIPv4: () => IsIPv4,
+  IsIPv6: () => IsIPv6,
+  IsIdnEmail: () => IsIdnEmail,
+  IsIdnHostname: () => IsIdnHostname,
+  IsIri: () => IsIri,
+  IsIriReference: () => IsIriReference,
+  IsJsonPointer: () => IsJsonPointer,
+  IsJsonPointerUriFragment: () => IsJsonPointerUriFragment,
+  IsRegex: () => IsRegex,
+  IsRelativeJsonPointer: () => IsRelativeJsonPointer,
+  IsTime: () => IsTime,
+  IsUri: () => IsUri,
+  IsUriReference: () => IsUriReference,
+  IsUriTemplate: () => IsUriTemplate,
+  IsUrl: () => IsUrl,
+  IsUuid: () => IsUuid,
+  Reset: () => Reset2,
+  Set: () => Set3,
+  Test: () => Test
+});
+var init_format2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/format.mjs"() {
+    init_registry();
+    init_date_time();
+    init_date();
+    init_duration();
+    init_email();
+    init_hostname();
+    init_idn_email();
+    init_idn_hostname();
+    init_ipv4();
+    init_ipv6();
+    init_iri_reference();
+    init_iri();
+    init_json_pointer_uri_fragment();
+    init_json_pointer();
+    init_regex();
+    init_relative_json_pointer();
+    init_time();
+    init_uri_reference();
+    init_uri_template();
+    init_uri();
+    init_url();
+    init_uuid();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/index.mjs
+var init_format3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/format/index.mjs"() {
+    init_format2();
+    init_format2();
+    init_format2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/format.mjs
 function CheckFormat(_stack, _context, schema, value) {
@@ -6419,6 +9927,12 @@ function ErrorFormat(stack, context, schemaPath, instancePath, schema, value) {
     params: { format: schema.format }
   });
 }
+var init_format4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/format.mjs"() {
+    init_format3();
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/if.mjs
 function CheckIf(stack, context, schema, value) {
@@ -6445,6 +9959,14 @@ function ErrorIf(stack, context, schemaPath, instancePath, schema, value) {
     context.Merge([trueContext]);
   return isIf;
 }
+var init_if2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/if.mjs"() {
+    init_types2();
+    init_context();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/items.mjs
 function CheckItemsSized(stack, context, schema, value) {
@@ -6479,6 +10001,13 @@ function CheckItems(stack, context, schema, value) {
 function ErrorItems(stack, context, schemaPath, instancePath, schema, value) {
   return IsItemsSized(schema) ? ErrorItemsSized(stack, context, schemaPath, instancePath, schema, value) : ErrorItemsUnsized(stack, context, schemaPath, instancePath, schema, value);
 }
+var init_items2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/items.mjs"() {
+    init_types2();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/maxContains.mjs
 function IsValid3(schema) {
@@ -6499,6 +10028,14 @@ function ErrorMaxContains(stack, context, schemaPath, instancePath, schema, valu
     params: { minContains, maxContains: schema.maxContains }
   });
 }
+var init_maxContains2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/maxContains.mjs"() {
+    init_types2();
+    init_unique();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/maximum.mjs
 function CheckMaximum(_stack, _context, schema, value) {
@@ -6512,6 +10049,11 @@ function ErrorMaximum(stack, context, schemaPath, instancePath, schema, value) {
     params: { comparison: "<=", limit: schema.maximum }
   });
 }
+var init_maximum2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/maximum.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/maxItems.mjs
 function CheckMaxItems(_stack, _context, schema, value) {
@@ -6525,6 +10067,11 @@ function ErrorMaxItems(stack, context, schemaPath, instancePath, schema, value) 
     params: { limit: schema.maxItems }
   });
 }
+var init_maxItems2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/maxItems.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/maxLength.mjs
 function CheckMaxLength(_stack, _context, schema, value) {
@@ -6538,6 +10085,11 @@ function ErrorMaxLength(stack, context, schemaPath, instancePath, schema, value)
     params: { limit: schema.maxLength }
   });
 }
+var init_maxLength2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/maxLength.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/maxProperties.mjs
 function CheckMaxProperties(_stack, _context, schema, value) {
@@ -6551,6 +10103,11 @@ function ErrorMaxProperties(stack, context, schemaPath, instancePath, schema, va
     params: { limit: schema.maxProperties }
   });
 }
+var init_maxProperties2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/maxProperties.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/minContains.mjs
 function IsValid4(schema) {
@@ -6570,6 +10127,14 @@ function ErrorMinContains(stack, context, schemaPath, instancePath, schema, valu
     params: { minContains: schema.minContains }
   });
 }
+var init_minContains2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/minContains.mjs"() {
+    init_types2();
+    init_unique();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/minimum.mjs
 function CheckMinimum(_stack, _context, schema, value) {
@@ -6583,6 +10148,11 @@ function ErrorMinimum(stack, context, schemaPath, instancePath, schema, value) {
     params: { comparison: ">=", limit: schema.minimum }
   });
 }
+var init_minimum2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/minimum.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/minItems.mjs
 function CheckMinItems(_stack, _context, schema, value) {
@@ -6596,6 +10166,11 @@ function ErrorMinItems(stack, context, schemaPath, instancePath, schema, value) 
     params: { limit: schema.minItems }
   });
 }
+var init_minItems2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/minItems.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/minLength.mjs
 function CheckMinLength(_stack, _context, schema, value) {
@@ -6609,6 +10184,11 @@ function ErrorMinLength(stack, context, schemaPath, instancePath, schema, value)
     params: { limit: schema.minLength }
   });
 }
+var init_minLength2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/minLength.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/minProperties.mjs
 function CheckMinProperties(_stack, _context, schema, value) {
@@ -6622,6 +10202,11 @@ function ErrorMinProperties(stack, context, schemaPath, instancePath, schema, va
     params: { limit: schema.minProperties }
   });
 }
+var init_minProperties2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/minProperties.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/multipleOf.mjs
 function CheckMultipleOf(_stack, _context, schema, value) {
@@ -6635,6 +10220,11 @@ function ErrorMultipleOf(stack, context, schemaPath, instancePath, schema, value
     params: { multipleOf: schema.multipleOf }
   });
 }
+var init_multipleOf2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/multipleOf.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/not.mjs
 function CheckNot(stack, context, schema, value) {
@@ -6651,6 +10241,14 @@ function ErrorNot(stack, context, schemaPath, instancePath, schema, value) {
     params: {}
   });
 }
+var init_not2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/not.mjs"() {
+    init_context();
+    init_reducer();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/oneOf.mjs
 function CheckOneOf(stack, context, schema, value) {
@@ -6683,6 +10281,15 @@ function ErrorOneOf(stack, context, schemaPath, instancePath, schema, value) {
     params: { passingSchemas }
   });
 }
+var init_oneOf2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/oneOf.mjs"() {
+    init_context();
+    init_reducer();
+    init_guard2();
+    init_schema3();
+    init_unique();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/pattern.mjs
 function CheckPattern(_stack, _context, schema, value) {
@@ -6697,6 +10304,12 @@ function ErrorPattern(stack, context, schemaPath, instancePath, schema, value) {
     params: { pattern: schema.pattern }
   });
 }
+var init_pattern3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/pattern.mjs"() {
+    init_externals();
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/patternProperties.mjs
 function CheckPatternProperties(stack, context, schema, value) {
@@ -6718,6 +10331,14 @@ function ErrorPatternProperties(stack, context, schemaPath, instancePath, schema
     });
   });
 }
+var init_patternProperties2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/patternProperties.mjs"() {
+    init_externals();
+    init_unique();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/prefixItems.mjs
 function CheckPrefixItems(stack, context, schema, value) {
@@ -6732,6 +10353,12 @@ function ErrorPrefixItems(stack, context, schemaPath, instancePath, schema, valu
     return guard_exports.IsLessEqualThan(value.length, index) || ErrorSchemaPushStack(stack, context, nextSchemaPath, nextInstancePath, schema2, value[index]) && context.AddIndex(index);
   });
 }
+var init_prefixItems2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/prefixItems.mjs"() {
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_exact_optional.mjs
 function IsExactOptional(required, key) {
@@ -6740,6 +10367,12 @@ function IsExactOptional(required, key) {
 function InexactOptionalCheck(value, key) {
   return guard_exports.IsUndefined(value[key]);
 }
+var init_exact_optional = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_exact_optional.mjs"() {
+    init_settings2();
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/properties.mjs
 function CheckProperties(stack, context, schema, value) {
@@ -6760,6 +10393,14 @@ function ErrorProperties(stack, context, schemaPath, instancePath, schema, value
   });
   return isProperties;
 }
+var init_properties3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/properties.mjs"() {
+    init_types2();
+    init_guard2();
+    init_schema3();
+    init_exact_optional();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/propertyNames.mjs
 function CheckPropertyNames(stack, context, schema, value) {
@@ -6783,6 +10424,14 @@ function ErrorPropertyNames(stack, context, schemaPath, instancePath, schema, va
     params: { propertyNames }
   });
 }
+var init_propertyNames2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/propertyNames.mjs"() {
+    init_unique();
+    init_context();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/recursiveRef.mjs
 function CheckRecursiveRef(stack, context, schema, value) {
@@ -6793,6 +10442,13 @@ function ErrorRecursiveRef(stack, context, _schemaPath, instancePath, schema, va
   const target = stack.RecursiveRef(schema) ?? false;
   return IsSchema2(target) && ErrorSchema(stack, context, "#", instancePath, target, value);
 }
+var init_recursiveRef2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/recursiveRef.mjs"() {
+    init_functions();
+    init_types2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/ref.mjs
 function CheckRef(stack, context, schema, value) {
@@ -6813,6 +10469,15 @@ function ErrorRef(stack, context, _schemaPath, instancePath, schema, value) {
     nextContext.GetErrors().forEach((error) => context.AddError(error));
   return result2;
 }
+var init_ref4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/ref.mjs"() {
+    init_functions();
+    init_types2();
+    init_context();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/required.mjs
 function CheckRequired(_stack, _context, schema, value) {
@@ -6833,6 +10498,11 @@ function ErrorRequired(_stack, context, schemaPath, instancePath, schema, value)
     params: { requiredProperties }
   });
 }
+var init_required4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/required.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/type.mjs
 function CheckTypeName(_stack, _context, type, _schema, value) {
@@ -6859,6 +10529,11 @@ function ErrorType(stack, context, schemaPath, instancePath, schema, value) {
     params: { type: schema.type }
   });
 }
+var init_type2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/type.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/unevaluatedItems.mjs
 function CheckUnevaluatedItems(stack, context, schema, value) {
@@ -6884,6 +10559,14 @@ function ErrorUnevaluatedItems(stack, context, schemaPath, instancePath, schema,
     params: { unevaluatedItems }
   });
 }
+var init_unevaluatedItems2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/unevaluatedItems.mjs"() {
+    init_unique();
+    init_context();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/unevaluatedProperties.mjs
 function CheckUnevaluatedProperties(stack, context, schema, value) {
@@ -6909,6 +10592,14 @@ function ErrorUnevaluatedProperties(stack, context, schemaPath, instancePath, sc
     params: { unevaluatedProperties }
   });
 }
+var init_unevaluatedProperties2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/unevaluatedProperties.mjs"() {
+    init_unique();
+    init_context();
+    init_guard2();
+    init_schema3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/uniqueItems.mjs
 function IsValid5(schema) {
@@ -6940,6 +10631,12 @@ function ErrorUniqueItems(_stack, context, schemaPath, instancePath, schema, val
     params: { duplicateItems }
   });
 }
+var init_uniqueItems2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/uniqueItems.mjs"() {
+    init_hashing();
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/schema.mjs
 function CheckSchemaPushStack(stack, context, schema, value) {
@@ -6960,12 +10657,68 @@ function ErrorSchema(stack, context, schemaPath, instancePath, schema, value) {
   stack.Pop(schema);
   return result2;
 }
+var init_schema3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/schema.mjs"() {
+    init_types2();
+    init_refine3();
+    init_guard2();
+    init_additionalItems2();
+    init_additionalProperties2();
+    init_allOf2();
+    init_anyOf2();
+    init_boolean3();
+    init_const3();
+    init_contains2();
+    init_dependencies3();
+    init_dependentRequired2();
+    init_dependentSchemas2();
+    init_dynamicRef2();
+    init_enum5();
+    init_exclusiveMaximum2();
+    init_exclusiveMinimum2();
+    init_format4();
+    init_if2();
+    init_items2();
+    init_maxContains2();
+    init_maximum2();
+    init_maxItems2();
+    init_maxLength2();
+    init_maxProperties2();
+    init_minContains2();
+    init_minimum2();
+    init_minItems2();
+    init_minLength2();
+    init_minProperties2();
+    init_multipleOf2();
+    init_not2();
+    init_oneOf2();
+    init_pattern3();
+    init_patternProperties2();
+    init_prefixItems2();
+    init_properties3();
+    init_propertyNames2();
+    init_recursiveRef2();
+    init_ref4();
+    init_required4();
+    init_type2();
+    init_unevaluatedItems2();
+    init_unevaluatedProperties2();
+    init_uniqueItems2();
+  }
+});
 
-// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/resolve/resolve.mjs
-var resolve_exports = {};
-__export(resolve_exports, {
-  DynamicRef: () => DynamicRef,
-  Ref: () => Ref2
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_functions.mjs
+var init_functions = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_functions.mjs"() {
+    init_guard2();
+    init_schema3();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/pointer/pointer_get.mjs
+var init_pointer_get = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/pointer/pointer_get.mjs"() {
+  }
 });
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/pointer/pointer.mjs
@@ -7054,6 +10807,19 @@ function Delete(value, pointer) {
   }
   return value;
 }
+var init_pointer = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/pointer/pointer.mjs"() {
+    init_guard2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/pointer/index.mjs
+var init_pointer2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/pointer/index.mjs"() {
+    init_pointer_get();
+    init_pointer();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/resolve/ref.mjs
 function MatchId(schema, base, ref) {
@@ -7147,111 +10913,212 @@ function DynamicRef(root, base, dynamicRef, dynamicAnchors) {
   const anchorTarget = dynamicAnchors.find((anchor) => anchor.$dynamicAnchor === fragmentTarget.$dynamicAnchor);
   return anchorTarget ?? fragmentTarget;
 }
+var init_ref5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/resolve/ref.mjs"() {
+    init_guard2();
+    init_pointer2();
+    init_types2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/resolve/resolve.mjs
+var resolve_exports = {};
+__export(resolve_exports, {
+  DynamicRef: () => DynamicRef,
+  Ref: () => Ref2
+});
+var init_resolve = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/resolve/resolve.mjs"() {
+    init_ref5();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/resolve/index.mjs
+var init_resolve2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/resolve/index.mjs"() {
+    init_resolve();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_stack.mjs
-var __classPrivateFieldGet = function(receiver, state, kind, f) {
-  if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-  if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-  return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var _Stack_instances;
-var _Stack_PushResourceAnchors;
-var _Stack_PopResourceAnchors;
-var _Stack_FromContext;
-var _Stack_FromRef;
-var Stack = class {
-  constructor(context, schema) {
-    _Stack_instances.add(this);
-    this.context = context;
-    this.schema = schema;
-    this.ids = [];
-    this.anchors = [];
-    this.recursiveAnchors = [];
-    this.dynamicAnchors = [];
+var __classPrivateFieldGet, _Stack_instances, _Stack_PushResourceAnchors, _Stack_PopResourceAnchors, _Stack_FromContext, _Stack_FromRef, Stack;
+var init_stack = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/_stack.mjs"() {
+    init_types2();
+    init_guard2();
+    init_resolve2();
+    __classPrivateFieldGet = function(receiver, state, kind, f) {
+      if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+      if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+      return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+    };
+    Stack = class {
+      constructor(context, schema) {
+        _Stack_instances.add(this);
+        this.context = context;
+        this.schema = schema;
+        this.ids = [];
+        this.anchors = [];
+        this.recursiveAnchors = [];
+        this.dynamicAnchors = [];
+      }
+      // ----------------------------------------------------------------
+      // Base
+      // ----------------------------------------------------------------
+      BaseURL() {
+        return this.ids.reduce((result2, schema) => new URL(schema.$id, result2), new URL("http://unknown"));
+      }
+      Base() {
+        return this.ids[this.ids.length - 1] ?? this.schema;
+      }
+      // ----------------------------------------------------------------
+      // Stack
+      // ----------------------------------------------------------------
+      Push(schema) {
+        if (!IsSchemaObject(schema))
+          return;
+        if (IsId(schema)) {
+          this.ids.push(schema);
+          __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_PushResourceAnchors).call(this, schema);
+        }
+        if (IsAnchor(schema))
+          this.anchors.push(schema);
+        if (IsRecursiveAnchorTrue(schema))
+          this.recursiveAnchors.push(schema);
+        if (IsDynamicAnchor(schema))
+          this.dynamicAnchors.push(schema);
+      }
+      Pop(schema) {
+        if (!IsSchemaObject(schema))
+          return;
+        if (IsId(schema)) {
+          this.ids.pop();
+          __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_PopResourceAnchors).call(this, schema);
+        }
+        if (IsAnchor(schema))
+          this.anchors.pop();
+        if (IsRecursiveAnchorTrue(schema))
+          this.recursiveAnchors.pop();
+        if (IsDynamicAnchor(schema))
+          this.dynamicAnchors.pop();
+      }
+      Ref(ref) {
+        return __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_FromContext).call(this, ref) ?? __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_FromRef).call(this, ref);
+      }
+      // ----------------------------------------------------------------
+      // RecursiveRef
+      // ----------------------------------------------------------------
+      RecursiveRef(recursiveRef) {
+        return IsRecursiveAnchorTrue(this.Base()) ? resolve_exports.Ref(this.recursiveAnchors[0], recursiveRef.$recursiveRef) : resolve_exports.Ref(this.Base(), recursiveRef.$recursiveRef);
+      }
+      // ----------------------------------------------------------------
+      // DynamicRef
+      // ----------------------------------------------------------------
+      DynamicRef(dynamicRef) {
+        const root = this.schema;
+        return resolve_exports.DynamicRef(root, this.Base(), dynamicRef, this.dynamicAnchors);
+      }
+    };
+    _Stack_instances = /* @__PURE__ */ new WeakSet(), _Stack_PushResourceAnchors = function _Stack_PushResourceAnchors2(schema, isRoot = true) {
+      if (!IsSchemaObject(schema))
+        return;
+      const current = schema;
+      if (!isRoot && IsId(current))
+        return;
+      if (!isRoot && IsDynamicAnchor(current))
+        this.dynamicAnchors.push(current);
+      for (const key of guard_exports.Keys(current))
+        __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_PushResourceAnchors2).call(this, current[key], false);
+    }, _Stack_PopResourceAnchors = function _Stack_PopResourceAnchors2(schema, isRoot = true) {
+      if (!IsSchemaObject(schema))
+        return;
+      const current = schema;
+      if (!isRoot && IsId(current))
+        return;
+      if (!isRoot && IsDynamicAnchor(current))
+        this.dynamicAnchors.pop();
+      for (const key of guard_exports.Keys(current))
+        __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_PopResourceAnchors2).call(this, current[key], false);
+    }, _Stack_FromContext = function _Stack_FromContext2(ref) {
+      return guard_exports.HasPropertyKey(this.context, ref.$ref) ? this.context[ref.$ref] : void 0;
+    }, _Stack_FromRef = function _Stack_FromRef2(ref) {
+      const root = this.schema;
+      return !ref.$ref.startsWith("#") ? resolve_exports.Ref(root, ref.$ref) : resolve_exports.Ref(this.Base(), ref.$ref);
+    };
   }
-  // ----------------------------------------------------------------
-  // Base
-  // ----------------------------------------------------------------
-  BaseURL() {
-    return this.ids.reduce((result2, schema) => new URL(schema.$id, result2), new URL("http://unknown"));
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/index.mjs
+var init_engine2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/engine/index.mjs"() {
+    init_context();
+    init_externals();
+    init_functions();
+    init_reducer();
+    init_refine3();
+    init_stack();
+    init_additionalItems2();
+    init_additionalProperties2();
+    init_allOf2();
+    init_anyOf2();
+    init_boolean3();
+    init_const3();
+    init_contains2();
+    init_dependencies3();
+    init_dependentRequired2();
+    init_dependentSchemas2();
+    init_enum5();
+    init_exclusiveMaximum2();
+    init_exclusiveMinimum2();
+    init_format4();
+    init_if2();
+    init_items2();
+    init_maxContains2();
+    init_maxItems2();
+    init_maxLength2();
+    init_maxProperties2();
+    init_maximum2();
+    init_minContains2();
+    init_minItems2();
+    init_minLength2();
+    init_minProperties2();
+    init_minimum2();
+    init_multipleOf2();
+    init_not2();
+    init_oneOf2();
+    init_pattern3();
+    init_patternProperties2();
+    init_prefixItems2();
+    init_properties3();
+    init_propertyNames2();
+    init_recursiveRef2();
+    init_ref4();
+    init_required4();
+    init_schema3();
+    init_type2();
+    init_unevaluatedItems2();
+    init_unevaluatedProperties2();
+    init_uniqueItems2();
   }
-  Base() {
-    return this.ids[this.ids.length - 1] ?? this.schema;
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/static/index.mjs
+var init_static3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/static/index.mjs"() {
   }
-  // ----------------------------------------------------------------
-  // Stack
-  // ----------------------------------------------------------------
-  Push(schema) {
-    if (!IsSchemaObject(schema))
-      return;
-    if (IsId(schema)) {
-      this.ids.push(schema);
-      __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_PushResourceAnchors).call(this, schema);
-    }
-    if (IsAnchor(schema))
-      this.anchors.push(schema);
-    if (IsRecursiveAnchorTrue(schema))
-      this.recursiveAnchors.push(schema);
-    if (IsDynamicAnchor(schema))
-      this.dynamicAnchors.push(schema);
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/build.mjs
+var init_build2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/build.mjs"() {
+    init_arguments2();
+    init_environment2();
+    init_hashing();
+    init_guard2();
+    init_format3();
+    init_engine2();
   }
-  Pop(schema) {
-    if (!IsSchemaObject(schema))
-      return;
-    if (IsId(schema)) {
-      this.ids.pop();
-      __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_PopResourceAnchors).call(this, schema);
-    }
-    if (IsAnchor(schema))
-      this.anchors.pop();
-    if (IsRecursiveAnchorTrue(schema))
-      this.recursiveAnchors.pop();
-    if (IsDynamicAnchor(schema))
-      this.dynamicAnchors.pop();
-  }
-  Ref(ref) {
-    return __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_FromContext).call(this, ref) ?? __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_FromRef).call(this, ref);
-  }
-  // ----------------------------------------------------------------
-  // RecursiveRef
-  // ----------------------------------------------------------------
-  RecursiveRef(recursiveRef) {
-    return IsRecursiveAnchorTrue(this.Base()) ? resolve_exports.Ref(this.recursiveAnchors[0], recursiveRef.$recursiveRef) : resolve_exports.Ref(this.Base(), recursiveRef.$recursiveRef);
-  }
-  // ----------------------------------------------------------------
-  // DynamicRef
-  // ----------------------------------------------------------------
-  DynamicRef(dynamicRef) {
-    const root = this.schema;
-    return resolve_exports.DynamicRef(root, this.Base(), dynamicRef, this.dynamicAnchors);
-  }
-};
-_Stack_instances = /* @__PURE__ */ new WeakSet(), _Stack_PushResourceAnchors = function _Stack_PushResourceAnchors2(schema, isRoot = true) {
-  if (!IsSchemaObject(schema))
-    return;
-  const current = schema;
-  if (!isRoot && IsId(current))
-    return;
-  if (!isRoot && IsDynamicAnchor(current))
-    this.dynamicAnchors.push(current);
-  for (const key of guard_exports.Keys(current))
-    __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_PushResourceAnchors2).call(this, current[key], false);
-}, _Stack_PopResourceAnchors = function _Stack_PopResourceAnchors2(schema, isRoot = true) {
-  if (!IsSchemaObject(schema))
-    return;
-  const current = schema;
-  if (!isRoot && IsId(current))
-    return;
-  if (!isRoot && IsDynamicAnchor(current))
-    this.dynamicAnchors.pop();
-  for (const key of guard_exports.Keys(current))
-    __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_PopResourceAnchors2).call(this, current[key], false);
-}, _Stack_FromContext = function _Stack_FromContext2(ref) {
-  return guard_exports.HasPropertyKey(this.context, ref.$ref) ? this.context[ref.$ref] : void 0;
-}, _Stack_FromRef = function _Stack_FromRef2(ref) {
-  const root = this.schema;
-  return !ref.$ref.startsWith("#") ? resolve_exports.Ref(root, ref.$ref) : resolve_exports.Ref(this.Base(), ref.$ref);
-};
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/errors.mjs
 function Errors(...args) {
@@ -7271,6 +11138,15 @@ function Errors(...args) {
   const result2 = ErrorSchema(stack, errorContext, "#", "", schema, value);
   return [result2, errors];
 }
+var init_errors = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/errors.mjs"() {
+    init_arguments2();
+    init_settings2();
+    init_config();
+    init_guard2();
+    init_engine2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/check.mjs
 function Check(...args) {
@@ -7282,6 +11158,55 @@ function Check(...args) {
   const checkContext = new CheckContext();
   return CheckSchema(stack, checkContext, schema, value);
 }
+var init_check2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/check.mjs"() {
+    init_arguments2();
+    init_engine2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/parse.mjs
+var init_parse = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/parse.mjs"() {
+    init_arguments2();
+    init_check2();
+    init_errors();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/compile.mjs
+var init_compile = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/compile.mjs"() {
+    init_arguments2();
+    init_build2();
+    init_errors();
+    init_parse();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/schema.mjs
+var init_schema4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/schema.mjs"() {
+    init_engine2();
+    init_pointer2();
+    init_resolve2();
+    init_static3();
+    init_types2();
+    init_build2();
+    init_compile();
+    init_check2();
+    init_parse();
+    init_errors();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/index.mjs
+var init_schema5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/schema/index.mjs"() {
+    init_schema4();
+    init_schema4();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/check/check.mjs
 function Check2(...args) {
@@ -7291,6 +11216,19 @@ function Check2(...args) {
   });
   return Check(context, type, value);
 }
+var init_check3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/check/check.mjs"() {
+    init_arguments2();
+    init_schema5();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/check/index.mjs
+var init_check4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/check/index.mjs"() {
+    init_check3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/errors/errors.mjs
 function Errors2(...args) {
@@ -7301,19 +11239,21 @@ function Errors2(...args) {
   const [_, errors] = Errors(context, type, value);
   return errors;
 }
+var init_errors2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/errors/errors.mjs"() {
+    init_arguments2();
+    init_schema5();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/errors/index.mjs
+var init_errors3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/errors/index.mjs"() {
+    init_errors2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/assert/assert.mjs
-var AssertError = class extends Error {
-  constructor(source, value, errors) {
-    super(source);
-    Object.defineProperty(this, "cause", {
-      value: { source, errors, value },
-      writable: false,
-      configurable: false,
-      enumerable: false
-    });
-  }
-};
 function Assert(...args) {
   const [context, type, value] = arguments_exports.Match(args, {
     3: (context2, type2, value2) => [context2, type2, value2],
@@ -7323,6 +11263,43 @@ function Assert(...args) {
   if (!check)
     throw new AssertError("Assert", value, Errors2(context, type, value));
 }
+var AssertError;
+var init_assert = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/assert/assert.mjs"() {
+    init_arguments2();
+    init_check4();
+    init_errors3();
+    AssertError = class extends Error {
+      constructor(source, value, errors) {
+        super(source);
+        Object.defineProperty(this, "cause", {
+          value: { source, errors, value },
+          writable: false,
+          configurable: false,
+          enumerable: false
+        });
+      }
+    };
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/assert/index.mjs
+var init_assert2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/assert/index.mjs"() {
+    init_assert();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/index.mjs
+var init_type3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/index.mjs"() {
+    init_action();
+    init_engine();
+    init_extends3();
+    init_script2();
+    init_types();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_array.mjs
 function FromArray7(context, type, value) {
@@ -7330,11 +11307,23 @@ function FromArray7(context, type, value) {
     return value;
   return value.map((value2) => FromType19(context, type.items, value2));
 }
+var init_from_array4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_array.mjs"() {
+    init_guard2();
+    init_from_type11();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_cyclic.mjs
 function FromCyclic6(context, type, value) {
   return FromType19({ ...context, ...type.$defs }, Ref(type.$ref), value);
 }
+var init_from_cyclic6 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_cyclic.mjs"() {
+    init_type3();
+    init_from_type11();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_intersect.mjs
 function EvaluateIntersection(context, type) {
@@ -7347,12 +11336,24 @@ function FromIntersect6(context, type, value) {
   const evaluated = EvaluateIntersection(context, type);
   return FromType19(context, evaluated, value);
 }
+var init_from_intersect6 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_intersect.mjs"() {
+    init_type3();
+    init_guard2();
+    init_from_type11();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/additional.mjs
 function GetAdditionalProperties(type) {
   const additionalProperties = guard_exports.HasPropertyKey(type, "additionalProperties") ? type.additionalProperties : void 0;
   return additionalProperties;
 }
+var init_additional = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/additional.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_object.mjs
 function FromObject11(context, type, value) {
@@ -7376,6 +11377,15 @@ function FromObject11(context, type, value) {
   }
   return value;
 }
+var init_from_object7 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_object.mjs"() {
+    init_type3();
+    init_guard2();
+    init_from_type11();
+    init_check4();
+    init_additional();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_record.mjs
 function FromRecord3(context, type, value) {
@@ -7400,11 +11410,26 @@ function FromRecord3(context, type, value) {
   }
   return value;
 }
+var init_from_record2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_record.mjs"() {
+    init_type3();
+    init_guard2();
+    init_from_type11();
+    init_check4();
+    init_additional();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_ref.mjs
 function FromRef5(context, type, value) {
   return guard_exports.HasPropertyKey(context, type.$ref) ? FromType19(context, context[type.$ref], value) : value;
 }
+var init_from_ref = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_ref.mjs"() {
+    init_guard2();
+    init_from_type11();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_tuple.mjs
 function FromTuple5(context, schema, value) {
@@ -7416,11 +11441,29 @@ function FromTuple5(context, schema, value) {
   }
   return guard_exports.IsGreaterThan(value.length, length) ? value.slice(0, length) : value;
 }
+var init_from_tuple5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_tuple.mjs"() {
+    init_guard2();
+    init_from_type11();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clone/clone.mjs
 function Clone2(value) {
   return Clone(value);
 }
+var init_clone2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clone/clone.mjs"() {
+    init_clone();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clone/index.mjs
+var init_clone3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clone/index.mjs"() {
+    init_clone2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_union.mjs
 function FromUnion9(context, type, value) {
@@ -7431,11 +11474,31 @@ function FromUnion9(context, type, value) {
   }
   return value;
 }
+var init_from_union7 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_union.mjs"() {
+    init_check4();
+    init_clone3();
+    init_from_type11();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_type.mjs
 function FromType19(context, type, value) {
   return IsArray2(type) ? FromArray7(context, type, value) : IsCyclic(type) ? FromCyclic6(context, type, value) : IsIntersect(type) ? FromIntersect6(context, type, value) : IsObject2(type) ? FromObject11(context, type, value) : IsRecord(type) ? FromRecord3(context, type, value) : IsRef(type) ? FromRef5(context, type, value) : IsTuple(type) ? FromTuple5(context, type, value) : IsUnion(type) ? FromUnion9(context, type, value) : value;
 }
+var init_from_type11 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/from_type.mjs"() {
+    init_type3();
+    init_from_array4();
+    init_from_cyclic6();
+    init_from_intersect6();
+    init_from_object7();
+    init_from_record2();
+    init_from_ref();
+    init_from_tuple5();
+    init_from_union7();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/shared/union_priority_sort.mjs
 function Modifiers(type, next) {
@@ -7466,6 +11529,18 @@ function UnionPrioritySort(type) {
   const result2 = FromType20(type);
   return result2;
 }
+var init_union_priority_sort = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/shared/union_priority_sort.mjs"() {
+    init_guard2();
+    init_type3();
+    init_type3();
+    init_type3();
+    init_type3();
+    init_type3();
+    init_type3();
+    init_type3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/clean.mjs
 function Clean(...args) {
@@ -7476,20 +11551,19 @@ function Clean(...args) {
   const sorted = settings_exports.Get().unionPrioritySort ? UnionPrioritySort(type) : type;
   return FromType19(context, sorted, value);
 }
+var init_clean = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/clean.mjs"() {
+    init_system2();
+    init_from_type11();
+    init_union_priority_sort();
+  }
+});
 
-// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try.mjs
-var try_exports = {};
-__export(try_exports, {
-  Fail: () => Fail,
-  IsOk: () => IsOk,
-  Ok: () => Ok,
-  TryArray: () => TryArray,
-  TryBigInt: () => TryBigInt,
-  TryBoolean: () => TryBoolean,
-  TryNull: () => TryNull,
-  TryNumber: () => TryNumber,
-  TryString: () => TryString,
-  TryUndefined: () => TryUndefined
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/index.mjs
+var init_clean2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/clean/index.mjs"() {
+    init_clean();
+  }
 });
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_result.mjs
@@ -7502,19 +11576,27 @@ function Ok(value) {
 function Fail() {
   return void 0;
 }
+var init_try_result = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_result.mjs"() {
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_array.mjs
 function TryArray(value) {
   return guard_exports.IsArray(value) ? Ok(value) : Ok([value]);
 }
+var init_try_array = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_array.mjs"() {
+    init_guard2();
+    init_try_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_bigint.mjs
 function FromBoolean2(value) {
   return guard_exports.IsEqual(value, true) ? Ok(BigInt(1)) : Ok(BigInt(0));
 }
-var bigintPattern = /^-?(0|[1-9]\d*)n$/;
-var decimalPattern = /^-?(0|[1-9]\d*)\.\d+$/;
-var integerPattern = /^-?(0|[1-9]\d*)$/;
 function IsStringBigIntLike(value) {
   return bigintPattern.test(value);
 }
@@ -7531,6 +11613,16 @@ function FromString2(value) {
 function TryBigInt(value) {
   return guard_exports.IsBigInt(value) ? Ok(value) : guard_exports.IsBoolean(value) ? FromBoolean2(value) : guard_exports.IsNumber(value) ? Ok(BigInt(Math.trunc(value))) : guard_exports.IsNull(value) ? Ok(BigInt(0)) : guard_exports.IsString(value) ? FromString2(value) : guard_exports.IsUndefined(value) ? Ok(BigInt(0)) : Fail();
 }
+var bigintPattern, decimalPattern, integerPattern;
+var init_try_bigint = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_bigint.mjs"() {
+    init_guard2();
+    init_try_result();
+    bigintPattern = /^-?(0|[1-9]\d*)n$/;
+    decimalPattern = /^-?(0|[1-9]\d*)\.\d+$/;
+    integerPattern = /^-?(0|[1-9]\d*)$/;
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_boolean.mjs
 function FromBigInt2(value) {
@@ -7545,6 +11637,12 @@ function FromString3(value) {
 function TryBoolean(value) {
   return guard_exports.IsBigInt(value) ? FromBigInt2(value) : guard_exports.IsBoolean(value) ? Ok(value) : guard_exports.IsNumber(value) ? FromNumber2(value) : guard_exports.IsNull(value) ? Ok(false) : guard_exports.IsString(value) ? FromString3(value) : guard_exports.IsUndefined(value) ? Ok(false) : Fail();
 }
+var init_try_boolean = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_boolean.mjs"() {
+    init_guard2();
+    init_try_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_null.mjs
 function FromBigInt3(value) {
@@ -7564,10 +11662,14 @@ function FromString4(value) {
 function TryNull(value) {
   return guard_exports.IsBigInt(value) ? FromBigInt3(value) : guard_exports.IsBoolean(value) ? FromBoolean3(value) : guard_exports.IsNumber(value) ? FromNumber3(value) : guard_exports.IsNull(value) ? Ok(null) : guard_exports.IsString(value) ? FromString4(value) : guard_exports.IsUndefined(value) ? Ok(null) : Fail();
 }
+var init_try_null = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_null.mjs"() {
+    init_guard2();
+    init_try_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_number.mjs
-var maxBigInt = BigInt(Number.MAX_SAFE_INTEGER);
-var minBigInt = BigInt(Number.MIN_SAFE_INTEGER);
 function FromBigInt4(value) {
   return value <= maxBigInt && value >= minBigInt ? Ok(Number(value)) : Fail();
 }
@@ -7591,11 +11693,27 @@ function FromString5(value) {
 function TryNumber(value) {
   return guard_exports.IsBigInt(value) ? FromBigInt4(value) : guard_exports.IsBoolean(value) ? FromBoolean4(value) : guard_exports.IsNumber(value) ? Ok(value) : guard_exports.IsNull(value) ? Ok(0) : guard_exports.IsString(value) ? FromString5(value) : guard_exports.IsUndefined(value) ? Ok(0) : Fail();
 }
+var maxBigInt, minBigInt;
+var init_try_number = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_number.mjs"() {
+    init_guard2();
+    init_try_result();
+    init_try_bigint();
+    maxBigInt = BigInt(Number.MAX_SAFE_INTEGER);
+    minBigInt = BigInt(Number.MIN_SAFE_INTEGER);
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_string.mjs
 function TryString(value) {
   return guard_exports.IsBigInt(value) ? Ok(value.toString()) : guard_exports.IsBoolean(value) ? Ok(value.toString()) : guard_exports.IsNumber(value) ? Ok(value.toString()) : guard_exports.IsNull(value) ? Ok("null") : guard_exports.IsString(value) ? Ok(value) : guard_exports.IsUndefined(value) ? Ok("") : Fail();
 }
+var init_try_string = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_string.mjs"() {
+    init_guard2();
+    init_try_result();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_undefined.mjs
 function FromBigInt5(value) {
@@ -7615,40 +11733,113 @@ function FromString6(value) {
 function TryUndefined(value) {
   return guard_exports.IsBigInt(value) ? FromBigInt5(value) : guard_exports.IsBoolean(value) ? FromBoolean5(value) : guard_exports.IsNumber(value) ? FromNumber4(value) : guard_exports.IsNull(value) ? Ok(void 0) : guard_exports.IsString(value) ? FromString6(value) : guard_exports.IsUndefined(value) ? Ok(value) : Fail();
 }
+var init_try_undefined = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try_undefined.mjs"() {
+    init_guard2();
+    init_try_result();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try.mjs
+var try_exports = {};
+__export(try_exports, {
+  Fail: () => Fail,
+  IsOk: () => IsOk,
+  Ok: () => Ok,
+  TryArray: () => TryArray,
+  TryBigInt: () => TryBigInt,
+  TryBoolean: () => TryBoolean,
+  TryNull: () => TryNull,
+  TryNumber: () => TryNumber,
+  TryString: () => TryString,
+  TryUndefined: () => TryUndefined
+});
+var init_try = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/try.mjs"() {
+    init_try_array();
+    init_try_bigint();
+    init_try_boolean();
+    init_try_null();
+    init_try_number();
+    init_try_result();
+    init_try_string();
+    init_try_undefined();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/index.mjs
+var init_try2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/try/index.mjs"() {
+    init_try();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_array.mjs
 function FromArray8(context, type, value) {
   const result2 = try_exports.TryArray(value);
   return result2.value.map((value2) => FromType21(context, type.items, value2));
 }
+var init_from_array5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_array.mjs"() {
+    init_from_type12();
+    init_try2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_bigint.mjs
 function FromBigInt6(_context, _type, value) {
   const result2 = try_exports.TryBigInt(value);
   return try_exports.IsOk(result2) ? result2.value : value;
 }
+var init_from_bigint = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_bigint.mjs"() {
+    init_try2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_boolean.mjs
 function FromBoolean6(_context, _type, value) {
   const result2 = try_exports.TryBoolean(value);
   return try_exports.IsOk(result2) ? result2.value : value;
 }
+var init_from_boolean = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_boolean.mjs"() {
+    init_try2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_cyclic.mjs
 function FromCyclic7(context, type, value) {
   return FromType21({ ...context, ...type.$defs }, Ref(type.$ref), value);
 }
+var init_from_cyclic7 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_cyclic.mjs"() {
+    init_type3();
+    init_from_type12();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_enum.mjs
 function FromEnum3(context, type, value) {
   return FromType21(context, Evaluate(type), value);
 }
+var init_from_enum2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_enum.mjs"() {
+    init_type3();
+    init_from_type12();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_integer.mjs
 function FromInteger(_context, _type, value) {
   const result2 = try_exports.TryNumber(value);
   return try_exports.IsOk(result2) ? Math.trunc(result2.value) : value;
 }
+var init_from_integer = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_integer.mjs"() {
+    init_try2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_intersect.mjs
 function FromIntersect7(context, type, value) {
@@ -7656,6 +11847,12 @@ function FromIntersect7(context, type, value) {
   const evaluated = Evaluate(instantiated);
   return FromType21(context, evaluated, value);
 }
+var init_from_intersect7 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_intersect.mjs"() {
+    init_type3();
+    init_from_type12();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_literal.mjs
 function FromLiteralBigInt(_context, type, value) {
@@ -7679,18 +11876,36 @@ function FromLiteral6(context, type, value) {
     return value;
   return IsLiteralBigInt(type) ? FromLiteralBigInt(context, type, value) : IsLiteralBoolean(type) ? FromLiteralBoolean(context, type, value) : IsLiteralNumber(type) ? FromLiteralNumber(context, type, value) : IsLiteralString(type) ? FromLiteralString(context, type, value) : Unreachable();
 }
+var init_from_literal3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_literal.mjs"() {
+    init_unreachable2();
+    init_guard2();
+    init_type3();
+    init_try2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_null.mjs
 function FromNull2(_context, _type, value) {
   const result2 = try_exports.TryNull(value);
   return try_exports.IsOk(result2) ? result2.value : value;
 }
+var init_from_null = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_null.mjs"() {
+    init_try2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_number.mjs
 function FromNumber5(_context, _type, value) {
   const result2 = try_exports.TryNumber(value);
   return try_exports.IsOk(result2) ? result2.value : value;
 }
+var init_from_number = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_number.mjs"() {
+    init_try2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_additional.mjs
 function FromAdditionalProperties(context, entries, additionalProperties, value) {
@@ -7704,11 +11919,23 @@ function FromAdditionalProperties(context, entries, additionalProperties, value)
   }
   return value;
 }
+var init_from_additional = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_additional.mjs"() {
+    init_guard2();
+    init_from_type12();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/shared/optional_undefined.mjs
 function IsOptionalUndefined(property, key, value) {
   return IsOptional(property) && guard_exports.IsUndefined(value[key]);
 }
+var init_optional_undefined = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/shared/optional_undefined.mjs"() {
+    init_guard2();
+    init_type3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_object.mjs
 function FromProperties5(context, type, value) {
@@ -7726,6 +11953,14 @@ function FromProperties5(context, type, value) {
 function FromObject12(context, type, value) {
   return guard_exports.IsObjectNotArray(value) ? FromProperties5(context, type, value) : value;
 }
+var init_from_object8 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_object.mjs"() {
+    init_guard2();
+    init_from_type12();
+    init_from_additional();
+    init_optional_undefined();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_record.mjs
 function FromPatternProperties(context, type, value) {
@@ -7743,22 +11978,46 @@ function FromPatternProperties(context, type, value) {
 function FromRecord4(context, type, value) {
   return guard_exports.IsObjectNotArray(value) ? FromPatternProperties(context, type, value) : value;
 }
+var init_from_record3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_record.mjs"() {
+    init_guard2();
+    init_from_type12();
+    init_from_additional();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_ref.mjs
 function FromRef6(context, type, value) {
   return guard_exports.HasPropertyKey(context, type.$ref) ? FromType21(context, context[type.$ref], value) : value;
 }
+var init_from_ref2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_ref.mjs"() {
+    init_from_type12();
+    init_guard2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_string.mjs
 function FromString7(_context, _type, value) {
   const result2 = try_exports.TryString(value);
   return try_exports.IsOk(result2) ? result2.value : value;
 }
+var init_from_string = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_string.mjs"() {
+    init_try2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_template_literal.mjs
 function FromTemplateLiteral4(context, type, value) {
   return FromType21(context, Evaluate(type), value);
 }
+var init_from_template_literal3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_template_literal.mjs"() {
+    init_type3();
+    init_from_type12();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_tuple.mjs
 function FromTuple6(context, type, value) {
@@ -7769,12 +12028,23 @@ function FromTuple6(context, type, value) {
   }
   return value;
 }
+var init_from_tuple6 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_tuple.mjs"() {
+    init_guard2();
+    init_from_type12();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_undefined.mjs
 function FromUndefined2(_context, _type, value) {
   const result2 = try_exports.TryUndefined(value);
   return try_exports.IsOk(result2) ? result2.value : value;
 }
+var init_from_undefined = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_undefined.mjs"() {
+    init_try2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_union.mjs
 function FromUnion10(context, type, value) {
@@ -7785,17 +12055,54 @@ function FromUnion10(context, type, value) {
   const selected = candidates.find((value2) => Check2(context, type, value2));
   return guard_exports.IsUndefined(selected) ? value : selected;
 }
+var init_from_union8 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_union.mjs"() {
+    init_guard2();
+    init_check4();
+    init_clone3();
+    init_from_type12();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_void.mjs
 function FromVoid(_context, _type, value) {
   const result2 = try_exports.TryUndefined(value);
   return try_exports.IsOk(result2) ? void 0 : value;
 }
+var init_from_void = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_void.mjs"() {
+    init_try2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_type.mjs
 function FromType21(context, type, value) {
   return IsArray2(type) ? FromArray8(context, type, value) : IsBigInt2(type) ? FromBigInt6(context, type, value) : IsBoolean3(type) ? FromBoolean6(context, type, value) : IsCyclic(type) ? FromCyclic7(context, type, value) : IsEnum(type) ? FromEnum3(context, type, value) : IsInteger2(type) ? FromInteger(context, type, value) : IsIntersect(type) ? FromIntersect7(context, type, value) : IsLiteral(type) ? FromLiteral6(context, type, value) : IsNull2(type) ? FromNull2(context, type, value) : IsNumber3(type) ? FromNumber5(context, type, value) : IsObject2(type) ? FromObject12(context, type, value) : IsRecord(type) ? FromRecord4(context, type, value) : IsRef(type) ? FromRef6(context, type, value) : IsString3(type) ? FromString7(context, type, value) : IsTemplateLiteral(type) ? FromTemplateLiteral4(context, type, value) : IsTuple(type) ? FromTuple6(context, type, value) : IsUndefined2(type) ? FromUndefined2(context, type, value) : IsUnion(type) ? FromUnion10(context, type, value) : IsVoid(type) ? FromVoid(context, type, value) : value;
 }
+var init_from_type12 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/from_type.mjs"() {
+    init_type3();
+    init_from_array5();
+    init_from_bigint();
+    init_from_boolean();
+    init_from_cyclic7();
+    init_from_enum2();
+    init_from_integer();
+    init_from_intersect7();
+    init_from_literal3();
+    init_from_null();
+    init_from_number();
+    init_from_object8();
+    init_from_record3();
+    init_from_ref2();
+    init_from_string();
+    init_from_template_literal3();
+    init_from_tuple6();
+    init_from_undefined();
+    init_from_union8();
+    init_from_void();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/convert.mjs
 function Convert(...args) {
@@ -7805,6 +12112,19 @@ function Convert(...args) {
   });
   return FromType21(context, type, value);
 }
+var init_convert = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/convert.mjs"() {
+    init_arguments2();
+    init_from_type12();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/index.mjs
+var init_convert2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/convert/index.mjs"() {
+    init_convert();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_array.mjs
 function FromArray9(context, type, value) {
@@ -7815,11 +12135,23 @@ function FromArray9(context, type, value) {
   }
   return value;
 }
+var init_from_array6 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_array.mjs"() {
+    init_guard2();
+    init_from_type13();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_cyclic.mjs
 function FromCyclic8(context, type, value) {
   return FromType22({ ...context, ...type.$defs }, Ref(type.$ref), value);
 }
+var init_from_cyclic8 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_cyclic.mjs"() {
+    init_type3();
+    init_from_type13();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_default.mjs
 function FromDefault(type, value) {
@@ -7827,6 +12159,12 @@ function FromDefault(type, value) {
     return value;
   return guard_exports.IsFunction(type.default) ? type.default() : Clone2(type.default);
 }
+var init_from_default = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_default.mjs"() {
+    init_guard2();
+    init_clone3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_intersect.mjs
 function FromIntersect8(context, type, value) {
@@ -7834,6 +12172,12 @@ function FromIntersect8(context, type, value) {
   const evaluated = Evaluate(instantiated);
   return FromType22(context, evaluated, value);
 }
+var init_from_intersect8 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_intersect.mjs"() {
+    init_type3();
+    init_from_type13();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_object.mjs
 function FromObject13(context, type, value) {
@@ -7856,6 +12200,14 @@ function FromObject13(context, type, value) {
   }
   return value;
 }
+var init_from_object9 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_object.mjs"() {
+    init_type3();
+    init_guard2();
+    init_from_type13();
+    init_types2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_record.mjs
 function FromRecord5(context, type, value) {
@@ -7876,11 +12228,25 @@ function FromRecord5(context, type, value) {
   }
   return value;
 }
+var init_from_record4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_record.mjs"() {
+    init_type3();
+    init_types2();
+    init_guard2();
+    init_from_type13();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_ref.mjs
 function FromRef7(context, type, value) {
   return guard_exports.HasPropertyKey(context, type.$ref) ? FromType22(context, context[type.$ref], value) : value;
 }
+var init_from_ref3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_ref.mjs"() {
+    init_guard2();
+    init_from_type13();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_tuple.mjs
 function FromTuple7(context, schema, value) {
@@ -7893,6 +12259,12 @@ function FromTuple7(context, schema, value) {
   }
   return value;
 }
+var init_from_tuple7 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_tuple.mjs"() {
+    init_guard2();
+    init_from_type13();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_union.mjs
 function FromUnion11(context, schema, value) {
@@ -7904,12 +12276,34 @@ function FromUnion11(context, schema, value) {
   }
   return value;
 }
+var init_from_union9 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_union.mjs"() {
+    init_check4();
+    init_clone3();
+    init_from_type13();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_type.mjs
 function FromType22(context, type, value) {
   const defaulted = IsDefault(type) ? FromDefault(type, value) : value;
   return IsArray2(type) ? FromArray9(context, type, defaulted) : IsCyclic(type) ? FromCyclic8(context, type, defaulted) : IsIntersect(type) ? FromIntersect8(context, type, defaulted) : IsObject2(type) ? FromObject13(context, type, defaulted) : IsRecord(type) ? FromRecord5(context, type, defaulted) : IsRef(type) ? FromRef7(context, type, defaulted) : IsTuple(type) ? FromTuple7(context, type, defaulted) : IsUnion(type) ? FromUnion11(context, type, defaulted) : defaulted;
 }
+var init_from_type13 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/from_type.mjs"() {
+    init_schema5();
+    init_type3();
+    init_from_array6();
+    init_from_cyclic8();
+    init_from_default();
+    init_from_intersect8();
+    init_from_object9();
+    init_from_record4();
+    init_from_ref3();
+    init_from_tuple7();
+    init_from_union9();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/default.mjs
 function Default(...args) {
@@ -7919,6 +12313,19 @@ function Default(...args) {
   });
   return FromType22(context, type, value);
 }
+var init_default2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/default.mjs"() {
+    init_arguments2();
+    init_from_type13();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/index.mjs
+var init_default3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/default/index.mjs"() {
+    init_default2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/pipeline/pipeline.mjs
 function Pipeline(pipeline) {
@@ -7930,6 +12337,18 @@ function Pipeline(pipeline) {
     return pipeline.reduce((result2, func) => func(context, type, result2), value);
   };
 }
+var init_pipeline = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/pipeline/pipeline.mjs"() {
+    init_arguments2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/pipeline/index.mjs
+var init_pipeline2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/pipeline/index.mjs"() {
+    init_pipeline();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/callback.mjs
 function Decode3(_context, type, value) {
@@ -7943,6 +12362,12 @@ function Callback(direction, context, type, value) {
     return value;
   return guard_exports.IsEqual(direction, "Decode") ? Decode3(context, type, value) : Encode2(context, type, value);
 }
+var init_callback = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/callback.mjs"() {
+    init_guard2();
+    init_type3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_array.mjs
 function Decode4(direction, context, type, value) {
@@ -7965,12 +12390,26 @@ function Encode3(direction, context, type, value) {
 function FromArray10(direction, context, type, value) {
   return guard_exports.IsEqual(direction, "Decode") ? Decode4(direction, context, type, value) : Encode3(direction, context, type, value);
 }
+var init_from_array7 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_array.mjs"() {
+    init_guard2();
+    init_from_type14();
+    init_callback();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_cyclic.mjs
 function FromCyclic9(direction, context, type, value) {
   value = FromType23(direction, { ...context, ...type.$defs }, Ref(type.$ref), value);
   return Callback(direction, context, type, value);
 }
+var init_from_cyclic9 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_cyclic.mjs"() {
+    init_type3();
+    init_from_type14();
+    init_callback();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_intersect.mjs
 function MergeInteriors(interiors) {
@@ -8003,6 +12442,15 @@ function Encode4(direction, context, type, value) {
 function FromIntersect9(direction, context, type, value) {
   return guard_exports.IsEqual(direction, "Decode") ? Decode5(direction, context, type, value) : Encode4(direction, context, type, value);
 }
+var init_from_intersect9 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_intersect.mjs"() {
+    init_guard2();
+    init_from_type14();
+    init_callback();
+    init_clone3();
+    init_clean2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_object.mjs
 function Decode6(direction, context, type, value) {
@@ -8029,6 +12477,14 @@ function Encode5(direction, context, type, value) {
 function FromObject14(direction, context, type, value) {
   return guard_exports.IsEqual(direction, "Decode") ? Decode6(direction, context, type, value) : Encode5(direction, context, type, value);
 }
+var init_from_object10 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_object.mjs"() {
+    init_guard2();
+    init_from_type14();
+    init_callback();
+    init_optional_undefined();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_record.mjs
 function Decode7(direction, context, type, value) {
@@ -8057,6 +12513,14 @@ function Encode6(direction, context, type, value) {
 function FromRecord6(direction, context, type, value) {
   return guard_exports.IsEqual(direction, "Decode") ? Decode7(direction, context, type, value) : Encode6(direction, context, type, value);
 }
+var init_from_record5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_record.mjs"() {
+    init_guard2();
+    init_type3();
+    init_from_type14();
+    init_callback();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_ref.mjs
 function ResolveRef(direction, context, type, value) {
@@ -8065,6 +12529,13 @@ function ResolveRef(direction, context, type, value) {
 function FromRef8(direction, context, type, value) {
   return guard_exports.IsEqual(direction, "Decode") ? Callback(direction, context, type, ResolveRef(direction, context, type, value)) : ResolveRef(direction, context, type, Callback(direction, context, type, value));
 }
+var init_from_ref4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_ref.mjs"() {
+    init_guard2();
+    init_from_type14();
+    init_callback();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_tuple.mjs
 function Decode8(direction, context, type, value) {
@@ -8087,6 +12558,13 @@ function Encode7(direction, context, type, value) {
 function FromTuple8(direction, context, type, value) {
   return guard_exports.IsEqual(direction, "Decode") ? Decode8(direction, context, type, value) : Encode7(direction, context, type, value);
 }
+var init_from_tuple8 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_tuple.mjs"() {
+    init_guard2();
+    init_from_type14();
+    init_callback();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_union.mjs
 function Decode9(direction, context, type, value) {
@@ -8111,18 +12589,36 @@ function Encode8(direction, context, type, value) {
 function FromUnion12(direction, context, type, value) {
   return guard_exports.IsEqual(direction, "Decode") ? Decode9(direction, context, type, value) : Encode8(direction, context, type, value);
 }
+var init_from_union10 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_union.mjs"() {
+    init_guard2();
+    init_callback();
+    init_from_type14();
+    init_clone3();
+    init_check4();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_type.mjs
 function FromType23(direction, context, type, value) {
   return IsArray2(type) ? FromArray10(direction, context, type, value) : IsCyclic(type) ? FromCyclic9(direction, context, type, value) : IsIntersect(type) ? FromIntersect9(direction, context, type, value) : IsObject2(type) ? FromObject14(direction, context, type, value) : IsRecord(type) ? FromRecord6(direction, context, type, value) : IsRef(type) ? FromRef8(direction, context, type, value) : IsTuple(type) ? FromTuple8(direction, context, type, value) : IsUnion(type) ? FromUnion12(direction, context, type, value) : Callback(direction, context, type, value);
 }
+var init_from_type14 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/from_type.mjs"() {
+    init_type3();
+    init_from_array7();
+    init_from_cyclic9();
+    init_from_intersect9();
+    init_from_object10();
+    init_from_record5();
+    init_from_ref4();
+    init_from_tuple8();
+    init_from_union10();
+    init_callback();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/decode.mjs
-var DecodeError = class extends AssertError {
-  constructor(value, errors) {
-    super("Decode", value, errors);
-  }
-};
 function Assert2(context, type, value) {
   if (!Check2(context, type, value))
     throw new DecodeError(value, Errors2(context, type, value));
@@ -8132,14 +12628,6 @@ function DecodeUnsafe(context, type, value) {
   const sorted = settings_exports.Get().unionPrioritySort ? UnionPrioritySort(type) : type;
   return FromType23("Decode", context, sorted, value);
 }
-var Decoder = Pipeline([
-  (_context, _type, value) => Clone2(value),
-  (context, type, value) => Default(context, type, value),
-  (context, type, value) => Convert(context, type, value),
-  (context, type, value) => Clean(context, type, value),
-  (context, type, value) => Assert2(context, type, value),
-  (context, type, value) => DecodeUnsafe(context, type, value)
-]);
 function Decode10(...args) {
   const [context, type, value] = arguments_exports.Match(args, {
     3: (context2, type2, value2) => [context2, type2, value2],
@@ -8147,13 +12635,37 @@ function Decode10(...args) {
   });
   return Decoder(context, type, value);
 }
+var DecodeError, Decoder;
+var init_decode2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/decode.mjs"() {
+    init_system2();
+    init_assert2();
+    init_check4();
+    init_errors3();
+    init_clean2();
+    init_clone3();
+    init_convert2();
+    init_default3();
+    init_pipeline2();
+    init_from_type14();
+    init_union_priority_sort();
+    DecodeError = class extends AssertError {
+      constructor(value, errors) {
+        super("Decode", value, errors);
+      }
+    };
+    Decoder = Pipeline([
+      (_context, _type, value) => Clone2(value),
+      (context, type, value) => Default(context, type, value),
+      (context, type, value) => Convert(context, type, value),
+      (context, type, value) => Clean(context, type, value),
+      (context, type, value) => Assert2(context, type, value),
+      (context, type, value) => DecodeUnsafe(context, type, value)
+    ]);
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/encode.mjs
-var EncodeError = class extends AssertError {
-  constructor(value, errors) {
-    super("Encode", value, errors);
-  }
-};
 function Assert3(context, type, value) {
   if (!Check2(context, type, value))
     throw new EncodeError(value, Errors2(context, type, value));
@@ -8163,14 +12675,6 @@ function EncodeUnsafe(context, type, value) {
   const sorted = settings_exports.Get().unionPrioritySort ? UnionPrioritySort(type) : type;
   return FromType23("Encode", context, sorted, value);
 }
-var Encoder = Pipeline([
-  (_context, _type, value) => Clone2(value),
-  (context, type, value) => EncodeUnsafe(context, type, value),
-  (context, type, value) => Default(context, type, value),
-  (context, type, value) => Convert(context, type, value),
-  (context, type, value) => Clean(context, type, value),
-  (context, type, value) => Assert3(context, type, value)
-]);
 function Encode9(...args) {
   const [context, type, value] = arguments_exports.Match(args, {
     3: (context2, type2, value2) => [context2, type2, value2],
@@ -8178,6 +12682,35 @@ function Encode9(...args) {
   });
   return Encoder(context, type, value);
 }
+var EncodeError, Encoder;
+var init_encode2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/encode.mjs"() {
+    init_system2();
+    init_assert2();
+    init_check4();
+    init_errors3();
+    init_clean2();
+    init_clone3();
+    init_convert2();
+    init_default3();
+    init_pipeline2();
+    init_from_type14();
+    init_union_priority_sort();
+    EncodeError = class extends AssertError {
+      constructor(value, errors) {
+        super("Encode", value, errors);
+      }
+    };
+    Encoder = Pipeline([
+      (_context, _type, value) => Clone2(value),
+      (context, type, value) => EncodeUnsafe(context, type, value),
+      (context, type, value) => Default(context, type, value),
+      (context, type, value) => Convert(context, type, value),
+      (context, type, value) => Clean(context, type, value),
+      (context, type, value) => Assert3(context, type, value)
+    ]);
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/has.mjs
 function FromArray11(context, type) {
@@ -8212,7 +12745,6 @@ function FromUnion13(context, type) {
 function FromType24(context, type) {
   return IsArray2(type) ? FromArray11(context, type) : IsCyclic(type) ? FromCyclic10(context, type) : IsIntersect(type) ? FromIntersect10(context, type) : IsObject2(type) ? FromObject15(context, type) : IsRecord(type) ? FromRecord7(context, type) : IsRef(type) ? FromRef9(context, type) : IsTuple(type) ? FromTuple9(context, type) : IsUnion(type) ? FromUnion13(context, type) : IsCodec(type);
 }
-var visited = /* @__PURE__ */ new Set();
 function HasCodec(...args) {
   const [context, type] = arguments_exports.Match(args, {
     2: (context2, type2) => [context2, type2],
@@ -8221,19 +12753,56 @@ function HasCodec(...args) {
   visited.clear();
   return FromType24(context, type);
 }
+var visited;
+var init_has = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/has.mjs"() {
+    init_arguments2();
+    init_guard2();
+    init_type3();
+    init_type3();
+    init_type3();
+    init_type3();
+    init_type3();
+    init_type3();
+    init_type3();
+    init_type3();
+    init_type3();
+    visited = /* @__PURE__ */ new Set();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/index.mjs
+var init_codec2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/codec/index.mjs"() {
+    init_decode2();
+    init_encode2();
+    init_has();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/error.mjs
-var CreateError = class extends Error {
-  constructor(type, message) {
-    super(message);
-    this.type = type;
+var CreateError;
+var init_error = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/error.mjs"() {
+    CreateError = class extends Error {
+      constructor(type, message) {
+        super(message);
+        this.type = type;
+      }
+    };
   }
-};
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_default.mjs
 function FromDefault2(_context, schema) {
   return guard_exports.IsFunction(schema.default) ? schema.default(schema) : guard_exports.IsObject(schema.default) ? Clone2(schema.default) : schema.default;
 }
+var init_from_default2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_default.mjs"() {
+    init_guard2();
+    init_clone3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_array.mjs
 function FromArray12(context, type) {
@@ -8242,16 +12811,32 @@ function FromArray12(context, type) {
   const length = IsMinItems(type) ? type.minItems : 0;
   return Array.from({ length }, () => FromType25(context, type.items));
 }
+var init_from_array8 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_array.mjs"() {
+    init_types2();
+    init_from_type15();
+    init_error();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_bigint.mjs
 function FromBigInt7(_context, type) {
   return IsExclusiveMinimum(type) ? BigInt(type.exclusiveMinimum) + BigInt(1) : IsMinimum(type) ? BigInt(type.minimum) : BigInt(0);
 }
+var init_from_bigint2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_bigint.mjs"() {
+    init_types2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_boolean.mjs
 function FromBoolean7(_context, _type) {
   return false;
 }
+var init_from_boolean2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_boolean.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_constructor.mjs
 function FromConstructor2(context, type) {
@@ -8262,27 +12847,55 @@ function FromConstructor2(context, type) {
     }
   };
 }
+var init_from_constructor = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_constructor.mjs"() {
+    init_from_type15();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_cyclic.mjs
 function FromCyclic11(context, type) {
   return FromType25({ ...context, ...type.$defs }, Ref(type.$ref));
 }
+var init_from_cyclic10 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_cyclic.mjs"() {
+    init_type3();
+    init_from_type15();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_enum.mjs
 function FromEnum4(context, type) {
   return FromType25(context, Evaluate(type));
 }
+var init_from_enum3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_enum.mjs"() {
+    init_type3();
+    init_from_type15();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_function.mjs
 function FromFunction2(context, type) {
   const returnType = FromType25(context, type.returnType);
   return () => returnType;
 }
+var init_from_function = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_function.mjs"() {
+    init_from_type15();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_integer.mjs
 function FromInteger2(_context, type) {
   return IsExclusiveMinimum(type) && guard_exports.IsNumber(type.exclusiveMinimum) ? type.exclusiveMinimum + 1 : IsMinimum(type) ? type.minimum : 0;
 }
+var init_from_integer2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_integer.mjs"() {
+    init_guard2();
+    init_types2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_intersect.mjs
 function FromIntersect11(context, type) {
@@ -8290,26 +12903,51 @@ function FromIntersect11(context, type) {
   const evaluated = Evaluate(instantiated);
   return FromType25(context, evaluated);
 }
+var init_from_intersect10 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_intersect.mjs"() {
+    init_type3();
+    init_from_type15();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_literal.mjs
 function FromLiteral7(_context, type) {
   return type.const;
 }
+var init_from_literal4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_literal.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_never.mjs
 function FromNever(_context, type) {
   throw new CreateError(type, "Cannot create TNever types");
 }
+var init_from_never = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_never.mjs"() {
+    init_error();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_null.mjs
 function FromNull3(_context, _type) {
   return null;
 }
+var init_from_null2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_null.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_number.mjs
 function FromNumber6(_context, type) {
   return IsExclusiveMinimum(type) && guard_exports.IsNumber(type.exclusiveMinimum) ? type.exclusiveMinimum + 1 : IsMinimum(type) ? type.minimum : 0;
 }
+var init_from_number2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_number.mjs"() {
+    init_guard2();
+    init_types2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_object.mjs
 function FromObject16(context, type) {
@@ -8318,6 +12956,12 @@ function FromObject16(context, type) {
     return { ...result2, [key]: FromType25(context, type.properties[key]) };
   }, {});
 }
+var init_from_object11 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_object.mjs"() {
+    init_guard2();
+    init_from_type15();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_record.mjs
 function FromRecord8(_context, type) {
@@ -8325,6 +12969,12 @@ function FromRecord8(_context, type) {
     throw new CreateError(type, "Record with the minProperties constraint must have a default annotation");
   return {};
 }
+var init_from_record6 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_record.mjs"() {
+    init_types2();
+    init_error();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_ref.mjs
 function FromRef10(context, type) {
@@ -8332,6 +12982,13 @@ function FromRef10(context, type) {
     throw new CreateError(type, "Unable to deref Ref");
   })();
 }
+var init_from_ref5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_ref.mjs"() {
+    init_guard2();
+    init_from_type15();
+    init_error();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_string.mjs
 function FromString8(_context, type) {
@@ -8341,11 +12998,20 @@ function FromString8(_context, type) {
   const minLength = IsMinLength3(type) ? type.minLength : 0;
   return "".padEnd(minLength);
 }
+var init_from_string2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_string.mjs"() {
+    init_types2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_symbol.mjs
 function FromSymbol2(_context, _type) {
   return /* @__PURE__ */ Symbol();
 }
+var init_from_symbol = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_symbol.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_template_literal.mjs
 function FromTemplateLiteral5(context, type) {
@@ -8354,16 +13020,33 @@ function FromTemplateLiteral5(context, type) {
     throw new CreateError(type, "Unable to create TemplateLiteral due to infinite type expansion");
   return FromType25(context, decoded);
 }
+var init_from_template_literal4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_template_literal.mjs"() {
+    init_type3();
+    init_template_literal3();
+    init_from_type15();
+    init_error();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_tuple.mjs
 function FromTuple10(context, type) {
   return Array.from({ length: type.minItems }, (_, i) => FromType25(context, type.items[i]));
 }
+var init_from_tuple9 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_tuple.mjs"() {
+    init_from_type15();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_undefined.mjs
 function FromUndefined3(_context, _type) {
   return void 0;
 }
+var init_from_undefined2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_undefined.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_union.mjs
 function FromUnion14(context, type) {
@@ -8372,11 +13055,21 @@ function FromUnion14(context, type) {
   }
   return FromType25(context, type.anyOf[0]);
 }
+var init_from_union11 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_union.mjs"() {
+    init_guard2();
+    init_from_type15();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_void.mjs
 function FromVoid2(_context, _type) {
   return void 0;
 }
+var init_from_void2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_void.mjs"() {
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_type.mjs
 function FromType25(context, type) {
@@ -8392,6 +13085,36 @@ function FromType25(context, type) {
     )
   );
 }
+var init_from_type15 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/from_type.mjs"() {
+    init_type3();
+    init_types2();
+    init_from_default2();
+    init_from_array8();
+    init_from_bigint2();
+    init_from_boolean2();
+    init_from_constructor();
+    init_from_cyclic10();
+    init_from_enum3();
+    init_from_function();
+    init_from_integer2();
+    init_from_intersect10();
+    init_from_literal4();
+    init_from_never();
+    init_from_null2();
+    init_from_number2();
+    init_from_object11();
+    init_from_record6();
+    init_from_ref5();
+    init_from_string2();
+    init_from_symbol();
+    init_from_template_literal4();
+    init_from_tuple9();
+    init_from_undefined2();
+    init_from_union11();
+    init_from_void2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/create.mjs
 function Create2(...args) {
@@ -8401,35 +13124,61 @@ function Create2(...args) {
   });
   return FromType25(context, type);
 }
+var init_create3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/create.mjs"() {
+    init_arguments2();
+    init_from_type15();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/index.mjs
+var init_create4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/create/index.mjs"() {
+    init_error();
+    init_create3();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/equal/equal.mjs
 function Equal(left, right) {
   return guard_exports.IsDeepEqual(left, right);
 }
+var init_equal = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/equal/equal.mjs"() {
+    init_guard2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/equal/index.mjs
+var init_equal2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/equal/index.mjs"() {
+    init_equal();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/hash/hash.mjs
 function Hash2(value) {
   return hash_exports.Hash(value);
 }
+var init_hash2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/hash/hash.mjs"() {
+    init_hashing();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/hash/index.mjs
+var init_hash3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/hash/index.mjs"() {
+    init_hash2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/parse/parse.mjs
-var ParseError2 = class extends AssertError {
-  constructor(value, errors) {
-    super("Parse", value, errors);
-  }
-};
 function Assert4(context, type, value) {
   if (!Check2(context, type, value))
     throw new ParseError2(value, Errors2(context, type, value));
   return value;
 }
-var Parser = Pipeline([
-  (_context, _type, value) => Clone2(value),
-  (context, type, value) => Default(context, type, value),
-  (context, type, value) => Convert(context, type, value),
-  (context, type, value) => Clean(context, type, value),
-  (context, type, value) => Assert4(context, type, value)
-]);
 function Parse(...args) {
   const [context, type, value] = arguments_exports.Match(args, {
     3: (context2, type2, value2) => [context2, type2, value2],
@@ -8442,6 +13191,40 @@ function Parse(...args) {
     return Parser(context, type, value);
   throw new ParseError2(value, Errors2(context, type, value));
 }
+var ParseError2, Parser;
+var init_parse2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/parse/parse.mjs"() {
+    init_system();
+    init_arguments2();
+    init_assert2();
+    init_check4();
+    init_errors3();
+    init_clean2();
+    init_clone3();
+    init_convert2();
+    init_default3();
+    init_pipeline2();
+    ParseError2 = class extends AssertError {
+      constructor(value, errors) {
+        super("Parse", value, errors);
+      }
+    };
+    Parser = Pipeline([
+      (_context, _type, value) => Clone2(value),
+      (context, type, value) => Default(context, type, value),
+      (context, type, value) => Convert(context, type, value),
+      (context, type, value) => Clean(context, type, value),
+      (context, type, value) => Assert4(context, type, value)
+    ]);
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/parse/index.mjs
+var init_parse3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/parse/index.mjs"() {
+    init_parse2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/delta/diff.mjs
 function CreateUpdate(path, value) {
@@ -8529,23 +13312,42 @@ function* FromValue4(path, left, right) {
 function Diff(current, next) {
   return [...FromValue4("", current, next)];
 }
+var init_diff = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/delta/diff.mjs"() {
+    init_guard2();
+    init_equal2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/delta/edit.mjs
-var Insert2 = _Object_({
-  type: Literal("insert"),
-  path: String2(),
-  value: Unknown()
+var Insert2, Update2, Delete2, Edit;
+var init_edit = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/delta/edit.mjs"() {
+    init_type3();
+    Insert2 = _Object_({
+      type: Literal("insert"),
+      path: String2(),
+      value: Unknown()
+    });
+    Update2 = Object({
+      type: Literal("update"),
+      path: String2(),
+      value: Unknown()
+    });
+    Delete2 = _Object_({
+      type: Literal("delete"),
+      path: String2()
+    });
+    Edit = Union([Insert2, Update2, Delete2]);
+  }
 });
-var Update2 = Object({
-  type: Literal("update"),
-  path: String2(),
-  value: Unknown()
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/pointer/index.mjs
+var init_pointer3 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/pointer/index.mjs"() {
+    init_pointer2();
+  }
 });
-var Delete2 = _Object_({
-  type: Literal("delete"),
-  path: String2()
-});
-var Edit = Union([Insert2, Update2, Delete2]);
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/delta/patch.mjs
 function IsRoot(edits) {
@@ -8578,16 +13380,36 @@ function Patch(current, edits) {
   }
   return clone;
 }
+var init_patch = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/delta/patch.mjs"() {
+    init_clone3();
+    init_pointer3();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/delta/index.mjs
+var init_delta = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/delta/index.mjs"() {
+    init_diff();
+    init_edit();
+    init_patch();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/error.mjs
-var RepairError = class extends Error {
-  constructor(context, type, value, message) {
-    super(message);
-    this.context = context;
-    this.type = type;
-    this.value = value;
+var RepairError;
+var init_error2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/error.mjs"() {
+    RepairError = class extends Error {
+      constructor(context, type, value, message) {
+        super(message);
+        this.context = context;
+        this.type = type;
+        this.value = value;
+      }
+    };
   }
-};
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_array.mjs
 function MakeUnique(values) {
@@ -8615,11 +13437,28 @@ function FromArray14(context, type, value) {
     throw new RepairError(context, type, value, "Failed to repair Array due to uniqueItems constraint");
   return unique;
 }
+var init_from_array9 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_array.mjs"() {
+    init_types2();
+    init_guard2();
+    init_check4();
+    init_create4();
+    init_hash3();
+    init_from_type16();
+    init_error2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_enum.mjs
 function FromEnum5(context, type, value) {
   return FromType26(context, Evaluate(type), value);
 }
+var init_from_enum4 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_enum.mjs"() {
+    init_type3();
+    init_from_type16();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_intersect.mjs
 function FromIntersect12(context, type, value) {
@@ -8627,6 +13466,12 @@ function FromIntersect12(context, type, value) {
   const evaluated = Evaluate(instantiated);
   return FromType26(context, evaluated, value);
 }
+var init_from_intersect11 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_intersect.mjs"() {
+    init_type3();
+    init_from_type16();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_object.mjs
 function FromObject18(context, type, value) {
@@ -8651,6 +13496,15 @@ function FromObject18(context, type, value) {
   }
   return result2;
 }
+var init_from_object12 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_object.mjs"() {
+    init_guard2();
+    init_check4();
+    init_create4();
+    init_types2();
+    init_from_type16();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_record.mjs
 function FromRecord9(context, type, value) {
@@ -8677,6 +13531,16 @@ function FromRecord9(context, type, value) {
   }
   return result2;
 }
+var init_from_record7 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_record.mjs"() {
+    init_types2();
+    init_type3();
+    init_guard2();
+    init_create4();
+    init_check4();
+    init_from_type16();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_ref.mjs
 function FromRef11(context, type, value) {
@@ -8684,12 +13548,25 @@ function FromRef11(context, type, value) {
     throw new RepairError(context, type, value, "Unable to de-reference target type");
   })();
 }
+var init_from_ref6 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_ref.mjs"() {
+    init_guard2();
+    init_from_type16();
+    init_error2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_template_literal.mjs
 function FromTemplateLiteral6(context, type, value) {
   const decoded = TemplateLiteralDecode(type.pattern);
   return FromType26(context, decoded, value);
 }
+var init_from_template_literal5 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_template_literal.mjs"() {
+    init_template_literal3();
+    init_from_type16();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_tuple.mjs
 function FromTuple11(context, schema, value) {
@@ -8699,6 +13576,14 @@ function FromTuple11(context, schema, value) {
     return Create2(context, schema);
   return schema.items.map((schema2, index) => FromType26(context, schema2, value[index]));
 }
+var init_from_tuple10 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_tuple.mjs"() {
+    init_guard2();
+    init_check4();
+    init_create4();
+    init_from_type16();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/shared/union_score_select.mjs
 function Deref(context, type, value) {
@@ -8730,6 +13615,13 @@ function UnionScoreSelect(context, type, value) {
   }
   return select;
 }
+var init_union_score_select = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/shared/union_score_select.mjs"() {
+    init_type3();
+    init_guard2();
+    init_check4();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_union.mjs
 function RepairUnion(context, type, value) {
@@ -8744,6 +13636,18 @@ function FromUnion15(context, type, value) {
     return Create2(context, type);
   return RepairUnion(context, type, value);
 }
+var init_from_union12 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_union.mjs"() {
+    init_types2();
+    init_type3();
+    init_evaluate3();
+    init_check4();
+    init_clone3();
+    init_create4();
+    init_from_type16();
+    init_union_score_select();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_unknown.mjs
 function FromUnknown2(context, type, value) {
@@ -8754,6 +13658,13 @@ function FromUnknown2(context, type, value) {
     return converted;
   return Create2(context, type);
 }
+var init_from_unknown = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_unknown.mjs"() {
+    init_check4();
+    init_create4();
+    init_convert2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_type.mjs
 function AssertRepairableValue(context, type, value) {
@@ -8781,6 +13692,25 @@ function FromType26(context, type, value) {
   const repaired = IsArray2(type) ? FromArray14(context, type, candidate) : IsEnum(type) ? FromEnum5(context, type, candidate) : IsIntersect(type) ? FromIntersect12(context, type, candidate) : IsObject2(type) ? FromObject18(context, type, candidate) : IsRecord(type) ? FromRecord9(context, type, candidate) : IsRef(type) ? FromRef11(context, type, candidate) : IsTemplateLiteral(type) ? FromTemplateLiteral6(context, type, candidate) : IsTuple(type) ? FromTuple11(context, type, candidate) : IsUnion(type) ? FromUnion15(context, type, candidate) : FromUnknown2(context, type, candidate);
   return FinalizeRepair(context, type, repaired);
 }
+var init_from_type16 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/from_type.mjs"() {
+    init_guard2();
+    init_type3();
+    init_check4();
+    init_create4();
+    init_from_array9();
+    init_from_enum4();
+    init_from_intersect11();
+    init_from_object12();
+    init_from_record7();
+    init_from_ref6();
+    init_from_template_literal5();
+    init_from_tuple10();
+    init_from_union12();
+    init_from_unknown();
+    init_error2();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/repair.mjs
 function Repair(...args) {
@@ -8792,6 +13722,29 @@ function Repair(...args) {
   Assert(context, type, repaired);
   return repaired;
 }
+var init_repair = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/repair.mjs"() {
+    init_arguments2();
+    init_from_type16();
+    init_assert2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/index.mjs
+var init_repair2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/repair/index.mjs"() {
+    init_repair();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/shared/index.mjs
+var init_shared = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/shared/index.mjs"() {
+    init_optional_undefined();
+    init_union_priority_sort();
+    init_union_score_select();
+  }
+});
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/value.mjs
 var value_exports = {};
@@ -8815,14 +13768,52 @@ __export(value_exports, {
   Pointer: () => pointer_exports,
   Repair: () => Repair
 });
+var init_value = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/value.mjs"() {
+    init_assert2();
+    init_check4();
+    init_clean2();
+    init_clone3();
+    init_codec2();
+    init_convert2();
+    init_create4();
+    init_default3();
+    init_equal2();
+    init_errors3();
+    init_hash3();
+    init_parse3();
+    init_delta();
+    init_pointer3();
+    init_repair2();
+  }
+});
+
+// node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/index.mjs
+var init_value2 = __esm({
+  "node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/value/index.mjs"() {
+    init_assert2();
+    init_check4();
+    init_clean2();
+    init_clone3();
+    init_codec2();
+    init_convert2();
+    init_create4();
+    init_errors3();
+    init_default3();
+    init_equal2();
+    init_hash3();
+    init_parse3();
+    init_delta();
+    init_pipeline2();
+    init_pointer3();
+    init_repair2();
+    init_shared();
+    init_value();
+    init_value();
+  }
+});
 
 // src/package-contracts/fixer-packet.ts
-var FIXER_PREREQUISITE_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]*$";
-var fixerPrerequisiteSchema = typebox_exports.Object({
-  id: typebox_exports.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }),
-  requirement: typebox_exports.String({ pattern: "\\S" })
-}, { additionalProperties: false });
-var fixerPrerequisitesSchema = typebox_exports.Array(fixerPrerequisiteSchema);
 function causeMessage(cause) {
   if (cause instanceof Error) return cause.message;
   if (typeof cause === "string") return cause;
@@ -8832,17 +13823,6 @@ function causeMessage(cause) {
     return String(cause);
   }
 }
-var FixerPacketValidationError = class extends Error {
-  code = "AK_INVALID_FIX_PACKET";
-  constructor(cause) {
-    const prefix = "Fixer prerequisites or instructions violate the invocation contract";
-    super(
-      cause === void 0 ? prefix : `${prefix}: ${causeMessage(cause)}`,
-      cause === void 0 ? void 0 : { cause }
-    );
-    this.name = "FixerPacketValidationError";
-  }
-};
 function fail(cause) {
   throw new FixerPacketValidationError(cause);
 }
@@ -8887,6 +13867,31 @@ function parseFixerPrerequisites(source) {
   }
   return validateFixerPrerequisites(decoded);
 }
+var FIXER_PREREQUISITE_ID_PATTERN, fixerPrerequisiteSchema, fixerPrerequisitesSchema, FixerPacketValidationError;
+var init_fixer_packet = __esm({
+  "src/package-contracts/fixer-packet.ts"() {
+    "use strict";
+    init_build();
+    init_value2();
+    FIXER_PREREQUISITE_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]*$";
+    fixerPrerequisiteSchema = typebox_exports.Object({
+      id: typebox_exports.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }),
+      requirement: typebox_exports.String({ pattern: "\\S" })
+    }, { additionalProperties: false });
+    fixerPrerequisitesSchema = typebox_exports.Array(fixerPrerequisiteSchema);
+    FixerPacketValidationError = class extends Error {
+      code = "AK_INVALID_FIX_PACKET";
+      constructor(cause) {
+        const prefix = "Fixer prerequisites or instructions violate the invocation contract";
+        super(
+          cause === void 0 ? prefix : `${prefix}: ${causeMessage(cause)}`,
+          cause === void 0 ? void 0 : { cause }
+        );
+        this.name = "FixerPacketValidationError";
+      }
+    };
+  }
+});
 
 // src/open-tool-schema.ts
 function described(name, schema) {
@@ -8916,116 +13921,88 @@ function openToolObjectFromUnion(schema) {
   object.required = [];
   return object;
 }
+var init_open_tool_schema = __esm({
+  "src/open-tool-schema.ts"() {
+    "use strict";
+    init_build();
+  }
+});
 
 // src/package-contracts/fixer-output.ts
-var FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
-var nonblankTransportString = typebox_exports.String({ minLength: 1 });
-var authorityBlockerSchema = typebox_exports.Object({ cause: typebox_exports.Literal("authority_violation"), evidence: nonblankTransportString });
-var prerequisiteBlockerSchema = typebox_exports.Object({ cause: typebox_exports.Literal("prerequisite_unmet"), prerequisiteId: typebox_exports.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }), evidence: nonblankTransportString });
-var blockerSchema = typebox_exports.Union([authorityBlockerSchema, prerequisiteBlockerSchema]);
-var exceptionSchema = typebox_exports.Object({ where: nonblankTransportString, reason: nonblankTransportString });
-var testEvidenceSchema = typebox_exports.Object({
-  contract: typebox_exports.String({ minLength: 1, description: "Contract the test change proves." }),
-  minimumNecessaryCost: typebox_exports.String({ minLength: 1, description: "One-line minimum necessary cost of the test change." }),
-  measuredDuration: typebox_exports.String({ minLength: 1, description: "Measured duration of the focused verification run." })
-}, { description: "Test evidence slip (submit when diff includes test changes; machine does not verify)." });
-var completedClassResultSchema = typebox_exports.Object({
-  name: nonblankTransportString,
-  disposition: typebox_exports.Literal("completed"),
-  searchScope: nonblankTransportString,
-  exceptions: typebox_exports.Array(exceptionSchema),
-  commitSha: nonblankTransportString
-});
-var refusedClassResultSchema = typebox_exports.Object({
-  name: nonblankTransportString,
-  disposition: typebox_exports.Literal("refused"),
-  remainingScope: nonblankTransportString,
-  blocker: blockerSchema
-});
-var classResultSchema = typebox_exports.Union([completedClassResultSchema, refusedClassResultSchema]);
-var completedClassResultsSchema = typebox_exports.Array(completedClassResultSchema, { minItems: 1 });
-var fixerOutputVariants = typebox_exports.Union([
-  typebox_exports.Object({ status: typebox_exports.Literal("planned", { description: "Plan-phase proposal outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }) }),
-  typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "Lawfully refused outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work that cannot lawfully be performed." }), blocker: typebox_exports.Unsafe({ ...blockerSchema, description: "Lawful blocker preventing completion." }) }),
-  typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "Honest unfinished apply outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work remaining after this invocation." }), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
-  typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "All assigned classes completed." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
-  typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "All assigned classes lawfully refused." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class refusal settlements." }) }),
-  typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) })
-]);
-var fixerOutputSchema = openToolObjectFromUnion(fixerOutputVariants);
 function validateFixerOutput(value, _phase) {
   return value;
 }
+var FIXER_OUTPUT_TOOL_NAME, nonblankTransportString, authorityBlockerSchema, prerequisiteBlockerSchema, blockerSchema, exceptionSchema, testEvidenceSchema, completedClassResultSchema, refusedClassResultSchema, classResultSchema, completedClassResultsSchema, fixerOutputVariants, fixerOutputSchema;
+var init_fixer_output = __esm({
+  "src/package-contracts/fixer-output.ts"() {
+    "use strict";
+    init_build();
+    init_fixer_packet();
+    init_open_tool_schema();
+    FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
+    nonblankTransportString = typebox_exports.String({ minLength: 1 });
+    authorityBlockerSchema = typebox_exports.Object({ cause: typebox_exports.Literal("authority_violation"), evidence: nonblankTransportString });
+    prerequisiteBlockerSchema = typebox_exports.Object({ cause: typebox_exports.Literal("prerequisite_unmet"), prerequisiteId: typebox_exports.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }), evidence: nonblankTransportString });
+    blockerSchema = typebox_exports.Union([authorityBlockerSchema, prerequisiteBlockerSchema]);
+    exceptionSchema = typebox_exports.Object({ where: nonblankTransportString, reason: nonblankTransportString });
+    testEvidenceSchema = typebox_exports.Object({
+      contract: typebox_exports.String({ minLength: 1, description: "Contract the test change proves." }),
+      minimumNecessaryCost: typebox_exports.String({ minLength: 1, description: "One-line minimum necessary cost of the test change." }),
+      measuredDuration: typebox_exports.String({ minLength: 1, description: "Measured duration of the focused verification run." })
+    }, { description: "Test evidence slip (submit when diff includes test changes; machine does not verify)." });
+    completedClassResultSchema = typebox_exports.Object({
+      name: nonblankTransportString,
+      disposition: typebox_exports.Literal("completed"),
+      searchScope: nonblankTransportString,
+      exceptions: typebox_exports.Array(exceptionSchema),
+      commitSha: nonblankTransportString
+    });
+    refusedClassResultSchema = typebox_exports.Object({
+      name: nonblankTransportString,
+      disposition: typebox_exports.Literal("refused"),
+      remainingScope: nonblankTransportString,
+      blocker: blockerSchema
+    });
+    classResultSchema = typebox_exports.Union([completedClassResultSchema, refusedClassResultSchema]);
+    completedClassResultsSchema = typebox_exports.Array(completedClassResultSchema, { minItems: 1 });
+    fixerOutputVariants = typebox_exports.Union([
+      typebox_exports.Object({ status: typebox_exports.Literal("planned", { description: "Plan-phase proposal outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "Lawfully refused outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work that cannot lawfully be performed." }), blocker: typebox_exports.Unsafe({ ...blockerSchema, description: "Lawful blocker preventing completion." }) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "Honest unfinished apply outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work remaining after this invocation." }), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "All assigned classes completed." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "All assigned classes lawfully refused." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class refusal settlements." }) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) })
+    ]);
+    fixerOutputSchema = openToolObjectFromUnion(fixerOutputVariants);
+  }
+});
 
 // src/package-contracts/worker-output.ts
-var CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
 function validateAcceptedCoderDetails(output) {
   return output;
 }
 function validateAcceptedWorkerDetails(output, roleLabel = "Coder") {
   return roleLabel === "Fixer" ? validateFixerOutput(output) : validateAcceptedCoderDetails(output);
 }
+var CODER_OUTPUT_TOOL_NAME;
+var init_worker_output = __esm({
+  "src/package-contracts/worker-output.ts"() {
+    "use strict";
+    init_fixer_output();
+    init_fixer_packet();
+    init_fixer_output();
+    CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
+  }
+});
+
+// src/canonical-json.ts
+var init_canonical_json = __esm({
+  "src/canonical-json.ts"() {
+    "use strict";
+  }
+});
 
 // src/doctor-contracts.ts
-var DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
-var DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
-var nonblank = typebox_exports.String({ minLength: 1, pattern: "\\S" });
-var count = typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank) }, { additionalProperties: false });
-var evidenceIds = typebox_exports.Array(nonblank, { minItems: 1 });
-var guardrail = typebox_exports.Object({ answer: typebox_exports.Boolean(), evidenceIds, explanation: nonblank }, { additionalProperties: false });
-var lastRealBite = typebox_exports.Union([
-  typebox_exports.Object({ kind: typebox_exports.Literal("actual"), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: false }),
-  typebox_exports.Object({ kind: typebox_exports.Literal("noRealBite"), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false })
-]);
-var assetKinds = DOCTOR_TARGET_KINDS;
-var findingBody = {
-  evidenceIds,
-  disposition: typebox_exports.Union([typebox_exports.Literal("keep"), typebox_exports.Literal("thin"), typebox_exports.Literal("delete")]),
-  guardrails: typebox_exports.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: true }),
-  prescription: typebox_exports.Object({ kind: typebox_exports.Union([typebox_exports.Literal("retain"), typebox_exports.Literal("delete"), typebox_exports.Literal("simplify"), typebox_exports.Literal("patch"), typebox_exports.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: typebox_exports.Optional(nonblank) }, { additionalProperties: false }),
-  lastRealBite
-};
-var finding = typebox_exports.Union([
-  typebox_exports.Object({ targetKey: nonblank, observation: nonblank, evidenceIds }, { additionalProperties: false }),
-  typebox_exports.Object({ targetKey: nonblank, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), assetEvidence: typebox_exports.Object({ targetKey: nonblank, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false })
-]);
-var caseIdentity = typebox_exports.Object({ issueNumber: typebox_exports.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
-var cost = typebox_exports.Object({
-  invocations: count,
-  legs: count,
-  modelApiTurns: count,
-  outputTokens: count,
-  toolCalls: count,
-  retries: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank), evidence: typebox_exports.Literal("literal run-dir naming") }, { additionalProperties: false }),
-  statuses: typebox_exports.Array(typebox_exports.Object({ source: nonblank, status: nonblank }, { additionalProperties: false })),
-  commits: typebox_exports.Array(typebox_exports.Object({ source: nonblank, commit: nonblank }, { additionalProperties: false })),
-  sessions: typebox_exports.Array(typebox_exports.Union([
-    typebox_exports.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: typebox_exports.Number({ minimum: 0 }), completion: typebox_exports.Literal("accepted") }, { additionalProperties: false }),
-    typebox_exports.Object({ source: nonblank, startedAt: typebox_exports.Optional(nonblank), endedAt: typebox_exports.Optional(nonblank), wallMilliseconds: typebox_exports.Optional(typebox_exports.Number({ minimum: 0 })), completion: typebox_exports.Literal("incomplete"), degradationReason: typebox_exports.Optional(nonblank) }, { additionalProperties: false })
-  ])),
-  outputBytes: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank), payload: typebox_exports.Literal("raw JSONL bytes"), providerWireBytes: typebox_exports.Literal("unavailable") }, { additionalProperties: false })
-}, { additionalProperties: false });
-var doctorSubmissionVariants = typebox_exports.Union([
-  typebox_exports.Object({
-    status: typebox_exports.Literal("completed", { description: "Truthful single-case testimony was completed; the runtime adds derived cost to the receipt." }),
-    case: typebox_exports.Unsafe({ ...caseIdentity, description: "Identity of the retained Doctor case." }),
-    findings: typebox_exports.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." })
-  }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
-  typebox_exports.Object({
-    status: typebox_exports.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
-    reason: typebox_exports.String({ minLength: 1, description: "Reason evidence is insufficient for truthful testimony." }),
-    missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank, targetKeys: typebox_exports.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "Evidence required before truthful testimony is possible." })
-  }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." })
-]);
-var doctorSubmissionSchema = openToolObjectFromUnion(doctorSubmissionVariants);
-var doctorOutputSchema = typebox_exports.Union([
-  typebox_exports.Object({ status: typebox_exports.Literal("completed"), case: caseIdentity, findings: typebox_exports.Array(finding), cost }, { additionalProperties: false }),
-  doctorSubmissionVariants.anyOf[1]
-]);
-var doctorEvidenceReadSchema = typebox_exports.Object({ evidenceId: typebox_exports.String({ minLength: 1, description: "Identifier of the retained evidence to read." }), offset: typebox_exports.Optional(typebox_exports.Integer({ minimum: 0, description: "Zero-based byte offset at which to begin reading." })), limit: typebox_exports.Optional(typebox_exports.Integer({ minimum: 1, maximum: 4096, description: "Maximum number of bytes to return." })) }, { additionalProperties: false });
-var DoctorSubmissionContractError = class extends Error {
-  name = "DoctorSubmissionContractError";
-};
 function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -9047,15 +14024,88 @@ function validateRecordedDoctorOutput(value) {
   if (read2(output, "status") === "completed" && read2(output, "cost") === void 0) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
   return output;
 }
+var DOCTOR_OUTPUT_TOOL_NAME, DOCTOR_TARGET_KINDS, nonblank, count, evidenceIds, guardrail, lastRealBite, assetKinds, findingBody, finding, caseIdentity, cost, doctorSubmissionVariants, doctorSubmissionSchema, doctorOutputSchema, doctorEvidenceReadSchema, DoctorSubmissionContractError;
+var init_doctor_contracts = __esm({
+  "src/doctor-contracts.ts"() {
+    "use strict";
+    init_build();
+    init_canonical_json();
+    init_open_tool_schema();
+    DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
+    DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
+    nonblank = typebox_exports.String({ minLength: 1, pattern: "\\S" });
+    count = typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank) }, { additionalProperties: false });
+    evidenceIds = typebox_exports.Array(nonblank, { minItems: 1 });
+    guardrail = typebox_exports.Object({ answer: typebox_exports.Boolean(), evidenceIds, explanation: nonblank }, { additionalProperties: false });
+    lastRealBite = typebox_exports.Union([
+      typebox_exports.Object({ kind: typebox_exports.Literal("actual"), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: false }),
+      typebox_exports.Object({ kind: typebox_exports.Literal("noRealBite"), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false })
+    ]);
+    assetKinds = DOCTOR_TARGET_KINDS;
+    findingBody = {
+      evidenceIds,
+      disposition: typebox_exports.Union([typebox_exports.Literal("keep"), typebox_exports.Literal("thin"), typebox_exports.Literal("delete")]),
+      guardrails: typebox_exports.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: true }),
+      prescription: typebox_exports.Object({ kind: typebox_exports.Union([typebox_exports.Literal("retain"), typebox_exports.Literal("delete"), typebox_exports.Literal("simplify"), typebox_exports.Literal("patch"), typebox_exports.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: typebox_exports.Optional(nonblank) }, { additionalProperties: false }),
+      lastRealBite
+    };
+    finding = typebox_exports.Union([
+      typebox_exports.Object({ targetKey: nonblank, observation: nonblank, evidenceIds }, { additionalProperties: false }),
+      typebox_exports.Object({ targetKey: nonblank, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), assetEvidence: typebox_exports.Object({ targetKey: nonblank, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false })
+    ]);
+    caseIdentity = typebox_exports.Object({ issueNumber: typebox_exports.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
+    cost = typebox_exports.Object({
+      invocations: count,
+      legs: count,
+      modelApiTurns: count,
+      outputTokens: count,
+      toolCalls: count,
+      retries: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank), evidence: typebox_exports.Literal("literal run-dir naming") }, { additionalProperties: false }),
+      statuses: typebox_exports.Array(typebox_exports.Object({ source: nonblank, status: nonblank }, { additionalProperties: false })),
+      commits: typebox_exports.Array(typebox_exports.Object({ source: nonblank, commit: nonblank }, { additionalProperties: false })),
+      sessions: typebox_exports.Array(typebox_exports.Union([
+        typebox_exports.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: typebox_exports.Number({ minimum: 0 }), completion: typebox_exports.Literal("accepted") }, { additionalProperties: false }),
+        typebox_exports.Object({ source: nonblank, startedAt: typebox_exports.Optional(nonblank), endedAt: typebox_exports.Optional(nonblank), wallMilliseconds: typebox_exports.Optional(typebox_exports.Number({ minimum: 0 })), completion: typebox_exports.Literal("incomplete"), degradationReason: typebox_exports.Optional(nonblank) }, { additionalProperties: false })
+      ])),
+      outputBytes: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank), payload: typebox_exports.Literal("raw JSONL bytes"), providerWireBytes: typebox_exports.Literal("unavailable") }, { additionalProperties: false })
+    }, { additionalProperties: false });
+    doctorSubmissionVariants = typebox_exports.Union([
+      typebox_exports.Object({
+        status: typebox_exports.Literal("completed", { description: "Truthful single-case testimony was completed; the runtime adds derived cost to the receipt." }),
+        case: typebox_exports.Unsafe({ ...caseIdentity, description: "Identity of the retained Doctor case." }),
+        findings: typebox_exports.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." })
+      }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
+      typebox_exports.Object({
+        status: typebox_exports.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
+        reason: typebox_exports.String({ minLength: 1, description: "Reason evidence is insufficient for truthful testimony." }),
+        missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank, targetKeys: typebox_exports.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "Evidence required before truthful testimony is possible." })
+      }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." })
+    ]);
+    doctorSubmissionSchema = openToolObjectFromUnion(doctorSubmissionVariants);
+    doctorOutputSchema = typebox_exports.Union([
+      typebox_exports.Object({ status: typebox_exports.Literal("completed"), case: caseIdentity, findings: typebox_exports.Array(finding), cost }, { additionalProperties: false }),
+      doctorSubmissionVariants.anyOf[1]
+    ]);
+    doctorEvidenceReadSchema = typebox_exports.Object({ evidenceId: typebox_exports.String({ minLength: 1, description: "Identifier of the retained evidence to read." }), offset: typebox_exports.Optional(typebox_exports.Integer({ minimum: 0, description: "Zero-based byte offset at which to begin reading." })), limit: typebox_exports.Optional(typebox_exports.Integer({ minimum: 1, maximum: 4096, description: "Maximum number of bytes to return." })) }, { additionalProperties: false });
+    DoctorSubmissionContractError = class extends Error {
+      name = "DoctorSubmissionContractError";
+    };
+  }
+});
 
 // src/git-object-id.ts
-var FULL_GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 function isFullGitObjectId(value) {
   return typeof value === "string" && FULL_GIT_OBJECT_ID_RE.test(value);
 }
+var FULL_GIT_OBJECT_ID_RE;
+var init_git_object_id = __esm({
+  "src/git-object-id.ts"() {
+    "use strict";
+    FULL_GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+  }
+});
 
 // src/exact-utf8.ts
-var decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 function exactUtf8(bytes, label) {
   let text;
   try {
@@ -9065,41 +14115,26 @@ function exactUtf8(bytes, label) {
   }
   return text;
 }
+var decoder;
+var init_exact_utf8 = __esm({
+  "src/exact-utf8.ts"() {
+    "use strict";
+    decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  }
+});
 
 // src/sha256.ts
 import { createHash } from "node:crypto";
 function sha256Hex(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
+var init_sha256 = __esm({
+  "src/sha256.ts"() {
+    "use strict";
+  }
+});
 
 // src/merger-contracts.ts
-var oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
-var materialSchema = typebox_exports.Object({ bytesBase64: typebox_exports.String(), sha256: typebox_exports.String() }, { additionalProperties: false });
-var checkSchema = typebox_exports.Object({ name: typebox_exports.String({ minLength: 1 }), argv: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), { minItems: 1 }) }, { additionalProperties: false });
-var mergerInputSchema = typebox_exports.Object({
-  version: typebox_exports.Literal(1),
-  attemptId: typebox_exports.String({ minLength: 1 }),
-  targetObjectId: typebox_exports.String({ pattern: oidPattern }),
-  sourceObjectId: typebox_exports.String({ pattern: oidPattern }),
-  materials: typebox_exports.Object({ task: materialSchema, authority: materialSchema, targetIntent: materialSchema, sourceIntent: materialSchema }, { additionalProperties: false }),
-  expectedConflictPaths: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), { minItems: 1 }),
-  resolutionScope: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), { minItems: 1 }),
-  authorizedChecks: typebox_exports.Array(checkSchema)
-}, { additionalProperties: false });
-var mergerOutputVariants = typebox_exports.Union([
-  typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "Merge attempt completed." }), attemptId: typebox_exports.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), report: typebox_exports.String({ minLength: 1, description: "Truthful merge outcome report." }), mergeCommitId: typebox_exports.String({ pattern: oidPattern, description: "Verified completed merge commit object ID." }) }, { additionalProperties: false }),
-  typebox_exports.Object({ status: typebox_exports.Literal("escalate", { description: "Merge attempt requires human authority." }), attemptId: typebox_exports.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), diagnosis: typebox_exports.String({ minLength: 1, description: "Reason merge completion requires escalation." }), report: typebox_exports.String({ minLength: 1, description: "Truthful merge outcome report." }) }, { additionalProperties: false })
-]);
-var mergerOutputSchema = openToolObjectFromUnion(mergerOutputVariants);
-var MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
-var record = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
-var blank = (v) => typeof v !== "string" || v.trim().length === 0;
-var MergerInputContractError = class extends Error {
-  constructor(message = "Merger input violates its exact contract") {
-    super(message);
-    this.name = "MergerInputContractError";
-  }
-};
 function fail2(message = "Merger input violates its exact contract") {
   throw new MergerInputContractError(message);
 }
@@ -9142,71 +14177,72 @@ function validateMergerOutput(value, expectedAttemptId) {
   if (value.status === "escalate") return structuredClone(value);
   throw new Error("Merger output has no recognized execution discriminator");
 }
+var oidPattern, materialSchema, checkSchema, mergerInputSchema, mergerOutputVariants, mergerOutputSchema, MERGER_OUTPUT_TOOL_NAME, record, blank, MergerInputContractError;
+var init_merger_contracts = __esm({
+  "src/merger-contracts.ts"() {
+    "use strict";
+    init_build();
+    init_git_object_id();
+    init_exact_utf8();
+    init_sha256();
+    init_open_tool_schema();
+    oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
+    materialSchema = typebox_exports.Object({ bytesBase64: typebox_exports.String(), sha256: typebox_exports.String() }, { additionalProperties: false });
+    checkSchema = typebox_exports.Object({ name: typebox_exports.String({ minLength: 1 }), argv: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), { minItems: 1 }) }, { additionalProperties: false });
+    mergerInputSchema = typebox_exports.Object({
+      version: typebox_exports.Literal(1),
+      attemptId: typebox_exports.String({ minLength: 1 }),
+      targetObjectId: typebox_exports.String({ pattern: oidPattern }),
+      sourceObjectId: typebox_exports.String({ pattern: oidPattern }),
+      materials: typebox_exports.Object({ task: materialSchema, authority: materialSchema, targetIntent: materialSchema, sourceIntent: materialSchema }, { additionalProperties: false }),
+      expectedConflictPaths: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), { minItems: 1 }),
+      resolutionScope: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), { minItems: 1 }),
+      authorizedChecks: typebox_exports.Array(checkSchema)
+    }, { additionalProperties: false });
+    mergerOutputVariants = typebox_exports.Union([
+      typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "Merge attempt completed." }), attemptId: typebox_exports.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), report: typebox_exports.String({ minLength: 1, description: "Truthful merge outcome report." }), mergeCommitId: typebox_exports.String({ pattern: oidPattern, description: "Verified completed merge commit object ID." }) }, { additionalProperties: false }),
+      typebox_exports.Object({ status: typebox_exports.Literal("escalate", { description: "Merge attempt requires human authority." }), attemptId: typebox_exports.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), diagnosis: typebox_exports.String({ minLength: 1, description: "Reason merge completion requires escalation." }), report: typebox_exports.String({ minLength: 1, description: "Truthful merge outcome report." }) }, { additionalProperties: false })
+    ]);
+    mergerOutputSchema = openToolObjectFromUnion(mergerOutputVariants);
+    MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
+    record = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+    blank = (v) => typeof v !== "string" || v.trim().length === 0;
+    MergerInputContractError = class extends Error {
+      constructor(message = "Merger input violates its exact contract") {
+        super(message);
+        this.name = "MergerInputContractError";
+      }
+    };
+  }
+});
 
 // src/packaged-role-registry.ts
-var PACKAGED_ROLE_REGISTRY = [
-  { role: "judge", phases: [null], outputTool: JUDGE_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
-  { role: "fixer", phases: ["plan", "apply"], outputTool: FIXER_OUTPUT_TOOL_NAME, inputFlag: "ak-fix-packet", phaseFlag: "ak-fixer-phase", activationStage: "load-and-install" },
-  { role: "coder", phases: ["plan", "apply"], outputTool: CODER_OUTPUT_TOOL_NAME, inputFlag: "ak-coder-task", phaseFlag: "ak-coder-phase", activationStage: "load-and-install" },
-  { role: "reviewer", phases: [null], outputTool: REVIEWER_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
-  { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: "ak-collector-repo", phaseFlag: void 0, activationStage: "load-and-install" },
-  { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: void 0, activationStage: "load-and-install" },
-  { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: void 0, activationStage: "prepare-git-and-install" }
-];
 function packagedRoleMetadata(role) {
   return PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === role);
 }
+var PACKAGED_ROLE_REGISTRY;
+var init_packaged_role_registry = __esm({
+  "src/packaged-role-registry.ts"() {
+    "use strict";
+    init_collector_output();
+    init_judge_output();
+    init_reviewer_output();
+    init_worker_output();
+    init_doctor_contracts();
+    init_merger_contracts();
+    PACKAGED_ROLE_REGISTRY = [
+      { role: "judge", phases: [null], outputTool: JUDGE_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
+      { role: "fixer", phases: ["plan", "apply"], outputTool: FIXER_OUTPUT_TOOL_NAME, inputFlag: "ak-fix-packet", phaseFlag: "ak-fixer-phase", activationStage: "load-and-install" },
+      { role: "coder", phases: ["plan", "apply"], outputTool: CODER_OUTPUT_TOOL_NAME, inputFlag: "ak-coder-task", phaseFlag: "ak-coder-phase", activationStage: "load-and-install" },
+      { role: "reviewer", phases: [null], outputTool: REVIEWER_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
+      { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: "ak-collector-repo", phaseFlag: void 0, activationStage: "load-and-install" },
+      { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: void 0, activationStage: "load-and-install" },
+      { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: void 0, activationStage: "prepare-git-and-install" }
+    ];
+  }
+});
 
 // src/public-cli/registry.ts
-var INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
-var PUBLIC_CALLABLE_ROLES = PACKAGED_ROLE_REGISTRY.map(
-  (entry) => entry.role
-);
-var AUTOMATIC_NAVIGATOR_SEAT = "navigator";
-var PUBLIC_CONFIGURABLE_SEATS = [
-  ...PUBLIC_CALLABLE_ROLES,
-  AUTOMATIC_NAVIGATOR_SEAT
-];
-var PUBLIC_CLI_SUPPORT_COMMANDS = [
-  "roles",
-  "config",
-  "help",
-  "resume"
-];
-var STARTUP_CANDIDATES = {
-  judge: [
-    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" }
-  ],
-  reviewer: [
-    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" }
-  ],
-  coder: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" }
-  ],
-  fixer: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" }
-  ],
-  collector: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" }
-  ],
-  doctor: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" }
-  ],
-  merger: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" }
-  ],
-  navigator: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" }
-  ]
-};
 function publicStartupCandidates(seat) {
   return STARTUP_CANDIDATES[seat];
 }
@@ -9233,19 +14269,69 @@ function isPublicConfigurableSeat(value) {
 function isPublicCliSupportCommand(value) {
   return PUBLIC_CLI_SUPPORT_COMMANDS.includes(value);
 }
+var INTERNAL_ROLE_ENTRYPOINT_RELATIVE, PUBLIC_CALLABLE_ROLES, AUTOMATIC_NAVIGATOR_SEAT, PUBLIC_CONFIGURABLE_SEATS, PUBLIC_CLI_SUPPORT_COMMANDS, STARTUP_CANDIDATES;
+var init_registry2 = __esm({
+  "src/public-cli/registry.ts"() {
+    "use strict";
+    init_packaged_role_registry();
+    INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
+    PUBLIC_CALLABLE_ROLES = PACKAGED_ROLE_REGISTRY.map(
+      (entry) => entry.role
+    );
+    AUTOMATIC_NAVIGATOR_SEAT = "navigator";
+    PUBLIC_CONFIGURABLE_SEATS = [
+      ...PUBLIC_CALLABLE_ROLES,
+      AUTOMATIC_NAVIGATOR_SEAT
+    ];
+    PUBLIC_CLI_SUPPORT_COMMANDS = [
+      "roles",
+      "config",
+      "help",
+      "resume"
+    ];
+    STARTUP_CANDIDATES = {
+      judge: [
+        { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
+        { provider: "xai", model: "grok-4.5", thinking: "high" }
+      ],
+      reviewer: [
+        { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
+        { provider: "xai", model: "grok-4.5", thinking: "high" }
+      ],
+      coder: [
+        { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
+        { provider: "xai", model: "grok-4.5", thinking: "high" }
+      ],
+      fixer: [
+        { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
+        { provider: "xai", model: "grok-4.5", thinking: "high" }
+      ],
+      collector: [
+        { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
+        { provider: "xai", model: "grok-4.5", thinking: "high" }
+      ],
+      doctor: [
+        { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
+        { provider: "xai", model: "grok-4.5", thinking: "high" }
+      ],
+      merger: [
+        { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
+        { provider: "xai", model: "grok-4.5", thinking: "high" }
+      ],
+      navigator: [
+        { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
+        { provider: "xai", model: "grok-4.5", thinking: "high" }
+      ]
+    };
+  }
+});
 
 // src/public-cli/config.ts
-var THINKING_LEVELS = /* @__PURE__ */ new Set([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max"
-]);
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname as dirname2, join as join2 } from "node:path";
 function publicCliConfigPath(home = homedir()) {
-  return join(home, ".ak-roles", "public-cli.json");
+  return join2(home, ".ak-roles", "public-cli.json");
 }
 async function loadPublicCliConfig(home = homedir()) {
   const path = publicCliConfigPath(home);
@@ -9261,7 +14347,7 @@ async function loadPublicCliConfig(home = homedir()) {
 }
 async function savePublicCliConfig(config, home = homedir()) {
   const path = publicCliConfigPath(home);
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname2(path), { recursive: true });
   const normalized = parsePublicCliConfig(config);
   await writeFile(path, `${JSON.stringify(normalized, null, 2)}
 `, "utf8");
@@ -9431,7 +14517,7 @@ function credentialProvidersFromAuthData(data) {
 }
 async function loadCredentialProviders(agentDir) {
   try {
-    const raw = await readFile(join(agentDir, "auth.json"), "utf8");
+    const raw = await readFile(join2(agentDir, "auth.json"), "utf8");
     return credentialProvidersFromAuthData(JSON.parse(raw));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
@@ -9440,72 +14526,343 @@ async function loadCredentialProviders(agentDir) {
     throw error;
   }
 }
+var THINKING_LEVELS;
+var init_config2 = __esm({
+  "src/public-cli/config.ts"() {
+    "use strict";
+    init_registry2();
+    THINKING_LEVELS = /* @__PURE__ */ new Set([
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]);
+  }
+});
 
 // src/public-cli/cli-errors.ts
-var CliUsageError = class extends Error {
-  code = "AK_ROLE_USAGE";
-  constructor(message, options) {
-    super(
-      message,
-      options?.cause === void 0 ? void 0 : { cause: options.cause }
-    );
-    this.name = "CliUsageError";
+var CliUsageError;
+var init_cli_errors = __esm({
+  "src/public-cli/cli-errors.ts"() {
+    "use strict";
+    CliUsageError = class extends Error {
+      code = "AK_ROLE_USAGE";
+      constructor(message, options) {
+        super(
+          message,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "CliUsageError";
+      }
+    };
   }
-};
+});
 
-// src/public-cli/explicit-internal.ts
-import { execFile as execFile2, spawn } from "node:child_process";
-import { constants } from "node:fs";
-import { access, realpath as realpath3 } from "node:fs/promises";
-import { delimiter, isAbsolute as isAbsolute4, join as join4, resolve as resolve5 } from "node:path";
-import { platform } from "node:process";
-import { promisify as promisify2 } from "node:util";
-
-// src/public-cli/invocation.ts
-init_activation_ledger_topology();
-init_activation_ledger_git();
-import { execFileSync as execFileSync2 } from "node:child_process";
+// src/activation-ledger-topology.ts
 import {
-  lstat,
-  mkdir as mkdir2,
-  readFile as readFile4,
-  realpath as realpath2,
-  writeFile as writeFile2
-} from "node:fs/promises";
-import { basename as basename3, isAbsolute as isAbsolute3, join as join3, resolve as resolve4, sep as sep3 } from "node:path";
+  lstatSync as lstatSync2,
+  mkdirSync as mkdirSync2,
+  realpathSync as realpathSync2,
+  statSync
+} from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { basename, dirname as dirname3, isAbsolute, join as join3, relative, resolve, sep } from "node:path";
+function resolveActivationLedgerHome(home = homedir2) {
+  const processHome = home();
+  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
+    throw new ActivationLedgerError(
+      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
+    );
+  }
+  return resolve(processHome, ".ak-roles");
+}
+function activationBookDirectory(ledgerHome, bookKey) {
+  return join3(ledgerHome, "books", bookKey);
+}
+function pathContainedIn(root, candidate) {
+  const rel = relative(root, candidate);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+function physicalPathIdentity(path) {
+  const absolute = resolve(path);
+  const missing = [];
+  let cursor = absolute;
+  while (true) {
+    try {
+      const real = realpathSync2(cursor);
+      return missing.length === 0 ? real : join3(real, ...missing);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        return absolute;
+      }
+      const parent = dirname3(cursor);
+      if (parent === cursor) return absolute;
+      missing.unshift(basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+function physicallyContainedIn(root, candidate) {
+  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
+}
+function errnoCode(error) {
+  return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
+}
+function errorText(error) {
+  if (!(error instanceof Error)) return String(error);
+  return error.message;
+}
+function assertPhysicalLedgerRoot(absoluteRoot) {
+  let st;
+  try {
+    st = lstatSync2(absoluteRoot);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st === void 0) {
+    try {
+      mkdirSync2(absoluteRoot, { recursive: true });
+    } catch (error) {
+      if (errnoCode(error) !== "EEXIST") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
+    }
+    try {
+      st = lstatSync2(absoluteRoot);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st.isSymbolicLink()) {
+    throw new ActivationLedgerError(
+      `activation ledger home is a symbolic link: ${absoluteRoot}`
+    );
+  }
+  if (!st.isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
+  }
+}
+function ensureRealDirectoryTree(root, targetDir) {
+  if (!isAbsolute(root)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
+  }
+  const absoluteRoot = resolve(root);
+  const absoluteTarget = resolve(targetDir);
+  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  assertPhysicalLedgerRoot(absoluteRoot);
+  let realRoot;
+  try {
+    realRoot = realpathSync2(absoluteRoot);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  if (!statSync(realRoot).isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
+  }
+  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
+  if (rel === "") return realRoot;
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  let lexicalCursor = absoluteRoot;
+  for (const part of rel.split(sep)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
+    }
+    lexicalCursor = join3(lexicalCursor, part);
+    let st;
+    try {
+      st = lstatSync2(lexicalCursor);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
+      try {
+        mkdirSync2(lexicalCursor);
+      } catch (mkdirError) {
+        if (errnoCode(mkdirError) !== "EEXIST") {
+          throw new ActivationLedgerError(
+            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
+            { cause: mkdirError }
+          );
+        }
+      }
+      try {
+        st = lstatSync2(lexicalCursor);
+      } catch (statError) {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
+          { cause: statError }
+        );
+      }
+    }
+    if (st.isSymbolicLink()) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is a symbolic link: ${lexicalCursor}`
+      );
+    }
+    if (!st.isDirectory()) {
+      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
+    }
+    let realCursor;
+    try {
+      realCursor = realpathSync2(lexicalCursor);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
+      throw new ActivationLedgerError(
+        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`
+      );
+    }
+  }
+  try {
+    return realpathSync2(absoluteTarget);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+}
+var ActivationLedgerError;
+var init_activation_ledger_topology = __esm({
+  "src/activation-ledger-topology.ts"() {
+    "use strict";
+    ActivationLedgerError = class extends Error {
+      code = "AK_ACTIVATION_LEDGER";
+      constructor(message, options) {
+        super(
+          message,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "ActivationLedgerError";
+      }
+    };
+  }
+});
 
-// src/doctor-evidence.ts
-import { readdir, readFile as readFile2, realpath, stat } from "node:fs/promises";
-import { dirname as dirname4, relative as relative2, resolve as resolve3, sep as sep2 } from "node:path";
+// src/activation-ledger-git.ts
+import { execFileSync } from "node:child_process";
+import { basename as basename2, dirname as dirname4, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
+function envWithoutGitDiscovery(base = process.env) {
+  const env = { ...base };
+  for (const key of GIT_DISCOVERY_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
+}
+function isGitSpawnInfrastructureError(error) {
+  if (error === null || typeof error !== "object" || !("code" in error)) return false;
+  const code = error.code;
+  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
+}
+function gitChildExitedNonzero(error) {
+  if (error === null || typeof error !== "object" || !("status" in error)) return false;
+  const status = error.status;
+  return typeof status === "number" && status !== 0;
+}
+function resolveBookKeyFromGit(cwd) {
+  let commonDir;
+  try {
+    commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: envWithoutGitDiscovery()
+    }).trim();
+  } catch (error) {
+    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
+      throw error;
+    }
+    const err = error;
+    const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
+    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
+  }
+  if (commonDir.length === 0) {
+    throw new Error("git rev-parse --git-common-dir returned an empty path");
+  }
+  const absoluteCommon = isAbsolute2(commonDir) ? commonDir : resolve2(cwd, commonDir);
+  const hostDirectory = basename2(absoluteCommon) === ".git" ? dirname4(absoluteCommon) : absoluteCommon;
+  const bookKey = basename2(hostDirectory);
+  if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
+    throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
+  }
+  return bookKey;
+}
+var GIT_DISCOVERY_ENV_KEYS, ActivationGitRepositoryRequiredError;
+var init_activation_ledger_git = __esm({
+  "src/activation-ledger-git.ts"() {
+    "use strict";
+    GIT_DISCOVERY_ENV_KEYS = [
+      "GIT_DIR",
+      "GIT_COMMON_DIR",
+      "GIT_WORK_TREE",
+      "GIT_CEILING_DIRECTORIES",
+      "GIT_DISCOVERY_ACROSS_FILESYSTEM"
+    ];
+    ActivationGitRepositoryRequiredError = class extends Error {
+      code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
+      constructor(detail, options) {
+        super(
+          `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "ActivationGitRepositoryRequiredError";
+      }
+    };
+  }
+});
 
 // src/audit-escalation.ts
-var AUDIT_ESCALATION_KIND = "audit_escalation";
 function isAuditEscalationResult(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
   return value.kind === AUDIT_ESCALATION_KIND;
 }
+var AUDIT_ESCALATION_KIND;
+var init_audit_escalation = __esm({
+  "src/audit-escalation.ts"() {
+    "use strict";
+    AUDIT_ESCALATION_KIND = "audit_escalation";
+  }
+});
 
 // src/package-contracts/terminating-tools.ts
-var TERMINATING_TOOL_NAMES = [
-  CODER_OUTPUT_TOOL_NAME,
-  FIXER_OUTPUT_TOOL_NAME,
-  REVIEWER_OUTPUT_TOOL_NAME,
-  JUDGE_OUTPUT_TOOL_NAME,
-  COLLECTOR_OUTPUT_TOOL,
-  DOCTOR_OUTPUT_TOOL_NAME,
-  MERGER_OUTPUT_TOOL_NAME
-];
 function isTerminatingToolName(name) {
   return TERMINATING_TOOL_NAMES.includes(name);
 }
-var AcceptedDetailsContractError = class extends Error {
-  constructor(message, options) {
-    super(message, options);
-    this.name = "AcceptedDetailsContractError";
-  }
-};
 function safeProperty(candidate, property) {
   try {
     return candidate?.[property];
@@ -9579,8 +14936,38 @@ function acceptedFacts(toolName, details) {
       return { status: "collected" };
   }
 }
+var TERMINATING_TOOL_NAMES, AcceptedDetailsContractError;
+var init_terminating_tools = __esm({
+  "src/package-contracts/terminating-tools.ts"() {
+    "use strict";
+    init_collector_output();
+    init_judge_output();
+    init_reviewer_output();
+    init_audit_escalation();
+    init_doctor_contracts();
+    init_merger_contracts();
+    init_worker_output();
+    TERMINATING_TOOL_NAMES = [
+      CODER_OUTPUT_TOOL_NAME,
+      FIXER_OUTPUT_TOOL_NAME,
+      REVIEWER_OUTPUT_TOOL_NAME,
+      JUDGE_OUTPUT_TOOL_NAME,
+      COLLECTOR_OUTPUT_TOOL,
+      DOCTOR_OUTPUT_TOOL_NAME,
+      MERGER_OUTPUT_TOOL_NAME
+    ];
+    AcceptedDetailsContractError = class extends Error {
+      constructor(message, options) {
+        super(message, options);
+        this.name = "AcceptedDetailsContractError";
+      }
+    };
+  }
+});
 
 // src/doctor-evidence.ts
+import { readdir, readFile as readFile2, realpath, stat } from "node:fs/promises";
+import { dirname as dirname5, relative as relative2, resolve as resolve3, sep as sep2 } from "node:path";
 function record2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -9618,7 +15005,7 @@ async function stableRunsIdentity(root) {
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
     }
-    const parent = dirname4(cursor);
+    const parent = dirname5(cursor);
     if (parent === cursor) return root;
     cursor = parent;
   }
@@ -9717,13 +15104,17 @@ async function loadDoctorCase(runsPath) {
   const cost2 = { invocations: sourceList(runDirs.length, runDirs), legs: sourceList(legs.length, legs), modelApiTurns: sourceList(turns.count, turns.sources), outputTokens: sourceList(tokens.count, tokens.sources), toolCalls: sourceList(calls.count, calls.sources), retries: { ...sourceList(retryDirs.length, retryDirs), evidence: "literal run-dir naming" }, statuses, commits, sessions, outputBytes: { ...sourceList(rawBytes, legs), payload: "raw JSONL bytes", providerWireBytes: "unavailable" } };
   return { version: 1, identity: { issueNumber: Number(match[1]), runsPath: await stableRunsIdentity(root) }, evidence, cost: cost2 };
 }
+var init_doctor_evidence = __esm({
+  "src/doctor-evidence.ts"() {
+    "use strict";
+    init_sha256();
+    init_terminating_tools();
+  }
+});
 
 // src/collector-config.ts
 import { createHash as createHash2 } from "node:crypto";
 import { readFile as readFile3 } from "node:fs/promises";
-var COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
-var COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
-var COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target. Observe GitHub materials and submit exactly one ak_collector_output when observation is complete.";
 function fail3(message, cause) {
   throw new Error(message, cause === void 0 ? void 0 : { cause });
 }
@@ -9790,11 +15181,19 @@ async function loadCollectorManifest(path) {
   const canonicalJson2 = canonicalManifest(requests);
   return { requests, canonicalJson: canonicalJson2, digest: createHash2("sha256").update(canonicalJson2).digest("hex"), sourcePath: path };
 }
+var COLLECTOR_OWNER_PATTERN, COLLECTOR_REPO_PATTERN, COLLECTOR_FIXED_KICKOFF;
+var init_collector_config = __esm({
+  "src/collector-config.ts"() {
+    "use strict";
+    COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+    COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
+    COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target. Observe GitHub materials and submit exactly one ak_collector_output when observation is complete.";
+  }
+});
 
 // src/merger-git-state.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-var execFileAsync = promisify(execFile);
 async function git(cwd, args) {
   const { stdout } = await execFileAsync("git", args, { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
   return new Uint8Array(stdout);
@@ -9857,10 +15256,18 @@ function createProductionMergerGitState(repositoryRoot = process.cwd()) {
     }
   };
 }
+var execFileAsync;
+var init_merger_git_state = __esm({
+  "src/merger-git-state.ts"() {
+    "use strict";
+    init_exact_utf8();
+    init_git_object_id();
+    execFileAsync = promisify(execFile);
+  }
+});
 
 // src/uuidv7.ts
 import { randomBytes } from "node:crypto";
-var UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 function isUuidV7(value) {
   return typeof value === "string" && UUIDV7.test(value);
 }
@@ -9876,11 +15283,26 @@ function uuidv7(now = Date.now()) {
   const h = b.toString("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
+var UUIDV7;
+var init_uuidv7 = __esm({
+  "src/uuidv7.ts"() {
+    "use strict";
+    UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  }
+});
 
 // src/public-cli/invocation.ts
-var ROLE_RUN_SESSION_FILE_NAME = "session.jsonl";
+import { execFileSync as execFileSync2 } from "node:child_process";
+import {
+  lstat,
+  mkdir as mkdir2,
+  readFile as readFile4,
+  realpath as realpath2,
+  writeFile as writeFile2
+} from "node:fs/promises";
+import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve4, sep as sep3 } from "node:path";
 function roleRunSessionFile(sessionDirectory) {
-  return join3(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
+  return join4(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
 }
 async function writeRoleInvocationLedger(source, role) {
   const identity = {
@@ -9893,14 +15315,14 @@ async function writeRoleInvocationLedger(source, role) {
     sessionFile: source.sessionFile
   };
   await writeFile2(
-    join3(source.runDirectory, "invocation.json"),
+    join4(source.runDirectory, "invocation.json"),
     `${JSON.stringify(identity, null, 2)}
 `,
     "utf8"
   );
 }
 async function recordLaunchedPiIdentity(runDirectory, identity) {
-  const ledgerPath = join3(runDirectory, "invocation.json");
+  const ledgerPath = join4(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile4(ledgerPath, "utf8"));
   await writeFile2(
     ledgerPath,
@@ -9913,15 +15335,6 @@ async function recordLaunchedPiIdentity(runDirectory, identity) {
     "utf8"
   );
 }
-var MergerEnvelopeDerivationError = class extends Error {
-  code = "merger-envelope-derivation";
-  /** Typed cause for #107 classifyPostAdmissionFailure (isTypedActivationError). */
-  knownCause = "activation";
-  constructor(message, options) {
-    super(message, options);
-    this.name = "MergerEnvelopeDerivationError";
-  }
-};
 function requireOptionPath(flag, value) {
   if (value === void 0 || value.trim() === "") {
     throw new CliUsageError(
@@ -10096,7 +15509,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
   }
   const bytes = await readFile4(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename3(absolute)}`;
-  const frozenPath = join3(destinationDir, name);
+  const frozenPath = join4(destinationDir, name);
   await writeFile2(frozenPath, bytes);
   return {
     provenancePath: absolute,
@@ -10114,14 +15527,14 @@ async function admitJudgeInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join3(
+  const runDirectory = join4(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@judge`
   );
-  const sessionDirectory = join3(runDirectory, "session");
+  const sessionDirectory = join4(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join3(runDirectory, "attachments");
+  const attachmentsDirectory = join4(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -10154,7 +15567,7 @@ async function admitJudgeInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role);
@@ -10184,7 +15597,7 @@ function buildJudgeTransportPrompt(admitted) {
   return lines.join("\n");
 }
 async function ensureRunArtifactsDir(runDirectory) {
-  const dir = join3(runDirectory, "artifacts");
+  const dir = join4(runDirectory, "artifacts");
   await mkdir2(dir, { recursive: true });
   return dir;
 }
@@ -10205,14 +15618,14 @@ async function admitCoderInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join3(
+  const runDirectory = join4(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@coder`
   );
-  const sessionDirectory = join3(runDirectory, "session");
+  const sessionDirectory = join4(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join3(runDirectory, "attachments");
+  const attachmentsDirectory = join4(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -10225,7 +15638,7 @@ async function admitCoderInvocation(options) {
       )
     );
   }
-  const taskPath = join3(runDirectory, "task.md");
+  const taskPath = join4(runDirectory, "task.md");
   await writeFile2(taskPath, instruction, "utf8");
   const admitted = {
     role: "coder",
@@ -10247,7 +15660,7 @@ async function admitCoderInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role);
@@ -10295,14 +15708,14 @@ async function admitFixerInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join3(
+  const runDirectory = join4(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@fixer`
   );
-  const sessionDirectory = join3(runDirectory, "session");
+  const sessionDirectory = join4(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join3(runDirectory, "attachments");
+  const attachmentsDirectory = join4(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -10336,7 +15749,7 @@ async function admitFixerInvocation(options) {
       }
       throw error;
     }
-    prerequisitesPath = join3(runDirectory, "prerequisites.json");
+    prerequisitesPath = join4(runDirectory, "prerequisites.json");
     await writeFile2(
       prerequisitesPath,
       `${JSON.stringify(prerequisites, null, 2)}
@@ -10344,7 +15757,7 @@ async function admitFixerInvocation(options) {
       "utf8"
     );
   }
-  const packetPath = join3(runDirectory, "fix-packet.md");
+  const packetPath = join4(runDirectory, "fix-packet.md");
   await writeFile2(packetPath, instruction, "utf8");
   const admitted = {
     role: "fixer",
@@ -10371,7 +15784,7 @@ async function admitFixerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role);
@@ -10561,14 +15974,14 @@ async function admitCollectorInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join3(
+  const runDirectory = join4(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@collector`
   );
-  const sessionDirectory = join3(runDirectory, "session");
+  const sessionDirectory = join4(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join3(runDirectory, "attachments");
+  const attachmentsDirectory = join4(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -10590,7 +16003,7 @@ async function admitCollectorInvocation(options) {
     } catch (error) {
       throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
     }
-    requestManifestPath = join3(runDirectory, "request-manifest.json");
+    requestManifestPath = join4(runDirectory, "request-manifest.json");
     await writeFile2(requestManifestPath, manifest.canonicalJson, "utf8");
   }
   const manifestDigest = manifest.digest;
@@ -10619,7 +16032,7 @@ async function admitCollectorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -10648,8 +16061,6 @@ async function admitCollectorInvocation(options) {
 function buildCollectorTransportPrompt(_admitted) {
   return COLLECTOR_FIXED_KICKOFF;
 }
-var DOCTOR_ISSUE_NUMBER_PATTERN = /^[1-9]\d*$/;
-var DOCTOR_CASE_RUNS_PATH_PATTERN = /\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/;
 function parseDoctorIssueNumber(raw) {
   const trimmed = raw.trim();
   if (!DOCTOR_ISSUE_NUMBER_PATTERN.test(trimmed)) {
@@ -10743,7 +16154,7 @@ function parseDoctorArgv(args) {
 }
 async function resolveDoctorCaseRunsPath(options) {
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
-  const defaultRuns = join3(
+  const defaultRuns = join4(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",
     String(options.issueNumber),
@@ -10839,14 +16250,14 @@ async function admitDoctorInvocation(options) {
     );
   }
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join3(
+  const runDirectory = join4(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@doctor`
   );
-  const sessionDirectory = join3(runDirectory, "session");
+  const sessionDirectory = join4(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join3(runDirectory, "attachments");
+  const attachmentsDirectory = join4(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -10883,7 +16294,7 @@ async function admitDoctorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -10973,14 +16384,14 @@ async function admitReviewerInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join3(
+  const runDirectory = join4(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@reviewer`
   );
-  const sessionDirectory = join3(runDirectory, "session");
+  const sessionDirectory = join4(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join3(runDirectory, "attachments");
+  const attachmentsDirectory = join4(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -11014,7 +16425,7 @@ async function admitReviewerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -11134,14 +16545,14 @@ async function admitMergerInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join3(
+  const runDirectory = join4(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@merger`
   );
-  const sessionDirectory = join3(runDirectory, "session");
+  const sessionDirectory = join4(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join3(runDirectory, "attachments");
+  const attachmentsDirectory = join4(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -11178,7 +16589,7 @@ async function admitMergerInvocation(options) {
     // Authorized checks remain available on the assignment; default none.
     authorizedChecks: []
   });
-  const mergerInputPath = join3(runDirectory, "merger-input.json");
+  const mergerInputPath = join4(runDirectory, "merger-input.json");
   await writeFile2(
     mergerInputPath,
     `${JSON.stringify(mergerInput, null, 2)}
@@ -11211,7 +16622,7 @@ async function admitMergerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -11248,10 +16659,44 @@ function buildMergerTransportPrompt(admitted) {
   }
   return lines.join("\n");
 }
+var ROLE_RUN_SESSION_FILE_NAME, MergerEnvelopeDerivationError, DOCTOR_ISSUE_NUMBER_PATTERN, DOCTOR_CASE_RUNS_PATH_PATTERN;
+var init_invocation = __esm({
+  "src/public-cli/invocation.ts"() {
+    "use strict";
+    init_activation_ledger_topology();
+    init_activation_ledger_git();
+    init_doctor_evidence();
+    init_collector_config();
+    init_fixer_packet();
+    init_merger_git_state();
+    init_merger_contracts();
+    init_sha256();
+    init_uuidv7();
+    init_cli_errors();
+    ROLE_RUN_SESSION_FILE_NAME = "session.jsonl";
+    MergerEnvelopeDerivationError = class extends Error {
+      code = "merger-envelope-derivation";
+      /** Typed cause for #107 classifyPostAdmissionFailure (isTypedActivationError). */
+      knownCause = "activation";
+      constructor(message, options) {
+        super(message, options);
+        this.name = "MergerEnvelopeDerivationError";
+      }
+    };
+    DOCTOR_ISSUE_NUMBER_PATTERN = /^[1-9]\d*$/;
+    DOCTOR_CASE_RUNS_PATH_PATTERN = /\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/;
+  }
+});
 
 // src/public-cli/explicit-internal.ts
+import { execFile as execFile2, spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { access, realpath as realpath3 } from "node:fs/promises";
+import { delimiter as delimiter2, isAbsolute as isAbsolute4, join as join5, resolve as resolve5 } from "node:path";
+import { platform } from "node:process";
+import { promisify as promisify2 } from "node:util";
 function resolveInternalRoleEntrypoint(packageRoot2) {
-  return join4(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
+  return join5(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
 }
 function buildExplicitInternalActivationArgs(packageRoot2, extraArgs = []) {
   return [
@@ -11278,10 +16723,9 @@ function knownFailureFromProviderStop(input) {
     diagnostic
   };
 }
-var execFileAsync2 = promisify2(execFile2);
 async function resolveSelectedPi(command, cwd, env) {
   const searchPath = env.PATH ?? (platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin");
-  const candidates = isAbsolute4(command) || command.includes("/") ? [resolve5(cwd, command)] : searchPath.split(delimiter).map((dir) => resolve5(cwd, dir, command));
+  const candidates = isAbsolute4(command) || command.includes("/") ? [resolve5(cwd, command)] : searchPath.split(delimiter2).map((dir) => resolve5(cwd, dir, command));
   for (const candidate of candidates) {
     try {
       await access(candidate, constants.X_OK);
@@ -11305,55 +16749,6 @@ async function selectedPiIdentity(command, cwd, env) {
   if (version === "") throw new Error(`Pi executable returned an empty version: ${executable}`);
   return { executable, version };
 }
-var defaultExplicitInternalPiRunner = async (args, options) => {
-  const command = options.env.PI_BINARY ?? "pi";
-  const piIdentity = await selectedPiIdentity(command, options.cwd, options.env);
-  return await new Promise((resolveResult, reject) => {
-    const child = spawn(piIdentity.executable, [...args], {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["ignore", "ignore", "pipe"]
-    });
-    let stderr = "";
-    let timedOut = false;
-    let timer;
-    const armTimeoutAfterChildReady = () => {
-      if (options.timeoutMs === void 0) return;
-      timer = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-      }, options.timeoutMs);
-    };
-    let identityRecorded = Promise.resolve();
-    child.once("spawn", () => {
-      armTimeoutAfterChildReady();
-      const runDirectory = options.env.AK_ROLE_RUN_DIR;
-      if (typeof runDirectory === "string" && runDirectory !== "") {
-        identityRecorded = recordLaunchedPiIdentity(runDirectory, piIdentity);
-      }
-    });
-    child.stderr.setEncoding("utf8").on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", (error) => {
-      if (timer !== void 0) clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      if (timer !== void 0) clearTimeout(timer);
-      void identityRecorded.then(
-        () => resolveResult({
-          code,
-          stderr,
-          timedOut,
-          args: [...args],
-          piIdentity
-        }),
-        reject
-      );
-    });
-  });
-};
 async function runExplicitInternalActivation(options) {
   const args = buildExplicitInternalActivationArgs(
     options.packageRoot,
@@ -11371,34 +16766,69 @@ async function runExplicitInternalActivation(options) {
     }
   });
 }
-
-// src/public-cli/coder-run.ts
-import { writeFile as writeFile5 } from "node:fs/promises";
-import { join as join8 } from "node:path";
+var execFileAsync2, defaultExplicitInternalPiRunner;
+var init_explicit_internal = __esm({
+  "src/public-cli/explicit-internal.ts"() {
+    "use strict";
+    init_invocation();
+    init_registry2();
+    execFileAsync2 = promisify2(execFile2);
+    defaultExplicitInternalPiRunner = async (args, options) => {
+      const command = options.env.PI_BINARY ?? "pi";
+      const piIdentity = await selectedPiIdentity(command, options.cwd, options.env);
+      return await new Promise((resolveResult, reject) => {
+        const child = spawn(piIdentity.executable, [...args], {
+          cwd: options.cwd,
+          env: options.env,
+          stdio: ["ignore", "ignore", "pipe"]
+        });
+        let stderr = "";
+        let timedOut = false;
+        let timer;
+        const armTimeoutAfterChildReady = () => {
+          if (options.timeoutMs === void 0) return;
+          timer = setTimeout(() => {
+            timedOut = true;
+            child.kill("SIGTERM");
+          }, options.timeoutMs);
+        };
+        let identityRecorded = Promise.resolve();
+        child.once("spawn", () => {
+          armTimeoutAfterChildReady();
+          const runDirectory = options.env.AK_ROLE_RUN_DIR;
+          if (typeof runDirectory === "string" && runDirectory !== "") {
+            identityRecorded = recordLaunchedPiIdentity(runDirectory, piIdentity);
+          }
+        });
+        child.stderr.setEncoding("utf8").on("data", (chunk) => {
+          stderr += chunk;
+        });
+        child.on("error", (error) => {
+          if (timer !== void 0) clearTimeout(timer);
+          reject(error);
+        });
+        child.on("close", (code) => {
+          if (timer !== void 0) clearTimeout(timer);
+          void identityRecorded.then(
+            () => resolveResult({
+              code,
+              stderr,
+              timedOut,
+              args: [...args],
+              piIdentity
+            }),
+            reject
+          );
+        });
+      });
+    };
+  }
+});
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
 import { readFile as readFile5, realpath as realpath4 } from "node:fs/promises";
-import { join as join5 } from "node:path";
-var PackagedMethodSkillUnavailableError = class extends Error {
-  constructor(skillName, path, cause) {
-    super(`Canonical ${skillName} Skill is unavailable at ${path}`, { cause });
-    this.skillName = skillName;
-    this.name = "CanonicalSkillUnavailableError";
-  }
-  skillName;
-  code = "canonical-skill-unavailable";
-};
-var METHOD_SKILL_RELATIVE_ROOT = "resources/methods";
-var GIT_COMMIT_RE = /^[0-9a-f]{40}$/;
-var GIT_BLOB_RE = /^[0-9a-f]{40}$/;
-var SHA256_RE = /^[0-9a-f]{64}$/;
-var REQUIRED_COMPANIONS = {
-  tdd: ["tests.md", "mocking.md", "agents/openai.yaml"],
-  "diagnosing-bugs": ["agents/openai.yaml", "scripts/hitl-loop.template.sh"],
-  "code-review": ["agents/openai.yaml"],
-  "resolving-merge-conflicts": ["agents/openai.yaml"]
-};
+import { join as join6 } from "node:path";
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
   const header = Buffer.from(`blob ${body.byteLength}\0`, "utf8");
@@ -11415,10 +16845,10 @@ function packagedMethodSkillRelativeDirectory(name) {
   return `${METHOD_SKILL_RELATIVE_ROOT}/${name}`;
 }
 function resolvePackagedMethodSkillRoot(packageRoot2, name) {
-  return join5(packageRoot2, packagedMethodSkillRelativeDirectory(name));
+  return join6(packageRoot2, packagedMethodSkillRelativeDirectory(name));
 }
 function resolvePackagedMethodSkillPath(packageRoot2, name) {
-  return join5(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
+  return join6(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
 }
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -11512,8 +16942,8 @@ function parseProvenance(raw, expectedName) {
 }
 async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const rootDirectory = resolvePackagedMethodSkillRoot(packageRoot2, name);
-  const skillPathConfigured = join5(rootDirectory, "SKILL.md");
-  const provenancePath = join5(rootDirectory, "provenance.json");
+  const skillPathConfigured = join6(rootDirectory, "SKILL.md");
+  const provenancePath = join6(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
     provenanceRaw = await readFile5(provenancePath, "utf8");
@@ -11530,7 +16960,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   }
   const provenance = parseProvenance(provenanceJson, name);
   for (const [rel, expected] of Object.entries(provenance.files)) {
-    const absolute = join5(rootDirectory, rel);
+    const absolute = join6(rootDirectory, rel);
     let bytes;
     try {
       bytes = await readFile5(absolute);
@@ -11600,6 +17030,32 @@ function observePackagedMethodSkillInvocation(text, expected) {
   if (!expected.allowedLocations.includes(location)) return void 0;
   return Object.freeze({ name: expected.name, location });
 }
+var PackagedMethodSkillUnavailableError, METHOD_SKILL_RELATIVE_ROOT, GIT_COMMIT_RE, GIT_BLOB_RE, SHA256_RE, REQUIRED_COMPANIONS;
+var init_method_skill = __esm({
+  "src/package-resources/method-skill.ts"() {
+    "use strict";
+    init_sha256();
+    PackagedMethodSkillUnavailableError = class extends Error {
+      constructor(skillName, path, cause) {
+        super(`Canonical ${skillName} Skill is unavailable at ${path}`, { cause });
+        this.skillName = skillName;
+        this.name = "CanonicalSkillUnavailableError";
+      }
+      skillName;
+      code = "canonical-skill-unavailable";
+    };
+    METHOD_SKILL_RELATIVE_ROOT = "resources/methods";
+    GIT_COMMIT_RE = /^[0-9a-f]{40}$/;
+    GIT_BLOB_RE = /^[0-9a-f]{40}$/;
+    SHA256_RE = /^[0-9a-f]{64}$/;
+    REQUIRED_COMPANIONS = {
+      tdd: ["tests.md", "mocking.md", "agents/openai.yaml"],
+      "diagnosing-bugs": ["agents/openai.yaml", "scripts/hitl-loop.template.sh"],
+      "code-review": ["agents/openai.yaml"],
+      "resolving-merge-conflicts": ["agents/openai.yaml"]
+    };
+  }
+});
 
 // src/public-cli/public-run-credentials.ts
 function knownFailureForMissingProviderCredential(model, credentials) {
@@ -11630,21 +17086,21 @@ function postRunMissingCredentialFailure(result2, model, credentials) {
   if (!(result2.timedOut || result2.code !== 0)) return void 0;
   return knownFailureForMissingProviderCredential(model, credentials);
 }
+var init_public_run_credentials = __esm({
+  "src/public-cli/public-run-credentials.ts"() {
+    "use strict";
+    init_config2();
+  }
+});
 
 // src/public-cli/run-lifecycle.ts
-init_activation_ledger_topology();
 import { lstat as lstat2, open, readdir as readdir2, readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join6 } from "node:path";
-var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
-var RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
-var RUN_STATE_FILE = "run-state.json";
-var TYPED_HTTP_FILE = "typed-provider-http.json";
-var WRITER_LOCK_FILE = "writer.lock";
+import { join as join7 } from "node:path";
 function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
 }
 function typedProviderHttpPath(runDirectory) {
-  return join6(runDirectory, TYPED_HTTP_FILE);
+  return join7(runDirectory, TYPED_HTTP_FILE);
 }
 async function clearTypedProviderHttpObservation(runDirectory) {
   try {
@@ -11683,7 +17139,7 @@ function renderResumeCommand(runId) {
 async function writeRoleRunState(runDirectory, record4) {
   const payload = { ...record4, runDirectory };
   await writeFile3(
-    join6(runDirectory, RUN_STATE_FILE),
+    join7(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
 `,
     "utf8"
@@ -11692,7 +17148,7 @@ async function writeRoleRunState(runDirectory, record4) {
 async function readRoleRunState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile6(join6(runDirectory, RUN_STATE_FILE), "utf8")
+      await readFile6(join7(runDirectory, RUN_STATE_FILE), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
@@ -11807,15 +17263,8 @@ async function isSessionPrincipalAvailable(sessionFile) {
     return false;
   }
 }
-var RunWriterLeaseHeldError = class extends Error {
-  code = "AK_RUN_WRITER_LEASE_HELD";
-  constructor(message = "role run writer lease is already held") {
-    super(message);
-    this.name = "RunWriterLeaseHeldError";
-  }
-};
 async function acquireRunWriterLease(runDirectory) {
-  const lockPath = join6(runDirectory, WRITER_LOCK_FILE);
+  const lockPath = join7(runDirectory, WRITER_LOCK_FILE);
   try {
     const handle = await open(lockPath, "wx");
     try {
@@ -11846,7 +17295,7 @@ async function acquireRunWriterLease(runDirectory) {
 async function findRunDirectoryById(home, runId) {
   if (runId.trim() === "") return void 0;
   const ledgerHome = resolveActivationLedgerHome(() => home);
-  const booksRoot = join6(ledgerHome, "books");
+  const booksRoot = join7(ledgerHome, "books");
   let bookKeys;
   try {
     bookKeys = await readdir2(booksRoot);
@@ -11854,7 +17303,7 @@ async function findRunDirectoryById(home, runId) {
     return void 0;
   }
   for (const bookKey of bookKeys) {
-    const runsDir = join6(activationBookDirectory(ledgerHome, bookKey), "runs");
+    const runsDir = join7(activationBookDirectory(ledgerHome, bookKey), "runs");
     let entries;
     try {
       entries = await readdir2(runsDir);
@@ -11863,7 +17312,7 @@ async function findRunDirectoryById(home, runId) {
     }
     for (const entry of entries) {
       if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join6(runsDir, entry);
+        return join7(runsDir, entry);
       }
     }
   }
@@ -12175,62 +17624,128 @@ async function peekRoleRunRole(home, runId) {
   const run = await readRoleRunState(runDirectory);
   return run?.role;
 }
-
-// src/public-cli/settlement.ts
-import { randomUUID } from "node:crypto";
-import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile7, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname5, join as join7 } from "node:path";
+var V1_RESUMABLE_PROVIDERS, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, TYPED_HTTP_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
+var init_run_lifecycle = __esm({
+  "src/public-cli/run-lifecycle.ts"() {
+    "use strict";
+    init_activation_ledger_topology();
+    init_cli_errors();
+    init_invocation();
+    V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
+    RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
+    RUN_STATE_FILE = "run-state.json";
+    TYPED_HTTP_FILE = "typed-provider-http.json";
+    WRITER_LOCK_FILE = "writer.lock";
+    RunWriterLeaseHeldError = class extends Error {
+      code = "AK_RUN_WRITER_LEASE_HELD";
+      constructor(message = "role run writer lease is already held") {
+        super(message);
+        this.name = "RunWriterLeaseHeldError";
+      }
+    };
+  }
+});
 
 // src/auditor-soul.ts
 import { fileURLToPath } from "node:url";
-var AUDITOR_SOUL_ROLES = [
-  "judge",
-  "reviewer",
-  "doctor"
-];
-var auditorSoulPaths = Object.freeze({
-  judge: fileURLToPath(new URL("../souls/judge-auditor.md", import.meta.url)),
-  reviewer: fileURLToPath(
-    new URL("../souls/reviewer-auditor.md", import.meta.url)
-  ),
-  doctor: fileURLToPath(new URL("../souls/doctor-auditor.md", import.meta.url))
+var AUDITOR_SOUL_ROLES, auditorSoulPaths;
+var init_auditor_soul = __esm({
+  "src/auditor-soul.ts"() {
+    "use strict";
+    AUDITOR_SOUL_ROLES = [
+      "judge",
+      "reviewer",
+      "doctor"
+    ];
+    auditorSoulPaths = Object.freeze({
+      judge: fileURLToPath(new URL("../souls/judge-auditor.md", import.meta.url)),
+      reviewer: fileURLToPath(
+        new URL("../souls/reviewer-auditor.md", import.meta.url)
+      ),
+      doctor: fileURLToPath(new URL("../souls/doctor-auditor.md", import.meta.url))
+    });
+  }
+});
+
+// src/auditor-dossier-tool.ts
+var init_auditor_dossier_tool = __esm({
+  "src/auditor-dossier-tool.ts"() {
+    "use strict";
+    init_build();
+  }
+});
+
+// src/stream-idle-guard.ts
+var init_stream_idle_guard = __esm({
+  "src/stream-idle-guard.ts"() {
+    "use strict";
+  }
+});
+
+// src/stderr-jsonl.ts
+var init_stderr_jsonl = __esm({
+  "src/stderr-jsonl.ts"() {
+    "use strict";
+  }
 });
 
 // src/tool-execution-observation.ts
-var observationBase = {
-  role: typebox_exports.String({ minLength: 1 }),
-  toolCallId: typebox_exports.String({ minLength: 1 }),
-  toolName: typebox_exports.String({ minLength: 1 }),
-  timestamp: typebox_exports.String({ format: "date-time" })
-};
-var toolExecutionObservationRecordSchema = typebox_exports.Union([
-  typebox_exports.Object({
-    ...observationBase,
-    event: typebox_exports.Literal("tool_execution_start")
-  }, { additionalProperties: true }),
-  typebox_exports.Object({
-    ...observationBase,
-    event: typebox_exports.Literal("tool_execution_update")
-  }, { additionalProperties: true }),
-  typebox_exports.Object({
-    ...observationBase,
-    event: typebox_exports.Literal("tool_execution_end"),
-    isError: typebox_exports.Boolean()
-  }, { additionalProperties: true })
-]);
+var observationBase, toolExecutionObservationRecordSchema;
+var init_tool_execution_observation = __esm({
+  "src/tool-execution-observation.ts"() {
+    "use strict";
+    init_build();
+    init_value2();
+    init_stderr_jsonl();
+    observationBase = {
+      role: typebox_exports.String({ minLength: 1 }),
+      toolCallId: typebox_exports.String({ minLength: 1 }),
+      toolName: typebox_exports.String({ minLength: 1 }),
+      timestamp: typebox_exports.String({ format: "date-time" })
+    };
+    toolExecutionObservationRecordSchema = typebox_exports.Union([
+      typebox_exports.Object({
+        ...observationBase,
+        event: typebox_exports.Literal("tool_execution_start")
+      }, { additionalProperties: true }),
+      typebox_exports.Object({
+        ...observationBase,
+        event: typebox_exports.Literal("tool_execution_update")
+      }, { additionalProperties: true }),
+      typebox_exports.Object({
+        ...observationBase,
+        event: typebox_exports.Literal("tool_execution_end"),
+        isError: typebox_exports.Boolean()
+      }, { additionalProperties: true })
+    ]);
+  }
+});
+
+// src/package-owned-tool-idle.ts
+var init_package_owned_tool_idle = __esm({
+  "src/package-owned-tool-idle.ts"() {
+    "use strict";
+    init_stream_idle_guard();
+    init_tool_execution_observation();
+  }
+});
+
+// src/evidence-child-executor.ts
+var init_evidence_child_executor = __esm({
+  "src/evidence-child-executor.ts"() {
+    "use strict";
+    init_compliance_transport();
+    init_package_owned_tool_idle();
+    init_stream_idle_guard();
+  }
+});
 
 // src/compliance-transport.ts
-var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
-var decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
-var complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
 function createComplianceDecisionTool(name, description) {
   return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) {
     return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true };
   } };
 }
-var COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
-var AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
-var AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
 function readListField(value) {
   return Array.isArray(value) ? value : value === void 0 ? [] : [value];
 }
@@ -12243,50 +17758,134 @@ function readComplianceCandidate(arguments_, usage) {
   if (status === "escalate") return { status, ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}, ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}, ...usage === void 0 ? {} : { usage } };
   return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === void 0 ? "missing" : "unknown" }, candidate: arguments_, ...usage === void 0 ? {} : { usage } };
 }
+var nonblank2, decisionGateSchema, complianceDecisionSchema, COMPLIANCE_RESPONSE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE;
+var init_compliance_transport = __esm({
+  "src/compliance-transport.ts"() {
+    "use strict";
+    init_build();
+    init_evidence_child_executor();
+    init_auditor_dossier_tool();
+    nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
+    decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
+    complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
+    COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+    AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
+    AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
+  }
+});
+
+// src/dossier-resolution.ts
+var init_dossier_resolution = __esm({
+  "src/dossier-resolution.ts"() {
+    "use strict";
+    init_judge_output();
+  }
+});
 
 // src/doctor-auditor.ts
-var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
-var tool = createComplianceDecisionTool(
-  DOCTOR_AUDIT_TOOL_NAME,
-  "Return whether the proposed Doctor testimony demonstrably follows the Doctor Soul and frozen evidence record from the dossier. Completed receipts are later augmented with runtime-owned cost; empty findings are valid."
-);
+var DOCTOR_AUDIT_TOOL_NAME, tool;
+var init_doctor_auditor = __esm({
+  "src/doctor-auditor.ts"() {
+    "use strict";
+    init_auditor_dossier_tool();
+    init_auditor_soul();
+    init_compliance_transport();
+    init_dossier_resolution();
+    DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
+    tool = createComplianceDecisionTool(
+      DOCTOR_AUDIT_TOOL_NAME,
+      "Return whether the proposed Doctor testimony demonstrably follows the Doctor Soul and frozen evidence record from the dossier. Completed receipts are later augmented with runtime-owned cost; empty findings are valid."
+    );
+  }
+});
 
 // src/judge-auditor.ts
-var JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
-var auditDecisionTool = createComplianceDecisionTool(
-  JUDGE_AUDIT_TOOL_NAME,
-  "Return whether the proposed verdict demonstrably follows the judge soul and dossier evidence."
-);
+var JUDGE_AUDIT_TOOL_NAME, auditDecisionTool;
+var init_judge_auditor = __esm({
+  "src/judge-auditor.ts"() {
+    "use strict";
+    init_compliance_transport();
+    init_auditor_dossier_tool();
+    init_auditor_soul();
+    init_dossier_resolution();
+    JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
+    auditDecisionTool = createComplianceDecisionTool(
+      JUDGE_AUDIT_TOOL_NAME,
+      "Return whether the proposed verdict demonstrably follows the judge soul and dossier evidence."
+    );
+  }
+});
 
 // src/reviewer-auditor.ts
-var REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
-var reviewerDecisionTool = createComplianceDecisionTool(
-  REVIEWER_AUDIT_TOOL_NAME,
-  "Decide whether the Reviewer receipt demonstrably followed its method and boundaries from the dossier."
-);
+var REVIEWER_AUDIT_TOOL_NAME, reviewerDecisionTool;
+var init_reviewer_auditor = __esm({
+  "src/reviewer-auditor.ts"() {
+    "use strict";
+    init_auditor_dossier_tool();
+    init_auditor_soul();
+    init_compliance_transport();
+    init_dossier_resolution();
+    REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
+    reviewerDecisionTool = createComplianceDecisionTool(
+      REVIEWER_AUDIT_TOOL_NAME,
+      "Decide whether the Reviewer receipt demonstrably followed its method and boundaries from the dossier."
+    );
+  }
+});
 
 // src/collector-evidence.ts
-var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
+var COLLECTOR_ELIGIBILITY_MS;
+var init_collector_evidence = __esm({
+  "src/collector-evidence.ts"() {
+    "use strict";
+    COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
+  }
+});
+
+// src/collector-github.ts
+var init_collector_github = __esm({
+  "src/collector-github.ts"() {
+    "use strict";
+  }
+});
 
 // src/collector-tool-schemas.ts
-var collectorObserveArgsSchema = typebox_exports.Object({}, { additionalProperties: false });
-var collectorRequestArgsSchema = typebox_exports.Object({
-  requestId: typebox_exports.String({ minLength: 1, description: "Configured request identity." }),
-  snapshotId: typebox_exports.String({ minLength: 1, description: "Latest retained observation snapshot." })
-}, { additionalProperties: false });
-var collectorWaitArgsSchema = typebox_exports.Object({
-  durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS })
-}, { additionalProperties: false });
-var collectorOutputArgsSchema = typebox_exports.Object({}, { additionalProperties: true });
-collectorOutputArgsSchema.required = [];
+var collectorObserveArgsSchema, collectorRequestArgsSchema, collectorWaitArgsSchema, collectorOutputArgsSchema;
+var init_collector_tool_schemas = __esm({
+  "src/collector-tool-schemas.ts"() {
+    "use strict";
+    init_build();
+    init_collector_evidence();
+    collectorObserveArgsSchema = typebox_exports.Object({}, { additionalProperties: false });
+    collectorRequestArgsSchema = typebox_exports.Object({
+      requestId: typebox_exports.String({ minLength: 1, description: "Configured request identity." }),
+      snapshotId: typebox_exports.String({ minLength: 1, description: "Latest retained observation snapshot." })
+    }, { additionalProperties: false });
+    collectorWaitArgsSchema = typebox_exports.Object({
+      durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS })
+    }, { additionalProperties: false });
+    collectorOutputArgsSchema = typebox_exports.Object({}, { additionalProperties: true });
+    collectorOutputArgsSchema.required = [];
+  }
+});
 
 // src/collector-ledger.ts
-var COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
-var COLLECTOR_REQUEST_TOOL = "ak_collector_request";
-var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
+var COLLECTOR_OBSERVE_TOOL, COLLECTOR_REQUEST_TOOL, COLLECTOR_WAIT_TOOL;
+var init_collector_ledger = __esm({
+  "src/collector-ledger.ts"() {
+    "use strict";
+    init_value2();
+    init_collector_evidence();
+    init_collector_github();
+    init_collector_tool_schemas();
+    init_collector_output();
+    COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
+    COLLECTOR_REQUEST_TOOL = "ak_collector_request";
+    COLLECTOR_WAIT_TOOL = "ak_collector_wait";
+  }
+});
 
 // src/work-subject-identity.ts
-init_activation_ledger_topology();
 import { resolve as resolve6 } from "node:path";
 function issueRoot(value) {
   const normalized = value.replaceAll("\\", "/");
@@ -12329,15 +17928,14 @@ function workSubjectKeyFromProjectRoot(projectRoot) {
 function workSubjectKeysEqual(left, right) {
   return physicalPathIdentity(left) === physicalPathIdentity(right);
 }
+var init_work_subject_identity = __esm({
+  "src/work-subject-identity.ts"() {
+    "use strict";
+    init_activation_ledger_topology();
+  }
+});
 
 // src/navigator-invocation-identity.ts
-var NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
-var NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
-var NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
-  "kind",
-  "source",
-  "reasonCode"
-];
 function isNavigatorInfrastructureFailureFact(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record4 = value;
@@ -12348,9 +17946,6 @@ function isNavigatorInfrastructureFailureFact(value) {
   }
   return record4.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record4.source === "shared-role-lifecycle" && record4.reasonCode === "host_failure";
 }
-var PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
-  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
-);
 function invocationPhaseFromUnknown(value) {
   if (value === null || value === "plan" || value === "apply") return value;
   return void 0;
@@ -12473,11 +18068,27 @@ function bindCurrentDurableTerminalToMarker(entries) {
 function isReceiptSettlementBindingClear(entries) {
   return bindCurrentDurableTerminalToMarker(entries).kind !== "ambiguous";
 }
+var NAVIGATOR_INVOCATION_ENTRY, NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND, NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS, PACKAGED_ROLE_OUTPUT_TOOLS;
+var init_navigator_invocation_identity = __esm({
+  "src/navigator-invocation-identity.ts"() {
+    "use strict";
+    init_packaged_role_registry();
+    init_uuidv7();
+    init_work_subject_identity();
+    NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
+    NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
+    NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
+      "kind",
+      "source",
+      "reasonCode"
+    ];
+    PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
+      PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
+    );
+  }
+});
 
 // src/public-command-renderer.ts
-var PUBLIC_CALLABLE_ROLES2 = new Set(
-  PACKAGED_ROLE_REGISTRY.map((entry) => entry.role)
-);
 function renderPublicAkRoleCommand(target) {
   if (!PUBLIC_CALLABLE_ROLES2.has(target.role)) return void 0;
   const role = target.role;
@@ -12489,15 +18100,29 @@ function renderPublicAkRoleCommand(target) {
   }
   return `ak-role ${role}`;
 }
+var PUBLIC_CALLABLE_ROLES2;
+var init_public_command_renderer = __esm({
+  "src/public-command-renderer.ts"() {
+    "use strict";
+    init_packaged_role_registry();
+    PUBLIC_CALLABLE_ROLES2 = new Set(
+      PACKAGED_ROLE_REGISTRY.map((entry) => entry.role)
+    );
+  }
+});
+
+// src/public-cli/command-renderer.ts
+var init_command_renderer = __esm({
+  "src/public-cli/command-renderer.ts"() {
+    "use strict";
+    init_public_command_renderer();
+  }
+});
 
 // src/public-cli/terminal.ts
 function encodeTerminalField(value) {
   return JSON.stringify(value);
 }
-var JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
-  kind: "json-safe-sentinel",
-  type: "undefined"
-});
 function jsonSafeComplianceCandidate(value) {
   return value === void 0 ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
 }
@@ -12549,7 +18174,6 @@ function buildAuditIncompleteTerminalOutcome(input) {
     }
   };
 }
-var REDACTED_RUN_ID_TOKEN = "[run-id]";
 function redactExactRunId(text, runId) {
   if (runId.length === 0) return text;
   if (!text.includes(runId)) return text;
@@ -12618,9 +18242,23 @@ function formatTerminalResult(result2) {
   return `${lines.join("\n")}
 `;
 }
+var JSON_SAFE_UNDEFINED_ARGUMENT, REDACTED_RUN_ID_TOKEN;
+var init_terminal = __esm({
+  "src/public-cli/terminal.ts"() {
+    "use strict";
+    init_command_renderer();
+    JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
+      kind: "json-safe-sentinel",
+      type: "undefined"
+    });
+    REDACTED_RUN_ID_TOKEN = "[run-id]";
+  }
+});
 
 // src/public-cli/settlement.ts
-var CONCISE_DIAGNOSTIC_MAX_CHARS = 480;
+import { randomUUID } from "node:crypto";
+import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile7, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
+import { dirname as dirname6, join as join8 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
   if (line2.startsWith("event:")) return true;
@@ -12874,7 +18512,7 @@ async function readSessionProviderStop(sessionFile) {
   }
 }
 async function readBoundEvidenceChildKnownFailure(sessionFile) {
-  const childDirectory = join7(dirname5(sessionFile), "evidence-children");
+  const childDirectory = join8(dirname6(sessionFile), "evidence-children");
   let names;
   try {
     names = await readdir3(childDirectory);
@@ -12885,7 +18523,7 @@ async function readBoundEvidenceChildKnownFailure(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join7(childDirectory, file));
+      entries = await readBoundSessionEntries(join8(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered evidence-child session");
     }
@@ -12922,7 +18560,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
       break;
     }
   }
-  const childDirectory = join7(dirname5(sessionFile), "auditor-roles");
+  const childDirectory = join8(dirname6(sessionFile), "auditor-roles");
   let names;
   try {
     names = await readdir3(childDirectory);
@@ -12933,7 +18571,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join7(childDirectory, file));
+      entries = await readBoundSessionEntries(join8(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
@@ -13259,11 +18897,6 @@ function boundErroredToolCandidate(entries, resultIndex, message, toolName) {
   const diagnostic = toolResultText(message);
   return bound === void 0 || diagnostic === "" ? void 0 : { candidate: bound.candidate, diagnostic, callIndex: bound.callIndex };
 }
-var COLLECTOR_INFRASTRUCTURE_TOOLS = /* @__PURE__ */ new Set([
-  COLLECTOR_OBSERVE_TOOL,
-  COLLECTOR_REQUEST_TOOL,
-  COLLECTOR_WAIT_TOOL
-]);
 function extractCollectorInfrastructureFailure(entries) {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
@@ -13521,7 +19154,7 @@ function auditArtifactPublicationError(message, code) {
   return error;
 }
 async function ensureAuditEvidenceDirectory(runDirectory) {
-  const artifactsDir = join7(runDirectory, "artifacts");
+  const artifactsDir = join8(runDirectory, "artifacts");
   const runStat = await lstat3(runDirectory);
   if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
     throw auditArtifactPublicationError(
@@ -13558,7 +19191,7 @@ async function ensureAuditEvidenceDirectory(runDirectory) {
 }
 async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
   const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
-  const evidencePath = join7(artifactsDir, "audit-incomplete.json");
+  const evidencePath = join8(artifactsDir, "audit-incomplete.json");
   try {
     const existing = await lstat3(evidencePath);
     throw auditArtifactPublicationError(
@@ -13580,7 +19213,7 @@ async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
 }
 function auditPublicationFailureTerminal(admitted, entries, outcome, error) {
   const attempt = publicationAttemptFromError(
-    join7(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
+    join8(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
     error
   );
   const diagnostic = `audit-incomplete evidence publication failed: ${attempt.diagnostic}`;
@@ -13874,8 +19507,8 @@ async function extractNavigatorFactFromAdmittedSession(admitted) {
 }
 async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join7(artifactsDir, "report.json");
-  const evidencePath = join7(artifactsDir, "evidence.json");
+  const reportPath = join8(artifactsDir, "report.json");
+  const evidencePath = join8(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -13918,8 +19551,8 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
 }
 async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join7(artifactsDir, "report.json");
-  const evidencePath = join7(artifactsDir, "evidence.json");
+  const reportPath = join8(artifactsDir, "report.json");
+  const evidencePath = join8(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -14093,8 +19726,8 @@ function extractFixerMethodInvocations(entries, options) {
 }
 async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join7(artifactsDir, "report.json");
-  const evidencePath = join7(artifactsDir, "evidence.json");
+  const reportPath = join8(artifactsDir, "report.json");
+  const evidencePath = join8(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -14207,8 +19840,8 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
 }
 async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join7(artifactsDir, "report.json");
-  const evidencePath = join7(artifactsDir, "evidence.json");
+  const reportPath = join8(artifactsDir, "report.json");
+  const evidencePath = join8(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -14329,8 +19962,8 @@ async function trySettleCollectorTerminalResult(admitted) {
 }
 async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join7(artifactsDir, "report.json");
-  const evidencePath = join7(artifactsDir, "evidence.json");
+  const reportPath = join8(artifactsDir, "report.json");
+  const evidencePath = join8(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -14498,8 +20131,8 @@ function extractReviewerMethodInvocations(entries, options) {
 }
 async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join7(artifactsDir, "report.json");
-  const evidencePath = join7(artifactsDir, "evidence.json");
+  const reportPath = join8(artifactsDir, "report.json");
+  const evidencePath = join8(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -14665,8 +20298,8 @@ function extractMergerMethodInvocations(entries, options) {
 }
 async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join7(artifactsDir, "report.json");
-  const evidencePath = join7(artifactsDir, "evidence.json");
+  const reportPath = join8(artifactsDir, "report.json");
+  const evidencePath = join8(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -14831,13 +20464,13 @@ function publicationAttemptFromError(path, error) {
 }
 function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   const dirs = [];
-  for (const dir of [baseDir, runDirectory, dirname5(runDirectory)]) {
+  for (const dir of [baseDir, runDirectory, dirname6(runDirectory)]) {
     if (!dirs.includes(dir)) dirs.push(dir);
   }
   return dirs;
 }
 async function resolveFailureArtifactsBase(runDirectory) {
-  const artifactsDir = join7(runDirectory, "artifacts");
+  const artifactsDir = join8(runDirectory, "artifacts");
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -14853,7 +20486,7 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   const candidates = [
     ...preferredCandidates,
     // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join7(dir, `${stem}.${randomUUID()}.json`))
+    ...uniqueFallbackDirs.map((dir) => join8(dir, `${stem}.${randomUUID()}.json`))
   ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
@@ -14888,26 +20521,26 @@ async function publishFailureArtifacts(admitted, failure) {
     admitted.runDirectory
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
-  const underArtifacts = baseDir === join7(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === join8(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir
   );
   const errorCandidates = underArtifacts ? [
-    join7(baseDir, "error.json"),
-    join7(baseDir, "error.settlement.json"),
-    join7(admitted.runDirectory, "error.settlement.json")
+    join8(baseDir, "error.json"),
+    join8(baseDir, "error.settlement.json"),
+    join8(admitted.runDirectory, "error.settlement.json")
   ] : [
-    join7(baseDir, "error.settlement.json"),
-    join7(baseDir, "error.json")
+    join8(baseDir, "error.settlement.json"),
+    join8(baseDir, "error.json")
   ];
   const evidenceCandidates = underArtifacts ? [
-    join7(baseDir, "evidence.json"),
-    join7(baseDir, "evidence.settlement.json"),
-    join7(admitted.runDirectory, "evidence.settlement.json")
+    join8(baseDir, "evidence.json"),
+    join8(baseDir, "evidence.settlement.json"),
+    join8(admitted.runDirectory, "evidence.settlement.json")
   ] : [
-    join7(baseDir, "evidence.settlement.json"),
-    join7(baseDir, "evidence.json")
+    join8(baseDir, "evidence.settlement.json"),
+    join8(baseDir, "evidence.json")
   ];
   const errorPayloadBase = {
     kind: "error",
@@ -15055,8 +20688,43 @@ function presentFailureTerminal(terminal, io) {
     })
   );
 }
+var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS;
+var init_settlement = __esm({
+  "src/public-cli/settlement.ts"() {
+    "use strict";
+    init_audit_escalation();
+    init_auditor_soul();
+    init_doctor_auditor();
+    init_judge_auditor();
+    init_reviewer_auditor();
+    init_explicit_internal();
+    init_compliance_transport();
+    init_collector_ledger();
+    init_judge_output();
+    init_collector_output();
+    init_worker_output();
+    init_terminating_tools();
+    init_doctor_contracts();
+    init_reviewer_output();
+    init_merger_contracts();
+    init_method_skill();
+    init_navigator_invocation_identity();
+    init_packaged_role_registry();
+    init_work_subject_identity();
+    init_invocation();
+    init_terminal();
+    CONCISE_DIAGNOSTIC_MAX_CHARS = 480;
+    COLLECTOR_INFRASTRUCTURE_TOOLS = /* @__PURE__ */ new Set([
+      COLLECTOR_OBSERVE_TOOL,
+      COLLECTOR_REQUEST_TOOL,
+      COLLECTOR_WAIT_TOOL
+    ]);
+  }
+});
 
 // src/public-cli/coder-run.ts
+import { writeFile as writeFile5 } from "node:fs/promises";
+import { join as join9 } from "node:path";
 function buildModelArgs(model) {
   if (model === void 0) return [];
   return [
@@ -15216,7 +20884,7 @@ async function dispatchAdmittedCoder(input) {
     }
     try {
       await writeFile5(
-        join8(admitted.runDirectory, "stderr.log"),
+        join9(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -15414,10 +21082,23 @@ async function runPublicCoderResume(argv, env, io) {
     ...methodProvenance === void 0 ? {} : { methodProvenance }
   });
 }
+var init_coder_run = __esm({
+  "src/public-cli/coder-run.ts"() {
+    "use strict";
+    init_method_skill();
+    init_explicit_internal();
+    init_cli_errors();
+    init_invocation();
+    init_config2();
+    init_public_run_credentials();
+    init_run_lifecycle();
+    init_settlement();
+  }
+});
 
 // src/public-cli/collector-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 function buildModelArgs2(model) {
   if (model === void 0) return [];
   return [
@@ -15528,7 +21209,7 @@ async function dispatchAdmittedCollector(input) {
     }
     try {
       await writeFile6(
-        join9(admitted.runDirectory, "stderr.log"),
+        join10(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -15634,10 +21315,22 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
     lease
   });
 }
+var init_collector_run = __esm({
+  "src/public-cli/collector-run.ts"() {
+    "use strict";
+    init_explicit_internal();
+    init_cli_errors();
+    init_invocation();
+    init_config2();
+    init_public_run_credentials();
+    init_run_lifecycle();
+    init_settlement();
+  }
+});
 
 // src/public-cli/doctor-run.ts
 import { writeFile as writeFile7 } from "node:fs/promises";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 function buildModelArgs3(model) {
   if (model === void 0) return [];
   return [
@@ -15742,7 +21435,7 @@ async function dispatchAdmittedDoctor(input) {
     }
     try {
       await writeFile7(
-        join10(admitted.runDirectory, "stderr.log"),
+        join11(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -15854,10 +21547,22 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
     lease
   });
 }
+var init_doctor_run = __esm({
+  "src/public-cli/doctor-run.ts"() {
+    "use strict";
+    init_explicit_internal();
+    init_cli_errors();
+    init_invocation();
+    init_config2();
+    init_public_run_credentials();
+    init_run_lifecycle();
+    init_settlement();
+  }
+});
 
 // src/public-cli/fixer-run.ts
 import { writeFile as writeFile8 } from "node:fs/promises";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 function buildModelArgs4(model) {
   if (model === void 0) return [];
   return [
@@ -16026,7 +21731,7 @@ async function dispatchAdmittedFixer(input) {
     }
     try {
       await writeFile8(
-        join11(admitted.runDirectory, "stderr.log"),
+        join12(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -16233,10 +21938,23 @@ async function runPublicFixerResume(argv, env, io) {
     methodMaterial
   });
 }
+var init_fixer_run = __esm({
+  "src/public-cli/fixer-run.ts"() {
+    "use strict";
+    init_method_skill();
+    init_explicit_internal();
+    init_cli_errors();
+    init_invocation();
+    init_config2();
+    init_public_run_credentials();
+    init_run_lifecycle();
+    init_settlement();
+  }
+});
 
 // src/public-cli/judge-run.ts
 import { writeFile as writeFile9 } from "node:fs/promises";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 function buildModelArgs5(model) {
   if (model === void 0) return [];
   return [
@@ -16378,7 +22096,7 @@ async function dispatchAdmittedJudge(input) {
     }
     try {
       await writeFile9(
-        join12(admitted.runDirectory, "stderr.log"),
+        join13(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -16537,12 +22255,22 @@ async function runPublicResume(argv, env, io) {
     lease
   });
 }
+var init_judge_run = __esm({
+  "src/public-cli/judge-run.ts"() {
+    "use strict";
+    init_explicit_internal();
+    init_cli_errors();
+    init_invocation();
+    init_config2();
+    init_public_run_credentials();
+    init_run_lifecycle();
+    init_settlement();
+  }
+});
 
 // src/public-cli/merger-run.ts
-init_activation_ledger_git();
-init_activation_ledger_topology();
 import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
-import { join as join13, resolve as resolve7 } from "node:path";
+import { join as join14, resolve as resolve7 } from "node:path";
 function buildModelArgs6(model) {
   if (model === void 0) return [];
   return [
@@ -16700,7 +22428,7 @@ async function dispatchAdmittedMerger(input) {
     }
     try {
       await writeFile10(
-        join13(admitted.runDirectory, "stderr.log"),
+        join14(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -16772,12 +22500,12 @@ async function admitMergerShellForActivationFailure(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join13(
+  const runDirectory = join14(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@merger`
   );
-  const sessionDirectory = join13(runDirectory, "session");
+  const sessionDirectory = join14(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   await mkdir4(runDirectory, { recursive: true });
@@ -16788,8 +22516,8 @@ async function admitMergerShellForActivationFailure(options) {
     expectedConflictPaths: [],
     resolutionScope: []
   };
-  const admittedRequestPath = join13(runDirectory, "admitted-request.json");
-  const mergerInputPath = join13(runDirectory, "merger-input.json");
+  const admittedRequestPath = join14(runDirectory, "admitted-request.json");
+  const mergerInputPath = join14(runDirectory, "merger-input.json");
   await writeFile10(
     admittedRequestPath,
     `${JSON.stringify(
@@ -16986,10 +22714,26 @@ async function runPublicMergerResume(argv, env, io) {
     methodMaterial
   });
 }
+var init_merger_run = __esm({
+  "src/public-cli/merger-run.ts"() {
+    "use strict";
+    init_activation_ledger_git();
+    init_activation_ledger_topology();
+    init_method_skill();
+    init_uuidv7();
+    init_explicit_internal();
+    init_cli_errors();
+    init_invocation();
+    init_config2();
+    init_public_run_credentials();
+    init_run_lifecycle();
+    init_settlement();
+  }
+});
 
 // src/public-cli/reviewer-run.ts
 import { writeFile as writeFile11 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 function buildModelArgs7(model) {
   if (model === void 0) return [];
   return [
@@ -17144,7 +22888,7 @@ async function dispatchAdmittedReviewer(input) {
     }
     try {
       await writeFile11(
-        join14(admitted.runDirectory, "stderr.log"),
+        join15(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -17350,17 +23094,31 @@ async function runPublicReviewerResume(argv, env, io) {
     methodMaterial
   });
 }
+var init_reviewer_run = __esm({
+  "src/public-cli/reviewer-run.ts"() {
+    "use strict";
+    init_method_skill();
+    init_explicit_internal();
+    init_cli_errors();
+    init_invocation();
+    init_config2();
+    init_public_run_credentials();
+    init_run_lifecycle();
+    init_settlement();
+  }
+});
 
 // src/public-cli/cli.ts
-var THINKING_LEVELS2 = /* @__PURE__ */ new Set([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max"
-]);
+var cli_exports = {};
+__export(cli_exports, {
+  CliUsageError: () => CliUsageError,
+  buildExplicitInternalActivationArgs: () => buildExplicitInternalActivationArgs,
+  helpDocument: () => helpDocument,
+  resolveInternalRoleEntrypoint: () => resolveInternalRoleEntrypoint,
+  runAkRole: () => runAkRole
+});
+import { homedir as homedir3 } from "node:os";
+import { join as join16 } from "node:path";
 function defaultIo() {
   return {
     stdout: (text) => {
@@ -17375,7 +23133,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join15(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join16(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -17981,9 +23739,129 @@ async function runAkRole(argv, env) {
     return { exitCode: 1 };
   }
 }
+var THINKING_LEVELS2;
+var init_cli = __esm({
+  "src/public-cli/cli.ts"() {
+    "use strict";
+    init_config2();
+    init_cli_errors();
+    init_explicit_internal();
+    init_invocation();
+    init_coder_run();
+    init_collector_run();
+    init_doctor_run();
+    init_fixer_run();
+    init_judge_run();
+    init_merger_run();
+    init_reviewer_run();
+    init_run_lifecycle();
+    init_registry2();
+    init_settlement();
+    init_explicit_internal();
+    init_cli_errors();
+    THINKING_LEVELS2 = /* @__PURE__ */ new Set([
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]);
+  }
+});
 
 // src/public-cli/main.ts
-var here = dirname6(fileURLToPath2(import.meta.url));
-var packageRoot = join16(here, "..", "..");
-var result = await runAkRole(process.argv.slice(2), { packageRoot });
+import { dirname as dirname7, join as join17 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+
+// src/public-cli/host-pi-runtime.ts
+import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
+var HOST_PROVIDED_PACKAGES = [
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-coding-agent",
+  "typebox"
+];
+function ensureHostPiRuntimeResolvable(packageRoot2, env = process.env) {
+  const missing = missingPackages(packageRoot2);
+  if (missing.length === 0) {
+    return;
+  }
+  const hostCli = findHostPiCli(env);
+  if (hostCli === void 0) {
+    throw new Error(
+      `ak-role cannot resolve ${missing.join(", ")} next to the installed package and found no host \`pi\` executable on PATH. Install Pi (@earendil-works/pi-coding-agent) on this machine or provide the peer packages locally.`
+    );
+  }
+  for (const name of missing) {
+    const hostDir = findPackageDirFrom(dirname(hostCli), name);
+    if (hostDir === void 0) {
+      throw new Error(`ak-role found the host pi at ${hostCli} but could not locate ${name} in its tree.`);
+    }
+    linkPackage(packageRoot2, name, hostDir);
+  }
+  const unresolved = missingPackages(packageRoot2);
+  if (unresolved.length > 0) {
+    throw new Error(
+      `ak-role linked the host Pi runtime from ${hostCli} but ${unresolved.join(", ")} remained unresolvable.`
+    );
+  }
+}
+function missingPackages(packageRoot2) {
+  return HOST_PROVIDED_PACKAGES.filter((name) => findPackageDirFrom(packageRoot2, name) === void 0);
+}
+function findPackageDirFrom(startDir, name) {
+  let dir = startDir;
+  while (true) {
+    const candidate = join(dir, "node_modules", ...name.split("/"));
+    if (existsSync(join(candidate, "package.json"))) {
+      return realpathSync(candidate);
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      return void 0;
+    }
+    dir = parent;
+  }
+}
+function findHostPiCli(env) {
+  for (const dir of (env.PATH ?? "").split(delimiter)) {
+    if (dir === "") {
+      continue;
+    }
+    const candidate = join(dir, "pi");
+    if (existsSync(candidate)) {
+      return realpathSync(candidate);
+    }
+  }
+  return void 0;
+}
+function linkPackage(packageRoot2, name, targetDir) {
+  const linkPath = join(packageRoot2, "node_modules", ...name.split("/"));
+  mkdirSync(dirname(linkPath), { recursive: true });
+  const existing = lstatSync(linkPath, { throwIfNoEntry: false });
+  if (existing !== void 0) {
+    if (!existing.isSymbolicLink()) {
+      throw new Error(
+        `ak-role found ${linkPath} present but unresolvable; refusing to replace a non-symlink install.`
+      );
+    }
+    rmSync(linkPath);
+  }
+  try {
+    symlinkSync(targetDir, linkPath, "dir");
+  } catch (error) {
+    if (error.code !== "EEXIST") {
+      throw error;
+    }
+  }
+}
+
+// src/public-cli/main.ts
+var here = dirname7(fileURLToPath2(import.meta.url));
+var packageRoot = join17(here, "..", "..");
+ensureHostPiRuntimeResolvable(packageRoot);
+var { runAkRole: runAkRole2 } = await Promise.resolve().then(() => (init_cli(), cli_exports));
+var result = await runAkRole2(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;
