@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,7 @@ import {
   runExplicitInternalActivation,
 } from "../../src/public-cli/explicit-internal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-explicit-internal-"));
@@ -21,12 +22,7 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
 }
 
 async function writeExecutableStub(path: string, source: string): Promise<void> {
-  const versionAware = source.replace(
-    "\n",
-    "\nif (process.argv[2] === \"--version\") { console.log(\"test-pi-1.0.0\"); process.exit(0); }\n",
-  );
-  await writeFile(path, versionAware, "utf8");
-  await chmod(path, 0o755);
+  await writeVersionAwarePiShim(path, source);
 }
 
 async function waitForFile(
@@ -59,6 +55,20 @@ const sessionLine = `${JSON.stringify({
   },
 })}\n`;
 
+test("default runner preserves unexpected executable filesystem failures", async () => {
+  await withTempHome(async (home) => {
+    const loop = join(home, "pi-loop");
+    await symlink(loop, loop);
+    await assert.rejects(
+      defaultExplicitInternalPiRunner([], {
+        cwd: home,
+        env: isolatedTestProcessEnv({ env: { PATH: home, PI_BINARY: loop }, home, agentDir: join(home, ".pi", "agent") }),
+      }),
+      (error: NodeJS.ErrnoException) => error.code === "ELOOP" && !error.message.includes("Pi executable not found"),
+    );
+  });
+});
+
 test("default runner waits for child readiness without an implicit timeout", async () => {
   await withTempHome(async (home) => {
     const ready = join(home, "ready");
@@ -87,7 +97,7 @@ process.on("SIGTERM", () => {
 
     const resultPromise = defaultExplicitInternalPiRunner(["--help"], {
       cwd: home,
-      env: { ...process.env, PI_BINARY: stub },
+      env: isolatedTestProcessEnv({ env: { ...process.env, PI_BINARY: stub }, home, agentDir: join(home, ".pi", "agent") }),
     });
     await waitForFile(ready, resultPromise);
     await writeFile(release, "release", "utf8");
@@ -151,13 +161,20 @@ setInterval(() => {}, 1000);
   });
 });
 
-test("parent discards child stdout while retaining stderr", async () => {
+test("parent discards child stdout without inheriting the parent role ledger", async () => {
   await withTempHome(async (home) => {
+    const parentRun = join(home, "parent-run");
+    const invocation = join(parentRun, "invocation.json");
+    await mkdir(parentRun, { recursive: true });
+    await writeFile(invocation, "parent-identity", "utf8");
     const stub = join(home, "flood-stdout.mjs");
     await writeExecutableStub(
       stub,
       `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 const chunk = "X".repeat(64 * 1024);
+if (process.env.AK_ROLE_RUN_DIR) writeFileSync(join(process.env.AK_ROLE_RUN_DIR, "invocation.json"), "overwritten", "utf8");
 for (let i = 0; i < 200; i++) process.stdout.write(chunk);
 process.stderr.write("stderr-ok");
 process.exit(0);
@@ -166,10 +183,11 @@ process.exit(0);
 
     const result = await defaultExplicitInternalPiRunner(["x"], {
       cwd: home,
-      env: { ...process.env, PI_BINARY: stub },
+      env: isolatedTestProcessEnv({ env: { ...process.env, AK_ROLE_RUN_DIR: parentRun, PI_BINARY: stub }, home, agentDir: join(home, ".pi", "agent") }),
     });
 
     assert.equal(result.code, 0);
+    assert.equal(await readFile(invocation, "utf8"), "parent-identity");
     assert.equal(Object.hasOwn(result, "stdout"), false);
     assert.ok(result.stderr.includes("stderr-ok"));
   });

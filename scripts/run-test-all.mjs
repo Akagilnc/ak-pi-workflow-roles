@@ -132,7 +132,9 @@ function runNodeTest(files, { concurrency } = {}) {
       cwd: root,
       stdio: "inherit",
       env: Object.fromEntries(
-        Object.entries(process.env).filter(([name]) => name !== "AK_ROLE_RUN_DIR"),
+        Object.entries(process.env).filter(
+          ([name]) => name !== "AK_ROLE_RUN_DIR" && name !== "PI_CODING_AGENT_DIR",
+        ),
       ),
     });
     child.on("error", reject);

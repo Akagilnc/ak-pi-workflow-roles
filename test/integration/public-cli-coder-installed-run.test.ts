@@ -17,6 +17,7 @@ import {
   piCli,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
+import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
 
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root });
@@ -78,12 +79,11 @@ async function runAkRoleBin(
 }> {
   const { spawn } = await import("node:child_process");
   return await new Promise((resolvePromise) => {
-    const mergedEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...options.env,
-      HOME: options.home,
-      PI_CODING_AGENT_DIR: options.agentDir,
-    };
+    const mergedEnv = isolatedTestProcessEnv({
+      env: { ...process.env, ...options.env },
+      home: options.home,
+      agentDir: options.agentDir,
+    });
     const pathPrefix = `${dirname(bin)}:${mergedEnv.PATH ?? process.env.PATH ?? ""}`;
     const child = spawn(bin, args, {
       cwd: options.cwd,

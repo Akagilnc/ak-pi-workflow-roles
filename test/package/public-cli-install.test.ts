@@ -17,6 +17,7 @@ import {
   PUBLIC_CONFIGURABLE_SEATS,
 } from "../../src/public-cli/registry.ts";
 import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
+import { TEST_PI_VERSION_BRANCH } from "../helpers/test-process-fixtures.ts";
 
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root });
@@ -226,7 +227,7 @@ test("ordinary Pi startup does not register Internal --ak-role; ak-role explicit
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-if (process.argv[2] === "--version") { console.log("test-pi-1.0.0"); process.exit(0); }
+${TEST_PI_VERSION_BRANCH}
 import { spawn } from "node:child_process";
 const args = process.argv.slice(2);
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args), "utf8");
@@ -329,7 +330,7 @@ test("installed ak-role coder admits plan/apply and binds package-owned tdd with
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-if (process.argv[2] === "--version") { console.log("test-pi-1.0.0"); process.exit(0); }
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,
@@ -371,7 +372,7 @@ process.exit(1);
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-if (process.argv[2] === "--version") { console.log("test-pi-1.0.0"); process.exit(0); }
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,
@@ -447,7 +448,7 @@ test("installed ak-role collector admits PR/legs and pins isolation without pref
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-if (process.argv[2] === "--version") { console.log("test-pi-1.0.0"); process.exit(0); }
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,
@@ -497,7 +498,7 @@ process.exit(1);
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-if (process.argv[2] === "--version") { console.log("test-pi-1.0.0"); process.exit(0); }
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(overrideLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,
@@ -592,7 +593,7 @@ test("installed ak-role fixer admits plan/apply and binds package diagnosing-bug
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-if (process.argv[2] === "--version") { console.log("test-pi-1.0.0"); process.exit(0); }
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,
@@ -642,7 +643,7 @@ process.exit(1);
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-if (process.argv[2] === "--version") { console.log("test-pi-1.0.0"); process.exit(0); }
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(1);
 `,

@@ -143,10 +143,14 @@ async function resolveSelectedPi(command: string, env: NodeJS.ProcessEnv): Promi
   for (const candidate of candidates) {
     try {
       await access(candidate, constants.X_OK);
-      return await realpath(candidate);
-    } catch {
-      // Continue through PATH in selection order.
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") continue;
+      throw error;
     }
+    // Once a candidate qualifies, canonicalization failures are real filesystem
+    // failures, not evidence that PATH contained no executable.
+    return await realpath(candidate);
   }
   throw new Error(`Pi executable not found: ${command}`);
 }
