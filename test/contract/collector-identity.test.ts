@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { normalizeIssueComment, normalizeReview, normalizeReviewComment } from "../../src/collector-github.ts";
-import { extractGitHubIdentityGroups, groupGitHubMaterialsByIdentity } from "../../src/collector-identity.ts";
+import { normalizeReviewEvidence } from "../../src/collector-evidence.ts";
+import { extractCollectorEvidenceIdentityGroups, extractGitHubIdentityGroups, groupGitHubMaterialsByIdentity } from "../../src/collector-identity.ts";
 
 const noFindingFixture = new URL("../fixtures/collector/codex-nofinding-5234537035.json", import.meta.url);
 
@@ -48,6 +49,23 @@ test("CodeRabbit frozen HTML containers yield outside-diff and nitpick findings 
   assert.equal(group.findings.filter((finding) => finding.category === "nitpick").length, 2);
   assert.equal(group.findings.filter((finding) => finding.category === "inline").length, 4);
   assert.ok(group.findings.every((finding) => finding.source.id > 0 && finding.identity.userId === 136622811));
+});
+
+test("evidence extractor binds real evidenceId refs and head relation", async () => {
+  const raw = JSON.parse(await readFile(new URL("../fixtures/collector/sourcery-ratelimit-review-4892027495.json", import.meta.url), "utf8"));
+  const record = normalizeReviewEvidence(normalizeReview(raw), "2026-08-11T00:00:00Z");
+  const group = extractCollectorEvidenceIdentityGroups([record], "other-head")[0]!;
+
+  assert.deepEqual(group.identity, { userType: "Bot", userId: 58596630 });
+  assert.equal(group.attendance, true);
+  assert.equal(group.degraded, true);
+  assert.deepEqual(group.findings, []);
+  assert.deepEqual(group.materials, [{
+    kind: "review",
+    id: 4892027495,
+    evidenceId: record.evidenceId,
+    headRelation: "prior",
+  }]);
 });
 
 test("machine identity ignores display changes, separates user IDs, and leaves tombstones unassigned", () => {
