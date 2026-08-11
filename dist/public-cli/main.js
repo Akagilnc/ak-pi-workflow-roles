@@ -322,63 +322,20 @@ function safeGet(value, key) {
   }
 }
 function records(value) {
-  if (!Array.isArray(value)) return [];
-  return value.filter(
-    (item) => item !== null && typeof item === "object"
-  );
+  return Array.isArray(value) ? value.filter((item) => item !== null && typeof item === "object") : [];
 }
 function strings(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 }
-function projectReport(value) {
-  const common = {
-    legId: safeGet(value, "legId"),
-    report: safeGet(value, "report"),
-    windowRelation: safeGet(value, "windowRelation"),
-    evidenceRefs: strings(safeGet(value, "evidenceRefs"))
-  };
-  if (safeGet(value, "kind") === "review") {
-    return {
-      kind: "review",
-      ...common,
-      reviewedHead: safeGet(value, "reviewedHead"),
-      headRelation: safeGet(value, "headRelation")
-    };
-  }
-  const terminal = {
-    kind: "terminal-fact",
-    ...common,
-    terminalStatus: safeGet(value, "terminalStatus")
-  };
-  const targetSnapshotHead = safeGet(value, "targetSnapshotHead");
-  const scope = safeGet(value, "scope");
-  if (targetSnapshotHead !== void 0) terminal.targetSnapshotHead = targetSnapshotHead;
-  if (scope !== void 0) terminal.scope = scope;
-  return terminal;
-}
 function validateAcceptedCollectorReceipt(value) {
-  const snapshots = records(safeGet(value, "snapshots")).map((snapshot) => ({
-    snapshotId: safeGet(snapshot, "snapshotId"),
-    observedAt: safeGet(snapshot, "observedAt"),
-    completedAt: safeGet(snapshot, "completedAt"),
-    completedMono: safeGet(snapshot, "completedMono"),
-    host: safeGet(snapshot, "host"),
-    repository: safeGet(snapshot, "repository"),
-    prNumber: safeGet(snapshot, "prNumber"),
-    prState: safeGet(snapshot, "prState"),
-    headOid: safeGet(snapshot, "headOid"),
-    complete: safeGet(snapshot, "complete"),
-    evidenceIds: strings(safeGet(snapshot, "evidenceIds")),
-    pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")),
-    normalizedByteLength: safeGet(snapshot, "normalizedByteLength")
-  }));
-  const evidenceRecords = records(safeGet(value, "evidenceRecords")).map((record3) => ({
-    evidenceId: safeGet(record3, "evidenceId"),
-    kind: safeGet(record3, "kind"),
-    versionId: safeGet(record3, "versionId"),
-    contentDigest: safeGet(record3, "contentDigest"),
-    firstObservedAt: safeGet(record3, "firstObservedAt"),
-    raw: safeGet(record3, "raw")
+  const rawGroups = safeGet(value, "groups");
+  if (!Array.isArray(rawGroups)) throw new Error("Collector receipt has no typed groups terminal discriminator");
+  const groups = records(rawGroups).map((group) => ({
+    identity: safeGet(group, "identity") ?? null,
+    ...typeof safeGet(group, "displayLogin") === "string" ? { displayLogin: safeGet(group, "displayLogin") } : {},
+    attendance: true,
+    materials: records(safeGet(group, "materials")),
+    findings: records(safeGet(group, "findings"))
   }));
   return {
     host: safeGet(value, "host"),
@@ -390,16 +347,24 @@ function validateAcceptedCollectorReceipt(value) {
     finalObservationTime: safeGet(value, "finalObservationTime"),
     finalSnapshotId: safeGet(value, "finalSnapshotId"),
     targetHead: safeGet(value, "targetHead"),
-    reports: records(safeGet(value, "reports")).map(projectReport),
-    legs: records(safeGet(value, "legs")).map((leg) => ({
-      legId: safeGet(leg, "legId"),
-      status: safeGet(leg, "status"),
-      rationale: safeGet(leg, "rationale"),
-      evidenceRefs: strings(safeGet(leg, "evidenceRefs"))
-    })),
+    groups,
     requestAttempts: records(safeGet(value, "requestAttempts")),
-    snapshots,
-    evidenceRecords
+    snapshots: records(safeGet(value, "snapshots")).map((snapshot) => ({
+      snapshotId: safeGet(snapshot, "snapshotId"),
+      observedAt: safeGet(snapshot, "observedAt"),
+      completedAt: safeGet(snapshot, "completedAt"),
+      completedMono: safeGet(snapshot, "completedMono"),
+      host: safeGet(snapshot, "host"),
+      repository: safeGet(snapshot, "repository"),
+      prNumber: safeGet(snapshot, "prNumber"),
+      prState: safeGet(snapshot, "prState"),
+      headOid: safeGet(snapshot, "headOid"),
+      complete: safeGet(snapshot, "complete"),
+      evidenceIds: strings(safeGet(snapshot, "evidenceIds")),
+      pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")),
+      normalizedByteLength: safeGet(snapshot, "normalizedByteLength")
+    })),
+    evidenceRecords: records(safeGet(value, "evidenceRecords")).map((record4) => ({ evidenceId: safeGet(record4, "evidenceId"), kind: safeGet(record4, "kind"), versionId: safeGet(record4, "versionId"), contentDigest: safeGet(record4, "contentDigest"), firstObservedAt: safeGet(record4, "firstObservedAt"), raw: safeGet(record4, "raw") }))
   };
 }
 
@@ -2086,8 +2051,8 @@ function CreateObject(types, value) {
 }
 function FromUnionKey(types, value) {
   const flattened = Flatten(types);
-  const record3 = TryBuildRecord(flattened, value);
-  return IsSchema(record3) ? record3 : CreateObject(flattened, value);
+  const record4 = TryBuildRecord(flattened, value);
+  return IsSchema(record4) ? record4 : CreateObject(flattened, value);
 }
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key.mjs
@@ -9184,7 +9149,7 @@ var PACKAGED_ROLE_REGISTRY = [
   { role: "fixer", phases: ["plan", "apply"], outputTool: FIXER_OUTPUT_TOOL_NAME, inputFlag: "ak-fix-packet", phaseFlag: "ak-fixer-phase", activationStage: "load-and-install" },
   { role: "coder", phases: ["plan", "apply"], outputTool: CODER_OUTPUT_TOOL_NAME, inputFlag: "ak-coder-task", phaseFlag: "ak-coder-phase", activationStage: "load-and-install" },
   { role: "reviewer", phases: [null], outputTool: REVIEWER_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
-  { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: "ak-collector-legs", phaseFlag: void 0, activationStage: "load-and-install" },
+  { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: "ak-collector-repo", phaseFlag: void 0, activationStage: "load-and-install" },
   { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: void 0, activationStage: "load-and-install" },
   { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: void 0, activationStage: "prepare-git-and-install" }
 ];
@@ -9346,16 +9311,16 @@ function parsePublicCliConfig(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("public CLI config must be an object");
   }
-  const record3 = value;
-  if (record3.seats === void 0) {
+  const record4 = value;
+  if (record4.seats === void 0) {
     return { seats: {} };
   }
-  if (record3.seats === null || typeof record3.seats !== "object" || Array.isArray(record3.seats)) {
+  if (record4.seats === null || typeof record4.seats !== "object" || Array.isArray(record4.seats)) {
     throw new Error("public CLI config.seats must be an object");
   }
   const seats = {};
   for (const [key, raw] of Object.entries(
-    record3.seats
+    record4.seats
   )) {
     if (!PUBLIC_CONFIGURABLE_SEATS.includes(key)) {
       throw new Error(`unknown configurable seat in config: ${key}`);
@@ -9458,10 +9423,10 @@ function credentialProvidersFromAuthData(data) {
   if (data === null || typeof data !== "object" || Array.isArray(data)) {
     return { "openai-codex": false, xai: false };
   }
-  const record3 = data;
+  const record4 = data;
   return {
-    "openai-codex": Object.prototype.hasOwnProperty.call(record3, "openai-codex"),
-    xai: Object.prototype.hasOwnProperty.call(record3, "xai")
+    "openai-codex": Object.prototype.hasOwnProperty.call(record4, "openai-codex"),
+    xai: Object.prototype.hasOwnProperty.call(record4, "xai")
   };
 }
 async function loadCredentialProviders(agentDir) {
@@ -9570,7 +9535,7 @@ function validateAcceptedDetails(toolName, details) {
     [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"]
   };
-  const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.legs) && candidate.legs.length > 0 && candidate.legs.every((leg) => leg !== null && typeof leg === "object" && ["valid", "unavailable", "missing"].includes(String(leg.status)));
+  const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const runtimeBindingMissing = toolName === DOCTOR_OUTPUT_TOOL_NAME && discriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object") || toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2;
   if (runtimeBindingMissing || !collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(discriminator))) {
     throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
@@ -9597,11 +9562,6 @@ function validateAcceptedDetails(toolName, details) {
     throw error;
   }
 }
-var COLLECTOR_LEG_STATUS_RANK = {
-  missing: 0,
-  unavailable: 1,
-  valid: 2
-};
 function acceptedFacts(toolName, details) {
   switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME:
@@ -9615,14 +9575,8 @@ function acceptedFacts(toolName, details) {
       const output = details;
       return { status: output.status, ...output.status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {} };
     }
-    case COLLECTOR_OUTPUT_TOOL: {
-      const legs = details.legs;
-      const unique = [...new Set((Array.isArray(legs) ? legs : []).flatMap(
-        (leg) => leg !== null && typeof leg === "object" && ["valid", "unavailable", "missing"].includes(String(leg.status)) ? [leg.status] : []
-      ))];
-      unique.sort((a, b) => COLLECTOR_LEG_STATUS_RANK[a] - COLLECTOR_LEG_STATUS_RANK[b]);
-      return { legStatuses: unique };
-    }
+    case COLLECTOR_OUTPUT_TOOL:
+      return { status: "collected" };
   }
 }
 
@@ -9720,10 +9674,8 @@ function deriveSession(content, id) {
       statuses.length = 0;
       if (facts.status !== void 0) {
         statuses.push({ source: id, status: facts.status });
-      } else if (facts.legStatuses !== void 0 && facts.legStatuses.length > 0) {
-        for (const legStatus of facts.legStatuses) statuses.push({ source: id, status: legStatus });
       } else {
-        statuses.push({ source: id, status: "unavailable (terminating receipt has no receipt-level status)" });
+        statuses.push({ source: id, status: "terminating receipt has no receipt-level status" });
       }
     }
   }
@@ -9769,220 +9721,74 @@ async function loadDoctorCase(runsPath) {
 // src/collector-config.ts
 import { createHash as createHash2 } from "node:crypto";
 import { readFile as readFile3 } from "node:fs/promises";
-var COLLECTOR_LEG_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 var COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 var COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
-var COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target and leg manifest. Use only Collector tools. Classify from cited ledger evidence. Submit exactly one ak_collector_output when terminal.";
+var COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target. Observe GitHub materials and submit exactly one ak_collector_output when observation is complete.";
 function fail3(message, cause) {
   throw new Error(message, cause === void 0 ? void 0 : { cause });
 }
-function isAsciiControlOrNonAscii(input) {
+function conservativeAscii(input) {
   for (let i = 0; i < input.length; i += 1) {
     const code = input.charCodeAt(i);
-    if (code <= 31 || code === 127 || code > 127) return true;
+    if (code <= 31 || code === 127 || code > 127) return false;
   }
-  return false;
+  return true;
 }
 function parseCollectorRepository(raw) {
-  if (typeof raw !== "string") {
-    fail3("Collector repository must be a string owner/repo");
-  }
-  const display = raw.trim();
-  if (display !== raw) {
-    fail3("Collector repository must not include surrounding whitespace");
-  }
-  if (display.length === 0) {
-    fail3("Collector repository is required");
-  }
-  if (isAsciiControlOrNonAscii(display)) {
-    fail3("Collector repository must be conservative ASCII without control bytes");
-  }
-  if (display.includes("://") || display.includes("?") || display.includes("#") || display.includes("@") || display.includes("%") || display.includes("\\") || display.includes(" ")) {
-    fail3("Collector repository rejects URL syntax, credentials, query, fragment, and percent encoding");
-  }
-  const parts = display.split("/");
-  if (parts.length !== 2) {
-    fail3("Collector repository must contain exactly one '/' separating owner and repo");
-  }
+  if (typeof raw !== "string" || raw.trim() !== raw || raw.length === 0) fail3("Collector repository must be a string owner/repo");
+  if (!conservativeAscii(raw) || raw.includes("://") || /[?#@%\\ ]/.test(raw)) fail3("Collector repository rejects URL syntax and non-identity bytes");
+  const parts = raw.split("/");
+  if (parts.length !== 2) fail3("Collector repository must contain exactly one '/' separating owner and repo");
   const [ownerDisplay, repoDisplay] = parts;
-  if (ownerDisplay === void 0 || repoDisplay === void 0) {
-    fail3("Collector repository must contain exactly one '/' separating owner and repo");
-  }
-  if (ownerDisplay.length === 0 || repoDisplay.length === 0 || ownerDisplay === "." || ownerDisplay === ".." || repoDisplay === "." || repoDisplay === "..") {
-    fail3("Collector repository rejects empty, '.', or '..' segments");
-  }
-  if (!COLLECTOR_OWNER_PATTERN.test(ownerDisplay)) {
-    fail3("Collector repository owner must match the v1 conservative grammar (1-39 alphanumeric/hyphen)");
-  }
-  if (!COLLECTOR_REPO_PATTERN.test(repoDisplay)) {
-    fail3("Collector repository name must match the v1 conservative grammar (1-100 alphanumeric/._-)");
-  }
+  if (!COLLECTOR_OWNER_PATTERN.test(ownerDisplay) || !COLLECTOR_REPO_PATTERN.test(repoDisplay)) fail3("Collector repository does not match the conservative owner/repo grammar");
   const owner = ownerDisplay.toLowerCase();
   const repo = repoDisplay.toLowerCase();
-  return {
-    display,
-    canonical: `${owner}/${repo}`,
-    owner,
-    repo
-  };
+  return { display: raw, canonical: `${owner}/${repo}`, owner, repo };
 }
 function parseCollectorPrNumber(raw) {
-  if (typeof raw !== "string" && typeof raw !== "number") {
-    fail3("Collector pull request number is required");
-  }
-  const text = String(raw).trim();
-  if (text !== String(raw).trim() || text !== String(raw)) {
-  }
-  if (typeof raw === "string") {
-    if (!/^[1-9][0-9]*$/.test(raw)) {
-      fail3("Collector pull request number must be a positive safe integer string");
-    }
-  } else if (typeof raw === "number") {
-    if (!Number.isSafeInteger(raw) || raw < 1) {
-      fail3("Collector pull request number must be a positive safe integer");
-    }
-    return raw;
-  }
-  const value = Number(text);
-  if (!Number.isSafeInteger(value) || value < 1) {
-    fail3("Collector pull request number must be a positive safe integer");
-  }
+  if (typeof raw === "string" && !/^[1-9][0-9]*$/.test(raw)) fail3("Collector pull request number must be a positive safe integer string");
+  if (typeof raw !== "string" && typeof raw !== "number") fail3("Collector pull request number is required");
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) fail3("Collector pull request number must be a positive safe integer");
   return value;
 }
-function isPlainObject(value) {
+function record3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function hasRequiredKeys(value, required) {
-  return required.every((key) => Object.hasOwn(value, key));
-}
-function canonicalizeAuthor(raw, legId) {
-  if (typeof raw !== "string") {
-    fail3(`Collector leg "${legId}" expectedAuthors entries must be strings`);
-  }
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    fail3(`Collector leg "${legId}" expectedAuthors entries must be non-blank`);
-  }
-  if (trimmed !== raw.trim()) {
-  }
-  return trimmed.toLowerCase();
-}
-function canonicalizeLeg(raw, index) {
-  if (!isPlainObject(raw)) {
-    fail3(`Collector manifest legs[${index}] must be an object`);
-  }
-  const hasRequest = Object.hasOwn(raw, "request");
-  if (!hasRequiredKeys(raw, ["id", "expectedAuthors"])) {
-    fail3(`Collector manifest legs[${index}] is missing required keys`);
-  }
-  const id = raw["id"];
-  if (typeof id !== "string" || !COLLECTOR_LEG_ID_PATTERN.test(id)) {
-    fail3(`Collector leg id at legs[${index}] must match ^[a-z][a-z0-9._-]{0,63}$`);
-  }
-  const authorsRaw = raw["expectedAuthors"];
-  if (!Array.isArray(authorsRaw) || authorsRaw.length < 1) {
-    fail3(`Collector leg "${id}" expectedAuthors must be a non-empty array`);
-  }
-  const expectedAuthors = [];
-  const seenAuthors = /* @__PURE__ */ new Set();
-  for (const entry of authorsRaw) {
-    const author = canonicalizeAuthor(entry, id);
-    if (seenAuthors.has(author)) {
-      fail3(`Collector leg "${id}" has duplicate expected author "${author}"`);
-    }
-    seenAuthors.add(author);
-    expectedAuthors.push(author);
-  }
-  let requestBody;
-  if (hasRequest) {
-    const request = raw["request"];
-    if (!isPlainObject(request) || !hasRequiredKeys(request, ["body"])) {
-      fail3(`Collector leg "${id}" request must be an object with body`);
-    }
-    const body = request["body"];
-    if (typeof body !== "string") {
-      fail3(`Collector leg "${id}" request body must be a string`);
-    }
-    if (body.trim().length === 0) {
-      fail3(`Collector leg "${id}" request body must be trim-non-empty`);
-    }
-    requestBody = body;
-  }
-  return requestBody === void 0 ? { id, expectedAuthors } : { id, expectedAuthors, requestBody };
-}
-function stableCanonicalJson(manifest) {
-  const legs = manifest.legs.map((leg) => {
-    const base = {
-      id: leg.id,
-      expectedAuthors: [...leg.expectedAuthors]
-    };
-    if (leg.requestBody !== void 0) {
-      base["request"] = { body: leg.requestBody };
-    }
-    return base;
-  });
-  return `${JSON.stringify({ legs })}
+function canonicalManifest(requests) {
+  return `${JSON.stringify({ requests: requests.map((request) => ({ id: request.id, body: request.requestBody })) })}
 `;
+}
+function emptyCollectorManifest() {
+  const canonicalJson2 = canonicalManifest([]);
+  return { requests: [], canonicalJson: canonicalJson2, digest: createHash2("sha256").update(canonicalJson2).digest("hex") };
 }
 async function loadCollectorManifest(path) {
   let bytes;
   try {
     bytes = await readFile3(path);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    fail3(`Collector leg manifest is unreadable at ${path}: ${detail}`, error);
-  }
-  let text;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    fail3("Collector leg manifest must be UTF-8 JSON");
-  }
-  if (text.charCodeAt(0) === 65279) {
-    text = text.slice(1);
+    fail3(`Collector request manifest is unreadable at ${path}`, error);
   }
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    fail3(`Collector leg manifest is not valid JSON: ${detail}`, error);
+    fail3("Collector request manifest must be UTF-8 JSON", error);
   }
-  if (!isPlainObject(parsed) || !hasRequiredKeys(parsed, ["legs"])) {
-    fail3("Collector manifest must be an object with legs");
+  if (!record3(parsed)) fail3("Collector request manifest must be an object");
+  const rawRequests = parsed.requests ?? [];
+  if (!Array.isArray(rawRequests)) fail3("Collector request manifest requests must be an array");
+  const requests = [];
+  const ids = /* @__PURE__ */ new Set();
+  for (const [index, item] of rawRequests.entries()) {
+    if (!record3(item) || typeof item.id !== "string" || item.id.length === 0 || typeof item.body !== "string" || item.body.trim() === "") fail3(`Collector request manifest requests[${index}] is invalid`);
+    if (ids.has(item.id)) fail3(`Collector request manifest has duplicate request id "${item.id}"`);
+    ids.add(item.id);
+    requests.push({ id: item.id, requestBody: item.body });
   }
-  const legsRaw = parsed["legs"];
-  if (!Array.isArray(legsRaw) || legsRaw.length < 1) {
-    fail3("Collector manifest legs must be a non-empty array");
-  }
-  const legs = [];
-  const seenIds = /* @__PURE__ */ new Set();
-  const authorOwners = /* @__PURE__ */ new Map();
-  for (let index = 0; index < legsRaw.length; index += 1) {
-    const leg = canonicalizeLeg(legsRaw[index], index);
-    if (seenIds.has(leg.id)) {
-      fail3(`Collector manifest has duplicate leg id "${leg.id}"`);
-    }
-    seenIds.add(leg.id);
-    for (const author of leg.expectedAuthors) {
-      const owner = authorOwners.get(author);
-      if (owner !== void 0) {
-        fail3(
-          `Collector expected author "${author}" overlaps across legs "${owner}" and "${leg.id}"`
-        );
-      }
-      authorOwners.set(author, leg.id);
-    }
-    legs.push(leg);
-  }
-  const canonicalJson2 = stableCanonicalJson({ legs });
-  const digest = createHash2("sha256").update(canonicalJson2, "utf8").digest("hex");
-  return {
-    legs,
-    canonicalJson: canonicalJson2,
-    digest,
-    sourcePath: path
-  };
+  const canonicalJson2 = canonicalManifest(requests);
+  return { requests, canonicalJson: canonicalJson2, digest: createHash2("sha256").update(canonicalJson2).digest("hex"), sourcePath: path };
 }
 
 // src/merger-git-state.ts
@@ -10598,60 +10404,16 @@ function buildFixerTransportPrompt(admitted) {
   }
   return lines.join("\n");
 }
-function parseCollectorLegDeclaration(raw) {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    throw new CliUsageError("collector --leg requires id:author[,author...]");
-  }
-  const colon = trimmed.indexOf(":");
-  if (colon <= 0 || colon === trimmed.length - 1) {
-    throw new CliUsageError(
-      `collector --leg must be id:author[,author...], got ${raw}`
-    );
-  }
-  const id = trimmed.slice(0, colon);
-  if (!COLLECTOR_LEG_ID_PATTERN.test(id)) {
-    throw new CliUsageError(
-      `collector leg id must match ^[a-z][a-z0-9._-]{0,63}$, got ${id}`
-    );
-  }
-  const authorsPart = trimmed.slice(colon + 1);
-  const expectedAuthors = [];
-  for (const piece of authorsPart.split(",")) {
-    if (piece.trim() === "" || piece !== piece.trim()) {
-      if (piece.trim() === "") {
-        throw new CliUsageError(
-          `collector --leg ${id} has an empty expected author slot`
-        );
-      }
-      throw new CliUsageError(
-        `collector --leg ${id} expected author must not include surrounding whitespace`
-      );
-    }
-    expectedAuthors.push(piece);
-  }
-  if (expectedAuthors.length === 0) {
-    throw new CliUsageError(
-      `collector --leg ${id} requires at least one expected author`
-    );
-  }
-  return { id, expectedAuthors };
-}
 function parsePositivePrOption(raw) {
-  if (raw === void 0 || raw.trim() === "") {
-    throw new CliUsageError("--pr requires a positive pull request number");
-  }
+  if (raw === void 0 || raw.trim() === "") throw new CliUsageError("--pr requires a positive pull request number");
   try {
     return parseCollectorPrNumber(raw);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(detail, { cause: error });
+    throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
   }
 }
 function parseRepoOption(raw) {
-  if (raw === void 0 || raw.trim() === "") {
-    throw new CliUsageError("--repo requires owner/repo");
-  }
+  if (raw === void 0 || raw.trim() === "") throw new CliUsageError("--repo requires owner/repo");
   return raw;
 }
 function parseCollectorArgv(args) {
@@ -10659,7 +10421,7 @@ function parseCollectorArgv(args) {
   let project;
   let repo;
   let prNumber;
-  const legs = [];
+  let requestManifestPath;
   const positional = [];
   const tokens = [...args];
   while (tokens.length > 0) {
@@ -10673,9 +10435,7 @@ function parseCollectorArgv(args) {
       continue;
     }
     if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
+      attachmentPaths.push(requireOptionPath("--attach", token.slice(9)));
       continue;
     }
     if (token === "--project") {
@@ -10683,7 +10443,7 @@ function parseCollectorArgv(args) {
       continue;
     }
     if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
+      project = requireOptionPath("--project", token.slice(10));
       continue;
     }
     if (token === "--pr") {
@@ -10691,7 +10451,7 @@ function parseCollectorArgv(args) {
       continue;
     }
     if (token.startsWith("--pr=")) {
-      prNumber = parsePositivePrOption(token.slice("--pr=".length));
+      prNumber = parsePositivePrOption(token.slice(5));
       continue;
     }
     if (token === "--repo") {
@@ -10699,42 +10459,22 @@ function parseCollectorArgv(args) {
       continue;
     }
     if (token.startsWith("--repo=")) {
-      repo = parseRepoOption(token.slice("--repo=".length));
+      repo = parseRepoOption(token.slice(7));
       continue;
     }
-    if (token === "--leg") {
-      const value = tokens.shift();
-      if (value === void 0 || value.trim() === "") {
-        throw new CliUsageError("--leg requires id:author[,author...]");
-      }
-      legs.push(parseCollectorLegDeclaration(value));
+    if (token === "--request-manifest") {
+      requestManifestPath = requireOptionPath("--request-manifest", tokens.shift());
       continue;
     }
-    if (token.startsWith("--leg=")) {
-      legs.push(parseCollectorLegDeclaration(token.slice("--leg=".length)));
+    if (token.startsWith("--request-manifest=")) {
+      requestManifestPath = requireOptionPath("--request-manifest", token.slice(19));
       continue;
     }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown collector option: ${token}`);
-    }
+    if (token.startsWith("-") && token !== "-") throw new CliUsageError(`unknown collector option: ${token}`);
     positional.push(token);
   }
-  if (prNumber === void 0) {
-    throw new CliUsageError("collector requires --pr <positive-integer>");
-  }
-  if (legs.length === 0) {
-    throw new CliUsageError(
-      "collector requires at least one --leg id:author[,author...]"
-    );
-  }
-  return {
-    prNumber,
-    legs,
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...project === void 0 ? {} : { project },
-    ...repo === void 0 ? {} : { repo }
-  };
+  if (prNumber === void 0) throw new CliUsageError("collector requires --pr <positive-integer>");
+  return { prNumber, instruction: positional.join(" "), attachmentPaths, ...project === void 0 ? {} : { project }, ...repo === void 0 ? {} : { repo }, ...requestManifestPath === void 0 ? {} : { requestManifestPath } };
 }
 function resolveGitHubRemoteRepository(projectRoot) {
   let remoteUrl;
@@ -10799,11 +10539,6 @@ async function admitCollectorInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  if (options.legs.length === 0) {
-    throw new CliUsageError(
-      "collector requires at least one --leg id:author[,author...]"
-    );
-  }
   let prNumber;
   try {
     prNumber = parseCollectorPrNumber(options.prNumber);
@@ -10847,23 +10582,18 @@ async function admitCollectorInvocation(options) {
       )
     );
   }
-  const legsPath = join3(runDirectory, "legs.json");
-  const assembled = {
-    legs: options.legs.map((leg) => ({
-      id: leg.id,
-      expectedAuthors: [...leg.expectedAuthors]
-    }))
-  };
-  await writeFile2(legsPath, `${JSON.stringify(assembled, null, 2)}
-`, "utf8");
-  let manifestDigest;
-  try {
-    const manifest = await loadCollectorManifest(legsPath);
-    manifestDigest = manifest.digest;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(detail, { cause: error });
+  let manifest = emptyCollectorManifest();
+  let requestManifestPath;
+  if (options.requestManifestPath !== void 0) {
+    try {
+      manifest = await loadCollectorManifest(options.requestManifestPath);
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+    requestManifestPath = join3(runDirectory, "request-manifest.json");
+    await writeFile2(requestManifestPath, manifest.canonicalJson, "utf8");
   }
+  const manifestDigest = manifest.digest;
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
@@ -10879,7 +10609,7 @@ async function admitCollectorInvocation(options) {
     prNumber,
     repository: repository.canonical,
     repositoryDisplay: repository.display,
-    legsPath,
+    ...requestManifestPath === void 0 ? {} : { requestManifestPath },
     manifestDigest,
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -10911,7 +10641,7 @@ async function admitCollectorInvocation(options) {
     admittedRequestPath,
     prNumber,
     repository,
-    legsPath,
+    ...requestManifestPath === void 0 ? {} : { requestManifestPath },
     manifestDigest
   };
 }
@@ -11934,11 +11664,11 @@ async function readTypedHttp429Observation(runDirectory) {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
     }
-    const record3 = raw;
-    if (record3.httpStatus !== 429) return void 0;
-    if (typeof record3.provider !== "string") return void 0;
-    if (!isV1ResumableProvider(record3.provider)) return void 0;
-    return { httpStatus: 429, provider: record3.provider };
+    const record4 = raw;
+    if (record4.httpStatus !== 429) return void 0;
+    if (typeof record4.provider !== "string") return void 0;
+    if (!isV1ResumableProvider(record4.provider)) return void 0;
+    return { httpStatus: 429, provider: record4.provider };
   } catch {
     return void 0;
   }
@@ -11950,8 +11680,8 @@ function isV1ResumableFailure(input) {
 function renderResumeCommand(runId) {
   return `ak-role resume ${runId}`;
 }
-async function writeRoleRunState(runDirectory, record3) {
-  const payload = { ...record3, runDirectory };
+async function writeRoleRunState(runDirectory, record4) {
+  const payload = { ...record4, runDirectory };
   await writeFile3(
     join6(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
@@ -11967,42 +11697,42 @@ async function readRoleRunState(runDirectory) {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
     }
-    const record3 = raw;
-    if (typeof record3.runId !== "string" || record3.runId.trim() === "") {
+    const record4 = raw;
+    if (typeof record4.runId !== "string" || record4.runId.trim() === "") {
       return void 0;
     }
-    if (record3.role !== "judge" && record3.role !== "coder" && record3.role !== "fixer" && record3.role !== "collector" && record3.role !== "doctor" && record3.role !== "reviewer" && record3.role !== "merger") {
+    if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger") {
       return void 0;
     }
-    if (record3.state !== "admitted" && record3.state !== "running" && record3.state !== "resumable" && record3.state !== "terminal") {
+    if (record4.state !== "admitted" && record4.state !== "running" && record4.state !== "resumable" && record4.state !== "terminal") {
       return void 0;
     }
-    if (typeof record3.bookKey !== "string") return void 0;
-    if (typeof record3.projectRoot !== "string") return void 0;
-    if (typeof record3.sessionDirectory !== "string") return void 0;
-    if (typeof record3.admittedRequestPath !== "string") return void 0;
-    const runDir = typeof record3.runDirectory === "string" && record3.runDirectory.trim() !== "" ? record3.runDirectory : runDirectory;
-    const sessionFile = typeof record3.sessionFile === "string" && record3.sessionFile.trim() !== "" ? record3.sessionFile : roleRunSessionFile(record3.sessionDirectory);
+    if (typeof record4.bookKey !== "string") return void 0;
+    if (typeof record4.projectRoot !== "string") return void 0;
+    if (typeof record4.sessionDirectory !== "string") return void 0;
+    if (typeof record4.admittedRequestPath !== "string") return void 0;
+    const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
+    const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : roleRunSessionFile(record4.sessionDirectory);
     let resumable;
-    if (record3.resumable !== void 0 && record3.resumable !== null) {
-      if (typeof record3.resumable === "object" && !Array.isArray(record3.resumable)) {
-        const r = record3.resumable;
+    if (record4.resumable !== void 0 && record4.resumable !== null) {
+      if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
+        const r = record4.resumable;
         if (r.httpStatus === 429 && typeof r.provider === "string" && isV1ResumableProvider(r.provider)) {
           resumable = { httpStatus: 429, provider: r.provider };
         }
       }
     }
-    const phase = record3.phase === "plan" || record3.phase === "apply" ? record3.phase : void 0;
+    const phase = record4.phase === "plan" || record4.phase === "apply" ? record4.phase : void 0;
     return {
-      runId: record3.runId,
-      role: record3.role,
-      state: record3.state,
-      bookKey: record3.bookKey,
-      projectRoot: record3.projectRoot,
-      sessionDirectory: record3.sessionDirectory,
+      runId: record4.runId,
+      role: record4.role,
+      state: record4.state,
+      bookKey: record4.bookKey,
+      projectRoot: record4.projectRoot,
+      sessionDirectory: record4.sessionDirectory,
       sessionFile,
       runDirectory: runDir,
-      admittedRequestPath: record3.admittedRequestPath,
+      admittedRequestPath: record4.admittedRequestPath,
       ...phase === void 0 ? {} : { phase },
       ...resumable === void 0 ? {} : { resumable }
     };
@@ -12175,39 +11905,39 @@ async function loadResumableRunRecord(home, runId) {
       await readFile6(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-      const record3 = raw;
-      if (typeof record3.instruction === "string") {
-        instruction = record3.instruction;
+      const record4 = raw;
+      if (typeof record4.instruction === "string") {
+        instruction = record4.instruction;
       }
-      if (typeof record3.instructionEmpty === "boolean") {
-        instructionEmpty = record3.instructionEmpty;
+      if (typeof record4.instructionEmpty === "boolean") {
+        instructionEmpty = record4.instructionEmpty;
       }
-      if (Array.isArray(record3.attachments)) {
-        attachments = record3.attachments;
+      if (Array.isArray(record4.attachments)) {
+        attachments = record4.attachments;
       }
-      if (record3.phase === "plan" || record3.phase === "apply") {
-        phase = record3.phase;
+      if (record4.phase === "plan" || record4.phase === "apply") {
+        phase = record4.phase;
       }
-      if (typeof record3.taskPath === "string" && record3.taskPath.trim() !== "") {
-        taskPath = record3.taskPath;
+      if (typeof record4.taskPath === "string" && record4.taskPath.trim() !== "") {
+        taskPath = record4.taskPath;
       }
-      if (typeof record3.packetPath === "string" && record3.packetPath.trim() !== "") {
-        packetPath = record3.packetPath;
+      if (typeof record4.packetPath === "string" && record4.packetPath.trim() !== "") {
+        packetPath = record4.packetPath;
       }
-      if (typeof record3.prerequisitesPath === "string" && record3.prerequisitesPath.trim() !== "") {
-        prerequisitesPath = record3.prerequisitesPath;
+      if (typeof record4.prerequisitesPath === "string" && record4.prerequisitesPath.trim() !== "") {
+        prerequisitesPath = record4.prerequisitesPath;
       }
-      if (Array.isArray(record3.prerequisites)) {
-        prerequisites = record3.prerequisites;
+      if (Array.isArray(record4.prerequisites)) {
+        prerequisites = record4.prerequisites;
       }
-      if (typeof record3.baseRevision === "string" && record3.baseRevision.trim() !== "") {
-        baseRevision = record3.baseRevision;
+      if (typeof record4.baseRevision === "string" && record4.baseRevision.trim() !== "") {
+        baseRevision = record4.baseRevision;
       }
-      if (typeof record3.mergerInputPath === "string" && record3.mergerInputPath.trim() !== "") {
-        mergerInputPath = record3.mergerInputPath;
+      if (typeof record4.mergerInputPath === "string" && record4.mergerInputPath.trim() !== "") {
+        mergerInputPath = record4.mergerInputPath;
       }
-      if (record3.derived !== null && typeof record3.derived === "object" && !Array.isArray(record3.derived)) {
-        const d = record3.derived;
+      if (record4.derived !== null && typeof record4.derived === "object" && !Array.isArray(record4.derived)) {
+        const d = record4.derived;
         if (typeof d.targetObjectId === "string" && typeof d.sourceObjectId === "string" && typeof d.automaticMergeTreeId === "string" && Array.isArray(d.expectedConflictPaths) && Array.isArray(d.resolutionScope) && d.expectedConflictPaths.every((p) => typeof p === "string") && d.resolutionScope.every((p) => typeof p === "string")) {
           derived = {
             targetObjectId: d.targetObjectId,
@@ -12539,71 +12269,15 @@ var reviewerDecisionTool = createComplianceDecisionTool(
 var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
 
 // src/collector-tool-schemas.ts
-var nonBlankString = typebox_exports.String({ minLength: 1, pattern: "\\S" });
-var nonEmptyString = typebox_exports.String({ minLength: 1 });
-var collectorObserveArgsSchema = typebox_exports.Object(
-  {},
-  { additionalProperties: false }
-);
-var collectorRequestArgsSchema = typebox_exports.Object(
-  {
-    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg to request." }),
-    snapshotId: typebox_exports.String({ minLength: 1, description: "Latest retained observation snapshot supporting the request." })
-  },
-  { additionalProperties: false }
-);
-var collectorWaitArgsSchema = typebox_exports.Object(
-  {
-    durationMs: typebox_exports.Integer({
-      minimum: 1,
-      maximum: COLLECTOR_ELIGIBILITY_MS,
-      description: "Bounded wait duration before Collector reassesses current evidence."
-    })
-  },
-  { additionalProperties: false }
-);
-var collectorValidLegSchema = typebox_exports.Object(
-  {
-    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg being settled." }),
-    status: typebox_exports.Literal("valid", { description: "Leg has qualifying current-target evidence." }),
-    rationale: typebox_exports.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
-    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." })
-  },
-  { additionalProperties: false }
-);
-var collectorUnavailableLegSchema = typebox_exports.Object(
-  {
-    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg being settled." }),
-    status: typebox_exports.Literal("unavailable", { description: "Leg cannot be obtained within an identified scope." }),
-    rationale: typebox_exports.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
-    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." }),
-    unavailableScope: typebox_exports.Union([
-      typebox_exports.Literal("target"),
-      typebox_exports.Literal("global")
-    ], { description: "Whether unavailability applies only to this target or globally." })
-  },
-  { additionalProperties: false }
-);
-var collectorMissingLegSchema = typebox_exports.Object(
-  {
-    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg being settled." }),
-    status: typebox_exports.Literal("missing", { description: "Leg lacks qualifying current-target evidence at cutoff." }),
-    rationale: typebox_exports.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
-    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." })
-  },
-  { additionalProperties: false }
-);
-var collectorOutputLegSchema = typebox_exports.Union([
-  collectorValidLegSchema,
-  collectorUnavailableLegSchema,
-  collectorMissingLegSchema
-]);
-var collectorOutputArgsSchema = typebox_exports.Object(
-  {
-    legs: typebox_exports.Optional(typebox_exports.Array(collectorOutputLegSchema, { minItems: 1, description: "One truthful result for each admitted Collector leg." }))
-  },
-  { additionalProperties: true }
-);
+var collectorObserveArgsSchema = typebox_exports.Object({}, { additionalProperties: false });
+var collectorRequestArgsSchema = typebox_exports.Object({
+  requestId: typebox_exports.String({ minLength: 1, description: "Configured request identity." }),
+  snapshotId: typebox_exports.String({ minLength: 1, description: "Latest retained observation snapshot." })
+}, { additionalProperties: false });
+var collectorWaitArgsSchema = typebox_exports.Object({
+  durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS })
+}, { additionalProperties: false });
+var collectorOutputArgsSchema = typebox_exports.Object({}, { additionalProperties: true });
 collectorOutputArgsSchema.required = [];
 
 // src/collector-ledger.ts
@@ -12666,13 +12340,13 @@ var NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
 ];
 function isNavigatorInfrastructureFailureFact(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record3 = value;
-  const keys = Object.keys(record3);
+  const record4 = value;
+  const keys = Object.keys(record4);
   if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
   for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
-    if (!Object.hasOwn(record3, key)) return false;
+    if (!Object.hasOwn(record4, key)) return false;
   }
-  return record3.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record3.source === "shared-role-lifecycle" && record3.reasonCode === "host_failure";
+  return record4.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record4.source === "shared-role-lifecycle" && record4.reasonCode === "host_failure";
 }
 var PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
   PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
@@ -12683,20 +12357,20 @@ function invocationPhaseFromUnknown(value) {
 }
 function parseInvocationMarkerIdentity(data) {
   if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
-  const record3 = data;
-  const invocationId = record3.invocationId;
+  const record4 = data;
+  const invocationId = record4.invocationId;
   if (typeof invocationId !== "string") return void 0;
   const trimmedId = invocationId.trim();
   if (!isUuidV7(trimmedId)) return void 0;
-  if (typeof record3.role !== "string" || record3.role.trim() === "") return void 0;
-  const phase = invocationPhaseFromUnknown(record3.phase);
+  if (typeof record4.role !== "string" || record4.role.trim() === "") return void 0;
+  const phase = invocationPhaseFromUnknown(record4.phase);
   if (phase === void 0) return void 0;
-  if (typeof record3.subjectKey !== "string" || record3.subjectKey.trim() === "") return void 0;
+  if (typeof record4.subjectKey !== "string" || record4.subjectKey.trim() === "") return void 0;
   return {
     invocationId: trimmedId,
-    role: record3.role,
+    role: record4.role,
     phase,
-    subjectKey: record3.subjectKey
+    subjectKey: record4.subjectKey
   };
 }
 function markerMatchesExpectedIdentity(marker, expected) {
@@ -13055,7 +12729,7 @@ function classifyPostAdmissionFailure(input) {
     };
   }
   if (input.knownCause !== void 0) {
-    const fallback = input.knownCause === "provider" ? "provider failure" : input.knownCause === "session" ? "session unreadable" : input.knownCause === "output" ? "Judge Role run completed without a lawful typed terminal result" : `judge role run failed (${input.knownCause})`;
+    const fallback = input.knownCause === "provider" ? "provider failure" : input.knownCause === "session" ? "session unreadable" : input.knownCause === "output" ? "role run completed without a lawful typed terminal result" : `role run failed (${input.knownCause})`;
     const diagnostic = input.knownDiagnostic !== void 0 && input.knownDiagnostic.trim() !== "" ? input.knownDiagnostic : conciseChildDiagnostic(input.stderr, fallback);
     const { code: _knownCode, timedOut: _knownTimedOut, ...knownDetails } = input.knownDetails ?? {};
     return {
@@ -13072,12 +12746,12 @@ function classifyPostAdmissionFailure(input) {
   if (input.timedOut) {
     return {
       cause: "timeout",
-      diagnostic: "judge role run timed out",
+      diagnostic: "role run timed out",
       details: { timedOut: true, code: input.code }
     };
   }
   if (input.code !== 0) {
-    const fallback = `judge role run failed with exit ${input.code ?? "null"}`;
+    const fallback = `role run failed with exit ${input.code ?? "null"}`;
     return {
       cause: "activation",
       diagnostic: conciseChildDiagnostic(input.stderr, fallback),
@@ -13087,7 +12761,7 @@ function classifyPostAdmissionFailure(input) {
   if (input.session?.state === "missing") {
     return {
       cause: "session",
-      diagnostic: "Judge Role run left no readable session transcript",
+      diagnostic: "role run left no readable session transcript",
       details: { code: input.code, session: "missing" }
     };
   }
@@ -13100,7 +12774,7 @@ function classifyPostAdmissionFailure(input) {
   }
   return {
     cause: "output",
-    diagnostic: "Judge Role run completed without a lawful typed terminal result",
+    diagnostic: "role run completed without a lawful typed terminal result",
     details: { code: input.code }
   };
 }
@@ -13488,15 +13162,24 @@ function collectorDecisiveFacts(receipt) {
     const value = safelyRead(candidate, key);
     if (value.readable && value.value !== void 0) facts[key] = value.value;
   }
-  const legs = safelyRead(candidate, "legs");
-  if (legs.readable && Array.isArray(legs.value)) {
+  const groups = safelyRead(candidate, "groups");
+  if (groups.readable && Array.isArray(groups.value)) {
     try {
-      facts.legStatuses = legs.value.map((leg) => {
-        if (!isRecord4(leg)) throw new Error("unreadable Collector leg");
-        const legId = safelyRead(leg, "legId");
-        const status = safelyRead(leg, "status");
-        if (!legId.readable || !status.readable) throw new Error("unreadable Collector leg");
-        return { legId: legId.value, status: status.value };
+      facts.groups = groups.value.map((group) => {
+        if (!isRecord4(group)) throw new Error("unreadable Collector group");
+        const identity = safelyRead(group, "identity");
+        const attendance = safelyRead(group, "attendance");
+        const materials = safelyRead(group, "materials");
+        const findings = safelyRead(group, "findings");
+        if (!identity.readable || !attendance.readable || !materials.readable || !Array.isArray(materials.value) || !findings.readable || !Array.isArray(findings.value)) {
+          throw new Error("unreadable Collector group");
+        }
+        return {
+          identity: identity.value,
+          attendance: attendance.value,
+          materialCount: materials.value.length,
+          findingCount: findings.value.length
+        };
       });
     } catch {
     }
@@ -13559,9 +13242,6 @@ function collectorReceiptBindingFailure(diagnostic) {
   error.knownCause = "output";
   return error;
 }
-function sortedUniqueStrings(values) {
-  return [...new Set(values)].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
-}
 function toolResultText(message) {
   const content = message.content;
   if (typeof content === "string") return content.trim();
@@ -13612,7 +13292,7 @@ async function readCollectorInfrastructureFailure(sessionFile) {
     return void 0;
   }
 }
-function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds) {
+function assertCollectorReceiptMatchesAdmitted(receipt, admitted) {
   if (receipt.repository !== admitted.repository.canonical) {
     throw collectorReceiptBindingFailure(
       `Collector receipt repository "${receipt.repository}" does not match admitted repository "${admitted.repository.canonical}"`
@@ -13626,15 +13306,6 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds
   if (receipt.manifestDigest !== admitted.manifestDigest) {
     throw collectorReceiptBindingFailure(
       `Collector receipt manifestDigest does not match admitted manifestDigest`
-    );
-  }
-  const receiptLegIds = sortedUniqueStrings(
-    receipt.legs.map((leg) => leg.legId)
-  );
-  const expectedLegIds = sortedUniqueStrings(admittedLegIds);
-  if (receipt.legs.length !== admittedLegIds.length || receiptLegIds.length !== expectedLegIds.length || receiptLegIds.some((id, index) => id !== expectedLegIds[index])) {
-    throw collectorReceiptBindingFailure(
-      `Collector receipt leg set [${receiptLegIds.join(",")}] does not match admitted leg set [${expectedLegIds.join(",")}]`
     );
   }
 }
@@ -14561,7 +14232,6 @@ async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory
         role: "collector",
         prNumber: admitted.prNumber,
         repository: admitted.repository.canonical,
-        legsPath: admitted.legsPath,
         manifestDigest: admitted.manifestDigest,
         sessionDirectory,
         sessionFile: admitted.sessionFile,
@@ -14636,17 +14306,7 @@ async function settleLawfulCollectorTerminalResult(admitted) {
     }
     return void 0;
   }
-  const admittedManifest = await loadCollectorManifest(admitted.legsPath);
-  if (admittedManifest.digest !== admitted.manifestDigest) {
-    throw collectorReceiptBindingFailure(
-      `Collector legs at settlement digest does not match admitted manifestDigest`
-    );
-  }
-  assertCollectorReceiptMatchesAdmitted(
-    extracted.receipt,
-    admitted,
-    admittedManifest.legs.map((leg) => leg.id)
-  );
+  assertCollectorReceiptMatchesAdmitted(extracted.receipt, admitted);
   const navigator = extractNavigatorFact(
     entries,
     attendanceIdentityFromAdmitted(admitted)
@@ -15787,8 +15447,7 @@ function buildCollectorActivationExtraArgs(admitted, options = {}) {
     admitted.repository.display,
     "--ak-collector-pr",
     String(admitted.prNumber),
-    "--ak-collector-legs",
-    admitted.legsPath,
+    ...admitted.requestManifestPath === void 0 ? [] : ["--ak-collector-request-manifest", admitted.requestManifestPath],
     "--mode",
     "json",
     ...buildModelArgs2(options.model),
@@ -15938,11 +15597,11 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
       home: env.home,
       cwd: env.cwd,
       prNumber: parsed.prNumber,
-      legs: parsed.legs,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
       ...parsed.repo === void 0 ? {} : { repo: parsed.repo },
+      ...parsed.requestManifestPath === void 0 ? {} : { requestManifestPath: parsed.requestManifestPath },
       ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
     });
   } catch (error) {

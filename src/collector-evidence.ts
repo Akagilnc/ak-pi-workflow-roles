@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 
 import type {
   GitHubIssueComment,
+  GitHubMachineIdentity,
   GitHubPageDiagnostics,
   GitHubPullRequest,
+  GitHubPullRequestReaction,
   GitHubReview,
   GitHubReviewComment,
   GitHubUser,
@@ -14,16 +16,10 @@ export const COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1000;
 export type WindowRelation = "before" | "within" | "after" | "uncertain";
 export type HeadRelation = "current" | "prior";
 
-export const VALID_REVIEW_STATES = [
-  "APPROVED",
-  "CHANGES_REQUESTED",
-  "COMMENTED",
-] as const;
-export type ValidReviewState = (typeof VALID_REVIEW_STATES)[number];
-
 export type CollectorEvidenceKind =
   | "pull_request"
   | "review"
+  | "reaction"
   | "issue_comment"
   | "review_comment"
   | "authenticated_user"
@@ -35,6 +31,9 @@ export type CollectorEvidenceRecord = {
   evidenceId: string;
   kind: CollectorEvidenceKind;
   stableGitHubId?: string;
+  /** Typed GitHub facts retained from the transport's single normalization pass. */
+  githubId?: number;
+  machineIdentity?: GitHubMachineIdentity | null;
   versionId: string;
   contentDigest: string;
   authorLogin?: string;
@@ -128,45 +127,6 @@ export function computeWindowRelation(
   return "after";
 }
 
-export function isValidReviewState(state: string): state is ValidReviewState {
-  return (VALID_REVIEW_STATES as readonly string[]).includes(state);
-}
-
-export function reviewQualifiesForValid(input: {
-  review: Pick<CollectorEvidenceRecord, "authorLogin" | "state" | "commitOid" | "authoritativeTime">;
-  expectedAuthors: ReadonlySet<string>;
-  targetHead: string;
-  activationTime: Date;
-  deadlineTime: Date;
-}): { ok: true; windowRelation: WindowRelation } | { ok: false; reason: string } {
-  const author = input.review.authorLogin?.toLowerCase();
-  if (author === undefined || !input.expectedAuthors.has(author)) {
-    return { ok: false, reason: "author" };
-  }
-  if (input.review.state === undefined || !isValidReviewState(input.review.state)) {
-    return { ok: false, reason: "state" };
-  }
-  if (
-    input.review.commitOid === undefined ||
-    input.review.commitOid === null ||
-    input.review.commitOid.length === 0
-  ) {
-    return { ok: false, reason: "commit" };
-  }
-  if (input.review.commitOid !== input.targetHead) {
-    return { ok: false, reason: "head" };
-  }
-  const windowRelation = computeWindowRelation(
-    input.review.authoritativeTime,
-    input.activationTime,
-    input.deadlineTime,
-  );
-  if (windowRelation !== "before" && windowRelation !== "within") {
-    return { ok: false, reason: "window" };
-  }
-  return { ok: true, windowRelation };
-}
-
 function stableId(kind: string, githubId: string | number): string {
   return `${kind}:${githubId}`;
 }
@@ -252,12 +212,15 @@ export function normalizeReviewEvidence(
     submittedAt: review.submittedAt,
     htmlUrl: review.htmlUrl,
     userLogin: authorLogin ?? null,
+    machineIdentity: review.machineIdentity ?? null,
   });
   const versionId = `review:${review.id}:${contentDigest.slice(0, 12)}`;
   return {
     evidenceId: evidenceIdFor("review", versionId),
     kind: "review",
     stableGitHubId: stableId("review", review.id),
+    githubId: review.id,
+    machineIdentity: review.machineIdentity ?? null,
     versionId,
     contentDigest,
     ...(authorLogin === undefined ? {} : { authorLogin }),
@@ -270,6 +233,34 @@ export function normalizeReviewEvidence(
     authoritativeTime: review.submittedAt,
     firstObservedAt: observedAt,
     raw: review.raw,
+  };
+}
+
+export function normalizePullRequestReactionEvidence(
+  reaction: GitHubPullRequestReaction,
+  observedAt: string,
+): CollectorEvidenceRecord {
+  const authorLogin = reaction.userLogin?.toLowerCase();
+  const contentDigest = versionDigest({
+    id: reaction.id,
+    content: reaction.content,
+    createdAt: reaction.createdAt,
+    machineIdentity: reaction.machineIdentity ?? null,
+  });
+  const versionId = `reaction:${reaction.id}:${contentDigest.slice(0, 12)}`;
+  return {
+    evidenceId: evidenceIdFor("reaction", versionId),
+    kind: "reaction",
+    stableGitHubId: stableId("reaction", reaction.id),
+    githubId: reaction.id,
+    machineIdentity: reaction.machineIdentity ?? null,
+    versionId,
+    contentDigest,
+    ...(authorLogin === undefined ? {} : { authorLogin }),
+    body: reaction.content,
+    authoritativeTime: reaction.createdAt,
+    firstObservedAt: observedAt,
+    raw: reaction.raw,
   };
 }
 
@@ -286,6 +277,7 @@ export function normalizeIssueCommentEvidence(
     body: comment.body,
     updatedAt: comment.updatedAt,
     userLogin: authorLogin ?? null,
+    machineIdentity: comment.machineIdentity ?? null,
     htmlUrl: comment.htmlUrl,
   });
   const versionId = `issue_comment:${comment.id}:${contentDigest.slice(0, 12)}`;
@@ -293,6 +285,8 @@ export function normalizeIssueCommentEvidence(
     evidenceId: evidenceIdFor("issue_comment", versionId),
     kind: "issue_comment",
     stableGitHubId: stableId("issue_comment", comment.id),
+    githubId: comment.id,
+    machineIdentity: comment.machineIdentity ?? null,
     versionId,
     contentDigest,
     ...(authorLogin === undefined ? {} : { authorLogin }),
@@ -324,6 +318,7 @@ export function normalizeReviewCommentEvidence(
     commitId: comment.commitId,
     pullRequestReviewId: comment.pullRequestReviewId,
     userLogin: authorLogin ?? null,
+    machineIdentity: comment.machineIdentity ?? null,
     htmlUrl: comment.htmlUrl,
   });
   const versionId = `review_comment:${comment.id}:${contentDigest.slice(0, 12)}`;
@@ -331,6 +326,8 @@ export function normalizeReviewCommentEvidence(
     evidenceId: evidenceIdFor("review_comment", versionId),
     kind: "review_comment",
     stableGitHubId: stableId("review_comment", comment.id),
+    githubId: comment.id,
+    machineIdentity: comment.machineIdentity ?? null,
     versionId,
     contentDigest,
     ...(authorLogin === undefined ? {} : { authorLogin }),

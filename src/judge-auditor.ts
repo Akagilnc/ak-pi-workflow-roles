@@ -6,6 +6,7 @@ import {
   type ComplianceCompletion,
   type ComplianceDecision,
 } from "./compliance-transport.ts";
+import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { loadAuditorSoul } from "./auditor-soul.ts";
 import {
   readJudgeAuditSubjects,
@@ -47,6 +48,7 @@ export function createPiJudgeAuditor(
       invalidDecisionLabel: "invalid soul audit decision",
       ...(runCompletion === undefined ? {} : { runCompletion }),
       context: options.context,
+      ...(auditorRunDirectory(options.context) === undefined ? {} : { runDirectory: auditorRunDirectory(options.context) }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   };

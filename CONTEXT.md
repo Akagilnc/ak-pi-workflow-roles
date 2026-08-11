@@ -23,8 +23,8 @@
 - **未完终态(Unfinished)**:两个 worker 角色 apply 阶段的合法交卷状态,只陈述「本次角色调用未结清」这一事实——不诊断原因,不规定调用者的下一步。它是**可续的交棒,不是失败,也不是验收结论**:既不表达基础设施故障(那走非零退出),也不豁免任何验收。规范见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。#72 的 #75/#76 两条施工腿均已装配。
 - **Reviewer(御史台)**:围绕一个固定目标形成独立、可追溯代码评审的角色;不修复、不发布、不路由、不作最终裁决。经 Pi 原生 `/skill:code-review` 使用外部 canonical 方法,回执只表达 `completed` 或 `refused`,不表达批准、合并或流转语义。
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
-- **Collector(门下省)**:单次调用内独立观察外部 GitHub PR 评审腿、可选请求、判定收集终态并提交自包含回执的角色;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`,无默认腿清单。
-- **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的配置腿是外部 GitHub 作者集合,与 Reviewer 内部 Agent 腿不同。
+- **Collector(门下省)**:单次调用内独立观察外部 GitHub PR 材料、可选请求、判定停止观察并提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`。
+- **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的可选请求不构成评审腿或身份期待。
 - **Soul 审刑院(Soul-compliance audit)**:独立的实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」；不再限于复核大理寺的程序或既给材料。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md),现行职掌见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)。
 - **卷宗(Dossier)**:一次 run 在候簿记录之家里的全部既落账材料；卷宗即真源,无投影副本。定位靠机器注入的 typed 指针(`cwd` 与 `AK_ROLE_RUN_DIR`),禁 latest-run/mtime/全局扫描猜测。
 - **先立卷后审卷**:被审对象必先落账,审计只从账上读；手递手传料非法。缺卷或缺被审对象响亮 typed `audit-incomplete`(`missing-dossier` / `missing-subject`),public CLI 无合法 Receipt。
