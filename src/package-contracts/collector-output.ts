@@ -103,6 +103,15 @@ export type CollectorEvidenceRecord = {
   };
 };
 
+export type CollectorIdentityGroup = {
+  identity: Record<string, unknown> | null;
+  displayLogin?: string;
+  attendance: true;
+  degraded: boolean;
+  materials: Array<Record<string, unknown>>;
+  findings: Array<Record<string, unknown>>;
+};
+
 export type CollectorReceipt = {
   host: "github.com";
   repository: string;
@@ -113,7 +122,10 @@ export type CollectorReceipt = {
   finalObservationTime: string;
   finalSnapshotId: string;
   targetHead: string;
-  identityGroups?: Array<Record<string, unknown>>;
+  /** Canonical machine-identity attendance groups. */
+  groups?: CollectorIdentityGroup[];
+  /** Legacy read-only view derived from groups; removed after consumer migration. */
+  identityGroups?: CollectorIdentityGroup[];
   reports: CollectorReport[];
   legs: CollectorReceiptLeg[];
   requestAttempts: CollectorRequestAttempt[];
@@ -209,6 +221,20 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     firstObservedAt: safeGet(record, "firstObservedAt"),
     raw: safeGet(record, "raw"),
   } as CollectorEvidenceRecord));
+  const rawGroups = records(safeGet(value, "groups"));
+  const groupSource = rawGroups.length > 0
+    ? rawGroups
+    : records(safeGet(value, "identityGroups"));
+  const groups = groupSource.map((group) => ({
+    identity: (safeGet(group, "identity") ?? null) as Record<string, unknown> | null,
+    ...(typeof safeGet(group, "displayLogin") === "string"
+      ? { displayLogin: safeGet(group, "displayLogin") as string }
+      : {}),
+    attendance: true as const,
+    degraded: safeGet(group, "degraded") === true,
+    materials: records(safeGet(group, "materials")),
+    findings: records(safeGet(group, "findings")),
+  }));
   return {
     host: safeGet(value, "host") as "github.com",
     repository: safeGet(value, "repository") as string,
@@ -219,7 +245,8 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     finalObservationTime: safeGet(value, "finalObservationTime") as string,
     finalSnapshotId: safeGet(value, "finalSnapshotId") as string,
     targetHead: safeGet(value, "targetHead") as string,
-    identityGroups: records(safeGet(value, "identityGroups")),
+    groups,
+    identityGroups: groups,
     reports: records(safeGet(value, "reports")).map(projectReport),
     legs: records(safeGet(value, "legs")).map((leg) => ({
       legId: safeGet(leg, "legId") as string,

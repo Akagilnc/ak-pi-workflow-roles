@@ -76,7 +76,9 @@ export type CollectorReceipt = {
   finalObservationTime: string;
   finalSnapshotId: string;
   targetHead: string;
-  identityGroups: ExtractedCollectorIdentityGroup[];
+  groups: ExtractedCollectorIdentityGroup[];
+  /** Legacy read-only view derived from groups. */
+  readonly identityGroups: readonly ExtractedCollectorIdentityGroup[];
   reports: CollectorReport[];
   legs: Array<{
     legId: string;
@@ -787,8 +789,8 @@ export function buildCollectorReceipt(
     }
   }
 
-  const identityGroups = extractCollectorEvidenceIdentityGroups(evidenceRecords, targetHead);
-  for (const group of identityGroups) {
+  const groups = extractCollectorEvidenceIdentityGroups(evidenceRecords, targetHead);
+  for (const group of groups) {
     for (const material of group.materials) {
       if (material.evidenceId === undefined || !evidenceIndex.has(material.evidenceId)) {
         fail("Collector identity material lacks a receipt-local evidence ref");
@@ -811,7 +813,8 @@ export function buildCollectorReceipt(
     finalObservationTime: finalSnapshot.completedAt ?? finalSnapshot.observedAt,
     finalSnapshotId: finalSnapshot.snapshotId,
     targetHead,
-    identityGroups,
+    groups,
+    identityGroups: groups,
     reports,
     legs: legsOut,
     requestAttempts: [...ledger.requestAttempts()],
