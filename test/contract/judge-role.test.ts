@@ -224,7 +224,7 @@ test("stable factory registers the complete typed role flag set and stays inert 
     "ak-merger-input",
     "ak-collector-repo",
     "ak-collector-pr",
-    "ak-collector-repo",
+    "ak-collector-request-manifest",
   ]));
   for (const [name, options] of harness.flags) {
     assert.equal((options as { type?: unknown }).type, "string", name);

@@ -110,6 +110,9 @@ export function buildCollectorActivationExtraArgs(
     admitted.repository.display,
     "--ak-collector-pr",
     String(admitted.prNumber),
+    ...(admitted.requestManifestPath === undefined
+      ? []
+      : ["--ak-collector-request-manifest", admitted.requestManifestPath]),
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -339,6 +342,7 @@ export async function runPublicCollector(
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(parsed.repo === undefined ? {} : { repo: parsed.repo }),
+      ...(parsed.requestManifestPath === undefined ? {} : { requestManifestPath: parsed.requestManifestPath }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
     });
   } catch (error) {

@@ -77,45 +77,42 @@ export function groupGitHubMaterialsByIdentity(
 
 const CODEX_USER_ID = 199175422;
 const CODERABBIT_USER_ID = 136622811;
-const SOURCERY_USER_ID = 58596630;
-
 function foldedCodeRabbitFindings(body: string, identity: GitHubMachineIdentity, source: CollectorMaterialRef): CollectorFinding[] {
   const findings: CollectorFinding[] = [];
-  const stack: Array<{ start: number; summary: string; category?: "outside_diff" | "nitpick" }> = [];
-  const tokens = /<details>|<\/details>|<summary>([\s\S]*?)<\/summary>|<!--\s*cr-comment:v1:[^>]+-->/gi;
+  const stack: Array<{ start: number; rootId: number }> = [];
+  let rootContainerCount = 0;
+  const findingRoots = new Map<number, "outside_diff" | "nitpick">();
+  const tokens = /<details>|<\/details>|<summary>[\s\S]*?<\/summary>|<!--\s*cr-comment:v1:[^>]+-->/gi;
   for (const match of body.matchAll(tokens)) {
     const token = match[0].toLowerCase();
     if (token === "<details>") {
-      stack.push({ start: match.index! + match[0].length, summary: "" });
+      if (stack.length === 0) rootContainerCount += 1;
+      stack.push({
+        start: match.index! + match[0].length,
+        rootId: stack.at(-1)?.rootId ?? rootContainerCount,
+      });
     } else if (token === "</details>") {
       stack.pop();
-    } else if (match[1] !== undefined) {
+    } else if (token.startsWith("<summary>")) {
       const current = stack.at(-1);
-      if (current !== undefined) {
-        current.summary = match[1].replace(/<[^>]+>/g, "").trim();
-        if (/outside diff range comments/i.test(current.summary)) current.category = "outside_diff";
-        if (/nitpick comments/i.test(current.summary)) current.category = "nitpick";
+      if (current !== undefined) current.start = match.index! + match[0].length;
+    } else if (stack.length >= 2) {
+      const leaf = stack.at(-1)!;
+      let category = findingRoots.get(leaf.rootId);
+      if (category === undefined && findingRoots.size < 2) {
+        category = findingRoots.size === 0 ? "outside_diff" : "nitpick";
+        findingRoots.set(leaf.rootId, category);
       }
-    } else {
-      const category = [...stack].reverse().find((entry) => entry.category)?.category;
       if (category === undefined) continue;
-      const container = [...stack].reverse().find((entry) => entry.summary.length > 0 && entry.category === undefined);
       findings.push({
         identity,
         source,
         category,
-        body: body.slice(container?.start ?? match.index!, match.index).trim(),
+        body: body.slice(leaf.start, match.index).trim(),
       });
     }
   }
   return findings;
-}
-
-function isDegraded(material: GitHubIdentityMaterial, identity: GitHubMachineIdentity): boolean {
-  const body = "body" in material ? material.body : "";
-  if (identity.userId === CODEX_USER_ID) return /reached your Codex usage limits for code reviews/i.test(body);
-  if (identity.userId === SOURCERY_USER_ID) return /Sorry @[\s\S]*(?:rate limit|review limit)/i.test(body);
-  return false;
 }
 
 export type ExtractedCollectorIdentityGroup = CollectorIdentityGroup & {
@@ -138,7 +135,6 @@ export function extractGitHubIdentityGroups(materials: readonly GitHubIdentityMa
     const group = byKey.get(identityKey(identity))!;
     if (identity === null) continue;
     const source = { kind: materialKind(material), id: material.id };
-    if (isDegraded(material, identity)) group.degraded = true;
     if (source.kind === "review_comment" && "body" in material && (identity.userId === CODEX_USER_ID || identity.userId === CODERABBIT_USER_ID)) {
       group.findings!.push({ identity, source, category: "inline", body: material.body });
     } else if (source.kind === "review" && "body" in material && identity.userId === CODERABBIT_USER_ID) {
@@ -171,22 +167,26 @@ export function extractCollectorEvidenceIdentityGroups(
       // typed attendance when their retained bytes do not normalize.
     }
   }
-  const groups = extractGitHubIdentityGroups(supported.map((entry) => entry.material));
-  const recordBySource = new Map(supported.map(({ record, material }) => [
-    `${materialKind(material)}:${material.id}`,
-    record,
-  ]));
-  for (const group of groups) {
+  const groups = new Map<string, ExtractedCollectorIdentityGroup>();
+  for (const { record, material } of supported) {
+    const extracted = extractGitHubIdentityGroups([material])[0]!;
     const bind = (source: CollectorMaterialRef) => {
-      const record = recordBySource.get(`${source.kind}:${source.id}`);
-      if (record === undefined) return;
       source.evidenceId = record.evidenceId;
       source.headRelation = record.commitOid === undefined || record.commitOid === null
         ? "unbound"
         : record.commitOid === targetHead ? "current" : "prior";
     };
-    for (const material of group.materials) bind(material);
-    for (const finding of group.findings) bind(finding.source);
+    for (const source of extracted.materials) bind(source);
+    for (const finding of extracted.findings) bind(finding.source);
+    const key = identityKey(extracted.identity);
+    const existing = groups.get(key);
+    if (existing === undefined) {
+      groups.set(key, extracted);
+    } else {
+      existing.materials.push(...extracted.materials);
+      existing.findings.push(...extracted.findings);
+      existing.degraded ||= extracted.degraded;
+    }
   }
-  return groups;
+  return [...groups.values()];
 }

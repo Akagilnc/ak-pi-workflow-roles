@@ -26,6 +26,7 @@ import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import {
   COLLECTOR_FIXED_KICKOFF,
   emptyCollectorManifest,
+  loadCollectorManifest,
   parseCollectorPrNumber,
   parseCollectorRepository,
   type CollectorRepository,
@@ -111,6 +112,7 @@ export type AdmittedCollectorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "collector";
   readonly prNumber: number;
   readonly repository: CollectorRepository;
+  readonly requestManifestPath?: string;
   readonly manifestDigest: string;
 };
 
@@ -214,6 +216,7 @@ export type ParseCollectorArgvResult = {
   attachmentPaths: string[];
   project?: string;
   repo?: string;
+  requestManifestPath?: string;
 };
 
 export type ParseDoctorArgvResult = {
@@ -253,7 +256,7 @@ export class MergerEnvelopeDerivationError extends Error {
 
 /** Reject missing/blank path values so empty overrides cannot silently degrade. */
 function requireOptionPath(
-  flag: "--project" | "--attach" | "--prerequisites" | "--base",
+  flag: "--project" | "--attach" | "--prerequisites" | "--request-manifest" | "--base",
   value: string | undefined,
 ): string {
   if (value === undefined || value.trim() === "") {
@@ -908,6 +911,7 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
   let project: string | undefined;
   let repo: string | undefined;
   let prNumber: number | undefined;
+  let requestManifestPath: string | undefined;
   const positional: string[] = [];
   const tokens = [...args];
   while (tokens.length > 0) {
@@ -921,11 +925,13 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
     if (token.startsWith("--pr=")) { prNumber = parsePositivePrOption(token.slice(5)); continue; }
     if (token === "--repo") { repo = parseRepoOption(tokens.shift()); continue; }
     if (token.startsWith("--repo=")) { repo = parseRepoOption(token.slice(7)); continue; }
+    if (token === "--request-manifest") { requestManifestPath = requireOptionPath("--request-manifest", tokens.shift()); continue; }
+    if (token.startsWith("--request-manifest=")) { requestManifestPath = requireOptionPath("--request-manifest", token.slice(19)); continue; }
     if (token.startsWith("-") && token !== "-") throw new CliUsageError(`unknown collector option: ${token}`);
     positional.push(token);
   }
   if (prNumber === undefined) throw new CliUsageError("collector requires --pr <positive-integer>");
-  return { prNumber, instruction: positional.join(" "), attachmentPaths, ...(project === undefined ? {} : { project }), ...(repo === undefined ? {} : { repo }) };
+  return { prNumber, instruction: positional.join(" "), attachmentPaths, ...(project === undefined ? {} : { project }), ...(repo === undefined ? {} : { repo }), ...(requestManifestPath === undefined ? {} : { requestManifestPath }) };
 }
 
 /**
@@ -1010,6 +1016,8 @@ export type AdmitCollectorInvocationOptions = {
   project?: string;
   /** Explicit owner/repo override; defaults from project origin remote. */
   repo?: string;
+  /** Optional public request configuration; copied into the admitted run. */
+  requestManifestPath?: string;
   createRunId?: () => string;
 };
 
@@ -1071,7 +1079,17 @@ export async function admitCollectorInvocation(
     );
   }
 
-  const manifest = emptyCollectorManifest();
+  let manifest = emptyCollectorManifest();
+  let requestManifestPath: string | undefined;
+  if (options.requestManifestPath !== undefined) {
+    try {
+      manifest = await loadCollectorManifest(options.requestManifestPath);
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+    requestManifestPath = join(runDirectory, "request-manifest.json");
+    await writeFile(requestManifestPath, manifest.canonicalJson, "utf8");
+  }
   const manifestDigest = manifest.digest;
 
   const instruction = options.instruction ?? "";
@@ -1089,6 +1107,7 @@ export async function admitCollectorInvocation(
     prNumber,
     repository: repository.canonical,
     repositoryDisplay: repository.display,
+    ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     manifestDigest,
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -1120,6 +1139,7 @@ export async function admitCollectorInvocation(
     admittedRequestPath,
     prNumber,
     repository,
+    ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     manifestDigest,
   };
 }

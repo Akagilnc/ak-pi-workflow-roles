@@ -365,7 +365,7 @@ function validateAcceptedCollectorReceipt(value) {
       pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")),
       normalizedByteLength: safeGet(snapshot, "normalizedByteLength")
     })),
-    evidenceRecords: records(safeGet(value, "evidenceRecords")).map((record3) => ({ evidenceId: safeGet(record3, "evidenceId"), kind: safeGet(record3, "kind"), versionId: safeGet(record3, "versionId"), contentDigest: safeGet(record3, "contentDigest"), firstObservedAt: safeGet(record3, "firstObservedAt"), raw: safeGet(record3, "raw") }))
+    evidenceRecords: records(safeGet(value, "evidenceRecords")).map((record4) => ({ evidenceId: safeGet(record4, "evidenceId"), kind: safeGet(record4, "kind"), versionId: safeGet(record4, "versionId"), contentDigest: safeGet(record4, "contentDigest"), firstObservedAt: safeGet(record4, "firstObservedAt"), raw: safeGet(record4, "raw") }))
   };
 }
 
@@ -2052,8 +2052,8 @@ function CreateObject(types, value) {
 }
 function FromUnionKey(types, value) {
   const flattened = Flatten(types);
-  const record3 = TryBuildRecord(flattened, value);
-  return IsSchema(record3) ? record3 : CreateObject(flattened, value);
+  const record4 = TryBuildRecord(flattened, value);
+  return IsSchema(record4) ? record4 : CreateObject(flattened, value);
 }
 
 // node_modules/.pnpm/typebox@1.3.8/node_modules/typebox/build/type/engine/record/from_key.mjs
@@ -9312,16 +9312,16 @@ function parsePublicCliConfig(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("public CLI config must be an object");
   }
-  const record3 = value;
-  if (record3.seats === void 0) {
+  const record4 = value;
+  if (record4.seats === void 0) {
     return { seats: {} };
   }
-  if (record3.seats === null || typeof record3.seats !== "object" || Array.isArray(record3.seats)) {
+  if (record4.seats === null || typeof record4.seats !== "object" || Array.isArray(record4.seats)) {
     throw new Error("public CLI config.seats must be an object");
   }
   const seats = {};
   for (const [key, raw] of Object.entries(
-    record3.seats
+    record4.seats
   )) {
     if (!PUBLIC_CONFIGURABLE_SEATS.includes(key)) {
       throw new Error(`unknown configurable seat in config: ${key}`);
@@ -9424,10 +9424,10 @@ function credentialProvidersFromAuthData(data) {
   if (data === null || typeof data !== "object" || Array.isArray(data)) {
     return { "openai-codex": false, xai: false };
   }
-  const record3 = data;
+  const record4 = data;
   return {
-    "openai-codex": Object.prototype.hasOwnProperty.call(record3, "openai-codex"),
-    xai: Object.prototype.hasOwnProperty.call(record3, "xai")
+    "openai-codex": Object.prototype.hasOwnProperty.call(record4, "openai-codex"),
+    xai: Object.prototype.hasOwnProperty.call(record4, "xai")
   };
 }
 async function loadCredentialProviders(agentDir) {
@@ -9547,7 +9547,7 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat,
   mkdir as mkdir2,
-  readFile as readFile3,
+  readFile as readFile4,
   realpath as realpath2,
   writeFile as writeFile2
 } from "node:fs/promises";
@@ -9799,6 +9799,8 @@ async function loadDoctorCase(runsPath) {
 
 // src/collector-config.ts
 import { createHash as createHash2 } from "node:crypto";
+import { readFile as readFile3 } from "node:fs/promises";
+var COLLECTOR_REQUEST_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 var COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 var COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
 var COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target. Observe GitHub materials and submit exactly one ak_collector_output when observation is complete.";
@@ -9830,6 +9832,9 @@ function parseCollectorPrNumber(raw) {
   if (!Number.isSafeInteger(value) || value < 1) fail3("Collector pull request number must be a positive safe integer");
   return value;
 }
+function record3(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 function canonicalManifest(requests) {
   return `${JSON.stringify({ requests: requests.map((request) => ({ id: request.id, body: request.requestBody })) })}
 `;
@@ -9837,6 +9842,33 @@ function canonicalManifest(requests) {
 function emptyCollectorManifest() {
   const canonicalJson2 = canonicalManifest([]);
   return { requests: [], canonicalJson: canonicalJson2, digest: createHash2("sha256").update(canonicalJson2).digest("hex") };
+}
+async function loadCollectorManifest(path) {
+  let bytes;
+  try {
+    bytes = await readFile3(path);
+  } catch (error) {
+    fail3(`Collector request manifest is unreadable at ${path}`, error);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch (error) {
+    fail3("Collector request manifest must be UTF-8 JSON", error);
+  }
+  if (!record3(parsed)) fail3("Collector request manifest must be an object");
+  const rawRequests = parsed.requests ?? [];
+  if (!Array.isArray(rawRequests)) fail3("Collector request manifest requests must be an array");
+  const requests = [];
+  const ids = /* @__PURE__ */ new Set();
+  for (const [index, item] of rawRequests.entries()) {
+    if (!record3(item) || typeof item.id !== "string" || !COLLECTOR_REQUEST_ID_PATTERN.test(item.id) || typeof item.body !== "string" || item.body.trim() === "") fail3(`Collector request manifest requests[${index}] is invalid`);
+    if (ids.has(item.id)) fail3(`Collector request manifest has duplicate request id "${item.id}"`);
+    ids.add(item.id);
+    requests.push({ id: item.id, requestBody: item.body });
+  }
+  const canonicalJson2 = canonicalManifest(requests);
+  return { requests, canonicalJson: canonicalJson2, digest: createHash2("sha256").update(canonicalJson2).digest("hex"), sourcePath: path };
 }
 
 // src/merger-git-state.ts
@@ -10128,7 +10160,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
     );
   }
-  const bytes = await readFile3(absolute);
+  const bytes = await readFile4(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename3(absolute)}`;
   const frozenPath = join4(destinationDir, name);
   await writeFile2(frozenPath, bytes);
@@ -10355,7 +10387,7 @@ async function admitFixerInvocation(options) {
     const absolutePrereq = isAbsolute3(options.prerequisitesPath) ? options.prerequisitesPath : resolve4(options.prerequisitesPath);
     let source;
     try {
-      source = await readFile3(absolutePrereq, "utf8");
+      source = await readFile4(absolutePrereq, "utf8");
     } catch (error) {
       throw new CliUsageError(
         `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
@@ -10455,6 +10487,7 @@ function parseCollectorArgv(args) {
   let project;
   let repo;
   let prNumber;
+  let requestManifestPath;
   const positional = [];
   const tokens = [...args];
   while (tokens.length > 0) {
@@ -10495,11 +10528,19 @@ function parseCollectorArgv(args) {
       repo = parseRepoOption(token.slice(7));
       continue;
     }
+    if (token === "--request-manifest") {
+      requestManifestPath = requireOptionPath("--request-manifest", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--request-manifest=")) {
+      requestManifestPath = requireOptionPath("--request-manifest", token.slice(19));
+      continue;
+    }
     if (token.startsWith("-") && token !== "-") throw new CliUsageError(`unknown collector option: ${token}`);
     positional.push(token);
   }
   if (prNumber === void 0) throw new CliUsageError("collector requires --pr <positive-integer>");
-  return { prNumber, instruction: positional.join(" "), attachmentPaths, ...project === void 0 ? {} : { project }, ...repo === void 0 ? {} : { repo } };
+  return { prNumber, instruction: positional.join(" "), attachmentPaths, ...project === void 0 ? {} : { project }, ...repo === void 0 ? {} : { repo }, ...requestManifestPath === void 0 ? {} : { requestManifestPath } };
 }
 function resolveGitHubRemoteRepository(projectRoot) {
   let remoteUrl;
@@ -10607,7 +10648,17 @@ async function admitCollectorInvocation(options) {
       )
     );
   }
-  const manifest = emptyCollectorManifest();
+  let manifest = emptyCollectorManifest();
+  let requestManifestPath;
+  if (options.requestManifestPath !== void 0) {
+    try {
+      manifest = await loadCollectorManifest(options.requestManifestPath);
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+    requestManifestPath = join4(runDirectory, "request-manifest.json");
+    await writeFile2(requestManifestPath, manifest.canonicalJson, "utf8");
+  }
   const manifestDigest = manifest.digest;
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
@@ -10624,6 +10675,7 @@ async function admitCollectorInvocation(options) {
     prNumber,
     repository: repository.canonical,
     repositoryDisplay: repository.display,
+    ...requestManifestPath === void 0 ? {} : { requestManifestPath },
     manifestDigest,
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -10655,6 +10707,7 @@ async function admitCollectorInvocation(options) {
     admittedRequestPath,
     prNumber,
     repository,
+    ...requestManifestPath === void 0 ? {} : { requestManifestPath },
     manifestDigest
   };
 }
@@ -11268,7 +11321,7 @@ import { join as join8 } from "node:path";
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile4, realpath as realpath3 } from "node:fs/promises";
+import { readFile as readFile5, realpath as realpath3 } from "node:fs/promises";
 import { join as join5 } from "node:path";
 var PackagedMethodSkillUnavailableError = class extends Error {
   constructor(skillName, path, cause) {
@@ -11476,7 +11529,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const provenancePath = join5(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile4(provenancePath, "utf8");
+    provenanceRaw = await readFile5(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -11494,7 +11547,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
     const absolute = join5(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile4(absolute);
+      bytes = await readFile5(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -11510,7 +11563,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let raw;
   try {
     skillPath = await realpath3(skillPathConfigured);
-    raw = await readFile4(skillPath, "utf8");
+    raw = await readFile5(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -11594,7 +11647,7 @@ function postRunMissingCredentialFailure(result2, model, credentials) {
 
 // src/public-cli/run-lifecycle.ts
 init_activation_ledger_topology();
-import { lstat as lstat2, open, readdir as readdir2, readFile as readFile5, unlink, writeFile as writeFile3 } from "node:fs/promises";
+import { lstat as lstat2, open, readdir as readdir2, readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
 var RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
@@ -11620,16 +11673,16 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readTypedHttp429Observation(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile5(typedProviderHttpPath(runDirectory), "utf8")
+      await readFile6(typedProviderHttpPath(runDirectory), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
     }
-    const record3 = raw;
-    if (record3.httpStatus !== 429) return void 0;
-    if (typeof record3.provider !== "string") return void 0;
-    if (!isV1ResumableProvider(record3.provider)) return void 0;
-    return { httpStatus: 429, provider: record3.provider };
+    const record4 = raw;
+    if (record4.httpStatus !== 429) return void 0;
+    if (typeof record4.provider !== "string") return void 0;
+    if (!isV1ResumableProvider(record4.provider)) return void 0;
+    return { httpStatus: 429, provider: record4.provider };
   } catch {
     return void 0;
   }
@@ -11641,8 +11694,8 @@ function isV1ResumableFailure(input) {
 function renderResumeCommand(runId) {
   return `ak-role resume ${runId}`;
 }
-async function writeRoleRunState(runDirectory, record3) {
-  const payload = { ...record3, runDirectory };
+async function writeRoleRunState(runDirectory, record4) {
+  const payload = { ...record4, runDirectory };
   await writeFile3(
     join6(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
@@ -11653,47 +11706,47 @@ async function writeRoleRunState(runDirectory, record3) {
 async function readRoleRunState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile5(join6(runDirectory, RUN_STATE_FILE), "utf8")
+      await readFile6(join6(runDirectory, RUN_STATE_FILE), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
     }
-    const record3 = raw;
-    if (typeof record3.runId !== "string" || record3.runId.trim() === "") {
+    const record4 = raw;
+    if (typeof record4.runId !== "string" || record4.runId.trim() === "") {
       return void 0;
     }
-    if (record3.role !== "judge" && record3.role !== "coder" && record3.role !== "fixer" && record3.role !== "collector" && record3.role !== "doctor" && record3.role !== "reviewer" && record3.role !== "merger") {
+    if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger") {
       return void 0;
     }
-    if (record3.state !== "admitted" && record3.state !== "running" && record3.state !== "resumable" && record3.state !== "terminal") {
+    if (record4.state !== "admitted" && record4.state !== "running" && record4.state !== "resumable" && record4.state !== "terminal") {
       return void 0;
     }
-    if (typeof record3.bookKey !== "string") return void 0;
-    if (typeof record3.projectRoot !== "string") return void 0;
-    if (typeof record3.sessionDirectory !== "string") return void 0;
-    if (typeof record3.admittedRequestPath !== "string") return void 0;
-    const runDir = typeof record3.runDirectory === "string" && record3.runDirectory.trim() !== "" ? record3.runDirectory : runDirectory;
-    const sessionFile = typeof record3.sessionFile === "string" && record3.sessionFile.trim() !== "" ? record3.sessionFile : roleRunSessionFile(record3.sessionDirectory);
+    if (typeof record4.bookKey !== "string") return void 0;
+    if (typeof record4.projectRoot !== "string") return void 0;
+    if (typeof record4.sessionDirectory !== "string") return void 0;
+    if (typeof record4.admittedRequestPath !== "string") return void 0;
+    const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
+    const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : roleRunSessionFile(record4.sessionDirectory);
     let resumable;
-    if (record3.resumable !== void 0 && record3.resumable !== null) {
-      if (typeof record3.resumable === "object" && !Array.isArray(record3.resumable)) {
-        const r = record3.resumable;
+    if (record4.resumable !== void 0 && record4.resumable !== null) {
+      if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
+        const r = record4.resumable;
         if (r.httpStatus === 429 && typeof r.provider === "string" && isV1ResumableProvider(r.provider)) {
           resumable = { httpStatus: 429, provider: r.provider };
         }
       }
     }
-    const phase = record3.phase === "plan" || record3.phase === "apply" ? record3.phase : void 0;
+    const phase = record4.phase === "plan" || record4.phase === "apply" ? record4.phase : void 0;
     return {
-      runId: record3.runId,
-      role: record3.role,
-      state: record3.state,
-      bookKey: record3.bookKey,
-      projectRoot: record3.projectRoot,
-      sessionDirectory: record3.sessionDirectory,
+      runId: record4.runId,
+      role: record4.role,
+      state: record4.state,
+      bookKey: record4.bookKey,
+      projectRoot: record4.projectRoot,
+      sessionDirectory: record4.sessionDirectory,
       sessionFile,
       runDirectory: runDir,
-      admittedRequestPath: record3.admittedRequestPath,
+      admittedRequestPath: record4.admittedRequestPath,
       ...phase === void 0 ? {} : { phase },
       ...resumable === void 0 ? {} : { resumable }
     };
@@ -11863,42 +11916,42 @@ async function loadResumableRunRecord(home, runId) {
   let derived;
   try {
     const raw = JSON.parse(
-      await readFile5(run.admittedRequestPath, "utf8")
+      await readFile6(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-      const record3 = raw;
-      if (typeof record3.instruction === "string") {
-        instruction = record3.instruction;
+      const record4 = raw;
+      if (typeof record4.instruction === "string") {
+        instruction = record4.instruction;
       }
-      if (typeof record3.instructionEmpty === "boolean") {
-        instructionEmpty = record3.instructionEmpty;
+      if (typeof record4.instructionEmpty === "boolean") {
+        instructionEmpty = record4.instructionEmpty;
       }
-      if (Array.isArray(record3.attachments)) {
-        attachments = record3.attachments;
+      if (Array.isArray(record4.attachments)) {
+        attachments = record4.attachments;
       }
-      if (record3.phase === "plan" || record3.phase === "apply") {
-        phase = record3.phase;
+      if (record4.phase === "plan" || record4.phase === "apply") {
+        phase = record4.phase;
       }
-      if (typeof record3.taskPath === "string" && record3.taskPath.trim() !== "") {
-        taskPath = record3.taskPath;
+      if (typeof record4.taskPath === "string" && record4.taskPath.trim() !== "") {
+        taskPath = record4.taskPath;
       }
-      if (typeof record3.packetPath === "string" && record3.packetPath.trim() !== "") {
-        packetPath = record3.packetPath;
+      if (typeof record4.packetPath === "string" && record4.packetPath.trim() !== "") {
+        packetPath = record4.packetPath;
       }
-      if (typeof record3.prerequisitesPath === "string" && record3.prerequisitesPath.trim() !== "") {
-        prerequisitesPath = record3.prerequisitesPath;
+      if (typeof record4.prerequisitesPath === "string" && record4.prerequisitesPath.trim() !== "") {
+        prerequisitesPath = record4.prerequisitesPath;
       }
-      if (Array.isArray(record3.prerequisites)) {
-        prerequisites = record3.prerequisites;
+      if (Array.isArray(record4.prerequisites)) {
+        prerequisites = record4.prerequisites;
       }
-      if (typeof record3.baseRevision === "string" && record3.baseRevision.trim() !== "") {
-        baseRevision = record3.baseRevision;
+      if (typeof record4.baseRevision === "string" && record4.baseRevision.trim() !== "") {
+        baseRevision = record4.baseRevision;
       }
-      if (typeof record3.mergerInputPath === "string" && record3.mergerInputPath.trim() !== "") {
-        mergerInputPath = record3.mergerInputPath;
+      if (typeof record4.mergerInputPath === "string" && record4.mergerInputPath.trim() !== "") {
+        mergerInputPath = record4.mergerInputPath;
       }
-      if (record3.derived !== null && typeof record3.derived === "object" && !Array.isArray(record3.derived)) {
-        const d = record3.derived;
+      if (record4.derived !== null && typeof record4.derived === "object" && !Array.isArray(record4.derived)) {
+        const d = record4.derived;
         if (typeof d.targetObjectId === "string" && typeof d.sourceObjectId === "string" && typeof d.automaticMergeTreeId === "string" && Array.isArray(d.expectedConflictPaths) && Array.isArray(d.resolutionScope) && d.expectedConflictPaths.every((p) => typeof p === "string") && d.resolutionScope.every((p) => typeof p === "string")) {
           derived = {
             targetObjectId: d.targetObjectId,
@@ -12139,7 +12192,7 @@ async function peekRoleRunRole(home, runId) {
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile6, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
+import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile7, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname5, join as join7 } from "node:path";
 
 // src/auditor-soul.ts
@@ -12301,13 +12354,13 @@ var NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
 ];
 function isNavigatorInfrastructureFailureFact(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record3 = value;
-  const keys = Object.keys(record3);
+  const record4 = value;
+  const keys = Object.keys(record4);
   if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
   for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
-    if (!Object.hasOwn(record3, key)) return false;
+    if (!Object.hasOwn(record4, key)) return false;
   }
-  return record3.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record3.source === "shared-role-lifecycle" && record3.reasonCode === "host_failure";
+  return record4.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record4.source === "shared-role-lifecycle" && record4.reasonCode === "host_failure";
 }
 var PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
   PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
@@ -12318,20 +12371,20 @@ function invocationPhaseFromUnknown(value) {
 }
 function parseInvocationMarkerIdentity(data) {
   if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
-  const record3 = data;
-  const invocationId = record3.invocationId;
+  const record4 = data;
+  const invocationId = record4.invocationId;
   if (typeof invocationId !== "string") return void 0;
   const trimmedId = invocationId.trim();
   if (!isUuidV7(trimmedId)) return void 0;
-  if (typeof record3.role !== "string" || record3.role.trim() === "") return void 0;
-  const phase = invocationPhaseFromUnknown(record3.phase);
+  if (typeof record4.role !== "string" || record4.role.trim() === "") return void 0;
+  const phase = invocationPhaseFromUnknown(record4.phase);
   if (phase === void 0) return void 0;
-  if (typeof record3.subjectKey !== "string" || record3.subjectKey.trim() === "") return void 0;
+  if (typeof record4.subjectKey !== "string" || record4.subjectKey.trim() === "") return void 0;
   return {
     invocationId: trimmedId,
-    role: record3.role,
+    role: record4.role,
     phase,
-    subjectKey: record3.subjectKey
+    subjectKey: record4.subjectKey
   };
 }
 function markerMatchesExpectedIdentity(marker, expected) {
@@ -12636,7 +12689,7 @@ function presentStructuralRejection(error, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile6(sessionFile, "utf8");
+    await readFile7(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError2(error)) return { state: "missing" };
@@ -12777,7 +12830,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile6(sessionFile, "utf8");
+  const text = await readFile7(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -15372,6 +15425,7 @@ function buildCollectorActivationExtraArgs(admitted, options = {}) {
     admitted.repository.display,
     "--ak-collector-pr",
     String(admitted.prNumber),
+    ...admitted.requestManifestPath === void 0 ? [] : ["--ak-collector-request-manifest", admitted.requestManifestPath],
     "--mode",
     "json",
     ...buildModelArgs2(options.model),
@@ -15525,6 +15579,7 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
       attachmentPaths: parsed.attachmentPaths,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
       ...parsed.repo === void 0 ? {} : { repo: parsed.repo },
+      ...parsed.requestManifestPath === void 0 ? {} : { requestManifestPath: parsed.requestManifestPath },
       ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
     });
   } catch (error) {
