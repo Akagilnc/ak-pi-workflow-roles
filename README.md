@@ -37,7 +37,7 @@ Receipts are typed, so callers compose roles without parsing prose; ordering and
 
 ## Call the roles
 
-Common flags: `--attach <file>` (repeatable, frozen at admission) and `--project <path>`. An instruction is optional for judge, collector, and doctor, and required nonblank for coder, fixer, reviewer, and merger.
+Most roles accept `--attach <file>` (repeatable, frozen at admission); Reviewer instead gathers review evidence independently. All roles accept `--project <path>`. An instruction is optional for judge, collector, and doctor, and required nonblank for coder, fixer, reviewer, and merger.
 
 ```bash
 # judge — adjudicate the supplied materials; infers its burden, no burden flag
@@ -49,7 +49,7 @@ ak-role coder apply --attach ./plan.md "Implement the approved slice."
 # apply binds the package-owned TDD method; do not bind a home Skill as a substitute
 
 # reviewer — fixed-target two-axis review (Standards + Spec)
-ak-role reviewer --base main --attach ./issue.md "Review the branch."
+ak-role reviewer --base main "Review the branch against the governing issue and repository authority."
 # --base is a hint; completed ≠ approved — read the findings in the Terminal
 
 # collector — GitHub PR review evidence; github.com only, needs gh auth; one-shot

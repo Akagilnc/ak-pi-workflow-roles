@@ -74,7 +74,7 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("SHA-256 pins full and abbreviated commits, range, material, and ref snapshots", async (t) => {
+test("SHA-256 pins full and abbreviated commits, range, and ref snapshots", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "reviewer-sha256-"));
   try {
     try { await git(root, "init", "--object-format=sha256"); }
@@ -92,7 +92,6 @@ test("SHA-256 pins full and abbreviated commits, range, material, and ref snapsh
     await assert.rejects(reader.resolve(base.slice(0, 40)), /base-invalid/);
     const range = await reader.range(base);
     assert.equal(range.base, base); assert.match(range.target, /^[0-9a-f]{64}$/); assert.deepEqual(range.commits, [reader.pin.targetHead]);
-    assert.equal(Buffer.from(await reader.material("file", reader.pin.targetHead)).toString(), "target\n");
     assert.deepEqual(await reader.snapshot(), reader.pin);
     assert.equal(reader.pin.refs["refs/heads/review-base"]?.peeledCommitId, base);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -120,7 +119,6 @@ test("abbreviated bases are resolved only among commits reachable from the activ
     assert.equal(await reader.resolve(prefix), base);
 
     const parent = reader.pin.targetHead;
-    // One git fast-import stream creates the reachable chain (vs one spawn per commit-tree).
     const parts: string[] = [];
     for (let index = 0; index < 1200; index++) {
       const message = `reachable-${index}\n`;
@@ -184,26 +182,6 @@ test("pinning rejects non-repositories and bare repositories", async () => {
     await git(temporary, "init", "--bare", bare);
     await assert.rejects(createReviewerPinnedGitReader(bare));
   } finally { await rm(temporary, { recursive: true, force: true }); }
-});
-
-test("material path safety rejects unsafe Git object paths at the concrete read seam", async () => {
-  const root = await materializeSeededRepo("reviewer-material-path-");
-  try {
-    await writeFile(join(root, "safe"), "content\n"); await git(root, "add", "."); await git(root, "commit", "-m", "safe");
-    const reader = await createReviewerPinnedGitReader(root);
-    const unsafe = [
-      { path: "/absolute", diagnostic: /materials\.repositoryPath must be relative, not absolute/ },
-      { path: "../escape", diagnostic: /materials\.repositoryPath must not contain .*parent-directory/ },
-      { path: "dir/../escape", diagnostic: /materials\.repositoryPath must not contain .*parent-directory/ },
-      { path: "bad\\path", diagnostic: /materials\.repositoryPath must not contain backslashes/ },
-      { path: "bad\npath", diagnostic: /materials\.repositoryPath must not contain control characters/ },
-    ];
-    for (const { path, diagnostic } of unsafe) {
-      await assert.rejects(reader.material(path, reader.pin.targetHead), diagnostic);
-    }
-    await assert.rejects(reader.material("missing", reader.pin.targetHead), /pinned material at materials\.repositoryPath is missing from the target/);
-    assert.equal(Buffer.from(await reader.material("safe", reader.pin.targetHead)).toString(), "content\n");
-  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("shared ref snapshot helper canonicalizes immutably and compares order-independently", () => {

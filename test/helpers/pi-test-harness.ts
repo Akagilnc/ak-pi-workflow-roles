@@ -70,8 +70,7 @@ export function trackedPackageInputPaths(): string[] {
 export interface MaterializePackageOptions {
   /**
    * Provide package node_modules for offline prepack/install.
-   * Default "copy" keeps package-manager lifecycle checks isolated. A symlink is
-   * unsafe because pnpm may purge the link target while reconciling the pack tree.
+   * Default "symlink" (cheap). "copy" keeps the historical full tree copy.
    * false skips node_modules entirely.
    */
   nodeModules?: boolean | "symlink" | "copy";
@@ -99,7 +98,7 @@ export async function materializePackageTree(
   }
 
   const nodeModulesMode = options.nodeModules === undefined
-    ? "copy"
+    ? "symlink"
     : options.nodeModules === true
     ? "symlink"
     : options.nodeModules === false
@@ -144,6 +143,41 @@ export interface IsolatedPackResult {
   tarball: string;
   filename: string;
   files: Array<{ path: string }>;
+}
+
+/**
+ * Materialize a private package tree and run real `npm pack` there so the
+ * prepack → retained package build cannot rewrite shared dist/.
+ */
+export async function packIsolatedPackage(
+  packDestination: string,
+  options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
+): Promise<IsolatedPackResult> {
+  await mkdir(packDestination, { recursive: true });
+  const root = await mkdtemp(resolve(tmpdir(), "ak-pack-mat-"));
+  try {
+    await materializePackageTree(root, {
+      nodeModules: options.nodeModules ?? "symlink",
+    });
+    const { stdout } = await execFileAsync(
+      "npm",
+      ["pack", "--json", "--pack-destination", packDestination],
+      { cwd: root, maxBuffer: 10 * 1024 * 1024 },
+    );
+    const pack = JSON.parse(stdout) as Array<{
+      filename: string;
+      files: Array<{ path: string }>;
+    }>;
+    const entry = pack[0]!;
+    return {
+      root,
+      tarball: resolve(packDestination, entry.filename),
+      filename: entry.filename,
+      files: entry.files,
+    };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 }
 
 export interface ConstructionProvenance {
@@ -297,18 +331,15 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
       const packDestination = cacheDir;
       const materialRoot = await mkdtemp(resolve(cacheDir, "mat-"));
       try {
-        await materializePackageTree(materialRoot, { nodeModules: "copy" });
+        await materializePackageTree(materialRoot, { nodeModules: "symlink" });
         const { stdout } = await execFileAsync(
           "npm",
-          ["pack", "--silent", "--json", "--pack-destination", packDestination],
-          {
-            cwd: materialRoot,
-            env: { ...process.env, CI: "true" },
-            maxBuffer: 10 * 1024 * 1024,
-          },
+          ["pack", "--json", "--pack-destination", packDestination],
+          { cwd: materialRoot, maxBuffer: 10 * 1024 * 1024, env: { ...process.env, PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false" } },
         );
-        const jsonStart = Math.max(stdout.lastIndexOf("\n["), stdout.startsWith("[") ? 0 : -1);
-        const pack = JSON.parse(stdout.slice(jsonStart < 0 ? 0 : jsonStart + (jsonStart === 0 ? 0 : 1))) as Array<{
+        const jsonStart = stdout.indexOf("[");
+        if (jsonStart < 0) throw new Error(`npm pack did not emit JSON: ${stdout}`);
+        const pack = JSON.parse(stdout.slice(jsonStart)) as Array<{
           filename: string;
           files: Array<{ path: string }>;
         }>;
@@ -635,18 +666,12 @@ export async function withHermeticHome<T>(
     const agentDir = resolve(home, ".pi-agent");
     await mkdir(agentDir, { recursive: true });
     const previousHome = process.env.HOME;
-    const previousRunDir = process.env.AK_ROLE_RUN_DIR;
     process.env.HOME = home;
-    // A caller's admitted run belongs to the host process, never to a hermetic
-    // in-process Pi fixture. Tests that exercise admission seed their own value.
-    delete process.env.AK_ROLE_RUN_DIR;
     try {
       return await scenario({ home, agentDir });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
-      if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-      else process.env.AK_ROLE_RUN_DIR = previousRunDir;
       await rm(home, { recursive: true, force: true });
     }
   });
@@ -896,10 +921,11 @@ export interface InProcessPiOptions {
   noExtensions?: boolean;
   reviewerShutdown?: boolean;
   /**
-   * Opt-in at activation-owning tests only: place a durable session file under the
-   * machine ledger book (ADR 0048). Requires hermetic HOME and a git cwd. Generic
+   * Opt-in at activation-owning tests only: real parent SessionManager whose
+   * getSessionFile/getSessionDir share a persisted directory under the machine
+   * ledger book (ADR 0048). Requires hermetic HOME and a git cwd. Generic
    * in-process callers must leave this unset so they incur no git discovery or
-   * durable-session persistence.
+   * durable-session persistence. cwd/Navigator subject semantics stay fixture-owned.
    */
   activationLedgerSession?: boolean;
 }
@@ -984,10 +1010,10 @@ export async function withInProcessPi<T>(
   // Activation-owning tests opt in via activationLedgerSession.
   let sessionManager: SessionManager = options.sessionManager ?? SessionManager.inMemory(options.cwd);
   if (options.sessionManager === undefined && options.activationLedgerSession === true) {
-    // Keep in-memory session-dir semantics (empty getSessionDir) so Navigator subject
-    // derivation from cwd/.ak/work stays intact, while exposing a genuinely persisted
-    // session file under the machine ledger book (ADR 0048).
-    const memorySession = sessionManager;
+    // Real parent manager: file + dir co-located under the hermetic ledger book so
+    // nested auditor-roles land beside the parent (ADR 0048), not at repo root.
+    // subjectPath treats machine-ledger session dirs like empty getSessionDir, so
+    // cwd/Navigator identity stays fixture-owned.
     const hermeticHome = process.env.HOME;
     if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
       throw new Error("withInProcessPi activationLedgerSession requires process.env.HOME");
@@ -997,19 +1023,15 @@ export async function withInProcessPi<T>(
     }
     // Opt-in path requires a git cwd; infrastructure and non-git failures propagate.
     const bookKey = resolveBookKeyFromGit(options.cwd);
-    const durableSessionFile = persistActivationSessionFile({
-      home: hermeticHome,
+    const parentSessionDir = join(
+      machineLedgerHome(hermeticHome),
+      "books",
       bookKey,
-      name: "inprocess-pi",
-      cwd: options.cwd,
-    });
-    sessionManager = new Proxy(memorySession, {
-      get(target, property, receiver) {
-        if (property === "getSessionFile") return () => durableSessionFile;
-        const value = Reflect.get(target, property, receiver);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
+      "runs",
+      "activation",
+      "inprocess-pi",
+    );
+    sessionManager = SessionManager.create(options.cwd, parentSessionDir);
   }
   const { session, extensionsResult } = await createAgentSession({
     cwd: options.cwd,

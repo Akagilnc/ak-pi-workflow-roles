@@ -1,30 +1,17 @@
-import { sha256Hex } from "./sha256.ts";
+/**
+ * ADR 0031: Reviewer model-visible text remains plain text.
+ * No length/digest identity shell; callers compare strings directly when needed.
+ */
 
-/** Dispatch-owned exact identity for model-visible prompt bytes. */
-export type ReviewerPromptIdentity = Readonly<{
-  text: string;
-  utf8Length: number;
-  sha256: string;
-}>;
+export type ReviewerPromptText = string;
 
-export function reviewerPromptIdentity(text: string): ReviewerPromptIdentity {
-  return Object.freeze({
-    text,
-    utf8Length: Buffer.byteLength(text, "utf8"),
-    sha256: sha256Hex(text),
-  });
+export function isReviewerPromptText(value: unknown): value is ReviewerPromptText {
+  return typeof value === "string";
 }
 
-export function isReviewerPromptIdentity(value: ReviewerPromptIdentity): boolean {
-  const actual = reviewerPromptIdentity(value.text);
-  return value.utf8Length === actual.utf8Length && value.sha256 === actual.sha256;
-}
-
-export function sameReviewerPromptIdentity(
-  first: ReviewerPromptIdentity,
-  second: ReviewerPromptIdentity,
+export function sameReviewerPromptText(
+  first: ReviewerPromptText,
+  second: ReviewerPromptText,
 ): boolean {
-  return first.text === second.text &&
-    first.utf8Length === second.utf8Length &&
-    first.sha256 === second.sha256;
+  return first === second;
 }

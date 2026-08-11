@@ -14,7 +14,6 @@ import {
 
 import { transcriptFromContext as productionTranscriptFromContext } from "../../extensions/role-runtime.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
-import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
 import {
@@ -23,7 +22,6 @@ import {
   type NavigatorPreparationSession,
 } from "../../src/navigator-attendance.ts";
 import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
-import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
 import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
@@ -34,7 +32,6 @@ import {
   JUDGE_OUTPUT_TOOL_NAME,
   createRoleRuntimeExtension,
   type JudgeVerdict,
-  type SoulAuditInput,
 } from "../../src/role-runtime.ts";
 import {
   readTypedHttp429Observation,
@@ -75,7 +72,7 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
       path: tddPath,
       baseDir: tddBaseDir,
       body: tddBody,
-      snapshotIdentity: reviewerPromptIdentity(`---\nname: tdd\ndescription: test\n---\n\n${tddBody}`),
+      snapshotIdentity: Object.freeze({ text: `---\nname: tdd\ndescription: test\n---\n\n${tddBody}` }),
     },
     invocation(originalRequest) {
       return `/skill:tdd ${originalRequest}`;
@@ -221,8 +218,7 @@ test("stable factory registers the complete typed role flag set and stays inert 
     "ak-fixer-phase",
     "ak-coder-task",
     "ak-coder-phase",
-    "ak-review-task",
-    "ak-review-capabilities",
+    "ak-review-base",
     "ak-review-scope-keys",
     "ak-doctor-case",
     "ak-merger-input",
@@ -403,7 +399,6 @@ test("focused Judge controller registers output without narrowing host tools", a
     harness.pi as ExtensionAPI,
     {
       loadSoul: async () => "  JUDGE LAW  ",
-      transcriptFromContext: () => "record",
       auditSoulCompliance: async () => ({ status: "pass" }),
     },
     { failInfrastructure(error) { throw error; } },
@@ -432,8 +427,6 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     {
       loadSoul: async () => "\n FIXER LAW \n",
       loadPacket: async () => emptyFixPacket,
-      transcriptFromContext: () => "record",
-      auditCompliance: async () => ({ status: "pass" }),
     },
   );
   assert.deepEqual(new Set(fixer.flags.keys()), new Set(["ak-fix-packet", "ak-fixer-prerequisites", "ak-fixer-phase"]));
@@ -497,7 +490,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           harness.pi as ExtensionAPI,
           {
             loadSoul: async () => "judge",
-            transcriptFromContext: () => "record",
             auditSoulCompliance: async () => ({ status: "pass", usage }),
           },
           { failInfrastructure(error) { throw error; } },
@@ -521,8 +513,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           {
             loadSoul: async () => "fixer",
             loadPacket: async () => emptyFixPacket,
-            transcriptFromContext: () => "record",
-            auditCompliance: async () => ({ status: "pass", usage }),
           },
         );
         await runtime.activate();
@@ -578,7 +568,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     assert.equal(result.terminate, true);
     assert.deepEqual(
       result.usage,
-      fixture.role === "judge" || fixture.role === "fixer" ? usage : undefined,
+      fixture.role === "judge" ? usage : undefined,
     );
   }
 });
@@ -599,9 +589,9 @@ test("production audit transcript preserves the assignment received by the judge
 });
 
 test("judge role injects its soul and accepts a soul-compliant verdict", async () => {
-  const seenAudits: SoulAuditInput[] = [];
-  const { harness, tool } = await startJudge(async (input) => {
-    seenAudits.push(input);
+  let auditCalls = 0;
+  const { harness, tool } = await startJudge(async () => {
+    auditCalls += 1;
     return { status: "pass" };
   });
 
@@ -621,13 +611,8 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
     toolCallContext([{ id: "call-1", arguments: verdict }]),
   );
 
-  assert.deepEqual(seenAudits, [
-    {
-      soul: "JUDGE LAW\nApply the law.",
-      transcript: "review evidence and adjudication",
-      verdict,
-    },
-  ]);
+  // Zero hand-delivery: auditor is invoked with context only (no projected materials).
+  assert.equal(auditCalls, 1);
   assert.equal(result.terminate, true);
   assert.deepEqual(result.details, verdict);
 });
@@ -896,6 +881,9 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     status: "completed",
     report: "TDD evidence and self-check three are recorded here.",
   };
+  const { execFileSync } = await import("node:child_process");
+  const { seedGitRepository } = await import("../helpers/pi-test-harness.ts");
+
   const start = async () => {
     const harness = extensionHarness("coder", {
       "ak-coder-task": "/materials/approved.md",
@@ -909,13 +897,31 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       transcriptFromContext: () => '<skill name="tdd" location="/copied/transcript">',
       auditSoulCompliance: async () => ({ status: "pass" }),
     })(harness.pi as ExtensionAPI);
-    await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-      await harness.handlers.get("session_start")?.({}, activationCtx(home));
-    });
-    return harness;
+    // Keep activation home alive: gate ① arms baseline against this worktree.
+    const home = await mkdtemp(join(tmpdir(), "ak-judge-role-"));
+    const previousHome = process.env.HOME;
+    process.env.HOME = home;
+    seedGitRepository(home);
+    execFileSync("git", ["config", "user.email", "coder@test.local"], { cwd: home });
+    execFileSync("git", ["config", "user.name", "Coder Test"], { cwd: home });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: home });
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+    // One forward commit so completed does not hit forgetfulness bounce.
+    execFileSync("git", ["commit", "--allow-empty", "-m", "ak-roles: coder test work"], { cwd: home });
+    return {
+      harness,
+      async dispose() {
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+        await rm(home, { recursive: true, force: true });
+      },
+    };
   };
-  const submitCompleted = async (harness: Awaited<ReturnType<typeof start>>, id: string) => {
-    const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+  const submitCompleted = async (
+    started: Awaited<ReturnType<typeof start>>,
+    id: string,
+  ) => {
+    const tool = started.harness.tools.get(CODER_OUTPUT_TOOL_NAME);
     assert.ok(tool);
     return tool.execute(
       id,
@@ -926,126 +932,152 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     );
   };
 
-  const acceptedHarness = await start();
-  assert.deepEqual(
-    await acceptedHarness.handlers.get("input")?.(
-      { text: request, source: "interactive", images: [{ type: "image", data: "fixture" }] },
-      {},
-    ),
-    {
-      action: "transform",
-      text: `/skill:tdd ${request}`,
-      images: [{ type: "image", data: "fixture" }],
-    },
-  );
-  assert.deepEqual(
-    await acceptedHarness.handlers.get("input")?.(
-      { text: "A later message must not reinvoke TDD." },
-      {},
-    ),
-    { action: "continue" },
-  );
-  const promptResult = await acceptedHarness.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: expandedTdd(request) },
-    { abort() {}, mode: "tui" },
-  );
-  const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
-  assert.match(prompt, /<coder_phase>\s*apply/);
-  assert.doesNotMatch(prompt, /coder_quality_skill/);
-  assert.deepEqual((await submitCompleted(acceptedHarness, "accepted")).details, completed);
+  const accepted = await start();
+  try {
+    assert.deepEqual(
+      await accepted.harness.handlers.get("input")?.(
+        { text: request, source: "interactive", images: [{ type: "image", data: "fixture" }] },
+        {},
+      ),
+      {
+        action: "transform",
+        text: `/skill:tdd ${request}`,
+        images: [{ type: "image", data: "fixture" }],
+      },
+    );
+    assert.deepEqual(
+      await accepted.harness.handlers.get("input")?.(
+        { text: "A later message must not reinvoke TDD." },
+        {},
+      ),
+      { action: "continue" },
+    );
+    const promptResult = await accepted.harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request) },
+      { abort() {}, mode: "tui" },
+    );
+    const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
+    assert.match(prompt, /<coder_phase>\s*apply/);
+    assert.doesNotMatch(prompt, /coder_quality_skill/);
+    assert.deepEqual((await submitCompleted(accepted, "accepted")).details, completed);
+  } finally {
+    await accepted.dispose();
+  }
 
   // One must-reject malformed expansion proves the completed-gate (law ③);
   // the full malformed spelling matrix lives in canonical-skill-binding tests.
   {
-    const harness = await start();
-    await harness.handlers.get("input")?.({ text: request }, {});
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd(request).replace(tddBody, "# Canonical TDD") },
+    const started = await start();
+    try {
+      await started.harness.handlers.get("input")?.({ text: request }, {});
+      await started.harness.handlers.get("before_agent_start")?.(
+        { systemPrompt: "BASE", prompt: expandedTdd(request).replace(tddBody, "# Canonical TDD") },
+        { abort() {}, mode: "tui" },
+      );
+      await assert.rejects(
+        submitCompleted(started, "malformed-gate"),
+        /completed requires the Matt tdd skill to be expanded/i,
+      );
+    } finally {
+      await started.dispose();
+    }
+  }
+
+  const later = await start();
+  try {
+    await later.harness.handlers.get("input")?.({ text: request }, {});
+    await later.harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: "not the expansion" },
+      { abort() {}, mode: "tui" },
+    );
+    await later.harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request) },
       { abort() {}, mode: "tui" },
     );
     await assert.rejects(
-      submitCompleted(harness, "malformed-gate"),
+      submitCompleted(later, "later"),
       /completed requires the Matt tdd skill to be expanded/i,
     );
+  } finally {
+    await later.dispose();
   }
 
-  const laterHarness = await start();
-  await laterHarness.handlers.get("input")?.({ text: request }, {});
-  await laterHarness.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: "not the expansion" },
-    { abort() {}, mode: "tui" },
-  );
-  await laterHarness.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: expandedTdd(request) },
-    { abort() {}, mode: "tui" },
-  );
-  await assert.rejects(
-    submitCompleted(laterHarness, "later"),
-    /completed requires the Matt tdd skill to be expanded/i,
-  );
+  const prefixed = await start();
+  try {
+    assert.deepEqual(
+      await prefixed.harness.handlers.get("input")?.(
+        { text: `/skill:tdd ${request}` },
+        {},
+      ),
+      { action: "continue" },
+    );
+    await prefixed.harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request) },
+      { abort() {}, mode: "tui" },
+    );
+    assert.deepEqual((await submitCompleted(prefixed, "prefixed")).details, completed);
+  } finally {
+    await prefixed.dispose();
+  }
 
-  const prefixedHarness = await start();
-  assert.deepEqual(
-    await prefixedHarness.handlers.get("input")?.(
-      { text: `/skill:tdd ${request}` },
-      {},
-    ),
-    { action: "continue" },
-  );
-  await prefixedHarness.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: expandedTdd(request) },
-    { abort() {}, mode: "tui" },
-  );
-  assert.deepEqual((await submitCompleted(prefixedHarness, "prefixed")).details, completed);
+  const bareNative = await start();
+  try {
+    assert.deepEqual(
+      await bareNative.harness.handlers.get("input")?.(
+        { text: "/skill:tdd" },
+        {},
+      ),
+      { action: "continue" },
+    );
+    await bareNative.harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd("") },
+      { abort() {}, mode: "tui" },
+    );
+    assert.deepEqual((await submitCompleted(bareNative, "bare-native")).details, completed);
+  } finally {
+    await bareNative.dispose();
+  }
 
-  const bareNativeHarness = await start();
-  assert.deepEqual(
-    await bareNativeHarness.handlers.get("input")?.(
-      { text: "/skill:tdd" },
-      {},
-    ),
-    { action: "continue" },
-  );
-  await bareNativeHarness.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: expandedTdd("") },
-    { abort() {}, mode: "tui" },
-  );
-  assert.deepEqual((await submitCompleted(bareNativeHarness, "bare-native")).details, completed);
+  const collision = await start();
+  try {
+    assert.deepEqual(
+      await collision.harness.handlers.get("input")?.(
+        { text: "/skill:tddfoo" },
+        {},
+      ),
+      {
+        action: "transform",
+        text: "/skill:tdd /skill:tddfoo",
+      },
+    );
+    await collision.harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd("/skill:tddfoo") },
+      { abort() {}, mode: "tui" },
+    );
+    assert.deepEqual(
+      (await submitCompleted(collision, "collision")).details,
+      completed,
+    );
+  } finally {
+    await collision.dispose();
+  }
 
-  const collisionHarness = await start();
-  assert.deepEqual(
-    await collisionHarness.handlers.get("input")?.(
-      { text: "/skill:tddfoo" },
-      {},
-    ),
-    {
-      action: "transform",
-      text: "/skill:tdd /skill:tddfoo",
-    },
-  );
-  await collisionHarness.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: expandedTdd("/skill:tddfoo") },
-    { abort() {}, mode: "tui" },
-  );
-  assert.deepEqual(
-    (await submitCompleted(collisionHarness, "collision")).details,
-    completed,
-  );
-
-  const tabSeparatedHarness = await start();
-  assert.deepEqual(
-    await tabSeparatedHarness.handlers.get("input")?.(
-      { text: `/skill:tdd\t${request}` },
-      {},
-    ),
-    {
-      action: "transform",
-      text: `/skill:tdd /skill:tdd\t${request}`,
-    },
-  );
-
-  const refusedHarness = await start();
-  await refusedHarness.handlers.get("input")?.({ text: request }, {});
+  // Refusal remains a sole-final-call terminal without the TDD expansion obligation.
+  const refusedHarness = extensionHarness("coder", {
+    "ak-coder-task": "/materials/approved.md",
+    "ak-coder-phase": "apply",
+  });
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "JUDGE LAW",
+    loadCoderSoul: async () => "CODER LAW",
+    loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
+    loadCanonicalSkillBinding: async () => tddBinding(),
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  })(refusedHarness.pi as ExtensionAPI);
+  await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
+    await refusedHarness.handlers.get("session_start")?.({}, activationCtx(home));
+  });
   const refused = {
     status: "refused",
     report: "The assignment contradicts its authority.",
@@ -1083,93 +1115,72 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
   ] as const;
   for (const row of rows) {
     const harness = extensionHarness("fixer", row.flags);
-    let audits = 0;
     createRoleRuntimeExtension({
       loadJudgeSoul: async () => "judge",
       loadFixerSoul: async () => "fixer",
       loadFixPacket: async () => row.packet,
       transcriptFromContext: () => "record",
       auditSoulCompliance: async () => ({ status: "pass" }),
-      auditFixerCompliance: async () => { audits += 1; return { status: "pass" }; },
     })(harness.pi as ExtensionAPI);
     await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
       await assert.rejects(Promise.resolve(harness.handlers.get("session_start")?.({}, activationCtx(home))), row.diagnostic);
     });
-    assert.equal(audits, 0);
     assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), false);
     assert.equal(harness.handlers.has("before_agent_start"), true);
   }
 });
 
-test("undeclared prerequisite submissions are correctable before audit and declared references receive one immutable audit input", async () => {
+test("undeclared prerequisite submissions are rejected; declared references accept without LLM audit", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
-  const seen: unknown[] = [];
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n",
     transcriptFromContext: () => "record", auditSoulCompliance: async () => ({ status: "pass" }),
-    auditFixerCompliance: async (input) => { seen.push(input); return { status: "pass", usage }; },
   })(harness.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
+    const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
+    const candidate = (prerequisiteId: string) => ({ status: "refused" as const, report: "Blocked.", classResults: [{ name: "Policy", disposition: "refused" as const, remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId, evidence: "Choice absent." } }] });
+    await assert.rejects(tool.execute("bad", candidate("other"), undefined, undefined, toolCallContext([{ id: "bad", name: FIXER_OUTPUT_TOOL_NAME }])), /Fixer output/);
+    const accepted = await tool.execute("good", candidate("owner.choice"), undefined, undefined, toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }]));
+    assert.equal(Object.isFrozen(accepted.details), true);
+    assert.deepEqual(accepted.details, candidate("owner.choice"));
+
+    const partial = {
+      status: "partially_completed" as const,
+      report: "Mixed.",
+      classResults: [
+        { name: "Done", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
+        { name: "Policy", disposition: "refused" as const, remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "owner.choice", evidence: "Choice absent." } },
+      ],
+    };
+    await assert.rejects(tool.execute("partial", partial, undefined, undefined, toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }])), /未观察到 commit/);
+    const second = await tool.execute("partial2", partial, undefined, undefined, toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }]));
+    assert.deepEqual(second.details, partial);
+
+    const sharedCommit = "shared-commit";
+    const classA = { name: "Reviewer diagnostics", disposition: "completed" as const, searchScope: "reviewer admission and dispatch", exceptions: [], commitSha: sharedCommit };
+    const classB = { name: "Fixer projection", disposition: "completed" as const, searchScope: "fixer output branches", exceptions: [], commitSha: sharedCommit };
+    const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }]));
+    assert.equal(shared.terminate, true);
+    assert.deepEqual(shared.details.classResults, [classA, classB]);
   });
-  const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
-  const candidate = (prerequisiteId: string) => ({ status: "refused", report: "Blocked.", classResults: [{ name: "Policy", disposition: "refused", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId, evidence: "Choice absent." } }] });
-  await assert.rejects(tool.execute("bad", candidate("other"), undefined, undefined, toolCallContext([{ id: "bad", name: FIXER_OUTPUT_TOOL_NAME }])), /Fixer output/);
-  assert.equal(seen.length, 0);
-  const accepted = await tool.execute("good", candidate("owner.choice"), undefined, undefined, toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }]));
-  assert.equal(seen.length, 1);
-  assert.equal(Object.isFrozen(seen[0]), true);
-  assert.equal(Object.isFrozen((seen[0] as any).packet), true);
-  assert.equal(Object.isFrozen((seen[0] as any).candidate), true);
-  assert.equal(Object.isFrozen((seen[0] as any).candidate.classResults[0].blocker), true);
-  assert.deepEqual(accepted.details, candidate("owner.choice"));
-  assert.deepEqual(accepted.usage, usage);
-
-  // Second lawful declared shape on the same harness: distinct frozen audit input.
-  const partial = {
-    status: "partially_completed" as const,
-    report: "Mixed.",
-    classResults: [
-      { name: "Done", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
-      { name: "Policy", disposition: "refused" as const, remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "owner.choice", evidence: "Choice absent." } },
-    ],
-  };
-  const second = await tool.execute("partial", partial, undefined, undefined, toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }]));
-  assert.deepEqual(second.details, partial);
-  assert.equal(seen.length, 2);
-  assert.notEqual(seen[0], seen[1]);
-  assert.equal(Object.isFrozen(seen[1]), true);
-
-  // Shared-commit acceptance audits exactly once more; rejections never reach audit.
-  const sharedCommit = "shared-commit";
-  const classA = { name: "Reviewer diagnostics", disposition: "completed" as const, searchScope: "reviewer admission and dispatch", exceptions: [], commitSha: sharedCommit };
-  const classB = { name: "Fixer projection", disposition: "completed" as const, searchScope: "fixer output branches", exceptions: [], commitSha: sharedCommit };
-  const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }]));
-  assert.equal(shared.terminate, true);
-  assert.deepEqual(shared.details.classResults, [classA, classB]);
-  assert.equal(seen.length, 3);
 });
-
-test("declared plan refusal reaches exactly one fresh audit", async () => {
+test("declared plan refusal accepts without LLM audit", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "plan" });
-  const auditInputs: unknown[] = [];
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer",
     loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n",
     transcriptFromContext: () => "plan-record", auditSoulCompliance: async () => ({ status: "pass" }),
-    auditFixerCompliance: async (input) => { auditInputs.push(input); return { status: "pass", usage }; },
   })(harness.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
+    const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
+    const candidate = { status: "refused", report: "Blocked.", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "Choice absent." } };
+    const accepted = await tool.execute("plan-refused", candidate, undefined, undefined, toolCallContext([{ id: "plan-refused", name: FIXER_OUTPUT_TOOL_NAME }]));
+    assert.deepEqual(accepted.details, candidate);
+    assert.equal(accepted.terminate, true);
   });
-  const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
-  const candidate = { status: "refused", report: "Blocked.", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "Choice absent." } };
-  const accepted = await tool.execute("plan-refused", candidate, undefined, undefined, toolCallContext([{ id: "plan-refused", name: FIXER_OUTPUT_TOOL_NAME }]));
-  assert.deepEqual(accepted.details, candidate);
-  assert.equal(auditInputs.length, 1);
-  assert.equal(Object.isFrozen(auditInputs[0]), true);
 });
-
 test("fixer role loads opaque instructions and returns a thin report envelope", async () => {
   const loadedPaths: string[] = [];
   const instructionBytes = "  REPAIR INSTRUCTIONS\nFix the live findings.\n\n";
@@ -1186,7 +1197,6 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
     },
     transcriptFromContext: () => "invocation record",
     auditSoulCompliance: async () => ({ status: "pass" }),
-    auditFixerCompliance: async () => ({ status: "pass" }),
   });
 
   extension(harness.pi as ExtensionAPI);
@@ -1241,47 +1251,50 @@ test("fixer output must be the sole call in its assistant batch", async () => {
     loadFixPacket: async () => emptyFixPacket,
     transcriptFromContext: () => "record",
     auditSoulCompliance: async () => ({ status: "pass" }),
-    auditFixerCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
-  });
-  const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
-  assert.ok(tool);
-  const output = { status: "completed", report: "Repaired and verified.", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
-  const sibling = { id: "sibling", name: "read" };
+    const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
+    assert.ok(tool);
+    const output = { status: "completed", report: "Repaired and verified.", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
+    const sibling = { id: "sibling", name: "read" };
 
-  for (const calls of [
-    [],
-    [{ id: "wrong-id", name: FIXER_OUTPUT_TOOL_NAME }],
-    [{ id: "fixer", name: CODER_OUTPUT_TOOL_NAME }],
-    [
-      { id: "fixer", name: FIXER_OUTPUT_TOOL_NAME },
-      { id: "fixer-2", name: FIXER_OUTPUT_TOOL_NAME },
-    ],
-    [{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }, sibling],
-    [sibling, { id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }],
-  ]) {
+    for (const calls of [
+      [],
+      [{ id: "wrong-id", name: FIXER_OUTPUT_TOOL_NAME }],
+      [{ id: "fixer", name: CODER_OUTPUT_TOOL_NAME }],
+      [
+        { id: "fixer", name: FIXER_OUTPUT_TOOL_NAME },
+        { id: "fixer-2", name: FIXER_OUTPUT_TOOL_NAME },
+      ],
+      [{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }, sibling],
+      [sibling, { id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }],
+    ]) {
+      await assert.rejects(
+        tool.execute(
+          "fixer",
+          output,
+          undefined,
+          undefined,
+          toolCallContext(calls),
+        ),
+        /Fixer output must be the sole final tool call/,
+      );
+    }
+
     await assert.rejects(
-      tool.execute(
-        "fixer",
-        output,
-        undefined,
-        undefined,
-        toolCallContext(calls),
-      ),
-      /Fixer output must be the sole final tool call/,
+      tool.execute("fixer", output, undefined, undefined, toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }])),
+      /未观察到 commit/,
     );
-  }
-
-  const accepted = await tool.execute(
-    "fixer",
-    output,
-    undefined,
-    undefined,
-    toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }]),
-  );
-  assert.deepEqual(accepted.details, output);
+    const accepted = await tool.execute(
+      "fixer",
+      output,
+      undefined,
+      undefined,
+      toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }]),
+    );
+    assert.deepEqual(accepted.details, output);
+  });
 });
 
 test("fixer activation leaves its tool surface unchanged", async () => {

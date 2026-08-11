@@ -11,7 +11,6 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { SEALED_UNCHANGED_METHOD_PINS } from "../../src/package-resources/method-skill.ts";
 import {
   installPackedArtifactIntoPiNpm,
   packageRoot,
@@ -296,19 +295,19 @@ test(
         assert.ok(evidence.methodProvenance);
         assert.equal(
           evidence.methodProvenance!.upstream.commit,
-          SEALED_UNCHANGED_METHOD_PINS.tdd.commit,
+          "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
         );
         assert.equal(
           evidence.methodProvenance!.upstream.tag,
-          SEALED_UNCHANGED_METHOD_PINS.tdd.tag,
+          "v1.2.2",
         );
         assert.equal(
           evidence.methodProvenance!.upstream.path,
-          SEALED_UNCHANGED_METHOD_PINS.tdd.path,
+          "skills/engineering/tdd",
         );
         assert.equal(
           evidence.methodProvenance!.files["SKILL.md"]?.gitBlob,
-          SEALED_UNCHANGED_METHOD_PINS.tdd.files["SKILL.md"]!.gitBlob,
+          "d6b6bebaa1d1fed58812f8809b9ebc1ff9a5d1e4",
         );
         assert.equal(JSON.stringify(evidence).includes(".agents/skills"), false);
 
