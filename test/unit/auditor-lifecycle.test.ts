@@ -131,6 +131,50 @@ test("auditor gathers evidence and submits one decision", async () => {
   }
 });
 
+test("constant unknown tools receive native error receipts and exhaust at the exact provider-turn limit", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-exhaustion-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const faux = fauxProvider({ provider: "exhaustion-test" });
+    let turns = 0;
+    const unknownId = "unknown-call";
+    faux.setResponses(Array.from({ length: AUDITOR_TURN_LIMIT }, () => (context: Context) => {
+      turns += 1;
+      if (turns > 1) {
+        const receipt = [...context.messages].reverse().find((message) =>
+          message.role === "toolResult" && message.toolCallId === unknownId);
+        assert.equal(receipt?.role, "toolResult");
+        if (receipt?.role !== "toolResult") throw new Error("missing native unknown-tool receipt");
+        assert.equal(receipt?.toolName, "ak_unknown_decision");
+        assert.equal(receipt?.isError, true);
+      }
+      return fauxAssistantMessage([{
+        ...fauxToolCall("ak_unknown_decision", {}),
+        id: unknownId,
+      }], { stopReason: "toolUse" });
+    }));
+    await assert.rejects(
+      withRunDir(runDirectory, () => runComplianceAudit({
+        tool: createComplianceDecisionTool("ak_real_decision", "Submit."),
+        systemPrompt: "Decide.",
+        roleLabel: "Exhaustion auditor",
+        invalidDecisionLabel: "invalid decision",
+        context: auditExtensionContext(cwd, sessionManager, faux),
+      })),
+      (error: unknown) => error instanceof AuditorTurnLimitError
+        && error.limit === AUDITOR_TURN_LIMIT
+        && error.observedTurns === AUDITOR_TURN_LIMIT
+        && error.lastResponse?.stopReason === "toolUse"
+        && error.lastResponse.toolNames.includes("ak_unknown_decision"),
+    );
+    assert.equal(turns, AUDITOR_TURN_LIMIT);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("provider-stream idle retries at most twice then fails loud as StreamIdleTimeoutError", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-idle-"));
   const runDirectory = join(cwd, "run");

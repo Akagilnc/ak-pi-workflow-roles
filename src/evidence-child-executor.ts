@@ -557,7 +557,7 @@ export async function executeAuditorChild(
         message.role === "toolResult" && callIds.has(message.toolCallId) && message.isError);
     };
     const unsubscribe = session.subscribe((event) => {
-      if (event.type === "message_end" && event.message.role === "assistant") {
+      if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
         turns += 1;
         retainedResponse = event.message;
         try { options.retainResponse?.(event.message); } catch (error) { retentionFailure = error; }
