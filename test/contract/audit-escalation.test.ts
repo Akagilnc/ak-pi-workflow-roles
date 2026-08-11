@@ -2,18 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  fauxAssistantMessage,
-  fauxToolCall,
-  type AssistantMessage,
-  type Context,
-  type ProviderStreamOptions,
-} from "@earendil-works/pi-ai";
-import {
-  SessionManager,
-  type ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
-
-import {
   AUDIT_ESCALATION_KIND,
   buildAuditEscalationResult,
   disposeComplianceDecision,
@@ -21,28 +9,11 @@ import {
   isAuditEscalationResult,
   projectAuditEscalation,
 } from "../../src/audit-escalation.ts";
-import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
-import { createPiDoctorAuditor, DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
-import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
-import { createPiReviewerAuditor, REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   AcceptedDetailsContractError,
   validateAcceptedDetails,
 } from "../../src/package-contracts/terminating-tools.ts";
-
-const context = {
-  model: { provider: "audit-test", id: "same-model", api: "openai-responses" },
-  modelRegistry: {
-    async getProviderAuth() {
-      return { auth: { apiKey: "secret" } };
-    },
-    async getApiKeyAndHeaders() {
-      return { ok: true as const, apiKey: "secret" };
-    },
-  },
-  sessionManager: SessionManager.inMemory(),
-} as unknown as ExtensionContext;
 
 const escalationArguments = {
   status: "escalate",
@@ -53,62 +24,6 @@ const escalationArguments = {
     options: ["Use the Soul", "Use the controlling authority"],
   },
 };
-
-function response(toolName: string): AssistantMessage {
-  return fauxAssistantMessage(
-    fauxToolCall(toolName, escalationArguments),
-    { stopReason: "toolUse" },
-  );
-}
-
-function captureSystemPrompt(toolName: string, systemPrompt: { value: string | undefined }) {
-  return async (_model: unknown, request: Context) => {
-    systemPrompt.value = request.systemPrompt;
-    return response(toolName);
-  };
-}
-
-const judgeInput = {
-  soul: "judge law",
-  transcript: "judge record",
-  verdict: { judgeStatus: "converged" as const },
-};
-const reviewerInput = {
-  soul: "reviewer law",
-  canonicalSkill: "skill",
-  task: "task",
-  record: {} as any,
-  candidate: {} as any,
-};
-const doctorInput = {
-  soul: "doctor law",
-  patient: {
-    version: 1 as const,
-    identity: { issueNumber: 58, runsPath: ".ak/work/issues/58/runs" },
-    evidence: [],
-    cost: { invocations: { total: 0, sources: [] }, bytes: 0 },
-  },
-  readRecord: [],
-  testimony: { status: "refused" as const, reason: "missing", missingEvidence: [] },
-} as any;
-
-const auditorCases = [
-  {
-    role: "judge" as const,
-    toolName: JUDGE_AUDIT_TOOL_NAME,
-    run: (complete: any, auditContext: ExtensionContext = context) => createPiJudgeAuditor(complete)(judgeInput, { context: auditContext }),
-  },
-  {
-    role: "reviewer" as const,
-    toolName: REVIEWER_AUDIT_TOOL_NAME,
-    run: (complete: any, auditContext: ExtensionContext = context) => createPiReviewerAuditor(complete)(reviewerInput, { context: auditContext }),
-  },
-  {
-    role: "doctor" as const,
-    toolName: DOCTOR_AUDIT_TOOL_NAME,
-    run: (complete: any, auditContext: ExtensionContext = context) => createPiDoctorAuditor(complete)(doctorInput, { context: auditContext }),
-  },
-] as const;
 
 test("escalation projects one terminating human decision and is not an accepted Receipt", async () => {
   const decision = {

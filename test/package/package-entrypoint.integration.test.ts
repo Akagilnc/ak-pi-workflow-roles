@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 
@@ -255,15 +256,28 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         },
         sessionManager: SessionManager.inMemory(),
       } as any;
-      const inputs = {
-        judge: { soul: "caller judge soul", transcript: "judge record", verdict: { judgeStatus: "converged" } },
-        reviewer: { soul: "caller reviewer soul", canonicalSkill: "skill", record: {}, candidate: {} },
-        doctor: { soul: "caller doctor soul", patient: { version: 1, identity: { issueNumber: 58, runsPath: ".ak/work/issues/58/runs" }, evidence: [], cost: { invocations: { total: 0, sources: [] }, bytes: 0 } }, readRecord: [], testimony: { status: "refused", reason: "missing", missingEvidence: [] } },
-      } as const;
+// Judge/reviewer/doctor auditors take zero hand-delivered materials (#233).
+      // Fixer LLM auditor retired (#242) — active auditor seats only.
+      // Seed parent-session subjects + AK_ROLE_RUN_DIR so dossier preflight passes.
+      const runDirectory = resolve(installedRoot, "fixture-run");
+      await mkdir(runDirectory, { recursive: true });
+      const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+      process.env.AK_ROLE_RUN_DIR = runDirectory;
+      try {
+      context.sessionManager.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
+      context.sessionManager.appendMessage({
+        role: "assistant",
+        content: [{ type: "toolCall", id: "v1", name: "ak_judge_output", arguments: { judgeStatus: "converged" } }],
+        api: "openai-responses", provider: "test", model: "test",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "toolUse", timestamp: Date.now(),
+      });
+      context.sessionManager.appendCustomEntry("ak_reviewer_audit_candidate", { version: 1, candidate: {} });
+      context.sessionManager.appendCustomEntry("ak_doctor_audit_candidate", { version: 1, testimony: {} });
       const roles = [
-        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: (completion: ComplianceCompletion) => judge.createPiJudgeAuditor(completion)(inputs.judge as never, { context }) },
-        { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: (completion: ComplianceCompletion) => reviewer.createPiReviewerAuditor(completion)(inputs.reviewer as never, { context }) },
-        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)(inputs.doctor as never, { context }) },
+        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: (completion: ComplianceCompletion) => judge.createPiJudgeAuditor(completion)({ context }) },
+        { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: (completion: ComplianceCompletion) => reviewer.createPiReviewerAuditor(completion)({ context }) },
+        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)({ context }) },
       ] as const;
       const run = async (role: (typeof roles)[number]) => {
         let calls = 0;
@@ -318,6 +332,10 @@ test("cold-installed package audits active auditor seats from editable Souls", a
           await writeFile(role.soulPath, original, "utf8");
         }
       }
+      } finally {
+        if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+        else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+      }
       });
     },
   );
@@ -328,6 +346,10 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   // this carrier owns revise→errored / pass→terminate / escalate per role output tool.
   const root = packageRoot;
   const importSrc = (rel: string) => import(resolve(root, rel));
+  const nestedRunDir = await mkdtemp(join(tmpdir(), "ak-nested-audit-run-"));
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  process.env.AK_ROLE_RUN_DIR = nestedRunDir;
+  try {
   {
       const [judge, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
         importSrc("src/judge-auditor.ts"),
@@ -404,11 +426,12 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         };
         return { pi, tools, handlers };
       };
-      const outputContext = (name: string, id: string) => {
+      const outputContext = (name: string, id: string, arguments_: Record<string, unknown> = {}) => {
         const sessionManager = SessionManager.inMemory();
+        sessionManager.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
         sessionManager.appendMessage({
           role: "assistant",
-          content: [{ type: "toolCall", id, name, arguments: {} }],
+          content: [{ type: "toolCall", id, name, arguments: arguments_ }],
           api: "openai-responses",
           provider: "installed-role",
           model: "installed-role",
@@ -441,16 +464,16 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           const auditTool = toolNames[role as Exclude<typeof role, "fixer">];
           return fauxAssistantMessage(fauxToolCall(auditTool, selectedDecision), { stopReason: "toolUse" });
         };
-        const auditCompliance = (input: any, options: any) => {
-          if (role === "judge") return judge.createPiJudgeAuditor(complete)(input, options);
-          if (role === "reviewer") return reviewer.createPiReviewerAuditor(complete)(input, options);
-          return doctor.createPiDoctorAuditor(complete)(input, options);
+// Judge/reviewer/doctor: zero-arg materials (#233). Fixer LLM auditor retired (#242).
+        const auditCompliance = (options: any) => {
+          if (role === "judge") return judge.createPiJudgeAuditor(complete)(options);
+          if (role === "reviewer") return reviewer.createPiReviewerAuditor(complete)(options);
+          return doctor.createPiDoctorAuditor(complete)(options);
         };
         let runtime: any;
         if (role === "judge") {
           runtime = judgeRole.createJudgeRoleRuntime(harness.pi, {
             loadSoul: async () => "judge law",
-            transcriptFromContext: () => "judge transcript",
             auditSoulCompliance: auditCompliance,
           }, { failInfrastructure(error: unknown) { throw error; } });
         } else if (role === "fixer") {
@@ -505,9 +528,9 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         await retriable.runtime.activate();
         const tool = retriable.harness.tools.get(toolName);
         assert.ok(tool);
-        await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-revise`)), /violation|violates its|closed contract/);
+        await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-revise`, outputs[role] as Record<string, unknown>)), /violation|violates its|closed contract/);
         retriable.setDecision(pass);
-        const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-pass`));
+        const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-pass`, outputs[role] as Record<string, unknown>));
         assert.equal(accepted.terminate, true);
         if (role === "judge") assert.equal(accepted.details.judgeStatus, outputs[role].judgeStatus);
         else assert.equal(accepted.details.status, outputs[role].status);
@@ -517,7 +540,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         const escalated = createRole(role, escalation);
         await escalated.runtime.activate();
         const escalationTool = escalated.harness.tools.get(tool.name);
-        const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-escalate`));
+        const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-escalate`, outputs[role] as Record<string, unknown>));
         assert.equal(result.terminate, true);
         // Escalation face carries audit kind/conflicts/gate AND the seat's
         // already-delivered fields (ADR 0055). Old "exactly three keys" deepEqual
@@ -539,6 +562,11 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         );
         assert.equal(escalated.auditCalls, 1);
       }
+  }
+  } finally {
+    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+    await rm(nestedRunDir, { recursive: true, force: true });
   }
 });
 
@@ -713,8 +741,12 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           .filter((part) => part.type === "text")
           .map((part) => part.text)
           .join("\n");
+        // #233 zero projection: user prompt carries no hand-delivered soul/transcript/verdict.
+        assert.equal(/judge_soul|adjudication_record|proposed_verdict/.test(auditText), false);
+        // Soul is systemPrompt only — auditor loads it itself.
         assert.ok(
-          auditText.includes(`<judge_soul>\n${judgeSoul}\n</judge_soul>`),
+          (seenAuditContext.systemPrompt?.length ?? 0) > 0,
+          "auditor system prompt must carry the installed judge-auditor soul",
         );
 
         const acceptedResult = sessionManager

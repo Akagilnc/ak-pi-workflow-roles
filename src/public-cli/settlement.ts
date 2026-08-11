@@ -1147,6 +1147,10 @@ function isComplianceAuditIncomplete(value: unknown): value is ComplianceAuditIn
   if (!isRecord(value) || value.status !== "audit-incomplete") return false;
   const observation = value.observation;
   if (!isRecord(observation)) return false;
+  if (observation.kind === "missing-dossier") return true;
+  if (observation.kind === "missing-subject") {
+    return typeof observation.subject === "string" && observation.subject.length > 0;
+  }
   if (observation.kind === "object-status-unreadable") {
     return observation.status === "missing" || observation.status === "unknown";
   }
@@ -1400,6 +1404,22 @@ export function extractComplianceAuditIncompleteRoleOutcome(
       outputToolName,
     );
     if (roleCall === undefined) continue;
+    // Preflight missing-dossier / missing-subject never contacts the provider, so
+    // there is no retained auditor response — the role tool details are the audit.
+    // details already narrowed by isComplianceAuditIncomplete at the loop gate.
+    const details = message.details;
+    if (
+      details.observation.kind === "missing-dossier"
+      || details.observation.kind === "missing-subject"
+    ) {
+      return {
+        outcome: buildAuditIncompleteTerminalOutcome({
+          role,
+          roleCandidate: roleCall.candidate,
+          audit: details,
+        }),
+      };
+    }
     const retained = boundRetainedAuditResponse(
       entries,
       roleCall.callIndex,

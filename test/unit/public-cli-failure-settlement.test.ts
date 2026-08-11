@@ -62,10 +62,11 @@ import {
   resolveAuditedRunnerKnownFailure,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
-import type {
-  ControlledFailureCause,
-  TerminalArtifactRef,
-  TerminalResult,
+import {
+  buildAuditIncompleteTerminalOutcome,
+  type ControlledFailureCause,
+  type TerminalArtifactRef,
+  type TerminalResult,
 } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -1259,6 +1260,88 @@ test("shared audit-incomplete extraction binds every audited seat and rejects am
       ], role),
       undefined,
     );
+  }
+});
+
+test("missing-dossier and missing-subject settle as audit_incomplete with no lawful Receipt", () => {
+  const cases = [
+    {
+      observation: { kind: "missing-dossier" as const },
+      observationType: "missing-dossier",
+    },
+    {
+      observation: { kind: "missing-subject" as const, subject: "candidate-verdict" },
+      observationType: "candidate-verdict",
+    },
+  ] as const;
+
+  for (const role of AUDITOR_SOUL_ROLES) {
+    // Active auditor seats only (#242 retired fixer LLM auditor).
+    const outputTool = {
+      judge: JUDGE_OUTPUT_TOOL_NAME,
+      reviewer: REVIEWER_OUTPUT_TOOL_NAME,
+      doctor: DOCTOR_OUTPUT_TOOL_NAME,
+    }[role];
+    for (const fixture of cases) {
+      const roleCandidate = { role, status: "candidate" };
+      const audit = {
+        status: "audit-incomplete" as const,
+        observation: fixture.observation,
+        candidate: undefined,
+      };
+      // Terminal builder projects dossier discriminators (terminal.ts observationType).
+      const built = buildAuditIncompleteTerminalOutcome({
+        role,
+        roleCandidate,
+        audit,
+      });
+      assert.equal(built.kind, "audit_incomplete");
+      assert.equal(built.acceptedReceipt, false);
+      assert.equal(built.decisiveFacts.acceptedReceipt, false);
+      assert.equal(built.decisiveFacts.observationKind, fixture.observation.kind);
+      assert.equal(built.decisiveFacts.observationType, fixture.observationType);
+      assert.equal(isLawfulTypedTerminalOutcome(built), false);
+      assert.equal(exitCodeForTerminalOutcome(built), 1);
+
+      // Settlement extract binds preflight incomplete from role tool details alone
+      // (no retained auditor response — provider was never contacted).
+      const roleCallId = `${role}-${fixture.observation.kind}-call`;
+      const entries = [
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{
+              type: "toolCall",
+              id: roleCallId,
+              name: outputTool,
+              arguments: roleCandidate,
+            }],
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolCallId: roleCallId,
+            toolName: outputTool,
+            isError: false,
+            details: audit,
+          },
+        },
+      ] as const;
+      const bound = extractComplianceAuditIncompleteRoleOutcome(
+        entries as Parameters<typeof extractComplianceAuditIncompleteRoleOutcome>[0],
+        role,
+        outputTool,
+      );
+      assert.ok(bound, `${role} ${fixture.observation.kind} must bind`);
+      assert.equal(bound.outcome.kind, "audit_incomplete");
+      assert.equal(bound.outcome.acceptedReceipt, false);
+      assert.deepEqual(bound.outcome.audit.observation, fixture.observation);
+      assert.equal(isLawfulTypedTerminalOutcome(bound.outcome), false);
+      assert.equal(exitCodeForTerminalOutcome(bound.outcome), 1);
+    }
   }
 });
 

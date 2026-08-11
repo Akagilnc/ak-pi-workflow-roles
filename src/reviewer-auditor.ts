@@ -7,16 +7,11 @@ import {
   type ComplianceCompletion,
   type ComplianceDecision,
 } from "./compliance-transport.ts";
-import type { ReviewerAuditInput } from "./reviewer-role.ts";
-import { reviewerAuditReadiness } from "./reviewer-audit-facts.ts";
-
-export { reviewerAuditReadiness } from "./reviewer-audit-facts.ts";
-export class ReviewerAuditEvidenceError extends Error {
-  constructor(readonly missing: readonly string[]) {
-    super(`Reviewer audit evidence is incomplete: ${missing.join("; ")}`);
-    this.name = "ReviewerAuditEvidenceError";
-  }
-}
+import {
+  readReviewerAuditSubjects,
+  resolveAuditDossier,
+  toAuditIncomplete,
+} from "./dossier-resolution.ts";
 
 export const REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
 
@@ -27,37 +22,25 @@ export type ReviewerAuditOptions = {
 
 const reviewerDecisionTool = createComplianceDecisionTool(
   REVIEWER_AUDIT_TOOL_NAME,
-  "Decide whether the Reviewer receipt demonstrably followed its supplied method and boundaries.",
+  "Decide whether the Reviewer receipt demonstrably followed its method and boundaries from the dossier.",
 );
 
+/**
+ * Reviewer auditor: zero hand-delivered materials / no readiness projection.
+ * Candidate receipt must already be on the parent-session books.
+ */
 export function createPiReviewerAuditor(
   runCompletion?: ComplianceCompletion,
-): (
-  input: ReviewerAuditInput,
-  options: ReviewerAuditOptions,
-) => Promise<ComplianceDecision> {
-  return async (input, options) => {
-    const readiness = reviewerAuditReadiness(input.record);
-    if (!readiness.ready) throw new ReviewerAuditEvidenceError(readiness.missing);
+): (options: ReviewerAuditOptions) => Promise<ComplianceDecision> {
+  return async (options) => {
+    const dossier = resolveAuditDossier();
+    if (dossier.status === "incomplete") return toAuditIncomplete(dossier.observation);
+    const subjects = readReviewerAuditSubjects(options.context);
+    if (subjects.status === "incomplete") return toAuditIncomplete(subjects.observation);
+
     return runComplianceAudit({
       tool: reviewerDecisionTool,
       systemPrompt: await loadAuditorSoul("reviewer"),
-      serializedInput: [
-        "<reviewer_soul>", input.soul, "</reviewer_soul>",
-        "<canonical_code_review_skill>", input.canonicalSkill,
-        "</canonical_code_review_skill>",
-        ...(input.callerProvenance === undefined || input.callerProvenance.trim() === ""
-          ? []
-          : [
-              "<caller_provenance provenance-only=\"true\">",
-              input.callerProvenance,
-              "</caller_provenance>",
-            ]),
-        "<structured_execution_record>", JSON.stringify(input.record),
-        "</structured_execution_record>",
-        "<candidate_receipt>", JSON.stringify(input.candidate),
-        "</candidate_receipt>",
-      ].join("\n"),
       roleLabel: "Reviewer compliance audit",
       invalidDecisionLabel: "invalid reviewer audit decision",
       ...(runCompletion === undefined ? {} : { runCompletion }),
