@@ -75,7 +75,6 @@ export type PackagedMethodSkillMaterial = Readonly<{
 }>;
 
 const METHOD_SKILL_RELATIVE_ROOT = "resources/methods" as const;
-const UNCHANGED_PINNED_SNAPSHOT = "unchanged-pinned-snapshot" as const;
 const GIT_COMMIT_RE = /^[0-9a-f]{40}$/;
 const GIT_BLOB_RE = /^[0-9a-f]{40}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
@@ -88,56 +87,6 @@ const REQUIRED_COMPANIONS: Readonly<
   "code-review": ["agents/openai.yaml"],
   "resolving-merge-conflicts": ["agents/openai.yaml"],
 };
-
-/**
- * Sealed offline pin for packageAdaptation `unchanged-pinned-snapshot`.
- * Adjacent provenance.json alone is not the unchanged-upstream proof: load
- * requires this sealed identity to match, so rewriting package bytes together
- * with the adjacent manifest cannot preserve the claim.
- */
-type SealedUnchangedMethodPin = Readonly<{
-  commit: string;
-  tag: string;
-  path: string;
-  files: Readonly<Record<string, PackagedMethodFileProvenance>>;
-}>;
-
-/** Only unchanged-pinned-snapshot methods carry sealed offline pins. */
-export const SEALED_UNCHANGED_METHOD_PINS: Readonly<{
-  readonly tdd: SealedUnchangedMethodPin;
-}> = Object.freeze({
-  tdd: Object.freeze({
-    commit: "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
-    tag: "v1.2.2",
-    path: "skills/engineering/tdd",
-    files: Object.freeze({
-      "SKILL.md": Object.freeze({
-        sha256:
-          "5e6b9c16b547113e90afbb946489d1c1384be5c2128f0159bd0bee57251ecf08",
-        byteLength: 3568,
-        gitBlob: "ead7781d79eb11cdafa1ac2db978cadef0eba240",
-      }),
-      "tests.md": Object.freeze({
-        sha256:
-          "859f9e592c188fda4fc7277dd180e4ce9c7a2e13f6efe1f6f29eccc9d28c106a",
-        byteLength: 2214,
-        gitBlob: "7ab86479f925a1f9e8ba680af33cb3b12e015381",
-      }),
-      "mocking.md": Object.freeze({
-        sha256:
-          "3ceb807fdf4a47d6a93d4d9a891e5ba6d362a6247bd08adc451feebfc17361ef",
-        byteLength: 1481,
-        gitBlob: "71cbfee674d93244ce81d1830b930ca9a69200bd",
-      }),
-      "agents/openai.yaml": Object.freeze({
-        sha256:
-          "ea6f01cf1b8c06a4b0f5b649d74b1b8ce8685e72af1b38d70d877693e092af0b",
-        byteLength: 87,
-        gitBlob: "651b838a7663e027b1b8884491e867f26bb9a021",
-      }),
-    }),
-  }),
-});
 
 /** Git blob OID for raw file bytes (sha1 of `blob <size>\\0` + content). */
 export function gitBlobOid(bytes: string | Uint8Array): string {
@@ -282,58 +231,6 @@ function parseProvenance(
 }
 
 /**
- * Require sealed unchanged-upstream identity when packageAdaptation claims it.
- * Adjacent manifest self-consistency is not sufficient.
- */
-function assertSealedUnchangedUpstreamPin(
-  provenance: PackagedMethodSkillProvenance,
-): void {
-  if (provenance.packageAdaptation !== UNCHANGED_PINNED_SNAPSHOT) return;
-  if (provenance.name !== "tdd") {
-    throw new Error(
-      `Packaged method ${provenance.name} claims unchanged-pinned-snapshot without a sealed pin`,
-    );
-  }
-  const sealed = SEALED_UNCHANGED_METHOD_PINS.tdd;
-  if (provenance.upstream.commit !== sealed.commit) {
-    throw new Error(
-      `Packaged method ${provenance.name} upstream.commit does not match sealed unchanged pin`,
-    );
-  }
-  if (provenance.upstream.tag !== sealed.tag) {
-    throw new Error(
-      `Packaged method ${provenance.name} upstream.tag does not match sealed unchanged pin`,
-    );
-  }
-  if (provenance.upstream.path !== sealed.path) {
-    throw new Error(
-      `Packaged method ${provenance.name} upstream.path does not match sealed unchanged pin`,
-    );
-  }
-  const sealedRels = Object.keys(sealed.files).sort();
-  const actualRels = Object.keys(provenance.files).sort();
-  if (sealedRels.length !== actualRels.length ||
-    sealedRels.some((rel, index) => rel !== actualRels[index])) {
-    throw new Error(
-      `Packaged method ${provenance.name} file set does not match sealed unchanged pin`,
-    );
-  }
-  for (const rel of sealedRels) {
-    const expected = sealed.files[rel]!;
-    const actual = provenance.files[rel]!;
-    if (
-      actual.sha256 !== expected.sha256 ||
-      actual.byteLength !== expected.byteLength ||
-      actual.gitBlob !== expected.gitBlob
-    ) {
-      throw new Error(
-        `Packaged method ${provenance.name}/${rel} identity does not match sealed unchanged pin`,
-      );
-    }
-  }
-}
-
-/**
  * Load a package-owned method Skill and verify per-file provenance digests.
  * Does not consult HOME or ambient Skill discovery paths.
  */
@@ -360,7 +257,6 @@ export async function loadPackagedMethodSkillMaterial(
     });
   }
   const provenance = parseProvenance(provenanceJson, name);
-  assertSealedUnchangedUpstreamPin(provenance);
 
   // Verify every declared file digest + independent git blob against package bytes (no network).
   for (const [rel, expected] of Object.entries(provenance.files)) {
