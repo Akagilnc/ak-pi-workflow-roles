@@ -430,16 +430,21 @@ export async function executeAuditorChild(options) {
         });
         const cwd = options.context.cwd ?? process.cwd();
         let decision;
+        let decisionSubmitted = false;
+        let decisionCallId;
         let decisionToolFailure;
         const tool = wrapPackageOwnedToolDefinition({
             ...options.tool,
             label: options.roleLabel,
             async execute(...args) {
-                if (decision !== undefined)
+                if (decisionSubmitted && decisionCallId !== args[0]) {
                     throw new Error("Auditor decision was submitted more than once");
+                }
                 try {
                     const result = await options.tool.execute(...args);
                     decision = args[1];
+                    decisionCallId = args[0];
+                    decisionSubmitted = true;
                     return result;
                 }
                 catch (error) {
@@ -487,9 +492,32 @@ export async function executeAuditorChild(options) {
         let retentionFailure;
         let retainedResponse;
         const registeredToolNames = new Set(session.getAllTools().map((entry) => entry.name));
+        const evidenceToolFailures = new Map();
+        for (const name of registeredToolNames) {
+            if (name === tool.name)
+                continue;
+            const definition = session.getToolDefinition(name);
+            if (definition === undefined)
+                continue;
+            const execute = definition.execute.bind(definition);
+            definition.execute = async (...args) => {
+                try {
+                    return await execute(...args);
+                }
+                catch (error) {
+                    evidenceToolFailures.set(args[0], error);
+                    throw error;
+                }
+            };
+        }
         const findToolFailure = (response) => {
-            const callIds = new Set(response.content.flatMap((part) => part.type === "toolCall" && part.name !== tool.name && registeredToolNames.has(part.name) ? [part.id] : []));
-            return [...session.messages].reverse().find((message) => message.role === "toolResult" && callIds.has(message.toolCallId) && message.isError);
+            const callIds = response.content.flatMap((part) => part.type === "toolCall" && part.name !== tool.name && registeredToolNames.has(part.name) ? [part.id] : []);
+            for (const callId of callIds) {
+                if (evidenceToolFailures.has(callId))
+                    return evidenceToolFailures.get(callId);
+            }
+            const callIdSet = new Set(callIds);
+            return [...session.messages].reverse().find((message) => message.role === "toolResult" && callIdSet.has(message.toolCallId) && message.isError);
         };
         const unsubscribe = session.subscribe((event) => {
             if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
@@ -501,11 +529,23 @@ export async function executeAuditorChild(options) {
                 catch (error) {
                     retentionFailure = error;
                 }
+                for (const part of event.message.content) {
+                    if (part.type !== "toolCall" || part.name !== tool.name)
+                        continue;
+                    if (!decisionSubmitted) {
+                        decision = part.arguments;
+                        decisionCallId = part.id;
+                        decisionSubmitted = true;
+                    }
+                    else if (decisionCallId !== part.id) {
+                        decisionToolFailure = new Error("Auditor decision was submitted more than once");
+                    }
+                }
                 if (turns >= AUDITOR_TURN_LIMIT)
                     boundaryResponse = event.message;
             }
             if (event.type === "turn_end" &&
-                (decision !== undefined || boundaryResponse !== undefined || retentionFailure !== undefined)) {
+                (decisionSubmitted || boundaryResponse !== undefined || retentionFailure !== undefined)) {
                 void session.abort();
             }
         });
@@ -531,7 +571,7 @@ export async function executeAuditorChild(options) {
                 throw inherited.streamFailure;
             if (decisionToolFailure !== undefined)
                 throw decisionToolFailure;
-            const relevantResponse = decision === undefined
+            const relevantResponse = !decisionSubmitted
                 ? boundaryResponse
                 : [...session.messages].reverse().find((message) => message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
             if (relevantResponse !== undefined) {
@@ -541,7 +581,7 @@ export async function executeAuditorChild(options) {
             }
             if (retentionFailure !== undefined && retainedResponse?.stopReason !== "error")
                 throw retentionFailure;
-            if (boundaryResponse !== undefined && decision === undefined) {
+            if (boundaryResponse !== undefined && !decisionSubmitted) {
                 const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
                 throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
                     stopReason: boundaryResponse.stopReason,
@@ -551,7 +591,7 @@ export async function executeAuditorChild(options) {
             const assistants = [...session.messages]
                 .reverse()
                 .filter((message) => message.role === "assistant");
-            const response = decision === undefined
+            const response = !decisionSubmitted
                 ? assistants[0]
                 : assistants.find((message) => message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
             if (response !== undefined) {
@@ -610,7 +650,7 @@ export async function executeAuditorChild(options) {
             if (response === undefined
                 || response.stopReason === "error"
                 || response.stopReason === "aborted"
-                || decision === undefined) {
+                || !decisionSubmitted) {
                 throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
             }
             return { decision, response };

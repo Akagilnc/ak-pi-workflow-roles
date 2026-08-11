@@ -550,15 +550,21 @@ export async function executeAuditorChild(
     const cwd = options.context.cwd ?? process.cwd();
 
     let decision: unknown;
+    let decisionSubmitted = false;
+    let decisionCallId: string | undefined;
     let decisionToolFailure: unknown;
     const tool = wrapPackageOwnedToolDefinition({
       ...options.tool,
       label: options.roleLabel,
       async execute(...args: any[]) {
-        if (decision !== undefined) throw new Error("Auditor decision was submitted more than once");
+        if (decisionSubmitted && decisionCallId !== args[0]) {
+          throw new Error("Auditor decision was submitted more than once");
+        }
         try {
           const result = await options.tool.execute(...args);
           decision = args[1];
+          decisionCallId = args[0];
+          decisionSubmitted = true;
           return result;
         } catch (error) {
           decisionToolFailure = error;
@@ -609,21 +615,50 @@ export async function executeAuditorChild(
     let retentionFailure: unknown;
     let retainedResponse: AssistantMessage | undefined;
     const registeredToolNames = new Set(session.getAllTools().map((entry) => entry.name));
+    const evidenceToolFailures = new Map<string, unknown>();
+    for (const name of registeredToolNames) {
+      if (name === tool.name) continue;
+      const definition = session.getToolDefinition(name);
+      if (definition === undefined) continue;
+      const execute = definition.execute.bind(definition);
+      definition.execute = async (...args: any[]) => {
+        try {
+          return await (execute as (...executeArgs: any[]) => Promise<any>)(...args);
+        } catch (error) {
+          evidenceToolFailures.set(args[0], error);
+          throw error;
+        }
+      };
+    }
     const findToolFailure = (response: AssistantMessage): unknown => {
-      const callIds = new Set(response.content.flatMap((part) =>
-        part.type === "toolCall" && part.name !== tool.name && registeredToolNames.has(part.name) ? [part.id] : []));
+      const callIds = response.content.flatMap((part) =>
+        part.type === "toolCall" && part.name !== tool.name && registeredToolNames.has(part.name) ? [part.id] : []);
+      for (const callId of callIds) {
+        if (evidenceToolFailures.has(callId)) return evidenceToolFailures.get(callId);
+      }
+      const callIdSet = new Set(callIds);
       return [...session.messages].reverse().find((message) =>
-        message.role === "toolResult" && callIds.has(message.toolCallId) && message.isError);
+        message.role === "toolResult" && callIdSet.has(message.toolCallId) && message.isError);
     };
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
         turns += 1;
         retainedResponse = event.message;
         try { options.retainResponse?.(event.message); } catch (error) { retentionFailure = error; }
+        for (const part of event.message.content) {
+          if (part.type !== "toolCall" || part.name !== tool.name) continue;
+          if (!decisionSubmitted) {
+            decision = part.arguments;
+            decisionCallId = part.id;
+            decisionSubmitted = true;
+          } else if (decisionCallId !== part.id) {
+            decisionToolFailure = new Error("Auditor decision was submitted more than once");
+          }
+        }
         if (turns >= AUDITOR_TURN_LIMIT) boundaryResponse = event.message;
       }
       if (event.type === "turn_end" &&
-          (decision !== undefined || boundaryResponse !== undefined || retentionFailure !== undefined)) {
+          (decisionSubmitted || boundaryResponse !== undefined || retentionFailure !== undefined)) {
         void session.abort();
       }
     });
@@ -642,7 +677,7 @@ export async function executeAuditorChild(
       if (options.signal?.aborted) throw options.signal.reason;
       if (inherited.streamFailure !== undefined) throw inherited.streamFailure;
       if (decisionToolFailure !== undefined) throw decisionToolFailure;
-      const relevantResponse = decision === undefined
+      const relevantResponse = !decisionSubmitted
         ? boundaryResponse
         : [...session.messages].reverse().find((message): message is AssistantMessage =>
           message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
@@ -651,7 +686,7 @@ export async function executeAuditorChild(
         if (toolFailure !== undefined) throw toolFailure;
       }
       if (retentionFailure !== undefined && retainedResponse?.stopReason !== "error") throw retentionFailure;
-      if (boundaryResponse !== undefined && decision === undefined) {
+      if (boundaryResponse !== undefined && !decisionSubmitted) {
         const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
         throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
           stopReason: boundaryResponse.stopReason,
@@ -662,7 +697,7 @@ export async function executeAuditorChild(
       const assistants = [...session.messages]
         .reverse()
         .filter((message): message is AssistantMessage => message.role === "assistant");
-      const response = decision === undefined
+      const response = !decisionSubmitted
         ? assistants[0]
         : assistants.find((message) =>
           message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
@@ -728,7 +763,7 @@ export async function executeAuditorChild(
         response === undefined
         || response.stopReason === "error"
         || response.stopReason === "aborted"
-        || decision === undefined
+        || !decisionSubmitted
       ) {
         throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
       }
