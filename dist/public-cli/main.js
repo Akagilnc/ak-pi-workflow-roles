@@ -11553,9 +11553,12 @@ async function resolveSelectedPi(command, env) {
   for (const candidate of candidates) {
     try {
       await access(candidate, constants.X_OK);
-      return await realpath3(candidate);
-    } catch {
+    } catch (error) {
+      const code = error.code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") continue;
+      throw error;
     }
+    return await realpath3(candidate);
   }
   throw new Error(`Pi executable not found: ${command}`);
 }

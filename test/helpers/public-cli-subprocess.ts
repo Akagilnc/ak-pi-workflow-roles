@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
 
+import { isolatedTestProcessEnv } from "./test-process-fixtures.ts";
+
 export type PublicCliSubprocessResult = {
   code: number | null;
   stdout: string;
@@ -21,12 +23,11 @@ export async function runPublicCliSubprocess(
   },
 ): Promise<PublicCliSubprocessResult> {
   return await new Promise((resolve, reject) => {
-    const mergedEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...options.env,
-      HOME: options.home,
-      PI_CODING_AGENT_DIR: options.agentDir,
-    };
+    const mergedEnv = isolatedTestProcessEnv({
+      env: { ...process.env, ...options.env },
+      home: options.home,
+      agentDir: options.agentDir,
+    });
     const child = spawn(bin, [...args], {
       cwd: options.cwd ?? options.home,
       env: {

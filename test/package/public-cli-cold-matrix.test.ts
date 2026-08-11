@@ -39,6 +39,7 @@ import {
 } from "../../src/public-cli/registry.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
+import { TEST_PI_VERSION_BRANCH } from "../helpers/test-process-fixtures.ts";
 
 /** Required package-owned method trees shipped in the release artifact. */
 const PACKAGED_METHOD_TREES = [
@@ -121,7 +122,7 @@ async function writePiArgvShim(
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-if (process.argv[2] === "--version") { console.log("test-pi-1.0.0"); process.exit(0); }
+${TEST_PI_VERSION_BRANCH}
 import { spawn } from "node:child_process";
 const args = process.argv.slice(2);
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args), "utf8");
@@ -145,7 +146,7 @@ child.on("close", (code, signal) => {
       shimPath,
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-if (process.argv[2] === "--version") { console.log("test-pi-1.0.0"); process.exit(0); }
+${TEST_PI_VERSION_BRANCH}
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
 process.exit(${exitCode});
 `,
