@@ -1513,8 +1513,6 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
   assert.equal(resolveNavigatorAuthorityMaterial("", undefined), undefined);
 
   const root = await mkdtemp(join(tmpdir(), "navigator-input-authority-"));
-  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-  delete process.env.AK_ROLE_RUN_DIR;
   try {
     const workRoot = resolve(root, ".ak/work/issues/91");
     await mkdir(workRoot, { recursive: true });
