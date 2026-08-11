@@ -128,6 +128,7 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
           AK_HEALTHY_NAVIGATOR: "1",
           AK_NAVIGATOR_ROOT: issueRoot,
           AK_ROLE_SESSION_DIR: sessionDirectory,
+          AK_ROLE_RUN_DIR: undefined,
           PI_OFFLINE: "1",
         },
       });
@@ -342,20 +343,124 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
   }
 });
 
-test("fatal Judge audit failure settles with at most one Navigator preparation on Pi 0.84.1", async () => {
+test("fatal Judge audit failure drains one healthy packaged Navigator without advice", async () => {
+  // Process boundary required: process-release evidence is emitted on process exit.
   const result = await runHealthyNavigatorAuditFailureCli("json");
   assert.equal(result.timedOut, false, "subprocess did not time out");
   assert.equal(result.code, 1, "subprocess exits nonzero");
-  const evidenceLine = result.stderr.split("\n").find((line) => line.startsWith("AUDIT_FAILURE_EVIDENCE="));
+  const evidenceLine = result.stderr
+    .split("\n")
+    .find((line) => line.startsWith("AUDIT_FAILURE_EVIDENCE="));
   assert.ok(evidenceLine, `must emit typed evidence: ${result.stderr}`);
-  const evidence = JSON.parse(evidenceLine.slice("AUDIT_FAILURE_EVIDENCE=".length)) as {
+  const evidence = JSON.parse(
+    evidenceLine.slice("AUDIT_FAILURE_EVIDENCE=".length),
+  ) as {
+    providerCalls: number;
     navigatorCalls: number;
-    role: { failedOutputCorrelation: boolean };
+    navigator: {
+      startedAt: string;
+      completedAt: string;
+      preparedAt: string;
+      settledAt: string;
+      settlementKind: string;
+      inputReleasedAt: string;
+      releaseAfterDrain: boolean;
+    };
+    role: {
+      failedOutput: {
+        toolCallId: string;
+        toolName: string;
+        isError: boolean;
+        details: Record<string, unknown>;
+      };
+      failedOutputAt: string;
+      failedOutputCorrelation: boolean;
+    };
   };
-  assert.ok(evidence.navigatorCalls === 0 || evidence.navigatorCalls === 1, "fatal settlement must never duplicate Navigator preparation");
-  assert.equal(evidence.role.failedOutputCorrelation, true, "failure correlates the exact Judge output call");
-  assert.match(result.stderr, /AUDIT_FAILURE_PROCESS_RELEASE=/, "process release remains observable");
-  assertJsonFailureFacts(result, "ak_judge_output", "healthy-navigator fatal settlement");
+  assert.equal(evidence.navigatorCalls, 1);
+  assert.equal(evidence.navigator.settlementKind, "role_infrastructure_failure");
+  const timestamp = (value: string, label: string) => {
+    const parsed = Date.parse(value);
+    assert.ok(Number.isFinite(parsed), `${label} must be an ISO timestamp`);
+    return parsed;
+  };
+  const startedAt = timestamp(evidence.navigator.startedAt, "preparation start");
+  const completedAt = timestamp(evidence.navigator.completedAt, "preparation completion");
+  const preparedAt = timestamp(evidence.navigator.preparedAt, "typed preparation persistence");
+  const settledAt = timestamp(evidence.navigator.settledAt, "typed settlement");
+  const inputReleasedAt = timestamp(evidence.navigator.inputReleasedAt, "input release");
+  const processReleaseLine = result.stderr
+    .split("\n")
+    .find((line) => line.startsWith("AUDIT_FAILURE_PROCESS_RELEASE="));
+  assert.ok(processReleaseLine, "must emit process release evidence");
+  const processReleasedAt = timestamp(
+    (JSON.parse(processReleaseLine.slice("AUDIT_FAILURE_PROCESS_RELEASE=".length)) as {
+      at: string;
+    }).at,
+    "process release",
+  );
+  timestamp(evidence.role.failedOutputAt, "failed output result");
+  assert.ok(
+    startedAt <= completedAt && completedAt <= preparedAt && preparedAt <= settledAt,
+    "Navigator preparation must drain before settlement",
+  );
+  assert.ok(
+    settledAt <= inputReleasedAt && inputReleasedAt <= processReleasedAt,
+    "input and process release must follow the drained Navigator settlement",
+  );
+  assert.deepEqual(evidence.role.failedOutput, {
+    toolCallId: "fatal-judge",
+    toolName: "ak_judge_output",
+    isError: true,
+    // Shared lifecycle persists the typed infra fact so exact-session restart
+    // classifies this terminal as durable completion (not a retryable isError).
+    details: {
+      kind: "role_infrastructure_failure",
+      source: "shared-role-lifecycle",
+      reasonCode: "host_failure",
+    },
+  });
+  assert.equal(
+    evidence.role.failedOutputCorrelation,
+    true,
+    "failure must correlate the exact Judge output call",
+  );
+  assert.equal(evidence.navigator.releaseAfterDrain, true);
+  const events = result.stdout
+    .split("\n")
+    .filter((line) => line.trim().startsWith("{"))
+    .map((line) => JSON.parse(line) as any);
+  const failedOutputs = events.filter(
+    (event) =>
+      event.type === "message_end" &&
+      event.message?.role === "toolResult" &&
+      event.message.toolName === "ak_judge_output" &&
+      event.message.toolCallId === "fatal-judge",
+  );
+  assert.equal(failedOutputs.length, 1, "must report exactly the failed Judge output call");
+  assert.equal(failedOutputs[0].message.isError, true);
+  assert.equal(
+    events.some(
+      (event) =>
+        event.type === "message_end" &&
+        event.message?.role === "assistant" &&
+        event.message.stopReason === "error",
+    ),
+    true,
+  );
+  // JSON stream emits message_end with role=custom; session principal uses custom_message.
+  const attendance = events.filter(
+    (event) =>
+      (event.type === "message_end" &&
+        event.message?.role === "custom" &&
+        event.message?.customType === "ak-navigator-attendance") ||
+      (event.type === "custom_message" && event.customType === "ak-navigator-attendance"),
+  );
+  assert.equal(attendance.length, 1, "infrastructure failure emits affirmative typed no-advice");
+  assert.equal(
+    attendance[0]?.message?.details?.disposition ?? attendance[0]?.details?.disposition,
+    "no-advice",
+  );
 });
 
 test("coder apply without skill expansion rejects completed as non-receipt", async () => {
