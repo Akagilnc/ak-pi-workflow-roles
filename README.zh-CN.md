@@ -37,7 +37,7 @@ ak-role config set navigator openai-codex/gpt-5.6-luna:medium
 
 ## 调用百官
 
-通用旗标：`--attach <文件>`（可重复，受理即冻结）、`--project <路径>`。指令对大理寺、门下省、太医署可省略，对将作监、修内司、御史台、校书郎必须非空。
+多数角色支持 `--attach <文件>`（可重复，受理即冻结），但御史台不接受该旗标。御史台必须用 `--base <revision>` 选定 fixed point，审查材料由包内 bundle 机制取得，而非由调用者附加。所有角色都支持 `--project <路径>`。指令对大理寺、门下省、太医署可省略，对将作监、修内司、御史台、校书郎必须非空。
 
 ```bash
 # 大理寺——审断所供材料；自行推断举证责任，无 burden 旗标
@@ -49,8 +49,9 @@ ak-role coder apply --attach ./plan.md "Implement the approved slice."
 # apply 强制包内 TDD 方法；勿绑 home Skill 顶替
 
 # 御史台——固定目标双轴察举（Standards + Spec）
-ak-role reviewer --base main --attach ./issue.md "Review the branch."
-# --base 只是提示；completed ≠ 准行——findings 在 Terminal 里
+ak-role reviewer --base main "Review the branch."
+# --base 为必填并钉住 fixed point；御史台不接受 --attach
+# completed ≠ 准行——findings 在 Terminal 里
 
 # 门下省——GitHub PR 收证；仅 github.com，需 gh 已认证；一次性
 ak-role collector --pr 42 --leg codex:CodexBot --leg cursor:cursor-bot,cursor-bot-2
