@@ -32,7 +32,6 @@ import {
   JUDGE_OUTPUT_TOOL_NAME,
   createRoleRuntimeExtension,
   type JudgeVerdict,
-  type SoulAuditInput,
 } from "../../src/role-runtime.ts";
 import {
   readTypedHttp429Observation,
@@ -400,7 +399,6 @@ test("focused Judge controller registers output without narrowing host tools", a
     harness.pi as ExtensionAPI,
     {
       loadSoul: async () => "  JUDGE LAW  ",
-      transcriptFromContext: () => "record",
       auditSoulCompliance: async () => ({ status: "pass" }),
     },
     { failInfrastructure(error) { throw error; } },
@@ -492,7 +490,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           harness.pi as ExtensionAPI,
           {
             loadSoul: async () => "judge",
-            transcriptFromContext: () => "record",
             auditSoulCompliance: async () => ({ status: "pass", usage }),
           },
           { failInfrastructure(error) { throw error; } },
@@ -592,9 +589,9 @@ test("production audit transcript preserves the assignment received by the judge
 });
 
 test("judge role injects its soul and accepts a soul-compliant verdict", async () => {
-  const seenAudits: SoulAuditInput[] = [];
-  const { harness, tool } = await startJudge(async (input) => {
-    seenAudits.push(input);
+  let auditCalls = 0;
+  const { harness, tool } = await startJudge(async () => {
+    auditCalls += 1;
     return { status: "pass" };
   });
 
@@ -614,13 +611,8 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
     toolCallContext([{ id: "call-1", arguments: verdict }]),
   );
 
-  assert.deepEqual(seenAudits, [
-    {
-      soul: "JUDGE LAW\nApply the law.",
-      transcript: "review evidence and adjudication",
-      verdict,
-    },
-  ]);
+  // Zero hand-delivery: auditor is invoked with context only (no projected materials).
+  assert.equal(auditCalls, 1);
   assert.equal(result.terminate, true);
   assert.deepEqual(result.details, verdict);
 });

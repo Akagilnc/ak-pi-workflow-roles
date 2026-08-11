@@ -44,8 +44,6 @@ import {
   packagedRoleMetadata,
 } from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
-export { runAuditorRole } from "../src/role-runtime.ts";
-
 const extensionPath = fileURLToPath(import.meta.url);
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const judgeSoulPath = fileURLToPath(new URL("../souls/judge.md", import.meta.url));

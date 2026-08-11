@@ -35,7 +35,7 @@ import {
   createCollectorRoleRuntime,
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
-import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
+import { createDoctorRoleRuntime } from "./doctor-role.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -49,14 +49,11 @@ import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, p
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
-  type JudgeAdjudicativeVerdict,
-  type SoulAuditInput,
   type SoulAuditResult,
 } from "./judge-role.ts";
 import {
   createReviewerRoleRuntime,
   type ReviewerActivation,
-  type ReviewerAuditInput,
 } from "./reviewer-role.ts";
 import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
@@ -135,28 +132,24 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
-export { runAuditorRole } from "./auditor-role.ts";
-export type { AuditorCompletion, AuditorDecisionTool } from "./auditor-role.ts";
+export { executeAuditorChild } from "./evidence-child-executor.ts";
+export type { AuditorCompletion, AuditorDecisionTool } from "./evidence-child-executor.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
   DOCTOR_OUTPUT_TOOL_NAME,
-  type DoctorAuditInput,
 } from "./doctor-role.ts";
 export type { DoctorCase, DoctorCaseCost, DoctorSubmission, DoctorOutput, DoctorFinding } from "./doctor-contracts.ts";
 export { validateDoctorSubmissionShape, validateDoctorOutput, DoctorEvidenceStore } from "./doctor-contracts.ts";
 export { loadDoctorCase } from "./doctor-evidence.ts";
 export {
   JUDGE_OUTPUT_TOOL_NAME,
-  type JudgeAdjudicativeVerdict,
   type JudgeVerdict,
-  type SoulAuditInput,
   type SoulAuditResult,
 } from "./judge-role.ts";
 export {
   AGENT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
-  type ReviewerAuditInput,
   type ReviewerIntent,
 } from "./reviewer-role.ts";
 export {
@@ -318,7 +311,7 @@ export type RoleRuntimeDependencies = {
   loadMergerInput?(path: string): Promise<unknown>;
   mergerGitState?: MergerRoleDependencies["gitState"];
   createMergerGitState?(repositoryRoot: string): MergerRoleDependencies["gitState"];
-  auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
+  auditDoctorCompliance?(options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
   createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
@@ -333,11 +326,9 @@ export type RoleRuntimeDependencies = {
   shutdownReviewerAgent?(): Promise<void>;
   transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
-    input: SoulAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
   auditReviewerCompliance?(
-    input: ReviewerAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<ComplianceDecision>;
   activationClock?(): string;
@@ -586,7 +577,6 @@ export function createRoleRuntimeExtension(
       pi,
       {
         loadSoul: dependencies.loadJudgeSoul,
-        transcriptFromContext: dependencies.transcriptFromContext,
         auditSoulCompliance: dependencies.auditSoulCompliance,
       },
       hostActions,
@@ -658,11 +648,11 @@ export function createRoleRuntimeExtension(
         ...(dependencies.shutdownReviewerAgent === undefined
           ? {}
           : { shutdownAgent: dependencies.shutdownReviewerAgent }),
-        async auditCompliance(input, options) {
+        async auditCompliance(options) {
           if (dependencies.auditReviewerCompliance === undefined) {
             throw new Error("Reviewer runtime dependencies are not configured");
           }
-          return dependencies.auditReviewerCompliance(input, options);
+          return dependencies.auditReviewerCompliance(options);
         },
       },
       hostActions,
@@ -670,7 +660,7 @@ export function createRoleRuntimeExtension(
     const doctor = createDoctorRoleRuntime(pi, {
       async loadSoul() { if (!dependencies.loadDoctorSoul) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorSoul(); },
       async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
-      async auditCompliance(input, options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(input, options); },
+      async auditCompliance(options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(options); },
     }, hostActions);
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(pi, {
