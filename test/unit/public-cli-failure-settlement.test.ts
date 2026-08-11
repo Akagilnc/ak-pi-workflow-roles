@@ -2910,6 +2910,91 @@ test("bound auditor reader propagates malformed discovered JSONL", async () => {
   });
 });
 
+test("public Judge settles failed typed output evidence before nonzero stderr fallback", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["--model", "xai/grok-4:off", "judge", "--project", project, "typed output host failure"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-typed-output-host-failure-001",
+        io,
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await writeFile(sessionFile, [
+            { type: "session", id: "parent-session" },
+            { type: "message", id: "current-user", message: { role: "user" } },
+            { type: "custom", customType: "business-evidence", data: { observed: true } },
+            { type: "message", id: "output-call", message: { role: "assistant", content: [{ type: "toolCall", id: "host-failed-output", name: "ak_judge_output", arguments: { judgeStatus: "converged" } }] } },
+            { type: "message", id: "output-result", parentId: "output-call", message: {
+              role: "toolResult",
+              toolCallId: "host-failed-output",
+              toolName: "ak_judge_output",
+              isError: true,
+              content: [{ type: "text", text: "pi host could not load its runtime" }],
+              details: { kind: "role_infrastructure_failure", source: "shared-role-lifecycle", reasonCode: "host_failure" },
+            } },
+          ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+          return { code: 1, stderr: "VARIABLE DECOY service tier switched successfully\n", timedOut: false, args: [...args] };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    if (result.terminal!.roleOutcome.kind !== "failure") return;
+    assert.equal(result.terminal!.roleOutcome.cause, "output");
+    assert.equal(result.terminal!.roleOutcome.diagnostic, "pi host could not load its runtime");
+    assert.equal(JSON.stringify(result.terminal).includes("VARIABLE DECOY"), false);
+    const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
+    assert.ok(errorRef);
+    const durable = JSON.parse(await readFile(errorRef.path, "utf8"));
+    assert.equal(durable.diagnostic, "pi host could not load its runtime");
+    assert.deepEqual(durable.identity, { name: "ak_judge_output", code: "host-failed-output" });
+    assert.deepEqual(durable.details, {
+      kind: "role_infrastructure_failure",
+      source: "shared-role-lifecycle",
+      reasonCode: "host_failure",
+      code: 1,
+    });
+    assert.equal(JSON.stringify(durable).includes("VARIABLE DECOY"), false);
+    assert.equal(stdout.length, 1);
+    assert.ok(stderr.length > 0);
+  });
+});
+
+test("typed output failure cannot bind a call from an earlier attempt", async () => {
+  await withTempHome(async (home) => {
+    const sessionFile = join(home, "session.jsonl");
+    await writeFile(sessionFile, [
+      { type: "session", id: "parent-session" },
+      { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "reused-id", name: "ak_judge_output", arguments: {} }] } },
+      { type: "message", message: { role: "user" } },
+      { type: "message", message: {
+        role: "toolResult",
+        toolCallId: "reused-id",
+        toolName: "ak_judge_output",
+        isError: true,
+        content: [{ type: "text", text: "unbound current-attempt result" }],
+        details: { kind: "role_infrastructure_failure", source: "shared-role-lifecycle", reasonCode: "host_failure" },
+      } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+    assert.equal(await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+    }), undefined);
+  });
+});
+
 test("session provider-stop produces provider cause without injected knownFailure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
