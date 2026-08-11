@@ -1,8 +1,4 @@
 import {
-  normalizeIssueComment,
-  normalizePullRequestReaction,
-  normalizeReview,
-  normalizeReviewComment,
   type GitHubIssueComment,
   type GitHubMachineIdentity,
   type GitHubPullRequestReaction,
@@ -12,20 +8,6 @@ import {
 import type { CollectorEvidenceRecord, HeadRelation } from "./collector-evidence.ts";
 
 export type GitHubIdentityMaterial = GitHubReview | GitHubIssueComment | GitHubReviewComment | GitHubPullRequestReaction;
-
-/** Typed failure when retained external bytes cannot be read as their recorded material kind. */
-export class CollectorEvidenceNormalizationError extends Error {
-  readonly code = "COLLECTOR_EVIDENCE_NORMALIZATION_FAILED";
-
-  constructor(
-    readonly evidenceId: string,
-    readonly evidenceKind: CollectorEvidenceRecord["kind"],
-    cause: unknown,
-  ) {
-    super(`Collector evidence ${evidenceId} (${evidenceKind}) could not be normalized`, { cause });
-    this.name = "CollectorEvidenceNormalizationError";
-  }
-}
 
 export type CollectorMaterialRef = {
   kind: "review" | "issue_comment" | "review_comment" | "reaction";
@@ -38,7 +20,7 @@ export type CollectorMaterialRef = {
 export type CollectorFinding = {
   identity: GitHubMachineIdentity;
   source: CollectorMaterialRef;
-  category: "inline" | "outside_diff" | "nitpick" | "material";
+  category: "inline" | "material";
   body: string;
 };
 
@@ -103,44 +85,6 @@ export function groupGitHubMaterialsByIdentity(
 
 const CODEX_USER_ID = 199175422;
 const CODERABBIT_USER_ID = 136622811;
-function foldedCodeRabbitFindings(body: string, identity: GitHubMachineIdentity, source: CollectorMaterialRef): CollectorFinding[] {
-  const findings: CollectorFinding[] = [];
-  const stack: Array<{ start: number; rootId: number }> = [];
-  let rootContainerCount = 0;
-  const findingRoots = new Map<number, "outside_diff" | "nitpick">();
-  const tokens = /<details>|<\/details>|<summary>[\s\S]*?<\/summary>|<!--\s*cr-comment:v1:[^>]+-->/gi;
-  for (const match of body.matchAll(tokens)) {
-    const token = match[0].toLowerCase();
-    if (token === "<details>") {
-      if (stack.length === 0) rootContainerCount += 1;
-      stack.push({
-        start: match.index! + match[0].length,
-        rootId: stack.at(-1)?.rootId ?? rootContainerCount,
-      });
-    } else if (token === "</details>") {
-      stack.pop();
-    } else if (token.startsWith("<summary>")) {
-      const current = stack.at(-1);
-      if (current !== undefined) current.start = match.index! + match[0].length;
-    } else if (stack.length >= 2) {
-      const leaf = stack.at(-1)!;
-      let category = findingRoots.get(leaf.rootId);
-      if (category === undefined && findingRoots.size < 2) {
-        category = findingRoots.size === 0 ? "outside_diff" : "nitpick";
-        findingRoots.set(leaf.rootId, category);
-      }
-      if (category === undefined) continue;
-      findings.push({
-        identity,
-        source,
-        category,
-        body: body.slice(leaf.start, match.index).trim(),
-      });
-    }
-  }
-  return findings;
-}
-
 export type ExtractedCollectorIdentityGroup = CollectorIdentityGroup & {
   attendance: true;
   findings: CollectorFinding[];
@@ -162,53 +106,53 @@ export function extractGitHubIdentityGroups(materials: readonly GitHubIdentityMa
     if (source.kind === "review_comment" && "body" in material && (identity.userId === CODEX_USER_ID || identity.userId === CODERABBIT_USER_ID)) {
       group.findings!.push({ identity, source, category: "inline", body: material.body });
     } else if (source.kind === "review" && "body" in material && identity.userId === CODERABBIT_USER_ID) {
-      group.findings!.push(...foldedCodeRabbitFindings(material.body, identity, source));
+      // CodeRabbit review markup is opaque LLM material. Preserve it whole;
+      // deterministic code must not split or classify its HTML containers.
+      group.findings!.push({ identity, source, category: "material", body: material.body });
     }
   }
   return groups as ExtractedCollectorIdentityGroup[];
 }
 
-/**
- * Receipt adapter: run the source extractors over retained GitHub bytes, then
- * replace transport IDs with closure-checked evidence refs and HEAD relation.
- */
+/** Receipt adapter consuming the typed facts retained by transport normalization. */
 export function extractCollectorEvidenceIdentityGroups(
   records: readonly CollectorEvidenceRecord[],
   targetHead: string,
 ): ExtractedCollectorIdentityGroup[] {
-  const supported: Array<{
-    record: CollectorEvidenceRecord;
-    material: GitHubIdentityMaterial;
-  }> = [];
-  for (const record of records) {
-    try {
-      if (record.kind === "review") supported.push({ record, material: normalizeReview(record.raw) });
-      if (record.kind === "issue_comment") supported.push({ record, material: normalizeIssueComment(record.raw) });
-      if (record.kind === "review_comment") supported.push({ record, material: normalizeReviewComment(record.raw) });
-      if (record.kind === "reaction") supported.push({ record, material: normalizePullRequestReaction(record.raw) });
-    } catch (cause) {
-      throw new CollectorEvidenceNormalizationError(record.evidenceId, record.kind, cause);
-    }
-  }
   const groups = new Map<string, ExtractedCollectorIdentityGroup>();
-  for (const { record, material } of supported) {
-    const extracted = extractGitHubIdentityGroups([material])[0]!;
-    const bind = (source: CollectorMaterialRef) => {
-      source.evidenceId = record.evidenceId;
-      source.headRelation = record.commitOid === undefined || record.commitOid === null
+  for (const record of records) {
+    if (record.kind !== "review" && record.kind !== "issue_comment" && record.kind !== "review_comment" && record.kind !== "reaction") continue;
+    if (record.githubId === undefined) continue;
+    const identity = record.machineIdentity ?? null;
+    const kind = record.kind;
+    const source: CollectorMaterialRef = {
+      kind,
+      id: record.githubId,
+      evidenceId: record.evidenceId,
+      headRelation: record.commitOid === undefined || record.commitOid === null
         ? "unbound"
-        : record.commitOid === targetHead ? "current" : "prior";
+        : record.commitOid === targetHead ? "current" : "prior",
     };
-    for (const source of extracted.materials) bind(source);
-    for (const finding of extracted.findings) bind(finding.source);
-    const key = identityKey(extracted.identity);
-    const existing = groups.get(key);
-    if (existing === undefined) {
-      groups.set(key, extracted);
+    const key = identityKey(identity);
+    let group = groups.get(key);
+    if (group === undefined) {
+      group = {
+        identity,
+        ...(record.authorLogin === undefined ? {} : { displayLogin: record.authorLogin }),
+        attendance: true,
+        findings: [],
+        materials: [],
+      };
+      groups.set(key, group);
     } else {
-      existing.identity = mergeMachineIdentity(existing.identity, extracted.identity);
-      existing.materials.push(...extracted.materials);
-      existing.findings.push(...extracted.findings);
+      group.identity = mergeMachineIdentity(group.identity, identity);
+    }
+    group.materials.push(source);
+    if (identity === null || record.body === undefined) continue;
+    if (kind === "review_comment" && (identity.userId === CODEX_USER_ID || identity.userId === CODERABBIT_USER_ID)) {
+      group.findings.push({ identity, source: { ...source }, category: "inline", body: record.body });
+    } else if (kind === "review" && identity.userId === CODERABBIT_USER_ID) {
+      group.findings.push({ identity, source: { ...source }, category: "material", body: record.body });
     }
   }
   return [...groups.values()];
