@@ -93,6 +93,11 @@ test("packed artifact carries complete Apache-2.0 LICENSE and matching license f
       extracted.paths.includes("LICENSE"),
       "npm pack file list must include LICENSE",
     );
+    assert.equal(
+      extracted.paths.some((path) => path === "patches" || path.startsWith("patches/")),
+      false,
+      "npm pack must exclude repository-only patches",
+    );
     assert.equal(extracted.licenseText, CANONICAL_APACHE_2_0);
   });
 });
