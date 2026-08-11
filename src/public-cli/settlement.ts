@@ -67,6 +67,7 @@ import {
 } from "../package-resources/method-skill.ts";
 import {
   bindCurrentDurableTerminalToMarker,
+  classifyPackagedRoleTerminalResult,
   isAcceptedPackagedRoleTerminalResult,
   isReceiptSettlementBindingClear,
   markerMatchesExpectedIdentity,
@@ -756,26 +757,13 @@ function typedFailedTerminatingToolKnownFailure(
       break;
     }
   }
-  const admittedCalls = new Map<string, string>();
-  for (let i = attemptStart; i < entries.length; i += 1) {
-    const message = entries[i]?.message;
-    if (entries[i]?.type !== "message" || message?.role !== "assistant" || !Array.isArray(message.content)) continue;
-    for (const part of message.content) {
-      if (!isRecord(part) || part.type !== "toolCall" || typeof part.id !== "string" || typeof part.name !== "string") continue;
-      if (isTerminatingToolName(part.name)) admittedCalls.set(part.id, part.name);
-    }
-  }
   for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const message = entries[i]?.message;
-    if (entries[i]?.type !== "message" || message?.role !== "toolResult" || message.isError !== true) continue;
+    if (entries[i]?.type !== "message" || message?.role !== "toolResult") continue;
+    const classification = classifyPackagedRoleTerminalResult(message);
+    if (classification.kind !== "infrastructure") continue;
     if (typeof message.toolCallId !== "string" || typeof message.toolName !== "string") continue;
-    if (admittedCalls.get(message.toolCallId) !== message.toolName) continue;
-    const details = isRecord(message.details) ? message.details : undefined;
-    if (
-      details?.kind !== "role_infrastructure_failure" ||
-      details.source !== "shared-role-lifecycle" ||
-      details.reasonCode !== "host_failure"
-    ) continue;
+    if (boundRoleToolCallForResult(entries, i, message, message.toolName) === undefined) continue;
     const textPart = Array.isArray(message.content)
       ? message.content.find((part) => isRecord(part) && part.type === "text" && typeof part.text === "string")
       : undefined;
@@ -784,7 +772,7 @@ function typedFailedTerminatingToolKnownFailure(
       cause: "output",
       identity: { name: message.toolName, code: message.toolCallId },
       ...(typeof diagnostic === "string" && diagnostic.trim() !== "" ? { diagnostic } : {}),
-      details,
+      details: classification.fact,
     };
   }
   return undefined;
