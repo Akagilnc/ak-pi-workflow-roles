@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { normalizeIssueComment } from "../../src/collector-github.ts";
-import { groupGitHubMaterialsByIdentity } from "../../src/collector-identity.ts";
+import { normalizeIssueComment, normalizeReview, normalizeReviewComment } from "../../src/collector-github.ts";
+import { extractGitHubIdentityGroups, groupGitHubMaterialsByIdentity } from "../../src/collector-identity.ts";
 
 const noFindingFixture = new URL("../fixtures/collector/codex-nofinding-5234537035.json", import.meta.url);
 
@@ -17,6 +17,37 @@ test("real GitHub bytes group attendance by machine user and App identity", asyn
     displayLogin: "chatgpt-codex-connector[bot]",
     materials: [{ kind: "issue_comment", id: 5234537035 }],
   }]);
+});
+
+test("Codex frozen inline review yields five identity-owned findings with evidence refs", async () => {
+  const raw = JSON.parse(await readFile(new URL("../fixtures/collector/codex-inline-review-4895614344.json", import.meta.url), "utf8"));
+  const group = extractGitHubIdentityGroups(raw.map(normalizeReviewComment))[0]!;
+  assert.equal(group.attendance, true);
+  assert.equal(group.degraded, false);
+  assert.equal(group.findings.length, 5);
+  assert.ok(group.findings.every((finding) => finding.identity.userId === 199175422 && finding.source.kind === "review_comment"));
+});
+
+test("Codex no-finding and usage-limit bytes distinguish empty findings from degraded attendance", async () => {
+  const load = async (name: string) => normalizeIssueComment(JSON.parse(await readFile(new URL(`../fixtures/collector/${name}`, import.meta.url), "utf8")));
+  const noFinding = extractGitHubIdentityGroups([await load("codex-nofinding-5234537035.json")])[0]!;
+  const limited = extractGitHubIdentityGroups([await load("codex-usagelimit-5244073043.json")])[0]!;
+  assert.equal(noFinding.attendance, true);
+  assert.deepEqual(noFinding.findings, []);
+  assert.equal(noFinding.degraded, false);
+  assert.equal(limited.attendance, true);
+  assert.deepEqual(limited.findings, []);
+  assert.equal(limited.degraded, true);
+});
+
+test("CodeRabbit frozen HTML containers yield outside-diff and nitpick findings plus four inline", async () => {
+  const review = normalizeReview(JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-review-4895713581.json", import.meta.url), "utf8")));
+  const inlineRaw = JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-inline-review-4895713581.json", import.meta.url), "utf8"));
+  const group = extractGitHubIdentityGroups([review, ...inlineRaw.map(normalizeReviewComment)])[0]!;
+  assert.equal(group.findings.filter((finding) => finding.category === "outside_diff").length, 8);
+  assert.equal(group.findings.filter((finding) => finding.category === "nitpick").length, 2);
+  assert.equal(group.findings.filter((finding) => finding.category === "inline").length, 4);
+  assert.ok(group.findings.every((finding) => finding.source.id > 0 && finding.identity.userId === 136622811));
 });
 
 test("machine identity ignores display changes, separates user IDs, and leaves tombstones unassigned", () => {
