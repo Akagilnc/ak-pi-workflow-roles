@@ -21,7 +21,6 @@ import {
   type ComplianceAuditIncomplete,
   type ComplianceDecision,
 } from "../compliance-transport.ts";
-import { loadCollectorManifest } from "../collector-config.ts";
 import {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_REQUEST_TOOL,
@@ -944,18 +943,6 @@ function collectorDecisiveFacts(
       });
     } catch { /* omit unreadable optional projection */ }
   }
-  const legs = safelyRead(candidate, "legs");
-  if (legs.readable && Array.isArray(legs.value)) {
-    try {
-      facts.legStatuses = legs.value.map((leg) => {
-        if (!isRecord(leg)) throw new Error("unreadable Collector leg");
-        const legId = safelyRead(leg, "legId");
-        const status = safelyRead(leg, "status");
-        if (!legId.readable || !status.readable) throw new Error("unreadable Collector leg");
-        return { legId: legId.value, status: status.value };
-      });
-    } catch { /* omit unreadable optional projection */ }
-  }
   return facts;
 }
 
@@ -1016,7 +1003,7 @@ function reviewerDecisiveFacts(
 
 /**
  * ADR 0037: a shape-valid Collector receipt may still name the wrong live target.
- * Public success binds receipt identity to this admitted repository/PR/manifest/legs
+ * Public success binds receipt identity to this admitted repository/PR/request manifest
  * at the existing settlement seam — not a second receipt factory or validator.
  */
 function collectorReceiptBindingFailure(
@@ -1028,10 +1015,6 @@ function collectorReceiptBindingFailure(
   error.name = "CollectorReceiptBindingError";
   error.knownCause = "output";
   return error;
-}
-
-function sortedUniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function toolResultText(message: SessionMessage): string {
@@ -1131,7 +1114,6 @@ export async function readCollectorInfrastructureFailure(
 export function assertCollectorReceiptMatchesAdmitted(
   receipt: CollectorReceipt,
   admitted: AdmittedCollectorInvocation,
-  admittedLegIds: readonly string[],
 ): void {
   if (receipt.repository !== admitted.repository.canonical) {
     throw collectorReceiptBindingFailure(
@@ -1146,19 +1128,6 @@ export function assertCollectorReceiptMatchesAdmitted(
   if (receipt.manifestDigest !== admitted.manifestDigest) {
     throw collectorReceiptBindingFailure(
       `Collector receipt manifestDigest does not match admitted manifestDigest`,
-    );
-  }
-  const receiptLegIds = sortedUniqueStrings(
-    receipt.legs.map((leg) => leg.legId),
-  );
-  const expectedLegIds = sortedUniqueStrings(admittedLegIds);
-  if (
-    receipt.legs.length !== admittedLegIds.length ||
-    receiptLegIds.length !== expectedLegIds.length ||
-    receiptLegIds.some((id, index) => id !== expectedLegIds[index])
-  ) {
-    throw collectorReceiptBindingFailure(
-      `Collector receipt leg set [${receiptLegIds.join(",")}] does not match admitted leg set [${expectedLegIds.join(",")}]`,
     );
   }
 }
@@ -2503,7 +2472,6 @@ export async function publishCollectorArtifacts(
         role: "collector",
         prNumber: admitted.prNumber,
         repository: admitted.repository.canonical,
-        legsPath: admitted.legsPath,
         manifestDigest: admitted.manifestDigest,
         sessionDirectory,
         sessionFile: admitted.sessionFile,
@@ -2592,19 +2560,7 @@ async function settleLawfulCollectorTerminalResult(
     }
     return undefined;
   }
-  // Re-load legs.json and bind its digest to admission before using its IDs (ADR 0037/0022).
-  // A post-admission mutation that keeps receipt digest=A while legs become B must fail closed.
-  const admittedManifest = await loadCollectorManifest(admitted.legsPath);
-  if (admittedManifest.digest !== admitted.manifestDigest) {
-    throw collectorReceiptBindingFailure(
-      `Collector legs at settlement digest does not match admitted manifestDigest`,
-    );
-  }
-  assertCollectorReceiptMatchesAdmitted(
-    extracted.receipt,
-    admitted,
-    admittedManifest.legs.map((leg) => leg.id),
-  );
+  assertCollectorReceiptMatchesAdmitted(extracted.receipt, admitted);
   const navigator = extractNavigatorFact(
     entries,
     attendanceIdentityFromAdmitted(admitted),

@@ -4,41 +4,18 @@ export const COLLECTOR_OUTPUT_TOOL = "ak_collector_output";
 export const COLLECTOR_ACCEPTED_TEXT = "Collector receipt accepted";
 export const COLLECTOR_HOST = "github.com";
 
-export type CollectorLegStatus = "valid" | "unavailable" | "missing";
-
-export type ReviewDerivedReport = {
-  kind: "review";
-  legId: string;
-  report: string;
-  reviewedHead: string;
-  headRelation: string;
-  windowRelation: string;
-  evidenceRefs: string[];
-};
-
-export type TerminalFactReport = {
-  kind: "terminal-fact";
-  legId: string;
-  terminalStatus: "unavailable" | "missing";
-  report: string;
-  windowRelation: string;
-  evidenceRefs: string[];
-  targetSnapshotHead?: string;
-  scope?: "global";
-};
-
-export type CollectorReport = ReviewDerivedReport | TerminalFactReport;
-
-export type CollectorReceiptLeg = {
-  legId: string;
-  status: CollectorLegStatus;
-  rationale: string;
-  evidenceRefs: string[];
+export type CollectorIdentityGroup = {
+  identity: Record<string, unknown> | null;
+  displayLogin?: string;
+  attendance: true;
+  degraded: boolean;
+  materials: Array<Record<string, unknown>>;
+  findings: Array<Record<string, unknown>>;
 };
 
 export type CollectorRequestAttempt = {
   attemptId: string;
-  legId: string;
+  requestId: string;
   observedHead: string;
   snapshotId: string;
   marker: string;
@@ -48,14 +25,6 @@ export type CollectorRequestAttempt = {
   responseDiagnostics?: string;
   commentEvidenceId?: string;
   recoverySnapshotId?: string;
-};
-
-export type CollectorPageDiagnostics = {
-  path: string;
-  page: number;
-  status: number;
-  itemCount: number;
-  linkHeader?: string;
 };
 
 export type CollectorSnapshot = {
@@ -70,7 +39,7 @@ export type CollectorSnapshot = {
   headOid: string;
   complete: boolean;
   evidenceIds: string[];
-  pageDiagnostics: CollectorPageDiagnostics[];
+  pageDiagnostics: Array<Record<string, unknown>>;
   normalizedByteLength: number;
 };
 
@@ -81,35 +50,6 @@ export type CollectorEvidenceRecord = {
   contentDigest: string;
   firstObservedAt: string;
   raw: unknown;
-  stableGitHubId?: string;
-  authorLogin?: string;
-  state?: string;
-  body?: string;
-  commitOid?: string | null;
-  htmlUrl?: string;
-  path?: string;
-  line?: number | null;
-  originalLine?: number | null;
-  side?: string | null;
-  position?: number | null;
-  pullRequestReviewId?: number | null;
-  submittedAt?: string | null;
-  authoritativeTime?: string | null;
-  windowRelation?: string;
-  pagination?: {
-    surface: string;
-    complete: boolean;
-    pages: CollectorPageDiagnostics[];
-  };
-};
-
-export type CollectorIdentityGroup = {
-  identity: Record<string, unknown> | null;
-  displayLogin?: string;
-  attendance: true;
-  degraded: boolean;
-  materials: Array<Record<string, unknown>>;
-  findings: Array<Record<string, unknown>>;
 };
 
 export type CollectorReceipt = {
@@ -122,114 +62,30 @@ export type CollectorReceipt = {
   finalObservationTime: string;
   finalSnapshotId: string;
   targetHead: string;
-  /** Canonical machine-identity attendance groups. */
-  groups?: CollectorIdentityGroup[];
-  /** Legacy read-only view derived from groups; removed after consumer migration. */
-  identityGroups?: CollectorIdentityGroup[];
-  reports: CollectorReport[];
-  legs: CollectorReceiptLeg[];
+  groups: CollectorIdentityGroup[];
   requestAttempts: CollectorRequestAttempt[];
   snapshots: CollectorSnapshot[];
   evidenceRecords: CollectorEvidenceRecord[];
 };
 
-export type CollectorGeneratedOutput = {
-  legs: Array<{
-    legId: string;
-    status: CollectorLegStatus;
-    rationale: string;
-    evidenceRefs: string[];
-    unavailableScope?: "target" | "global";
-  }>;
-};
-
 function safeGet(value: unknown, key: string): unknown {
   if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined;
-  try {
-    return (value as Record<string, unknown>)[key];
-  } catch {
-    return undefined;
-  }
+  try { return (value as Record<string, unknown>)[key]; } catch { return undefined; }
 }
-
 function records(value: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is Record<string, unknown> =>
-    item !== null && typeof item === "object"
-  );
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => item !== null && typeof item === "object") : [];
 }
-
 function strings(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-function projectReport(value: Record<string, unknown>): CollectorReport {
-  const common = {
-    legId: safeGet(value, "legId") as string,
-    report: safeGet(value, "report") as string,
-    windowRelation: safeGet(value, "windowRelation") as string,
-    evidenceRefs: strings(safeGet(value, "evidenceRefs")),
-  };
-  if (safeGet(value, "kind") === "review") {
-    return {
-      kind: "review",
-      ...common,
-      reviewedHead: safeGet(value, "reviewedHead") as string,
-      headRelation: safeGet(value, "headRelation") as string,
-    };
-  }
-  const terminal: TerminalFactReport = {
-    kind: "terminal-fact",
-    ...common,
-    terminalStatus: safeGet(value, "terminalStatus") as "unavailable" | "missing",
-  };
-  const targetSnapshotHead = safeGet(value, "targetSnapshotHead");
-  const scope = safeGet(value, "scope");
-  if (targetSnapshotHead !== undefined) terminal.targetSnapshotHead = targetSnapshotHead as string;
-  if (scope !== undefined) terminal.scope = scope as "global";
-  return terminal;
-}
-
-/**
- * Safely project the receipt fields consumed by settlement. Runtime ledger
- * construction owns their semantic bindings; this boundary does not impose a
- * second required/type/closed/status shape contract.
- */
+/** Settlement projection. Presence of the canonical groups array is the one Collector terminal discriminator. */
 export function validateAcceptedCollectorReceipt(value: unknown): CollectorReceipt {
-  const snapshots = records(safeGet(value, "snapshots")).map((snapshot) => ({
-    snapshotId: safeGet(snapshot, "snapshotId"),
-    observedAt: safeGet(snapshot, "observedAt"),
-    completedAt: safeGet(snapshot, "completedAt"),
-    completedMono: safeGet(snapshot, "completedMono"),
-    host: safeGet(snapshot, "host"),
-    repository: safeGet(snapshot, "repository"),
-    prNumber: safeGet(snapshot, "prNumber"),
-    prState: safeGet(snapshot, "prState"),
-    headOid: safeGet(snapshot, "headOid"),
-    complete: safeGet(snapshot, "complete"),
-    evidenceIds: strings(safeGet(snapshot, "evidenceIds")),
-    pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")),
-    normalizedByteLength: safeGet(snapshot, "normalizedByteLength"),
-  } as CollectorSnapshot));
-  const evidenceRecords = records(safeGet(value, "evidenceRecords")).map((record) => ({
-    evidenceId: safeGet(record, "evidenceId"),
-    kind: safeGet(record, "kind"),
-    versionId: safeGet(record, "versionId"),
-    contentDigest: safeGet(record, "contentDigest"),
-    firstObservedAt: safeGet(record, "firstObservedAt"),
-    raw: safeGet(record, "raw"),
-  } as CollectorEvidenceRecord));
-  const rawGroups = records(safeGet(value, "groups"));
-  const groupSource = rawGroups.length > 0
-    ? rawGroups
-    : records(safeGet(value, "identityGroups"));
-  const groups = groupSource.map((group) => ({
+  const rawGroups = safeGet(value, "groups");
+  if (!Array.isArray(rawGroups)) throw new Error("Collector receipt has no typed groups terminal discriminator");
+  const groups = records(rawGroups).map((group) => ({
     identity: (safeGet(group, "identity") ?? null) as Record<string, unknown> | null,
-    ...(typeof safeGet(group, "displayLogin") === "string"
-      ? { displayLogin: safeGet(group, "displayLogin") as string }
-      : {}),
+    ...(typeof safeGet(group, "displayLogin") === "string" ? { displayLogin: safeGet(group, "displayLogin") as string } : {}),
     attendance: true as const,
     degraded: safeGet(group, "degraded") === true,
     materials: records(safeGet(group, "materials")),
@@ -246,16 +102,10 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     finalSnapshotId: safeGet(value, "finalSnapshotId") as string,
     targetHead: safeGet(value, "targetHead") as string,
     groups,
-    identityGroups: groups,
-    reports: records(safeGet(value, "reports")).map(projectReport),
-    legs: records(safeGet(value, "legs")).map((leg) => ({
-      legId: safeGet(leg, "legId") as string,
-      status: safeGet(leg, "status") as CollectorLegStatus,
-      rationale: safeGet(leg, "rationale") as string,
-      evidenceRefs: strings(safeGet(leg, "evidenceRefs")),
-    })),
     requestAttempts: records(safeGet(value, "requestAttempts")) as unknown as CollectorRequestAttempt[],
-    snapshots,
-    evidenceRecords,
+    snapshots: records(safeGet(value, "snapshots")).map((snapshot) => ({
+      snapshotId: safeGet(snapshot, "snapshotId"), observedAt: safeGet(snapshot, "observedAt"), completedAt: safeGet(snapshot, "completedAt"), completedMono: safeGet(snapshot, "completedMono"), host: safeGet(snapshot, "host"), repository: safeGet(snapshot, "repository"), prNumber: safeGet(snapshot, "prNumber"), prState: safeGet(snapshot, "prState"), headOid: safeGet(snapshot, "headOid"), complete: safeGet(snapshot, "complete"), evidenceIds: strings(safeGet(snapshot, "evidenceIds")), pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")), normalizedByteLength: safeGet(snapshot, "normalizedByteLength"),
+    } as CollectorSnapshot)),
+    evidenceRecords: records(safeGet(value, "evidenceRecords")).map((record) => ({ evidenceId: safeGet(record, "evidenceId"), kind: safeGet(record, "kind"), versionId: safeGet(record, "versionId"), contentDigest: safeGet(record, "contentDigest"), firstObservedAt: safeGet(record, "firstObservedAt"), raw: safeGet(record, "raw") } as CollectorEvidenceRecord)),
   };
 }

@@ -53,7 +53,7 @@ ak-role reviewer --base main --attach ./issue.md "Review the branch."
 # --base 只是提示；completed ≠ 准行——findings 在 Terminal 里
 
 # 门下省——GitHub PR 收证；仅 github.com，需 gh 已认证；一次性
-ak-role collector --pr 42 --leg codex:CodexBot --leg cursor:cursor-bot,cursor-bot-2
+ak-role collector --pr 42 --repo owner/repository
 # leg 语法 id:author[,author...]；repo 默认取 origin，--repo owner/repo 覆盖
 
 # 修内司——缮修所指 findings；phase 默认 apply，或显式 plan

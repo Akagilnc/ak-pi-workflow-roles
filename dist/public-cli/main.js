@@ -322,63 +322,21 @@ function safeGet(value, key) {
   }
 }
 function records(value) {
-  if (!Array.isArray(value)) return [];
-  return value.filter(
-    (item) => item !== null && typeof item === "object"
-  );
+  return Array.isArray(value) ? value.filter((item) => item !== null && typeof item === "object") : [];
 }
 function strings(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 }
-function projectReport(value) {
-  const common = {
-    legId: safeGet(value, "legId"),
-    report: safeGet(value, "report"),
-    windowRelation: safeGet(value, "windowRelation"),
-    evidenceRefs: strings(safeGet(value, "evidenceRefs"))
-  };
-  if (safeGet(value, "kind") === "review") {
-    return {
-      kind: "review",
-      ...common,
-      reviewedHead: safeGet(value, "reviewedHead"),
-      headRelation: safeGet(value, "headRelation")
-    };
-  }
-  const terminal = {
-    kind: "terminal-fact",
-    ...common,
-    terminalStatus: safeGet(value, "terminalStatus")
-  };
-  const targetSnapshotHead = safeGet(value, "targetSnapshotHead");
-  const scope = safeGet(value, "scope");
-  if (targetSnapshotHead !== void 0) terminal.targetSnapshotHead = targetSnapshotHead;
-  if (scope !== void 0) terminal.scope = scope;
-  return terminal;
-}
 function validateAcceptedCollectorReceipt(value) {
-  const snapshots = records(safeGet(value, "snapshots")).map((snapshot) => ({
-    snapshotId: safeGet(snapshot, "snapshotId"),
-    observedAt: safeGet(snapshot, "observedAt"),
-    completedAt: safeGet(snapshot, "completedAt"),
-    completedMono: safeGet(snapshot, "completedMono"),
-    host: safeGet(snapshot, "host"),
-    repository: safeGet(snapshot, "repository"),
-    prNumber: safeGet(snapshot, "prNumber"),
-    prState: safeGet(snapshot, "prState"),
-    headOid: safeGet(snapshot, "headOid"),
-    complete: safeGet(snapshot, "complete"),
-    evidenceIds: strings(safeGet(snapshot, "evidenceIds")),
-    pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")),
-    normalizedByteLength: safeGet(snapshot, "normalizedByteLength")
-  }));
-  const evidenceRecords = records(safeGet(value, "evidenceRecords")).map((record3) => ({
-    evidenceId: safeGet(record3, "evidenceId"),
-    kind: safeGet(record3, "kind"),
-    versionId: safeGet(record3, "versionId"),
-    contentDigest: safeGet(record3, "contentDigest"),
-    firstObservedAt: safeGet(record3, "firstObservedAt"),
-    raw: safeGet(record3, "raw")
+  const rawGroups = safeGet(value, "groups");
+  if (!Array.isArray(rawGroups)) throw new Error("Collector receipt has no typed groups terminal discriminator");
+  const groups = records(rawGroups).map((group) => ({
+    identity: safeGet(group, "identity") ?? null,
+    ...typeof safeGet(group, "displayLogin") === "string" ? { displayLogin: safeGet(group, "displayLogin") } : {},
+    attendance: true,
+    degraded: safeGet(group, "degraded") === true,
+    materials: records(safeGet(group, "materials")),
+    findings: records(safeGet(group, "findings"))
   }));
   return {
     host: safeGet(value, "host"),
@@ -390,16 +348,24 @@ function validateAcceptedCollectorReceipt(value) {
     finalObservationTime: safeGet(value, "finalObservationTime"),
     finalSnapshotId: safeGet(value, "finalSnapshotId"),
     targetHead: safeGet(value, "targetHead"),
-    reports: records(safeGet(value, "reports")).map(projectReport),
-    legs: records(safeGet(value, "legs")).map((leg) => ({
-      legId: safeGet(leg, "legId"),
-      status: safeGet(leg, "status"),
-      rationale: safeGet(leg, "rationale"),
-      evidenceRefs: strings(safeGet(leg, "evidenceRefs"))
-    })),
+    groups,
     requestAttempts: records(safeGet(value, "requestAttempts")),
-    snapshots,
-    evidenceRecords
+    snapshots: records(safeGet(value, "snapshots")).map((snapshot) => ({
+      snapshotId: safeGet(snapshot, "snapshotId"),
+      observedAt: safeGet(snapshot, "observedAt"),
+      completedAt: safeGet(snapshot, "completedAt"),
+      completedMono: safeGet(snapshot, "completedMono"),
+      host: safeGet(snapshot, "host"),
+      repository: safeGet(snapshot, "repository"),
+      prNumber: safeGet(snapshot, "prNumber"),
+      prState: safeGet(snapshot, "prState"),
+      headOid: safeGet(snapshot, "headOid"),
+      complete: safeGet(snapshot, "complete"),
+      evidenceIds: strings(safeGet(snapshot, "evidenceIds")),
+      pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")),
+      normalizedByteLength: safeGet(snapshot, "normalizedByteLength")
+    })),
+    evidenceRecords: records(safeGet(value, "evidenceRecords")).map((record3) => ({ evidenceId: safeGet(record3, "evidenceId"), kind: safeGet(record3, "kind"), versionId: safeGet(record3, "versionId"), contentDigest: safeGet(record3, "contentDigest"), firstObservedAt: safeGet(record3, "firstObservedAt"), raw: safeGet(record3, "raw") }))
   };
 }
 
@@ -9184,7 +9150,7 @@ var PACKAGED_ROLE_REGISTRY = [
   { role: "fixer", phases: ["plan", "apply"], outputTool: FIXER_OUTPUT_TOOL_NAME, inputFlag: "ak-fix-packet", phaseFlag: "ak-fixer-phase", activationStage: "load-and-install" },
   { role: "coder", phases: ["plan", "apply"], outputTool: CODER_OUTPUT_TOOL_NAME, inputFlag: "ak-coder-task", phaseFlag: "ak-coder-phase", activationStage: "load-and-install" },
   { role: "reviewer", phases: [null], outputTool: REVIEWER_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
-  { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: "ak-collector-legs", phaseFlag: void 0, activationStage: "load-and-install" },
+  { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: "ak-collector-repo", phaseFlag: void 0, activationStage: "load-and-install" },
   { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: void 0, activationStage: "load-and-install" },
   { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: void 0, activationStage: "prepare-git-and-install" }
 ];
@@ -9581,7 +9547,7 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat,
   mkdir as mkdir2,
-  readFile as readFile4,
+  readFile as readFile3,
   realpath as realpath2,
   writeFile as writeFile2
 } from "node:fs/promises";
@@ -9648,7 +9614,7 @@ function validateAcceptedDetails(toolName, details) {
     [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"]
   };
-  const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.legs) && candidate.legs.length > 0 && candidate.legs.every((leg) => leg !== null && typeof leg === "object" && ["valid", "unavailable", "missing"].includes(String(leg.status)));
+  const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const runtimeBindingMissing = toolName === DOCTOR_OUTPUT_TOOL_NAME && discriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object") || toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2;
   if (runtimeBindingMissing || !collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(discriminator))) {
     throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
@@ -9675,11 +9641,6 @@ function validateAcceptedDetails(toolName, details) {
     throw error;
   }
 }
-var COLLECTOR_LEG_STATUS_RANK = {
-  missing: 0,
-  unavailable: 1,
-  valid: 2
-};
 function acceptedFacts(toolName, details) {
   switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME:
@@ -9693,14 +9654,8 @@ function acceptedFacts(toolName, details) {
       const output = details;
       return { status: output.status, ...output.status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {} };
     }
-    case COLLECTOR_OUTPUT_TOOL: {
-      const legs = details.legs;
-      const unique = [...new Set((Array.isArray(legs) ? legs : []).flatMap(
-        (leg) => leg !== null && typeof leg === "object" && ["valid", "unavailable", "missing"].includes(String(leg.status)) ? [leg.status] : []
-      ))];
-      unique.sort((a, b) => COLLECTOR_LEG_STATUS_RANK[a] - COLLECTOR_LEG_STATUS_RANK[b]);
-      return { legStatuses: unique };
-    }
+    case COLLECTOR_OUTPUT_TOOL:
+      return { status: "collected" };
   }
 }
 
@@ -9798,10 +9753,8 @@ function deriveSession(content, id) {
       statuses.length = 0;
       if (facts.status !== void 0) {
         statuses.push({ source: id, status: facts.status });
-      } else if (facts.legStatuses !== void 0 && facts.legStatuses.length > 0) {
-        for (const legStatus of facts.legStatuses) statuses.push({ source: id, status: legStatus });
       } else {
-        statuses.push({ source: id, status: "unavailable (terminating receipt has no receipt-level status)" });
+        statuses.push({ source: id, status: "terminating receipt has no receipt-level status" });
       }
     }
   }
@@ -9846,221 +9799,44 @@ async function loadDoctorCase(runsPath) {
 
 // src/collector-config.ts
 import { createHash as createHash2 } from "node:crypto";
-import { readFile as readFile3 } from "node:fs/promises";
-var COLLECTOR_LEG_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 var COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 var COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
-var COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target and leg manifest. Use only Collector tools. Classify from cited ledger evidence. Submit exactly one ak_collector_output when terminal.";
+var COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target. Observe GitHub materials and submit exactly one ak_collector_output when observation is complete.";
 function fail3(message, cause) {
   throw new Error(message, cause === void 0 ? void 0 : { cause });
 }
-function isAsciiControlOrNonAscii(input) {
+function conservativeAscii(input) {
   for (let i = 0; i < input.length; i += 1) {
     const code = input.charCodeAt(i);
-    if (code <= 31 || code === 127 || code > 127) return true;
+    if (code <= 31 || code === 127 || code > 127) return false;
   }
-  return false;
+  return true;
 }
 function parseCollectorRepository(raw) {
-  if (typeof raw !== "string") {
-    fail3("Collector repository must be a string owner/repo");
-  }
-  const display = raw.trim();
-  if (display !== raw) {
-    fail3("Collector repository must not include surrounding whitespace");
-  }
-  if (display.length === 0) {
-    fail3("Collector repository is required");
-  }
-  if (isAsciiControlOrNonAscii(display)) {
-    fail3("Collector repository must be conservative ASCII without control bytes");
-  }
-  if (display.includes("://") || display.includes("?") || display.includes("#") || display.includes("@") || display.includes("%") || display.includes("\\") || display.includes(" ")) {
-    fail3("Collector repository rejects URL syntax, credentials, query, fragment, and percent encoding");
-  }
-  const parts = display.split("/");
-  if (parts.length !== 2) {
-    fail3("Collector repository must contain exactly one '/' separating owner and repo");
-  }
+  if (typeof raw !== "string" || raw.trim() !== raw || raw.length === 0) fail3("Collector repository must be a string owner/repo");
+  if (!conservativeAscii(raw) || raw.includes("://") || /[?#@%\\ ]/.test(raw)) fail3("Collector repository rejects URL syntax and non-identity bytes");
+  const parts = raw.split("/");
+  if (parts.length !== 2) fail3("Collector repository must contain exactly one '/' separating owner and repo");
   const [ownerDisplay, repoDisplay] = parts;
-  if (ownerDisplay === void 0 || repoDisplay === void 0) {
-    fail3("Collector repository must contain exactly one '/' separating owner and repo");
-  }
-  if (ownerDisplay.length === 0 || repoDisplay.length === 0 || ownerDisplay === "." || ownerDisplay === ".." || repoDisplay === "." || repoDisplay === "..") {
-    fail3("Collector repository rejects empty, '.', or '..' segments");
-  }
-  if (!COLLECTOR_OWNER_PATTERN.test(ownerDisplay)) {
-    fail3("Collector repository owner must match the v1 conservative grammar (1-39 alphanumeric/hyphen)");
-  }
-  if (!COLLECTOR_REPO_PATTERN.test(repoDisplay)) {
-    fail3("Collector repository name must match the v1 conservative grammar (1-100 alphanumeric/._-)");
-  }
+  if (!COLLECTOR_OWNER_PATTERN.test(ownerDisplay) || !COLLECTOR_REPO_PATTERN.test(repoDisplay)) fail3("Collector repository does not match the conservative owner/repo grammar");
   const owner = ownerDisplay.toLowerCase();
   const repo = repoDisplay.toLowerCase();
-  return {
-    display,
-    canonical: `${owner}/${repo}`,
-    owner,
-    repo
-  };
+  return { display: raw, canonical: `${owner}/${repo}`, owner, repo };
 }
 function parseCollectorPrNumber(raw) {
-  if (typeof raw !== "string" && typeof raw !== "number") {
-    fail3("Collector pull request number is required");
-  }
-  const text = String(raw).trim();
-  if (text !== String(raw).trim() || text !== String(raw)) {
-  }
-  if (typeof raw === "string") {
-    if (!/^[1-9][0-9]*$/.test(raw)) {
-      fail3("Collector pull request number must be a positive safe integer string");
-    }
-  } else if (typeof raw === "number") {
-    if (!Number.isSafeInteger(raw) || raw < 1) {
-      fail3("Collector pull request number must be a positive safe integer");
-    }
-    return raw;
-  }
-  const value = Number(text);
-  if (!Number.isSafeInteger(value) || value < 1) {
-    fail3("Collector pull request number must be a positive safe integer");
-  }
+  if (typeof raw === "string" && !/^[1-9][0-9]*$/.test(raw)) fail3("Collector pull request number must be a positive safe integer string");
+  if (typeof raw !== "string" && typeof raw !== "number") fail3("Collector pull request number is required");
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) fail3("Collector pull request number must be a positive safe integer");
   return value;
 }
-function isPlainObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function hasRequiredKeys(value, required) {
-  return required.every((key) => Object.hasOwn(value, key));
-}
-function canonicalizeAuthor(raw, legId) {
-  if (typeof raw !== "string") {
-    fail3(`Collector leg "${legId}" expectedAuthors entries must be strings`);
-  }
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    fail3(`Collector leg "${legId}" expectedAuthors entries must be non-blank`);
-  }
-  if (trimmed !== raw.trim()) {
-  }
-  return trimmed.toLowerCase();
-}
-function canonicalizeLeg(raw, index) {
-  if (!isPlainObject(raw)) {
-    fail3(`Collector manifest legs[${index}] must be an object`);
-  }
-  const hasRequest = Object.hasOwn(raw, "request");
-  if (!hasRequiredKeys(raw, ["id", "expectedAuthors"])) {
-    fail3(`Collector manifest legs[${index}] is missing required keys`);
-  }
-  const id = raw["id"];
-  if (typeof id !== "string" || !COLLECTOR_LEG_ID_PATTERN.test(id)) {
-    fail3(`Collector leg id at legs[${index}] must match ^[a-z][a-z0-9._-]{0,63}$`);
-  }
-  const authorsRaw = raw["expectedAuthors"];
-  if (!Array.isArray(authorsRaw) || authorsRaw.length < 1) {
-    fail3(`Collector leg "${id}" expectedAuthors must be a non-empty array`);
-  }
-  const expectedAuthors = [];
-  const seenAuthors = /* @__PURE__ */ new Set();
-  for (const entry of authorsRaw) {
-    const author = canonicalizeAuthor(entry, id);
-    if (seenAuthors.has(author)) {
-      fail3(`Collector leg "${id}" has duplicate expected author "${author}"`);
-    }
-    seenAuthors.add(author);
-    expectedAuthors.push(author);
-  }
-  let requestBody;
-  if (hasRequest) {
-    const request = raw["request"];
-    if (!isPlainObject(request) || !hasRequiredKeys(request, ["body"])) {
-      fail3(`Collector leg "${id}" request must be an object with body`);
-    }
-    const body = request["body"];
-    if (typeof body !== "string") {
-      fail3(`Collector leg "${id}" request body must be a string`);
-    }
-    if (body.trim().length === 0) {
-      fail3(`Collector leg "${id}" request body must be trim-non-empty`);
-    }
-    requestBody = body;
-  }
-  return requestBody === void 0 ? { id, expectedAuthors } : { id, expectedAuthors, requestBody };
-}
-function stableCanonicalJson(manifest) {
-  const legs = manifest.legs.map((leg) => {
-    const base = {
-      id: leg.id,
-      expectedAuthors: [...leg.expectedAuthors]
-    };
-    if (leg.requestBody !== void 0) {
-      base["request"] = { body: leg.requestBody };
-    }
-    return base;
-  });
-  return `${JSON.stringify({ legs })}
+function canonicalManifest(requests) {
+  return `${JSON.stringify({ requests: requests.map((request) => ({ id: request.id, body: request.requestBody })) })}
 `;
 }
-async function loadCollectorManifest(path) {
-  let bytes;
-  try {
-    bytes = await readFile3(path);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    fail3(`Collector leg manifest is unreadable at ${path}: ${detail}`, error);
-  }
-  let text;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    fail3("Collector leg manifest must be UTF-8 JSON");
-  }
-  if (text.charCodeAt(0) === 65279) {
-    text = text.slice(1);
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    fail3(`Collector leg manifest is not valid JSON: ${detail}`, error);
-  }
-  if (!isPlainObject(parsed) || !hasRequiredKeys(parsed, ["legs"])) {
-    fail3("Collector manifest must be an object with legs");
-  }
-  const legsRaw = parsed["legs"];
-  if (!Array.isArray(legsRaw) || legsRaw.length < 1) {
-    fail3("Collector manifest legs must be a non-empty array");
-  }
-  const legs = [];
-  const seenIds = /* @__PURE__ */ new Set();
-  const authorOwners = /* @__PURE__ */ new Map();
-  for (let index = 0; index < legsRaw.length; index += 1) {
-    const leg = canonicalizeLeg(legsRaw[index], index);
-    if (seenIds.has(leg.id)) {
-      fail3(`Collector manifest has duplicate leg id "${leg.id}"`);
-    }
-    seenIds.add(leg.id);
-    for (const author of leg.expectedAuthors) {
-      const owner = authorOwners.get(author);
-      if (owner !== void 0) {
-        fail3(
-          `Collector expected author "${author}" overlaps across legs "${owner}" and "${leg.id}"`
-        );
-      }
-      authorOwners.set(author, leg.id);
-    }
-    legs.push(leg);
-  }
-  const canonicalJson2 = stableCanonicalJson({ legs });
-  const digest = createHash2("sha256").update(canonicalJson2, "utf8").digest("hex");
-  return {
-    legs,
-    canonicalJson: canonicalJson2,
-    digest,
-    sourcePath: path
-  };
+function emptyCollectorManifest() {
+  const canonicalJson2 = canonicalManifest([]);
+  return { requests: [], canonicalJson: canonicalJson2, digest: createHash2("sha256").update(canonicalJson2).digest("hex") };
 }
 
 // src/merger-git-state.ts
@@ -10352,7 +10128,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
     );
   }
-  const bytes = await readFile4(absolute);
+  const bytes = await readFile3(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename3(absolute)}`;
   const frozenPath = join4(destinationDir, name);
   await writeFile2(frozenPath, bytes);
@@ -10579,7 +10355,7 @@ async function admitFixerInvocation(options) {
     const absolutePrereq = isAbsolute3(options.prerequisitesPath) ? options.prerequisitesPath : resolve4(options.prerequisitesPath);
     let source;
     try {
-      source = await readFile4(absolutePrereq, "utf8");
+      source = await readFile3(absolutePrereq, "utf8");
     } catch (error) {
       throw new CliUsageError(
         `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
@@ -10662,60 +10438,16 @@ function buildFixerTransportPrompt(admitted) {
   }
   return lines.join("\n");
 }
-function parseCollectorLegDeclaration(raw) {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    throw new CliUsageError("collector --leg requires id:author[,author...]");
-  }
-  const colon = trimmed.indexOf(":");
-  if (colon <= 0 || colon === trimmed.length - 1) {
-    throw new CliUsageError(
-      `collector --leg must be id:author[,author...], got ${raw}`
-    );
-  }
-  const id = trimmed.slice(0, colon);
-  if (!COLLECTOR_LEG_ID_PATTERN.test(id)) {
-    throw new CliUsageError(
-      `collector leg id must match ^[a-z][a-z0-9._-]{0,63}$, got ${id}`
-    );
-  }
-  const authorsPart = trimmed.slice(colon + 1);
-  const expectedAuthors = [];
-  for (const piece of authorsPart.split(",")) {
-    if (piece.trim() === "" || piece !== piece.trim()) {
-      if (piece.trim() === "") {
-        throw new CliUsageError(
-          `collector --leg ${id} has an empty expected author slot`
-        );
-      }
-      throw new CliUsageError(
-        `collector --leg ${id} expected author must not include surrounding whitespace`
-      );
-    }
-    expectedAuthors.push(piece);
-  }
-  if (expectedAuthors.length === 0) {
-    throw new CliUsageError(
-      `collector --leg ${id} requires at least one expected author`
-    );
-  }
-  return { id, expectedAuthors };
-}
 function parsePositivePrOption(raw) {
-  if (raw === void 0 || raw.trim() === "") {
-    throw new CliUsageError("--pr requires a positive pull request number");
-  }
+  if (raw === void 0 || raw.trim() === "") throw new CliUsageError("--pr requires a positive pull request number");
   try {
     return parseCollectorPrNumber(raw);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(detail, { cause: error });
+    throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
   }
 }
 function parseRepoOption(raw) {
-  if (raw === void 0 || raw.trim() === "") {
-    throw new CliUsageError("--repo requires owner/repo");
-  }
+  if (raw === void 0 || raw.trim() === "") throw new CliUsageError("--repo requires owner/repo");
   return raw;
 }
 function parseCollectorArgv(args) {
@@ -10723,7 +10455,6 @@ function parseCollectorArgv(args) {
   let project;
   let repo;
   let prNumber;
-  const legs = [];
   const positional = [];
   const tokens = [...args];
   while (tokens.length > 0) {
@@ -10737,9 +10468,7 @@ function parseCollectorArgv(args) {
       continue;
     }
     if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
+      attachmentPaths.push(requireOptionPath("--attach", token.slice(9)));
       continue;
     }
     if (token === "--project") {
@@ -10747,7 +10476,7 @@ function parseCollectorArgv(args) {
       continue;
     }
     if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
+      project = requireOptionPath("--project", token.slice(10));
       continue;
     }
     if (token === "--pr") {
@@ -10755,7 +10484,7 @@ function parseCollectorArgv(args) {
       continue;
     }
     if (token.startsWith("--pr=")) {
-      prNumber = parsePositivePrOption(token.slice("--pr=".length));
+      prNumber = parsePositivePrOption(token.slice(5));
       continue;
     }
     if (token === "--repo") {
@@ -10763,42 +10492,14 @@ function parseCollectorArgv(args) {
       continue;
     }
     if (token.startsWith("--repo=")) {
-      repo = parseRepoOption(token.slice("--repo=".length));
+      repo = parseRepoOption(token.slice(7));
       continue;
     }
-    if (token === "--leg") {
-      const value = tokens.shift();
-      if (value === void 0 || value.trim() === "") {
-        throw new CliUsageError("--leg requires id:author[,author...]");
-      }
-      legs.push(parseCollectorLegDeclaration(value));
-      continue;
-    }
-    if (token.startsWith("--leg=")) {
-      legs.push(parseCollectorLegDeclaration(token.slice("--leg=".length)));
-      continue;
-    }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown collector option: ${token}`);
-    }
+    if (token.startsWith("-") && token !== "-") throw new CliUsageError(`unknown collector option: ${token}`);
     positional.push(token);
   }
-  if (prNumber === void 0) {
-    throw new CliUsageError("collector requires --pr <positive-integer>");
-  }
-  if (legs.length === 0) {
-    throw new CliUsageError(
-      "collector requires at least one --leg id:author[,author...]"
-    );
-  }
-  return {
-    prNumber,
-    legs,
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...project === void 0 ? {} : { project },
-    ...repo === void 0 ? {} : { repo }
-  };
+  if (prNumber === void 0) throw new CliUsageError("collector requires --pr <positive-integer>");
+  return { prNumber, instruction: positional.join(" "), attachmentPaths, ...project === void 0 ? {} : { project }, ...repo === void 0 ? {} : { repo } };
 }
 function resolveGitHubRemoteRepository(projectRoot) {
   let remoteUrl;
@@ -10863,11 +10564,6 @@ async function admitCollectorInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  if (options.legs.length === 0) {
-    throw new CliUsageError(
-      "collector requires at least one --leg id:author[,author...]"
-    );
-  }
   let prNumber;
   try {
     prNumber = parseCollectorPrNumber(options.prNumber);
@@ -10911,23 +10607,8 @@ async function admitCollectorInvocation(options) {
       )
     );
   }
-  const legsPath = join4(runDirectory, "legs.json");
-  const assembled = {
-    legs: options.legs.map((leg) => ({
-      id: leg.id,
-      expectedAuthors: [...leg.expectedAuthors]
-    }))
-  };
-  await writeFile2(legsPath, `${JSON.stringify(assembled, null, 2)}
-`, "utf8");
-  let manifestDigest;
-  try {
-    const manifest = await loadCollectorManifest(legsPath);
-    manifestDigest = manifest.digest;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(detail, { cause: error });
-  }
+  const manifest = emptyCollectorManifest();
+  const manifestDigest = manifest.digest;
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
@@ -10943,7 +10624,6 @@ async function admitCollectorInvocation(options) {
     prNumber,
     repository: repository.canonical,
     repositoryDisplay: repository.display,
-    legsPath,
     manifestDigest,
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -10975,7 +10655,6 @@ async function admitCollectorInvocation(options) {
     admittedRequestPath,
     prNumber,
     repository,
-    legsPath,
     manifestDigest
   };
 }
@@ -11589,7 +11268,7 @@ import { join as join8 } from "node:path";
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile5, realpath as realpath3 } from "node:fs/promises";
+import { readFile as readFile4, realpath as realpath3 } from "node:fs/promises";
 import { join as join5 } from "node:path";
 var PackagedMethodSkillUnavailableError = class extends Error {
   constructor(skillName, path, cause) {
@@ -11797,7 +11476,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const provenancePath = join5(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile5(provenancePath, "utf8");
+    provenanceRaw = await readFile4(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -11815,7 +11494,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
     const absolute = join5(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile5(absolute);
+      bytes = await readFile4(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -11831,7 +11510,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let raw;
   try {
     skillPath = await realpath3(skillPathConfigured);
-    raw = await readFile5(skillPath, "utf8");
+    raw = await readFile4(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -11915,7 +11594,7 @@ function postRunMissingCredentialFailure(result2, model, credentials) {
 
 // src/public-cli/run-lifecycle.ts
 init_activation_ledger_topology();
-import { lstat as lstat2, open, readdir as readdir2, readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
+import { lstat as lstat2, open, readdir as readdir2, readFile as readFile5, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
 var RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
@@ -11941,7 +11620,7 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readTypedHttp429Observation(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile6(typedProviderHttpPath(runDirectory), "utf8")
+      await readFile5(typedProviderHttpPath(runDirectory), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
@@ -11974,7 +11653,7 @@ async function writeRoleRunState(runDirectory, record3) {
 async function readRoleRunState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile6(join6(runDirectory, RUN_STATE_FILE), "utf8")
+      await readFile5(join6(runDirectory, RUN_STATE_FILE), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
@@ -12184,7 +11863,7 @@ async function loadResumableRunRecord(home, runId) {
   let derived;
   try {
     const raw = JSON.parse(
-      await readFile6(run.admittedRequestPath, "utf8")
+      await readFile5(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       const record3 = raw;
@@ -12460,7 +12139,7 @@ async function peekRoleRunRole(home, runId) {
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile7, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
+import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile6, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname5, join as join7 } from "node:path";
 
 // src/auditor-soul.ts
@@ -12551,71 +12230,15 @@ var reviewerDecisionTool = createComplianceDecisionTool(
 var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
 
 // src/collector-tool-schemas.ts
-var nonBlankString = typebox_exports.String({ minLength: 1, pattern: "\\S" });
-var nonEmptyString = typebox_exports.String({ minLength: 1 });
-var collectorObserveArgsSchema = typebox_exports.Object(
-  {},
-  { additionalProperties: false }
-);
-var collectorRequestArgsSchema = typebox_exports.Object(
-  {
-    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg to request." }),
-    snapshotId: typebox_exports.String({ minLength: 1, description: "Latest retained observation snapshot supporting the request." })
-  },
-  { additionalProperties: false }
-);
-var collectorWaitArgsSchema = typebox_exports.Object(
-  {
-    durationMs: typebox_exports.Integer({
-      minimum: 1,
-      maximum: COLLECTOR_ELIGIBILITY_MS,
-      description: "Bounded wait duration before Collector reassesses current evidence."
-    })
-  },
-  { additionalProperties: false }
-);
-var collectorValidLegSchema = typebox_exports.Object(
-  {
-    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg being settled." }),
-    status: typebox_exports.Literal("valid", { description: "Leg has qualifying current-target evidence." }),
-    rationale: typebox_exports.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
-    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." })
-  },
-  { additionalProperties: false }
-);
-var collectorUnavailableLegSchema = typebox_exports.Object(
-  {
-    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg being settled." }),
-    status: typebox_exports.Literal("unavailable", { description: "Leg cannot be obtained within an identified scope." }),
-    rationale: typebox_exports.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
-    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." }),
-    unavailableScope: typebox_exports.Union([
-      typebox_exports.Literal("target"),
-      typebox_exports.Literal("global")
-    ], { description: "Whether unavailability applies only to this target or globally." })
-  },
-  { additionalProperties: false }
-);
-var collectorMissingLegSchema = typebox_exports.Object(
-  {
-    legId: typebox_exports.String({ minLength: 1, description: "Configured Collector leg being settled." }),
-    status: typebox_exports.Literal("missing", { description: "Leg lacks qualifying current-target evidence at cutoff." }),
-    rationale: typebox_exports.String({ minLength: 1, pattern: "\\S", description: "Evidence-grounded classification rationale." }),
-    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1, description: "Retained ledger evidence supporting this classification." })
-  },
-  { additionalProperties: false }
-);
-var collectorOutputLegSchema = typebox_exports.Union([
-  collectorValidLegSchema,
-  collectorUnavailableLegSchema,
-  collectorMissingLegSchema
-]);
-var collectorOutputArgsSchema = typebox_exports.Object(
-  {
-    legs: typebox_exports.Optional(typebox_exports.Array(collectorOutputLegSchema, { minItems: 1, description: "One truthful result for each admitted Collector leg." }))
-  },
-  { additionalProperties: true }
-);
+var collectorObserveArgsSchema = typebox_exports.Object({}, { additionalProperties: false });
+var collectorRequestArgsSchema = typebox_exports.Object({
+  requestId: typebox_exports.String({ minLength: 1, description: "Configured request identity." }),
+  snapshotId: typebox_exports.String({ minLength: 1, description: "Latest retained observation snapshot." })
+}, { additionalProperties: false });
+var collectorWaitArgsSchema = typebox_exports.Object({
+  durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS })
+}, { additionalProperties: false });
+var collectorOutputArgsSchema = typebox_exports.Object({}, { additionalProperties: true });
 collectorOutputArgsSchema.required = [];
 
 // src/collector-ledger.ts
@@ -13013,7 +12636,7 @@ function presentStructuralRejection(error, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile7(sessionFile, "utf8");
+    await readFile6(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError2(error)) return { state: "missing" };
@@ -13154,7 +12777,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile7(sessionFile, "utf8");
+  const text = await readFile6(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -13462,15 +13085,26 @@ function collectorDecisiveFacts(receipt) {
     const value = safelyRead(candidate, key);
     if (value.readable && value.value !== void 0) facts[key] = value.value;
   }
-  const legs = safelyRead(candidate, "legs");
-  if (legs.readable && Array.isArray(legs.value)) {
+  const groups = safelyRead(candidate, "groups");
+  if (groups.readable && Array.isArray(groups.value)) {
     try {
-      facts.legStatuses = legs.value.map((leg) => {
-        if (!isRecord4(leg)) throw new Error("unreadable Collector leg");
-        const legId = safelyRead(leg, "legId");
-        const status = safelyRead(leg, "status");
-        if (!legId.readable || !status.readable) throw new Error("unreadable Collector leg");
-        return { legId: legId.value, status: status.value };
+      facts.groups = groups.value.map((group) => {
+        if (!isRecord4(group)) throw new Error("unreadable Collector group");
+        const identity = safelyRead(group, "identity");
+        const attendance = safelyRead(group, "attendance");
+        const degraded = safelyRead(group, "degraded");
+        const materials = safelyRead(group, "materials");
+        const findings = safelyRead(group, "findings");
+        if (!identity.readable || !attendance.readable || !degraded.readable || !materials.readable || !Array.isArray(materials.value) || !findings.readable || !Array.isArray(findings.value)) {
+          throw new Error("unreadable Collector group");
+        }
+        return {
+          identity: identity.value,
+          attendance: attendance.value,
+          degraded: degraded.value,
+          materialCount: materials.value.length,
+          findingCount: findings.value.length
+        };
       });
     } catch {
     }
@@ -13533,9 +13167,6 @@ function collectorReceiptBindingFailure(diagnostic) {
   error.knownCause = "output";
   return error;
 }
-function sortedUniqueStrings(values) {
-  return [...new Set(values)].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
-}
 function toolResultText(message) {
   const content = message.content;
   if (typeof content === "string") return content.trim();
@@ -13586,7 +13217,7 @@ async function readCollectorInfrastructureFailure(sessionFile) {
     return void 0;
   }
 }
-function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds) {
+function assertCollectorReceiptMatchesAdmitted(receipt, admitted) {
   if (receipt.repository !== admitted.repository.canonical) {
     throw collectorReceiptBindingFailure(
       `Collector receipt repository "${receipt.repository}" does not match admitted repository "${admitted.repository.canonical}"`
@@ -13600,15 +13231,6 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds
   if (receipt.manifestDigest !== admitted.manifestDigest) {
     throw collectorReceiptBindingFailure(
       `Collector receipt manifestDigest does not match admitted manifestDigest`
-    );
-  }
-  const receiptLegIds = sortedUniqueStrings(
-    receipt.legs.map((leg) => leg.legId)
-  );
-  const expectedLegIds = sortedUniqueStrings(admittedLegIds);
-  if (receipt.legs.length !== admittedLegIds.length || receiptLegIds.length !== expectedLegIds.length || receiptLegIds.some((id, index) => id !== expectedLegIds[index])) {
-    throw collectorReceiptBindingFailure(
-      `Collector receipt leg set [${receiptLegIds.join(",")}] does not match admitted leg set [${expectedLegIds.join(",")}]`
     );
   }
 }
@@ -14535,7 +14157,6 @@ async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory
         role: "collector",
         prNumber: admitted.prNumber,
         repository: admitted.repository.canonical,
-        legsPath: admitted.legsPath,
         manifestDigest: admitted.manifestDigest,
         sessionDirectory,
         sessionFile: admitted.sessionFile,
@@ -14610,17 +14231,7 @@ async function settleLawfulCollectorTerminalResult(admitted) {
     }
     return void 0;
   }
-  const admittedManifest = await loadCollectorManifest(admitted.legsPath);
-  if (admittedManifest.digest !== admitted.manifestDigest) {
-    throw collectorReceiptBindingFailure(
-      `Collector legs at settlement digest does not match admitted manifestDigest`
-    );
-  }
-  assertCollectorReceiptMatchesAdmitted(
-    extracted.receipt,
-    admitted,
-    admittedManifest.legs.map((leg) => leg.id)
-  );
+  assertCollectorReceiptMatchesAdmitted(extracted.receipt, admitted);
   const navigator = extractNavigatorFact(
     entries,
     attendanceIdentityFromAdmitted(admitted)
@@ -15761,8 +15372,6 @@ function buildCollectorActivationExtraArgs(admitted, options = {}) {
     admitted.repository.display,
     "--ak-collector-pr",
     String(admitted.prNumber),
-    "--ak-collector-legs",
-    admitted.legsPath,
     "--mode",
     "json",
     ...buildModelArgs2(options.model),
@@ -15912,7 +15521,6 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
       home: env.home,
       cwd: env.cwd,
       prNumber: parsed.prNumber,
-      legs: parsed.legs,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...parsed.project === void 0 ? {} : { project: parsed.project },

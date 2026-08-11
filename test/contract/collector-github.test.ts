@@ -19,7 +19,6 @@ import {
   normalizeAuthenticatedUserEvidence,
   normalizePullRequestEvidence,
   normalizeReviewEvidence,
-  reviewQualifiesForValid,
   type CollectorClock,
 } from "../../src/collector-evidence.ts";
 import {
@@ -27,6 +26,8 @@ import {
   sampleUser,
 } from "../helpers/fake-github-transport.ts";
 import { buildCollectorReceipt } from "../../src/collector-receipt.ts";
+import { emptyCollectorManifest } from "../../src/collector-config.ts";
+import { createFakeGitHubTransport } from "../helpers/fake-github-transport.ts";
 
 function clockAt(startWall: string): CollectorClock & { advance(ms: number): void } {
   let mono = 0;
@@ -62,6 +63,30 @@ async function withPathGhStub<T>(
     else process.env.PATH = previousPath;
   }
 }
+
+test("runtime receipt is formed solely from observed typed identity groups", async () => {
+  const raw = JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-review-4895713581.json", import.meta.url), "utf8"));
+  const review = normalizeReview(raw);
+  const clock = clockAt("2026-08-11T00:00:00Z");
+  const ledger = createCollectorLedger({
+    repository: { display: "acme/widgets", canonical: "acme/widgets", owner: "acme", repo: "widgets" },
+    prNumber: 1,
+    manifest: emptyCollectorManifest(),
+  });
+  ledger.recordActivation(clock);
+  await ledger.observe(createFakeGitHubTransport({
+    user: { login: "collector", raw: { login: "collector" } },
+    pullRequest: { number: 1, state: "OPEN", headOid: review.commitId!, updatedAt: "2026-08-11T00:00:00Z", url: "https://github.com/acme/widgets/pull/1", raw: { number: 1 } },
+    reviews: [review], issueComments: [], reviewComments: [],
+  }), clock);
+  const receipt = buildCollectorReceipt(ledger, { ignored: "model projection" }, clock);
+  assert.equal(receipt.groups.length, 1);
+  assert.equal(receipt.groups[0]?.identity?.userId, 136622811);
+  assert.equal(receipt.groups[0]?.attendance, true);
+  assert.equal(Object.hasOwn(receipt, "reports"), false);
+  assert.equal(Object.hasOwn(receipt, "legs"), false);
+  assert.equal(Object.hasOwn(receipt, "identityGroups"), false);
+});
 
 test("production transport uses gh api --hostname github.com argument vector", async () => {
   const calls: string[][] = [];
@@ -143,20 +168,20 @@ test("normalize helpers accept OPEN and valid review states and reject missing h
   assert.equal(review.state, "APPROVED");
 });
 
-test("request marker is deterministic for digest/leg/head", () => {
+test("request marker is deterministic for digest/request/head", () => {
   const marker = buildCollectorRequestMarker({
     manifestDigest: "abcdef0123456789",
-    legId: "codex",
+    requestId: "codex",
     headOid: "head1",
   });
   assert.equal(
     marker,
-    "<!-- ak-collector:v1 manifest=abcdef012345 leg=codex head=head1 -->",
+    "<!-- ak-collector:v1 manifest=abcdef012345 request=codex head=head1 -->",
   );
   const built = buildCollectorRequestBody({
     configuredBody: "Please review.",
     manifestDigest: "abcdef0123456789",
-    legId: "codex",
+    requestId: "codex",
     headOid: "head1",
   });
   assert.equal(built.body.startsWith("Please review.\n"), true);
@@ -227,7 +252,7 @@ printf 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{"login":"colle
 });
 
 
-test("R6 null user on review/issue comment/review comment preserves record and never qualifies", async () => {
+test("R6 null user materials are retained without gaining typed identity", async () => {
   const review = normalizeReview({
     id: 1,
     user: null,
@@ -354,14 +379,13 @@ test("R6 null user on review/issue comment/review comment preserves record and n
     },
     prNumber: 1,
     manifest: {
-      legs: [{
+      requests: [{
         id: "codex",
-        expectedAuthors: ["codexbot"],
         requestBody: "Please review.",
       }],
       canonicalJson: "{}\n",
       digest: "d".repeat(64),
-      sourcePath: "/tmp/legs.json",
+      sourcePath: "/tmp/requests.json",
     },
   });
   ledger.recordActivation(clock);
@@ -375,30 +399,6 @@ test("R6 null user on review/issue comment/review comment preserves record and n
   for (const row of stored) {
     assert.equal(row.authorLogin, undefined);
   }
-  const tombstoneReview = stored.find((item) => item.kind === "review")!;
-  assert.equal(
-    reviewQualifiesForValid({
-      review: tombstoneReview,
-      expectedAuthors: new Set(["codexbot"]),
-      targetHead: "head-c",
-      activationTime: new Date("2024-01-01T00:10:00Z"),
-      deadlineTime: new Date("2024-01-01T00:25:00Z"),
-    }).ok,
-    false,
-  );
-  clock.advance(16 * 60 * 1000);
-  await ledger.observe(transport, clock);
-  assert.throws(
-    () => buildCollectorReceipt(ledger, {
-      legs: [{
-        legId: "codex",
-        status: "valid",
-        rationale: "ghost",
-        evidenceRefs: [tombstoneReview.evidenceId],
-      }],
-    }, clock),
-    /qualifying|valid/i,
-  );
   void page;
 });
 
@@ -595,21 +595,20 @@ test("2xx parse ambiguous_loss recovers via marker observe without second POST",
     },
     prNumber: 1,
     manifest: {
-      legs: [{
+      requests: [{
         id: "codex",
-        expectedAuthors: ["codexbot"],
         requestBody: "Please review.",
       }],
       canonicalJson: "{}\n",
       digest: "d".repeat(64),
-      sourcePath: "/tmp/legs.json",
+      sourcePath: "/tmp/requests.json",
     },
   });
   const clock = clockAt("2024-01-01T00:00:00Z");
   ledger.recordActivation(clock);
   const first = await ledger.observe(transport, clock);
   const req = await ledger.request(
-    { legId: "codex", snapshotId: first.snapshot.snapshotId },
+    { requestId: "codex", snapshotId: first.snapshot.snapshotId },
     transport,
     clock,
   ) as { status: string };
@@ -632,14 +631,13 @@ function collectorLedgerFixture(digestChar = "f") {
     },
     prNumber: 1,
     manifest: {
-      legs: [{
+      requests: [{
         id: "codex",
-        expectedAuthors: ["codexbot"],
         requestBody: "Please review.",
       }],
       canonicalJson: "{}\n",
       digest: digestChar.repeat(64),
-      sourcePath: "/tmp/legs.json",
+      sourcePath: "/tmp/requests.json",
     },
   });
 }
@@ -692,7 +690,7 @@ async function assertInProcessRequestAbort(abortReason: unknown) {
   const first = await ledger.observe(transport, clock);
   const controller = new AbortController();
   const pending = ledger.request(
-    { legId: "codex", snapshotId: first.snapshot.snapshotId },
+    { requestId: "codex", snapshotId: first.snapshot.snapshotId },
     transport,
     clock,
     controller.signal,
@@ -707,7 +705,7 @@ async function assertInProcessRequestAbort(abortReason: unknown) {
   assert.equal(attempts[0]?.status, "started");
   await assert.rejects(
     () => ledger.request(
-      { legId: "codex", snapshotId: first.snapshot.snapshotId },
+      { requestId: "codex", snapshotId: first.snapshot.snapshotId },
       transport,
       clock,
     ),

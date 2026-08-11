@@ -15,13 +15,6 @@ export const COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1000;
 export type WindowRelation = "before" | "within" | "after" | "uncertain";
 export type HeadRelation = "current" | "prior";
 
-export const VALID_REVIEW_STATES = [
-  "APPROVED",
-  "CHANGES_REQUESTED",
-  "COMMENTED",
-] as const;
-export type ValidReviewState = (typeof VALID_REVIEW_STATES)[number];
-
 export type CollectorEvidenceKind =
   | "pull_request"
   | "review"
@@ -128,45 +121,6 @@ export function computeWindowRelation(
   if (ms < activationMs) return "before";
   if (ms <= deadlineMs) return "within";
   return "after";
-}
-
-export function isValidReviewState(state: string): state is ValidReviewState {
-  return (VALID_REVIEW_STATES as readonly string[]).includes(state);
-}
-
-export function reviewQualifiesForValid(input: {
-  review: Pick<CollectorEvidenceRecord, "authorLogin" | "state" | "commitOid" | "authoritativeTime">;
-  expectedAuthors: ReadonlySet<string>;
-  targetHead: string;
-  activationTime: Date;
-  deadlineTime: Date;
-}): { ok: true; windowRelation: WindowRelation } | { ok: false; reason: string } {
-  const author = input.review.authorLogin?.toLowerCase();
-  if (author === undefined || !input.expectedAuthors.has(author)) {
-    return { ok: false, reason: "author" };
-  }
-  if (input.review.state === undefined || !isValidReviewState(input.review.state)) {
-    return { ok: false, reason: "state" };
-  }
-  if (
-    input.review.commitOid === undefined ||
-    input.review.commitOid === null ||
-    input.review.commitOid.length === 0
-  ) {
-    return { ok: false, reason: "commit" };
-  }
-  if (input.review.commitOid !== input.targetHead) {
-    return { ok: false, reason: "head" };
-  }
-  const windowRelation = computeWindowRelation(
-    input.review.authoritativeTime,
-    input.activationTime,
-    input.deadlineTime,
-  );
-  if (windowRelation !== "before" && windowRelation !== "within") {
-    return { ok: false, reason: "window" };
-  }
-  return { ok: true, windowRelation };
 }
 
 function stableId(kind: string, githubId: string | number): string {
