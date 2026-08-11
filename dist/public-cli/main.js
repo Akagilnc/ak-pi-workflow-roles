@@ -13321,13 +13321,14 @@ function typedFailedTerminatingToolKnownFailure(entries) {
       break;
     }
   }
-  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
-    const message = entries[i]?.message;
-    if (entries[i]?.type !== "message" || message?.role !== "toolResult") continue;
+  const attemptEntries = entries.slice(attemptStart);
+  for (let i = attemptEntries.length - 1; i >= 0; i -= 1) {
+    const message = attemptEntries[i]?.message;
+    if (attemptEntries[i]?.type !== "message" || message?.role !== "toolResult") continue;
     const classification = classifyPackagedRoleTerminalResult(message);
     if (classification.kind !== "infrastructure") continue;
     if (typeof message.toolCallId !== "string" || typeof message.toolName !== "string") continue;
-    if (boundRoleToolCallForResult(entries, i, message, message.toolName) === void 0) continue;
+    if (boundRoleToolCallForResult(attemptEntries, i, message, message.toolName) === void 0) continue;
     const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord4(part) && part.type === "text" && typeof part.text === "string") : void 0;
     const diagnostic = isRecord4(textPart) ? textPart.text : void 0;
     return {

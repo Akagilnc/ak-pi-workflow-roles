@@ -2970,6 +2970,31 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
   });
 });
 
+test("typed output failure cannot bind a call from an earlier attempt", async () => {
+  await withTempHome(async (home) => {
+    const sessionFile = join(home, "session.jsonl");
+    await writeFile(sessionFile, [
+      { type: "session", id: "parent-session" },
+      { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "reused-id", name: "ak_judge_output", arguments: {} }] } },
+      { type: "message", message: { role: "user" } },
+      { type: "message", message: {
+        role: "toolResult",
+        toolCallId: "reused-id",
+        toolName: "ak_judge_output",
+        isError: true,
+        content: [{ type: "text", text: "unbound current-attempt result" }],
+        details: { kind: "role_infrastructure_failure", source: "shared-role-lifecycle", reasonCode: "host_failure" },
+      } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+    assert.equal(await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+    }), undefined);
+  });
+});
+
 test("malformed typed output evidence with extra detail keys fails closed", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
