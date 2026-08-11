@@ -44,7 +44,7 @@ import {
   type CoderOutput,
   type FixerOutput,
 } from "../package-contracts/worker-output.ts";
-import { isTerminatingToolName, validateAcceptedDetails } from "../package-contracts/terminating-tools.ts";
+import { validateAcceptedDetails } from "../package-contracts/terminating-tools.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
   validateRecordedDoctorOutput,
