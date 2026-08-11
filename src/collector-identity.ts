@@ -13,6 +13,20 @@ import type { CollectorEvidenceRecord, HeadRelation } from "./collector-evidence
 
 export type GitHubIdentityMaterial = GitHubReview | GitHubIssueComment | GitHubReviewComment | GitHubPullRequestReaction;
 
+/** Typed failure when retained external bytes cannot be read as their recorded material kind. */
+export class CollectorEvidenceNormalizationError extends Error {
+  readonly code = "COLLECTOR_EVIDENCE_NORMALIZATION_FAILED";
+
+  constructor(
+    readonly evidenceId: string,
+    readonly evidenceKind: CollectorEvidenceRecord["kind"],
+    cause: unknown,
+  ) {
+    super(`Collector evidence ${evidenceId} (${evidenceKind}) could not be normalized`, { cause });
+    this.name = "CollectorEvidenceNormalizationError";
+  }
+}
+
 export type CollectorMaterialRef = {
   kind: "review" | "issue_comment" | "review_comment" | "reaction";
   id: number;
@@ -172,9 +186,8 @@ export function extractCollectorEvidenceIdentityGroups(
       if (record.kind === "issue_comment") supported.push({ record, material: normalizeIssueComment(record.raw) });
       if (record.kind === "review_comment") supported.push({ record, material: normalizeReviewComment(record.raw) });
       if (record.kind === "reaction") supported.push({ record, material: normalizePullRequestReaction(record.raw) });
-    } catch {
-      // Raw transport failures remain evidenceRecords, but cannot impersonate
-      // typed attendance when their retained bytes do not normalize.
+    } catch (cause) {
+      throw new CollectorEvidenceNormalizationError(record.evidenceId, record.kind, cause);
     }
   }
   const groups = new Map<string, ExtractedCollectorIdentityGroup>();
