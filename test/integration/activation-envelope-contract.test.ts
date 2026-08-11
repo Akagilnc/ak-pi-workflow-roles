@@ -252,7 +252,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
 }
 
 function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string, unknown> {
-  const legsPath = join(fixtureRoot, "legs.json");
   switch (role) {
     case "judge":
       return {};
@@ -265,13 +264,9 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
         "ak-review-base": "main~1",
       };
     case "collector":
-      writeFileSync(legsPath, `${JSON.stringify({
-        legs: [{ id: "codex", expectedAuthors: ["codexbot"], request: { body: "Please review." } }],
-      })}\n`);
       return {
         "ak-collector-repo": "acme/widgets",
         "ak-collector-pr": "1",
-        "ak-collector-legs": legsPath,
       };
     case "doctor":
       return { "ak-doctor-case": "/lawful/case" };
@@ -295,7 +290,7 @@ test("seven packaged terminating tools expose the provider-open registration inv
       case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence"];
       case "reviewer": return ["status", "diagnostic"];
       case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"];
-      case "collector": return ["legs"];
+      case "collector": return [];
       case "doctor": return ["status", "case", "findings", "reason", "missingEvidence"];
       case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis"];
       default: throw new Error(`unexpected packaged role ${role}`);
@@ -362,8 +357,6 @@ test("seven packaged terminating tools expose the provider-open registration inv
             classResultsBranches.some((branch) => branch.items?.anyOf),
             `${label}.classResults mixed branch items retain their legal union`,
           );
-        } else if (entry.role === "collector") {
-          assert.ok(parameters.properties?.legs?.items?.anyOf, `${label}.legs item retains its legal union`);
         } else if (entry.role === "doctor") {
           assert.ok(parameters.properties?.findings?.items?.anyOf, `${label}.findings item retains its legal union`);
         }
