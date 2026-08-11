@@ -13,9 +13,9 @@
   "packageAdaptation": "fixer-boundary-no-external-skill-chain",
   "files": {
     "SKILL.md": {
-      "sha256": "20cb4ec08e2dd914a1a493afac8ece6d15b14c36243eba21e628f96638db64af",
-      "byteLength": 8672,
-      "gitBlob": "439bd76c1dbf1933d018625efff1b89afa31e057"
+      "sha256": "600d0c8e84f01ceaf77137184c564e05f594cf49f8d5ef9860b4a794c5cd368f",
+      "byteLength": 8879,
+      "gitBlob": "9fae71cbf39944ce5dbe4404436b4fe5d0d5be10"
     },
     "agents/openai.yaml": {
       "sha256": "3e430dbe4334a87597488c060cb3dc3786bb00c9182877d6f5ec41f62490e90b",
