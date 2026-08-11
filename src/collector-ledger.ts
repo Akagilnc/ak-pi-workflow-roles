@@ -9,9 +9,9 @@ import {
   normalizeAuthenticatedUserEvidence,
   normalizeIssueCommentEvidence,
   normalizePullRequestEvidence,
+  normalizePullRequestReactionEvidence,
   normalizeReviewCommentEvidence,
   normalizeReviewEvidence,
-  reviewQualifiesForValid,
   sha256Text,
   type CollectorClock,
   type CollectorEvidenceRecord,
@@ -46,7 +46,7 @@ export type CollectorOperationalTool = (typeof COLLECTOR_OPERATIONAL_TOOLS)[numb
 
 export type CollectorRequestAttempt = {
   attemptId: string;
-  legId: string;
+  requestId: string;
   observedHead: string;
   snapshotId: string;
   marker: string;
@@ -72,7 +72,7 @@ export type CollectorTransportFailure = {
   failureId: string;
   kind: "ambiguous_request_loss" | "api" | "pagination" | "size";
   message: string;
-  legId?: string;
+  requestId?: string;
   observedHead?: string;
   marker?: string;
   recovered: boolean;
@@ -109,10 +109,7 @@ export type CollectorLedger = {
   completeOperational(toolCallId: string): void;
   markOutputAccepted(): void;
   noteCutoffObserved(): void;
-  assertOutputObservationLaw(
-    candidate: { legs: ReadonlyArray<{ status: string }> },
-    clock: CollectorClock,
-  ): void;
+  assertOutputObservationLaw(clock: CollectorClock): void;
 
   observe(
     transport: CollectorGitHubTransport,
@@ -124,7 +121,7 @@ export type CollectorLedger = {
   }>;
 
   request(
-    input: { legId: string; snapshotId: string },
+    input: { requestId: string; snapshotId: string },
     transport: CollectorGitHubTransport,
     clock: CollectorClock,
     signal?: AbortSignal,
@@ -143,8 +140,7 @@ export type CollectorLedger = {
   requestAttempts(): readonly CollectorRequestAttempt[];
   waits(): readonly CollectorWaitRecord[];
   transportFailures(): readonly CollectorTransportFailure[];
-  configuredAuthorLogins(): ReadonlySet<string>;
-  legById(legId: string): CollectorConfigState["manifest"]["legs"][number] | undefined;
+  requestById(requestId: string): CollectorConfigState["manifest"]["requests"][number] | undefined;
 };
 
 function isOperationalTool(name: string): name is CollectorOperationalTool {
@@ -195,11 +191,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
   const attemptKeys = new Set<string>();
   const waits: CollectorWaitRecord[] = [];
   const transportFailures: CollectorTransportFailure[] = [];
-
-  const configuredAuthors = new Set<string>();
-  for (const leg of config.manifest.legs) {
-    for (const author of leg.expectedAuthors) configuredAuthors.add(author);
-  }
 
   const latchFatal = (reason: string, cause?: unknown): Error => {
     fatal = true;
@@ -260,6 +251,9 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       prNumber,
       ...signalOpt,
     });
+    const reactions = transport.listPullRequestReactions === undefined
+      ? { items: [], pages: [] }
+      : await transport.listPullRequestReactions({ owner, repo, prNumber, ...signalOpt });
     const issueComments = await transport.listIssueComments({
       owner,
       repo,
@@ -278,7 +272,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       prNumber,
       ...signalOpt,
     });
-    return { user, prInitial, reviews, issueComments, reviewComments, prTerminal };
+    return { user, prInitial, reviews, reactions, issueComments, reviewComments, prTerminal };
   };
 
   const ledger: CollectorLedger = {
@@ -382,7 +376,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       finalObservationRequired = true;
     },
 
-    assertOutputObservationLaw(candidate, clock) {
+    assertOutputObservationLaw(clock) {
       assertNotFatal();
       if (activationTime === undefined || deadlineTime === undefined || deadlineMono === undefined) {
         throw new Error("Collector output requires activation timeline");
@@ -402,14 +396,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
       const mono = monoNowOrThrow(clock);
       const atOrAfterCutoff = mono >= deadlineMono;
-      const hasMissing = candidate.legs.some((leg) => leg.status === "missing");
-
-      if (!atOrAfterCutoff && hasMissing) {
-        throw new Error(
-          "Collector missing status is forbidden before the eligibility cutoff",
-        );
-      }
-
       if (atOrAfterCutoff) {
         finalObservationRequired = true;
         if (
@@ -470,12 +456,13 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
       // Always bind terminal PR identity fields.
       const pr = surfaces.prTerminal;
-      const { user, reviews, issueComments, reviewComments } = surfaces;
+      const { user, reviews, reactions, issueComments, reviewComments } = surfaces;
 
       requesterLogin = user.login.toLowerCase();
 
       const pageDiagnostics: GitHubPageDiagnostics[] = [
         ...reviews.pages,
+        ...reactions.pages,
         ...issueComments.pages,
         ...reviewComments.pages,
       ];
@@ -485,6 +472,9 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       pendingRecords.push(normalizePullRequestEvidence(pr, firstObservedAt));
       for (const review of reviews.items) {
         pendingRecords.push(normalizeReviewEvidence(review, firstObservedAt));
+      }
+      for (const reaction of reactions.items) {
+        pendingRecords.push(normalizePullRequestReactionEvidence(reaction, firstObservedAt));
       }
       for (const comment of issueComments.items) {
         pendingRecords.push(normalizeIssueCommentEvidence(comment, firstObservedAt));
@@ -526,7 +516,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       // Recover ambiguous request markers if present.
       for (const failure of transportFailures) {
         if (failure.recovered || failure.kind !== "ambiguous_request_loss") continue;
-        if (failure.marker === undefined || failure.legId === undefined) continue;
+        if (failure.marker === undefined || failure.requestId === undefined) continue;
         const found = storedRecords.find((record) =>
           record.kind === "issue_comment" &&
           record.authorLogin === requesterLogin &&
@@ -537,7 +527,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
           failure.recovered = true;
           const attempt = attempts.find((item) =>
             item.status === "ambiguous_loss" &&
-            item.legId === failure.legId &&
+            item.requestId === failure.requestId &&
             item.marker === failure.marker
           );
           if (attempt) {
@@ -575,7 +565,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       const modelView = buildObserveModelView({
         snapshot,
         records: storedRecords,
-        configuredAuthors,
         requesterLogin,
         attempts,
       });
@@ -596,12 +585,9 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         throw latchFatal("Collector cannot request while a transport failure is unrecovered");
       }
 
-      const leg = config.manifest.legs.find((item) => item.id === input.legId);
-      if (leg === undefined) {
-        throw new Error(`Unknown Collector legId \"${input.legId}\"`);
-      }
-      if (leg.requestBody === undefined) {
-        throw new Error(`Collector leg \"${input.legId}\" is observe-only and cannot request`);
+      const request = config.manifest.requests.find((item) => item.id === input.requestId);
+      if (request === undefined) {
+        throw new Error(`Unknown Collector requestId "${input.requestId}"`);
       }
 
       const snapshot = snapshots.find((item) => item.snapshotId === input.snapshotId);
@@ -615,29 +601,10 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         throw latchFatal("Collector cannot request on a non-OPEN pull request snapshot");
       }
 
-      // Existing exact-head qualifying review means no request (same law as receipt valid).
-      const expected = new Set(leg.expectedAuthors);
-      const hasQualifying = snapshot.evidenceIds.some((id) => {
-        const record = evidenceById.get(id);
-        if (record === undefined || record.kind !== "review") return false;
-        return reviewQualifiesForValid({
-          review: record,
-          expectedAuthors: expected,
-          targetHead: snapshot.headOid,
-          activationTime: activationTime!,
-          deadlineTime: deadlineTime!,
-        }).ok;
-      });
-      if (hasQualifying) {
-        throw new Error(
-          `Collector leg \"${input.legId}\" already has an exact-head qualifying review; request refused`,
-        );
-      }
-
       const { body, marker } = buildCollectorRequestBody({
-        configuredBody: leg.requestBody,
+        configuredBody: request.requestBody,
         manifestDigest: config.manifest.digest,
-        legId: leg.id,
+        requestId: request.id,
         headOid: snapshot.headOid,
       });
       const existingMarker = snapshot.evidenceIds.some((id) => {
@@ -649,7 +616,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       });
       if (existingMarker) {
         throw new Error(
-          `Collector already has an authenticated same-marker request for leg \"${input.legId}\" at this HEAD`,
+          `Collector already has an authenticated same-marker request for request \"${input.requestId}\" at this HEAD`,
         );
       }
 
@@ -657,11 +624,11 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         config.repository.canonical,
         String(config.prNumber),
         snapshot.headOid,
-        leg.id,
+        request.id,
       ].join("|");
       if (attemptKeys.has(attemptKey)) {
         throw new Error(
-          `Collector process-local request attempt already used for leg \"${leg.id}\" at HEAD ${snapshot.headOid}`,
+          `Collector process-local request attempt already used for request \"${request.id}\" at HEAD ${snapshot.headOid}`,
         );
       }
 
@@ -669,7 +636,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       const attemptId = sha256Text(`${attemptKey}:${startedAt}`).slice(0, 16);
       const attempt: CollectorRequestAttempt = {
         attemptId,
-        legId: leg.id,
+        requestId: request.id,
         observedHead: snapshot.headOid,
         snapshotId: snapshot.snapshotId,
         marker,
@@ -701,7 +668,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         return {
           status: "succeeded",
           attemptId,
-          legId: leg.id,
+          requestId: request.id,
           observedHead: snapshot.headOid,
           marker,
           commentEvidenceId: record.evidenceId,
@@ -715,7 +682,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
           failureId: sha256Text(`loss:${attemptId}`).slice(0, 16),
           kind: "ambiguous_request_loss",
           message: result.diagnostics,
-          legId: leg.id,
+          requestId: request.id,
           observedHead: snapshot.headOid,
           marker,
           recovered: false,
@@ -723,7 +690,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         return {
           status: "ambiguous_loss",
           attemptId,
-          legId: leg.id,
+          requestId: request.id,
           observedHead: snapshot.headOid,
           marker,
           diagnostics: result.diagnostics,
@@ -810,11 +777,8 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     transportFailures() {
       return [...transportFailures];
     },
-    configuredAuthorLogins() {
-      return configuredAuthors;
-    },
-    legById(legId) {
-      return config.manifest.legs.find((leg) => leg.id === legId);
+    requestById(requestId) {
+      return config.manifest.requests.find((request) => request.id === requestId);
     },
   };
 
@@ -824,26 +788,10 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 function buildObserveModelView(input: {
   snapshot: CollectorSnapshot;
   records: readonly CollectorEvidenceRecord[];
-  configuredAuthors: ReadonlySet<string>;
   requesterLogin: string | undefined;
   attempts: readonly CollectorRequestAttempt[];
 }): unknown {
-  const relevant = input.records.filter((record) => {
-    if (record.kind === "pull_request" || record.kind === "authenticated_user") return true;
-    if (record.authorLogin !== undefined && input.configuredAuthors.has(record.authorLogin)) {
-      return true;
-    }
-    if (
-      record.kind === "issue_comment" &&
-      record.authorLogin === input.requesterLogin &&
-      typeof record.body === "string" &&
-      record.body.includes("ak-collector:v1")
-    ) {
-      return true;
-    }
-    return false;
-  });
-
+  const relevant = input.records;
   return {
     snapshotId: input.snapshot.snapshotId,
     observedAt: input.snapshot.observedAt,
@@ -869,7 +817,7 @@ function buildObserveModelView(input: {
     })),
     requestAttempts: input.attempts.map((attempt) => ({
       attemptId: attempt.attemptId,
-      legId: attempt.legId,
+      requestId: attempt.requestId,
       observedHead: attempt.observedHead,
       status: attempt.status,
       marker: attempt.marker,

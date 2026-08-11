@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 
 export type GitHubPullRequest = {
   number: number;
@@ -14,11 +15,27 @@ export type GitHubUser = {
   raw: unknown;
 };
 
+export type GitHubMachineIdentity = {
+  userType: string;
+  userId: number;
+  appId?: number;
+};
+
+export type GitHubPullRequestReaction = {
+  id: number;
+  userLogin: string | null;
+  machineIdentity?: GitHubMachineIdentity | null;
+  content: string;
+  createdAt: string;
+  raw: unknown;
+};
+
 export type GitHubReview = {
   id: number;
   nodeId?: string;
   /** Null when GitHub tombstones the author (`user: null`). */
   userLogin: string | null;
+  machineIdentity?: GitHubMachineIdentity | null;
   state: string;
   body: string;
   commitId: string | null;
@@ -31,6 +48,7 @@ export type GitHubIssueComment = {
   id: number;
   /** Null when GitHub tombstones the author (`user: null`). */
   userLogin: string | null;
+  machineIdentity?: GitHubMachineIdentity | null;
   body: string;
   createdAt: string;
   updatedAt: string;
@@ -43,6 +61,7 @@ export type GitHubReviewComment = {
   pullRequestReviewId: number | null;
   /** Null when GitHub tombstones the author (`user: null`). */
   userLogin: string | null;
+  machineIdentity?: GitHubMachineIdentity | null;
   body: string;
   path: string;
   line: number | null;
@@ -100,6 +119,13 @@ export type CollectorGitHubTransport = {
     /** Charge observation budget before aggregate append / next-page fetch. */
     retainPage?: (items: GitHubReview[]) => void;
   }): Promise<{ items: GitHubReview[]; pages: GitHubPageDiagnostics[] }>;
+  listPullRequestReactions?(input: {
+    owner: string;
+    repo: string;
+    prNumber: number;
+    signal?: AbortSignal;
+    retainPage?: (items: GitHubPullRequestReaction[]) => void;
+  }): Promise<{ items: GitHubPullRequestReaction[]; pages: GitHubPageDiagnostics[] }>;
   listIssueComments(input: {
     owner: string;
     repo: string;
@@ -202,6 +228,20 @@ function optionalUserLogin(raw: unknown): string | null {
   return raw["login"];
 }
 
+function machineIdentity(raw: Record<string, unknown>): GitHubMachineIdentity | null {
+  const user = raw["user"];
+  if (!isRecord(user) || typeof user["type"] !== "string" || typeof user["id"] !== "number") {
+    return null;
+  }
+  const app = raw["performed_via_github_app"];
+  const appId = isRecord(app) && typeof app["id"] === "number" ? app["id"] : undefined;
+  return {
+    userType: user["type"],
+    userId: user["id"],
+    ...(appId === undefined ? {} : { appId }),
+  };
+}
+
 export function normalizePullRequest(raw: unknown): GitHubPullRequest {
   if (!isRecord(raw)) throw new Error("GitHub pull request payload must be an object");
   const head = raw["head"];
@@ -223,12 +263,25 @@ export function normalizePullRequest(raw: unknown): GitHubPullRequest {
   };
 }
 
+export function normalizePullRequestReaction(raw: unknown): GitHubPullRequestReaction {
+  if (!isRecord(raw)) throw new Error("GitHub reaction payload must be an object");
+  return {
+    id: requireNumber(raw["id"], "reaction.id"),
+    userLogin: optionalUserLogin(raw["user"]),
+    machineIdentity: machineIdentity(raw),
+    content: requireString(raw["content"], "reaction.content"),
+    createdAt: requireString(raw["created_at"], "reaction.created_at"),
+    raw,
+  };
+}
+
 export function normalizeReview(raw: unknown): GitHubReview {
   if (!isRecord(raw)) throw new Error("GitHub review payload must be an object");
   return {
     id: requireNumber(raw["id"], "review.id"),
     ...(typeof raw["node_id"] === "string" ? { nodeId: raw["node_id"] } : {}),
     userLogin: optionalUserLogin(raw["user"]),
+    machineIdentity: machineIdentity(raw),
     state: requireString(raw["state"], "review.state").toUpperCase(),
     body: typeof raw["body"] === "string" ? raw["body"] : "",
     commitId: optionalString(raw["commit_id"]),
@@ -243,6 +296,7 @@ export function normalizeIssueComment(raw: unknown): GitHubIssueComment {
   return {
     id: requireNumber(raw["id"], "comment.id"),
     userLogin: optionalUserLogin(raw["user"]),
+    machineIdentity: machineIdentity(raw),
     body: typeof raw["body"] === "string" ? raw["body"] : "",
     createdAt: requireString(raw["created_at"], "comment.created_at"),
     updatedAt: requireString(raw["updated_at"], "comment.updated_at"),
@@ -259,6 +313,7 @@ export function normalizeReviewComment(raw: unknown): GitHubReviewComment {
       ? raw["pull_request_review_id"]
       : null,
     userLogin: optionalUserLogin(raw["user"]),
+    machineIdentity: machineIdentity(raw),
     body: typeof raw["body"] === "string" ? raw["body"] : "",
     path: requireString(raw["path"], "review_comment.path"),
     line: typeof raw["line"] === "number" ? raw["line"] : null,
@@ -500,6 +555,15 @@ export function createGhCollectorGitHubTransport(
       });
     },
 
+    async listPullRequestReactions(input) {
+      const path =
+        `/repos/${input.owner}/${input.repo}/issues/${input.prNumber}/reactions?per_page=100`;
+      return await paginate(path, normalizePullRequestReaction, {
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+        ...(input.retainPage === undefined ? {} : { retainPage: input.retainPage }),
+      });
+    },
+
     async listIssueComments(input) {
       const path =
         `/repos/${input.owner}/${input.repo}/issues/${input.prNumber}/comments?per_page=100`;
@@ -569,17 +633,18 @@ export function createGhCollectorGitHubTransport(
 
 export function buildCollectorRequestMarker(input: {
   manifestDigest: string;
-  legId: string;
+  requestId: string;
   headOid: string;
 }): string {
   const prefix = input.manifestDigest.slice(0, 12);
-  return `<!-- ak-collector:v1 manifest=${prefix} leg=${input.legId} head=${input.headOid} -->`;
+  const requestMarkerId = createHash("sha256").update(input.requestId).digest("hex");
+  return `<!-- ak-collector:v1 manifest=${prefix} request=${requestMarkerId} head=${input.headOid} -->`;
 }
 
 export function buildCollectorRequestBody(input: {
   configuredBody: string;
   manifestDigest: string;
-  legId: string;
+  requestId: string;
   headOid: string;
 }): { body: string; marker: string } {
   const marker = buildCollectorRequestMarker(input);

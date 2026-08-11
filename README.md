@@ -54,8 +54,8 @@ ak-role reviewer --base main "Review the branch against the governing issue and 
 # completed ≠ approved — read the findings in the Terminal
 
 # collector — GitHub PR review evidence; github.com only, needs gh auth; one-shot
-ak-role collector --pr 42 --leg codex:CodexBot --leg cursor:cursor-bot,cursor-bot-2
-# legs are id:author[,author...]; repo defaults from origin, --repo owner/repo overrides
+ak-role collector --pr 42 --repo owner/repository
+# repo defaults from origin; --repo owner/repo overrides
 
 # fixer — repair the assigned findings; phase defaults to apply, or pass plan
 ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."

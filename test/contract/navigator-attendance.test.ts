@@ -1002,23 +1002,9 @@ test("#224/#226/#227/#265 frozen scenarios: stale speculative advice rebinds onc
       role: "collector" as const,
       phase: null,
       subjectKey: "/Users/akagilnc/WorkSpace/Ming_LLM-558/.ak/work",
-      // Frozen work subject = legs manifest only (case prepare context).
-      subject: JSON.stringify({
-        legs: [
-          { id: "sourcery", expectedAuthors: ["sourcery-ai[bot]"] },
-          { id: "gemini", expectedAuthors: ["gemini-code-assist[bot]"] },
-          { id: "codex", expectedAuthors: ["chatgpt-codex-connector[bot]"] },
-          { id: "cursor", expectedAuthors: ["cursor[bot]"] },
-        ],
-      }),
-      authority: JSON.stringify({
-        legs: [
-          { id: "sourcery", expectedAuthors: ["sourcery-ai[bot]"] },
-          { id: "gemini", expectedAuthors: ["gemini-code-assist[bot]"] },
-          { id: "codex", expectedAuthors: ["chatgpt-codex-connector[bot]"] },
-          { id: "cursor", expectedAuthors: ["cursor[bot]"] },
-        ],
-      }),
+      // Frozen work subject = observed identity-group artifact.
+      subject: JSON.stringify({ groups: [{ identity: { userType: "Bot", userId: 199175422 }, attendance: true }] }),
+      authority: JSON.stringify({ groups: [{ identity: { userType: "Bot", userId: 199175422 }, attendance: true }] }),
       loadRoutePlaybook: async () => "collector → 大理寺；旧收敛不盖新材料",
       invocationId: "019fe954-f995-7c1a-ae42-98c5740429f0",
       staleToolCallId: "stale-merger",
