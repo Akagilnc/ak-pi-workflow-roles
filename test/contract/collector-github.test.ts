@@ -163,6 +163,25 @@ test("request marker is deterministic for digest/leg/head", () => {
   assert.ok(built.body.includes(marker));
 });
 
+test("PR reactions transport follows issue-level endpoint pagination", async () => {
+  const paths: string[] = [];
+  const runner = async (args: string[]) => {
+    const path = args.find((arg) => arg.startsWith("/repos/"))!;
+    paths.push(path);
+    return paths.length === 1
+      ? { status: 200, headers: { link: '<https://api.github.com/repos/a/b/issues/1/reactions?per_page=100&page=2>; rel="next"' }, bodyText: '[{"id":7,"user":{"id":199175422,"login":"codex","type":"User"},"content":"+1","created_at":"2026-01-01T00:00:00Z"}]' }
+      : { status: 200, headers: {}, bodyText: "[]" };
+  };
+  const result = await createGhCollectorGitHubTransport(runner).listPullRequestReactions!({ owner: "a", repo: "b", prNumber: 1 });
+  assert.deepEqual(paths, [
+    "/repos/a/b/issues/1/reactions?per_page=100",
+    "/repos/a/b/issues/1/reactions?per_page=100&page=2",
+  ]);
+  assert.equal(result.items[0]?.machineIdentity?.userId, 199175422);
+  assert.equal(result.items[0]?.machineIdentity?.userType, "User");
+  assert.equal(result.pages.length, 2);
+});
+
 test("final-page HTTP 429 fails pagination loudly", async () => {
   let page = 0;
   const runner = async (args: string[]) => {
@@ -318,6 +337,9 @@ test("R6 null user on review/issue comment/review comment preserves record and n
           pull_request_review_id: 11,
         }]),
       };
+    }
+    if (args.some((arg) => arg.includes("/reactions"))) {
+      return { status: 200, headers: {}, bodyText: "[]" };
     }
     page += 1;
     throw new Error(`unexpected ${args.join(" ")}`);
@@ -558,7 +580,7 @@ test("2xx parse ambiguous_loss recovers via marker observe without second POST",
         }]),
       };
     }
-    if (path.includes("/pulls/1/comments")) {
+    if (path.includes("/pulls/1/comments") || path.includes("/reactions")) {
       return { status: 200, headers: {}, bodyText: "[]" };
     }
     throw new Error(`unexpected path ${path}`);
@@ -658,7 +680,7 @@ async function assertInProcessRequestAbort(abortReason: unknown) {
         }),
       };
     }
-    if (path.includes("/reviews") || path.includes("/comments")) {
+    if (path.includes("/reviews") || path.includes("/comments") || path.includes("/reactions")) {
       return { status: 200, headers: {}, bodyText: "[]" };
     }
     throw new Error(`unexpected path ${path}`);

@@ -9,6 +9,7 @@ import {
   normalizeAuthenticatedUserEvidence,
   normalizeIssueCommentEvidence,
   normalizePullRequestEvidence,
+  normalizePullRequestReactionEvidence,
   normalizeReviewCommentEvidence,
   normalizeReviewEvidence,
   reviewQualifiesForValid,
@@ -260,6 +261,9 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       prNumber,
       ...signalOpt,
     });
+    const reactions = transport.listPullRequestReactions === undefined
+      ? { items: [], pages: [] }
+      : await transport.listPullRequestReactions({ owner, repo, prNumber, ...signalOpt });
     const issueComments = await transport.listIssueComments({
       owner,
       repo,
@@ -278,7 +282,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       prNumber,
       ...signalOpt,
     });
-    return { user, prInitial, reviews, issueComments, reviewComments, prTerminal };
+    return { user, prInitial, reviews, reactions, issueComments, reviewComments, prTerminal };
   };
 
   const ledger: CollectorLedger = {
@@ -470,12 +474,13 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
       // Always bind terminal PR identity fields.
       const pr = surfaces.prTerminal;
-      const { user, reviews, issueComments, reviewComments } = surfaces;
+      const { user, reviews, reactions, issueComments, reviewComments } = surfaces;
 
       requesterLogin = user.login.toLowerCase();
 
       const pageDiagnostics: GitHubPageDiagnostics[] = [
         ...reviews.pages,
+        ...reactions.pages,
         ...issueComments.pages,
         ...reviewComments.pages,
       ];
@@ -485,6 +490,9 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       pendingRecords.push(normalizePullRequestEvidence(pr, firstObservedAt));
       for (const review of reviews.items) {
         pendingRecords.push(normalizeReviewEvidence(review, firstObservedAt));
+      }
+      for (const reaction of reactions.items) {
+        pendingRecords.push(normalizePullRequestReactionEvidence(reaction, firstObservedAt));
       }
       for (const comment of issueComments.items) {
         pendingRecords.push(normalizeIssueCommentEvidence(comment, firstObservedAt));

@@ -4,6 +4,7 @@ import type {
   GitHubIssueComment,
   GitHubPageDiagnostics,
   GitHubPullRequest,
+  GitHubPullRequestReaction,
   GitHubReview,
   GitHubReviewComment,
   GitHubUser,
@@ -24,6 +25,7 @@ export type ValidReviewState = (typeof VALID_REVIEW_STATES)[number];
 export type CollectorEvidenceKind =
   | "pull_request"
   | "review"
+  | "reaction"
   | "issue_comment"
   | "review_comment"
   | "authenticated_user"
@@ -270,6 +272,32 @@ export function normalizeReviewEvidence(
     authoritativeTime: review.submittedAt,
     firstObservedAt: observedAt,
     raw: review.raw,
+  };
+}
+
+export function normalizePullRequestReactionEvidence(
+  reaction: GitHubPullRequestReaction,
+  observedAt: string,
+): CollectorEvidenceRecord {
+  const authorLogin = reaction.userLogin?.toLowerCase();
+  const contentDigest = versionDigest({
+    id: reaction.id,
+    content: reaction.content,
+    createdAt: reaction.createdAt,
+    userId: reaction.machineIdentity?.userId ?? null,
+  });
+  const versionId = `reaction:${reaction.id}:${contentDigest.slice(0, 12)}`;
+  return {
+    evidenceId: evidenceIdFor("reaction", versionId),
+    kind: "reaction",
+    stableGitHubId: stableId("reaction", reaction.id),
+    versionId,
+    contentDigest,
+    ...(authorLogin === undefined ? {} : { authorLogin }),
+    body: reaction.content,
+    authoritativeTime: reaction.createdAt,
+    firstObservedAt: observedAt,
+    raw: reaction.raw,
   };
 }
 
