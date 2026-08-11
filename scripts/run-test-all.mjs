@@ -8,6 +8,8 @@ import { readdirSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { join, relative } from "node:path";
 
+import { isolatedTestProcessEnv } from "./test-process-env.mjs";
+
 const HEAVYWEIGHT_MANIFEST = Object.freeze([
   "test/integration/audit-failure-subprocess.test.ts",
   "test/integration/public-cli-judge-run.test.ts",
@@ -131,7 +133,7 @@ function runNodeTest(files, { concurrency } = {}) {
     const child = spawn("node", args, {
       cwd: root,
       stdio: "inherit",
-      env: process.env,
+      env: isolatedTestProcessEnv(),
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {

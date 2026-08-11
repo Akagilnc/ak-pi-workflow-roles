@@ -23,7 +23,7 @@ import {
   statSync
 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { basename, dirname as dirname2, isAbsolute, join as join3, relative, resolve, sep } from "node:path";
+import { basename, dirname as dirname2, isAbsolute, join as join2, relative, resolve, sep } from "node:path";
 function resolveActivationLedgerHome(home = homedir2) {
   const processHome = home();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
@@ -34,7 +34,7 @@ function resolveActivationLedgerHome(home = homedir2) {
   return resolve(processHome, ".ak-roles");
 }
 function activationBookDirectory(ledgerHome, bookKey) {
-  return join3(ledgerHome, "books", bookKey);
+  return join2(ledgerHome, "books", bookKey);
 }
 function pathContainedIn(root, candidate) {
   const rel = relative(root, candidate);
@@ -47,7 +47,7 @@ function physicalPathIdentity(path) {
   while (true) {
     try {
       const real = realpathSync(cursor);
-      return missing.length === 0 ? real : join3(real, ...missing);
+      return missing.length === 0 ? real : join2(real, ...missing);
     } catch (error) {
       if (errnoCode(error) !== "ENOENT") {
         return absolute;
@@ -147,7 +147,7 @@ function ensureRealDirectoryTree(root, targetDir) {
     if (part === "..") {
       throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
     }
-    lexicalCursor = join3(lexicalCursor, part);
+    lexicalCursor = join2(lexicalCursor, part);
     let st;
     try {
       st = lstatSync(lexicalCursor);
@@ -9454,90 +9454,12 @@ var CliUsageError = class extends Error {
 };
 
 // src/public-cli/explicit-internal.ts
-import { spawn } from "node:child_process";
-import { join as join2 } from "node:path";
-function resolveInternalRoleEntrypoint(packageRoot2) {
-  return join2(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
-}
-function buildExplicitInternalActivationArgs(packageRoot2, extraArgs = []) {
-  return [
-    "--no-extensions",
-    "-e",
-    resolveInternalRoleEntrypoint(packageRoot2),
-    ...extraArgs
-  ];
-}
-function knownFailureFromProviderStop(input) {
-  if (input.stopReason !== "error") return void 0;
-  const diagnostic = typeof input.errorMessage === "string" && input.errorMessage.trim() !== "" ? input.errorMessage.trim() : "provider failure";
-  const identity = {
-    name: "ProviderStopError"
-  };
-  if (typeof input.provider === "string" && input.provider.trim() !== "") {
-    identity.code = input.provider;
-  } else if (typeof input.model === "string" && input.model.trim() !== "") {
-    identity.code = input.model;
-  }
-  return {
-    cause: "provider",
-    identity,
-    diagnostic
-  };
-}
-var defaultExplicitInternalPiRunner = async (args, options) => {
-  const command = options.env.PI_BINARY ?? "pi";
-  return await new Promise((resolveResult, reject) => {
-    const child = spawn(command, [...args], {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["ignore", "ignore", "pipe"]
-    });
-    let stderr = "";
-    let timedOut = false;
-    let timer;
-    const armTimeoutAfterChildReady = () => {
-      if (options.timeoutMs === void 0) return;
-      timer = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-      }, options.timeoutMs);
-    };
-    child.once("spawn", armTimeoutAfterChildReady);
-    child.stderr.setEncoding("utf8").on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", (error) => {
-      if (timer !== void 0) clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      if (timer !== void 0) clearTimeout(timer);
-      resolveResult({
-        code,
-        stderr,
-        timedOut,
-        args: [...args]
-      });
-    });
-  });
-};
-async function runExplicitInternalActivation(options) {
-  const args = buildExplicitInternalActivationArgs(
-    options.packageRoot,
-    options.extraArgs ?? []
-  );
-  const runner = options.runner ?? defaultExplicitInternalPiRunner;
-  return await runner(args, {
-    cwd: options.cwd,
-    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs },
-    env: {
-      ...process.env,
-      ...options.env,
-      HOME: options.home,
-      PI_CODING_AGENT_DIR: options.agentDir
-    }
-  });
-}
+import { execFile as execFile2, spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { access, realpath as realpath3 } from "node:fs/promises";
+import { delimiter, isAbsolute as isAbsolute4, join as join4, resolve as resolve5 } from "node:path";
+import { platform } from "node:process";
+import { promisify as promisify2 } from "node:util";
 
 // src/public-cli/invocation.ts
 init_activation_ledger_topology();
@@ -9550,7 +9472,7 @@ import {
   realpath as realpath2,
   writeFile as writeFile2
 } from "node:fs/promises";
-import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve4, sep as sep3 } from "node:path";
+import { basename as basename3, isAbsolute as isAbsolute3, join as join3, resolve as resolve4, sep as sep3 } from "node:path";
 
 // src/doctor-evidence.ts
 import { readdir, readFile as readFile2, realpath, stat } from "node:fs/promises";
@@ -9958,7 +9880,7 @@ function uuidv7(now = Date.now()) {
 // src/public-cli/invocation.ts
 var ROLE_RUN_SESSION_FILE_NAME = "session.jsonl";
 function roleRunSessionFile(sessionDirectory) {
-  return join4(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
+  return join3(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
 }
 async function writeRoleInvocationLedger(source, role) {
   const identity = {
@@ -9971,8 +9893,22 @@ async function writeRoleInvocationLedger(source, role) {
     sessionFile: source.sessionFile
   };
   await writeFile2(
-    join4(source.runDirectory, "invocation.json"),
+    join3(source.runDirectory, "invocation.json"),
     `${JSON.stringify(identity, null, 2)}
+`,
+    "utf8"
+  );
+}
+async function recordLaunchedPiIdentity(runDirectory, identity) {
+  const ledgerPath = join3(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile4(ledgerPath, "utf8"));
+  await writeFile2(
+    ledgerPath,
+    `${JSON.stringify({
+      ...current,
+      piExecutable: identity.executable,
+      piVersion: identity.version
+    }, null, 2)}
 `,
     "utf8"
   );
@@ -10160,7 +10096,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
   }
   const bytes = await readFile4(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename3(absolute)}`;
-  const frozenPath = join4(destinationDir, name);
+  const frozenPath = join3(destinationDir, name);
   await writeFile2(frozenPath, bytes);
   return {
     provenancePath: absolute,
@@ -10178,14 +10114,14 @@ async function admitJudgeInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join4(
+  const runDirectory = join3(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@judge`
   );
-  const sessionDirectory = join4(runDirectory, "session");
+  const sessionDirectory = join3(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join4(runDirectory, "attachments");
+  const attachmentsDirectory = join3(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -10218,7 +10154,7 @@ async function admitJudgeInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role);
@@ -10248,7 +10184,7 @@ function buildJudgeTransportPrompt(admitted) {
   return lines.join("\n");
 }
 async function ensureRunArtifactsDir(runDirectory) {
-  const dir = join4(runDirectory, "artifacts");
+  const dir = join3(runDirectory, "artifacts");
   await mkdir2(dir, { recursive: true });
   return dir;
 }
@@ -10269,14 +10205,14 @@ async function admitCoderInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join4(
+  const runDirectory = join3(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@coder`
   );
-  const sessionDirectory = join4(runDirectory, "session");
+  const sessionDirectory = join3(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join4(runDirectory, "attachments");
+  const attachmentsDirectory = join3(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -10289,7 +10225,7 @@ async function admitCoderInvocation(options) {
       )
     );
   }
-  const taskPath = join4(runDirectory, "task.md");
+  const taskPath = join3(runDirectory, "task.md");
   await writeFile2(taskPath, instruction, "utf8");
   const admitted = {
     role: "coder",
@@ -10311,7 +10247,7 @@ async function admitCoderInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role);
@@ -10359,14 +10295,14 @@ async function admitFixerInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join4(
+  const runDirectory = join3(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@fixer`
   );
-  const sessionDirectory = join4(runDirectory, "session");
+  const sessionDirectory = join3(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join4(runDirectory, "attachments");
+  const attachmentsDirectory = join3(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -10400,7 +10336,7 @@ async function admitFixerInvocation(options) {
       }
       throw error;
     }
-    prerequisitesPath = join4(runDirectory, "prerequisites.json");
+    prerequisitesPath = join3(runDirectory, "prerequisites.json");
     await writeFile2(
       prerequisitesPath,
       `${JSON.stringify(prerequisites, null, 2)}
@@ -10408,7 +10344,7 @@ async function admitFixerInvocation(options) {
       "utf8"
     );
   }
-  const packetPath = join4(runDirectory, "fix-packet.md");
+  const packetPath = join3(runDirectory, "fix-packet.md");
   await writeFile2(packetPath, instruction, "utf8");
   const admitted = {
     role: "fixer",
@@ -10435,7 +10371,7 @@ async function admitFixerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role);
@@ -10625,14 +10561,14 @@ async function admitCollectorInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join4(
+  const runDirectory = join3(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@collector`
   );
-  const sessionDirectory = join4(runDirectory, "session");
+  const sessionDirectory = join3(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join4(runDirectory, "attachments");
+  const attachmentsDirectory = join3(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -10654,7 +10590,7 @@ async function admitCollectorInvocation(options) {
     } catch (error) {
       throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
     }
-    requestManifestPath = join4(runDirectory, "request-manifest.json");
+    requestManifestPath = join3(runDirectory, "request-manifest.json");
     await writeFile2(requestManifestPath, manifest.canonicalJson, "utf8");
   }
   const manifestDigest = manifest.digest;
@@ -10683,7 +10619,7 @@ async function admitCollectorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -10807,7 +10743,7 @@ function parseDoctorArgv(args) {
 }
 async function resolveDoctorCaseRunsPath(options) {
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
-  const defaultRuns = join4(
+  const defaultRuns = join3(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",
     String(options.issueNumber),
@@ -10903,14 +10839,14 @@ async function admitDoctorInvocation(options) {
     );
   }
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join4(
+  const runDirectory = join3(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@doctor`
   );
-  const sessionDirectory = join4(runDirectory, "session");
+  const sessionDirectory = join3(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join4(runDirectory, "attachments");
+  const attachmentsDirectory = join3(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -10947,7 +10883,7 @@ async function admitDoctorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -11037,14 +10973,14 @@ async function admitReviewerInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join4(
+  const runDirectory = join3(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@reviewer`
   );
-  const sessionDirectory = join4(runDirectory, "session");
+  const sessionDirectory = join3(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join4(runDirectory, "attachments");
+  const attachmentsDirectory = join3(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -11078,7 +11014,7 @@ async function admitReviewerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -11198,14 +11134,14 @@ async function admitMergerInvocation(options) {
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join4(
+  const runDirectory = join3(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${runId}@merger`
   );
-  const sessionDirectory = join4(runDirectory, "session");
+  const sessionDirectory = join3(runDirectory, "session");
   const sessionFile = roleRunSessionFile(sessionDirectory);
-  const attachmentsDirectory = join4(runDirectory, "attachments");
+  const attachmentsDirectory = join3(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -11242,7 +11178,7 @@ async function admitMergerInvocation(options) {
     // Authorized checks remain available on the assignment; default none.
     authorizedChecks: []
   });
-  const mergerInputPath = join4(runDirectory, "merger-input.json");
+  const mergerInputPath = join3(runDirectory, "merger-input.json");
   await writeFile2(
     mergerInputPath,
     `${JSON.stringify(mergerInput, null, 2)}
@@ -11275,7 +11211,7 @@ async function admitMergerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join3(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -11313,13 +11249,136 @@ function buildMergerTransportPrompt(admitted) {
   return lines.join("\n");
 }
 
+// src/public-cli/explicit-internal.ts
+function resolveInternalRoleEntrypoint(packageRoot2) {
+  return join4(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
+}
+function buildExplicitInternalActivationArgs(packageRoot2, extraArgs = []) {
+  return [
+    "--no-extensions",
+    "-e",
+    resolveInternalRoleEntrypoint(packageRoot2),
+    ...extraArgs
+  ];
+}
+function knownFailureFromProviderStop(input) {
+  if (input.stopReason !== "error") return void 0;
+  const diagnostic = typeof input.errorMessage === "string" && input.errorMessage.trim() !== "" ? input.errorMessage.trim() : "provider failure";
+  const identity = {
+    name: "ProviderStopError"
+  };
+  if (typeof input.provider === "string" && input.provider.trim() !== "") {
+    identity.code = input.provider;
+  } else if (typeof input.model === "string" && input.model.trim() !== "") {
+    identity.code = input.model;
+  }
+  return {
+    cause: "provider",
+    identity,
+    diagnostic
+  };
+}
+var execFileAsync2 = promisify2(execFile2);
+async function resolveSelectedPi(command, cwd, env) {
+  const searchPath = env.PATH ?? (platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin");
+  const candidates = isAbsolute4(command) || command.includes("/") ? [resolve5(cwd, command)] : searchPath.split(delimiter).map((dir) => resolve5(cwd, dir, command));
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.X_OK);
+    } catch (error) {
+      const code = error.code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") continue;
+      throw error;
+    }
+    return await realpath3(candidate);
+  }
+  throw new Error(`Pi executable not found: ${command}`);
+}
+async function selectedPiIdentity(command, cwd, env) {
+  const executable = await resolveSelectedPi(command, cwd, env);
+  const { stdout } = await execFileAsync2(executable, ["--version"], {
+    cwd,
+    env,
+    encoding: "utf8"
+  });
+  const version = stdout.trim();
+  if (version === "") throw new Error(`Pi executable returned an empty version: ${executable}`);
+  return { executable, version };
+}
+var defaultExplicitInternalPiRunner = async (args, options) => {
+  const command = options.env.PI_BINARY ?? "pi";
+  const piIdentity = await selectedPiIdentity(command, options.cwd, options.env);
+  return await new Promise((resolveResult, reject) => {
+    const child = spawn(piIdentity.executable, [...args], {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "ignore", "pipe"]
+    });
+    let stderr = "";
+    let timedOut = false;
+    let timer;
+    const armTimeoutAfterChildReady = () => {
+      if (options.timeoutMs === void 0) return;
+      timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, options.timeoutMs);
+    };
+    let identityRecorded = Promise.resolve();
+    child.once("spawn", () => {
+      armTimeoutAfterChildReady();
+      const runDirectory = options.env.AK_ROLE_RUN_DIR;
+      if (typeof runDirectory === "string" && runDirectory !== "") {
+        identityRecorded = recordLaunchedPiIdentity(runDirectory, piIdentity);
+      }
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      if (timer !== void 0) clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (timer !== void 0) clearTimeout(timer);
+      void identityRecorded.then(
+        () => resolveResult({
+          code,
+          stderr,
+          timedOut,
+          args: [...args],
+          piIdentity
+        }),
+        reject
+      );
+    });
+  });
+};
+async function runExplicitInternalActivation(options) {
+  const args = buildExplicitInternalActivationArgs(
+    options.packageRoot,
+    options.extraArgs ?? []
+  );
+  const runner = options.runner ?? defaultExplicitInternalPiRunner;
+  return await runner(args, {
+    cwd: options.cwd,
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs },
+    env: {
+      ...process.env,
+      ...options.env,
+      HOME: options.home,
+      PI_CODING_AGENT_DIR: options.agentDir
+    }
+  });
+}
+
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile5 } from "node:fs/promises";
 import { join as join8 } from "node:path";
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile5, realpath as realpath3 } from "node:fs/promises";
+import { readFile as readFile5, realpath as realpath4 } from "node:fs/promises";
 import { join as join5 } from "node:path";
 var PackagedMethodSkillUnavailableError = class extends Error {
   constructor(skillName, path, cause) {
@@ -11489,7 +11548,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let skillPath;
   let raw;
   try {
-    skillPath = await realpath3(skillPathConfigured);
+    skillPath = await realpath4(skillPathConfigured);
     raw = await readFile5(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
@@ -12228,7 +12287,7 @@ var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 
 // src/work-subject-identity.ts
 init_activation_ledger_topology();
-import { resolve as resolve5 } from "node:path";
+import { resolve as resolve6 } from "node:path";
 function issueRoot(value) {
   const normalized = value.replaceAll("\\", "/");
   const marker = ".ak/work/issues/";
@@ -12238,7 +12297,7 @@ function issueRoot(value) {
   return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
 }
 function workIdentityFromCwd(cwd) {
-  const resolvedCwd = resolve5(cwd, ".");
+  const resolvedCwd = resolve6(cwd, ".");
   const cwdIssue = issueRoot(resolvedCwd);
   if (cwdIssue !== void 0) return cwdIssue;
   if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
@@ -12249,11 +12308,11 @@ function isMachineLedgerSessionPath(sessionPath) {
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
   if (sessionDir === "") {
-    return workIdentityFromCwd(cwd) ?? resolve5(cwd, ".ak/work");
+    return workIdentityFromCwd(cwd) ?? resolve6(cwd, ".ak/work");
   }
-  const resolvedSession = resolve5(cwd, sessionDir || ".ak/work");
+  const resolvedSession = resolve6(cwd, sessionDir || ".ak/work");
   if (isMachineLedgerSessionPath(resolvedSession)) {
-    return workIdentityFromCwd(cwd) ?? resolve5(cwd, ".ak/work");
+    return workIdentityFromCwd(cwd) ?? resolve6(cwd, ".ak/work");
   }
   const issue = issueRoot(resolvedSession);
   if (issue !== void 0) return issue;
@@ -16483,7 +16542,7 @@ async function runPublicResume(argv, env, io) {
 init_activation_ledger_git();
 init_activation_ledger_topology();
 import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
-import { join as join13, resolve as resolve6 } from "node:path";
+import { join as join13, resolve as resolve7 } from "node:path";
 function buildModelArgs6(model) {
   if (model === void 0) return [];
   return [
@@ -16709,7 +16768,7 @@ async function loadMergerMethodMaterial(packageRoot2) {
   );
 }
 async function admitMergerShellForActivationFailure(options) {
-  const projectRoot = resolve6(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();

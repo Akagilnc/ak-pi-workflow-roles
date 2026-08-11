@@ -18,6 +18,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { isolatedTestProcessEnv } from "./test-process-fixtures.ts";
+
 import {
   type FauxProviderHandle,
   InMemoryCredentialStore,
@@ -865,7 +867,11 @@ export async function runPiSubprocess(
   return await new Promise((resolveResult, reject) => {
     const child = spawn(piCli, args, {
       cwd: options.cwd,
-      env: options.env,
+      env: isolatedTestProcessEnv({
+        ...(options.env === undefined ? {} : { env: options.env }),
+        home: options.env?.HOME ?? options.cwd,
+        agentDir: options.env?.PI_CODING_AGENT_DIR ?? join(options.cwd, ".pi-agent"),
+      }),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
