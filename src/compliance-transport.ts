@@ -1,4 +1,4 @@
-import type { Api, AssistantMessage, Context, Model, Usage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -115,19 +115,6 @@ export type RunComplianceAuditOptions = {
 
 export async function runComplianceAudit(options: RunComplianceAuditOptions): Promise<ComplianceDecision> {
   const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
-  // The injected completion seam is deterministic unit infrastructure; the
-  // ordinary provider path below still crosses the independent Pi role.
-  if (options.runCompletion !== undefined) {
-    const model = options.context.model;
-    if (model === undefined) throw new Error(`${options.roleLabel} requires an active model`);
-    const dispatch = await prepareComplianceDispatch(model, options.context, options.roleLabel);
-    const context: Context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }], tools: [createAuditorDossierTool(options.runDirectory), options.tool] };
-    const response = await options.runCompletion(dispatch.model, context, { ...dispatch.auth, ...(options.signal === undefined ? {} : { signal: options.signal }) });
-    retainComplianceResponse(options.context, response);
-    const call = [...response.content].reverse().find((part) => part.type === "toolCall" && part.name === options.tool.name);
-    if (call === undefined || call.type !== "toolCall") throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
-    return readComplianceCandidate(call.arguments, response.usage);
-  }
   const receipt = await executeAuditorChild({
     tool: options.tool,
     dossierTool: createAuditorDossierTool(options.runDirectory),
@@ -136,6 +123,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     roleLabel: options.roleLabel,
     context: options.context,
     retainResponse: (response) => retainComplianceResponse(options.context, response),
+    ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   return readComplianceCandidate(receipt.decision, receipt.response.usage);

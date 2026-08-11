@@ -16,12 +16,14 @@ export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
 export class AuditorTurnLimitError extends Error {
     limit;
     observedTurns;
-    constructor(limit, observedTurns) {
+    lastResponse;
+    constructor(limit, observedTurns, lastResponse) {
         super(observedTurns === undefined
             ? `Auditor exceeded ${limit} turns`
             : `Auditor exhausted its ${limit}-turn limit after ${observedTurns} provider turns`);
         this.limit = limit;
         this.observedTurns = observedTurns;
+        this.lastResponse = lastResponse;
         this.name = "AuditorTurnLimitError";
     }
 }
@@ -68,9 +70,24 @@ export async function createInheritedRuntime(options) {
         credentials: new InMemoryCredentialStore(),
         modelsPath: null,
     });
+    // Injected completions historically accepted the minimal model exposed by an
+    // ExtensionContext. AgentSession crosses ModelRuntime first, so complete the
+    // model metadata required by that runtime without changing provider identity.
+    const inheritedModel = options.runCompletion === undefined
+        ? dispatch.model
+        : {
+            ...dispatch.model,
+            name: dispatch.model.name ?? dispatch.model.id,
+            baseUrl: dispatch.model.baseUrl ?? "",
+            reasoning: dispatch.model.reasoning ?? false,
+            input: dispatch.model.input ?? ["text"],
+            cost: dispatch.model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: dispatch.model.contextWindow ?? 1,
+            maxTokens: dispatch.model.maxTokens ?? 1,
+        };
     const state = {
         runtime,
-        model: dispatch.model,
+        model: inheritedModel,
         dispatch,
         streamFailure: undefined,
     };
@@ -99,14 +116,34 @@ export async function createInheritedRuntime(options) {
             for (let attempt = 0;; attempt += 1) {
                 const idle = createStreamIdleGuard(options.signal === undefined ? {} : { parentSignal: options.signal });
                 try {
+                    const requestSignal = request?.signal;
+                    const streamSignal = requestSignal === undefined
+                        ? idle.signal
+                        : AbortSignal.any([idle.signal, requestSignal]);
                     const inheritedRequest = {
                         ...(request ?? {}),
                         ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }),
-                        signal: idle.signal,
+                        signal: streamSignal,
                     };
                     if (options.runCompletion !== undefined) {
-                        const response = await waitForStream(options.runCompletion(model, context, inheritedRequest), idle.signal);
-                        wrapped.end(response);
+                        await new Promise((resolve) => setImmediate(resolve));
+                        if (streamSignal.aborted)
+                            throw abortReason(streamSignal);
+                        const completed = await waitForStream(options.runCompletion(model, options.injectedSystemPrompt === undefined
+                            ? context
+                            : { ...context, systemPrompt: options.injectedSystemPrompt }, inheritedRequest), streamSignal);
+                        const response = {
+                            ...completed,
+                            api: model.api,
+                            provider: model.provider,
+                            model: model.id,
+                        };
+                        if (response.stopReason === "error" || response.stopReason === "aborted") {
+                            wrapped.push({ type: "error", reason: response.stopReason, error: response });
+                        }
+                        else {
+                            wrapped.end(response);
+                        }
                         return;
                     }
                     const source = simple
@@ -128,6 +165,22 @@ export async function createInheritedRuntime(options) {
                     return;
                 }
                 catch (error) {
+                    if (request?.signal?.aborted) {
+                        const response = {
+                            role: "assistant",
+                            content: [],
+                            api: model.api,
+                            provider: model.provider,
+                            model: model.id,
+                            usage: emptyUsage(),
+                            stopReason: "aborted",
+                            errorMessage: "Auditor session aborted",
+                            timestamp: Date.now(),
+                        };
+                        wrapped.push({ type: "error", reason: "aborted", error: response });
+                        wrapped.end(response);
+                        return;
+                    }
                     const failure = isStreamIdleTimeoutError(idle.signal.reason) ? idle.signal.reason : error;
                     if (options.idleRetry === true
                         && isStreamIdleTimeoutError(failure)
@@ -177,7 +230,7 @@ export async function createInheritedRuntime(options) {
                     },
                 },
             },
-            getModels() { return [dispatch.model]; },
+            getModels() { return [inheritedModel]; },
             stream(model, context, request) {
                 return createRetriedStream(false, model, context, request);
             },
@@ -205,7 +258,7 @@ export async function createInheritedRuntime(options) {
                     },
                 },
             },
-            getModels() { return [dispatch.model]; },
+            getModels() { return [inheritedModel]; },
             stream(model, childContext, streamOptions) {
                 return parentProvider.stream(model, childContext, streamOptions);
             },
@@ -367,21 +420,34 @@ export async function executeAuditorChild(options) {
             context: options.context,
             label: options.roleLabel,
             idleRetry: true,
-            ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
+            ...(options.runCompletion === undefined
+                ? {}
+                : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
         const cwd = options.context.cwd ?? process.cwd();
         let decision;
+        let decisionSubmitted = false;
+        let decisionCallId;
+        let decisionToolFailure;
         const tool = wrapPackageOwnedToolDefinition({
             ...options.tool,
             label: options.roleLabel,
             async execute(...args) {
-                if (decision !== undefined)
+                if (decisionSubmitted && decisionCallId !== args[0]) {
                     throw new Error("Auditor decision was submitted more than once");
-                // Record first so a second submit is rejected even if execute returns;
-                // compliance decision tools return and do not throw.
-                decision = args[1];
-                return options.tool.execute(...args);
+                }
+                try {
+                    const result = await options.tool.execute(...args);
+                    decision = args[1];
+                    decisionCallId = args[0];
+                    decisionSubmitted = true;
+                    return result;
+                }
+                catch (error) {
+                    decisionToolFailure = error;
+                    throw error;
+                }
             },
         });
         const parentSessionManager = options.context.sessionManager;
@@ -419,14 +485,65 @@ export async function executeAuditorChild(options) {
         // response could not later be tied to the current parent attempt.
         auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
         let turns = 0;
-        let turnError;
-        const unsubscribe = session.subscribe((event) => {
-            if (event.type === "message_end" && event.message.role === "assistant") {
-                turns += 1;
-                if (turns > AUDITOR_TURN_LIMIT) {
-                    turnError = new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns);
-                    void session.abort();
+        let boundaryResponse;
+        let retentionFailure;
+        let retainedResponse;
+        const registeredToolNames = new Set(session.getAllTools().map((entry) => entry.name));
+        const evidenceToolFailures = new Map();
+        for (const name of registeredToolNames) {
+            if (name === tool.name)
+                continue;
+            const definition = session.getToolDefinition(name);
+            if (definition === undefined)
+                continue;
+            const execute = definition.execute.bind(definition);
+            definition.execute = async (...args) => {
+                try {
+                    return await execute(...args);
                 }
+                catch (error) {
+                    evidenceToolFailures.set(args[0], error);
+                    throw error;
+                }
+            };
+        }
+        const findToolFailure = (response) => {
+            const callIds = response.content.flatMap((part) => part.type === "toolCall" && part.name !== tool.name && registeredToolNames.has(part.name) ? [part.id] : []);
+            for (const callId of callIds) {
+                if (evidenceToolFailures.has(callId))
+                    return evidenceToolFailures.get(callId);
+            }
+            const callIdSet = new Set(callIds);
+            return [...session.messages].reverse().find((message) => message.role === "toolResult" && callIdSet.has(message.toolCallId) && message.isError);
+        };
+        const unsubscribe = session.subscribe((event) => {
+            if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
+                turns += 1;
+                retainedResponse = event.message;
+                try {
+                    options.retainResponse?.(event.message);
+                }
+                catch (error) {
+                    retentionFailure = error;
+                }
+                for (const part of event.message.content) {
+                    if (part.type !== "toolCall" || part.name !== tool.name)
+                        continue;
+                    if (!decisionSubmitted) {
+                        decision = part.arguments;
+                        decisionCallId = part.id;
+                        decisionSubmitted = true;
+                    }
+                    else if (decisionCallId !== part.id) {
+                        decisionToolFailure = new Error("Auditor decision was submitted more than once");
+                    }
+                }
+                if (turns >= AUDITOR_TURN_LIMIT)
+                    boundaryResponse = event.message;
+            }
+            if (event.type === "turn_end" &&
+                (decisionSubmitted || boundaryResponse !== undefined || retentionFailure !== undefined)) {
+                void session.abort();
             }
         });
         const abort = () => { void session.abort(); };
@@ -449,17 +566,37 @@ export async function executeAuditorChild(options) {
                 throw options.signal.reason;
             if (inherited.streamFailure !== undefined)
                 throw inherited.streamFailure;
-            if (turnError !== undefined)
-                throw turnError;
+            if (decisionToolFailure !== undefined)
+                throw decisionToolFailure;
+            const relevantResponse = !decisionSubmitted
+                ? boundaryResponse
+                : [...session.messages].reverse().find((message) => message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
+            if (relevantResponse !== undefined) {
+                const toolFailure = findToolFailure(relevantResponse);
+                if (toolFailure !== undefined)
+                    throw toolFailure;
+            }
+            if (retentionFailure !== undefined && retainedResponse?.stopReason !== "error")
+                throw retentionFailure;
+            if (boundaryResponse !== undefined && !decisionSubmitted) {
+                const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
+                throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
+                    stopReason: boundaryResponse.stopReason,
+                    toolNames,
+                });
+            }
             const assistants = [...session.messages]
                 .reverse()
                 .filter((message) => message.role === "assistant");
-            const response = decision === undefined
+            const response = !decisionSubmitted
                 ? assistants[0]
                 : assistants.find((message) => message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
             if (response !== undefined) {
                 try {
-                    options.retainResponse?.(response);
+                    if (retainedResponse === undefined)
+                        options.retainResponse?.(response);
+                    else if (retentionFailure !== undefined)
+                        throw retentionFailure;
                 }
                 catch (retentionFailure) {
                     if (response.stopReason !== "error")
@@ -510,7 +647,7 @@ export async function executeAuditorChild(options) {
             if (response === undefined
                 || response.stopReason === "error"
                 || response.stopReason === "aborted"
-                || decision === undefined) {
+                || !decisionSubmitted) {
                 throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
             }
             return { decision, response };

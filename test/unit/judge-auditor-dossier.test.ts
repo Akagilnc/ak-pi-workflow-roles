@@ -4,16 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { fauxAssistantMessage, fauxToolCall, type Context } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context } from "@earendil-works/pi-ai";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 
 function auditContext(sessionManager: SessionManager): ExtensionContext {
+  const faux = fauxProvider({ provider: "test" });
   return {
-    model: { provider: "test", id: "auditor", api: "openai-responses" },
+    model: faux.getModel(),
     modelRegistry: {
+      getProvider() { return faux.provider; },
       async getProviderAuth() { return { auth: { apiKey: "secret" } }; },
       async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "secret" }; },
     },

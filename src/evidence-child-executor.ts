@@ -38,16 +38,19 @@ import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-g
 export const AUDITOR_TURN_LIMIT = 32;
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
 
+export type AuditorLastResponseFacts = {
+  readonly stopReason: AssistantMessage["stopReason"];
+  readonly toolNames: readonly string[];
+};
 export class AuditorTurnLimitError extends Error {
   constructor(
     readonly limit: number,
     readonly observedTurns?: number,
+    readonly lastResponse?: AuditorLastResponseFacts,
   ) {
-    super(
-      observedTurns === undefined
-        ? `Auditor exceeded ${limit} turns`
-        : `Auditor exhausted its ${limit}-turn limit after ${observedTurns} provider turns`,
-    );
+    super(observedTurns === undefined
+      ? `Auditor exceeded ${limit} turns`
+      : `Auditor exhausted its ${limit}-turn limit after ${observedTurns} provider turns`);
     this.name = "AuditorTurnLimitError";
   }
 }
@@ -96,6 +99,7 @@ export type InheritedRuntimeOptions = {
   readonly context: ExtensionContext;
   readonly label: string;
   readonly runCompletion?: AuditorCompletion;
+  readonly injectedSystemPrompt?: string;
   readonly signal?: AbortSignal;
   /** When true, wrap provider streams with ADR 0059 idle-only retry. */
   readonly idleRetry?: boolean;
@@ -128,9 +132,24 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
     credentials: new InMemoryCredentialStore(),
     modelsPath: null,
   });
+  // Injected completions historically accepted the minimal model exposed by an
+  // ExtensionContext. AgentSession crosses ModelRuntime first, so complete the
+  // model metadata required by that runtime without changing provider identity.
+  const inheritedModel: Model<Api> = options.runCompletion === undefined
+    ? dispatch.model
+    : {
+      ...dispatch.model,
+      name: dispatch.model.name ?? dispatch.model.id,
+      baseUrl: dispatch.model.baseUrl ?? "",
+      reasoning: dispatch.model.reasoning ?? false,
+      input: dispatch.model.input ?? ["text"],
+      cost: dispatch.model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: dispatch.model.contextWindow ?? 1,
+      maxTokens: dispatch.model.maxTokens ?? 1,
+    };
   const state: InheritedRuntime = {
     runtime,
-    model: dispatch.model,
+    model: inheritedModel,
     dispatch,
     streamFailure: undefined,
   };
@@ -167,17 +186,39 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
           options.signal === undefined ? {} : { parentSignal: options.signal },
         );
         try {
+          const requestSignal = request?.signal;
+          const streamSignal = requestSignal === undefined
+            ? idle.signal
+            : AbortSignal.any([idle.signal, requestSignal]);
           const inheritedRequest = {
             ...(request ?? {}),
             ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }),
-            signal: idle.signal,
+            signal: streamSignal,
           } as ProviderStreamOptions;
           if (options.runCompletion !== undefined) {
-            const response = await waitForStream(
-              options.runCompletion(model, context, inheritedRequest),
-              idle.signal,
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            if (streamSignal.aborted) throw abortReason(streamSignal);
+            const completed = await waitForStream(
+              options.runCompletion(
+                model,
+                options.injectedSystemPrompt === undefined
+                  ? context
+                  : { ...context, systemPrompt: options.injectedSystemPrompt },
+                inheritedRequest,
+              ),
+              streamSignal,
             );
-            wrapped.end(response);
+            const response: AssistantMessage = {
+              ...completed,
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
+            };
+            if (response.stopReason === "error" || response.stopReason === "aborted") {
+              wrapped.push({ type: "error", reason: response.stopReason, error: response });
+            } else {
+              wrapped.end(response);
+            }
             return;
           }
           const source = simple
@@ -196,6 +237,22 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
           if (!sawEvent) wrapped.end(response);
           return;
         } catch (error) {
+          if (request?.signal?.aborted) {
+            const response: AssistantMessage = {
+              role: "assistant",
+              content: [],
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
+              usage: emptyUsage(),
+              stopReason: "aborted",
+              errorMessage: "Auditor session aborted",
+              timestamp: Date.now(),
+            };
+            wrapped.push({ type: "error", reason: "aborted", error: response });
+            wrapped.end(response);
+            return;
+          }
           const failure = isStreamIdleTimeoutError(idle.signal.reason) ? idle.signal.reason : error;
           if (
             options.idleRetry === true
@@ -247,7 +304,7 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
           },
         },
       },
-      getModels() { return [dispatch.model]; },
+      getModels() { return [inheritedModel]; },
       stream(model, context, request) {
         return createRetriedStream(false, model, context, request as ProviderStreamOptions | undefined);
       },
@@ -275,7 +332,7 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
           },
         },
       },
-      getModels() { return [dispatch.model]; },
+      getModels() { return [inheritedModel]; },
       stream(model, childContext, streamOptions) {
         return parentProvider!.stream(model, childContext, streamOptions);
       },
@@ -482,22 +539,35 @@ export async function executeAuditorChild(
       context: options.context,
       label: options.roleLabel,
       idleRetry: true,
-      ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
+      ...(options.runCompletion === undefined
+        ? {}
+        : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
 
     const cwd = options.context.cwd ?? process.cwd();
 
     let decision: unknown;
+    let decisionSubmitted = false;
+    let decisionCallId: string | undefined;
+    let decisionToolFailure: unknown;
     const tool = wrapPackageOwnedToolDefinition({
       ...options.tool,
       label: options.roleLabel,
       async execute(...args: any[]) {
-        if (decision !== undefined) throw new Error("Auditor decision was submitted more than once");
-        // Record first so a second submit is rejected even if execute returns;
-        // compliance decision tools return and do not throw.
-        decision = args[1];
-        return options.tool.execute(...args);
+        if (decisionSubmitted && decisionCallId !== args[0]) {
+          throw new Error("Auditor decision was submitted more than once");
+        }
+        try {
+          const result = await options.tool.execute(...args);
+          decision = args[1];
+          decisionCallId = args[0];
+          decisionSubmitted = true;
+          return result;
+        } catch (error) {
+          decisionToolFailure = error;
+          throw error;
+        }
       },
     });
 
@@ -539,14 +609,55 @@ export async function executeAuditorChild(
     auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
 
     let turns = 0;
-    let turnError: AuditorTurnLimitError | undefined;
-    const unsubscribe = session.subscribe((event) => {
-      if (event.type === "message_end" && event.message.role === "assistant") {
-        turns += 1;
-        if (turns > AUDITOR_TURN_LIMIT) {
-          turnError = new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns);
-          void session.abort();
+    let boundaryResponse: AssistantMessage | undefined;
+    let retentionFailure: unknown;
+    let retainedResponse: AssistantMessage | undefined;
+    const registeredToolNames = new Set(session.getAllTools().map((entry) => entry.name));
+    const evidenceToolFailures = new Map<string, unknown>();
+    for (const name of registeredToolNames) {
+      if (name === tool.name) continue;
+      const definition = session.getToolDefinition(name);
+      if (definition === undefined) continue;
+      const execute = definition.execute.bind(definition);
+      definition.execute = async (...args: any[]) => {
+        try {
+          return await (execute as (...executeArgs: any[]) => Promise<any>)(...args);
+        } catch (error) {
+          evidenceToolFailures.set(args[0], error);
+          throw error;
         }
+      };
+    }
+    const findToolFailure = (response: AssistantMessage): unknown => {
+      const callIds = response.content.flatMap((part) =>
+        part.type === "toolCall" && part.name !== tool.name && registeredToolNames.has(part.name) ? [part.id] : []);
+      for (const callId of callIds) {
+        if (evidenceToolFailures.has(callId)) return evidenceToolFailures.get(callId);
+      }
+      const callIdSet = new Set(callIds);
+      return [...session.messages].reverse().find((message) =>
+        message.role === "toolResult" && callIdSet.has(message.toolCallId) && message.isError);
+    };
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
+        turns += 1;
+        retainedResponse = event.message;
+        try { options.retainResponse?.(event.message); } catch (error) { retentionFailure = error; }
+        for (const part of event.message.content) {
+          if (part.type !== "toolCall" || part.name !== tool.name) continue;
+          if (!decisionSubmitted) {
+            decision = part.arguments;
+            decisionCallId = part.id;
+            decisionSubmitted = true;
+          } else if (decisionCallId !== part.id) {
+            decisionToolFailure = new Error("Auditor decision was submitted more than once");
+          }
+        }
+        if (turns >= AUDITOR_TURN_LIMIT) boundaryResponse = event.message;
+      }
+      if (event.type === "turn_end" &&
+          (decisionSubmitted || boundaryResponse !== undefined || retentionFailure !== undefined)) {
+        void session.abort();
       }
     });
     const abort = () => { void session.abort(); };
@@ -563,19 +674,36 @@ export async function executeAuditorChild(
       }
       if (options.signal?.aborted) throw options.signal.reason;
       if (inherited.streamFailure !== undefined) throw inherited.streamFailure;
-      if (turnError !== undefined) throw turnError;
+      if (decisionToolFailure !== undefined) throw decisionToolFailure;
+      const relevantResponse = !decisionSubmitted
+        ? boundaryResponse
+        : [...session.messages].reverse().find((message): message is AssistantMessage =>
+          message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
+      if (relevantResponse !== undefined) {
+        const toolFailure = findToolFailure(relevantResponse);
+        if (toolFailure !== undefined) throw toolFailure;
+      }
+      if (retentionFailure !== undefined && retainedResponse?.stopReason !== "error") throw retentionFailure;
+      if (boundaryResponse !== undefined && !decisionSubmitted) {
+        const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
+        throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
+          stopReason: boundaryResponse.stopReason,
+          toolNames,
+        });
+      }
 
       const assistants = [...session.messages]
         .reverse()
         .filter((message): message is AssistantMessage => message.role === "assistant");
-      const response = decision === undefined
+      const response = !decisionSubmitted
         ? assistants[0]
         : assistants.find((message) =>
           message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
 
       if (response !== undefined) {
         try {
-          options.retainResponse?.(response);
+          if (retainedResponse === undefined) options.retainResponse?.(response);
+          else if (retentionFailure !== undefined) throw retentionFailure;
         } catch (retentionFailure) {
           if (response.stopReason !== "error") throw retentionFailure;
           const failure = new Error(
@@ -633,7 +761,7 @@ export async function executeAuditorChild(
         response === undefined
         || response.stopReason === "error"
         || response.stopReason === "aborted"
-        || decision === undefined
+        || !decisionSubmitted
       ) {
         throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
       }
