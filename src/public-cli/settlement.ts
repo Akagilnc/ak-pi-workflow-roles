@@ -362,8 +362,8 @@ export function classifyPostAdmissionFailure(input: {
         : input.knownCause === "session"
           ? "session unreadable"
           : input.knownCause === "output"
-            ? "Judge Role run completed without a lawful typed terminal result"
-            : `judge role run failed (${input.knownCause})`;
+            ? "role run completed without a lawful typed terminal result"
+            : `role run failed (${input.knownCause})`;
     const diagnostic =
       input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
         ? input.knownDiagnostic
@@ -386,12 +386,12 @@ export function classifyPostAdmissionFailure(input: {
   if (input.timedOut) {
     return {
       cause: "timeout",
-      diagnostic: "judge role run timed out",
+      diagnostic: "role run timed out",
       details: { timedOut: true, code: input.code },
     };
   }
   if (input.code !== 0) {
-    const fallback = `judge role run failed with exit ${input.code ?? "null"}`;
+    const fallback = `role run failed with exit ${input.code ?? "null"}`;
     return {
       cause: "activation",
       diagnostic: conciseChildDiagnostic(input.stderr, fallback),
@@ -401,7 +401,7 @@ export function classifyPostAdmissionFailure(input: {
   if (input.session?.state === "missing") {
     return {
       cause: "session",
-      diagnostic: "Judge Role run left no readable session transcript",
+      diagnostic: "role run left no readable session transcript",
       details: { code: input.code, session: "missing" },
     };
   }
@@ -414,7 +414,7 @@ export function classifyPostAdmissionFailure(input: {
   }
   return {
     cause: "output",
-    diagnostic: "Judge Role run completed without a lawful typed terminal result",
+    diagnostic: "role run completed without a lawful typed terminal result",
     details: { code: input.code },
   };
 }
