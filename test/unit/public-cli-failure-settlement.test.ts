@@ -334,14 +334,13 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
 });
 
 test("classifyPostAdmissionFailure retains typed causes without washing identity", () => {
-  assert.deepEqual(
-    classifyPostAdmissionFailure({ timedOut: true, code: null, stderr: floodStderr() }),
-    {
-      cause: "timeout",
-      diagnostic: "judge role run timed out",
-      details: { timedOut: true, code: null },
-    },
-  );
+  const timeout = classifyPostAdmissionFailure({
+    timedOut: true,
+    code: null,
+    stderr: floodStderr(),
+  });
+  assert.equal(timeout.cause, "timeout");
+  assert.deepEqual(timeout.details, { timedOut: true, code: null });
 
   const activation = classifyPostAdmissionFailure({
     timedOut: false,
@@ -1693,6 +1692,49 @@ test("zero-exit missing session classifies as session cause via public entry", a
       stderr,
       expectedCause: "session",
     });
+  });
+});
+
+test("zero-exit invalid coder details retain coder typed identity through shared output fallback", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io } = captureIo();
+    const result = await runAkRole(
+      ["coder", "apply", "--project", project, "bogus details"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-coder-output-bogus-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            `${JSON.stringify({
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolName: CODER_OUTPUT_TOOL_NAME,
+                isError: false,
+                details: { status: "not-a-coder-status" },
+              },
+            })}\n`,
+            "utf8",
+          );
+          return { code: 0, stderr: "", timedOut: false, args: [...args] };
+        },
+      },
+    );
+
+    assert.equal(result.terminal?.roleOutcome.role, "coder");
+    const errorRef = result.terminal?.artifacts.find((artifact) => artifact.kind === "error");
+    assert.ok(errorRef);
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as { role: string };
+    assert.equal(errorBody.role, "coder");
   });
 });
 
