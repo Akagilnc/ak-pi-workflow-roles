@@ -414,17 +414,18 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
       const makeHarness = (flags: Record<string, string> = {}) => {
         const tools = new Map<string, any>();
         const handlers = new Map<string, any>();
-        let activeTools: string[] = [];
+        const hostTools = ["read", "write", "grep", "find", "bash"];
+        let activeTools: string[] = [...hostTools];
         const pi = {
           registerFlag() {},
           getFlag(name: string) { return flags[name]; },
           registerTool(tool: any) { tools.set(tool.name, tool); },
-          getAllTools() { return [...tools.keys()].map((name) => ({ name })); },
+          getAllTools() { return [...hostTools, ...tools.keys()].map((name) => ({ name })); },
           setActiveTools(names: string[]) { activeTools = [...names]; },
           getActiveTools() { return activeTools; },
           on(name: string, handler: any) { handlers.set(name, handler); },
         };
-        return { pi, tools, handlers };
+        return { pi, tools, handlers, activeTools: () => [...activeTools] };
       };
       const outputContext = (name: string, id: string, arguments_: Record<string, unknown> = {}) => {
         const sessionManager = SessionManager.inMemory();
@@ -526,6 +527,13 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         }
         const retriable = createRole(role, revise);
         await retriable.runtime.activate();
+        if (role === "reviewer") {
+          assert.deepEqual(
+            retriable.harness.activeTools(),
+            ["read", "write", "grep", "find", "bash"],
+            "Reviewer activation must preserve Pi's evidence tool surface",
+          );
+        }
         const tool = retriable.harness.tools.get(toolName);
         assert.ok(tool);
         await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-revise`, outputs[role] as Record<string, unknown>)), /violation|violates its|closed contract/);

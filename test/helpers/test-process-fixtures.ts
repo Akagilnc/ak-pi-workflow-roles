@@ -19,9 +19,13 @@ export function isolatedTestProcessEnv(options: {
   home?: string;
   agentDir?: string;
 } = {}): NodeJS.ProcessEnv {
-  const env = { ...(options.env ?? process.env) };
-  delete env.AK_ROLE_RUN_DIR;
-  delete env.PI_CODING_AGENT_DIR;
+  const env: NodeJS.ProcessEnv = {
+    ...(options.env ?? process.env),
+    // Keep right-hand masks so a later {...process.env, ...env} cannot revive
+    // machine ledger/home pointers. Node spawn omits undefined values.
+    AK_ROLE_RUN_DIR: undefined,
+    PI_CODING_AGENT_DIR: undefined,
+  };
   if (options.home !== undefined) env.HOME = options.home;
   if (options.agentDir !== undefined) env.PI_CODING_AGENT_DIR = options.agentDir;
   return env;

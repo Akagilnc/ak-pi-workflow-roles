@@ -9493,6 +9493,7 @@ import { execFile as execFile2, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, realpath as realpath3 } from "node:fs/promises";
 import { delimiter, isAbsolute as isAbsolute4, join as join4, resolve as resolve5 } from "node:path";
+import { platform } from "node:process";
 import { promisify as promisify2 } from "node:util";
 
 // src/public-cli/invocation.ts
@@ -11548,8 +11549,9 @@ function knownFailureFromProviderStop(input) {
   };
 }
 var execFileAsync2 = promisify2(execFile2);
-async function resolveSelectedPi(command, env) {
-  const candidates = isAbsolute4(command) || command.includes("/") ? [resolve5(command)] : (env.PATH ?? "").split(delimiter).filter(Boolean).map((dir) => resolve5(dir, command));
+async function resolveSelectedPi(command, cwd, env) {
+  const searchPath = env.PATH ?? (platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin");
+  const candidates = isAbsolute4(command) || command.includes("/") ? [resolve5(cwd, command)] : searchPath.split(delimiter).map((dir) => resolve5(cwd, dir, command));
   for (const candidate of candidates) {
     try {
       await access(candidate, constants.X_OK);
@@ -11562,9 +11564,10 @@ async function resolveSelectedPi(command, env) {
   }
   throw new Error(`Pi executable not found: ${command}`);
 }
-async function selectedPiIdentity(command, env) {
-  const executable = await resolveSelectedPi(command, env);
+async function selectedPiIdentity(command, cwd, env) {
+  const executable = await resolveSelectedPi(command, cwd, env);
   const { stdout } = await execFileAsync2(executable, ["--version"], {
+    cwd,
     env,
     encoding: "utf8"
   });
@@ -11574,7 +11577,7 @@ async function selectedPiIdentity(command, env) {
 }
 var defaultExplicitInternalPiRunner = async (args, options) => {
   const command = options.env.PI_BINARY ?? "pi";
-  const piIdentity = await selectedPiIdentity(command, options.env);
+  const piIdentity = await selectedPiIdentity(command, options.cwd, options.env);
   return await new Promise((resolveResult, reject) => {
     const child = spawn(piIdentity.executable, [...args], {
       cwd: options.cwd,
