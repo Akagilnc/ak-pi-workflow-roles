@@ -919,6 +919,31 @@ function collectorDecisiveFacts(
     const value = safelyRead(candidate, key);
     if (value.readable && value.value !== undefined) facts[key] = value.value;
   }
+  const groups = safelyRead(candidate, "groups");
+  if (groups.readable && Array.isArray(groups.value)) {
+    try {
+      facts.groups = groups.value.map((group) => {
+        if (!isRecord(group)) throw new Error("unreadable Collector group");
+        const identity = safelyRead(group, "identity");
+        const attendance = safelyRead(group, "attendance");
+        const degraded = safelyRead(group, "degraded");
+        const materials = safelyRead(group, "materials");
+        const findings = safelyRead(group, "findings");
+        if (!identity.readable || !attendance.readable || !degraded.readable ||
+          !materials.readable || !Array.isArray(materials.value) ||
+          !findings.readable || !Array.isArray(findings.value)) {
+          throw new Error("unreadable Collector group");
+        }
+        return {
+          identity: identity.value,
+          attendance: attendance.value,
+          degraded: degraded.value,
+          materialCount: materials.value.length,
+          findingCount: findings.value.length,
+        };
+      });
+    } catch { /* omit unreadable optional projection */ }
+  }
   const legs = safelyRead(candidate, "legs");
   if (legs.readable && Array.isArray(legs.value)) {
     try {

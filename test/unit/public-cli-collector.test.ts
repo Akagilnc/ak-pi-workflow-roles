@@ -68,6 +68,20 @@ function sampleCollectorReceipt(overrides: {
     finalObservationTime: "2026-01-01T00:01:00.000Z",
     finalSnapshotId: "snap-1",
     targetHead: headOid,
+    groups: [{
+      identity: { userType: "Bot", userId: 199175422 },
+      displayLogin: "chatgpt-codex-connector[bot]",
+      attendance: true,
+      degraded: false,
+      materials: [{ kind: "review", id: 81, evidenceId: "review-81", headRelation: "current" }],
+      findings: [{
+        identity: { userType: "Bot", userId: 199175422 },
+        source: { kind: "review", id: 81, evidenceId: "review-81", headRelation: "current" },
+        category: "material",
+        body: "typed finding",
+      }],
+    }],
+    identityGroups: [{ attendance: true, degraded: true, materials: [], findings: [] }],
     reports: legIds.map((legId) => ({
       kind: "terminal-fact",
       legId,
@@ -687,6 +701,13 @@ test("runAkRole collector settles lawful receipt bound to admitted identity with
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.role, "collector");
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
+    assert.deepEqual(result.terminal!.roleOutcome.decisiveFacts.groups, [{
+      identity: { userType: "Bot", userId: 199175422 },
+      attendance: true,
+      degraded: false,
+      materialCount: 1,
+      findingCount: 1,
+    }]);
     assert.deepEqual(
       result.terminal!.roleOutcome.decisiveFacts.legStatuses,
       [{ legId: "codex", status: "missing" }],
@@ -703,11 +724,29 @@ test("runAkRole collector settles lawful receipt bound to admitted identity with
     assert.ok(reportPath);
     const report = JSON.parse(await readFile(reportPath!, "utf8")) as {
       role: string;
-      receipt: { prNumber: number; manifestDigest: string };
+      receipt: { prNumber: number; manifestDigest: string; groups: unknown; identityGroups: unknown };
     };
     assert.equal(report.role, "collector");
     assert.equal(report.receipt.prNumber, 12);
     assert.equal(report.receipt.manifestDigest, boundManifestDigest);
+    assert.deepEqual(report.receipt.groups, [{
+      identity: { userType: "Bot", userId: 199175422 },
+      displayLogin: "chatgpt-codex-connector[bot]",
+      attendance: true,
+      degraded: false,
+      materials: [{ kind: "review", id: 81, evidenceId: "review-81", headRelation: "current" }],
+      findings: [{
+        identity: { userType: "Bot", userId: 199175422 },
+        source: { kind: "review", id: 81, evidenceId: "review-81", headRelation: "current" },
+        category: "material",
+        body: "typed finding",
+      }],
+    }]);
+    assert.deepEqual(
+      report.receipt.identityGroups,
+      report.receipt.groups,
+      "legacy identityGroups is derived from canonical groups, not the submitted side projection",
+    );
     assert.ok((await readFile(reportPath!, "utf8")).includes(rationale));
 
     const bookKey = resolveBookKeyFromGit(project);
