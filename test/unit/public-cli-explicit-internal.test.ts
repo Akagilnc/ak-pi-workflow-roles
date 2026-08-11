@@ -21,7 +21,11 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
 }
 
 async function writeExecutableStub(path: string, source: string): Promise<void> {
-  await writeFile(path, source, "utf8");
+  const versionAware = source.replace(
+    "\n",
+    "\nif (process.argv[2] === \"--version\") { console.log(\"test-pi-1.0.0\"); process.exit(0); }\n",
+  );
+  await writeFile(path, versionAware, "utf8");
   await chmod(path, 0o755);
 }
 
