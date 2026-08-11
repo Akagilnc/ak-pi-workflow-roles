@@ -10,12 +10,12 @@
     "copyright": "Copyright (c) 2026 Matt Pocock",
     "attribution": "mattpocock/skills"
   },
-  "packageAdaptation": "unchanged-pinned-snapshot",
+  "packageAdaptation": "red-green-advisory-no-historical-compliance-gate",
   "files": {
     "SKILL.md": {
-      "sha256": "5e6b9c16b547113e90afbb946489d1c1384be5c2128f0159bd0bee57251ecf08",
-      "byteLength": 3568,
-      "gitBlob": "ead7781d79eb11cdafa1ac2db978cadef0eba240"
+      "sha256": "26c74168236078b8e43510b49f8c4b30784ec3cc7d4b1356792cbc8500d5cae6",
+      "byteLength": 3798,
+      "gitBlob": "d6b6bebaa1d1fed58812f8809b9ebc1ff9a5d1e4"
     },
     "tests.md": {
       "sha256": "859f9e592c188fda4fc7277dd180e4ce9c7a2e13f6efe1f6f29eccc9d28c106a",
