@@ -151,7 +151,7 @@ test("every public callable role is a completed path (no deferred slice)", async
       // nonblank instruction that must not hit deferred-slice stubs.
       const argv =
         role === "collector"
-          ? ["collector", "--pr", "0", "--leg", "codex:bot"]
+          ? ["collector", "--pr", "0"]
           : role === "doctor"
             ? ["doctor", "--issue", "0"]
             : role === "merger"
@@ -219,7 +219,7 @@ test("public runs write one identity-bound invocation ledger for every role", as
       { role: "coder", runId: "public-coder-001", args: ["coder", "--project", project, "coder task"] },
       { role: "fixer", runId: "public-fixer-001", args: ["fixer", "--project", project, "fixer task"] },
       { role: "reviewer", runId: "public-reviewer-001", args: ["reviewer", "--project", project, "--base", "HEAD", "reviewer task"] },
-      { role: "collector", runId: "public-collector-001", args: ["collector", "--project", project, "--pr", "177", "--repo", "acme/widgets", "--leg", "primary:bot"] },
+      { role: "collector", runId: "public-collector-001", args: ["collector", "--project", project, "--pr", "177", "--repo", "acme/widgets"] },
       { role: "doctor", runId: "public-doctor-001", args: ["doctor", "--project", project, "--issue", "177"] },
       { role: "merger", runId: "public-merger-001", args: ["merger", "--project", project, "merger task"] },
     ] as const;

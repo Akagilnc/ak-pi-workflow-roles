@@ -155,14 +155,14 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
       "public bin must ship Collector receipt validation before lawful settlement",
     );
     assert.equal(
-      committedText.includes("ak-collector-legs"),
+      committedText.includes("ak-collector-repo"),
       true,
-      "public bin must pin collector legs flag on activation",
+      "public bin must pin the collector repository on activation",
     );
     assert.equal(
-      committedText.includes("loadCollectorManifest"),
+      committedText.includes("typed groups terminal discriminator"),
       true,
-      "public bin must assemble retained collector manifests via loadCollectorManifest",
+      "public bin must settle Collector from typed groups",
     );
     // #110 / #113 public Fixer + Doctor adapters must ship in the installed bin.
     assert.equal(
