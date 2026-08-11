@@ -20,7 +20,6 @@ import {
 } from "../package-resources/method-skill.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import {
-  knownFailureFromProviderStop,
   runExplicitInternalActivation,
   type ExplicitInternalKnownFailure,
   type ExplicitInternalPiRunner,
