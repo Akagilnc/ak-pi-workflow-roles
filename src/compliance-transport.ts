@@ -5,6 +5,7 @@ import {
   executeAuditorChild,
   type AuditorCompletion,
 } from "./evidence-child-executor.ts";
+import { createAuditorDossierTool } from "./auditor-dossier-tool.ts";
 import type { DossierObservation } from "./dossier-resolution.ts";
 
 export type ComplianceCompletion = AuditorCompletion;
@@ -107,6 +108,8 @@ export type RunComplianceAuditOptions = {
   invalidDecisionLabel: string;
   runCompletion?: ComplianceCompletion;
   context: ExtensionContext;
+  /** Exact machine-owned run binding; never sourced from AK_ROLE_RUN_DIR. */
+  runDirectory?: string | undefined;
   signal?: AbortSignal;
 };
 
@@ -114,6 +117,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
   const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
   const receipt = await executeAuditorChild({
     tool: options.tool,
+    dossierTool: createAuditorDossierTool(options.runDirectory),
     systemPrompt: options.systemPrompt,
     prompt,
     roleLabel: options.roleLabel,

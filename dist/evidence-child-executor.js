@@ -471,7 +471,7 @@ export async function executeAuditorChild(options) {
             thinkingLevel: options.context.thinkingLevel ?? "off",
             modelRuntime: inherited.runtime,
             systemPrompt: options.systemPrompt,
-            customTools: [tool],
+            customTools: [wrapPackageOwnedToolDefinition({ ...options.dossierTool, label: options.roleLabel }), tool],
             sessionManager: auditorSessionManager,
         });
         const binding = {
