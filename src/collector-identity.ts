@@ -1,5 +1,6 @@
 import {
   normalizeIssueComment,
+  normalizePullRequestReaction,
   normalizeReview,
   normalizeReviewComment,
   type GitHubIssueComment,
@@ -164,6 +165,7 @@ export function extractCollectorEvidenceIdentityGroups(
       if (record.kind === "review") supported.push({ record, material: normalizeReview(record.raw) });
       if (record.kind === "issue_comment") supported.push({ record, material: normalizeIssueComment(record.raw) });
       if (record.kind === "review_comment") supported.push({ record, material: normalizeReviewComment(record.raw) });
+      if (record.kind === "reaction") supported.push({ record, material: normalizePullRequestReaction(record.raw) });
     } catch {
       // Raw transport failures remain evidenceRecords, but cannot impersonate
       // typed attendance when their retained bytes do not normalize.

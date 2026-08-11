@@ -118,6 +118,13 @@ export type CollectorGitHubTransport = {
     /** Charge observation budget before aggregate append / next-page fetch. */
     retainPage?: (items: GitHubReview[]) => void;
   }): Promise<{ items: GitHubReview[]; pages: GitHubPageDiagnostics[] }>;
+  listPullRequestReactions?(input: {
+    owner: string;
+    repo: string;
+    prNumber: number;
+    signal?: AbortSignal;
+    retainPage?: (items: GitHubPullRequestReaction[]) => void;
+  }): Promise<{ items: GitHubPullRequestReaction[]; pages: GitHubPageDiagnostics[] }>;
   listIssueComments(input: {
     owner: string;
     repo: string;
@@ -542,6 +549,15 @@ export function createGhCollectorGitHubTransport(
       const path =
         `/repos/${input.owner}/${input.repo}/pulls/${input.prNumber}/reviews?per_page=100`;
       return await paginate(path, normalizeReview, {
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+        ...(input.retainPage === undefined ? {} : { retainPage: input.retainPage }),
+      });
+    },
+
+    async listPullRequestReactions(input) {
+      const path =
+        `/repos/${input.owner}/${input.repo}/issues/${input.prNumber}/reactions?per_page=100`;
+      return await paginate(path, normalizePullRequestReaction, {
         ...(input.signal === undefined ? {} : { signal: input.signal }),
         ...(input.retainPage === undefined ? {} : { retainPage: input.retainPage }),
       });
