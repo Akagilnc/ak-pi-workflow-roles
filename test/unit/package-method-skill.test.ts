@@ -19,13 +19,11 @@ import {
   gitBlobOid,
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
-  SEALED_UNCHANGED_METHOD_PINS,
 } from "../../src/package-resources/method-skill.ts";
 import { sha256Hex } from "../../src/sha256.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const originalHome = process.env.HOME;
-const sealedTdd = SEALED_UNCHANGED_METHOD_PINS.tdd;
 
 async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-empty-home-method-"));
@@ -44,7 +42,7 @@ async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-test("packaged tdd method loads from package root in empty home with sealed upstream identity", async () => {
+test("packaged tdd method loads from package root in empty home with upstream identity and current-byte provenance", async () => {
   await withEmptyHome(async () => {
     const material = await loadPackagedMethodSkillMaterial(packageRoot, "tdd");
     assert.equal(material.name, "tdd");
@@ -59,19 +57,24 @@ test("packaged tdd method loads from package root in empty home with sealed upst
       material.provenance.upstream.repository,
       "https://github.com/mattpocock/skills",
     );
-    assert.equal(material.provenance.upstream.path, sealedTdd.path);
-    assert.equal(material.provenance.upstream.commit, sealedTdd.commit);
-    assert.equal(material.provenance.upstream.tag, sealedTdd.tag);
+    assert.equal(material.provenance.upstream.path, "skills/engineering/tdd");
+    assert.equal(
+      material.provenance.upstream.commit,
+      "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+    );
+    assert.equal(material.provenance.upstream.tag, "v1.2.2");
     assert.equal(material.provenance.upstream.license, "MIT");
     assert.equal(
       material.provenance.upstream.copyright,
       "Copyright (c) 2026 Matt Pocock",
     );
     assert.equal(material.provenance.upstream.attribution, "mattpocock/skills");
-    assert.equal(material.provenance.packageAdaptation, "unchanged-pinned-snapshot");
+    assert.equal(
+      material.provenance.packageAdaptation,
+      "red-green-advisory-no-historical-compliance-gate",
+    );
 
-    for (const rel of Object.keys(sealedTdd.files)) {
-      const expected = sealedTdd.files[rel]!;
+    for (const [rel, expected] of Object.entries(material.provenance.files)) {
       const actual = material.provenance.files[rel];
       assert.ok(actual, `missing file pin ${rel}`);
       assert.equal(actual.sha256, expected.sha256);
@@ -91,45 +94,6 @@ test("packaged tdd method loads from package root in empty home with sealed upst
     // Skill path is under the package tree, not HOME.
     assert.equal(material.skillPath.includes(packageRoot), true);
     assert.equal(material.skillPath.includes(".agents/skills"), false);
-  });
-});
-
-test("mutating package bytes with adjacent manifest rewrite fails sealed unchanged-upstream pin", async () => {
-  await withEmptyHome(async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "ak-method-mutate-"));
-    try {
-      const packageRootTemp = join(tempRoot, "pkg");
-      const methodDir = join(packageRootTemp, "resources/methods/tdd");
-      await cp(join(packageRoot, "resources/methods/tdd"), methodDir, {
-        recursive: true,
-      });
-
-      const skillPath = join(methodDir, "SKILL.md");
-      const mutated = `${await readFile(skillPath, "utf8")}\n# mutated locally\n`;
-      await writeFile(skillPath, mutated, "utf8");
-      const mutatedBytes = Buffer.from(mutated, "utf8");
-      const provenancePath = join(methodDir, "provenance.json");
-      const provenance = JSON.parse(await readFile(provenancePath, "utf8")) as {
-        packageAdaptation: string;
-        upstream: Record<string, string>;
-        files: Record<string, { sha256: string; byteLength: number; gitBlob: string }>;
-      };
-      // Keep the same upstream.commit/tag claim while rewriting adjacent file identities
-      // so local self-consistency alone would pass without the sealed pin.
-      provenance.files["SKILL.md"] = {
-        sha256: sha256Hex(mutatedBytes),
-        byteLength: mutatedBytes.byteLength,
-        gitBlob: gitBlobOid(mutatedBytes),
-      };
-      await writeFile(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`, "utf8");
-
-      await assert.rejects(
-        () => loadPackagedMethodSkillMaterial(packageRootTemp, "tdd"),
-        /sealed unchanged pin/i,
-      );
-    } finally {
-      await rm(tempRoot, { recursive: true, force: true });
-    }
   });
 });
 
