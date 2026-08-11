@@ -376,7 +376,7 @@ process.exit(1);
   });
 });
 
-test("installed ak-role collector admits PR/legs and pins isolation without preflight", async () => {
+test("installed ak-role collector admits a PR without observer declarations", async () => {
   await withHermeticHome({ prefix: "ak-public-cli-collector-" }, async ({ home }) => {
     const piAgentDir = resolve(home, ".pi", "agent");
     await mkdir(piAgentDir, { recursive: true });
@@ -394,20 +394,12 @@ test("installed ak-role collector admits PR/legs and pins isolation without pref
     // Malformed grammar rejects on the installed bin (not "unavailable slice").
     const badPr = await runAkRoleBin(
       installed.akRoleBin,
-      ["collector", "--pr", "0", "--leg", "codex:bot", "--project", project],
+      ["collector", "--pr", "0", "--project", project],
       { home, agentDir: piAgentDir },
     );
     assert.equal(badPr.timedOut, false, badPr.stderr);
     assert.equal(badPr.code, 2, badPr.stderr);
     assert.equal(badPr.stderr.includes("not available in this install slice"), false);
-
-    const badLeg = await runAkRoleBin(
-      installed.akRoleBin,
-      ["collector", "--pr", "1", "--leg", "NOPE:bot", "--project", project],
-      { home, agentDir: piAgentDir },
-    );
-    assert.equal(badLeg.code, 2, badLeg.stderr);
-    assert.equal(badLeg.stderr.includes("not available in this install slice"), false);
 
     // Record Pi argv owned by ak-role collector (isolation + structural flags).
     const shimDir = resolve(home, "pi-shim-collector");
@@ -433,10 +425,6 @@ process.exit(1);
         project,
         "--pr",
         "999999",
-        "--leg",
-        "codex:definitely-not-a-real-bot",
-        "--leg",
-        "cursor:cursor-bot",
       ],
       {
         home,
@@ -456,7 +444,6 @@ process.exit(1);
       recorded[recorded.indexOf("--ak-collector-repo") + 1],
       "Acme/Widgets",
     );
-    assert.equal(recorded.includes("--ak-collector-legs"), true);
     assert.equal(recorded.includes("--no-skills"), true);
     assert.equal(recorded.includes("--skill"), false);
     assert.equal(recorded.includes("--no-session"), false);
@@ -483,8 +470,6 @@ process.exit(1);
         "OtherOrg/OtherRepo",
         "--pr",
         "7",
-        "--leg",
-        "codex:CodexBot",
       ],
       {
         home,

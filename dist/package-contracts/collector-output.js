@@ -13,71 +13,22 @@ function safeGet(value, key) {
     }
 }
 function records(value) {
-    if (!Array.isArray(value))
-        return [];
-    return value.filter((item) => item !== null && typeof item === "object");
+    return Array.isArray(value) ? value.filter((item) => item !== null && typeof item === "object") : [];
 }
 function strings(value) {
-    return Array.isArray(value)
-        ? value.filter((item) => typeof item === "string")
-        : [];
+    return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 }
-function projectReport(value) {
-    const common = {
-        legId: safeGet(value, "legId"),
-        report: safeGet(value, "report"),
-        windowRelation: safeGet(value, "windowRelation"),
-        evidenceRefs: strings(safeGet(value, "evidenceRefs")),
-    };
-    if (safeGet(value, "kind") === "review") {
-        return {
-            kind: "review",
-            ...common,
-            reviewedHead: safeGet(value, "reviewedHead"),
-            headRelation: safeGet(value, "headRelation"),
-        };
-    }
-    const terminal = {
-        kind: "terminal-fact",
-        ...common,
-        terminalStatus: safeGet(value, "terminalStatus"),
-    };
-    const targetSnapshotHead = safeGet(value, "targetSnapshotHead");
-    const scope = safeGet(value, "scope");
-    if (targetSnapshotHead !== undefined)
-        terminal.targetSnapshotHead = targetSnapshotHead;
-    if (scope !== undefined)
-        terminal.scope = scope;
-    return terminal;
-}
-/**
- * Safely project the receipt fields consumed by settlement. Runtime ledger
- * construction owns their semantic bindings; this boundary does not impose a
- * second required/type/closed/status shape contract.
- */
+/** Settlement projection. Presence of the canonical groups array is the one Collector terminal discriminator. */
 export function validateAcceptedCollectorReceipt(value) {
-    const snapshots = records(safeGet(value, "snapshots")).map((snapshot) => ({
-        snapshotId: safeGet(snapshot, "snapshotId"),
-        observedAt: safeGet(snapshot, "observedAt"),
-        completedAt: safeGet(snapshot, "completedAt"),
-        completedMono: safeGet(snapshot, "completedMono"),
-        host: safeGet(snapshot, "host"),
-        repository: safeGet(snapshot, "repository"),
-        prNumber: safeGet(snapshot, "prNumber"),
-        prState: safeGet(snapshot, "prState"),
-        headOid: safeGet(snapshot, "headOid"),
-        complete: safeGet(snapshot, "complete"),
-        evidenceIds: strings(safeGet(snapshot, "evidenceIds")),
-        pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")),
-        normalizedByteLength: safeGet(snapshot, "normalizedByteLength"),
-    }));
-    const evidenceRecords = records(safeGet(value, "evidenceRecords")).map((record) => ({
-        evidenceId: safeGet(record, "evidenceId"),
-        kind: safeGet(record, "kind"),
-        versionId: safeGet(record, "versionId"),
-        contentDigest: safeGet(record, "contentDigest"),
-        firstObservedAt: safeGet(record, "firstObservedAt"),
-        raw: safeGet(record, "raw"),
+    const rawGroups = safeGet(value, "groups");
+    if (!Array.isArray(rawGroups))
+        throw new Error("Collector receipt has no typed groups terminal discriminator");
+    const groups = records(rawGroups).map((group) => ({
+        identity: (safeGet(group, "identity") ?? null),
+        ...(typeof safeGet(group, "displayLogin") === "string" ? { displayLogin: safeGet(group, "displayLogin") } : {}),
+        attendance: true,
+        materials: records(safeGet(group, "materials")),
+        findings: records(safeGet(group, "findings")),
     }));
     return {
         host: safeGet(value, "host"),
@@ -89,15 +40,11 @@ export function validateAcceptedCollectorReceipt(value) {
         finalObservationTime: safeGet(value, "finalObservationTime"),
         finalSnapshotId: safeGet(value, "finalSnapshotId"),
         targetHead: safeGet(value, "targetHead"),
-        reports: records(safeGet(value, "reports")).map(projectReport),
-        legs: records(safeGet(value, "legs")).map((leg) => ({
-            legId: safeGet(leg, "legId"),
-            status: safeGet(leg, "status"),
-            rationale: safeGet(leg, "rationale"),
-            evidenceRefs: strings(safeGet(leg, "evidenceRefs")),
-        })),
+        groups,
         requestAttempts: records(safeGet(value, "requestAttempts")),
-        snapshots,
-        evidenceRecords,
+        snapshots: records(safeGet(value, "snapshots")).map((snapshot) => ({
+            snapshotId: safeGet(snapshot, "snapshotId"), observedAt: safeGet(snapshot, "observedAt"), completedAt: safeGet(snapshot, "completedAt"), completedMono: safeGet(snapshot, "completedMono"), host: safeGet(snapshot, "host"), repository: safeGet(snapshot, "repository"), prNumber: safeGet(snapshot, "prNumber"), prState: safeGet(snapshot, "prState"), headOid: safeGet(snapshot, "headOid"), complete: safeGet(snapshot, "complete"), evidenceIds: strings(safeGet(snapshot, "evidenceIds")), pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")), normalizedByteLength: safeGet(snapshot, "normalizedByteLength"),
+        })),
+        evidenceRecords: records(safeGet(value, "evidenceRecords")).map((record) => ({ evidenceId: safeGet(record, "evidenceId"), kind: safeGet(record, "kind"), versionId: safeGet(record, "versionId"), contentDigest: safeGet(record, "contentDigest"), firstObservedAt: safeGet(record, "firstObservedAt"), raw: safeGet(record, "raw") })),
     };
 }

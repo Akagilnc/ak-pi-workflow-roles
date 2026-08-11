@@ -140,14 +140,25 @@ export function createFakeGitHubTransport(
       calls.create += 1;
       if (state.failNext?.create) throw state.failNext.create;
       if (state.createComment) return await state.createComment(input.body);
+      const id = 10_000 + calls.create;
+      const createdAt = new Date().toISOString();
+      const updatedAt = new Date().toISOString();
+      const htmlUrl = "https://github.com/o/r/pull/1#issuecomment-1";
       const comment: GitHubIssueComment = {
-        id: 10_000 + calls.create,
+        id,
         userLogin: state.user.login,
         body: input.body,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        htmlUrl: "https://github.com/o/r/pull/1#issuecomment-1",
-        raw: { body: input.body },
+        createdAt,
+        updatedAt,
+        htmlUrl,
+        raw: {
+          id,
+          user: { login: state.user.login },
+          body: input.body,
+          created_at: createdAt,
+          updated_at: updatedAt,
+          html_url: htmlUrl,
+        },
       };
       state.issueComments = [...state.issueComments, comment];
       return { kind: "success", comment };
