@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 
 export type GitHubPullRequest = {
   number: number;
@@ -636,7 +637,8 @@ export function buildCollectorRequestMarker(input: {
   headOid: string;
 }): string {
   const prefix = input.manifestDigest.slice(0, 12);
-  return `<!-- ak-collector:v1 manifest=${prefix} request=${input.requestId} head=${input.headOid} -->`;
+  const requestMarkerId = createHash("sha256").update(input.requestId).digest("hex");
+  return `<!-- ak-collector:v1 manifest=${prefix} request=${requestMarkerId} head=${input.headOid} -->`;
 }
 
 export function buildCollectorRequestBody(input: {

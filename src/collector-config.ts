@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 export const COLLECTOR_HOST = "github.com" as const;
-export const COLLECTOR_REQUEST_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 export const COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 export const COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
 export const COLLECTOR_FIXED_KICKOFF =
@@ -80,7 +79,7 @@ export async function loadCollectorManifest(path: string): Promise<CollectorMani
   const requests: CollectorRequestConfig[] = [];
   const ids = new Set<string>();
   for (const [index, item] of rawRequests.entries()) {
-    if (!record(item) || typeof item.id !== "string" || !COLLECTOR_REQUEST_ID_PATTERN.test(item.id) || typeof item.body !== "string" || item.body.trim() === "") fail(`Collector request manifest requests[${index}] is invalid`);
+    if (!record(item) || typeof item.id !== "string" || item.id.length === 0 || typeof item.body !== "string" || item.body.trim() === "") fail(`Collector request manifest requests[${index}] is invalid`);
     if (ids.has(item.id)) fail(`Collector request manifest has duplicate request id "${item.id}"`);
     ids.add(item.id);
     requests.push({ id: item.id, requestBody: item.body });

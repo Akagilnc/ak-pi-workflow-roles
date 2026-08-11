@@ -334,7 +334,6 @@ function validateAcceptedCollectorReceipt(value) {
     identity: safeGet(group, "identity") ?? null,
     ...typeof safeGet(group, "displayLogin") === "string" ? { displayLogin: safeGet(group, "displayLogin") } : {},
     attendance: true,
-    degraded: safeGet(group, "degraded") === true,
     materials: records(safeGet(group, "materials")),
     findings: records(safeGet(group, "findings"))
   }));
@@ -9800,7 +9799,6 @@ async function loadDoctorCase(runsPath) {
 // src/collector-config.ts
 import { createHash as createHash2 } from "node:crypto";
 import { readFile as readFile3 } from "node:fs/promises";
-var COLLECTOR_REQUEST_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 var COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 var COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
 var COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target. Observe GitHub materials and submit exactly one ak_collector_output when observation is complete.";
@@ -9862,7 +9860,7 @@ async function loadCollectorManifest(path) {
   const requests = [];
   const ids = /* @__PURE__ */ new Set();
   for (const [index, item] of rawRequests.entries()) {
-    if (!record3(item) || typeof item.id !== "string" || !COLLECTOR_REQUEST_ID_PATTERN.test(item.id) || typeof item.body !== "string" || item.body.trim() === "") fail3(`Collector request manifest requests[${index}] is invalid`);
+    if (!record3(item) || typeof item.id !== "string" || item.id.length === 0 || typeof item.body !== "string" || item.body.trim() === "") fail3(`Collector request manifest requests[${index}] is invalid`);
     if (ids.has(item.id)) fail3(`Collector request manifest has duplicate request id "${item.id}"`);
     ids.add(item.id);
     requests.push({ id: item.id, requestBody: item.body });
@@ -13145,16 +13143,14 @@ function collectorDecisiveFacts(receipt) {
         if (!isRecord4(group)) throw new Error("unreadable Collector group");
         const identity = safelyRead(group, "identity");
         const attendance = safelyRead(group, "attendance");
-        const degraded = safelyRead(group, "degraded");
         const materials = safelyRead(group, "materials");
         const findings = safelyRead(group, "findings");
-        if (!identity.readable || !attendance.readable || !degraded.readable || !materials.readable || !Array.isArray(materials.value) || !findings.readable || !Array.isArray(findings.value)) {
+        if (!identity.readable || !attendance.readable || !materials.readable || !Array.isArray(materials.value) || !findings.readable || !Array.isArray(findings.value)) {
           throw new Error("unreadable Collector group");
         }
         return {
           identity: identity.value,
           attendance: attendance.value,
-          degraded: degraded.value,
           materialCount: materials.value.length,
           findingCount: findings.value.length
         };

@@ -8,7 +8,6 @@ export type CollectorIdentityGroup = {
   identity: Record<string, unknown> | null;
   displayLogin?: string;
   attendance: true;
-  degraded: boolean;
   materials: Array<Record<string, unknown>>;
   findings: Array<Record<string, unknown>>;
 };
@@ -87,7 +86,6 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     identity: (safeGet(group, "identity") ?? null) as Record<string, unknown> | null,
     ...(typeof safeGet(group, "displayLogin") === "string" ? { displayLogin: safeGet(group, "displayLogin") as string } : {}),
     attendance: true as const,
-    degraded: safeGet(group, "degraded") === true,
     materials: records(safeGet(group, "materials")),
     findings: records(safeGet(group, "findings")),
   }));
