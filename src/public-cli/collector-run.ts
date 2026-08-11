@@ -46,7 +46,7 @@ import {
   presentStructuralRejection,
   explicitInternalKnownFailureClassificationInput,
   readCollectorInfrastructureFailure,
-  readSessionProviderStop,
+  resolveAuditedRunnerKnownFailure,
   settleFailureTerminalResult,
   trySettleCollectorTerminalResult,
 } from "./settlement.ts";
@@ -280,31 +280,26 @@ async function dispatchAdmittedCollector(input: {
     const infrastructureFailure = await readCollectorInfrastructureFailure(
       admitted.sessionFile,
     );
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile,
-    );
-    const sessionProviderFailure =
-      sessionProviderStop === undefined
-        ? undefined
-        : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = postRunMissingCredentialFailure(
       result,
       env.model,
       env.credentials,
     );
-    const knownFailure =
-      result.knownFailure ??
-      (infrastructureFailure === undefined
-        ? undefined
-        : {
-            cause: infrastructureFailure.cause,
-            diagnostic: infrastructureFailure.diagnostic,
-            ...(infrastructureFailure.identity === undefined
-              ? {}
-              : { identity: infrastructureFailure.identity }),
-          }) ??
-      sessionProviderFailure ??
-      credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner:
+        result.knownFailure ??
+        (infrastructureFailure === undefined
+          ? undefined
+          : {
+              cause: infrastructureFailure.cause,
+              diagnostic: infrastructureFailure.diagnostic,
+              ...(infrastructureFailure.identity === undefined
+                ? {}
+                : { identity: infrastructureFailure.identity }),
+            }),
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure,
+    });
     return await presentControlledFailure(
       admitted,
       {

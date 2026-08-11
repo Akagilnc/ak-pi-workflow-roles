@@ -797,21 +797,9 @@ export async function resolveAuditedRunnerKnownFailure(input: {
   credential: ExplicitInternalKnownFailure | undefined;
 }): Promise<ExplicitInternalKnownFailure | undefined> {
   if (input.runner !== undefined) return input.runner;
-  try {
-    const terminatingFailure = typedFailedTerminatingToolKnownFailure(
-      await readBoundSessionEntries(input.sessionFile),
-    );
-    if (terminatingFailure !== undefined) return terminatingFailure;
-  } catch (error) {
-    if (!isMissingPathError(error)) {
-      const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
-      return { cause: "session", identity: thrownIdentity(failure), diagnostic: failure.message || failure.name };
-    }
-  }
-  // Bound auditor evidence outranks a parent abort that the auditor path itself
-  // caused (retention EISDIR race). Reviewer axis evidence-children are next:
-  // fixed two-axis dispatch fails during activation with only child stops durable.
-  // Parent stop remains the fallback; credential is last.
+  // Bound auditor evidence outranks a parent failure that the auditor path itself
+  // caused (retention EISDIR race). A typed terminating-tool host failure is next:
+  // it outranks provider/credential and nonzero fallbacks, but not its recorded cause.
   try {
     const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
     if (auditorFailure !== undefined) return auditorFailure;
@@ -823,6 +811,20 @@ export async function resolveAuditedRunnerKnownFailure(input: {
       diagnostic: failure.message || failure.name,
     };
   }
+  try {
+    const terminatingFailure = typedFailedTerminatingToolKnownFailure(
+      await readBoundSessionEntries(input.sessionFile),
+    );
+    if (terminatingFailure !== undefined) return terminatingFailure;
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
+      return { cause: "session", identity: thrownIdentity(failure), diagnostic: failure.message || failure.name };
+    }
+  }
+  // Reviewer axis evidence-children are next: fixed two-axis dispatch fails
+  // during activation with only child stops durable. Parent stop remains the
+  // fallback; credential is last.
   try {
     const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
     if (evidenceChildFailure !== undefined) return evidenceChildFailure;
