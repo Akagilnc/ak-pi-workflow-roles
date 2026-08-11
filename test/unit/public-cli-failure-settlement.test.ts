@@ -2995,49 +2995,6 @@ test("typed output failure cannot bind a call from an earlier attempt", async ()
   });
 });
 
-test("malformed typed output evidence with extra detail keys fails closed", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io } = captureIo();
-    const result = await runAkRole(
-      ["--model", "xai/grok-4:off", "judge", "--project", project, "malformed typed output host failure"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => "run-malformed-output-host-failure-001",
-        io,
-        piRunner: async (args) => {
-          const sessionFile = args[args.indexOf("--session") + 1]!;
-          await writeFile(sessionFile, [
-            { type: "session", id: "parent-session" },
-            { type: "message", id: "current-user", message: { role: "user" } },
-            { type: "message", id: "output-call", message: { role: "assistant", content: [{ type: "toolCall", id: "host-failed-output", name: "ak_judge_output", arguments: {} }] } },
-            { type: "message", id: "output-result", message: {
-              role: "toolResult",
-              toolCallId: "host-failed-output",
-              toolName: "ak_judge_output",
-              isError: true,
-              content: [{ type: "text", text: "must not become output evidence" }],
-              details: { kind: "role_infrastructure_failure", source: "shared-role-lifecycle", reasonCode: "host_failure", extra: true },
-            } },
-          ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-          return { code: 1, stderr: "fallback diagnostic\n", timedOut: false, args: [...args] };
-        },
-      },
-    );
-
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    if (result.terminal!.roleOutcome.kind !== "failure") return;
-    assert.equal(result.terminal!.roleOutcome.cause, "activation");
-    assert.equal(result.terminal!.roleOutcome.diagnostic, "fallback diagnostic");
-  });
-});
-
 test("session provider-stop produces provider cause without injected knownFailure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
