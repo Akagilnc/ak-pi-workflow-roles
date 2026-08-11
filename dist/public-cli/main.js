@@ -11601,7 +11601,6 @@ var PackagedMethodSkillUnavailableError = class extends Error {
   code = "canonical-skill-unavailable";
 };
 var METHOD_SKILL_RELATIVE_ROOT = "resources/methods";
-var UNCHANGED_PINNED_SNAPSHOT = "unchanged-pinned-snapshot";
 var GIT_COMMIT_RE = /^[0-9a-f]{40}$/;
 var GIT_BLOB_RE = /^[0-9a-f]{40}$/;
 var SHA256_RE = /^[0-9a-f]{64}$/;
@@ -11611,35 +11610,6 @@ var REQUIRED_COMPANIONS = {
   "code-review": ["agents/openai.yaml"],
   "resolving-merge-conflicts": ["agents/openai.yaml"]
 };
-var SEALED_UNCHANGED_METHOD_PINS = Object.freeze({
-  tdd: Object.freeze({
-    commit: "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
-    tag: "v1.2.2",
-    path: "skills/engineering/tdd",
-    files: Object.freeze({
-      "SKILL.md": Object.freeze({
-        sha256: "5e6b9c16b547113e90afbb946489d1c1384be5c2128f0159bd0bee57251ecf08",
-        byteLength: 3568,
-        gitBlob: "ead7781d79eb11cdafa1ac2db978cadef0eba240"
-      }),
-      "tests.md": Object.freeze({
-        sha256: "859f9e592c188fda4fc7277dd180e4ce9c7a2e13f6efe1f6f29eccc9d28c106a",
-        byteLength: 2214,
-        gitBlob: "7ab86479f925a1f9e8ba680af33cb3b12e015381"
-      }),
-      "mocking.md": Object.freeze({
-        sha256: "3ceb807fdf4a47d6a93d4d9a891e5ba6d362a6247bd08adc451feebfc17361ef",
-        byteLength: 1481,
-        gitBlob: "71cbfee674d93244ce81d1830b930ca9a69200bd"
-      }),
-      "agents/openai.yaml": Object.freeze({
-        sha256: "ea6f01cf1b8c06a4b0f5b649d74b1b8ce8685e72af1b38d70d877693e092af0b",
-        byteLength: 87,
-        gitBlob: "651b838a7663e027b1b8884491e867f26bb9a021"
-      })
-    })
-  })
-});
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
   const header = Buffer.from(`blob ${body.byteLength}\0`, "utf8");
@@ -11751,46 +11721,6 @@ function parseProvenance(raw, expectedName) {
     files: Object.freeze(files)
   });
 }
-function assertSealedUnchangedUpstreamPin(provenance) {
-  if (provenance.packageAdaptation !== UNCHANGED_PINNED_SNAPSHOT) return;
-  if (provenance.name !== "tdd") {
-    throw new Error(
-      `Packaged method ${provenance.name} claims unchanged-pinned-snapshot without a sealed pin`
-    );
-  }
-  const sealed = SEALED_UNCHANGED_METHOD_PINS.tdd;
-  if (provenance.upstream.commit !== sealed.commit) {
-    throw new Error(
-      `Packaged method ${provenance.name} upstream.commit does not match sealed unchanged pin`
-    );
-  }
-  if (provenance.upstream.tag !== sealed.tag) {
-    throw new Error(
-      `Packaged method ${provenance.name} upstream.tag does not match sealed unchanged pin`
-    );
-  }
-  if (provenance.upstream.path !== sealed.path) {
-    throw new Error(
-      `Packaged method ${provenance.name} upstream.path does not match sealed unchanged pin`
-    );
-  }
-  const sealedRels = Object.keys(sealed.files).sort();
-  const actualRels = Object.keys(provenance.files).sort();
-  if (sealedRels.length !== actualRels.length || sealedRels.some((rel, index) => rel !== actualRels[index])) {
-    throw new Error(
-      `Packaged method ${provenance.name} file set does not match sealed unchanged pin`
-    );
-  }
-  for (const rel of sealedRels) {
-    const expected = sealed.files[rel];
-    const actual = provenance.files[rel];
-    if (actual.sha256 !== expected.sha256 || actual.byteLength !== expected.byteLength || actual.gitBlob !== expected.gitBlob) {
-      throw new Error(
-        `Packaged method ${provenance.name}/${rel} identity does not match sealed unchanged pin`
-      );
-    }
-  }
-}
 async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const rootDirectory = resolvePackagedMethodSkillRoot(packageRoot2, name);
   const skillPathConfigured = join5(rootDirectory, "SKILL.md");
@@ -11810,7 +11740,6 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
     });
   }
   const provenance = parseProvenance(provenanceJson, name);
-  assertSealedUnchangedUpstreamPin(provenance);
   for (const [rel, expected] of Object.entries(provenance.files)) {
     const absolute = join5(rootDirectory, rel);
     let bytes;
@@ -13313,6 +13242,33 @@ async function readBoundAuditorKnownFailure(sessionFile) {
   }
   return void 0;
 }
+function typedFailedTerminatingToolKnownFailure(entries) {
+  let attemptStart = 0;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    if (entries[i]?.type === "message" && entries[i]?.message?.role === "user") {
+      attemptStart = i;
+      break;
+    }
+  }
+  const attemptEntries = entries.slice(attemptStart);
+  for (let i = attemptEntries.length - 1; i >= 0; i -= 1) {
+    const message = attemptEntries[i]?.message;
+    if (attemptEntries[i]?.type !== "message" || message?.role !== "toolResult") continue;
+    const classification = classifyPackagedRoleTerminalResult(message);
+    if (classification.kind !== "infrastructure") continue;
+    if (typeof message.toolCallId !== "string" || typeof message.toolName !== "string") continue;
+    if (boundRoleToolCallForResult(attemptEntries, i, message, message.toolName) === void 0) continue;
+    const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord4(part) && part.type === "text" && typeof part.text === "string") : void 0;
+    const diagnostic = isRecord4(textPart) ? textPart.text : void 0;
+    return {
+      cause: "output",
+      identity: { name: message.toolName, code: message.toolCallId },
+      ...typeof diagnostic === "string" && diagnostic.trim() !== "" ? { diagnostic } : {},
+      details: classification.fact
+    };
+  }
+  return void 0;
+}
 async function resolveAuditedRunnerKnownFailure(input) {
   if (input.runner !== void 0) return input.runner;
   try {
@@ -13325,6 +13281,17 @@ async function resolveAuditedRunnerKnownFailure(input) {
       identity: thrownIdentity(failure),
       diagnostic: failure.message || failure.name
     };
+  }
+  try {
+    const terminatingFailure = typedFailedTerminatingToolKnownFailure(
+      await readBoundSessionEntries(input.sessionFile)
+    );
+    if (terminatingFailure !== void 0) return terminatingFailure;
+  } catch (error) {
+    if (!isMissingPathError2(error)) {
+      const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
+      return { cause: "session", identity: thrownIdentity(failure), diagnostic: failure.message || failure.name };
+    }
   }
   try {
     const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
@@ -15562,16 +15529,16 @@ async function dispatchAdmittedCoder(input) {
         terminal: lawful
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
       env.model,
       env.credentials
     );
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure(
       admitted,
       {
@@ -15876,20 +15843,20 @@ async function dispatchAdmittedCollector(input) {
     const infrastructureFailure = await readCollectorInfrastructureFailure(
       admitted.sessionFile
     );
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
       env.model,
       env.credentials
     );
-    const knownFailure = result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
-      cause: infrastructureFailure.cause,
-      diagnostic: infrastructureFailure.diagnostic,
-      ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
-    }) ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
+        cause: infrastructureFailure.cause,
+        diagnostic: infrastructureFailure.diagnostic,
+        ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
+      }),
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure2(
       admitted,
       {
@@ -17052,16 +17019,16 @@ async function dispatchAdmittedMerger(input) {
         terminal: lawful
       };
     }
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile
-    );
-    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
       env.model,
       env.credentials
     );
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result2.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure
+    });
     return await presentControlledFailure6(
       admitted,
       {
