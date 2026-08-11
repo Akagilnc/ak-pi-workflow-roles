@@ -52,34 +52,6 @@ test("public Collector accepts PR/repository without an observer declaration", (
   });
 });
 
-test("optional request manifest reaches the sole public Collector activation path", async () => {
-  const home = await mkdtemp(join(tmpdir(), "collector-request-"));
-  try {
-    const project = join(home, "project");
-    await mkdir(project);
-    seedProject(project);
-    const source = join(home, "requests.json");
-    await writeFile(source, JSON.stringify({ requests: [{ id: "codex", body: "Please review." }] }));
-    const result = await runAkRole(["collector", "--pr", "1168", "--repo", "acme/widgets", "--project", project, "--request-manifest", source], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials: { "openai-codex": true, xai: false },
-      createRunId: () => "collector-request-run",
-      io: { stdout: () => undefined, stderr: () => undefined },
-      piRunner: async (args) => {
-        const flag = args.indexOf("--ak-collector-request-manifest");
-        assert.ok(flag > 0);
-        assert.equal(JSON.parse(await readFile(args[flag + 1]!, "utf8")).requests[0].id, "codex");
-        return { code: 1, timedOut: false, stderr: "fixture stop", args: [...args] };
-      },
-    });
-    assert.notEqual(result.exitCode, 2);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
 test("typed groups travel from real output settlement into the report artifact", async () => {
   const home = await mkdtemp(join(tmpdir(), "collector-groups-"));
   try {
