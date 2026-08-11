@@ -1,5 +1,7 @@
 import { chmod, writeFile } from "node:fs/promises";
 
+export { isolatedTestProcessEnv } from "../../scripts/test-process-env.mjs";
+
 export const TEST_PI_VERSION = "test-pi-1.0.0";
 export const TEST_PI_VERSION_BRANCH = `if (process.argv[2] === "--version") { console.log(${JSON.stringify(TEST_PI_VERSION)}); process.exit(0); }`;
 
@@ -11,22 +13,4 @@ export function versionAwarePiShim(source: string): string {
 export async function writeVersionAwarePiShim(path: string, source: string): Promise<void> {
   await writeFile(path, versionAwarePiShim(source), "utf8");
   await chmod(path, 0o755);
-}
-
-/** Never let a test-owned process inherit a live role ledger or machine Pi home. */
-export function isolatedTestProcessEnv(options: {
-  env?: NodeJS.ProcessEnv;
-  home?: string;
-  agentDir?: string;
-} = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
-    ...(options.env ?? process.env),
-    // Keep right-hand masks so a later {...process.env, ...env} cannot revive
-    // machine ledger/home pointers. Node spawn omits undefined values.
-    AK_ROLE_RUN_DIR: undefined,
-    PI_CODING_AGENT_DIR: undefined,
-  };
-  if (options.home !== undefined) env.HOME = options.home;
-  if (options.agentDir !== undefined) env.PI_CODING_AGENT_DIR = options.agentDir;
-  return env;
 }
