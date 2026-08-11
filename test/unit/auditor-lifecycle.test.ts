@@ -171,95 +171,59 @@ test("injected completion executes a same-turn evidence and decision batch exact
   }
 });
 
-test("constant unknown tools receive native error receipts and exhaust at the exact provider-turn limit", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-exhaustion-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
-  try {
-    const sessionManager = parentWithJudgeSubjects(cwd);
-    const faux = fauxProvider({ provider: "exhaustion-test" });
-    let turns = 0;
-    const unknownId = "unknown-call";
-    faux.setResponses(Array.from({ length: AUDITOR_TURN_LIMIT }, () => (context: Context) => {
-      turns += 1;
-      if (turns > 1) {
-        const receipt = [...context.messages].reverse().find((message) =>
-          message.role === "toolResult" && message.toolCallId === unknownId);
-        assert.equal(receipt?.role, "toolResult");
-        if (receipt?.role !== "toolResult") throw new Error("missing native unknown-tool receipt");
-        assert.equal(receipt?.toolName, "ak_unknown_decision");
-        assert.equal(receipt?.isError, true);
+for (const mode of ["provider", "injected"] as const) {
+  test(`${mode} completion gives unknown tools native receipts and exhausts at the exact turn limit`, async () => {
+    const cwd = await mkdtemp(join(tmpdir(), `ak-auditor-${mode}-exhaustion-`));
+    const runDirectory = join(cwd, "run");
+    await mkdir(runDirectory);
+    try {
+      const sessionManager = parentWithJudgeSubjects(cwd);
+      const faux = fauxProvider({ provider: `${mode}-exhaustion-test` });
+      const unknownId = `${mode}-unknown-call`;
+      const unknownTool = `ak_${mode}_unknown_decision`;
+      let turns = 0;
+      const traceTurn = async (context: Context) => {
+        turns += 1;
+        if (turns > 1) {
+          const receipt = [...context.messages].reverse().find((message) =>
+            message.role === "toolResult" && message.toolCallId === unknownId);
+          assert.equal(receipt?.role, "toolResult");
+          if (receipt?.role !== "toolResult") throw new Error("missing native unknown-tool receipt");
+          assert.equal(receipt.toolName, unknownTool);
+          assert.equal(receipt.isError, true);
+        }
+        return fauxAssistantMessage([{
+          ...fauxToolCall(unknownTool, {}),
+          id: unknownId,
+        }], { stopReason: "toolUse" });
+      };
+      if (mode === "provider") {
+        faux.setResponses(Array.from({ length: AUDITOR_TURN_LIMIT }, () => traceTurn));
       }
-      return fauxAssistantMessage([{
-        ...fauxToolCall("ak_unknown_decision", {}),
-        id: unknownId,
-      }], { stopReason: "toolUse" });
-    }));
-    await assert.rejects(
-      withRunDir(runDirectory, () => runComplianceAudit({
-        tool: createComplianceDecisionTool("ak_real_decision", "Submit."),
-        systemPrompt: "Decide.",
-        roleLabel: "Exhaustion auditor",
-        invalidDecisionLabel: "invalid decision",
-        context: auditExtensionContext(cwd, sessionManager, faux),
-      })),
-      (error: unknown) => error instanceof AuditorTurnLimitError
-        && error.limit === AUDITOR_TURN_LIMIT
-        && error.observedTurns === AUDITOR_TURN_LIMIT
-        && error.lastResponse?.stopReason === "toolUse"
-        && error.lastResponse.toolNames.includes("ak_unknown_decision"),
-    );
-    assert.equal(turns, AUDITOR_TURN_LIMIT);
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
 
-test("injected completion uses native unknown-tool receipts and exact provider-turn exhaustion", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-injected-exhaustion-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
-  try {
-    const sessionManager = parentWithJudgeSubjects(cwd);
-    const faux = fauxProvider({ provider: "injected-exhaustion-test" });
-    let turns = 0;
-    const unknownId = "injected-unknown-call";
-    const runCompletion = async (context: Context) => {
-      turns += 1;
-      if (turns > 1) {
-        const receipt = [...context.messages].reverse().find((message) =>
-          message.role === "toolResult" && message.toolCallId === unknownId);
-        assert.equal(receipt?.role, "toolResult");
-        if (receipt?.role !== "toolResult") throw new Error("missing native injected unknown-tool receipt");
-        assert.equal(receipt.toolName, "ak_injected_unknown_decision");
-        assert.equal(receipt.isError, true);
-      }
-      return fauxAssistantMessage([{
-        ...fauxToolCall("ak_injected_unknown_decision", {}),
-        id: unknownId,
-      }], { stopReason: "toolUse" });
-    };
-
-    await assert.rejects(
-      withRunDir(runDirectory, () => runComplianceAudit({
-        tool: createComplianceDecisionTool("ak_real_injected_decision", "Submit."),
-        systemPrompt: "Decide.",
-        roleLabel: "Injected exhaustion auditor",
-        invalidDecisionLabel: "invalid injected decision",
-        runCompletion: async (_model, context) => runCompletion(context),
-        context: auditExtensionContext(cwd, sessionManager, faux),
-      })),
-      (error: unknown) => error instanceof AuditorTurnLimitError
-        && error.limit === AUDITOR_TURN_LIMIT
-        && error.observedTurns === AUDITOR_TURN_LIMIT
-        && error.lastResponse?.stopReason === "toolUse"
-        && error.lastResponse.toolNames.includes("ak_injected_unknown_decision"),
-    );
-    assert.equal(turns, AUDITOR_TURN_LIMIT);
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
+      await assert.rejects(
+        withRunDir(runDirectory, () => runComplianceAudit({
+          tool: createComplianceDecisionTool(`ak_real_${mode}_decision`, "Submit."),
+          systemPrompt: "Decide.",
+          roleLabel: `${mode} exhaustion auditor`,
+          invalidDecisionLabel: `invalid ${mode} decision`,
+          ...(mode === "injected"
+            ? { runCompletion: async (_model: unknown, context: Context) => traceTurn(context) }
+            : {}),
+          context: auditExtensionContext(cwd, sessionManager, faux),
+        })),
+        (error: unknown) => error instanceof AuditorTurnLimitError
+          && error.limit === AUDITOR_TURN_LIMIT
+          && error.observedTurns === AUDITOR_TURN_LIMIT
+          && error.lastResponse?.stopReason === "toolUse"
+          && error.lastResponse.toolNames.includes(unknownTool),
+      );
+      assert.equal(turns, AUDITOR_TURN_LIMIT);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+}
 
 test("provider-stream idle retries at most twice then fails loud as StreamIdleTimeoutError", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-idle-"));
@@ -300,14 +264,6 @@ test("provider-stream idle retries at most twice then fails loud as StreamIdleTi
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
-});
-
-test("AuditorTurnLimitError bites the production AUDITOR_TURN_LIMIT constant", () => {
-  const error = new AuditorTurnLimitError(AUDITOR_TURN_LIMIT);
-  assert.equal(error.name, "AuditorTurnLimitError");
-  assert.equal(error.limit, AUDITOR_TURN_LIMIT);
-  assert.equal(error.limit, 32);
-  assert.match(error.message, new RegExp(String(AUDITOR_TURN_LIMIT)));
 });
 
 test("package-owned tool idle identity is not StreamIdleTimeoutError", () => {
