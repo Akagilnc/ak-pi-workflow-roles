@@ -113,6 +113,7 @@ export type CollectorReceipt = {
   finalObservationTime: string;
   finalSnapshotId: string;
   targetHead: string;
+  identityGroups?: Array<Record<string, unknown>>;
   reports: CollectorReport[];
   legs: CollectorReceiptLeg[];
   requestAttempts: CollectorRequestAttempt[];
@@ -218,6 +219,7 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     finalObservationTime: safeGet(value, "finalObservationTime") as string,
     finalSnapshotId: safeGet(value, "finalSnapshotId") as string,
     targetHead: safeGet(value, "targetHead") as string,
+    identityGroups: records(safeGet(value, "identityGroups")),
     reports: records(safeGet(value, "reports")).map(projectReport),
     legs: records(safeGet(value, "legs")).map((leg) => ({
       legId: safeGet(leg, "legId") as string,

@@ -1,15 +1,22 @@
-import type {
-  GitHubIssueComment,
-  GitHubMachineIdentity,
-  GitHubReview,
-  GitHubReviewComment,
+import {
+  normalizeIssueComment,
+  normalizeReview,
+  normalizeReviewComment,
+  type GitHubIssueComment,
+  type GitHubMachineIdentity,
+  type GitHubReview,
+  type GitHubReviewComment,
 } from "./collector-github.ts";
+import type { CollectorEvidenceRecord, HeadRelation } from "./collector-evidence.ts";
 
 export type GitHubIdentityMaterial = GitHubReview | GitHubIssueComment | GitHubReviewComment;
 
 export type CollectorMaterialRef = {
   kind: "review" | "issue_comment" | "review_comment";
   id: number;
+  /** Receipt-local immutable source reference. */
+  evidenceId?: string;
+  headRelation?: HeadRelation | "unbound";
 };
 
 export type CollectorFinding = {
@@ -132,4 +139,46 @@ export function extractGitHubIdentityGroups(materials: readonly GitHubIdentityMa
     }
   }
   return groups as ExtractedCollectorIdentityGroup[];
+}
+
+/**
+ * Receipt adapter: run the source extractors over retained GitHub bytes, then
+ * replace transport IDs with closure-checked evidence refs and HEAD relation.
+ */
+export function extractCollectorEvidenceIdentityGroups(
+  records: readonly CollectorEvidenceRecord[],
+  targetHead: string,
+): ExtractedCollectorIdentityGroup[] {
+  const supported: Array<{
+    record: CollectorEvidenceRecord;
+    material: GitHubIdentityMaterial;
+  }> = [];
+  for (const record of records) {
+    try {
+      if (record.kind === "review") supported.push({ record, material: normalizeReview(record.raw) });
+      if (record.kind === "issue_comment") supported.push({ record, material: normalizeIssueComment(record.raw) });
+      if (record.kind === "review_comment") supported.push({ record, material: normalizeReviewComment(record.raw) });
+    } catch {
+      // Raw transport failures remain evidenceRecords, but cannot impersonate
+      // typed attendance when their retained bytes do not normalize.
+    }
+  }
+  const groups = extractGitHubIdentityGroups(supported.map((entry) => entry.material));
+  const recordBySource = new Map(supported.map(({ record, material }) => [
+    `${materialKind(material)}:${material.id}`,
+    record,
+  ]));
+  for (const group of groups) {
+    const bind = (source: CollectorMaterialRef) => {
+      const record = recordBySource.get(`${source.kind}:${source.id}`);
+      if (record === undefined) return;
+      source.evidenceId = record.evidenceId;
+      source.headRelation = record.commitOid === undefined || record.commitOid === null
+        ? "unbound"
+        : record.commitOid === targetHead ? "current" : "prior";
+    };
+    for (const material of group.materials) bind(material);
+    for (const finding of group.findings) bind(finding.source);
+  }
+  return groups;
 }

@@ -18,6 +18,10 @@ import type {
   CollectorRequestAttempt,
 } from "./collector-ledger.ts";
 import { validateAcceptedCollectorReceipt } from "./package-contracts/collector-output.ts";
+import {
+  extractCollectorEvidenceIdentityGroups,
+  type ExtractedCollectorIdentityGroup,
+} from "./collector-identity.ts";
 
 export { validateAcceptedCollectorReceipt };
 
@@ -72,6 +76,7 @@ export type CollectorReceipt = {
   finalObservationTime: string;
   finalSnapshotId: string;
   targetHead: string;
+  identityGroups: ExtractedCollectorIdentityGroup[];
   reports: CollectorReport[];
   legs: Array<{
     legId: string;
@@ -782,6 +787,20 @@ export function buildCollectorReceipt(
     }
   }
 
+  const identityGroups = extractCollectorEvidenceIdentityGroups(evidenceRecords, targetHead);
+  for (const group of identityGroups) {
+    for (const material of group.materials) {
+      if (material.evidenceId === undefined || !evidenceIndex.has(material.evidenceId)) {
+        fail("Collector identity material lacks a receipt-local evidence ref");
+      }
+    }
+    for (const finding of group.findings) {
+      if (finding.source.evidenceId === undefined || !evidenceIndex.has(finding.source.evidenceId)) {
+        fail("Collector finding lacks a receipt-local evidence ref");
+      }
+    }
+  }
+
   const receipt: CollectorReceipt = {
     host: COLLECTOR_HOST,
     repository: config.repository.canonical,
@@ -792,6 +811,7 @@ export function buildCollectorReceipt(
     finalObservationTime: finalSnapshot.completedAt ?? finalSnapshot.observedAt,
     finalSnapshotId: finalSnapshot.snapshotId,
     targetHead,
+    identityGroups,
     reports,
     legs: legsOut,
     requestAttempts: [...ledger.requestAttempts()],
