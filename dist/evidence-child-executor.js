@@ -138,14 +138,11 @@ export async function createInheritedRuntime(options) {
                             provider: model.provider,
                             model: model.id,
                         };
-                        if (response.stopReason === "pending") {
-                            throw new Error(`${options.label} completion ended without a stop reason`);
-                        }
                         if (response.stopReason === "error" || response.stopReason === "aborted") {
                             wrapped.push({ type: "error", reason: response.stopReason, error: response });
                         }
                         else {
-                            wrapped.push({ type: "done", reason: response.stopReason, message: response });
+                            wrapped.end(response);
                         }
                         return;
                     }

@@ -190,7 +190,7 @@ test("injected completion preserves same-turn evidence failure identity", async 
   }
 });
 
-test("injected completion executes a same-turn evidence and decision batch exactly once", async () => {
+test("injected pending completion settles a same-turn evidence and decision batch exactly once", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-injected-decision-"));
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory);
@@ -218,7 +218,7 @@ test("injected completion executes a same-turn evidence and decision batch exact
         return fauxAssistantMessage([
           fauxToolCall("read", { path: "evidence.txt" }),
           fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-        ], { stopReason: "toolUse" });
+        ], { stopReason: "pending" });
       },
       context: auditExtensionContext(cwd, sessionManager, faux),
     }));
