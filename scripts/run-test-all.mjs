@@ -8,6 +8,8 @@ import { readdirSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { join, relative } from "node:path";
 
+import { isolatedTestProcessEnv } from "./test-process-env.mjs";
+
 const HEAVYWEIGHT_MANIFEST = Object.freeze([
   "test/integration/audit-failure-subprocess.test.ts",
   "test/integration/public-cli-judge-run.test.ts",
@@ -131,13 +133,7 @@ function runNodeTest(files, { concurrency } = {}) {
     const child = spawn("node", args, {
       cwd: root,
       stdio: "inherit",
-      // Right-hand masks survive any downstream ambient-env remerge; spawn
-      // naturally omits undefined values from the child environment.
-      env: {
-        ...process.env,
-        AK_ROLE_RUN_DIR: undefined,
-        PI_CODING_AGENT_DIR: undefined,
-      },
+      env: isolatedTestProcessEnv(),
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {

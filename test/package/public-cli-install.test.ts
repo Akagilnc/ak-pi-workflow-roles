@@ -58,32 +58,35 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     const project = resolve(home, "identity-work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    await writeFile(
-      resolve(piAgentDir, "auth.json"),
-      JSON.stringify({ "openai-codex": { type: "oauth", access: "test" } }),
-      "utf8",
-    );
     const hostPiExecutable = await realpath(piCli);
     const hostPiVersion = execFileSync(hostPiExecutable, ["--version"], { encoding: "utf8" }).trim();
     const traceInvocationIdentity = async (): Promise<void> => {
+      // Coder with no credentials reaches its documented activation-failure
+      // terminal without consulting a model provider.
       const run = await runAkRoleBin(
         installed.akRoleBin,
         ["coder", "plan", "--project", project, "Trace the selected Pi identity."],
         {
           home,
           agentDir: piAgentDir,
-          timeoutMs: 5_000,
           env: { PI_BINARY: hostPiExecutable, PI_OFFLINE: "1" },
         },
       );
-      assert.equal(run.timedOut || run.code !== null, true, run.stderr);
+      assert.equal(run.timedOut, false, run.stderr);
+      assert.equal(run.code, 1, run.stderr);
       const runsRoot = resolve(home, ".ak-roles", "books", "identity-work", "runs");
       const names = (await readdir(runsRoot)).filter((name) => name.endsWith("@coder")).sort();
+      const runRoot = resolve(runsRoot, names.at(-1)!);
       const invocation = JSON.parse(
-        await readFile(resolve(runsRoot, names.at(-1)!, "invocation.json"), "utf8"),
+        await readFile(resolve(runRoot, "invocation.json"), "utf8"),
       ) as { piExecutable?: string; piVersion?: string };
       assert.equal(invocation.piExecutable, hostPiExecutable);
       assert.equal(invocation.piVersion, hostPiVersion);
+      assert.match(
+        `${run.stdout}\n${run.stderr}`,
+        /^coder\tfailure\t"activation"$/m,
+        "installed public role must present its typed terminal",
+      );
     };
     await traceInvocationIdentity();
 
@@ -102,6 +105,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     assert.equal(repeated.code, 0, repeated.stderr);
     await assertHostPeersAbsent();
     await traceInvocationIdentity();
+    await assertHostPeersAbsent();
 
     await access(installed.akRoleBin);
     const realBin = await realpath(installed.akRoleBin);
