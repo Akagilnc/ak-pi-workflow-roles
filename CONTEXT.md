@@ -23,7 +23,10 @@
 - **未完终态(Unfinished)**:两个 worker 角色 apply 阶段的合法交卷状态,只陈述「本次角色调用未结清」这一事实——不诊断原因,不规定调用者的下一步。它是**可续的交棒,不是失败,也不是验收结论**:既不表达基础设施故障(那走非零退出),也不豁免任何验收。规范见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。#72 的 #75/#76 两条施工腿均已装配。
 - **Reviewer(御史台)**:围绕一个固定目标形成独立、可追溯代码评审的角色;不修复、不发布、不路由、不作最终裁决。经 Pi 原生 `/skill:code-review` 使用外部 canonical 方法,回执只表达 `completed` 或 `refused`,不表达批准、合并或流转语义。
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
-- **Collector(门下省)**:单次调用内独立观察外部 GitHub PR 材料、可选请求、判定停止观察并提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`。
+- **门下省(Menxia province)**:质量保证角色族的省名——审议与封驳:收证(Collector)、合规审计(Soul 审刑院)、质检(给事中)、文书核验(符宝郎),与干活角色(将作监/修内司)对举。分类词,不含编排;组合与挂接归调用者。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)。
+- **给事中(Quality-gate officer)**:门下省质检角色:对将作监/修内司产出行**复杂度**与**测试质量**两轴质检;查出即裁决,session 内 typed 打回产出方,修复后回同一道闸复检;狭义代码 bug 归御史台,不归它。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)。
+- **符宝郎(Document-fidelity auditor)**:门下省独立文书核验角色:**引语真伪**(凡引陛下裁定必须指得出可追溯真源,指不出即封驳)与**票面对齐**(明显超出/缺少票面要求);进单口审派单、打回签发方,交卷口核产出、打回产出方。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)。
+- **Collector(门下省·收证)**:门下省的收证衙门:单次调用内独立观察外部 GitHub PR 材料、可选请求、判定停止观察并提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`。
 - **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的可选请求不构成评审腿或身份期待。
 - **Soul 审刑院(Soul-compliance audit)**:独立的实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」；不再限于复核大理寺的程序或既给材料。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md),现行职掌见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)。
 - **卷宗(Dossier)**:一次 run 在候簿记录之家里的全部既落账材料；卷宗即真源,无投影副本。定位靠机器注入的 typed 指针(`cwd` 与 `AK_ROLE_RUN_DIR`),禁 latest-run/mtime/全局扫描猜测。
