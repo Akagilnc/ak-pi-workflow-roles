@@ -12,6 +12,8 @@ export type GitHubIdentityMaterial = GitHubReview | GitHubIssueComment | GitHubR
 export type CollectorMaterialRef = {
   kind: "review" | "issue_comment" | "review_comment" | "reaction";
   id: number;
+  /** Original review body, retained as uninterpreted material. */
+  body?: string;
   /** Receipt-local immutable source reference. */
   evidenceId?: string;
   headRelation?: HeadRelation | "unbound";
@@ -20,7 +22,7 @@ export type CollectorMaterialRef = {
 export type CollectorFinding = {
   identity: GitHubMachineIdentity;
   source: CollectorMaterialRef;
-  category: "inline" | "material";
+  category: "inline";
   body: string;
 };
 
@@ -78,7 +80,12 @@ export function groupGitHubMaterialsByIdentity(
     } else {
       group.identity = mergeMachineIdentity(group.identity, identity);
     }
-    group.materials.push({ kind: materialKind(material), id: material.id });
+    const kind = materialKind(material);
+    group.materials.push({
+      kind,
+      id: material.id,
+      ...(kind === "review" && "body" in material ? { body: material.body } : {}),
+    });
   }
   return [...groups.values()];
 }
@@ -105,10 +112,6 @@ export function extractGitHubIdentityGroups(materials: readonly GitHubIdentityMa
     const source = { kind: materialKind(material), id: material.id };
     if (source.kind === "review_comment" && "body" in material && (identity.userId === CODEX_USER_ID || identity.userId === CODERABBIT_USER_ID)) {
       group.findings!.push({ identity, source, category: "inline", body: material.body });
-    } else if (source.kind === "review" && "body" in material && identity.userId === CODERABBIT_USER_ID) {
-      // CodeRabbit review markup is opaque LLM material. Preserve it whole;
-      // deterministic code must not split or classify its HTML containers.
-      group.findings!.push({ identity, source, category: "material", body: material.body });
     }
   }
   return groups as ExtractedCollectorIdentityGroup[];
@@ -128,6 +131,7 @@ export function extractCollectorEvidenceIdentityGroups(
     const source: CollectorMaterialRef = {
       kind,
       id: record.githubId,
+      ...(kind === "review" && record.body !== undefined ? { body: record.body } : {}),
       evidenceId: record.evidenceId,
       headRelation: record.commitOid === undefined || record.commitOid === null
         ? "unbound"
@@ -151,8 +155,6 @@ export function extractCollectorEvidenceIdentityGroups(
     if (identity === null || record.body === undefined) continue;
     if (kind === "review_comment" && (identity.userId === CODEX_USER_ID || identity.userId === CODERABBIT_USER_ID)) {
       group.findings.push({ identity, source: { ...source }, category: "inline", body: record.body });
-    } else if (kind === "review" && identity.userId === CODERABBIT_USER_ID) {
-      group.findings.push({ identity, source: { ...source }, category: "material", body: record.body });
     }
   }
   return [...groups.values()];
