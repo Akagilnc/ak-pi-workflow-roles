@@ -21,7 +21,6 @@ import {
   type ComplianceAuditIncomplete,
   type ComplianceDecision,
 } from "../compliance-transport.ts";
-import { loadCollectorManifest } from "../collector-config.ts";
 import {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_REQUEST_TOOL,
@@ -362,8 +361,8 @@ export function classifyPostAdmissionFailure(input: {
         : input.knownCause === "session"
           ? "session unreadable"
           : input.knownCause === "output"
-            ? "Judge Role run completed without a lawful typed terminal result"
-            : `judge role run failed (${input.knownCause})`;
+            ? "role run completed without a lawful typed terminal result"
+            : `role run failed (${input.knownCause})`;
     const diagnostic =
       input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
         ? input.knownDiagnostic
@@ -386,12 +385,12 @@ export function classifyPostAdmissionFailure(input: {
   if (input.timedOut) {
     return {
       cause: "timeout",
-      diagnostic: "judge role run timed out",
+      diagnostic: "role run timed out",
       details: { timedOut: true, code: input.code },
     };
   }
   if (input.code !== 0) {
-    const fallback = `judge role run failed with exit ${input.code ?? "null"}`;
+    const fallback = `role run failed with exit ${input.code ?? "null"}`;
     return {
       cause: "activation",
       diagnostic: conciseChildDiagnostic(input.stderr, fallback),
@@ -401,7 +400,7 @@ export function classifyPostAdmissionFailure(input: {
   if (input.session?.state === "missing") {
     return {
       cause: "session",
-      diagnostic: "Judge Role run left no readable session transcript",
+      diagnostic: "role run left no readable session transcript",
       details: { code: input.code, session: "missing" },
     };
   }
@@ -414,7 +413,7 @@ export function classifyPostAdmissionFailure(input: {
   }
   return {
     cause: "output",
-    diagnostic: "Judge Role run completed without a lawful typed terminal result",
+    diagnostic: "role run completed without a lawful typed terminal result",
     details: { code: input.code },
   };
 }
@@ -965,15 +964,26 @@ function collectorDecisiveFacts(
     const value = safelyRead(candidate, key);
     if (value.readable && value.value !== undefined) facts[key] = value.value;
   }
-  const legs = safelyRead(candidate, "legs");
-  if (legs.readable && Array.isArray(legs.value)) {
+  const groups = safelyRead(candidate, "groups");
+  if (groups.readable && Array.isArray(groups.value)) {
     try {
-      facts.legStatuses = legs.value.map((leg) => {
-        if (!isRecord(leg)) throw new Error("unreadable Collector leg");
-        const legId = safelyRead(leg, "legId");
-        const status = safelyRead(leg, "status");
-        if (!legId.readable || !status.readable) throw new Error("unreadable Collector leg");
-        return { legId: legId.value, status: status.value };
+      facts.groups = groups.value.map((group) => {
+        if (!isRecord(group)) throw new Error("unreadable Collector group");
+        const identity = safelyRead(group, "identity");
+        const attendance = safelyRead(group, "attendance");
+        const materials = safelyRead(group, "materials");
+        const findings = safelyRead(group, "findings");
+        if (!identity.readable || !attendance.readable ||
+          !materials.readable || !Array.isArray(materials.value) ||
+          !findings.readable || !Array.isArray(findings.value)) {
+          throw new Error("unreadable Collector group");
+        }
+        return {
+          identity: identity.value,
+          attendance: attendance.value,
+          materialCount: materials.value.length,
+          findingCount: findings.value.length,
+        };
       });
     } catch { /* omit unreadable optional projection */ }
   }
@@ -1037,7 +1047,7 @@ function reviewerDecisiveFacts(
 
 /**
  * ADR 0037: a shape-valid Collector receipt may still name the wrong live target.
- * Public success binds receipt identity to this admitted repository/PR/manifest/legs
+ * Public success binds receipt identity to this admitted repository/PR/request manifest
  * at the existing settlement seam — not a second receipt factory or validator.
  */
 function collectorReceiptBindingFailure(
@@ -1049,10 +1059,6 @@ function collectorReceiptBindingFailure(
   error.name = "CollectorReceiptBindingError";
   error.knownCause = "output";
   return error;
-}
-
-function sortedUniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function toolResultText(message: SessionMessage): string {
@@ -1152,7 +1158,6 @@ export async function readCollectorInfrastructureFailure(
 export function assertCollectorReceiptMatchesAdmitted(
   receipt: CollectorReceipt,
   admitted: AdmittedCollectorInvocation,
-  admittedLegIds: readonly string[],
 ): void {
   if (receipt.repository !== admitted.repository.canonical) {
     throw collectorReceiptBindingFailure(
@@ -1167,19 +1172,6 @@ export function assertCollectorReceiptMatchesAdmitted(
   if (receipt.manifestDigest !== admitted.manifestDigest) {
     throw collectorReceiptBindingFailure(
       `Collector receipt manifestDigest does not match admitted manifestDigest`,
-    );
-  }
-  const receiptLegIds = sortedUniqueStrings(
-    receipt.legs.map((leg) => leg.legId),
-  );
-  const expectedLegIds = sortedUniqueStrings(admittedLegIds);
-  if (
-    receipt.legs.length !== admittedLegIds.length ||
-    receiptLegIds.length !== expectedLegIds.length ||
-    receiptLegIds.some((id, index) => id !== expectedLegIds[index])
-  ) {
-    throw collectorReceiptBindingFailure(
-      `Collector receipt leg set [${receiptLegIds.join(",")}] does not match admitted leg set [${expectedLegIds.join(",")}]`,
     );
   }
 }
@@ -2524,7 +2516,6 @@ export async function publishCollectorArtifacts(
         role: "collector",
         prNumber: admitted.prNumber,
         repository: admitted.repository.canonical,
-        legsPath: admitted.legsPath,
         manifestDigest: admitted.manifestDigest,
         sessionDirectory,
         sessionFile: admitted.sessionFile,
@@ -2613,19 +2604,7 @@ async function settleLawfulCollectorTerminalResult(
     }
     return undefined;
   }
-  // Re-load legs.json and bind its digest to admission before using its IDs (ADR 0037/0022).
-  // A post-admission mutation that keeps receipt digest=A while legs become B must fail closed.
-  const admittedManifest = await loadCollectorManifest(admitted.legsPath);
-  if (admittedManifest.digest !== admitted.manifestDigest) {
-    throw collectorReceiptBindingFailure(
-      `Collector legs at settlement digest does not match admitted manifestDigest`,
-    );
-  }
-  assertCollectorReceiptMatchesAdmitted(
-    extracted.receipt,
-    admitted,
-    admittedManifest.legs.map((leg) => leg.id),
-  );
+  assertCollectorReceiptMatchesAdmitted(extracted.receipt, admitted);
   const navigator = extractNavigatorFact(
     entries,
     attendanceIdentityFromAdmitted(admitted),

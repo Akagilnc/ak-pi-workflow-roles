@@ -512,7 +512,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
       assert.equal(skill.includes(".agents/skills"), false);
     }
 
-    // collector — explicit PR/legs isolation profile; no ambient skills.
+    // collector — explicit PR isolation profile; no ambient skills.
     {
       const result = await runAkRoleBin(
         installed.akRoleBin,
@@ -522,8 +522,6 @@ test("one cold install exercises all seven public roles plus automatic Navigator
           project,
           "--pr",
           "42",
-          "--leg",
-          "codex:CodexBot",
         ],
         { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
       );
@@ -533,7 +531,6 @@ test("one cold install exercises all seven public roles plus automatic Navigator
       assert.equal(flagValue(args, "--ak-role"), "collector");
       assert.equal(flagValue(args, "--ak-collector-pr"), "42");
       assert.equal(flagValue(args, "--ak-collector-repo"), "Acme/Widgets");
-      assert.equal(args.includes("--ak-collector-legs"), true);
       assert.equal(args.includes("--no-skills"), true);
       assert.equal(args.includes("--skill"), false);
     }

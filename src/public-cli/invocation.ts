@@ -25,7 +25,7 @@ import {
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import {
   COLLECTOR_FIXED_KICKOFF,
-  COLLECTOR_LEG_ID_PATTERN,
+  emptyCollectorManifest,
   loadCollectorManifest,
   parseCollectorPrNumber,
   parseCollectorRepository,
@@ -108,17 +108,11 @@ export type AdmittedFixerInvocation = AdmittedRoleInvocationBase & {
   readonly prerequisites: readonly FixerPrerequisite[];
 };
 
-export type CollectorLegDeclaration = {
-  readonly id: string;
-  readonly expectedAuthors: readonly string[];
-};
-
 export type AdmittedCollectorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "collector";
   readonly prNumber: number;
   readonly repository: CollectorRepository;
-  /** Retained assembled leg manifest path for --ak-collector-legs. */
-  readonly legsPath: string;
+  readonly requestManifestPath?: string;
   readonly manifestDigest: string;
 };
 
@@ -236,11 +230,11 @@ export type ParseFixerArgvResult = {
 
 export type ParseCollectorArgvResult = {
   prNumber: number;
-  legs: CollectorLegDeclaration[];
   instruction: string;
   attachmentPaths: string[];
   project?: string;
   repo?: string;
+  requestManifestPath?: string;
 };
 
 export type ParseDoctorArgvResult = {
@@ -280,7 +274,7 @@ export class MergerEnvelopeDerivationError extends Error {
 
 /** Reject missing/blank path values so empty overrides cannot silently degrade. */
 function requireOptionPath(
-  flag: "--project" | "--attach" | "--prerequisites" | "--base",
+  flag: "--project" | "--attach" | "--prerequisites" | "--request-manifest" | "--base",
   value: string | undefined,
 ): string {
   if (value === undefined || value.trim() === "") {
@@ -922,162 +916,40 @@ export function buildFixerTransportPrompt(
   return lines.join("\n");
 }
 
-/**
- * Parse one public Collector leg declaration: `id:author[,author...]`.
- * Authors are structural tokens only — never inferred from instruction prose.
- */
-export function parseCollectorLegDeclaration(
-  raw: string,
-): CollectorLegDeclaration {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    throw new CliUsageError("collector --leg requires id:author[,author...]");
-  }
-  const colon = trimmed.indexOf(":");
-  if (colon <= 0 || colon === trimmed.length - 1) {
-    throw new CliUsageError(
-      `collector --leg must be id:author[,author...], got ${raw}`,
-    );
-  }
-  const id = trimmed.slice(0, colon);
-  if (!COLLECTOR_LEG_ID_PATTERN.test(id)) {
-    throw new CliUsageError(
-      `collector leg id must match ^[a-z][a-z0-9._-]{0,63}$, got ${id}`,
-    );
-  }
-  const authorsPart = trimmed.slice(colon + 1);
-  const expectedAuthors: string[] = [];
-  for (const piece of authorsPart.split(",")) {
-    if (piece.trim() === "" || piece !== piece.trim()) {
-      // Reject empty slots and surrounding whitespace inside tokens.
-      if (piece.trim() === "") {
-        throw new CliUsageError(
-          `collector --leg ${id} has an empty expected author slot`,
-        );
-      }
-      throw new CliUsageError(
-        `collector --leg ${id} expected author must not include surrounding whitespace`,
-      );
-    }
-    expectedAuthors.push(piece);
-  }
-  if (expectedAuthors.length === 0) {
-    throw new CliUsageError(
-      `collector --leg ${id} requires at least one expected author`,
-    );
-  }
-  return { id, expectedAuthors };
-}
-
 function parsePositivePrOption(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === "") {
-    throw new CliUsageError("--pr requires a positive pull request number");
-  }
-  try {
-    return parseCollectorPrNumber(raw);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(detail, { cause: error });
-  }
+  if (raw === undefined || raw.trim() === "") throw new CliUsageError("--pr requires a positive pull request number");
+  try { return parseCollectorPrNumber(raw); } catch (error) { throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error }); }
 }
-
 function parseRepoOption(raw: string | undefined): string {
-  if (raw === undefined || raw.trim() === "") {
-    throw new CliUsageError("--repo requires owner/repo");
-  }
+  if (raw === undefined || raw.trim() === "") throw new CliUsageError("--repo requires owner/repo");
   return raw;
 }
-
-/**
- * Parse Collector-specific argv after the `collector` token.
- * PR number and leg declarations are structural; instruction prose is never mined.
- */
-export function parseCollectorArgv(
-  args: readonly string[],
-): ParseCollectorArgvResult {
+export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
   let repo: string | undefined;
   let prNumber: number | undefined;
-  const legs: CollectorLegDeclaration[] = [];
+  let requestManifestPath: string | undefined;
   const positional: string[] = [];
   const tokens = [...args];
-
   while (tokens.length > 0) {
     const token = tokens.shift()!;
-    if (token === "--") {
-      positional.push(...tokens);
-      break;
-    }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length)),
-      );
-      continue;
-    }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
-    if (token === "--pr") {
-      prNumber = parsePositivePrOption(tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--pr=")) {
-      prNumber = parsePositivePrOption(token.slice("--pr=".length));
-      continue;
-    }
-    if (token === "--repo") {
-      repo = parseRepoOption(tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--repo=")) {
-      repo = parseRepoOption(token.slice("--repo=".length));
-      continue;
-    }
-    if (token === "--leg") {
-      const value = tokens.shift();
-      if (value === undefined || value.trim() === "") {
-        throw new CliUsageError("--leg requires id:author[,author...]");
-      }
-      legs.push(parseCollectorLegDeclaration(value));
-      continue;
-    }
-    if (token.startsWith("--leg=")) {
-      legs.push(parseCollectorLegDeclaration(token.slice("--leg=".length)));
-      continue;
-    }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown collector option: ${token}`);
-    }
+    if (token === "--") { positional.push(...tokens); break; }
+    if (token === "--attach") { attachmentPaths.push(requireOptionPath("--attach", tokens.shift())); continue; }
+    if (token.startsWith("--attach=")) { attachmentPaths.push(requireOptionPath("--attach", token.slice(9))); continue; }
+    if (token === "--project") { project = requireOptionPath("--project", tokens.shift()); continue; }
+    if (token.startsWith("--project=")) { project = requireOptionPath("--project", token.slice(10)); continue; }
+    if (token === "--pr") { prNumber = parsePositivePrOption(tokens.shift()); continue; }
+    if (token.startsWith("--pr=")) { prNumber = parsePositivePrOption(token.slice(5)); continue; }
+    if (token === "--repo") { repo = parseRepoOption(tokens.shift()); continue; }
+    if (token.startsWith("--repo=")) { repo = parseRepoOption(token.slice(7)); continue; }
+    if (token === "--request-manifest") { requestManifestPath = requireOptionPath("--request-manifest", tokens.shift()); continue; }
+    if (token.startsWith("--request-manifest=")) { requestManifestPath = requireOptionPath("--request-manifest", token.slice(19)); continue; }
+    if (token.startsWith("-") && token !== "-") throw new CliUsageError(`unknown collector option: ${token}`);
     positional.push(token);
   }
-
-  if (prNumber === undefined) {
-    throw new CliUsageError("collector requires --pr <positive-integer>");
-  }
-  if (legs.length === 0) {
-    throw new CliUsageError(
-      "collector requires at least one --leg id:author[,author...]",
-    );
-  }
-
-  return {
-    prNumber,
-    legs,
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-    ...(repo === undefined ? {} : { repo }),
-  };
+  if (prNumber === undefined) throw new CliUsageError("collector requires --pr <positive-integer>");
+  return { prNumber, instruction: positional.join(" "), attachmentPaths, ...(project === undefined ? {} : { project }), ...(repo === undefined ? {} : { repo }), ...(requestManifestPath === undefined ? {} : { requestManifestPath }) };
 }
 
 /**
@@ -1157,12 +1029,13 @@ export type AdmitCollectorInvocationOptions = {
   home: string;
   cwd: string;
   prNumber: number;
-  legs: readonly CollectorLegDeclaration[];
   instruction?: string;
   attachmentPaths?: readonly string[];
   project?: string;
   /** Explicit owner/repo override; defaults from project origin remote. */
   repo?: string;
+  /** Optional public request configuration; copied into the admitted run. */
+  requestManifestPath?: string;
   createRunId?: () => string;
 };
 
@@ -1177,12 +1050,6 @@ export async function admitCollectorInvocation(
   if (options.project !== undefined) {
     requireOptionPath("--project", options.project);
   }
-  if (options.legs.length === 0) {
-    throw new CliUsageError(
-      "collector requires at least one --leg id:author[,author...]",
-    );
-  }
-
   let prNumber: number;
   try {
     prNumber = parseCollectorPrNumber(options.prNumber);
@@ -1230,24 +1097,18 @@ export async function admitCollectorInvocation(
     );
   }
 
-  // v1 public path: legs carry only id + expectedAuthors (no request bodies).
-  const legsPath = join(runDirectory, "legs.json");
-  const assembled = {
-    legs: options.legs.map((leg) => ({
-      id: leg.id,
-      expectedAuthors: [...leg.expectedAuthors],
-    })),
-  };
-  await writeFile(legsPath, `${JSON.stringify(assembled, null, 2)}\n`, "utf8");
-
-  let manifestDigest: string;
-  try {
-    const manifest = await loadCollectorManifest(legsPath);
-    manifestDigest = manifest.digest;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(detail, { cause: error });
+  let manifest = emptyCollectorManifest();
+  let requestManifestPath: string | undefined;
+  if (options.requestManifestPath !== undefined) {
+    try {
+      manifest = await loadCollectorManifest(options.requestManifestPath);
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+    requestManifestPath = join(runDirectory, "request-manifest.json");
+    await writeFile(requestManifestPath, manifest.canonicalJson, "utf8");
   }
+  const manifestDigest = manifest.digest;
 
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
@@ -1264,7 +1125,7 @@ export async function admitCollectorInvocation(
     prNumber,
     repository: repository.canonical,
     repositoryDisplay: repository.display,
-    legsPath,
+    ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     manifestDigest,
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -1296,7 +1157,7 @@ export async function admitCollectorInvocation(
     admittedRequestPath,
     prNumber,
     repository,
-    legsPath,
+    ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     manifestDigest,
   };
 }

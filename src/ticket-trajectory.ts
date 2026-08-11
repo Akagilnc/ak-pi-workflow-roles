@@ -106,8 +106,6 @@ export type TicketTrajectoryRun = {
   hasResult: boolean;
   /** Receipt-level status when the terminating contract carries one. */
   resultStatus: string;
-  /** Collector typed leg terminal states (distinct, stable order). */
-  legStatuses: readonly string[];
   model: string;
   provider: string;
   thinking: string;
@@ -281,14 +279,12 @@ function extractTerminatingLifecycle(rows: SessionRow[]): {
   toolNames: string[];
   hasResult: boolean;
   resultStatus: string;
-  legStatuses: readonly string[];
 } {
   let callAttempts = 0;
   let resultAttempts = 0;
   const toolNames: string[] = [];
   let hasResult = false;
   let resultStatus = "";
-  let legStatuses: readonly string[] = [];
 
   for (const row of rows) {
     const message = isRecord(row.message) ? row.message : undefined;
@@ -315,7 +311,6 @@ function extractTerminatingLifecycle(rows: SessionRow[]): {
         const facts = acceptedFacts(message.toolName as TerminatingToolName, details);
         hasResult = true;
         resultStatus = facts.status ?? "";
-        legStatuses = facts.legStatuses ?? [];
       } catch (error) {
         if (error instanceof AcceptedDetailsContractError) continue;
         throw error;
@@ -325,12 +320,7 @@ function extractTerminatingLifecycle(rows: SessionRow[]): {
 
   // Prefer toolCall count; fall back to toolResult count when calls were clipped away.
   const attemptCount = callAttempts > 0 ? callAttempts : resultAttempts;
-  return { attemptCount, toolNames, hasResult, resultStatus, legStatuses };
-}
-
-/** Human-read formatting only — machines consume legStatuses typed field / data attr items. */
-function formatLegStatusesForDisplay(legStatuses: readonly string[]): string {
-  return legStatuses.join(", ");
+  return { attemptCount, toolNames, hasResult, resultStatus };
 }
 
 type InvocationInfo = {
@@ -500,7 +490,6 @@ async function parseRun(ledgerDir: string, issueNumber: number, runId: string): 
     attemptCount: lifecycle.attemptCount,
     hasResult: lifecycle.hasResult,
     resultStatus: lifecycle.resultStatus,
-    legStatuses: lifecycle.legStatuses,
     model,
     provider,
     thinking,
@@ -572,10 +561,9 @@ export function renderTicketTrajectoryStationHtml(runs: readonly TicketTrajector
         .map((run) => {
           const resultDisplay = run.hasResult
             ? run.resultStatus ||
-              (run.legStatuses.length > 0 ? formatLegStatusesForDisplay(run.legStatuses) : "")
+              run.resultStatus
             : "";
           // Machine channel: space-separated closed-enum tokens (no custom status dialect).
-          const legStatusesAttr = run.legStatuses.join(" ");
           const wall = parentWallMs(run);
           return [
             `<article class="run"`,
@@ -586,7 +574,6 @@ export function renderTicketTrajectoryStationHtml(runs: readonly TicketTrajector
             ` data-attempt-count="${attr(String(run.attemptCount))}"`,
             ` data-has-result="${run.hasResult ? "true" : "false"}"`,
             ` data-result-status="${attr(run.resultStatus)}"`,
-            ` data-leg-statuses="${attr(legStatusesAttr)}"`,
             ` data-model="${attr(run.model)}"`,
             ` data-provider="${attr(run.provider)}"`,
             ` data-thinking="${attr(run.thinking)}"`,

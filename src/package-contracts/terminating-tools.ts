@@ -7,7 +7,6 @@ import {
   COLLECTOR_ACCEPTED_TEXT,
   COLLECTOR_OUTPUT_TOOL,
   validateAcceptedCollectorReceipt,
-  type CollectorLegStatus,
   type CollectorReceipt,
 } from "./collector-output.ts";
 import {
@@ -61,7 +60,6 @@ export {
   validateMergerOutput,
 };
 export type {
-  CollectorLegStatus,
   CollectorReceipt,
   JudgeVerdict,
   ReviewerIntent,
@@ -160,9 +158,7 @@ export function validateAcceptedDetails(
     [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
   };
-  const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.legs) && candidate.legs.length > 0 &&
-    candidate.legs.every((leg) => leg !== null && typeof leg === "object" &&
-      ["valid", "unavailable", "missing"].includes(String((leg as Record<string, unknown>).status)));
+  const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const runtimeBindingMissing =
     (toolName === DOCTOR_OUTPUT_TOOL_NAME && discriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
     (toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2);
@@ -219,14 +215,6 @@ export function validateAcceptedLifecycle(
 export type AcceptedFacts = {
   status?: string;
   commit?: string;
-  /** Collector only: distinct leg terminal states in stable rank order. */
-  legStatuses?: readonly CollectorLegStatus[];
-};
-
-const COLLECTOR_LEG_STATUS_RANK: Record<CollectorLegStatus, number> = {
-  missing: 0,
-  unavailable: 1,
-  valid: 2,
 };
 
 export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): AcceptedFacts {
@@ -240,16 +228,8 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
       const output = details as unknown as Record<string, unknown>;
       return { status: output.status as string, ...(output.status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {}) };
     }
-    case COLLECTOR_OUTPUT_TOOL: {
-      const legs = (details as unknown as { legs?: unknown }).legs;
-      const unique = [...new Set((Array.isArray(legs) ? legs : []).flatMap((leg) =>
-        leg !== null && typeof leg === "object" && ["valid", "unavailable", "missing"].includes(String((leg as { status?: unknown }).status))
-          ? [(leg as { status: CollectorLegStatus }).status]
-          : []
-      ))];
-      unique.sort((a, b) => COLLECTOR_LEG_STATUS_RANK[a] - COLLECTOR_LEG_STATUS_RANK[b]);
-      return { legStatuses: unique };
-    }
+    case COLLECTOR_OUTPUT_TOOL:
+      return { status: "collected" };
   }
 }
 

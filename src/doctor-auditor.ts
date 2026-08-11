@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { loadAuditorSoul } from "./auditor-soul.ts";
 import {
   createComplianceDecisionTool,
@@ -44,6 +45,7 @@ export function createPiDoctorAuditor(
       roleLabel: "Doctor Soul compliance audit",
       invalidDecisionLabel: "invalid Doctor audit decision",
       context: options.context,
+      ...(auditorRunDirectory(options.context) === undefined ? {} : { runDirectory: auditorRunDirectory(options.context) }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(runCompletion === undefined ? {} : { runCompletion }),
     });
