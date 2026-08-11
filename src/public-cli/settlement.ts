@@ -44,7 +44,7 @@ import {
   type CoderOutput,
   type FixerOutput,
 } from "../package-contracts/worker-output.ts";
-import { validateAcceptedDetails } from "../package-contracts/terminating-tools.ts";
+import { isTerminatingToolName, validateAcceptedDetails } from "../package-contracts/terminating-tools.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
   validateRecordedDoctorOutput,
@@ -746,6 +746,50 @@ export async function readBoundAuditorKnownFailure(
   return undefined;
 }
 
+function typedFailedTerminatingToolKnownFailure(
+  entries: readonly SessionEntry[],
+): ExplicitInternalKnownFailure | undefined {
+  let attemptStart = 0;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    if (entries[i]?.type === "message" && entries[i]?.message?.role === "user") {
+      attemptStart = i;
+      break;
+    }
+  }
+  const admittedCalls = new Map<string, string>();
+  for (let i = attemptStart; i < entries.length; i += 1) {
+    const message = entries[i]?.message;
+    if (entries[i]?.type !== "message" || message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (!isRecord(part) || part.type !== "toolCall" || typeof part.id !== "string" || typeof part.name !== "string") continue;
+      if (isTerminatingToolName(part.name)) admittedCalls.set(part.id, part.name);
+    }
+  }
+  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
+    const message = entries[i]?.message;
+    if (entries[i]?.type !== "message" || message?.role !== "toolResult" || message.isError !== true) continue;
+    if (typeof message.toolCallId !== "string" || typeof message.toolName !== "string") continue;
+    if (admittedCalls.get(message.toolCallId) !== message.toolName) continue;
+    const details = isRecord(message.details) ? message.details : undefined;
+    if (
+      details?.kind !== "role_infrastructure_failure" ||
+      details.source !== "shared-role-lifecycle" ||
+      details.reasonCode !== "host_failure"
+    ) continue;
+    const textPart = Array.isArray(message.content)
+      ? message.content.find((part) => isRecord(part) && part.type === "text" && typeof part.text === "string")
+      : undefined;
+    const diagnostic = isRecord(textPart) ? textPart.text : undefined;
+    return {
+      cause: "output",
+      identity: { name: message.toolName, code: message.toolCallId },
+      ...(typeof diagnostic === "string" && diagnostic.trim() !== "" ? { diagnostic } : {}),
+      details,
+    };
+  }
+  return undefined;
+}
+
 /** Sole evidence-priority owner for public runners with Soul auditors. */
 export async function resolveAuditedRunnerKnownFailure(input: {
   runner: ExplicitInternalKnownFailure | undefined;
@@ -753,6 +797,17 @@ export async function resolveAuditedRunnerKnownFailure(input: {
   credential: ExplicitInternalKnownFailure | undefined;
 }): Promise<ExplicitInternalKnownFailure | undefined> {
   if (input.runner !== undefined) return input.runner;
+  try {
+    const terminatingFailure = typedFailedTerminatingToolKnownFailure(
+      await readBoundSessionEntries(input.sessionFile),
+    );
+    if (terminatingFailure !== undefined) return terminatingFailure;
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
+      return { cause: "session", identity: thrownIdentity(failure), diagnostic: failure.message || failure.name };
+    }
+  }
   // Bound auditor evidence outranks a parent abort that the auditor path itself
   // caused (retention EISDIR race). Reviewer axis evidence-children are next:
   // fixed two-axis dispatch fails during activation with only child stops durable.

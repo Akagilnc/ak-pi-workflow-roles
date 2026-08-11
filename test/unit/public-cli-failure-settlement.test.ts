@@ -2545,7 +2545,7 @@ test("fast four-role public wiring matrix settles an injected auditor provider s
   });
 });
 
-test("Judge publicly retains a real default-Pi auditor provider stop across retention failure", async () => {
+test("Judge publicly prefers its failed typed output record across auditor retention failure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj-judge-retention");
     await mkdir(project, { recursive: true });
@@ -2568,11 +2568,11 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
       await tracer.close();
     }
     assert.notEqual(retentionResult.exitCode === 1 && retentionResult.terminal?.roleOutcome.kind === "failure" ? retentionResult.terminal.roleOutcome.cause : undefined, "timeout");
-    const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "provider", diagnosticIncludes: "WebSocket error", identityName: "faux-1", identityCode: "openai-codex" });
-    assert.equal((retentionSettlement.terminal.roleOutcome as any).decisiveFacts.secondaryEvidence.model, "faux-1");
+    const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "output", identityName: "ak_judge_output" });
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
-    assert.equal(retentionArtifact.details.retentionFailure.name, "ComplianceResponseRetentionError");
-    assert.equal(retentionArtifact.details.retentionFailure.cause.code, "EISDIR");
+    assert.equal(retentionArtifact.details.kind, "role_infrastructure_failure");
+    assert.equal(retentionArtifact.details.source, "shared-role-lifecycle");
+    assert.equal(retentionArtifact.details.reasonCode, "host_failure");
   });
 });
 
@@ -2907,6 +2907,66 @@ test("bound auditor reader propagates malformed discovered JSONL", async () => {
     await writeFile(join(childDir, "child.jsonl"), "{malformed\n");
     await assert.rejects(readBoundAuditorKnownFailure(sessionFile), (error: unknown) =>
       error instanceof SyntaxError && (error as Error & { knownCause?: string }).knownCause === "session");
+  });
+});
+
+test("public Judge settles failed typed output evidence before nonzero stderr fallback", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["--model", "xai/grok-4:off", "judge", "--project", project, "typed output host failure"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-typed-output-host-failure-001",
+        io,
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await writeFile(sessionFile, [
+            { type: "session", id: "parent-session" },
+            { type: "message", id: "current-user", message: { role: "user" } },
+            { type: "custom", customType: "business-evidence", data: { observed: true } },
+            { type: "message", id: "output-call", message: { role: "assistant", content: [{ type: "toolCall", id: "host-failed-output", name: "ak_judge_output", arguments: { judgeStatus: "converged" } }] } },
+            { type: "message", id: "output-result", parentId: "output-call", message: {
+              role: "toolResult",
+              toolCallId: "host-failed-output",
+              toolName: "ak_judge_output",
+              isError: true,
+              content: [{ type: "text", text: "pi host could not load its runtime" }],
+              details: { kind: "role_infrastructure_failure", source: "shared-role-lifecycle", reasonCode: "host_failure" },
+            } },
+          ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+          return { code: 1, stderr: "VARIABLE DECOY service tier switched successfully\n", timedOut: false, args: [...args] };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    if (result.terminal!.roleOutcome.kind !== "failure") return;
+    assert.equal(result.terminal!.roleOutcome.cause, "output");
+    assert.equal(result.terminal!.roleOutcome.diagnostic, "pi host could not load its runtime");
+    assert.equal(JSON.stringify(result.terminal).includes("VARIABLE DECOY"), false);
+    const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
+    assert.ok(errorRef);
+    const durable = JSON.parse(await readFile(errorRef.path, "utf8"));
+    assert.equal(durable.diagnostic, "pi host could not load its runtime");
+    assert.deepEqual(durable.identity, { name: "ak_judge_output", code: "host-failed-output" });
+    assert.deepEqual(durable.details, {
+      kind: "role_infrastructure_failure",
+      source: "shared-role-lifecycle",
+      reasonCode: "host_failure",
+      code: 1,
+    });
+    assert.equal(JSON.stringify(durable).includes("VARIABLE DECOY"), false);
+    assert.equal(stdout.length, 1);
+    assert.ok(stderr.length > 0);
   });
 });
 
