@@ -58,7 +58,10 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     const project = resolve(home, "identity-work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const hostPiExecutable = await realpath(piCli);
+    const machinePiOnPath = execFileSync("sh", ["-c", "command -v pi"], {
+      encoding: "utf8",
+    }).trim();
+    const hostPiExecutable = await realpath(machinePiOnPath);
     const hostPiVersion = execFileSync(hostPiExecutable, ["--version"], { encoding: "utf8" }).trim();
     const traceInvocationIdentity = async (): Promise<void> => {
       // Coder with no credentials reaches its documented activation-failure
@@ -69,7 +72,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
         {
           home,
           agentDir: piAgentDir,
-          env: { PI_BINARY: hostPiExecutable, PI_OFFLINE: "1" },
+          env: { PI_OFFLINE: "1" },
         },
       );
       assert.equal(run.timedOut, false, run.stderr);
@@ -82,11 +85,12 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
       ) as { piExecutable?: string; piVersion?: string };
       assert.equal(invocation.piExecutable, hostPiExecutable);
       assert.equal(invocation.piVersion, hostPiVersion);
-      assert.match(
-        `${run.stdout}\n${run.stderr}`,
-        /^coder\tfailure\t"activation"$/m,
-        "installed public role must present its typed terminal",
-      );
+      const errorArtifact = JSON.parse(
+        await readFile(resolve(runRoot, "artifacts", "error.json"), "utf8"),
+      ) as { kind?: string; role?: string; cause?: string };
+      assert.equal(errorArtifact.kind, "error");
+      assert.equal(errorArtifact.role, "coder");
+      assert.equal(errorArtifact.cause, "activation");
     };
     await traceInvocationIdentity();
 
