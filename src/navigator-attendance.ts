@@ -212,6 +212,9 @@ export function navigatorAdviceConsistentWithSettlement(
   if (settlement.kind !== "accepted") return true;
   // #227: open unfinished handoff must not be typed as next=judge.
   if (settlement.status === "unfinished" && next.role === "judge") return false;
+  // #265: completed Fixer apply must not be sent back to repeat the same work.
+  if (settlement.role === "fixer" && settlement.phase === "apply" && settlement.status === "completed"
+    && next.role === "fixer" && next.phase === "apply") return false;
   if (next.role !== "merger") return true;
   return settlement.role === "judge" && settlement.status === "converged";
 }
