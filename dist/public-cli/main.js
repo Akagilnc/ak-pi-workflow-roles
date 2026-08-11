@@ -12996,7 +12996,7 @@ function classifyPostAdmissionFailure(input) {
     };
   }
   if (input.knownCause !== void 0) {
-    const fallback = input.knownCause === "provider" ? "provider failure" : input.knownCause === "session" ? "session unreadable" : input.knownCause === "output" ? "Judge Role run completed without a lawful typed terminal result" : `judge role run failed (${input.knownCause})`;
+    const fallback = input.knownCause === "provider" ? "provider failure" : input.knownCause === "session" ? "session unreadable" : input.knownCause === "output" ? "role run completed without a lawful typed terminal result" : `role run failed (${input.knownCause})`;
     const diagnostic = input.knownDiagnostic !== void 0 && input.knownDiagnostic.trim() !== "" ? input.knownDiagnostic : conciseChildDiagnostic(input.stderr, fallback);
     const { code: _knownCode, timedOut: _knownTimedOut, ...knownDetails } = input.knownDetails ?? {};
     return {
@@ -13013,12 +13013,12 @@ function classifyPostAdmissionFailure(input) {
   if (input.timedOut) {
     return {
       cause: "timeout",
-      diagnostic: "judge role run timed out",
+      diagnostic: "role run timed out",
       details: { timedOut: true, code: input.code }
     };
   }
   if (input.code !== 0) {
-    const fallback = `judge role run failed with exit ${input.code ?? "null"}`;
+    const fallback = `role run failed with exit ${input.code ?? "null"}`;
     return {
       cause: "activation",
       diagnostic: conciseChildDiagnostic(input.stderr, fallback),
@@ -13028,7 +13028,7 @@ function classifyPostAdmissionFailure(input) {
   if (input.session?.state === "missing") {
     return {
       cause: "session",
-      diagnostic: "Judge Role run left no readable session transcript",
+      diagnostic: "role run left no readable session transcript",
       details: { code: input.code, session: "missing" }
     };
   }
@@ -13041,7 +13041,7 @@ function classifyPostAdmissionFailure(input) {
   }
   return {
     cause: "output",
-    diagnostic: "Judge Role run completed without a lawful typed terminal result",
+    diagnostic: "role run completed without a lawful typed terminal result",
     details: { code: input.code }
   };
 }
