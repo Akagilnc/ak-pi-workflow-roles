@@ -131,6 +131,46 @@ test("auditor gathers evidence and submits one decision", async () => {
   }
 });
 
+test("injected completion executes a same-turn evidence and decision batch exactly once", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-injected-decision-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    await writeFile(join(cwd, "evidence.txt"), "injected evidence\n");
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const faux = fauxProvider({ provider: "injected-decision-test" });
+    const baseTool = createComplianceDecisionTool("ak_injected_decision", "Submit.");
+    let decisions = 0;
+    const tool = {
+      ...baseTool,
+      async execute(...args: Parameters<typeof baseTool.execute>) {
+        decisions += 1;
+        return baseTool.execute(...args);
+      },
+    };
+    let completions = 0;
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool,
+      systemPrompt: "Read and decide.",
+      roleLabel: "Injected decision auditor",
+      invalidDecisionLabel: "invalid injected decision",
+      runCompletion: async () => {
+        completions += 1;
+        return fauxAssistantMessage([
+          fauxToolCall("read", { path: "evidence.txt" }),
+          fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+        ], { stopReason: "toolUse" });
+      },
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(decision.status, "pass");
+    assert.equal(completions, 1);
+    assert.equal(decisions, 1);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("constant unknown tools receive native error receipts and exhaust at the exact provider-turn limit", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-exhaustion-"));
   const runDirectory = join(cwd, "run");

@@ -70,9 +70,24 @@ export async function createInheritedRuntime(options) {
         credentials: new InMemoryCredentialStore(),
         modelsPath: null,
     });
+    // Injected completions historically accepted the minimal model exposed by an
+    // ExtensionContext. AgentSession crosses ModelRuntime first, so complete the
+    // model metadata required by that runtime without changing provider identity.
+    const inheritedModel = options.runCompletion === undefined
+        ? dispatch.model
+        : {
+            ...dispatch.model,
+            name: dispatch.model.name ?? dispatch.model.id,
+            baseUrl: dispatch.model.baseUrl ?? "",
+            reasoning: dispatch.model.reasoning ?? false,
+            input: dispatch.model.input ?? ["text"],
+            cost: dispatch.model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: dispatch.model.contextWindow ?? 1,
+            maxTokens: dispatch.model.maxTokens ?? 1,
+        };
     const state = {
         runtime,
-        model: dispatch.model,
+        model: inheritedModel,
         dispatch,
         streamFailure: undefined,
     };
@@ -114,7 +129,9 @@ export async function createInheritedRuntime(options) {
                         await new Promise((resolve) => setImmediate(resolve));
                         if (streamSignal.aborted)
                             throw abortReason(streamSignal);
-                        const completed = await waitForStream(options.runCompletion(model, context, inheritedRequest), streamSignal);
+                        const completed = await waitForStream(options.runCompletion(model, options.injectedSystemPrompt === undefined
+                            ? context
+                            : { ...context, systemPrompt: options.injectedSystemPrompt }, inheritedRequest), streamSignal);
                         const response = {
                             ...completed,
                             api: model.api,
@@ -128,36 +145,8 @@ export async function createInheritedRuntime(options) {
                             wrapped.push({ type: "error", reason: response.stopReason, error: response });
                         }
                         else {
-                            const partial = { ...response, content: [], stopReason: "pending" };
-                            wrapped.push({ type: "start", partial: { ...partial } });
-                            await new Promise((resolve) => queueMicrotask(resolve));
-                            for (const [contentIndex, part] of response.content.entries()) {
-                                if (part.type === "toolCall") {
-                                    partial.content = [...partial.content, { ...part, arguments: {} }];
-                                    wrapped.push({ type: "toolcall_start", contentIndex, partial: { ...partial } });
-                                    wrapped.push({ type: "toolcall_delta", contentIndex, delta: JSON.stringify(part.arguments), partial: { ...partial } });
-                                    partial.content[contentIndex] = part;
-                                    wrapped.push({ type: "toolcall_end", contentIndex, toolCall: part, partial: { ...partial } });
-                                    await new Promise((resolve) => queueMicrotask(resolve));
-                                }
-                                else if (part.type === "thinking") {
-                                    partial.content = [...partial.content, { type: "thinking", thinking: "" }];
-                                    wrapped.push({ type: "thinking_start", contentIndex, partial: { ...partial } });
-                                    wrapped.push({ type: "thinking_delta", contentIndex, delta: part.thinking, partial: { ...partial } });
-                                    partial.content[contentIndex] = part;
-                                    wrapped.push({ type: "thinking_end", contentIndex, content: part.thinking, partial: { ...partial } });
-                                }
-                                else {
-                                    partial.content = [...partial.content, { type: "text", text: "" }];
-                                    wrapped.push({ type: "text_start", contentIndex, partial: { ...partial } });
-                                    wrapped.push({ type: "text_delta", contentIndex, delta: part.text, partial: { ...partial } });
-                                    partial.content[contentIndex] = part;
-                                    wrapped.push({ type: "text_end", contentIndex, content: part.text, partial: { ...partial } });
-                                }
-                            }
                             wrapped.push({ type: "done", reason: response.stopReason, message: response });
                         }
-                        wrapped.end(response);
                         return;
                     }
                     const source = simple
@@ -244,7 +233,7 @@ export async function createInheritedRuntime(options) {
                     },
                 },
             },
-            getModels() { return [dispatch.model]; },
+            getModels() { return [inheritedModel]; },
             stream(model, context, request) {
                 return createRetriedStream(false, model, context, request);
             },
@@ -272,7 +261,7 @@ export async function createInheritedRuntime(options) {
                     },
                 },
             },
-            getModels() { return [dispatch.model]; },
+            getModels() { return [inheritedModel]; },
             stream(model, childContext, streamOptions) {
                 return parentProvider.stream(model, childContext, streamOptions);
             },
@@ -434,7 +423,9 @@ export async function executeAuditorChild(options) {
             context: options.context,
             label: options.roleLabel,
             idleRetry: true,
-            ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
+            ...(options.runCompletion === undefined
+                ? {}
+                : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
         const cwd = options.context.cwd ?? process.cwd();
