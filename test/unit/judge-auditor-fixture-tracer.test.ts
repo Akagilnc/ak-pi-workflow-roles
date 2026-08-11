@@ -12,6 +12,7 @@ import test from "node:test";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context } from "@earendil-works/pi-ai";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { AUDITOR_DOSSIER_TOOL_NAME } from "../../src/auditor-dossier-tool.ts";
 import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 
@@ -67,18 +68,17 @@ async function withFrozenJudgeFixture<T>(
 ): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), "ak-judge-fixture-tracer-"));
   const runDirectory = join(root, "run-frozen-judge");
-  await mkdir(runDirectory);
-  // Frozen target lives inside the run dossier — model must self-locate, not
-  // read a cwd-root convenience path that skips dossier resolution.
-  const lawPath = join(runDirectory, "LAW.md");
+  await mkdir(join(runDirectory, "session"), { recursive: true });
+  await mkdir(join(runDirectory, "attachments"));
+  await mkdir(join(runDirectory, "artifacts"));
+  await writeFile(join(runDirectory, "admitted-request.json"), "{}\n");
+  // Frozen target lives inside the run dossier — model must locate it through
+  // the run-bound typed tool, not an environment-variable convention.
+  const lawPath = join(runDirectory, "attachments", "LAW.md");
   await writeFile(lawPath, "Judge must cite authority before converge.\n");
-  const previous = process.env.AK_ROLE_RUN_DIR;
-  process.env.AK_ROLE_RUN_DIR = runDirectory;
   try {
     return await run({ root, runDirectory, lawPath });
   } finally {
-    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previous;
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -92,16 +92,16 @@ function toolResultText(context: Context): string {
 
 test("frozen judge fixture: self-locate dossier, gather law, pass", async () => {
   await withFrozenJudgeFixture(async ({ root, runDirectory, lawPath }) => {
-    const sessionManager = SessionManager.inMemory(root);
+    const sessionManager = SessionManager.open(join(runDirectory, "session", "session.jsonl"));
     seedJudgeCandidate(sessionManager, "authority cited");
 
     let turns = 0;
     const complete = (context: Context) => {
       turns += 1;
       if (turns === 1) {
-        // Self-locate via the machine pointer (soul: 从自身落卷位置 / cwd+pointer).
+        assert.ok(context.tools?.some((tool) => tool.name === AUDITOR_DOSSIER_TOOL_NAME));
         return fauxAssistantMessage(
-          [fauxToolCall("bash", { command: "printenv AK_ROLE_RUN_DIR" })],
+          [fauxToolCall(AUDITOR_DOSSIER_TOOL_NAME, {})],
           { stopReason: "toolUse" },
         );
       }
@@ -134,7 +134,7 @@ test("frozen judge fixture: self-locate dossier, gather law, pass", async () => 
     faux.setResponses([complete, complete, complete]);
 
     const decision = await createPiJudgeAuditor()({
-      context: auditContext(root, sessionManager, faux),
+      context: auditContext(process.cwd(), sessionManager, faux),
     });
 
     assert.equal(decision.status, "pass");
@@ -144,7 +144,7 @@ test("frozen judge fixture: self-locate dossier, gather law, pass", async () => 
 
 test("frozen judge fixture: self-locate dossier, gather law, revise with concrete violation", async () => {
   await withFrozenJudgeFixture(async ({ root, runDirectory, lawPath }) => {
-    const sessionManager = SessionManager.inMemory(root);
+    const sessionManager = SessionManager.open(join(runDirectory, "session", "session.jsonl"));
     seedJudgeCandidate(sessionManager, "no authority");
 
     let turns = 0;
@@ -152,7 +152,7 @@ test("frozen judge fixture: self-locate dossier, gather law, revise with concret
       turns += 1;
       if (turns === 1) {
         return fauxAssistantMessage(
-          [fauxToolCall("bash", { command: "printenv AK_ROLE_RUN_DIR" })],
+          [fauxToolCall(AUDITOR_DOSSIER_TOOL_NAME, {})],
           { stopReason: "toolUse" },
         );
       }
@@ -179,7 +179,7 @@ test("frozen judge fixture: self-locate dossier, gather law, revise with concret
     faux.setResponses([complete, complete, complete]);
 
     const decision = await createPiJudgeAuditor()({
-      context: auditContext(root, sessionManager, faux),
+      context: auditContext(process.cwd(), sessionManager, faux),
     });
 
     assert.equal(decision.status, "revise");
