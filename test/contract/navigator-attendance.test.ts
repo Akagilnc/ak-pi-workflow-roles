@@ -969,6 +969,11 @@ test("navigatorAdviceConsistentWithSettlement: unfinished must not skip to judge
     navigatorAdviceConsistentWithSettlement(fixerApply, { kind: "accepted", role: "fixer", phase: "apply", status: "unfinished" }),
     true,
   );
+  assert.equal(
+    navigatorAdviceConsistentWithSettlement(fixerApply, { kind: "accepted", role: "fixer", phase: "apply", status: "completed" }),
+    false,
+    "#265: completed fixer apply must not route back to the same fixer apply",
+  );
   // refused / partially_completed are settled terminals (ADR 0050); judge audit path stays lawful.
   assert.equal(
     navigatorAdviceConsistentWithSettlement(judge, { kind: "accepted", role: "fixer", phase: "apply", status: "refused" }),
@@ -986,7 +991,7 @@ test("navigatorAdviceConsistentWithSettlement: unfinished must not skip to judge
   );
 });
 
-test("#224/#226/#227 frozen scenarios: stale speculative advice rebinds once to settlement-consistent next", async () => {
+test("#224/#226/#227/#265 frozen scenarios: stale speculative advice rebinds once to settlement-consistent next", async () => {
   // Row A: #224 navigator invocation id. Row B: ticket-known fixer run id (not a navigator invocation id),
   // fed as attendance invocationId so the freeze pin survives the settle→rebind seam.
   // Row C/D: #226 judge continue accident + converged control — settle input from
@@ -1024,6 +1029,7 @@ test("#224/#226/#227 frozen scenarios: stale speculative advice rebinds once to 
       // Approved literal settle input (#224).
       settlement: { kind: "accepted" as const, role: "collector" as const, phase: null },
       projectJudgeStatus: undefined,
+      projectFixerStatus: undefined,
       expectsRebind: true,
       rebindSettlementMessage: "rebind prepare must carry the just-accepted settlement",
       rebindToolCallId: "rebind-judge",
@@ -1037,6 +1043,38 @@ test("#224/#226/#227 frozen scenarios: stale speculative advice rebinds once to 
       forbiddenNextRole: "merger" as const,
       expectedPrompts: 2,
       promptsMessage: "stale merger forces exactly one settlement-bound rebind",
+    },
+    {
+      label: "#265 fixer completed",
+      role: "fixer" as const,
+      phase: "apply" as const,
+      subjectKey: "/Users/akagilnc/WorkSpace/Ming_LLM/.ak/work/issues/546",
+      subject: JSON.stringify({ issue: 546, fixerStatus: "completed", commit: "4c687cf3" }),
+      authority: JSON.stringify({ issue: 546, repairSurface: "accepted focused fixer settlement" }),
+      loadRoutePlaybook: async () => "fixer completed 后通常交大理寺复核，但路线仍为自由建议",
+      invocationId: "019fef4c-f050-76ac-92b1-ed23433ba0da",
+      staleToolCallId: "stale-completed-fixer",
+      staleCandidate: {
+        next: { role: "fixer" as const, phase: "apply" as const },
+        reason: "An unfinished repair remains open; continue the same apply phase rather than auditing partial work.",
+      },
+      settlement: { kind: "accepted" as const, role: "fixer" as const, phase: "apply" as const, status: "completed" as const },
+      projectJudgeStatus: undefined,
+      projectFixerStatus: "completed" as const,
+      expectsRebind: true,
+      rebindSettlementMessage: "rebind prepare must carry the projected completed fixer settlement",
+      rebindToolCallId: "rebind-judge-after-completed-fixer",
+      rebindCandidate: {
+        matches: { role: "fixer" as const, phase: "apply" as const, kind: "accepted" as const, statuses: ["completed" as const] },
+        next: { role: "judge" as const, phase: null },
+        reason: "completed fixer settlement is ready for independent adjudication",
+      },
+      expectedDisposition: "recommendation" as const,
+      expectedNext: { role: "judge" as const, phase: null },
+      expectedCommand: "ak-role judge",
+      forbiddenNextRole: "fixer" as const,
+      expectedPrompts: 2,
+      promptsMessage: "stale completed-fixer advice forces exactly one settlement-bound rebind",
     },
     {
       label: "#227 fixer unfinished",
@@ -1065,6 +1103,7 @@ test("#224/#226/#227 frozen scenarios: stale speculative advice rebinds once to 
       // Approved literal settle input (#227).
       settlement: { kind: "accepted" as const, role: "fixer" as const, phase: "apply" as const, status: "unfinished" as const },
       projectJudgeStatus: undefined,
+      projectFixerStatus: undefined,
       expectsRebind: true,
       rebindSettlementMessage: "rebind prepare must carry the just-accepted unfinished settlement",
       rebindToolCallId: "rebind-continue-fixer",
@@ -1109,6 +1148,7 @@ test("#224/#226/#227 frozen scenarios: stale speculative advice rebinds once to 
       // Expected projected shape only — settle input comes from publicNavigatorSettlement.
       settlement: { kind: "accepted" as const, role: "judge" as const, phase: null, status: "continue" as const },
       projectJudgeStatus: "continue" as const,
+      projectFixerStatus: undefined,
       expectsRebind: true,
       rebindSettlementMessage: "rebind prepare must carry the projected settlement",
       rebindToolCallId: "rebind-continue-judge",
@@ -1145,6 +1185,7 @@ test("#224/#226/#227 frozen scenarios: stale speculative advice rebinds once to 
       // Expected projected shape only — settle input comes from publicNavigatorSettlement.
       settlement: { kind: "accepted" as const, role: "judge" as const, phase: null, status: "converged" as const },
       projectJudgeStatus: "converged" as const,
+      projectFixerStatus: undefined,
       expectsRebind: false,
       rebindSettlementMessage: "consistent converged advice must not rebind",
       rebindToolCallId: "rebind-unused",
@@ -1171,13 +1212,19 @@ test("#224/#226/#227 frozen scenarios: stale speculative advice rebinds once to 
 
       // #226 rows: real entry judge tool result → publicNavigatorSettlement → settle input.
       // #224/#227 rows: keep approved settlement literals.
-      const settlement = row.projectJudgeStatus !== undefined
+      const settlement = row.projectJudgeStatus !== undefined || row.projectFixerStatus !== undefined
         ? (() => {
-            const projected = publicNavigatorSettlement("judge", null, {
-              toolName: JUDGE_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: { judgeStatus: row.projectJudgeStatus },
-            });
+            const projected = row.projectJudgeStatus !== undefined
+              ? publicNavigatorSettlement("judge", null, {
+                  toolName: JUDGE_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: { judgeStatus: row.projectJudgeStatus },
+                })
+              : publicNavigatorSettlement("fixer", "apply", {
+                  toolName: FIXER_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: { status: row.projectFixerStatus },
+                });
             assert.ok(projected, `${row.label}: projection must yield settlement`);
             assert.deepEqual(projected, row.settlement, `${row.label}: projected settlement shape`);
             return projected;
