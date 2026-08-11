@@ -15,7 +15,6 @@ test("real PR reaction bytes make Codex present with zero findings by stable use
 
   assert.deepEqual(group.identity, { userType: "User", userId: 199175422 });
   assert.equal(group.attendance, true);
-  assert.equal(group.degraded, false);
   assert.deepEqual(group.findings, []);
   assert.deepEqual(group.materials, [{ kind: "reaction", id: 445776942 }]);
 });
@@ -71,7 +70,6 @@ test("Codex frozen inline review yields five identity-owned findings with eviden
   const raw = JSON.parse(await readFile(new URL("../fixtures/collector/codex-inline-review-4895614344.json", import.meta.url), "utf8"));
   const group = extractGitHubIdentityGroups(raw.map(normalizeReviewComment))[0]!;
   assert.equal(group.attendance, true);
-  assert.equal(group.degraded, false);
   assert.equal(group.findings.length, 5);
   assert.ok(group.findings.every((finding) => finding.identity.userId === 199175422 && finding.source.kind === "review_comment"));
 });
@@ -82,10 +80,8 @@ test("Codex attendance is invariant under no-finding and usage-limit prose", asy
   const limited = extractGitHubIdentityGroups([await load("codex-usagelimit-5244073043.json")])[0]!;
   assert.equal(noFinding.attendance, true);
   assert.deepEqual(noFinding.findings, []);
-  assert.equal(noFinding.degraded, false);
   assert.equal(limited.attendance, true);
   assert.deepEqual(limited.findings, []);
-  assert.equal(limited.degraded, false);
 });
 
 test("CodeRabbit frozen HTML containers yield outside-diff and nitpick findings plus four inline", async () => {
@@ -115,7 +111,6 @@ test("evidence extractor binds real evidenceId refs and head relation",  async (
 
   assert.deepEqual(group.identity, { userType: "Bot", userId: 58596630 });
   assert.equal(group.attendance, true);
-  assert.equal(group.degraded, false);
   assert.deepEqual(group.findings, []);
   assert.deepEqual(group.materials, [{
     kind: "review",

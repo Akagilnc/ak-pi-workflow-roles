@@ -34,7 +34,6 @@ function receipt() {
       identity: { userType: "Bot", userId: 199175422 },
       displayLogin: "chatgpt-codex-connector[bot]",
       attendance: true,
-      degraded: false,
       materials: [{ kind: "review", id: 81, evidenceId: "review-81", headRelation: "current" }],
       findings: [{ identity: { userType: "Bot", userId: 199175422 }, source: { kind: "review", id: 81, evidenceId: "review-81", headRelation: "current" }, category: "material", body: "typed finding" }],
     }],
@@ -104,7 +103,7 @@ test("typed groups travel from real output settlement into the report artifact",
     });
     assert.equal(result.exitCode, 0);
     assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.groups, [{
-      identity: { userType: "Bot", userId: 199175422 }, attendance: true, degraded: false, materialCount: 1, findingCount: 1,
+      identity: { userType: "Bot", userId: 199175422 }, attendance: true, materialCount: 1, findingCount: 1,
     }]);
     const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
     assert.ok(reportPath);

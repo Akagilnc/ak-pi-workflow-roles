@@ -27,7 +27,6 @@ export function validateAcceptedCollectorReceipt(value) {
         identity: (safeGet(group, "identity") ?? null),
         ...(typeof safeGet(group, "displayLogin") === "string" ? { displayLogin: safeGet(group, "displayLogin") } : {}),
         attendance: true,
-        degraded: safeGet(group, "degraded") === true,
         materials: records(safeGet(group, "materials")),
         findings: records(safeGet(group, "findings")),
     }));

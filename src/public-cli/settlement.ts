@@ -925,10 +925,9 @@ function collectorDecisiveFacts(
         if (!isRecord(group)) throw new Error("unreadable Collector group");
         const identity = safelyRead(group, "identity");
         const attendance = safelyRead(group, "attendance");
-        const degraded = safelyRead(group, "degraded");
         const materials = safelyRead(group, "materials");
         const findings = safelyRead(group, "findings");
-        if (!identity.readable || !attendance.readable || !degraded.readable ||
+        if (!identity.readable || !attendance.readable ||
           !materials.readable || !Array.isArray(materials.value) ||
           !findings.readable || !Array.isArray(findings.value)) {
           throw new Error("unreadable Collector group");
@@ -936,7 +935,6 @@ function collectorDecisiveFacts(
         return {
           identity: identity.value,
           attendance: attendance.value,
-          degraded: degraded.value,
           materialCount: materials.value.length,
           findingCount: findings.value.length,
         };

@@ -174,9 +174,9 @@ test("request marker is deterministic for digest/request/head", () => {
     requestId: "codex",
     headOid: "head1",
   });
-  assert.equal(
+  assert.match(
     marker,
-    "<!-- ak-collector:v1 manifest=abcdef012345 request=codex head=head1 -->",
+    /^<!-- ak-collector:v1 manifest=abcdef012345 request=[a-f0-9]{64} head=head1 -->$/,
   );
   const built = buildCollectorRequestBody({
     configuredBody: "Please review.",
@@ -186,6 +186,13 @@ test("request marker is deterministic for digest/request/head", () => {
   });
   assert.equal(built.body.startsWith("Please review.\n"), true);
   assert.ok(built.body.includes(marker));
+  const hostile = buildCollectorRequestMarker({
+    manifestDigest: "abcdef0123456789",
+    requestId: `UPPER --> ${"長".repeat(80)}`,
+    headOid: "head1",
+  });
+  assert.equal(hostile.includes("UPPER"), false);
+  assert.equal(hostile.match(/-->/g)?.length, 1);
 });
 
 test("PR reactions transport follows issue-level endpoint pagination", async () => {

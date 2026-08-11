@@ -33,7 +33,6 @@ export type CollectorIdentityGroup = {
   /** Human-readable metadata only; never participates in grouping. */
   displayLogin?: string;
   attendance?: true;
-  degraded?: boolean;
   findings?: CollectorFinding[];
   materials: CollectorMaterialRef[];
 };
@@ -117,7 +116,6 @@ function foldedCodeRabbitFindings(body: string, identity: GitHubMachineIdentity,
 
 export type ExtractedCollectorIdentityGroup = CollectorIdentityGroup & {
   attendance: true;
-  degraded: boolean;
   findings: CollectorFinding[];
 };
 
@@ -127,7 +125,6 @@ export function extractGitHubIdentityGroups(materials: readonly GitHubIdentityMa
   const byKey = new Map(groups.map((group) => [identityKey(group.identity), group]));
   for (const group of groups) {
     group.attendance = true;
-    group.degraded = false;
     group.findings = [];
   }
   for (const material of materials) {
@@ -185,7 +182,6 @@ export function extractCollectorEvidenceIdentityGroups(
     } else {
       existing.materials.push(...extracted.materials);
       existing.findings.push(...extracted.findings);
-      existing.degraded ||= extracted.degraded;
     }
   }
   return [...groups.values()];
