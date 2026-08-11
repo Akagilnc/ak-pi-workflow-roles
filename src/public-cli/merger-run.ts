@@ -20,7 +20,6 @@ import {
 } from "../package-resources/method-skill.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import {
-  knownFailureFromProviderStop,
   runExplicitInternalActivation,
   type ExplicitInternalKnownFailure,
   type ExplicitInternalPiRunner,
@@ -68,7 +67,7 @@ import {
   presentFailureTerminal,
   presentStructuralRejection,
   explicitInternalKnownFailureClassificationInput,
-  readSessionProviderStop,
+  resolveAuditedRunnerKnownFailure,
   settleFailureTerminalResult,
   trySettleMergerTerminalResult,
 } from "./settlement.ts";
@@ -368,20 +367,16 @@ async function dispatchAdmittedMerger(input: {
       };
     }
 
-    const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionFile,
-    );
-    const sessionProviderFailure =
-      sessionProviderStop === undefined
-        ? undefined
-        : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = postRunMissingCredentialFailure(
       result,
       env.model,
       env.credentials,
     );
-    const knownFailure =
-      result.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = await resolveAuditedRunnerKnownFailure({
+      runner: result.knownFailure,
+      sessionFile: admitted.sessionFile,
+      credential: credentialFailure,
+    });
     return await presentControlledFailure(
       admitted,
       {
