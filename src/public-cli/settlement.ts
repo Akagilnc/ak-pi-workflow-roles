@@ -10,7 +10,6 @@ import { dirname, join } from "node:path";
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
-import { FIXER_AUDIT_TOOL_NAME } from "../fixer-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
 import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure } from "./explicit-internal.ts";
@@ -1170,8 +1169,6 @@ function auditToolNameForRole(
   switch (role) {
     case "judge":
       return JUDGE_AUDIT_TOOL_NAME;
-    case "fixer":
-      return FIXER_AUDIT_TOOL_NAME;
     case "reviewer":
       return REVIEWER_AUDIT_TOOL_NAME;
     case "doctor":
@@ -1185,8 +1182,6 @@ function outputToolNameForAuditedRole(
   switch (role) {
     case "judge":
       return JUDGE_OUTPUT_TOOL_NAME;
-    case "fixer":
-      return FIXER_OUTPUT_TOOL_NAME;
     case "reviewer":
       return REVIEWER_OUTPUT_TOOL_NAME;
     case "doctor":
@@ -1552,11 +1547,9 @@ export async function trySettleComplianceAuditIncompleteTerminalResult(
   const outputToolName =
     admitted.role === "judge"
       ? JUDGE_OUTPUT_TOOL_NAME
-      : admitted.role === "fixer"
-        ? FIXER_OUTPUT_TOOL_NAME
-        : admitted.role === "reviewer"
-          ? REVIEWER_OUTPUT_TOOL_NAME
-          : DOCTOR_OUTPUT_TOOL_NAME;
+      : admitted.role === "reviewer"
+        ? REVIEWER_OUTPUT_TOOL_NAME
+        : DOCTOR_OUTPUT_TOOL_NAME;
   const entries = await readLawfulSettlementEntries(admitted);
   if (entries === undefined) return undefined;
   const extracted = extractComplianceAuditIncompleteRoleOutcome(
@@ -2333,20 +2326,13 @@ export async function publishFixerArtifacts(
   ];
 }
 
-/** Lawful Fixer accepted / audit_escalation outcome extracted from session. */
-export type LawfulFixerRoleOutcome =
-  | {
-      kind: "accepted";
-      role: "fixer";
-      status: string;
-      decisiveFacts: Readonly<Record<string, unknown>>;
-    }
-  | {
-      kind: "audit_escalation";
-      role: "fixer";
-      status: "audit_escalation";
-      decisiveFacts: Readonly<Record<string, unknown>>;
-    };
+/** Lawful Fixer accepted outcome extracted from session (no LLM auditor after #242). */
+export type LawfulFixerRoleOutcome = {
+  kind: "accepted";
+  role: "fixer";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
 
 export function extractFixerRoleOutcome(
   entries: readonly SessionEntry[],
@@ -2360,24 +2346,7 @@ export function extractFixerRoleOutcome(
     if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "fixer",
-      FIXER_OUTPUT_TOOL_NAME,
-    );
-    // #107 owns generic audit presentation; hand off only a bound escalation.
-    if (escalation !== undefined) {
-      return {
-        outcome: {
-          kind: "audit_escalation",
-          role: "fixer",
-          status: "audit_escalation",
-          decisiveFacts: { ...escalation.details },
-        },
-      };
-    }
+    // Residual audit_escalation faces are not lawful Fixer terminals after #242.
     if (isUnboundAuditEscalationFace(details)) continue;
     try {
       validateAcceptedDetails(FIXER_OUTPUT_TOOL_NAME, details);

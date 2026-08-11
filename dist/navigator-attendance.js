@@ -86,6 +86,7 @@ function navigatorUnavailableError(source, error, cause = source) {
 }
 function navigatorAdviceConsistentWithSettlement(next, settlement) {
   if (settlement.kind !== "accepted") return true;
+  if (settlement.status === "unfinished" && next.role === "judge") return false;
   if (next.role !== "merger") return true;
   return settlement.role === "judge" && settlement.status === "converged";
 }

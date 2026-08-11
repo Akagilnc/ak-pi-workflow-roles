@@ -22,7 +22,6 @@ import { Type } from "typebox";
 
 import {
   CODER_OUTPUT_TOOL_NAME,
-  FIXER_AUDIT_TOOL_NAME,
   FIXER_FLAG_DEFINITIONS,
   FIXER_OUTPUT_TOOL_NAME,
   FIXER_PHASES,
@@ -237,14 +236,13 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
   assert.equal(paths.has("packets/fixer-repair.json"), false, "removed closed packet shell must not be packed");
 });
 
-test("cold-installed package audits all four roles from editable Souls", async () => {
+test("cold-installed package audits active auditor seats from editable Souls", async () => {
   await withActivationHome(
     { prefix: "ak-auditor-package-" },
     async ({ home }) => {
       await withColdInstalledPackage(home, async ({ installedRoot, installed }) => {
-      const [judge, fixer, reviewer, doctor] = await Promise.all([
+      const [judge, reviewer, doctor] = await Promise.all([
         installed("src/judge-auditor.ts"),
-        installed("src/fixer-auditor.ts"),
         installed("src/reviewer-auditor.ts"),
         installed("src/doctor-auditor.ts"),
       ]);
@@ -259,13 +257,11 @@ test("cold-installed package audits all four roles from editable Souls", async (
       } as any;
       const inputs = {
         judge: { soul: "caller judge soul", transcript: "judge record", verdict: { judgeStatus: "converged" } },
-        fixer: { soul: "caller fixer soul", packet: { version: 1, instructions: "repair", prerequisites: [] }, phase: "apply", transcript: "fixer record", candidate: { status: "completed", report: "done", classResults: [] } },
         reviewer: { soul: "caller reviewer soul", canonicalSkill: "skill", record: {}, candidate: {} },
         doctor: { soul: "caller doctor soul", patient: { version: 1, identity: { issueNumber: 58, runsPath: ".ak/work/issues/58/runs" }, evidence: [], cost: { invocations: { total: 0, sources: [] }, bytes: 0 } }, readRecord: [], testimony: { status: "refused", reason: "missing", missingEvidence: [] } },
       } as const;
       const roles = [
         { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: (completion: ComplianceCompletion) => judge.createPiJudgeAuditor(completion)(inputs.judge as never, { context }) },
-        { name: "fixer", toolName: fixer.FIXER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/fixer-auditor.md"), run: (completion: ComplianceCompletion) => fixer.createPiFixerAuditor(completion)(inputs.fixer as never, { context }) },
         { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: (completion: ComplianceCompletion) => reviewer.createPiReviewerAuditor(completion)(inputs.reviewer as never, { context }) },
         { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)(inputs.doctor as never, { context }) },
       ] as const;
@@ -333,9 +329,8 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   const root = packageRoot;
   const importSrc = (rel: string) => import(resolve(root, rel));
   {
-      const [judge, fixer, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
+      const [judge, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
         importSrc("src/judge-auditor.ts"),
-        importSrc("src/fixer-auditor.ts"),
         importSrc("src/reviewer-auditor.ts"),
         importSrc("src/doctor-auditor.ts"),
         importSrc("src/judge-role.ts"),
@@ -384,7 +379,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
       } as const;
       const toolNames = {
         judge: judge.JUDGE_AUDIT_TOOL_NAME,
-        fixer: fixer.FIXER_AUDIT_TOOL_NAME,
         reviewer: reviewer.REVIEWER_AUDIT_TOOL_NAME,
         doctor: doctor.DOCTOR_AUDIT_TOOL_NAME,
       } as const;
@@ -444,11 +438,11 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         let selectedDecision = decision;
         const complete = async (_model: unknown, _request: Context) => {
           auditCalls += 1;
-          return fauxAssistantMessage(fauxToolCall(toolNames[role], selectedDecision), { stopReason: "toolUse" });
+          const auditTool = toolNames[role as Exclude<typeof role, "fixer">];
+          return fauxAssistantMessage(fauxToolCall(auditTool, selectedDecision), { stopReason: "toolUse" });
         };
         const auditCompliance = (input: any, options: any) => {
           if (role === "judge") return judge.createPiJudgeAuditor(complete)(input, options);
-          if (role === "fixer") return fixer.createPiFixerAuditor(complete)(input, options);
           if (role === "reviewer") return reviewer.createPiReviewerAuditor(complete)(input, options);
           return doctor.createPiDoctorAuditor(complete)(input, options);
         };
@@ -463,9 +457,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           runtime = workerRole.createFixerRoleRuntime(harness.pi, {
             loadSoul: async () => "fixer law",
             loadPacket: async () => "repair packet",
-            transcriptFromContext: () => "fixer transcript",
-            auditCompliance,
-          }, { failInfrastructure(error: unknown) { throw error; } });
+          });
         } else if (role === "doctor") {
           runtime = doctorRole.createDoctorRoleRuntime(harness.pi, {
             loadSoul: async () => "doctor law",
@@ -496,9 +488,22 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
       };
 
       for (const role of ["judge", "fixer", "reviewer", "doctor"] as const) {
+        const toolName = role === "judge" ? judgeRole.JUDGE_OUTPUT_TOOL_NAME : role === "fixer" ? workerRole.FIXER_OUTPUT_TOOL_NAME : role === "reviewer" ? reviewerRole.REVIEWER_OUTPUT_TOOL_NAME : doctorRole.DOCTOR_OUTPUT_TOOL_NAME;
+        if (role === "fixer") {
+          // #242: Fixer LLM auditor retired — accept on schema validate only, no audit leg.
+          const plain = createRole(role, pass);
+          await plain.runtime.activate();
+          const tool = plain.harness.tools.get(toolName);
+          assert.ok(tool);
+          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-pass`));
+          assert.equal(accepted.terminate, true);
+          assert.deepEqual(accepted.details, outputs[role]);
+          assert.equal(plain.auditCalls, 0);
+          continue;
+        }
         const retriable = createRole(role, revise);
         await retriable.runtime.activate();
-        const tool = retriable.harness.tools.get(role === "judge" ? judgeRole.JUDGE_OUTPUT_TOOL_NAME : role === "fixer" ? workerRole.FIXER_OUTPUT_TOOL_NAME : role === "reviewer" ? reviewerRole.REVIEWER_OUTPUT_TOOL_NAME : doctorRole.DOCTOR_OUTPUT_TOOL_NAME);
+        const tool = retriable.harness.tools.get(toolName);
         assert.ok(tool);
         await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-revise`)), /violation|violates its|closed contract/);
         retriable.setDecision(pass);
@@ -1553,8 +1558,8 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
             }],
           }), { stopReason: "toolUse" });
         }
-        if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes(FIXER_AUDIT_TOOL_NAME)) {
-          const auditTool = names.includes(FIXER_AUDIT_TOOL_NAME) ? FIXER_AUDIT_TOOL_NAME : SOUL_AUDIT_TOOL_NAME;
+        if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+          const auditTool = SOUL_AUDIT_TOOL_NAME;
           return fauxAssistantMessage(fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
         }
         if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
@@ -1690,9 +1695,6 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
               }],
             }), { stopReason: "toolUse" });
           }
-          if (names.includes(FIXER_AUDIT_TOOL_NAME)) {
-            return fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
-          }
           return fauxAssistantMessage(fauxToolCall(FIXER_OUTPUT_TOOL_NAME, { status: "planned", report: "outside-work plan" }), { stopReason: "toolUse" });
         };
         faux.setResponses([response, response, response]);
@@ -1755,7 +1757,7 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
       const child = String.raw`
         import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
         import { writeNavigatorModelSetting } from "./src/role-runtime.ts";
-        import { CODER_OUTPUT_TOOL_NAME, FIXER_AUDIT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME } from "./src/role-runtime.ts";
+        import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME } from "./src/role-runtime.ts";
         import { loadRawPackageManifest, resolvePackageEntrypoint, withInProcessPi } from "./test/helpers/pi-test-harness.ts";
         const role = process.env.AK_ROLE;
         const root = process.env.AK_ROOT;
@@ -1773,7 +1775,6 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
             const next = fixer ? { role: "reviewer", phase: null } : { role: "fixer", phase: "plan" };
             return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: fixer ? "fresh-fixer" : "fresh-coder", matches: { role, phase: role === "fixer" ? "plan" : "plan", kind: "accepted" }, route, next, reason: "fresh-process route", command: fixer ? "Usage: pi --ak-role reviewer --help" : "Usage: pi --ak-role fixer --ak-fixer-phase plan --help" }] }), { stopReason: "toolUse" });
           }
-          if (names.includes(FIXER_AUDIT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
           if (names.includes(FIXER_OUTPUT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(FIXER_OUTPUT_TOOL_NAME, { status: "planned", report: "fresh fixer plan" }), { stopReason: "toolUse" });
           return fauxAssistantMessage(fauxToolCall(CODER_OUTPUT_TOOL_NAME, { status: "planned", report: "fresh coder plan" }), { stopReason: "toolUse" });
         };
@@ -1935,6 +1936,13 @@ test("packaged coder apply proves canonical native tdd expansion including colli
       { prefix: "ak-coder-integration-" },
       async ({ home, agentDir }) => {
         // Package-owned TDD (#109): empty home, skill path from installed package tree.
+        // Worktree is a temp git repo — never arm the real package checkout (gate ②④ install).
+        const work = resolve(home, "work");
+        await mkdir(work, { recursive: true });
+        execFileSync("git", ["init", "-b", "main"], { cwd: work });
+        execFileSync("git", ["config", "user.email", "coder-tdd@test.local"], { cwd: work });
+        execFileSync("git", ["config", "user.name", "Coder TDD"], { cwd: work });
+        execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: work });
         const tddSkillPath = resolve(
           packageRoot,
           "resources/methods/tdd/SKILL.md",
@@ -1950,7 +1958,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
         });
         await withInProcessPi({
           activationLedgerSession: true,
-          cwd: packageRoot,
+          cwd: work,
           agentDir,
           faux,
           additionalExtensionPaths: [packageEntrypoint(manifest)],
@@ -1975,17 +1983,43 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           );
 
           let coderContext: Context | undefined;
-          faux.setResponses([
-            (context) => {
-              coderContext = context;
-              return fauxAssistantMessage(
-                fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
-                  id: row.callId,
-                }),
-                { stopReason: "toolUse" },
-              );
-            },
-          ]);
+          // completed zero-commit: ① bounces once; same payload resubmit confirms.
+          // unfinished: ① does not apply — single call accepted.
+          const firstCallId = row.output.status === "completed"
+            ? `${row.callId}-bounce`
+            : row.callId;
+          faux.setResponses(
+            row.output.status === "completed"
+              ? [
+                (context) => {
+                  coderContext = context;
+                  return fauxAssistantMessage(
+                    fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
+                      id: firstCallId,
+                    }),
+                    { stopReason: "toolUse" },
+                  );
+                },
+                () =>
+                  fauxAssistantMessage(
+                    fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
+                      id: row.callId,
+                    }),
+                    { stopReason: "toolUse" },
+                  ),
+              ]
+              : [
+                (context) => {
+                  coderContext = context;
+                  return fauxAssistantMessage(
+                    fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
+                      id: row.callId,
+                    }),
+                    { stopReason: "toolUse" },
+                  );
+                },
+              ],
+          );
           await session.prompt(row.prompt);
 
           const seenContext = coderContext as Context | undefined;
@@ -2027,6 +2061,20 @@ test("packaged coder apply proves canonical native tdd expansion including colli
             }`,
             userMessage: row.userMessage,
           });
+          if (row.output.status === "completed") {
+            const bounced = sessionManager.getEntries().find(
+              (entry) =>
+                entry.type === "message" &&
+                entry.message.role === "toolResult" &&
+                entry.message.toolCallId === firstCallId,
+            );
+            assert.ok(
+              bounced?.type === "message" &&
+                bounced.message.role === "toolResult",
+            );
+            assert.equal(bounced.message.isError, true);
+            assert.match(textOf(bounced.message), /未观察到 commit/);
+          }
           const accepted = sessionManager.getEntries().find(
             (entry) =>
               entry.type === "message" &&
@@ -2058,6 +2106,13 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
     async ({ home, agentDir }) => {
       const packetPath = resolve(home, "fix-packet.json");
       await writeFile(packetPath, JSON.stringify({ version: 1, instructions: "# Approved repair\n\nApply it.", prerequisites: [] }));
+      // Temp git worktree — production arm must not mutate the real package checkout.
+      const work = resolve(home, "work");
+      await mkdir(work, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: work });
+      execFileSync("git", ["config", "user.email", "fixer-seatbelt@test.local"], { cwd: work });
+      execFileSync("git", ["config", "user.name", "Fixer Seatbelt"], { cwd: work });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: work });
       for (const phase of ["plan", "apply"] as const) {
         const faux = fauxProvider({
           api: `ak-fixer-offline-${phase}`,
@@ -2066,7 +2121,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
         });
         await withInProcessPi({
           activationLedgerSession: true,
-          cwd: packageRoot,
+          cwd: work,
           agentDir,
           faux,
           additionalExtensionPaths: [packageEntrypoint(manifest)],
@@ -2218,7 +2273,6 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
               }),
               { stopReason: "toolUse" },
             ),
-            fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }),
           ]);
           await session.prompt(`Accept a sole Fixer output in ${phase}.`);
           const accepted = sessionManager.getEntries().find(
