@@ -2,11 +2,23 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { normalizeIssueComment, normalizeReview, normalizeReviewComment } from "../../src/collector-github.ts";
+import { normalizeIssueComment, normalizePullRequestReaction, normalizeReview, normalizeReviewComment } from "../../src/collector-github.ts";
 import { normalizeReviewCommentEvidence, normalizeReviewEvidence } from "../../src/collector-evidence.ts";
 import { extractCollectorEvidenceIdentityGroups, extractGitHubIdentityGroups, groupGitHubMaterialsByIdentity } from "../../src/collector-identity.ts";
 
+const reactionFixture = new URL("../fixtures/collector/codex-pr-reaction-1165.json", import.meta.url);
 const noFindingFixture = new URL("../fixtures/collector/codex-nofinding-5234537035.json", import.meta.url);
+
+test("real PR reaction bytes make Codex present with zero findings by stable user id", async () => {
+  const raw = JSON.parse(await readFile(reactionFixture, "utf8"));
+  const group = extractGitHubIdentityGroups(raw.map(normalizePullRequestReaction))[0]!;
+
+  assert.deepEqual(group.identity, { userType: "User", userId: 199175422 });
+  assert.equal(group.attendance, true);
+  assert.equal(group.degraded, false);
+  assert.deepEqual(group.findings, []);
+  assert.deepEqual(group.materials, [{ kind: "reaction", id: 445776942 }]);
+});
 
 test("real GitHub bytes group attendance by machine user and App identity", async () => {
   const raw = JSON.parse(await readFile(noFindingFixture, "utf8"));

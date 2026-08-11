@@ -4,15 +4,16 @@ import {
   normalizeReviewComment,
   type GitHubIssueComment,
   type GitHubMachineIdentity,
+  type GitHubPullRequestReaction,
   type GitHubReview,
   type GitHubReviewComment,
 } from "./collector-github.ts";
 import type { CollectorEvidenceRecord, HeadRelation } from "./collector-evidence.ts";
 
-export type GitHubIdentityMaterial = GitHubReview | GitHubIssueComment | GitHubReviewComment;
+export type GitHubIdentityMaterial = GitHubReview | GitHubIssueComment | GitHubReviewComment | GitHubPullRequestReaction;
 
 export type CollectorMaterialRef = {
-  kind: "review" | "issue_comment" | "review_comment";
+  kind: "review" | "issue_comment" | "review_comment" | "reaction";
   id: number;
   /** Receipt-local immutable source reference. */
   evidenceId?: string;
@@ -39,6 +40,7 @@ export type CollectorIdentityGroup = {
 function materialKind(material: GitHubIdentityMaterial): CollectorIdentityGroup["materials"][number]["kind"] {
   if ("pullRequestReviewId" in material) return "review_comment";
   if ("state" in material) return "review";
+  if ("content" in material) return "reaction";
   return "issue_comment";
 }
 
@@ -47,7 +49,7 @@ function identityKey(identity: GitHubMachineIdentity | null): string {
   // GitHub omits App metadata on some surfaces (notably review comments).
   // The stable user type/id pair is the grouping identity; appId is retained
   // when observed but must not split one actor across transport surfaces.
-  return `${identity.userType}:${identity.userId}`;
+  return String(identity.userId);
 }
 
 /** Group observed GitHub materials only by API machine identity fields. */
@@ -109,8 +111,9 @@ function foldedCodeRabbitFindings(body: string, identity: GitHubMachineIdentity,
 }
 
 function isDegraded(material: GitHubIdentityMaterial, identity: GitHubMachineIdentity): boolean {
-  if (identity.userId === CODEX_USER_ID) return /reached your Codex usage limits for code reviews/i.test(material.body);
-  if (identity.userId === SOURCERY_USER_ID) return /Sorry @[\s\S]*(?:rate limit|review limit)/i.test(material.body);
+  const body = "body" in material ? material.body : "";
+  if (identity.userId === CODEX_USER_ID) return /reached your Codex usage limits for code reviews/i.test(body);
+  if (identity.userId === SOURCERY_USER_ID) return /Sorry @[\s\S]*(?:rate limit|review limit)/i.test(body);
   return false;
 }
 
@@ -135,9 +138,9 @@ export function extractGitHubIdentityGroups(materials: readonly GitHubIdentityMa
     if (identity === null) continue;
     const source = { kind: materialKind(material), id: material.id };
     if (isDegraded(material, identity)) group.degraded = true;
-    if (source.kind === "review_comment" && (identity.userId === CODEX_USER_ID || identity.userId === CODERABBIT_USER_ID)) {
+    if (source.kind === "review_comment" && "body" in material && (identity.userId === CODEX_USER_ID || identity.userId === CODERABBIT_USER_ID)) {
       group.findings!.push({ identity, source, category: "inline", body: material.body });
-    } else if (source.kind === "review" && identity.userId === CODERABBIT_USER_ID) {
+    } else if (source.kind === "review" && "body" in material && identity.userId === CODERABBIT_USER_ID) {
       group.findings!.push(...foldedCodeRabbitFindings(material.body, identity, source));
     }
   }
