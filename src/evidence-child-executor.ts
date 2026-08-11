@@ -458,6 +458,7 @@ export type AuditorRoleOptions = {
   systemPrompt: string;
   prompt: string;
   tool: AuditorDecisionTool;
+  dossierTool: AuditorDecisionTool;
   roleLabel: string;
   context: ExtensionContext;
   signal?: AbortSignal;
@@ -519,7 +520,7 @@ export async function executeAuditorChild(
       thinkingLevel: options.context.thinkingLevel ?? "off",
       modelRuntime: inherited.runtime,
       systemPrompt: options.systemPrompt,
-      customTools: [tool],
+      customTools: [wrapPackageOwnedToolDefinition({ ...options.dossierTool, label: options.roleLabel }), tool],
       sessionManager: auditorSessionManager,
     });
 

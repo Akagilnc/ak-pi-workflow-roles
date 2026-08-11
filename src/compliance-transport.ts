@@ -5,6 +5,7 @@ import {
   executeAuditorChild,
   type AuditorCompletion,
 } from "./evidence-child-executor.ts";
+import { createAuditorDossierTool } from "./auditor-dossier-tool.ts";
 import type { DossierObservation } from "./dossier-resolution.ts";
 
 export type ComplianceCompletion = AuditorCompletion;
@@ -107,6 +108,8 @@ export type RunComplianceAuditOptions = {
   invalidDecisionLabel: string;
   runCompletion?: ComplianceCompletion;
   context: ExtensionContext;
+  /** Exact machine-owned run binding; never sourced from AK_ROLE_RUN_DIR. */
+  runDirectory?: string | undefined;
   signal?: AbortSignal;
 };
 
@@ -118,7 +121,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     const model = options.context.model;
     if (model === undefined) throw new Error(`${options.roleLabel} requires an active model`);
     const dispatch = await prepareComplianceDispatch(model, options.context, options.roleLabel);
-    const context: Context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }], tools: [options.tool] };
+    const context: Context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }], tools: [createAuditorDossierTool(options.runDirectory), options.tool] };
     const response = await options.runCompletion(dispatch.model, context, { ...dispatch.auth, ...(options.signal === undefined ? {} : { signal: options.signal }) });
     retainComplianceResponse(options.context, response);
     const call = [...response.content].reverse().find((part) => part.type === "toolCall" && part.name === options.tool.name);
@@ -127,6 +130,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
   }
   const receipt = await executeAuditorChild({
     tool: options.tool,
+    dossierTool: createAuditorDossierTool(options.runDirectory),
     systemPrompt: options.systemPrompt,
     prompt,
     roleLabel: options.roleLabel,

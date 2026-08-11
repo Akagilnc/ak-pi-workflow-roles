@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import { executeAuditorChild, } from "./evidence-child-executor.js";
+import { createAuditorDossierTool } from "./auditor-dossier-tool.js";
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
 export const AUDITOR_DOSSIER_PROMPT = "Audit the current run dossier.";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
@@ -68,7 +69,7 @@ export async function runComplianceAudit(options) {
         if (model === undefined)
             throw new Error(`${options.roleLabel} requires an active model`);
         const dispatch = await prepareComplianceDispatch(model, options.context, options.roleLabel);
-        const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }], tools: [options.tool] };
+        const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }], tools: [createAuditorDossierTool(options.runDirectory), options.tool] };
         const response = await options.runCompletion(dispatch.model, context, { ...dispatch.auth, ...(options.signal === undefined ? {} : { signal: options.signal }) });
         retainComplianceResponse(options.context, response);
         const call = [...response.content].reverse().find((part) => part.type === "toolCall" && part.name === options.tool.name);
@@ -78,6 +79,7 @@ export async function runComplianceAudit(options) {
     }
     const receipt = await executeAuditorChild({
         tool: options.tool,
+        dossierTool: createAuditorDossierTool(options.runDirectory),
         systemPrompt: options.systemPrompt,
         prompt,
         roleLabel: options.roleLabel,
