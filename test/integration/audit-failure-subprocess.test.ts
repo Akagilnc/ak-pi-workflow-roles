@@ -84,6 +84,11 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
         "session",
       );
       await mkdir(sessionDirectory, { recursive: true });
+      // The hermetic activation ledger owns Navigator records beside role runs.
+      await mkdir(
+        resolve(home, ".ak-roles", "books", basename(home), "navigator"),
+        { recursive: true },
+      );
       await writeFile(
         resolve(issueRoot, "authority.md"),
         "owner authority for Navigator drain\n",
@@ -123,6 +128,7 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
           AK_HEALTHY_NAVIGATOR: "1",
           AK_NAVIGATOR_ROOT: issueRoot,
           AK_ROLE_SESSION_DIR: sessionDirectory,
+          AK_ROLE_RUN_DIR: undefined,
           PI_OFFLINE: "1",
         },
       });
@@ -295,11 +301,11 @@ function jsonEvents(stdout: string): any[] {
     .map((line) => JSON.parse(line) as any);
 }
 
-function assertJsonAbortFacts(
+function assertJsonFailureFacts(
   result: { stdout: string; stderr: string },
   toolName: string,
   label: string,
-  requireAborted = true,
+  requireError = true,
 ) {
   const events = jsonEvents(result.stdout);
   assert.equal(
@@ -313,16 +319,16 @@ function assertJsonAbortFacts(
     true,
     `${label} emits an errored ${toolName} result`,
   );
-  if (requireAborted) {
+  if (requireError) {
     assert.equal(
       events.some(
         (event) =>
           event.type === "message_end" &&
           event.message?.role === "assistant" &&
-          event.message.stopReason === "aborted",
+          event.message.stopReason === "error",
       ),
       true,
-      `${label} stops with typed aborted reason`,
+      `${label} stops with typed error reason`,
     );
   }
 }
@@ -332,7 +338,7 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
     const result = await runCli(mode);
     assertAuditAbortWithoutReceipt(result, mode);
     if (mode === "json") {
-      assertJsonAbortFacts(result, "ak_judge_output", mode);
+      assertJsonFailureFacts(result, "ak_judge_output", mode);
     }
   }
 });
@@ -438,7 +444,7 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
       (event) =>
         event.type === "message_end" &&
         event.message?.role === "assistant" &&
-        event.message.stopReason === "aborted",
+        event.message.stopReason === "error",
     ),
     true,
   );
@@ -456,7 +462,6 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     "no-advice",
   );
 });
-
 
 test("coder apply without skill expansion rejects completed as non-receipt", async () => {
   // #109: TDD is package-owned (empty home is fine). Process-level negative keeps
@@ -524,7 +529,7 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
     assert.equal(result.timedOut, false, `${processRow.stage}/${mode} subprocess did not time out`);
     assert.equal(result.code, 1, `${processRow.stage}/${mode} exits nonzero`);
     if (mode === "json") {
-      assertJsonAbortFacts(result, processRow.tool, `${processRow.stage}/${mode}`);
+      assertJsonFailureFacts(result, processRow.tool, `${processRow.stage}/${mode}`);
     }
   }
 
@@ -541,7 +546,7 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
   for (const row of matrix) {
     const result = await runReviewerCli("json", row.stage);
     assert.equal(result.code, 1, `${row.stage} exits nonzero`);
-    assertJsonAbortFacts(result, row.tool, row.stage, row.stage !== "preflight-git");
+    assertJsonFailureFacts(result, row.tool, row.stage, row.stage !== "preflight-git");
   }
 });
 

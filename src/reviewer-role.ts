@@ -188,8 +188,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       });
       pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });
     }
-    const available = new Set(pi.getAllTools().map((tool) => tool.name));
-    pi.setActiveTools([REVIEWER_OUTPUT_TOOL_NAME].filter((name) => available.has(name)));
     return Object.freeze({ dispatcher, fixedBaseRevision });
   } };
 }
