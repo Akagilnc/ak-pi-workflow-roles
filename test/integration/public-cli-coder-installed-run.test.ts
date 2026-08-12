@@ -78,7 +78,8 @@ async function runAkRoleBin(
     agentDir: options.agentDir,
     cwd: options.cwd,
     ...(options.env === undefined ? {} : { env: options.env }),
-    timeoutMs: 180_000,
+    // Historical coder fixture had no harness deadline; do not invent one.
+    timeoutMs: null,
   });
 }
 

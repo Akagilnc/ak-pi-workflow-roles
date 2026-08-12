@@ -20,6 +20,9 @@ export type TestSubprocessResult = {
   timedOut: boolean;
 };
 
+/** Historical runNodeSubprocess / execFile collection ceiling (10 MiB per stream). */
+const TEST_SUBPROCESS_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+
 export class TestSubprocessOperationalError extends Error {
   readonly code: number | string | null;
   readonly signal: NodeJS.Signals | null;
@@ -77,6 +80,7 @@ function settleResult(input: {
 export type RunTestSubprocessOptions = {
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  /** Omit for no harness deadline. */
   timeoutMs?: number;
   owner: string;
 };
@@ -108,6 +112,7 @@ export async function runTestSubprocess(
     let stderr = "";
     let localTimeout = false;
     let settled = false;
+    let timeout: NodeJS.Timeout | undefined;
 
     const settleOnce = (action: () => void): void => {
       if (settled) return;
@@ -115,42 +120,95 @@ export async function runTestSubprocess(
       action();
     };
 
-    child.stdout.setEncoding("utf8").on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.setEncoding("utf8").on("data", (chunk) => {
-      stderr += chunk;
-    });
-
-    let timeout: NodeJS.Timeout | undefined;
-    if (options.timeoutMs !== undefined) {
-      timeout = setTimeout(() => {
-        localTimeout = true;
-        child.kill("SIGTERM");
-      }, options.timeoutMs);
-    }
-
-    child.once("error", (error) => {
+    const clearDeadline = (): void => {
       if (timeout !== undefined) clearTimeout(timeout);
+    };
+
+    const rejectOperational = (input: {
+      message: string;
+      code?: number | string | null;
+      signal?: NodeJS.Signals | null;
+      cause?: unknown;
+    }): void => {
+      clearDeadline();
       settleOnce(() => {
-        const errno = error as NodeJS.ErrnoException;
         reject(
           new TestSubprocessOperationalError({
-            message: error.message,
-            code: errno.code ?? null,
+            message: input.message,
+            ...(input.code === undefined ? {} : { code: input.code }),
+            ...(input.signal === undefined ? {} : { signal: input.signal }),
             localTimeout,
             localTimeoutOwner: localTimeout ? options.owner : null,
             localTimeoutMs: localTimeout ? (options.timeoutMs ?? null) : null,
             stdout,
             stderr,
-            cause: error,
+            ...(input.cause === undefined ? {} : { cause: input.cause }),
           }),
         );
+      });
+    };
+
+    const appendStream = (
+      stream: "stdout" | "stderr",
+      chunk: string,
+    ): void => {
+      if (settled) return;
+      if (stream === "stdout") stdout += chunk;
+      else stderr += chunk;
+      const collected = stream === "stdout" ? stdout : stderr;
+      if (Buffer.byteLength(collected, "utf8") <= TEST_SUBPROCESS_MAX_BUFFER_BYTES) {
+        return;
+      }
+      child.kill("SIGTERM");
+      rejectOperational({
+        message: `stdout/stderr maxBuffer length exceeded (${TEST_SUBPROCESS_MAX_BUFFER_BYTES} bytes)`,
+        code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+      });
+    };
+
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      appendStream("stdout", chunk);
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      appendStream("stderr", chunk);
+    });
+    child.stdout.on("error", (error) => {
+      rejectOperational({
+        message: error.message,
+        code: (error as NodeJS.ErrnoException).code ?? null,
+        cause: error,
+      });
+    });
+    child.stderr.on("error", (error) => {
+      rejectOperational({
+        message: error.message,
+        code: (error as NodeJS.ErrnoException).code ?? null,
+        cause: error,
+      });
+    });
+
+    if (options.timeoutMs !== undefined) {
+      timeout = setTimeout(() => {
+        localTimeout = true;
+        if (!child.kill("SIGTERM")) {
+          rejectOperational({
+            message: `failed to terminate timed-out subprocess: ${command}`,
+          });
+        }
+      }, options.timeoutMs);
+    }
+
+    child.once("error", (error) => {
+      const errno = error as NodeJS.ErrnoException;
+      rejectOperational({
+        message: error.message,
+        code: errno.code ?? null,
+        cause: error,
       });
     });
 
     child.once("close", (code, signal) => {
-      if (timeout !== undefined) clearTimeout(timeout);
+      clearDeadline();
       settleOnce(() => {
         resolveResult(
           settleResult({
