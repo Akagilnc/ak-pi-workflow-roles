@@ -53,28 +53,18 @@ export function createReceiptDeliveryPolicy() {
     let accepted = false;
     let terminalToolCalled = false;
     let deliveryTurns = 0;
-    let reservedTerminalExecutions = 0;
     const rejectedReceipts = [];
     return {
-        /** Reserve rejection capacity before executing a terminal tool from a batch. */
-        reserveTerminalExecution() {
-            if (deliveryTurns + reservedTerminalExecutions >= RECEIPT_DELIVERY_TURN_LIMIT)
-                return false;
-            reservedTerminalExecutions += 1;
-            return true;
-        },
         recordAccepted() {
             accepted = true;
             terminalToolCalled = true;
-            reservedTerminalExecutions = Math.max(0, reservedTerminalExecutions - 1);
         },
         /** Infrastructure owns terminality and must never trigger receipt催交. */
         stopForInfrastructure() { accepted = true; },
         recordRejected(reason) {
             terminalToolCalled = true;
-            reservedTerminalExecutions = Math.max(0, reservedTerminalExecutions - 1);
             rejectedReceipts.push({ reason, diagnosticAvailable: reason.trim() !== "" });
-            deliveryTurns += 1;
+            deliveryTurns = Math.min(RECEIPT_DELIVERY_TURN_LIMIT, deliveryTurns + 1);
         },
         recordDeliveryRequest() {
             deliveryTurns = Math.min(RECEIPT_DELIVERY_TURN_LIMIT, deliveryTurns + 1);

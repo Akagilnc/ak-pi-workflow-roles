@@ -20,18 +20,6 @@ test("shared receipt delivery policy accepts after zero, one, or two delivery tu
   assert.equal(exhausted.nextAction(), "no-receipt");
   assert.equal(exhausted.facts({ runPointer: "/run", attemptPointer: "attempt-1" }).deliveryTurns, 2);
 
-  const batched = createReceiptDeliveryPolicy();
-  batched.recordDeliveryRequest();
-  const firstReserved = batched.reserveTerminalExecution();
-  const secondReserved = batched.reserveTerminalExecution();
-  assert.equal(firstReserved, true);
-  assert.equal(secondReserved, false, "the consumed delivery turn leaves one execution slot");
-  if (firstReserved) batched.recordRejected("first executed rejection");
-  const batchedFacts = batched.facts({ runPointer: "/run", attemptPointer: "attempt-1" });
-  assert.equal(batchedFacts.deliveryTurns, 2);
-  assert.deepEqual(batchedFacts.rejectedReceipts, [
-    { reason: "first executed rejection", diagnosticAvailable: true },
-  ]);
 });
 
 test("persisted lifecycle readers ignore producer and nested rejection extensions", () => {
