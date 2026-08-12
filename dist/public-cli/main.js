@@ -15340,7 +15340,7 @@ async function recordLaunchedPiIdentity(runDirectory, identity) {
     piVersion: identity.version
   });
 }
-async function observeLaunchedRolePackageIdentity(packageRoot2) {
+async function observeLaunchedRolePackageIdentity(packageRoot2, selectedRoleEntry) {
   const rolePackageRoot = await realpath2(packageRoot2);
   const raw = JSON.parse(
     await readFile4(join4(rolePackageRoot, "package.json"), "utf8")
@@ -15350,9 +15350,7 @@ async function observeLaunchedRolePackageIdentity(packageRoot2) {
       `role package.json at ${rolePackageRoot} does not declare a nonblank version`
     );
   }
-  const roleEntry = await realpath2(
-    join4(rolePackageRoot, "extensions", "role-runtime.ts")
-  );
+  const roleEntry = await realpath2(selectedRoleEntry);
   return {
     roleEntry,
     rolePackageRoot,
@@ -16783,10 +16781,13 @@ async function selectedPiIdentity(command, cwd, env) {
   return { executable, version };
 }
 async function runExplicitInternalActivation(options) {
-  const args = buildExplicitInternalActivationArgs(
-    options.packageRoot,
-    options.extraArgs ?? []
-  );
+  const roleEntry = resolveInternalRoleEntrypoint(options.packageRoot);
+  const args = [
+    "--no-extensions",
+    "-e",
+    roleEntry,
+    ...options.extraArgs ?? []
+  ];
   const runner = options.runner ?? defaultExplicitInternalPiRunner;
   const env = {
     ...process.env,
@@ -16798,7 +16799,7 @@ async function runExplicitInternalActivation(options) {
   if (typeof runDirectory === "string" && runDirectory !== "") {
     await recordLaunchedRolePackageIdentity(
       runDirectory,
-      await observeLaunchedRolePackageIdentity(options.packageRoot)
+      await observeLaunchedRolePackageIdentity(options.packageRoot, roleEntry)
     );
   }
   return await runner(args, {

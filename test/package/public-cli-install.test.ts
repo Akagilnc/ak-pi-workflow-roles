@@ -82,27 +82,9 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
       const runRoot = resolve(runsRoot, names.at(-1)!);
       const invocation = JSON.parse(
         await readFile(resolve(runRoot, "invocation.json"), "utf8"),
-      ) as {
-        piExecutable?: string;
-        piVersion?: string;
-        roleEntry?: string;
-        rolePackageRoot?: string;
-        rolePackageVersion?: string;
-        entryMode?: string;
-      };
+      ) as { piExecutable?: string; piVersion?: string };
       assert.equal(invocation.piExecutable, hostPiExecutable);
       assert.equal(invocation.piVersion, hostPiVersion);
-      const packageRootReal = await realpath(installed.installedRoot);
-      assert.equal(invocation.entryMode, "public-cli");
-      assert.equal(invocation.rolePackageRoot, packageRootReal);
-      assert.equal(
-        invocation.roleEntry,
-        await realpath(resolve(packageRootReal, "extensions", "role-runtime.ts")),
-      );
-      assert.equal(
-        invocation.rolePackageVersion,
-        JSON.parse(await readFile(resolve(packageRootReal, "package.json"), "utf8")).version,
-      );
       const errorArtifact = JSON.parse(
         await readFile(resolve(runRoot, "artifacts", "error.json"), "utf8"),
       ) as { kind?: string; role?: string; cause?: string };

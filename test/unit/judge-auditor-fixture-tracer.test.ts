@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { packageRoot, runPiSubprocess, withColdInstalledPackage } from "../helpers/pi-test-harness.ts";
+import { packageRoot, piCli, withColdInstalledPackage } from "../helpers/pi-test-harness.ts";
+import { runPublicCliSubprocess } from "../helpers/public-cli-subprocess.ts";
 
 function seedProject(project: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: project });
@@ -15,11 +16,7 @@ function seedProject(project: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
 }
 
-/**
- * #286 real failure call shape: tarball-cold-installed public package root
- * (Ming freezes a packed artifact under a private consumer, then runs judge
- * with that root as packageRoot / bin target). One shortest tracer.
- */
+/** #286 shortest real-entry tracer: cold tarball .bin → dist main → auditor dossier read. */
 async function runPackagedTracer(marker: string): Promise<{
   runDirectory: string;
   installedRoot: string;
@@ -27,7 +24,7 @@ async function runPackagedTracer(marker: string): Promise<{
 }> {
   const home = await mkdtemp(join(tmpdir(), `ak-dossier-${marker}-`));
   try {
-    return await withColdInstalledPackage(home, async ({ installedRoot: rawRoot }) => {
+    return await withColdInstalledPackage(home, async ({ fixture, installedRoot: rawRoot }) => {
       const installedRoot = await realpath(rawRoot);
       const project = join(home, "work");
       await mkdir(project, { recursive: true });
@@ -37,57 +34,64 @@ async function runPackagedTracer(marker: string): Promise<{
       const agentDir = join(home, ".pi", "agent");
       await mkdir(agentDir, { recursive: true });
       await writeFile(join(agentDir, "navigator-model.json"), JSON.stringify({ model: "ak-dossier-tracer/faux-1" }));
-      // Public CLI of the installed package root — same packageRoot the bin derives.
-      const { runAkRole } = await import(resolve(installedRoot, "src/public-cli/cli.ts"));
+
       const provider = resolve(packageRoot, "test/fixtures/auditor-dossier-tracer-provider.ts");
       const tracePath = join(home, "auditor-trace.jsonl");
-      const runId = `run-${marker}`;
-      const errors: string[] = [];
-      const result = await runAkRole([
+      // PI_BINARY remains the production selection seam; this fixture wrapper only
+      // loads the faux provider while preserving --version and the real Pi process.
+      const piWrapper = join(home, "pi-with-tracer-provider.mjs");
+      await writeFile(piWrapper, `#!/usr/bin/env node\nimport { spawnSync } from "node:child_process";\nconst args = process.argv.slice(2);\nconst forwarded = args.length === 1 && args[0] === "--version" ? args : ["-e", ${JSON.stringify(provider)}, ...args];\nconst result = spawnSync(${JSON.stringify(piCli)}, forwarded, { stdio: "inherit", env: process.env });\nif (result.error) throw result.error;\nprocess.exit(result.status ?? 1);\n`);
+      await chmod(piWrapper, 0o755);
+
+      const bin = join(fixture, "node_modules", ".bin", "ak-role");
+      // cp preserves the shared fixture's absolute npm symlink; restore npm's
+      // relative link so this invocation executes its private cold-install copy.
+      await rm(bin);
+      await symlink("../@akagilnc/pi-workflow-roles/dist/public-cli/main.js", bin);
+      assert.equal(
+        await realpath(bin),
+        join(installedRoot, "dist", "public-cli", "main.js"),
+        "tracer must execute the cold-installed package bin",
+      );
+      const result = await runPublicCliSubprocess(bin, [
         "judge", "--model", "ak-dossier-tracer/faux-1", "--thinking", "off",
         "--attach", attachment, "--project", project, `request-${marker}`,
       ], {
-        packageRoot: installedRoot,
         home,
         agentDir,
         cwd: project,
-        createRunId: () => runId,
-        judgeExtraPiArgs: ["-e", provider],
-        judgeTimeoutMs: 90_000,
-        io: { stdout() {}, stderr(text: string) { errors.push(text); } },
-        piRunner: async (args: string[], options: any) => {
-          const child = await runPiSubprocess(args, {
-            cwd: options.cwd,
-            timeoutMs: options.timeoutMs,
-            env: {
-              ...options.env,
-              HOME: home,
-              PI_CODING_AGENT_DIR: agentDir,
-              PI_OFFLINE: "1",
-              AK_DOSSIER_TRACER_MARKER: marker,
-              AK_DOSSIER_TRACER_TRACE: tracePath,
-            },
-          });
-          return { ...child, args: [...args] };
+        timeoutMs: 90_000,
+        env: {
+          PI_BINARY: piWrapper,
+          PI_OFFLINE: "1",
+          AK_DOSSIER_TRACER_MARKER: marker,
+          AK_DOSSIER_TRACER_TRACE: tracePath,
         },
       });
-      assert.equal(result.exitCode, 0, errors.join(""));
-      const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs", `${runId}@judge`);
-      const invocation = JSON.parse(
-        await readFile(join(runDirectory, "invocation.json"), "utf8"),
-      ) as Record<string, unknown>;
-      assert.equal(invocation.entryMode, "public-cli", "public CLI launch must ledger entry mode");
-      assert.equal(invocation.rolePackageRoot, installedRoot);
-      assert.equal(
-        invocation.roleEntry,
-        await realpath(join(installedRoot, "extensions", "role-runtime.ts")),
-      );
-      assert.equal(
-        invocation.rolePackageVersion,
-        JSON.parse(await readFile(join(installedRoot, "package.json"), "utf8")).version,
+      assert.equal(result.timedOut, false, result.stderr);
+      assert.equal(result.code, 0, result.stderr);
+
+      const runsRoot = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs");
+      const runName = (await readdir(runsRoot)).find((name) => name.endsWith("@judge"));
+      assert.ok(runName);
+      const runDirectory = join(runsRoot, runName);
+      const invocation = JSON.parse(await readFile(join(runDirectory, "invocation.json"), "utf8")) as Record<string, unknown>;
+      assert.deepEqual(
+        {
+          roleEntry: invocation.roleEntry,
+          rolePackageRoot: invocation.rolePackageRoot,
+          rolePackageVersion: invocation.rolePackageVersion,
+          entryMode: invocation.entryMode,
+        },
+        {
+          roleEntry: await realpath(join(installedRoot, "extensions", "role-runtime.ts")),
+          rolePackageRoot: installedRoot,
+          rolePackageVersion: JSON.parse(await readFile(join(installedRoot, "package.json"), "utf8")).version,
+          entryMode: "public-cli",
+        },
       );
       const trace = (await readFile(tracePath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-      assert.equal(trace[0]?.tool, "ak_get_run_dossier", "auditor must call the run-bound locator first");
+      assert.equal(trace[0]?.tool, "ak_get_run_dossier");
       const readPaths = trace.filter((entry) => entry.tool === "read").map((entry) => entry.path);
       assert.deepEqual(readPaths.slice(0, 2), [
         join(runDirectory, "admitted-request.json"),
@@ -102,7 +106,7 @@ async function runPackagedTracer(marker: string): Promise<{
   }
 }
 
-test("tarball-installed public judge auditor locates and reads its real run dossier", { timeout: 120_000 }, async () => {
+test("tarball-installed .bin judge auditor locates and reads its real run dossier", { timeout: 120_000 }, async () => {
   await runPackagedTracer("single");
 });
 
