@@ -129,6 +129,36 @@ test(
 );
 
 test(
+  "public Coder aborted stop stays on infrastructure nonzero without receipt delivery",
+  { timeout: 120_000 },
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "ak-public-primary-aborted-"));
+    try {
+      const project = join(home, "work");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const providerPath = resolve(packageRoot, "test/fixtures/primary-no-receipt-provider.ts");
+      const result = await runAkRole([
+        "coder", "--model", "ak-primary-no-receipt/faux-1", "--thinking", "off",
+        "--project", project, "Exercise aborted infrastructure settlement.",
+      ], {
+        packageRoot, home, agentDir: join(home, ".pi", "agent"), cwd: project,
+        createRunId: () => "run-primary-aborted-001",
+        coderExtraPiArgs: ["-e", providerPath], coderTimeoutMs: 90_000,
+        io: { stdout() {}, stderr() {} },
+      });
+      assert.notEqual(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "failure");
+      const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs", "run-primary-aborted-001@coder");
+      const rows = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
+        .split("\n").filter(Boolean).map((line) => JSON.parse(line) as any);
+      assert.equal(rows.some((row) => row.customType === "ak-receipt-delivery-request" || row.message?.customType === "ak-receipt-delivery-prompt"), false);
+      assert.equal(rows.some((row) => row.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || row.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE), false);
+    } finally { await rm(home, { recursive: true, force: true }); }
+  },
+);
+
+test(
   "ak-role Judge settles retained unreadable compliance as a typed incomplete Terminal",
   { timeout: 120_000 },
   async () => {

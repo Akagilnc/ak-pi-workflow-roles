@@ -42,6 +42,22 @@ test("persisted lifecycle readers ignore producer and nested rejection extension
   });
 });
 
+test("persisted blank rejection diagnostics normalize instead of invalidating lifecycle facts", () => {
+  const facts = parseNoReceiptLifecycleFacts({
+    terminalToolCalled: true,
+    rejectedReceipts: [{ reason: "" }, { reason: "  \t" }],
+    deliveryTurns: 2,
+    sessionCompletion: "settled-without-accepted-receipt",
+    runPointer: "/run/current",
+    attemptPointer: "attempt-current",
+    acceptedReceipt: false,
+  });
+  assert.deepEqual(facts.rejectedReceipts, [
+    { reason: "terminal receipt rejected without diagnostic" },
+    { reason: "terminal receipt rejected without diagnostic" },
+  ]);
+});
+
 test("a session that never calls its terminal tool gets the same typed no-receipt facts", () => {
   const policy = createReceiptDeliveryPolicy();
   assert.equal(policy.nextAction(), "request-delivery");

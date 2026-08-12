@@ -249,6 +249,36 @@ test("two rejected auditor decisions exhaust the shared budget without a third e
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
+test("blank auditor rejection diagnostics normalize into consumable typed no-receipt facts", async () => {
+  for (const diagnostic of ["", "   \t"]) {
+    const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-blank-rejection-"));
+    const runDirectory = join(cwd, "run");
+    await mkdir(runDirectory);
+    try {
+      const sessionManager = parentWithJudgeSubjects(cwd);
+      const baseTool = createComplianceDecisionTool("ak_blank_rejection_decision", "Submit.");
+      const tool = { ...baseTool, async execute() { throw new Error(diagnostic); } };
+      const faux = fauxProvider({ provider: "blank-rejection-test" });
+      const submit = () => fauxAssistantMessage(
+        [fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })],
+        { stopReason: "toolUse" },
+      );
+      faux.setResponses([submit, submit, () => fauxAssistantMessage("done")]);
+      const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+        tool, systemPrompt: "Decide.", roleLabel: "Blank rejection auditor", invalidDecisionLabel: "invalid",
+        context: auditExtensionContext(cwd, sessionManager, faux),
+      }));
+      assert.equal(decision.status, "no-receipt");
+      if (decision.status === "no-receipt") {
+        assert.deepEqual(decision.rejectedReceipts, [
+          { reason: "terminal receipt rejected without diagnostic" },
+          { reason: "terminal receipt rejected without diagnostic" },
+        ]);
+      }
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  }
+});
+
 test("accepted auditor arguments cannot forge machine-owned no-receipt provenance", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-forged-no-receipt-"));
   const runDirectory = join(cwd, "run");
