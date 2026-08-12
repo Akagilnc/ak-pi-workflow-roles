@@ -74,6 +74,7 @@ import {
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
+import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, parseNoReceiptLifecycleFacts, type NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 import { packagedRoleMetadata } from "../packaged-role-registry.ts";
 import {
   workSubjectKeyFromProjectRoot,
@@ -856,11 +857,21 @@ function safelyRead(object: object, key: string): { readable: true; value: unkno
   }
 }
 
+function auditNoReceiptDecisiveFact(candidate: object): Record<string, unknown> {
+  const projected = safelyRead(candidate, "auditNoReceipt");
+  if (!projected.readable || projected.value === undefined) return {};
+  try {
+    return { auditNoReceipt: parseNoReceiptLifecycleFacts(projected.value) };
+  } catch {
+    return {};
+  }
+}
+
 function judgeDecisiveFacts(
   verdict: object,
   judgeStatus: JudgeVerdict["judgeStatus"],
 ): Record<string, unknown> {
-  const facts: Record<string, unknown> = { judgeStatus };
+  const facts: Record<string, unknown> = { judgeStatus, ...auditNoReceiptDecisiveFact(verdict) };
   if (judgeStatus === "continue") {
     const fix = safelyRead(verdict, "fix");
     if (fix.readable && isRecord(fix.value)) {
@@ -1015,7 +1026,7 @@ function collectorDecisiveFacts(
 function doctorDecisiveFacts(output: DoctorOutput): Record<string, unknown> {
   const candidate = output as unknown as object;
   const status = safelyRead(candidate, "status");
-  const facts: Record<string, unknown> = {};
+  const facts: Record<string, unknown> = { ...auditNoReceiptDecisiveFact(candidate) };
   if (status.readable && typeof status.value === "string") facts.doctorStatus = status.value;
   if (status.readable && status.value === "refused") {
     const reason = safelyRead(candidate, "reason");
@@ -1058,6 +1069,7 @@ function reviewerDecisiveFacts(
     axes,
     reportAxes,
     acceptedBatchPresent: acceptedBatch.readable && acceptedBatch.value !== undefined,
+    ...auditNoReceiptDecisiveFact(candidate),
   };
   if (status.readable && typeof status.value === "string") facts.reviewerStatus = status.value;
   const diagnostic = safelyRead(candidate, "diagnostic");
@@ -3668,6 +3680,33 @@ export async function settleFailureTerminalResult(
   failure: ControlledFailure,
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
+  // #288 is lawful only when the lifecycle owner persisted an exhausted,
+  // current-attempt fact. Transcript reconstruction must not turn arbitrary output
+  // failures (or bytes retained from a prior resume attempt) into exit zero.
+  if (failure.cause === "output") {
+    const entries = await readBoundSessionEntries(admitted.sessionFile).catch(() => undefined);
+    if (entries !== undefined) {
+      let attemptStart = 0;
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        if (entries[index]?.type === "message" && entries[index]?.message?.role === "user") { attemptStart = index; break; }
+      }
+      const lifecycleEntry = entries.slice(attemptStart).reverse().find((entry: SessionEntry) =>
+        entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
+      const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
+      if (raw !== undefined) {
+        try {
+          const facts = parseNoReceiptLifecycleFacts(raw);
+          if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
+            const decisiveFacts: NoReceiptLifecycleFacts = facts;
+            return {
+              roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },
+              navigator: await extractNavigatorFactFromAdmittedSession(admitted), artifacts: [], runId: admitted.runId,
+            };
+          }
+        } catch { /* malformed lifecycle bytes remain the existing nonzero output failure */ }
+      }
+    }
+  }
   // Exact-session attendance only — never infer no-advice from caller omission.
   const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
@@ -3741,16 +3780,16 @@ export function presentFailureTerminal(
   terminal: TerminalResult,
   io: { stdout: (text: string) => void; stderr: (text: string) => void },
 ): void {
-  if (terminal.roleOutcome.kind !== "failure") {
-    throw new TypeError("presentFailureTerminal requires a failure role outcome");
+  if (terminal.roleOutcome.kind !== "failure" && terminal.roleOutcome.kind !== "no_receipt") {
+    throw new TypeError("presentFailureTerminal requires a failure or no-receipt role outcome");
   }
   io.stdout(formatTerminalResult(terminal));
-  io.stderr(
-    formatFailureStderrDiagnostic({
+  if (terminal.roleOutcome.kind === "failure") {
+    io.stderr(formatFailureStderrDiagnostic({
       cause: terminal.roleOutcome.cause,
       diagnostic: terminal.roleOutcome.diagnostic,
-    }),
-  );
+    }));
+  }
 }
 
 /**

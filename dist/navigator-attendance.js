@@ -17,6 +17,7 @@ import { openInProcessAgentSession } from "./in-process-session.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
@@ -104,6 +105,28 @@ function unavailableKey(value) {
 }
 function exactRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function rejectedPrepareReason(entries, start) {
+  const recent = entries.slice(start);
+  const prepareCalls = /* @__PURE__ */ new Set();
+  for (const entry of recent) {
+    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message) || entry.message.role !== "assistant" || !Array.isArray(entry.message.content)) continue;
+    for (const part of entry.message.content) {
+      if (exactRecord(part) && part.type === "toolCall" && part.name === NAVIGATOR_PREPARE_TOOL_NAME && typeof part.id === "string") prepareCalls.add(part.id);
+    }
+  }
+  let reason;
+  for (const entry of recent) {
+    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message) || entry.message.role !== "toolResult" || entry.message.isError !== true) continue;
+    const callId = entry.message.toolCallId;
+    if (entry.message.toolName !== NAVIGATOR_PREPARE_TOOL_NAME || typeof callId !== "string" || !prepareCalls.has(callId)) {
+      return void 0;
+    }
+    const content = entry.message.content;
+    const text = Array.isArray(content) ? content.flatMap((part) => exactRecord(part) && typeof part.text === "string" ? [part.text] : []).join("") : typeof content === "string" ? content : "";
+    if (text.trim() !== "") reason = text.trim();
+  }
+  return reason;
 }
 function targetIsValid(value) {
   if (!exactRecord(value) || !targetRoles.has(String(value.role))) return false;
@@ -327,6 +350,7 @@ function createNavigatorAttendance(options) {
   let settlementTail = Promise.resolve();
   let settlementFailure;
   let preparationFailure;
+  let preparationNoReceipt = false;
   let routePlaybookReadFailure;
   let disposed = false;
   let warmedHelp;
@@ -526,7 +550,38 @@ ${helpContext}
     try {
       try {
         if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-        await activeSession.prompt(request);
+        const delivery = createReceiptDeliveryPolicy();
+        const promptAllowingRejectedPrepare = async (text, deliveryRequest) => {
+          const entryStart = activeSession.entries().length;
+          let promptFailure;
+          try {
+            await activeSession.prompt(text);
+          } catch (error) {
+            promptFailure = error;
+          }
+          const providerFailure = activeSession.providerFailure?.();
+          if (providerFailure !== void 0) {
+            throw navigatorUnavailableError(providerFailure.source, promptFailure ?? "Navigator provider failure", providerFailure.cause);
+          }
+          const rejectedReason = rejectedPrepareReason(activeSession.entries(), entryStart);
+          if (rejectedReason !== void 0) {
+            delivery.recordRejected(rejectedReason);
+            return;
+          }
+          if (promptFailure !== void 0) throw promptFailure;
+          if (deliveryRequest && output === void 0) delivery.recordDeliveryRequest();
+        };
+        await promptAllowingRejectedPrepare(request, false);
+        while (output === void 0 && delivery.nextAction() === "request-delivery") {
+          await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
+        }
+        if (output === void 0 && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === void 0) {
+          const facts = delivery.facts({ runPointer: sessionDir, attemptPointer: invocationId });
+          activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          preparationNoReceipt = true;
+          candidates = [];
+          return candidates;
+        }
       } catch (error) {
         throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
       }
@@ -655,22 +710,25 @@ ${helpContext}
             throw new Error("Navigator advice contradicts the accepted settlement");
           }
         }
-        if (selected?.next === void 0) {
+        if (selected?.next === void 0 && preparationNoReceipt) {
+          report = { disposition: "no-advice" };
+        } else if (selected?.next === void 0) {
           throw new Error("Navigator prepared no machine-usable next direction");
-        }
-        const selectedRoute = selected.route;
-        const routeChanged = selectedRoute !== void 0 && !routeEqual(previousRoute, selectedRoute);
-        const command = renderPublicAkRoleCommand(selected.next);
-        report = {
-          disposition: "recommendation",
-          ...routeChanged ? { route: selectedRoute } : {},
-          next: selected.next,
-          ...selected.reason === void 0 ? {} : { reason: oneLine(selected.reason) },
-          ...command === void 0 ? {} : { command }
-        };
-        if (selectedRoute !== void 0) {
-          previousRoute = selectedRoute;
-          session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selectedRoute });
+        } else {
+          const selectedRoute = selected.route;
+          const routeChanged = selectedRoute !== void 0 && !routeEqual(previousRoute, selectedRoute);
+          const command = renderPublicAkRoleCommand(selected.next);
+          report = {
+            disposition: "recommendation",
+            ...routeChanged ? { route: selectedRoute } : {},
+            next: selected.next,
+            ...selected.reason === void 0 ? {} : { reason: oneLine(selected.reason) },
+            ...command === void 0 ? {} : { command }
+          };
+          if (selectedRoute !== void 0) {
+            previousRoute = selectedRoute;
+            session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selectedRoute });
+          }
         }
       } catch (error) {
         report = unavailable(invocationId, error);
@@ -704,6 +762,7 @@ ${helpContext}
     sessionReady = void 0;
     candidates = void 0;
     preparationFailure = void 0;
+    preparationNoReceipt = false;
     routePlaybookSettlement = void 0;
     routePlaybookReadFailure = void 0;
   }

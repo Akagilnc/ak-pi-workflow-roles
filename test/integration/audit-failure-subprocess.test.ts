@@ -343,11 +343,13 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
   }
 });
 
-test("fatal Judge audit failure drains one healthy packaged Navigator without advice", async () => {
+test("no-receipt Judge audit drains one healthy packaged Navigator for the accepted parent", async () => {
   // Process boundary required: process-release evidence is emitted on process exit.
   const result = await runHealthyNavigatorAuditFailureCli("json");
   assert.equal(result.localTimeout, false, "subprocess did not time out");
-  assert.equal(result.code, 1, "subprocess exits nonzero");
+  // Malformed auditor prose is absence of an accepted receipt under #288, not
+  // infrastructure failure; the parent candidate remains lawful and exits zero.
+  assert.equal(result.code, 0, "typed no-receipt audit leg does not扣押 the parent candidate");
   const evidenceLine = result.stderr
     .split("\n")
     .find((line) => line.startsWith("AUDIT_FAILURE_EVIDENCE="));
@@ -378,7 +380,7 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     };
   };
   assert.equal(evidence.navigatorCalls, 1);
-  assert.equal(evidence.navigator.settlementKind, "role_infrastructure_failure");
+  assert.equal(evidence.navigator.settlementKind, "accepted");
   const timestamp = (value: string, label: string) => {
     const parsed = Date.parse(value);
     assert.ok(Number.isFinite(parsed), `${label} must be an ISO timestamp`);
@@ -408,18 +410,24 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     settledAt <= inputReleasedAt && inputReleasedAt <= processReleasedAt,
     "input and process release must follow the drained Navigator settlement",
   );
-  assert.deepEqual(evidence.role.failedOutput, {
-    toolCallId: "fatal-judge",
-    toolName: "ak_judge_output",
-    isError: true,
-    // Shared lifecycle persists the typed infra fact so exact-session restart
-    // classifies this terminal as durable completion (not a retryable isError).
-    details: {
-      kind: "role_infrastructure_failure",
-      source: "shared-role-lifecycle",
-      reasonCode: "host_failure",
-    },
-  });
+  assert.equal(evidence.role.failedOutput.toolCallId, "fatal-judge");
+  assert.equal(evidence.role.failedOutput.toolName, "ak_judge_output");
+  assert.equal(evidence.role.failedOutput.isError, false);
+  assert.equal(evidence.role.failedOutput.details.judgeStatus, "converged");
+  const auditNoReceipt = evidence.role.failedOutput.details.auditNoReceipt as {
+    acceptedReceipt: boolean;
+    deliveryTurns: number;
+    terminalToolCalled: boolean;
+    rejectedReceipts: readonly { reason: string }[];
+    runPointer: string;
+    attemptPointer: string;
+  };
+  assert.equal(auditNoReceipt.acceptedReceipt, false);
+  assert.equal(auditNoReceipt.deliveryTurns, 2);
+  assert.equal(auditNoReceipt.terminalToolCalled, false);
+  assert.deepEqual(auditNoReceipt.rejectedReceipts, []);
+  assert.match(auditNoReceipt.runPointer, /judge-navigator/);
+  assert.notEqual(auditNoReceipt.attemptPointer, "");
   assert.equal(
     evidence.role.failedOutputCorrelation,
     true,
@@ -437,17 +445,8 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
       event.message.toolName === "ak_judge_output" &&
       event.message.toolCallId === "fatal-judge",
   );
-  assert.equal(failedOutputs.length, 1, "must report exactly the failed Judge output call");
-  assert.equal(failedOutputs[0].message.isError, true);
-  assert.equal(
-    events.some(
-      (event) =>
-        event.type === "message_end" &&
-        event.message?.role === "assistant" &&
-        event.message.stopReason === "error",
-    ),
-    true,
-  );
+  assert.equal(failedOutputs.length, 1, "must report exactly the Judge output call");
+  assert.equal(failedOutputs[0].message.isError, false);
   // JSON stream emits message_end with role=custom; session principal uses custom_message.
   const attendance = events.filter(
     (event) =>
@@ -456,10 +455,10 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
         event.message?.customType === "ak-navigator-attendance") ||
       (event.type === "custom_message" && event.customType === "ak-navigator-attendance"),
   );
-  assert.equal(attendance.length, 1, "infrastructure failure emits affirmative typed no-advice");
+  assert.equal(attendance.length, 1, "accepted parent emits one typed Navigator attendance");
   assert.equal(
     attendance[0]?.message?.details?.disposition ?? attendance[0]?.details?.disposition,
-    "no-advice",
+    "recommendation",
   );
 });
 

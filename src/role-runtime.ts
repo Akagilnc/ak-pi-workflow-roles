@@ -23,6 +23,7 @@ import {
 } from "./tool-execution-observation.ts";
 import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 import { installWorkerGitHooks } from "./worker-submission-gates.ts";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -426,6 +427,10 @@ export function createRoleRuntimeExtension(
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     const pendingInfrastructureToolCallIds = new Set<string>();
+    // #288 primary-session thin adapter. The policy is the sole budget owner;
+    // terminating-tool rejections and mechanical delivery requests share two turns.
+    let receiptDelivery = createReceiptDeliveryPolicy();
+    let noReceiptRecorded = false;
     pi.on("input", () => {
       const role = pi.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
@@ -467,7 +472,7 @@ export function createRoleRuntimeExtension(
     });
     pi.on("tool_result", async (event) => {
       const role = selectedRole;
-      if (role === undefined || navigatorAttendance === undefined) return;
+      if (role === undefined) return;
       const isRoleInfrastructureFailure = pendingInfrastructureToolCallIds.delete(event.toolCallId);
       // Overlay typed infra fact so live settlement and durable session entry agree.
       const infrastructureDetails = isRoleInfrastructureFailure
@@ -476,6 +481,19 @@ export function createRoleRuntimeExtension(
       const classified = infrastructureDetails === undefined
         ? event
         : { ...event, details: infrastructureDetails };
+      const isOutputTool = event.toolName === navigatorOutputTool(role);
+      const outputClassification = isOutputTool ? classifyPackagedRoleTerminalResult(classified) : undefined;
+      if (isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure") {
+        receiptDelivery.stopForInfrastructure();
+      } else if (outputClassification?.kind === "accepted") {
+        receiptDelivery.recordAccepted();
+      } else if (isOutputTool && outputClassification?.kind === "nonterminal" && event.isError) {
+        const reason = (event.content ?? [])
+          .map((part) => part.type === "text" ? part.text : "")
+          .join("")
+          .trim() || "terminating tool rejected";
+        receiptDelivery.recordRejected(reason);
+      }
       const settlement = publicNavigatorSettlement(
         role,
         navigatorPhase(pi, role),
@@ -483,8 +501,9 @@ export function createRoleRuntimeExtension(
       );
       if (settlement !== undefined) {
         const attendance = navigatorAttendance;
-        const workContext = navigatorWorkContext;
-        const pending = (async () => {
+        if (attendance !== undefined) {
+          const workContext = navigatorWorkContext;
+          const pending = (async () => {
           // Accepted role terminal starts the post-role Navigator grace (#101/#106).
           if (settlement.kind !== "accepted") {
             await attendance.settle(settlement);
@@ -522,8 +541,9 @@ export function createRoleRuntimeExtension(
             void settlePromise.catch(() => undefined);
           }
         })();
-        pendingNavigatorSettlement = pending;
-        await pending;
+          pendingNavigatorSettlement = pending;
+          await pending;
+        }
       }
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
@@ -540,6 +560,39 @@ export function createRoleRuntimeExtension(
       return {
         content: decorated.content as typeof event.content,
       };
+    });
+    // Queue receipt delivery before `agent_settled`: that event means Pi has
+    // already decided no queued continuation will run, so a triggerTurn there is
+    // too late for print/json sessions. `agent_end` is the last production seam
+    // whose queued next turn is consumed before settlement.
+    pi.on("agent_end", (event) => {
+      const lastMessage = event.messages.at(-1);
+      if (lastMessage?.role === "assistant" && lastMessage.stopReason === "error") {
+        // Provider failure has no tool_result event; classify it here so the
+        // receipt policy cannot turn infrastructure death into an exit-0 lifecycle.
+        receiptDelivery.stopForInfrastructure();
+        return;
+      }
+      if (receiptDelivery.nextAction() === "request-delivery") {
+        receiptDelivery.recordDeliveryRequest();
+        // Keep the package-owned continuation off the public input lifecycle:
+        // one-shot roles must not mistake this delivery request for later caller input.
+        pi.appendEntry("ak-receipt-delivery-request");
+        pi.sendMessage({
+          customType: "ak-receipt-delivery-prompt",
+          content: RECEIPT_DELIVERY_PROMPT,
+          display: false,
+        }, { triggerTurn: true, deliverAs: "followUp" });
+      } else if (receiptDelivery.nextAction() === "no-receipt" && !noReceiptRecorded) {
+        const runPointer = process.env.AK_ROLE_RUN_DIR;
+        if (runPointer !== undefined) {
+          noReceiptRecorded = true;
+          pi.appendEntry(
+            NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+            receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` }),
+          );
+        }
+      }
     });
     pi.on("agent_settled", async () => {
       if (pendingNavigatorSettlement !== undefined) {
@@ -774,6 +827,8 @@ export function createRoleRuntimeExtension(
     pi.on("session_start", async (event, ctx) => {
       admitted = false;
       selectedRole = undefined;
+      receiptDelivery = createReceiptDeliveryPolicy();
+      noReceiptRecorded = false;
       observationFace.reset();
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;

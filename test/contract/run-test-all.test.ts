@@ -28,6 +28,7 @@ const TICKET_HEAVYWEIGHT = [
   "test/integration/audit-failure-subprocess.test.ts",
   "test/integration/public-cli-judge-run.test.ts",
   "test/package/package-entrypoint.integration.test.ts",
+  "test/package/doctor-package-lifecycle.test.ts",
 ] as const;
 
 type ChildRecord = {
@@ -222,7 +223,7 @@ test("runner partitions discovered universe into ordinary default-parallel then 
   );
 });
 
-test("runner discovers the live package tree as ordinary ⊎ exact three heavy, including this contract once", async () => {
+test("runner discovers the live package tree as ordinary ⊎ the exact heavy manifest, including this contract once", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-live-"));
   await withPrimaryAwareCleanup(
     async () => {
@@ -283,7 +284,8 @@ test("runner fails closed on missing manifest entry and does not spawn children"
         "test/unit/one.test.ts",
         TICKET_HEAVYWEIGHT[0],
         TICKET_HEAVYWEIGHT[1],
-        // missing TICKET_HEAVYWEIGHT[2]
+        TICKET_HEAVYWEIGHT[2],
+        // missing TICKET_HEAVYWEIGHT[3]
       ];
       await seedTierTree(workspace, files);
       const binDir = join(workspace, "bin");

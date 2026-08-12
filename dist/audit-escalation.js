@@ -95,6 +95,13 @@ export async function disposeComplianceDecision(decision, handlers, deliveredOut
     switch (decision.status) {
         case "pass":
             return await handlers.pass(decision.usage);
+        case "no-receipt":
+            // The parent candidate remains accepted, but its parallel audit leg is a
+            // public typed fact and must not be collapsed into an ordinary pass.
+            if (handlers.noReceipt === undefined) {
+                throw new Error("Compliance no-receipt projection handler is unavailable");
+            }
+            return await handlers.noReceipt(decision);
         case "revise":
             return await handlers.revise(decision.violations);
         case "escalate":

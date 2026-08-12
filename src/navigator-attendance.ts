@@ -19,6 +19,7 @@ import { openInProcessAgentSession } from "./in-process-session.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
@@ -277,6 +278,36 @@ function unavailableKey(value: unknown): NavigatorUnavailableKey | undefined {
 
 function exactRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Correlate one rejected prepare call/result inside the just-finished prompt. */
+function rejectedPrepareReason(entries: readonly unknown[], start: number): string | undefined {
+  const recent = entries.slice(start);
+  const prepareCalls = new Set<string>();
+  for (const entry of recent) {
+    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)
+      || entry.message.role !== "assistant" || !Array.isArray(entry.message.content)) continue;
+    for (const part of entry.message.content) {
+      if (exactRecord(part) && part.type === "toolCall" && part.name === NAVIGATOR_PREPARE_TOOL_NAME
+        && typeof part.id === "string") prepareCalls.add(part.id);
+    }
+  }
+  let reason: string | undefined;
+  for (const entry of recent) {
+    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)
+      || entry.message.role !== "toolResult" || entry.message.isError !== true) continue;
+    const callId = entry.message.toolCallId;
+    if (entry.message.toolName !== NAVIGATOR_PREPARE_TOOL_NAME
+      || typeof callId !== "string" || !prepareCalls.has(callId)) {
+      return undefined;
+    }
+    const content = entry.message.content;
+    const text = Array.isArray(content)
+      ? content.flatMap((part) => exactRecord(part) && typeof part.text === "string" ? [part.text] : []).join("")
+      : typeof content === "string" ? content : "";
+    if (text.trim() !== "") reason = text.trim();
+  }
+  return reason;
 }
 function targetIsValid(value: unknown): value is NavigatorRouteTarget {
   if (!exactRecord(value) || !targetRoles.has(String(value.role))) return false;
@@ -567,6 +598,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let settlementTail: Promise<void> = Promise.resolve();
   let settlementFailure: unknown;
   let preparationFailure: unknown;
+  let preparationNoReceipt = false;
   let routePlaybookReadFailure: string | undefined;
   let disposed = false;
   /** One-shot live-help warm; consumed by the next prepare so later prepares reread live help. */
@@ -770,7 +802,38 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       try {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-          await activeSession.prompt(request);
+          const delivery = createReceiptDeliveryPolicy();
+          const promptAllowingRejectedPrepare = async (text: string, deliveryRequest: boolean) => {
+            const entryStart = activeSession.entries().length;
+            let promptFailure: unknown;
+            try {
+              await activeSession.prompt(text);
+            } catch (error) {
+              promptFailure = error;
+            }
+            const providerFailure = activeSession.providerFailure?.();
+            if (providerFailure !== undefined) {
+              throw navigatorUnavailableError(providerFailure.source, promptFailure ?? "Navigator provider failure", providerFailure.cause);
+            }
+            const rejectedReason = rejectedPrepareReason(activeSession.entries(), entryStart);
+            if (rejectedReason !== undefined) {
+              delivery.recordRejected(rejectedReason);
+              return;
+            }
+            if (promptFailure !== undefined) throw promptFailure;
+            if (deliveryRequest && output === undefined) delivery.recordDeliveryRequest();
+          };
+          await promptAllowingRejectedPrepare(request, false);
+          while (output === undefined && delivery.nextAction() === "request-delivery") {
+            await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
+          }
+          if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
+            const facts = delivery.facts({ runPointer: sessionDir, attemptPointer: invocationId });
+            activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+            preparationNoReceipt = true;
+            candidates = [];
+            return candidates;
+          }
         } catch (error) {
           throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
         }
@@ -907,10 +970,13 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
               throw new Error("Navigator advice contradicts the accepted settlement");
             }
           }
-          // Usable model/authority next only — never invent from settlement role/status, prior absence, or prose.
-          if (selected?.next === undefined) {
+          // Budget exhaustion is affirmative typed no-advice; malformed submitted
+          // advice remains the existing unavailable path.
+          if (selected?.next === undefined && preparationNoReceipt) {
+            report = { disposition: "no-advice" };
+          } else if (selected?.next === undefined) {
             throw new Error("Navigator prepared no machine-usable next direction");
-          }
+          } else {
           const selectedRoute = selected.route;
           const routeChanged = selectedRoute !== undefined && !routeEqual(previousRoute, selectedRoute);
           // Single owner: public registry renderer (ADR 0052). Model command prose is never authority.
@@ -925,6 +991,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           if (selectedRoute !== undefined) {
             previousRoute = selectedRoute;
             session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selectedRoute });
+          }
           }
         // Contract: README.md#Navigator-attendance — Navigator failures become typed unavailable without invalidating the role Receipt; retain the original cause in the unavailable report.
         } catch (error) {
@@ -964,6 +1031,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       sessionReady = undefined;
       candidates = undefined;
       preparationFailure = undefined;
+      preparationNoReceipt = false;
       routePlaybookSettlement = undefined;
       routePlaybookReadFailure = undefined;
   }

@@ -167,10 +167,13 @@ export async function loadNavigatorWorkContext(
   // Public ak-role run: admitted request is the typed Navigator work-context source.
   // Classification failure here stays source=context (distinct from model/session/transport).
   const publicRunDir = process.env.AK_ROLE_RUN_DIR;
+  const currentSessionDir = options.context.sessionManager.getSessionDir();
+  const isBoundPublicRun = typeof publicRunDir === "string"
+    && publicRunDir.trim() !== ""
+    && resolve(currentSessionDir) === resolve(publicRunDir, "session");
   if (
     options.role === "judge" &&
-    typeof publicRunDir === "string" &&
-    publicRunDir.trim() !== ""
+    isBoundPublicRun
   ) {
     let admitted;
     try {

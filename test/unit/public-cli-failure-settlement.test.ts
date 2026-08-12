@@ -13,10 +13,11 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
@@ -2447,6 +2448,7 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
   let requestCount = 0;
   let tracerFailure: unknown;
   let restoreParent: (() => Promise<void>) | undefined;
+  let retentionInjected = false;
   let restoreInterval: ReturnType<typeof setInterval> | undefined;
   const retainFailure = (error: unknown) => {
     if (tracerFailure === undefined) tracerFailure = error;
@@ -2459,9 +2461,31 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
     const toolNames = (body.tools ?? []).map((tool: any) => tool.function?.name);
     const auditTool = toolNames.find((name: string) => name?.endsWith("_audit_decision"));
     if (auditTool !== undefined) {
-      const parentFile = (await readFile(marker, "utf8")).trim();
-      const backup = `${parentFile}.retention-test-backup`;
-      await rename(parentFile, backup);
+      if (retentionInjected) {
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "WebSocket error" } }));
+        return;
+      }
+      retentionInjected = true;
+      const reportedParentFile = (await readFile(marker, "utf8")).trim();
+      // Packed/default-Pi fixtures may expose the session principal itself where
+      // SessionManager reports the conventional nested session.jsonl path.
+      const reportedParentDirectory = dirname(reportedParentFile);
+      // The provider request can race the SessionManager's first durable append.
+      // Wait for the reported principal rather than coupling this tracer to mkdir timing.
+      let parentFile: string | undefined;
+      for (let attempt = 0; attempt < 100 && parentFile === undefined; attempt += 1) {
+        try {
+          await stat(reportedParentFile);
+          parentFile = reportedParentFile;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOTDIR") parentFile = reportedParentDirectory;
+          else await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      if (parentFile === undefined) throw new Error("reported parent session principal was not created");
+      const parentBytes = await readFile(parentFile);
+      await rm(parentFile, { force: true });
       await mkdir(parentFile);
       let restored = false;
       restoreParent = async () => {
@@ -2469,7 +2493,7 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
         restored = true;
         if (restoreInterval !== undefined) clearInterval(restoreInterval);
         await rm(parentFile, { recursive: true, force: true });
-        await rename(backup, parentFile);
+        await writeFile(parentFile, parentBytes);
       };
       restoreInterval = setInterval(() => {
         void (async () => {
@@ -2533,6 +2557,7 @@ export default function (pi) {
         retainFailure(error);
       }
       try {
+        server.closeAllConnections();
         await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       } catch (error) {
         retainFailure(error);
@@ -2561,7 +2586,9 @@ test("fast four-role public wiring matrix settles an injected auditor provider s
       piRunner: async (args) => {
         const entries: unknown[] = [];
         const faux = fauxProvider({ provider: "openai-codex" });
-        faux.setResponses([fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" })]);
+        faux.setResponses(Array.from({ length: 3 }, () =>
+          fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" }),
+        ));
         await assert.rejects(runComplianceAudit({
           tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
           systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
@@ -3485,7 +3512,7 @@ test("real Coder/Fixer runs require a legal execution status before accepted set
   });
 });
 
-test("older provider error then later end_turn settles as output not provider (AC5)", async () => {
+test("unbound output failure remains nonzero even after an older provider error (#288)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -3552,22 +3579,11 @@ test("older provider error then later end_turn settles as output not provider (A
         },
       },
     );
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "output",
-    });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "output");
-      assert.notEqual(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
-    }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause: string;
-      identity?: { name?: string };
-    };
-    assert.equal(errorBody.cause, "output");
-    assert.notEqual(errorBody.identity?.name, "ProviderStopError");
+    assert.notEqual(result.exitCode, 0);
+    assert.equal(stdout.length, 1, "exactly one failure Terminal emission");
+    assert.equal(stderr.length, 1);
+    assert.match(stderr[0]!, /without a lawful typed terminal result/);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    if (result.terminal?.roleOutcome.kind === "failure") assert.equal(result.terminal.roleOutcome.cause, "output");
   });
 });
