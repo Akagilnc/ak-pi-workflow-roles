@@ -19,6 +19,7 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
+import { roleRunSessionCoordinates } from "../sitian-record-entry.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -56,14 +57,6 @@ export type FrozenAttachment = {
   readonly sha256: string;
   readonly mediaKind: "regular-file";
 };
-
-/** Durable Pi session file principal name under a Role run's private session directory. */
-export const ROLE_RUN_SESSION_FILE_NAME = "session.jsonl" as const;
-
-/** Exact Pi session file principal path for a Role run session directory. */
-export function roleRunSessionFile(sessionDirectory: string): string {
-  return join(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
-}
 
 /** Shared admitted Role run identity (#106 common Invocation + #109 Coder). */
 export type AdmittedRoleInvocationBase = {
@@ -583,16 +576,10 @@ export async function admitJudgeInvocation(
     requireOptionPath("--project", options.project);
   }
   const projectRoot = resolve(options.project ?? options.cwd);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join(
-    activationBookDirectory(ledgerHome, bookKey),
-    "runs",
-    `${runId}@judge`,
-  );
-  const sessionDirectory = join(runDirectory, "session");
-  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -728,16 +715,10 @@ export async function admitCoderInvocation(
   }
 
   const projectRoot = resolve(options.project ?? options.cwd);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join(
-    activationBookDirectory(ledgerHome, bookKey),
-    "runs",
-    `${runId}@coder`,
-  );
-  const sessionDirectory = join(runDirectory, "session");
-  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -850,16 +831,10 @@ export async function admitFixerInvocation(
   }
 
   const projectRoot = resolve(options.project ?? options.cwd);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join(
-    activationBookDirectory(ledgerHome, bookKey),
-    "runs",
-    `${runId}@fixer`,
-  );
-  const sessionDirectory = join(runDirectory, "session");
-  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1131,16 +1106,10 @@ export async function admitCollectorInvocation(
     repository = resolveGitHubRemoteRepository(projectRoot);
   }
 
-  const bookKey = resolveBookKeyFromGit(projectRoot);
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join(
-    activationBookDirectory(ledgerHome, bookKey),
-    "runs",
-    `${runId}@collector`,
-  );
-  const sessionDirectory = join(runDirectory, "session");
-  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1449,7 +1418,9 @@ export async function admitDoctorInvocation(
   }
 
   const projectRoot = resolve(options.project ?? options.cwd);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const runId = (options.createRunId ?? uuidv7)();
+  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "doctor", home: options.home });
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
 
   let caseRunsPath: string;
@@ -1492,14 +1463,6 @@ export async function admitDoctorInvocation(
     );
   }
 
-  const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join(
-    activationBookDirectory(ledgerHome, bookKey),
-    "runs",
-    `${runId}@doctor`,
-  );
-  const sessionDirectory = join(runDirectory, "session");
-  const sessionFile = roleRunSessionFile(sessionDirectory);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1659,16 +1622,10 @@ export async function admitReviewerInvocation(
   }
 
   const projectRoot = resolve(options.project ?? options.cwd);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join(
-    activationBookDirectory(ledgerHome, bookKey),
-    "runs",
-    `${runId}@reviewer`,
-  );
-  const sessionDirectory = join(runDirectory, "session");
-  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1887,16 +1844,10 @@ export async function admitMergerInvocation(
     options.gitState ?? createProductionMergerGitState(projectRoot),
   );
 
-  const bookKey = resolveBookKeyFromGit(projectRoot);
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join(
-    activationBookDirectory(ledgerHome, bookKey),
-    "runs",
-    `${runId}@merger`,
-  );
-  const sessionDirectory = join(runDirectory, "session");
-  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
