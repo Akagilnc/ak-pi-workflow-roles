@@ -930,16 +930,6 @@ test("withPhysicalAliasFixture removes root and rethrows original unlink error",
 });
 
 test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {
-  const auditNoReceipt = {
-    status: "no-receipt",
-    terminalToolCalled: false,
-    rejectedReceipts: [],
-    deliveryTurns: 2,
-    sessionCompletion: "settled-without-accepted-receipt",
-    runPointer: "/audit/run",
-    attemptPointer: "audit-attempt",
-    acceptedReceipt: false,
-  };
   const entries = [
     {
       type: "custom",
@@ -961,7 +951,6 @@ test("settlement extracts Judge outcome and Navigator recommendation without mod
           judgeStatus: "continue",
           fix: { summary: "close the gate" },
           classes: [{ name: "A", owner: "o", boundary: "b", disposition: "open" }],
-          auditNoReceipt,
         },
       },
     },
@@ -991,13 +980,6 @@ test("settlement extracts Judge outcome and Navigator recommendation without mod
   assert.equal(outcome?.kind, "accepted");
   assert.equal(outcome?.status, "continue");
   assert.equal(outcome?.decisiveFacts.fixSummary, "close the gate");
-  assert.equal((outcome?.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
-  assert.match(formatTerminalResult({
-    roleOutcome: outcome!,
-    navigator: { disposition: "no-advice" },
-    artifacts: [],
-    runId: "run",
-  }), /auditNoReceipt/);
 
   const navigator = extractNavigatorFact(entries);
   assert.equal(navigator.disposition, "recommendation");
@@ -1181,7 +1163,7 @@ test("runAkRole judge rejects burden selector before admission", async () => {
   });
 });
 
-test("runAkRole judge admits, activates Internal, and publishes one Terminal result", async () => {
+test("runAkRole Judge publishes accepted Terminal facts when its audit has no receipt", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -1235,7 +1217,20 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
                 role: "toolResult",
                 toolName: JUDGE_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: { judgeStatus: "converged", note: "ok" },
+                details: {
+                  judgeStatus: "converged",
+                  note: "ok",
+                  auditNoReceipt: {
+                    status: "no-receipt",
+                    terminalToolCalled: false,
+                    rejectedReceipts: [],
+                    deliveryTurns: 2,
+                    sessionCompletion: "settled-without-accepted-receipt",
+                    runPointer: "/audit/run",
+                    attemptPointer: "audit-attempt",
+                    acceptedReceipt: false,
+                  },
+                },
               },
             },
             {
@@ -1299,10 +1294,6 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
       true,
     );
 
-    // AC4: one stdout write of presentation; typed facts come from settlement owners.
-    assert.equal(stdout.length, 1);
-    assert.ok(stdout[0]!.length > 0);
-
     const bookKey = resolveBookKeyFromGit(project);
     const runDir = join(
       home,
@@ -1325,9 +1316,16 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
       attachments: [],
       admittedRequestPath: join(runDir, "admitted-request.json"),
     });
+    assert.equal(stdout.length, 1);
+    assert.notEqual(stdout[0]?.trim(), "");
+    assert.equal(stdout.join(""), formatTerminalResult(terminal));
     assert.equal(terminal.roleOutcome.role, "judge");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(terminal.roleOutcome.status, "converged");
+    assert.equal(
+      (terminal.roleOutcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt,
+      false,
+    );
     assert.equal(terminal.navigator.disposition, "recommendation");
     if (terminal.navigator.disposition === "recommendation") {
       assert.equal(terminal.navigator.next.role, "reviewer");

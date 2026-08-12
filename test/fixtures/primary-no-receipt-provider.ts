@@ -18,7 +18,9 @@ export default function primaryNoReceiptProvider(pi: ExtensionAPI): void {
     ? "rejected"
     : runDirectory.includes("primary-never-called")
       ? "never-called"
-      : undefined;
+      : runDirectory.includes("primary-aborted")
+        ? "aborted"
+        : undefined;
   if (mode === undefined) throw new Error("primary no-receipt fixture requires a recognized run binding");
 
   const faux = fauxProvider({
@@ -36,6 +38,9 @@ export default function primaryNoReceiptProvider(pi: ExtensionAPI): void {
       );
     }
     roleCalls += 1;
+    if (mode === "aborted") {
+      return fauxAssistantMessage("aborted role turn", { stopReason: "aborted" });
+    }
     if (mode === "rejected" && roleCalls === 1) {
       return fauxAssistantMessage(
         fauxToolCall(CODER_OUTPUT_TOOL_NAME, {

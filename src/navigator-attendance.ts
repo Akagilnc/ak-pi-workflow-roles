@@ -704,8 +704,16 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       }
       const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">\n${text}\n</role_help>`).join("\n");
       let output: PrepareOutput | undefined;
+      let prepareBatchRejected = false;
       outputSink = (value) => {
-        if (output !== undefined) throw new Error("Navigator preparation must submit exactly one typed candidate batch");
+        if (prepareBatchRejected || output !== undefined) {
+          // Tool executions in one assistant response are provisional until the
+          // whole response is known to contain exactly one submission. A
+          // duplicate invalidates the batch, including its first call.
+          output = undefined;
+          prepareBatchRejected = true;
+          throw new Error("Navigator preparation must submit exactly one typed candidate batch");
+        }
         output = value;
       };
       const tool = createNavigatorPrepareTool((value) => { outputSink?.(value); });
@@ -805,6 +813,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const delivery = createReceiptDeliveryPolicy();
           const promptAllowingRejectedPrepare = async (text: string, deliveryRequest: boolean) => {
             const entryStart = activeSession.entries().length;
+            prepareBatchRejected = false;
             let promptFailure: unknown;
             try {
               await activeSession.prompt(text);
@@ -817,6 +826,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             }
             const rejectedReason = rejectedPrepareReason(activeSession.entries(), entryStart);
             if (rejectedReason !== undefined) {
+              // A rejected call makes every provisional output from this prompt
+              // ineligible for publication before the correction turn starts.
+              output = undefined;
+              prepareBatchRejected = true;
               delivery.recordRejected(rejectedReason);
               return;
             }

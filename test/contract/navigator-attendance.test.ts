@@ -203,6 +203,42 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
   } finally { await cleanupTempDir(root); }
 });
 
+test("a duplicate Navigator prepare batch cannot publish its first provisional recommendation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-duplicate-prepare-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events);
+    nav.prepare();
+    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    await harness.tool().execute("duplicate-first", candidate(), undefined, undefined, {} as never);
+    await assert.rejects(
+      harness.tool().execute("duplicate-second", candidate(), undefined, undefined, {} as never),
+      /exactly one typed candidate batch/,
+    );
+    harness.entries.push({
+      type: "message",
+      message: { role: "assistant", content: [
+        { type: "toolCall", id: "duplicate-first", name: NAVIGATOR_PREPARE_TOOL_NAME },
+        { type: "toolCall", id: "duplicate-second", name: NAVIGATOR_PREPARE_TOOL_NAME },
+      ] },
+    });
+    harness.entries.push({
+      type: "message",
+      message: { role: "toolResult", toolCallId: "duplicate-second", toolName: NAVIGATOR_PREPARE_TOOL_NAME, isError: true, content: [{ type: "text", text: "Navigator preparation must submit exactly one typed candidate batch" }] },
+    });
+    harness.release();
+    while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    await harness.tool().execute("corrected-single", candidate({ reason: "Only the corrected batch is lawful." }), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.reason, "Only the corrected batch is lawful.");
+  } finally { await cleanupTempDir(root); }
+});
+
 test("two rejected Navigator prepares settle typed no-advice with exact reasons and no third prompt", async () => {
   const root = await mkdtemp(join(tmpdir(), "navigator-rejected-exhaustion-"));
   try {
@@ -218,8 +254,8 @@ test("two rejected Navigator prepares settle typed no-advice with exact reasons 
     assert.equal(events[0]?.disposition, "no-advice");
     const lifecycle = harness.entries.find((entry: any) => entry.customType === "ak-no-receipt-lifecycle") as any;
     assert.deepEqual(lifecycle?.data.rejectedReceipts, [
-      { reason: "root rejection one" },
-      { reason: "root rejection two" },
+      { reason: "root rejection one", diagnosticAvailable: true },
+      { reason: "root rejection two", diagnosticAvailable: true },
     ]);
     assert.equal(lifecycle?.data.terminalToolCalled, true);
   } finally { await cleanupTempDir(root); }

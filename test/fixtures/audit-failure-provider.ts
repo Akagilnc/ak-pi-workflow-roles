@@ -194,7 +194,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     const settlement = [...persisted].reverse().find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
     const roleResults = rolePersisted
       .filter((entry) => entry.type === "message" && entry.message?.role === "toolResult")
-      .map((entry) => ({ toolCallId: entry.message.toolCallId, toolName: entry.message.toolName, isError: entry.message.isError === true, details: entry.message.details ?? {} }));
+      .map((entry) => ({ toolCallId: entry.message.toolCallId, toolName: entry.message.toolName, isError: entry.message.isError === true, details: entry.message.details ?? {}, usage: entry.message.usage }));
     const failedOutput = roleResults.find((entry) => entry.toolCallId === "fatal-judge");
     const failedOutputEntry = [...rolePersisted].find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolCallId === "fatal-judge");
     const drainedBeforeSettlement = navigatorCompletedAt !== "" && typeof settlement?.timestamp === "string" && Date.parse(navigatorCompletedAt) <= Date.parse(settlement.timestamp);

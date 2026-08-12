@@ -148,6 +148,7 @@ export type ComplianceDecisionHandlers<T> = {
   /** Project the accepted parent candidate beside the typed audit-leg facts. */
   noReceipt?: (
     facts: Extract<ComplianceDecision, { status: "no-receipt" }>,
+    usageProjection: { usage?: Usage },
   ) => T | PromiseLike<T>;
   revise: (violations: readonly unknown[]) => T | PromiseLike<T>;
   escalate: (result: AuditEscalationToolResult) => T | PromiseLike<T>;
@@ -172,7 +173,10 @@ export async function disposeComplianceDecision<T>(
       if (handlers.noReceipt === undefined) {
         throw new Error("Compliance no-receipt projection handler is unavailable");
       }
-      return await handlers.noReceipt(decision);
+      return await handlers.noReceipt(
+        decision,
+        decision.usage === undefined ? {} : { usage: decision.usage },
+      );
     case "revise":
       return await handlers.revise(decision.violations);
     case "escalate":

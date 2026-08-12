@@ -32,7 +32,7 @@ import {
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
-import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 
 // ── shared constants / types ──────────────────────────────────────────────
 
@@ -532,7 +532,7 @@ export type AuditorRoleOptions = {
  */
 export async function executeAuditorChild(
   options: AuditorRoleOptions,
-): Promise<{ decision: unknown; response: AssistantMessage }> {
+): Promise<{ decision: unknown; response: AssistantMessage; noReceiptLifecycle?: NoReceiptLifecycleFacts }> {
   const { createRecordSession } = await import("./sitian-record-entry.ts");
 
   return withInProcessScratch({ prefix: "ak-auditor-role-" }, async (scratch) => {
@@ -549,10 +549,12 @@ export async function executeAuditorChild(
     const cwd = options.context.cwd ?? process.cwd();
 
     let decision: unknown;
+    let noReceiptLifecycle: NoReceiptLifecycleFacts | undefined;
     let decisionSubmitted = false;
     let decisionCallId: string | undefined;
     let decisionToolFailure: unknown;
     const decisionToolFailures = new Map<string, unknown>();
+    const delivery = createReceiptDeliveryPolicy();
     const tool = wrapPackageOwnedToolDefinition({
       ...options.tool,
       label: options.roleLabel,
@@ -560,8 +562,12 @@ export async function executeAuditorChild(
         if (decisionSubmitted && decisionCallId !== args[0]) {
           throw new Error("Auditor decision was submitted more than once");
         }
+        // Pi may already have issued several decision calls in one assistant
+        // response. Execute every issued call: the budget limits future
+        // solicitations, not terminal calls already in flight.
         try {
           const result = await options.tool.execute(...args);
+          delivery.recordAccepted();
           decision = args[1];
           decisionCallId = args[0];
           decisionToolFailure = undefined;
@@ -614,11 +620,13 @@ export async function executeAuditorChild(
     auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
 
     let turns = 0;
+    const sessionUsage = emptyUsage();
     let boundaryResponse: AssistantMessage | undefined;
     let retentionFailure: unknown;
     let retainedResponse: AssistantMessage | undefined;
     let rejectedDecisionResponse: AssistantMessage | undefined;
     let promptNeighboringFailure: unknown;
+    let promptDecisionFailures: unknown[] = [];
     const registeredToolNames = new Set(session.getAllTools().map((entry) => entry.name));
     const evidenceToolFailures = new Map<string, unknown>();
     for (const name of registeredToolNames) {
@@ -645,9 +653,18 @@ export async function executeAuditorChild(
       return [...session.messages].reverse().find((message) =>
         message.role === "toolResult" && callIdSet.has(message.toolCallId) && message.isError);
     };
+    const drainRejectedDecisionFailures = (response: AssistantMessage) => {
+      for (const part of response.content) {
+        if (part.type !== "toolCall" || part.name !== tool.name || !decisionToolFailures.has(part.id)) continue;
+        decisionToolFailure = decisionToolFailures.get(part.id);
+        promptDecisionFailures.push(decisionToolFailure);
+        decisionToolFailures.delete(part.id);
+      }
+    };
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
         turns += 1;
+        addUsage(sessionUsage, event.message.usage);
         retainedResponse = event.message;
         try { options.retainResponse?.(event.message); } catch (error) { retentionFailure = error; }
         // A tool call in assistant output is only an observation. Preserve its
@@ -671,15 +688,11 @@ export async function executeAuditorChild(
       if (event.type === "turn_end") {
         if (rejectedDecisionResponse !== undefined) {
           promptNeighboringFailure = findToolFailure(rejectedDecisionResponse);
-          const rejectedCall = rejectedDecisionResponse.content.find((part) =>
-            part.type === "toolCall" && part.name === tool.name && decisionToolFailures.has(part.id));
-          if (rejectedCall?.type === "toolCall") {
-            decisionToolFailure = decisionToolFailures.get(rejectedCall.id);
-            decisionToolFailures.delete(rejectedCall.id);
-          }
+          drainRejectedDecisionFailures(rejectedDecisionResponse);
         }
         if (decisionSubmitted || promptNeighboringFailure !== undefined
-          || boundaryResponse !== undefined || retentionFailure !== undefined) {
+          || (boundaryResponse !== undefined && rejectedDecisionResponse === undefined)
+          || retentionFailure !== undefined) {
           void session.abort();
         }
       }
@@ -690,11 +703,11 @@ export async function executeAuditorChild(
 
     try {
       try {
-        const delivery = createReceiptDeliveryPolicy();
         const promptAllowingRejectedDecision = async (prompt: string) => {
           rejectedDecisionResponse = undefined;
           promptNeighboringFailure = undefined;
           decisionToolFailure = undefined;
+          promptDecisionFailures = [];
           let promptFailure: unknown;
           try {
             await session.prompt(prompt);
@@ -707,41 +720,62 @@ export async function executeAuditorChild(
           const correlatedResponse = rejectedDecisionResponse as AssistantMessage | undefined;
           if (correlatedResponse !== undefined) {
             promptNeighboringFailure ??= findToolFailure(correlatedResponse);
-            const rejectedCall = correlatedResponse.content.find((part) =>
-              part.type === "toolCall" && part.name === tool.name && decisionToolFailures.has(part.id));
-            if (rejectedCall?.type === "toolCall") {
-              decisionToolFailure = decisionToolFailures.get(rejectedCall.id);
-              decisionToolFailures.delete(rejectedCall.id);
-            }
+            drainRejectedDecisionFailures(correlatedResponse);
           }
           // An adjacent failure outranks correctable decision feedback.
           if (promptNeighboringFailure !== undefined) throw promptNeighboringFailure;
+          // An accepted correction in the same response owns the terminal
+          // outcome; correlated rejected siblings remain observations, not a
+          // stale failure capable of replacing that accepted receipt.
+          if (decisionSubmitted) {
+            decisionToolFailure = undefined;
+            return;
+          }
           if (decisionToolFailure !== undefined) return;
           if (promptFailure !== undefined) throw promptFailure;
         };
+        const chargeAndClearRejectedDecisionFailures = (failures: unknown[]) => {
+          for (const failure of failures) {
+            delivery.recordRejected(failure instanceof Error ? failure.message : String(failure));
+          }
+          decisionToolFailure = undefined;
+          promptDecisionFailures = [];
+        };
         await promptAllowingRejectedDecision(options.prompt);
-        while (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
-          && delivery.nextAction() === "request-delivery") {
+        while (!decisionSubmitted && (boundaryResponse === undefined || decisionToolFailure !== undefined)
+          && inherited.streamFailure === undefined && delivery.nextAction() === "request-delivery") {
           if (decisionToolFailure !== undefined) {
-            delivery.recordRejected(decisionToolFailure instanceof Error ? decisionToolFailure.message : String(decisionToolFailure));
-            decisionToolFailure = undefined;
+            const failures = promptDecisionFailures.length === 0
+              ? [decisionToolFailure]
+              : promptDecisionFailures;
+            chargeAndClearRejectedDecisionFailures(failures);
+            if (delivery.nextAction() === "no-receipt") boundaryResponse = undefined;
             if (delivery.nextAction() === "request-delivery") {
-              await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
+              // A rejection and its correction solicitation are one budget unit;
+              // recordRejected already charged it.
+              if (retainedResponse === rejectedDecisionResponse) {
+                await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
+                chargeAndClearRejectedDecisionFailures(promptDecisionFailures);
+              }
             }
           } else {
             delivery.recordDeliveryRequest();
             await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
           }
         }
-        if (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
+        if (!decisionSubmitted && inherited.streamFailure === undefined
           && delivery.nextAction() === "no-receipt") {
           const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
           const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
-          decision = delivery.facts({ runPointer, attemptPointer });
+          const facts = delivery.facts({ runPointer, attemptPointer });
+          decision = facts;
           // Late turn_end feedback cannot overturn a lifecycle that has already
           // charged this prompt to the exhausted shared budget.
           decisionToolFailure = undefined;
-          auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, decision);
+          auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          // Provenance is granted only after the lifecycle owner persisted the
+          // current child record; accepted model arguments can never set it.
+          noReceiptLifecycle = facts;
         }
       } catch (error) {
         if (options.signal?.aborted) throw options.signal.reason;
@@ -750,7 +784,7 @@ export async function executeAuditorChild(
       }
       if (options.signal?.aborted) throw options.signal.reason;
       if (inherited.streamFailure !== undefined) throw inherited.streamFailure;
-      if (decisionToolFailure !== undefined) throw decisionToolFailure;
+      if (!decisionSubmitted && decisionToolFailure !== undefined) throw decisionToolFailure;
       const relevantResponse = !decisionSubmitted
         ? boundaryResponse
         : [...session.messages].reverse().find((message): message is AssistantMessage =>
@@ -760,7 +794,7 @@ export async function executeAuditorChild(
         if (toolFailure !== undefined) throw toolFailure;
       }
       if (retentionFailure !== undefined && retainedResponse?.stopReason !== "error") throw retentionFailure;
-      if (boundaryResponse !== undefined && !decisionSubmitted) {
+      if (boundaryResponse !== undefined && !decisionSubmitted && noReceiptLifecycle === undefined) {
         const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
         throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
           stopReason: boundaryResponse.stopReason,
@@ -841,7 +875,11 @@ export async function executeAuditorChild(
       ) {
         throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
       }
-      return { decision, response };
+      return {
+        decision,
+        response: { ...response, usage: sessionUsage },
+        ...(noReceiptLifecycle === undefined ? {} : { noReceiptLifecycle }),
+      };
     } finally {
       options.signal?.removeEventListener("abort", abort);
       unsubscribe();
