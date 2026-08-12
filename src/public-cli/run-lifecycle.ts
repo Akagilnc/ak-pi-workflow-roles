@@ -15,7 +15,6 @@ import { CliUsageError } from "./cli-errors.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import {
-  roleRunSessionFile,
   type AdmittedCoderInvocation,
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
@@ -225,12 +224,11 @@ export async function readRoleRunState(
       typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
         ? record.runDirectory
         : runDirectory;
-    // Prefer durable principal; fall back only for in-progress records that
-    // predate the field but still own a private session directory.
-    const sessionFile =
-      typeof record.sessionFile === "string" && record.sessionFile.trim() !== ""
-        ? record.sessionFile
-        : roleRunSessionFile(record.sessionDirectory);
+    // Resume only the principal bound by admission; never derive a second one.
+    if (typeof record.sessionFile !== "string" || record.sessionFile.trim() === "") {
+      return undefined;
+    }
+    const sessionFile = record.sessionFile;
     let resumable: TypedHttp429Observation | undefined;
     if (record.resumable !== undefined && record.resumable !== null) {
       if (
