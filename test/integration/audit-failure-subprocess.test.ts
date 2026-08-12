@@ -374,6 +374,7 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
         toolName: string;
         isError: boolean;
         details: Record<string, unknown>;
+        usage?: { totalTokens: number };
       };
       failedOutputAt: string;
       failedOutputCorrelation: boolean;
@@ -421,6 +422,7 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
     rejectedReceipts: readonly { reason: string }[];
     runPointer: string;
     attemptPointer: string;
+    usage?: { totalTokens: number };
   };
   assert.equal(auditNoReceipt.acceptedReceipt, false);
   assert.equal(auditNoReceipt.deliveryTurns, 2);
@@ -428,6 +430,8 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
   assert.deepEqual(auditNoReceipt.rejectedReceipts, []);
   assert.match(auditNoReceipt.runPointer, /judge-navigator/);
   assert.notEqual(auditNoReceipt.attemptPointer, "");
+  assert.deepEqual(evidence.role.failedOutput.usage, auditNoReceipt.usage);
+  assert.ok((evidence.role.failedOutput.usage?.totalTokens ?? 0) > 0, "measured audit usage reaches the external Judge result");
   assert.equal(
     evidence.role.failedOutputCorrelation,
     true,

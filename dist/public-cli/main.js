@@ -17967,7 +17967,6 @@ var init_compliance_transport = __esm({
     init_build();
     init_evidence_child_executor();
     init_auditor_dossier_tool();
-    init_receipt_delivery_policy();
     nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
     decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
     complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });

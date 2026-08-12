@@ -438,8 +438,13 @@ function createNavigatorAttendance(options) {
 ${text}
 </role_help>`).join("\n");
     let output;
+    let prepareBatchRejected = false;
     outputSink = (value) => {
-      if (output !== void 0) throw new Error("Navigator preparation must submit exactly one typed candidate batch");
+      if (prepareBatchRejected || output !== void 0) {
+        output = void 0;
+        prepareBatchRejected = true;
+        throw new Error("Navigator preparation must submit exactly one typed candidate batch");
+      }
       output = value;
     };
     const tool = createNavigatorPrepareTool((value) => {
@@ -553,6 +558,7 @@ ${helpContext}
         const delivery = createReceiptDeliveryPolicy();
         const promptAllowingRejectedPrepare = async (text, deliveryRequest) => {
           const entryStart = activeSession.entries().length;
+          prepareBatchRejected = false;
           let promptFailure;
           try {
             await activeSession.prompt(text);
@@ -565,6 +571,8 @@ ${helpContext}
           }
           const rejectedReason = rejectedPrepareReason(activeSession.entries(), entryStart);
           if (rejectedReason !== void 0) {
+            output = void 0;
+            prepareBatchRejected = true;
             delivery.recordRejected(rejectedReason);
             return;
           }

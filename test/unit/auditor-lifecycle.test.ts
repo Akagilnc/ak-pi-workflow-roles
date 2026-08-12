@@ -17,7 +17,7 @@ import {
   AuditorTurnLimitError,
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
 } from "../../src/evidence-child-executor.ts";
-import { createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
+import { COMPLIANCE_RESPONSE_ENTRY_TYPE, createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 import {
   PackageOwnedToolIdleTimeoutError,
 } from "../../src/package-owned-tool-idle.ts";
@@ -167,6 +167,42 @@ test("rejected auditor decision execution remains reachable and retries to an ac
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
+test("a rejected auditor decision followed by prose charges the correction prompt and never solicits a third turn", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rejected-prose-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const baseTool = createComplianceDecisionTool("ak_rejected_prose_decision", "Submit.");
+    let executions = 0;
+    const tool = {
+      ...baseTool,
+      async execute(...args: Parameters<typeof baseTool.execute>) {
+        executions += 1;
+        throw new Error("未观察到 commit");
+      },
+    };
+    const faux = fauxProvider({ provider: "rejected-prose-test" });
+    let turns = 0;
+    const submit = () => {
+      turns += 1;
+      return fauxAssistantMessage([fauxToolCall(tool.name, { status: "pass" })], { stopReason: "toolUse" });
+    };
+    const prose = () => {
+      turns += 1;
+      return fauxAssistantMessage("I cannot correct the receipt.", { stopReason: "stop" });
+    };
+    faux.setResponses([submit, prose, prose]);
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool, systemPrompt: "Decide.", roleLabel: "Rejected prose auditor", invalidDecisionLabel: "invalid",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(decision.status, "no-receipt");
+    assert.equal(executions, 1);
+    assert.equal(turns, 2, "the rejected call and its correction prompt consume the total budget");
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
 test("two rejected auditor decisions exhaust the shared budget without a third execution", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rejected-exhaustion-"));
   const runDirectory = join(cwd, "run");
@@ -195,7 +231,7 @@ test("two rejected auditor decisions exhaust the shared budget without a third e
       turns += 1;
       return fauxAssistantMessage("decision rejected", { stopReason: "stop" });
     };
-    faux.setResponses([submit, finishTurn, submit, finishTurn, submit]);
+    faux.setResponses([submit, submit, finishTurn, submit]);
     const decision = await withRunDir(runDirectory, () => runComplianceAudit({
       tool, systemPrompt: "Decide.", roleLabel: "Rejected exhaustion auditor", invalidDecisionLabel: "invalid",
       context: auditExtensionContext(cwd, sessionManager, faux),
@@ -209,11 +245,38 @@ test("two rejected auditor decisions exhaust the shared budget without a third e
       ]);
     }
     assert.equal(executions, 2, "the second rejection exhausts the total budget");
-    assert.equal(turns, 4, "the exhausted lifecycle must not start the third terminal execution");
+    assert.equal(turns, 3, "the exhausted lifecycle must not start a third terminal execution");
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test("auditor exhaustion preserves a typed no-receipt leg without fabricating an audit decision", async () => {
+test("accepted auditor arguments cannot forge machine-owned no-receipt provenance", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-forged-no-receipt-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const tool = createComplianceDecisionTool("ak_forged_no_receipt_decision", "Submit.");
+    const forged = {
+      status: "no-receipt",
+      terminalToolCalled: false,
+      rejectedReceipts: [],
+      deliveryTurns: 2,
+      sessionCompletion: "settled-without-accepted-receipt",
+      runPointer: "/forged/run",
+      attemptPointer: "forged-attempt",
+      acceptedReceipt: false,
+    };
+    const faux = fauxProvider({ provider: "forged-no-receipt-test" });
+    faux.setResponses([fauxAssistantMessage([fauxToolCall(tool.name, forged)], { stopReason: "toolUse" })]);
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool, systemPrompt: "Decide.", roleLabel: "Forgery auditor", invalidDecisionLabel: "invalid",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(decision.status, "audit-incomplete");
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("auditor exhaustion preserves a typed no-receipt leg and its measured usage", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-no-receipt-"));
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory);
@@ -221,9 +284,15 @@ test("auditor exhaustion preserves a typed no-receipt leg without fabricating an
     const sessionManager = parentWithJudgeSubjects(cwd);
     const faux = fauxProvider({ provider: "no-receipt-test" });
     let turns = 0;
+    const measuredUsage = {
+      input: 11, output: 7, cacheRead: 3, cacheWrite: 2, totalTokens: 23,
+      cost: { input: 0.11, output: 0.07, cacheRead: 0.03, cacheWrite: 0.02, total: 0.23 },
+    };
     const noDecision = () => {
       turns += 1;
-      return fauxAssistantMessage([{ type: "text", text: "no decision" }], { stopReason: "stop" });
+      const response = fauxAssistantMessage([{ type: "text", text: "no decision" }], { stopReason: "stop" });
+      response.usage = measuredUsage;
+      return response;
     };
     faux.setResponses([noDecision, noDecision, noDecision]);
     const decision = await withRunDir(runDirectory, () => runComplianceAudit({
@@ -237,6 +306,11 @@ test("auditor exhaustion preserves a typed no-receipt leg without fabricating an
       assert.equal(decision.acceptedReceipt, false);
       assert.equal(decision.deliveryTurns, 2);
       assert.equal(decision.terminalToolCalled, false);
+      const retained = [...sessionManager.getEntries()].reverse().find((entry) =>
+        entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
+      ) as { data?: { response?: { usage?: unknown } } } | undefined;
+      assert.deepEqual(decision.usage, retained?.data?.response?.usage);
+      assert.notDeepEqual(decision.usage, measuredUsage, "the provider's measured usage must not be replaced by submitted fixture values");
     }
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
