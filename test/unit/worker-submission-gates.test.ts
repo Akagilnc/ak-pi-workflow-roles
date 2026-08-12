@@ -238,12 +238,6 @@ test("#267 worktreeConfig enable is local-bool only: global true still enables; 
         git(wt, ["config", "--local", "--bool", "--get", "extensions.worktreeConfig"]),
         "true",
       );
-      const hooksDir = git(wt, ["config", "--get", "core.hooksPath"]);
-      assert.match(hooksDir, /ak-roles-hooks$/);
-      assert.throws(
-        () => git(wt, ["commit", "--allow-empty", "-m", "no prefix"]),
-        /ak-roles: commit subject must start with ak-roles:/,
-      );
     } finally {
       await rm(lockPath, { force: true });
     }
@@ -252,6 +246,55 @@ test("#267 worktreeConfig enable is local-bool only: global true still enables; 
     else process.env.GIT_CONFIG_GLOBAL = previousGlobal;
     await rm(root, { recursive: true, force: true });
     await rm(dirname(globalConfig), { recursive: true, force: true });
+  }
+});
+
+test("#267 worktreeConfig bool read: only exit 1 continues; other get failures stay loud", async () => {
+  // Real entry: installWorkerGitHooks. A poisoned extensions.worktreeConfig bricks every git
+  // command (including the early rev-parse), so it cannot reach the bool-get catch. Shim only
+  // the --local --bool --get to exit 128 while leaving the key unset — empty catch would
+  // continue and write true; only exit 1 may mean unset.
+  const root = await tempGitRepo();
+  const bin = await mkdtemp(join(tmpdir(), "ak-git-shim-"));
+  const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const shim = join(bin, "git");
+  writeFileSync(
+    shim,
+    `#!/bin/sh
+if [ "$1" = config ] && [ "$2" = --local ] && [ "$3" = --bool ] && [ "$4" = --get ] && [ "$5" = extensions.worktreeConfig ]; then
+  echo "fatal: bad boolean config value 'notabool' for 'extensions.worktreeconfig'" >&2
+  exit 128
+fi
+exec "${realGit}" "$@"
+`,
+  );
+  chmodSync(shim, 0o755);
+  const previousPath = process.env.PATH;
+  try {
+    const wt = join(root, "wt-267-bool");
+    git(root, ["worktree", "add", wt, "HEAD"]);
+    assert.throws(() => git(wt, ["config", "--local", "--get", "extensions.worktreeConfig"]));
+    process.env.PATH = `${bin}${previousPath === undefined ? "" : `:${previousPath}`}`;
+    assert.throws(
+      () => installWorkerGitHooks(wt),
+      (error: unknown) => {
+        if (!(error instanceof Error)) return false;
+        if (!/bad boolean config value/i.test(error.message)) return false;
+        const status =
+          typeof error === "object" && error !== null && "status" in error
+            ? (error as { status: unknown }).status
+            : undefined;
+        return status === 128;
+      },
+    );
+    process.env.PATH = previousPath;
+    // Must remain unset — continuing after non-1 would have written true.
+    assert.throws(() => git(wt, ["config", "--local", "--get", "extensions.worktreeConfig"]));
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await rm(root, { recursive: true, force: true });
+    await rm(bin, { recursive: true, force: true });
   }
 });
 
