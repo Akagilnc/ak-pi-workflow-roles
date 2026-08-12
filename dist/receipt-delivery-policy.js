@@ -58,7 +58,7 @@ export function createReceiptDeliveryPolicy() {
     return {
         /** Reserve rejection capacity before executing a terminal tool from a batch. */
         reserveTerminalExecution() {
-            if (rejectedReceipts.length + reservedTerminalExecutions >= RECEIPT_DELIVERY_TURN_LIMIT)
+            if (deliveryTurns + reservedTerminalExecutions >= RECEIPT_DELIVERY_TURN_LIMIT)
                 return false;
             reservedTerminalExecutions += 1;
             return true;
@@ -73,8 +73,6 @@ export function createReceiptDeliveryPolicy() {
         recordRejected(reason) {
             terminalToolCalled = true;
             reservedTerminalExecutions = Math.max(0, reservedTerminalExecutions - 1);
-            if (deliveryTurns >= RECEIPT_DELIVERY_TURN_LIMIT)
-                return;
             rejectedReceipts.push({ reason, diagnosticAvailable: reason.trim() !== "" });
             deliveryTurns += 1;
         },
