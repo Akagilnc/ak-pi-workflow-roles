@@ -9,6 +9,7 @@ import {
   isAuditEscalationResult,
   projectAuditEscalation,
 } from "../../src/audit-escalation.ts";
+import type { ComplianceNoReceipt } from "../../src/compliance-transport.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   AcceptedDetailsContractError,
@@ -220,6 +221,35 @@ test("escalate face keeps role decisionGate and audit gate side by side", async 
     { kind: "not-escalation", decisionGate: roleGate },
   );
   assert.equal(launder.details.kind, AUDIT_ESCALATION_KIND);
+});
+
+test("no-receipt uses its own projection leg instead of collapsing into pass", async () => {
+  const decision = {
+    status: "no-receipt" as const,
+    acceptedReceipt: false as const,
+    terminalToolCalled: true,
+    rejectedReceipts: [{ reason: "未观察到 commit" }],
+    deliveryTurns: 2 as const,
+    sessionCompletion: "settled-without-accepted-receipt" as const,
+    runPointer: "/run",
+    attemptPointer: "attempt-1",
+  };
+  let passCalls = 0;
+  const result = await disposeComplianceDecision<{
+    parent: string;
+    auditNoReceipt: ComplianceNoReceipt;
+  }>(decision, {
+    pass: () => { passCalls += 1; throw new Error("ordinary pass used"); },
+    noReceipt: (facts) => ({ parent: "accepted", auditNoReceipt: facts }),
+    revise: () => { throw new Error("revise used"); },
+    escalate: () => { throw new Error("escalate used"); },
+  });
+  assert.equal(passCalls, 0);
+  assert.equal(result.parent, "accepted");
+  assert.equal(result.auditNoReceipt.acceptedReceipt, false);
+  assert.equal(result.auditNoReceipt.deliveryTurns, 2);
+  assert.equal(result.auditNoReceipt.rejectedReceipts[0]?.reason, "未观察到 commit");
+  assert.equal(result.auditNoReceipt.attemptPointer, "attempt-1");
 });
 
 test("audit-incomplete crosses disposition without entering a role decision handler", async () => {
