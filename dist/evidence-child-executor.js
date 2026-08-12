@@ -576,11 +576,14 @@ export async function executeAuditorChild(options) {
                     if (decisionToolFailure !== undefined) {
                         delivery.recordRejected(decisionToolFailure instanceof Error ? decisionToolFailure.message : String(decisionToolFailure));
                         decisionToolFailure = undefined;
+                        if (delivery.nextAction() === "request-delivery") {
+                            await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
+                        }
                     }
                     else {
                         delivery.recordDeliveryRequest();
+                        await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
                     }
-                    await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
                 }
                 if (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
                     && delivery.nextAction() === "no-receipt") {

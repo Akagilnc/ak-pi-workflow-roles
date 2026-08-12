@@ -552,10 +552,14 @@ export function createRoleRuntimeExtension(
       }
       if (receiptDelivery.nextAction() === "request-delivery") {
         receiptDelivery.recordDeliveryRequest();
-        // Durable observation stays out of model context; the user-message API is
-        // the host's guaranteed continuation path in print/json mode.
+        // Keep the package-owned continuation off the public input lifecycle:
+        // one-shot roles must not mistake this delivery request for later caller input.
         pi.appendEntry("ak-receipt-delivery-request");
-        pi.sendUserMessage(RECEIPT_DELIVERY_PROMPT, { deliverAs: "followUp" });
+        pi.sendMessage({
+          customType: "ak-receipt-delivery-prompt",
+          content: RECEIPT_DELIVERY_PROMPT,
+          display: false,
+        }, { triggerTurn: true, deliverAs: "followUp" });
       } else if (receiptDelivery.nextAction() === "no-receipt" && !noReceiptRecorded) {
         const runPointer = process.env.AK_ROLE_RUN_DIR;
         if (runPointer !== undefined) {
