@@ -3027,6 +3027,7 @@ test("Reviewer rejection sidecar rejects generic controlled failures", async () 
     await writeFile(sidecar, JSON.stringify({
       diagnostic: "Fixed Reviewer dispatch was not accepted",
       violations: ["base-invalid"],
+      producerMetadata: { version: 2 },
     }));
     assert.deepEqual(await readReviewerDispatchRejection(home), {
       cause: "activation",
