@@ -202,7 +202,7 @@ async function dispatchAdmittedCollector(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {

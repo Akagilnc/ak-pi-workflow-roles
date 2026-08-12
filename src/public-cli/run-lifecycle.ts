@@ -14,6 +14,7 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
+import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
 import {
   type AdmittedCoderInvocation,
   type AdmittedFixerInvocation,
@@ -185,6 +186,8 @@ export async function writeRoleRunState(
 
 export async function readRoleRunState(
   runDirectory: string,
+  home?: string,
+  canonicalSessionFile?: string,
 ): Promise<RoleRunRecord | undefined> {
   try {
     const raw: unknown = JSON.parse(
@@ -224,11 +227,21 @@ export async function readRoleRunState(
       typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
         ? record.runDirectory
         : runDirectory;
-    // Resume only the principal bound by admission; never derive a second one.
-    if (typeof record.sessionFile !== "string" || record.sessionFile.trim() === "") {
-      return undefined;
-    }
-    const sessionFile = record.sessionFile;
+    // Legacy states predate sessionFile. Resume them through the same canonical
+    // coordinate owner used by admission, rather than inventing a second principal.
+    const sessionFile =
+      typeof record.sessionFile === "string" && record.sessionFile.trim() !== ""
+        ? record.sessionFile
+        : canonicalSessionFile ??
+          (home === undefined
+            ? undefined
+            : roleRunSessionCoordinates({
+                cwd: record.projectRoot,
+                runId: record.runId,
+                role: record.role,
+                home,
+              }).sessionFile);
+    if (sessionFile === undefined) return undefined;
     let resumable: TypedHttp429Observation | undefined;
     if (record.resumable !== undefined && record.resumable !== null) {
       if (
@@ -287,8 +300,15 @@ export async function markRunAdmitted(
   });
 }
 
-export async function markRunRunning(runDirectory: string): Promise<void> {
-  const current = await readRoleRunState(runDirectory);
+export async function markRunRunning(
+  runDirectory: string,
+  canonicalSessionFile?: string,
+): Promise<void> {
+  const current = await readRoleRunState(
+    runDirectory,
+    undefined,
+    canonicalSessionFile,
+  );
   if (current === undefined) {
     throw new Error("cannot mark running: run state missing");
   }
@@ -467,7 +487,7 @@ async function loadResumableRunRecord(
   if (runDirectory === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  const run = await readRoleRunState(runDirectory);
+  const run = await readRoleRunState(runDirectory, home);
   if (run === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
@@ -877,6 +897,6 @@ export async function peekRoleRunRole(
 > {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) return undefined;
-  const run = await readRoleRunState(runDirectory);
+  const run = await readRoleRunState(runDirectory, home);
   return run?.role;
 }

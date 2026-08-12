@@ -256,7 +256,7 @@ async function dispatchAdmittedJudge(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
     // Attempt-scoped observation: drop any prior dispatch's 429 evidence so only
     // the current initial/resume attempt can qualify v1 resume.
     await clearTypedProviderHttpObservation(admitted.runDirectory);

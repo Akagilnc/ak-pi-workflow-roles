@@ -19,7 +19,7 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
-import { roleRunSessionCoordinates } from "../sitian-record-entry.ts";
+import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
