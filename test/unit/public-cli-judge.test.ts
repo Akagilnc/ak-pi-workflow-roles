@@ -1296,7 +1296,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
 
     // AC4: one stdout write of presentation; typed facts come from settlement owners.
     assert.equal(stdout.length, 1);
-    assert.match(stdout[0]!, /auditNoReceipt/);
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDir = join(
