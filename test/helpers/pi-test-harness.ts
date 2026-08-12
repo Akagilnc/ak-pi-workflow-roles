@@ -609,7 +609,7 @@ export async function installPackedArtifactIntoPiNpm(
       PI_OFFLINE: "1",
     },
   });
-  if (result.timedOut) {
+  if (result.localTimeout) {
     throw new Error(`pi install timed out for ${source}`);
   }
   if (result.code !== 0) {

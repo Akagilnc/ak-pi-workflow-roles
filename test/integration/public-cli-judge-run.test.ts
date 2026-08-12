@@ -80,7 +80,7 @@ test(
               code: subprocess.code,
               stdout: subprocess.stdout,
               stderr: subprocess.stderr,
-              timedOut: subprocess.timedOut,
+              timedOut: subprocess.localTimeout,
               args: [...args],
             };
           },
@@ -235,7 +235,7 @@ test(
               code: subprocess.code,
               stdout: subprocess.stdout,
               stderr: subprocess.stderr,
-              timedOut: subprocess.timedOut,
+              timedOut: subprocess.localTimeout,
               args: [...args],
             };
           },

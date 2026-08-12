@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, statSync } from "node:fs";
 import {
@@ -35,7 +36,6 @@ test("subprocess result seam classifies localTimeout, signal, nonzero exit, clea
     timeoutMs: localTimeoutMs,
   });
   assert.equal(timed.localTimeout, true);
-  assert.equal(timed.timedOut, true);
   assert.equal(timed.localTimeoutOwner, "runPiSubprocess");
   assert.equal(timed.localTimeoutMs, localTimeoutMs);
   assert.equal(timed.code, null);
@@ -46,7 +46,6 @@ test("subprocess result seam classifies localTimeout, signal, nonzero exit, clea
     { cwd: packageRoot, timeoutMs: 15_000 },
   );
   assert.equal(signaled.localTimeout, false);
-  assert.equal(signaled.timedOut, false);
   assert.equal(signaled.localTimeoutOwner, null);
   assert.equal(signaled.localTimeoutMs, null);
   assert.equal(signaled.signal, "SIGTERM");
@@ -93,7 +92,6 @@ test("subprocess result seam classifies localTimeout, signal, nonzero exit, clea
     { cwd: packageRoot, timeoutMs: postExitDeadlineMs },
   );
   assert.equal(postExit.localTimeout, false);
-  assert.equal(postExit.timedOut, false);
   assert.equal(postExit.localTimeoutOwner, null);
   assert.equal(postExit.localTimeoutMs, null);
   assert.equal(postExit.signal, null);
@@ -123,6 +121,67 @@ test("subprocess result seam classifies localTimeout, signal, nonzero exit, clea
       return true;
     },
   );
+
+  // Post-exit collection error on the real helper: descendant holds stdio so
+  // exit is recorded while pipes stay open; test-side ChildProcess.emit wrap
+  // (not a production hook) destroys stdout after exit listeners run. Must
+  // keep process code/signal — not stream errno — plus localTimeout facts and
+  // collected output. Reverting exited?exitCode/exitSignal selection fails this.
+  const collectionHoldMs = 2_000;
+  const originalEmit = ChildProcess.prototype.emit;
+  ChildProcess.prototype.emit = function (
+    this: ChildProcess,
+    event: string | symbol,
+    ...args: unknown[]
+  ): boolean {
+    if (event === "exit" && args[0] === 7) {
+      const emitted = originalEmit.apply(this, arguments as never);
+      if (this.stdout && !this.stdout.destroyed) {
+        this.stdout.destroy(
+          Object.assign(new Error("forced collection"), {
+            code: "ERR_STREAM_DESTROYED",
+          }),
+        );
+      }
+      return emitted;
+    }
+    return originalEmit.apply(this, arguments as never);
+  };
+  try {
+    await assert.rejects(
+      () =>
+        runNodeSubprocess(
+          [
+            "-e",
+            [
+              "const { spawn } = require('node:child_process');",
+              `const hold = spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${collectionHoldMs})'], {`,
+              "  stdio: ['ignore', 'inherit', 'inherit'],",
+              "  detached: true,",
+              "});",
+              "hold.unref();",
+              "process.stdout.write('out');",
+              "process.stderr.write('err');",
+              "process.exit(7);",
+            ].join(""),
+          ],
+          { cwd: packageRoot, timeoutMs: 15_000 },
+        ),
+      (error: unknown) => {
+        assert.ok(error instanceof TestSubprocessOperationalError);
+        assert.equal(error.code, 7);
+        assert.equal(error.signal, null);
+        assert.equal(error.localTimeout, false);
+        assert.equal(error.localTimeoutOwner, null);
+        assert.equal(error.localTimeoutMs, null);
+        assert.equal(error.stdout, "out");
+        assert.equal(error.stderr, "err");
+        return true;
+      },
+    );
+  } finally {
+    ChildProcess.prototype.emit = originalEmit;
+  }
 });
 
 test("hermetic HOME restores the exact prior value and recursively cleans up after a throw", async () => {
