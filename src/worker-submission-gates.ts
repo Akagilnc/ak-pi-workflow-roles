@@ -90,10 +90,16 @@ export function installWorkerGitHooks(cwd: string): void {
   try { bareInCommon = gitFile(commonConfig, ["--get", "core.bare"]) === "true"; } catch { /* unset */ }
   try { worktreeInCommon = gitFile(commonConfig, ["--get", "core.worktree"]); } catch { /* unset */ }
 
-  // Skip shared write when already enabled — concurrent sibling activations otherwise race
-  // on .git/config.lock (#267). First enable still writes; real write failures still throw.
+  // Skip shared write when already enabled in *this* repo — concurrent sibling activations
+  // otherwise race on .git/config.lock (#267). Scope must be --local (common config): a
+  // global/system true must not skip the repo's first enable. Value must use Git bool
+  // semantics (true/yes/on/1), not a literal "true" compare. First enable still writes;
+  // real write failures still throw.
   let worktreeConfigEnabled = false;
-  try { worktreeConfigEnabled = git(cwd, ["config", "--get", "extensions.worktreeConfig"]) === "true"; } catch { /* unset */ }
+  try {
+    worktreeConfigEnabled =
+      git(cwd, ["config", "--local", "--bool", "--get", "extensions.worktreeConfig"]) === "true";
+  } catch { /* unset or non-bool */ }
   if (!worktreeConfigEnabled) {
     git(cwd, ["config", "extensions.worktreeConfig", "true"]);
   }
