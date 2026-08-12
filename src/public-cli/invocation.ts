@@ -236,7 +236,7 @@ export async function observeLaunchedRolePackageIdentity(
   packageRoot: string,
   selectedRoleEntry: string,
 ): Promise<LaunchedRolePackageIdentity> {
-  const rolePackageRoot = await realpath(packageRoot);
+  const rolePackageRoot = packageRoot;
   const raw = JSON.parse(
     await readFile(join(rolePackageRoot, "package.json"), "utf8"),
   ) as { version?: unknown };

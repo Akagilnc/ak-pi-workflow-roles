@@ -15341,7 +15341,7 @@ async function recordLaunchedPiIdentity(runDirectory, identity) {
   });
 }
 async function observeLaunchedRolePackageIdentity(packageRoot2, selectedRoleEntry) {
-  const rolePackageRoot = await realpath2(packageRoot2);
+  const rolePackageRoot = packageRoot2;
   const raw = JSON.parse(
     await readFile4(join4(rolePackageRoot, "package.json"), "utf8")
   );
