@@ -44,7 +44,7 @@
 - **角色运行(Role run)**:一次已受理角色调用的持久执行身份，连接其调用请求、Pi session 与终局结果，并可在用户改选模型后继续同一现场。
 - **候簿(Ledger book)**:包所有的机器级记录之家,按主仓分簿(键=git common dir 宿主目录的 basename)。它是记录落点的唯一真源;消费者仓零侵入——记录不写进被服务的仓库。_Avoid_:家册、账本目录、工作区记录。
 - **司天台(Sitian)**:记录的所有者。两件职掌——**如实记录**(记录的落点由它决定,不由写入方各自选)与**生成高阶数据**(从记录派生可消费的结论,双面对账是其第一期实例)。确定性机制,非 LLM 角色。_Avoid_:Recorder、Docket、遥测。
-- **太史(Taishi)**:司天台的分析席。只读司天台记录、生成高阶数据(首例:耗时榜单——腿墙钟总榜＋单腿动作榜,耗时三桶归因,角色成功率);确定性机制,非 LLM 角色,可单独调用;指标居基础记录同家下的独立目录。建设排在二期记录工程后。规范见 [ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)。_Avoid_:遥测、metrics-service、Telemetry。
+- **太史(Taishi)**:司天台的分析席。只读司天台记录、生成高阶数据(首例:耗时榜单——腿墙钟总榜＋单腿动作榜,耗时两桶归因——模型等待与工具执行两桶互斥、加和≡腿墙钟,返工作为正交透镜另计,角色成功率);确定性机制,非 LLM 角色,可单独调用;指标居基础记录同家下的独立目录。建设排在二期记录工程后。规范见 [ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)。_Avoid_:遥测、metrics-service、Telemetry。
 - **Artifact reference**:终局结果中声明的本地材料引用，用于打开完整报告、证据或错误详情；它补充内联核心结论，不替代结论。
 - **编排器(Orchestrator)**:包外的交通系统——起各角色 Pi 进程、递材料、按三态判词走边。它只读回执,不定义交卷形状。
 - **三态判词**:`converged` / `continue` / `escalate`。环境/工具链故障不是判词,以非零退出走故障通道。
