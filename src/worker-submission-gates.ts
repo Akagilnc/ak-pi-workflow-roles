@@ -94,12 +94,18 @@ export function installWorkerGitHooks(cwd: string): void {
   // otherwise race on .git/config.lock (#267). Scope must be --local (common config): a
   // global/system true must not skip the repo's first enable. Value must use Git bool
   // semantics (true/yes/on/1), not a literal "true" compare. First enable still writes;
-  // real write failures still throw.
+  // real write failures still throw. Only --get exit 1 means unset; other failures stay loud.
   let worktreeConfigEnabled = false;
   try {
     worktreeConfigEnabled =
       git(cwd, ["config", "--local", "--bool", "--get", "extensions.worktreeConfig"]) === "true";
-  } catch { /* unset or non-bool */ }
+  } catch (error) {
+    const status =
+      typeof error === "object" && error !== null && "status" in error
+        ? (error as { status: unknown }).status
+        : undefined;
+    if (status !== 1) throw error;
+  }
   if (!worktreeConfigEnabled) {
     git(cwd, ["config", "extensions.worktreeConfig", "true"]);
   }
