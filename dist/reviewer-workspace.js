@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs, sameReviewerPinnedTarget, sameReviewerRefs } from "./reviewer-git-snapshot.js";
+import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.js";
 export class ReviewerProcessError extends Error {
     command;
     args;
@@ -44,20 +44,13 @@ async function runCommand(command, args, options = {}) {
     });
 }
 async function git(cwd, args, signal, allowedCodes) { return runCommand("git", ["-C", cwd, ...args], { ...(signal === undefined ? {} : { signal }), ...(allowedCodes === undefined ? {} : { allowedCodes }) }); }
-async function readRefs(cwd, signal) { return parseReviewerRefSnapshot((await git(cwd, reviewerRefSnapshotArgs(), signal)).stdout.trim()); }
 async function verifySnapshot(cwd, snapshot, signal) {
     if ((await git(cwd, ["rev-parse", "--show-object-format"], signal)).stdout.trim() !== snapshot.objectFormat)
         throw new Error("Review clone object format does not match the pinned session snapshot");
     const head = (await git(cwd, ["rev-parse", "HEAD^{commit}"], signal)).stdout.trim();
     if (head !== snapshot.targetHead)
         throw new Error(`Review clone target mismatch: expected ${snapshot.targetHead}, got ${head}`);
-    if (!sameReviewerRefs(await readRefs(cwd, signal), snapshot.refs))
-        throw new Error("Review clone ref map does not match the pinned session snapshot");
-    for (const entry of Object.values(snapshot.refs)) {
-        await git(cwd, ["cat-file", "-e", `${entry.objectId}^{object}`], signal);
-        if (entry.peeledCommitId !== null)
-            await git(cwd, ["cat-file", "-e", `${entry.peeledCommitId}^{commit}`], signal);
-    }
+    await git(cwd, ["cat-file", "-e", `${snapshot.targetHead}^{commit}`], signal);
 }
 function workspaceError(error, failure, disposition, target) {
     const wrapped = error instanceof Error ? error : new Error(String(error), { cause: error });
@@ -68,31 +61,20 @@ async function prepareSnapshot(accepted, signal, dependencies) {
     try {
         dependencies.fault?.("snapshot.head");
         const objectFormat = (await git(accepted.repositoryRoot, ["rev-parse", "--show-object-format"], signal)).stdout.trim();
-        if (objectFormat !== accepted.objectFormat)
-            throw new Error("Accepted Reviewer object format no longer matches the repository");
         const targetHead = (await git(accepted.repositoryRoot, ["rev-parse", "HEAD^{commit}"], signal)).stdout.trim();
-        dependencies.fault?.("snapshot.refs");
-        const refs = await readRefs(accepted.repositoryRoot, signal);
-        if (!sameReviewerPinnedTarget({ repositoryRoot: accepted.repositoryRoot, objectFormat: accepted.objectFormat, targetHead, refs }, accepted))
-            throw new Error("Accepted Reviewer target/ref identity no longer matches the repository");
+        if (!sameReviewerPinnedTarget({ repositoryRoot: accepted.repositoryRoot, objectFormat: objectFormat, targetHead }, accepted))
+            throw new Error("Accepted Reviewer target identity no longer matches the repository");
+        await git(accepted.repositoryRoot, ["cat-file", "-e", `${targetHead}^{commit}`], signal);
         dependencies.fault?.("mirror.before-create");
         mirrorRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-snapshot-"));
         const mirrorPath = join(mirrorRoot, "repository.git");
         dependencies.fault?.("mirror.create");
-        await runCommand("git", ["clone", "--mirror", "--no-hardlinks", accepted.repositoryRoot, mirrorPath], signal === undefined ? {} : { signal });
-        const present = await git(mirrorPath, ["cat-file", "-e", `${targetHead}^{commit}`], signal, [0, 1, 128]);
-        if (present.code !== 0) {
-            await git(mirrorPath, ["fetch", "--no-tags", accepted.repositoryRoot, targetHead], signal);
-            await git(mirrorPath, ["update-ref", "refs/ak-reviewer/target", targetHead], signal);
-        }
+        await runCommand("git", ["init", "--bare", `--object-format=${accepted.objectFormat}`, mirrorPath], signal === undefined ? {} : { signal });
+        await git(mirrorPath, ["fetch", "--no-tags", accepted.repositoryRoot, targetHead], signal);
+        await git(mirrorPath, ["update-ref", "refs/ak-reviewer/target", targetHead], signal);
         dependencies.fault?.("mirror.verify");
-        if (!sameReviewerRefs(await readRefs(mirrorPath, signal), refs))
-            throw new Error("Bare review mirror ref map changed while the snapshot was prepared");
-        const objects = Object.values(refs).flatMap(e => e.peeledCommitId === null ? [e.objectId] : [e.objectId, e.peeledCommitId]);
-        for (const object of new Set([targetHead, ...objects]))
-            await git(mirrorPath, ["cat-file", "-e", `${object}^{object}`], signal);
-        await git(mirrorPath, ["config", "--remove-section", "remote.origin"], signal, [0, 5, 128]);
-        return { ...accepted, targetHead, refs, mirrorRoot, mirrorPath };
+        await git(mirrorPath, ["cat-file", "-e", `${targetHead}^{commit}`], signal);
+        return { ...accepted, targetHead, mirrorRoot, mirrorPath };
     }
     catch (error) {
         throw workspaceError(error, "snapshot", mirrorRoot === undefined ? "not-created" : { retained: mirrorRoot }, accepted);
@@ -107,8 +89,7 @@ async function prepareClone(snapshot, signal, dependencies) {
         dependencies.fault?.("workspace.init");
         await git(workspace, ["init", `--object-format=${snapshot.objectFormat}`, "--initial-branch=ak-reviewer-unborn"], signal);
         dependencies.fault?.("workspace.fetch");
-        await git(workspace, ["fetch", "--no-tags", "--force", "--update-shallow", snapshot.mirrorPath, snapshot.targetHead, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+refs/remotes/*:refs/remotes/*"], signal);
-        await git(workspace, ["config", "--remove-section", "remote.origin"], signal, [0, 5, 128]);
+        await git(workspace, ["fetch", "--no-tags", snapshot.mirrorPath, snapshot.targetHead], signal);
         await git(workspace, ["checkout", "--detach", snapshot.targetHead], signal);
         dependencies.fault?.("workspace.verify");
         await verifySnapshot(workspace, snapshot, signal);

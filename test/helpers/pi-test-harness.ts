@@ -852,13 +852,21 @@ export async function runPiSubprocess(
     timeoutMs?: number;
   },
 ): Promise<PiSubprocessResult> {
+  const env = isolatedTestProcessEnv({
+    ...(options.env === undefined ? {} : { env: options.env }),
+    home: options.env?.HOME ?? options.cwd,
+    agentDir: options.env?.PI_CODING_AGENT_DIR ?? join(options.cwd, ".pi-agent"),
+  });
+  // Isolation masks ambient machine AK_ROLE_RUN_DIR. Public CLI children receive an
+  // explicit run binding in options.env — restore it so typed child→parent pages
+  // (provider HTTP / knownFailure) match production defaultExplicitInternalPiRunner.
+  const injectedRunDir = options.env?.AK_ROLE_RUN_DIR;
+  if (typeof injectedRunDir === "string" && injectedRunDir.trim() !== "") {
+    env.AK_ROLE_RUN_DIR = injectedRunDir;
+  }
   return runTestSubprocess(piCli, args, {
     cwd: options.cwd,
-    env: isolatedTestProcessEnv({
-      ...(options.env === undefined ? {} : { env: options.env }),
-      home: options.env?.HOME ?? options.cwd,
-      agentDir: options.env?.PI_CODING_AGENT_DIR ?? join(options.cwd, ".pi-agent"),
-    }),
+    env,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     owner: "runPiSubprocess",
   });
