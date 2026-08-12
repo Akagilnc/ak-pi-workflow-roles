@@ -37,6 +37,7 @@ import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts
 import {
   extractReviewerMethodInvocations,
   extractReviewerRoleOutcome,
+  formatTerminalResult,
   settleReviewerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -277,7 +278,19 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       "code-review",
     );
     const skillPath = resolvePackagedMethodSkillPath(packageRoot, "code-review");
-    const receipt = lawfulReviewerReceipt(["standards", "spec"]);
+    const receipt = {
+      ...lawfulReviewerReceipt(["standards", "spec"]),
+      auditNoReceipt: {
+        status: "no-receipt",
+        terminalToolCalled: false,
+        rejectedReceipts: [],
+        deliveryTurns: 2,
+        sessionCompletion: "settled-without-accepted-receipt",
+        runPointer: "/reviewer-audit/run",
+        attemptPointer: "reviewer-audit-attempt",
+        acceptedReceipt: false,
+      },
+    };
     const expansion = `<skill name="code-review" location="${material.skillPath}">\n${material.body}\n</skill>\n\nBase revision for the fixed review target: main\nUse this exact revision as the fixed review point.`;
     const sessionLines = [
       JSON.stringify({
@@ -325,6 +338,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal(extracted?.outcome.status, "completed");
     assert.deepEqual(extracted?.outcome.decisiveFacts.axes, ["standards", "spec"]);
     assert.deepEqual(extracted?.outcome.decisiveFacts.reportAxes, ["standards", "spec"]);
+    assert.equal((extracted?.outcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
 
     const invocations = extractReviewerMethodInvocations(entries, {
       allowedLocations: [material.skillPath, skillPath],
@@ -360,6 +374,8 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal(terminal.roleOutcome.role, "reviewer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(terminal.roleOutcome.status, "completed");
+    assert.equal((terminal.roleOutcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
+    assert.match(formatTerminalResult(terminal), /auditNoReceipt/);
     assert.equal(terminal.runId, "run-reviewer-settle-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);

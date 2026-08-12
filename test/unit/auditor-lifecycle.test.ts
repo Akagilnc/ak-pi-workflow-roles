@@ -300,6 +300,41 @@ test("injected completion preserves same-turn evidence failure identity", async 
   }
 });
 
+test("same-turn rejected decision and evidence failure propagates the evidence failure identity", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-correlated-rejection-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const faux = fauxProvider({ provider: "correlated-rejection-test" });
+    const baseTool = createComplianceDecisionTool("ak_correlated_rejection_decision", "Submit.");
+    let executions = 0;
+    const tool = {
+      ...baseTool,
+      async execute() {
+        executions += 1;
+        throw new Error("decision rejected");
+      },
+    };
+    await assert.rejects(
+      withRunDir(runDirectory, () => runComplianceAudit({
+        tool,
+        systemPrompt: "Read and decide.",
+        roleLabel: "Correlated rejection auditor",
+        invalidDecisionLabel: "invalid",
+        runCompletion: async () => fauxAssistantMessage([
+          fauxToolCall("read", { path: "missing-evidence.txt" }),
+          fauxToolCall(tool.name, { status: "pass" }),
+        ], { stopReason: "toolUse" }),
+        context: auditExtensionContext(cwd, sessionManager, faux),
+      })),
+      (error: unknown) => error instanceof Error
+        && (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
+    assert.equal(executions, 1);
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
 test("injected pending completion settles a same-turn evidence and decision batch exactly once", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-injected-decision-"));
   const runDirectory = join(cwd, "run");

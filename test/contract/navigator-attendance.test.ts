@@ -85,13 +85,30 @@ function sessionHarness() {
   let tool: any;
   let prompts = 0;
   let releasePrompt: (() => void) | undefined;
+  const rejectedPrepareReasons: string[] = [];
+  const transportFailures: string[] = [];
+  let providerFailure: { source: "transport"; cause: "transport" } | undefined;
   const session: NavigatorPreparationSession = {
     async prompt(_text) {
       prompts += 1;
+      providerFailure = undefined;
+      const rejected = rejectedPrepareReasons.shift();
+      if (rejected !== undefined) {
+        const id = `rejected-prepare-${prompts}`;
+        entries.push({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id, name: NAVIGATOR_PREPARE_TOOL_NAME, arguments: undefined }] } });
+        entries.push({ type: "message", message: { role: "toolResult", toolCallId: id, toolName: NAVIGATOR_PREPARE_TOOL_NAME, isError: true, content: [{ type: "text", text: rejected }] } });
+        throw new Error(rejected);
+      }
+      const transport = transportFailures.shift();
+      if (transport !== undefined) {
+        providerFailure = { source: "transport", cause: "transport" };
+        throw new Error(transport);
+      }
       await new Promise<void>((resolve) => { releasePrompt = resolve; });
     },
     appendEntry(_type, data) { entries.push({ type: "custom", customType: _type, data }); },
     entries: () => entries,
+    providerFailure: () => providerFailure,
     async setModel(model, thinkingLevel) { modelSettings.push({ model, thinkingLevel }); },
     dispose() {},
   };
@@ -100,6 +117,8 @@ function sessionHarness() {
     tool: () => tool,
     release: () => releasePrompt?.(),
     prompts: () => prompts,
+    rejectPrepare(...reasons: string[]) { rejectedPrepareReasons.push(...reasons); },
+    failTransport(...reasons: string[]) { transportFailures.push(...reasons); },
     /** Production-retained typed context fact (ak-navigator-context), not a prompt metadata channel. */
     retainedContext: () => {
       const entry = [...entries].reverse().find((item: any) => item?.customType === "ak-navigator-context");
@@ -163,6 +182,65 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     throw error;
   }
   await cleanupTempDir(root);
+});
+
+test("rejected Navigator prepare consumes budget and correction succeeds in the same session", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-rejected-prepare-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    harness.rejectPrepare("root parameters must be an object");
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events);
+    nav.prepare();
+    while (harness.prompts() < 2 || harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    await harness.tool().execute("corrected-prepare", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 2);
+    assert.equal(events[0]?.disposition, "recommendation");
+  } finally { await cleanupTempDir(root); }
+});
+
+test("two rejected Navigator prepares settle typed no-advice with exact reasons and no third prompt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-rejected-exhaustion-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    harness.rejectPrepare("root rejection one", "root rejection two");
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events);
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 2, "budget exhaustion must not start a third prompt");
+    assert.equal(events[0]?.disposition, "no-advice");
+    const lifecycle = harness.entries.find((entry: any) => entry.customType === "ak-no-receipt-lifecycle") as any;
+    assert.deepEqual(lifecycle?.data.rejectedReceipts, [
+      { reason: "root rejection one" },
+      { reason: "root rejection two" },
+    ]);
+    assert.equal(lifecycle?.data.terminalToolCalled, true);
+  } finally { await cleanupTempDir(root); }
+});
+
+test("Navigator transport failure remains unavailable and does not enter rejected-prepare budget", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-prepare-transport-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    harness.failTransport("socket reset");
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events);
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 1);
+    assert.equal(events[0]?.disposition, "unavailable");
+    assert.equal(events[0]?.unavailableSource, "transport");
+    assert.equal(harness.entries.some((entry: any) => entry.customType === "ak-no-receipt-lifecycle"), false);
+  } finally { await cleanupTempDir(root); }
 });
 
 test("live help changes the next hint without a static template or fabricated task arguments", async () => {

@@ -106,6 +106,28 @@ function unavailableKey(value) {
 function exactRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+function rejectedPrepareReason(entries, start) {
+  const recent = entries.slice(start);
+  const prepareCalls = /* @__PURE__ */ new Set();
+  for (const entry of recent) {
+    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message) || entry.message.role !== "assistant" || !Array.isArray(entry.message.content)) continue;
+    for (const part of entry.message.content) {
+      if (exactRecord(part) && part.type === "toolCall" && part.name === NAVIGATOR_PREPARE_TOOL_NAME && typeof part.id === "string") prepareCalls.add(part.id);
+    }
+  }
+  let reason;
+  for (const entry of recent) {
+    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message) || entry.message.role !== "toolResult" || entry.message.isError !== true) continue;
+    const callId = entry.message.toolCallId;
+    if (entry.message.toolName !== NAVIGATOR_PREPARE_TOOL_NAME || typeof callId !== "string" || !prepareCalls.has(callId)) {
+      return void 0;
+    }
+    const content = entry.message.content;
+    const text = Array.isArray(content) ? content.flatMap((part) => exactRecord(part) && typeof part.text === "string" ? [part.text] : []).join("") : typeof content === "string" ? content : "";
+    if (text.trim() !== "") reason = text.trim();
+  }
+  return reason;
+}
 function targetIsValid(value) {
   if (!exactRecord(value) || !targetRoles.has(String(value.role))) return false;
   const metadata = packagedRoleMetadata(String(value.role));
@@ -529,10 +551,29 @@ ${helpContext}
       try {
         if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
         const delivery = createReceiptDeliveryPolicy();
-        await activeSession.prompt(request);
+        const promptAllowingRejectedPrepare = async (text, deliveryRequest) => {
+          const entryStart = activeSession.entries().length;
+          let promptFailure;
+          try {
+            await activeSession.prompt(text);
+          } catch (error) {
+            promptFailure = error;
+          }
+          const providerFailure = activeSession.providerFailure?.();
+          if (providerFailure !== void 0) {
+            throw navigatorUnavailableError(providerFailure.source, promptFailure ?? "Navigator provider failure", providerFailure.cause);
+          }
+          const rejectedReason = rejectedPrepareReason(activeSession.entries(), entryStart);
+          if (rejectedReason !== void 0) {
+            delivery.recordRejected(rejectedReason);
+            return;
+          }
+          if (promptFailure !== void 0) throw promptFailure;
+          if (deliveryRequest && output === void 0) delivery.recordDeliveryRequest();
+        };
+        await promptAllowingRejectedPrepare(request, false);
         while (output === void 0 && delivery.nextAction() === "request-delivery") {
-          delivery.recordDeliveryRequest();
-          await activeSession.prompt(RECEIPT_DELIVERY_PROMPT);
+          await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
         }
         if (output === void 0 && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === void 0) {
           const facts = delivery.facts({ runPointer: sessionDir, attemptPointer: invocationId });
