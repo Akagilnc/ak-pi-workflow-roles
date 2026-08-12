@@ -17,7 +17,11 @@ export async function runPublicCliSubprocess(
     agentDir: string;
     cwd?: string;
     env?: NodeJS.ProcessEnv;
-    timeoutMs?: number;
+    /**
+     * Harness deadline. `null` = no deadline (delegate without timeoutMs).
+     * Omit / undefined keeps the historical 45s default.
+     */
+    timeoutMs?: number | null;
   },
 ): Promise<PublicCliSubprocessResult> {
   const mergedEnv = isolatedTestProcessEnv({
@@ -31,7 +35,9 @@ export async function runPublicCliSubprocess(
       ...mergedEnv,
       PATH: `${dirname(bin)}:${mergedEnv.PATH ?? ""}`,
     },
-    timeoutMs: options.timeoutMs ?? 45_000,
+    ...(options.timeoutMs === null
+      ? {}
+      : { timeoutMs: options.timeoutMs ?? 45_000 }),
     owner: "runPublicCliSubprocess",
   });
 }
