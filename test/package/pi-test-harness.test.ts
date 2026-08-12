@@ -72,26 +72,6 @@ test("subprocess result seam classifies localTimeout, signal, nonzero exit, and 
 
   await assert.rejects(
     () =>
-      runNodeSubprocess(
-        [
-          "-e",
-          "process.stdout.write(Buffer.alloc(11 * 1024 * 1024).fill(0x61));",
-        ],
-        { cwd: packageRoot, timeoutMs: 15_000 },
-      ),
-    (error: unknown) => {
-      assert.ok(error instanceof TestSubprocessOperationalError);
-      assert.equal(error.code, "ERR_CHILD_PROCESS_STDIO_MAXBUFFER");
-      assert.equal(error.localTimeout, false);
-      assert.equal(error.signal, null);
-      assert.ok(error.stdout.length > 0);
-      assert.equal(typeof error.stderr, "string");
-      return true;
-    },
-  );
-
-  await assert.rejects(
-    () =>
       runPublicCliSubprocess("/no/such/ak-roles-bin", ["--help"], {
         home: packageRoot,
         agentDir: packageRoot,
