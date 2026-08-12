@@ -577,9 +577,8 @@ export async function admitJudgeInvocation(
   }
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -716,9 +715,8 @@ export async function admitCoderInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -832,9 +830,8 @@ export async function admitFixerInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1107,9 +1104,8 @@ export async function admitCollectorInvocation(
   }
 
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1419,9 +1415,8 @@ export async function admitDoctorInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "doctor", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
 
   let caseRunsPath: string;
   try {
@@ -1623,9 +1618,8 @@ export async function admitReviewerInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1845,9 +1839,8 @@ export async function admitMergerInvocation(
   );
 
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
