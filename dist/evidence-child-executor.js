@@ -432,8 +432,8 @@ export async function executeAuditorChild(options) {
         let decisionSubmitted = false;
         let decisionCallId;
         let decisionToolFailure;
-        let decisionExecutionAttempts = 0;
         const decisionToolFailures = new Map();
+        const delivery = createReceiptDeliveryPolicy();
         const tool = wrapPackageOwnedToolDefinition({
             ...options.tool,
             label: options.roleLabel,
@@ -442,14 +442,14 @@ export async function executeAuditorChild(options) {
                     throw new Error("Auditor decision was submitted more than once");
                 }
                 // Pi may execute several decision calls from one assistant response.
-                // Refuse excess calls before the role tool once two real rejections have
-                // consumed the shared lifecycle budget.
-                if (decisionExecutionAttempts >= 2) {
+                // Reserve shared-policy capacity before invoking the role tool so an
+                // excess batched sibling cannot execute before its rejection is drained.
+                if (!delivery.reserveTerminalExecution()) {
                     throw new Error("Auditor decision rejection budget exhausted");
                 }
-                decisionExecutionAttempts += 1;
                 try {
                     const result = await options.tool.execute(...args);
+                    delivery.recordAccepted();
                     decision = args[1];
                     decisionCallId = args[0];
                     decisionToolFailure = undefined;
@@ -592,7 +592,6 @@ export async function executeAuditorChild(options) {
             options.signal?.addEventListener("abort", abort, { once: true });
         try {
             try {
-                const delivery = createReceiptDeliveryPolicy();
                 const promptAllowingRejectedDecision = async (prompt) => {
                     rejectedDecisionResponse = undefined;
                     promptNeighboringFailure = undefined;
