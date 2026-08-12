@@ -396,7 +396,9 @@ function coldInstallDependencySpec(tarball: string): Record<string, string> {
     "@earendil-works/pi-coding-agent": `file:${
       resolve(packageRoot, "node_modules/@earendil-works/pi-coding-agent")
     }`,
-    typebox: `file:${resolve(packageRoot, "node_modules/typebox")}`,
+    // Exercise the optional peer exactly as an isolated consumer would: npm
+    // materializes its own copy instead of preserving a link into this checkout.
+    typebox: "1.3.8",
   };
 }
 
@@ -410,7 +412,7 @@ export async function getSharedColdInstalledPackage(): Promise<SharedColdInstall
     const cacheDir = resolve(
       FIXTURE_CACHE_ROOT,
       pack.provenance.fingerprint,
-      "cold-install",
+      "cold-install-v2",
     );
     const readyPath = resolve(cacheDir, "ready.json");
     const lockDir = resolve(cacheDir, ".lock");
@@ -512,6 +514,15 @@ export async function cloneSharedColdInstall(
   await rm(dest, { recursive: true, force: true });
   await mkdir(dirname(dest), { recursive: true });
   await cp(shared.fixture, dest, { recursive: true, force: true });
+  // The optional peer is registry-installed in the shared fixture; copy its
+  // bytes rather than relocating npm's checkout-bound symlink.
+  const typeboxPath = resolve(dest, "node_modules/typebox");
+  await rm(typeboxPath, { recursive: true, force: true });
+  await cp(resolve(shared.fixture, "node_modules/typebox"), typeboxPath, {
+    recursive: true,
+    force: true,
+    dereference: true,
+  });
   const installedRoot = resolve(dest, "node_modules/@akagilnc/pi-workflow-roles");
   const installed = (relativePath: string) =>
     import(pathToFileURL(resolve(installedRoot, relativePath)).href);
