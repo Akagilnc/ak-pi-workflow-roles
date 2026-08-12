@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-为 [Pi](https://pi.dev) 打包的工作流角色：大理寺（judge）、修内司（fixer）、将作监（coder）、御史台（reviewer）、门下省（collector）、太医署（doctor）、校书郎（merger）。English: [README.md](README.md)。
+为 [Pi](https://pi.dev) 打包的工作流角色：大理寺（judge）、修内司（fixer）、将作监（coder）、御史台（reviewer）、门下省（collector）、太医署（doctor）、校书郎（merger）。English: [README.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.md)。
 
 ## 安装
 
