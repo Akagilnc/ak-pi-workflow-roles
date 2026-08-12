@@ -4,7 +4,6 @@
  * an isolated cwd/PATH child seam; does not touch production, grace, or Navigator.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -19,6 +18,7 @@ import test from "node:test";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
 const THIS_CONTRACT_REL = "test/contract/run-test-all.test.ts";
@@ -110,7 +110,7 @@ async function runRunner(options: {
   binDir: string;
   recordPath: string;
   childExits?: string;
-}): Promise<{ code: number; stdout: string; stderr: string; records: ChildRecord[] }> {
+}) {
   await writeFile(options.recordPath, "", "utf8");
   await writeFile(`${options.recordPath}.count`, "0", "utf8");
 
@@ -125,35 +125,11 @@ async function runRunner(options: {
   // Ensure no stale test-only hook can influence the runner under test.
   delete env.AK_TEST_ALL_NODE;
 
-  const result = await new Promise<{
-    code: number;
-    stdout: string;
-    stderr: string;
-  }>((resolvePromise) => {
-    // Host the real runner with the real interpreter; only children resolve `node` via PATH.
-    const child = spawn(process.execPath, [RUNNER], {
-      cwd: options.cwd,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", (error) => {
-      resolvePromise({ code: 1, stdout, stderr: `${stderr}\n${error.message}` });
-    });
-    child.on("exit", (code, signal) => {
-      resolvePromise({
-        code: signal ? 1 : (code ?? 1),
-        stdout,
-        stderr,
-      });
-    });
+  // Host the real runner with the real interpreter; only children resolve `node` via PATH.
+  const result = await runTestSubprocess(process.execPath, [RUNNER], {
+    cwd: options.cwd,
+    env,
+    owner: "runRunner",
   });
 
   const raw = await readFile(options.recordPath, "utf8");

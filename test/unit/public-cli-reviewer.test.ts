@@ -795,7 +795,7 @@ test("reviewer activation rejection lands violation code and diagnostic in books
           return {
             code: subprocess.code,
             stderr: subprocess.stderr,
-            timedOut: subprocess.timedOut,
+            timedOut: subprocess.localTimeout,
             args: [...args],
           };
         },

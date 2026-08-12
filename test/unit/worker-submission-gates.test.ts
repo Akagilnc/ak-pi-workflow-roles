@@ -13,6 +13,7 @@ import {
   createWorkerSubmissionGate,
   installWorkerGitHooks,
   WorkerCommitReminderError,
+  WorkerUnfinishedReasonReminderError,
   WORKER_COMMIT_BASELINE_ENTRY_TYPE,
   WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
   WORKER_COMMIT_SUBJECT_PREFIX,
@@ -37,15 +38,43 @@ async function tempGitRepo(): Promise<string> {
   return root;
 }
 
+test("unfinished reason gate bounces missing reason up to twice then accepts; reasoned unfinished free; other statuses unchanged", () => {
+  const gate = createWorkerSubmissionGate();
+  assert.throws(
+    () => gate.assertAcceptable("unfinished", {}),
+    (error: unknown) =>
+      error instanceof WorkerUnfinishedReasonReminderError &&
+      error.code === "worker_unfinished_reason_reminder" &&
+      error.message === "补理由（前置缺失/违宪之一）或继续施工",
+  );
+  assert.throws(() => gate.assertAcceptable("unfinished", { reason: "   " }), WorkerUnfinishedReasonReminderError);
+  assert.doesNotThrow(() =>
+    gate.assertAcceptable("unfinished", {
+      reason: "prerequisite_missing: pending owner decision on adapter scope",
+    }),
+  );
+
+  const loop = createWorkerSubmissionGate();
+  assert.throws(() => loop.assertAcceptable("unfinished", {}), WorkerUnfinishedReasonReminderError);
+  assert.throws(() => loop.assertAcceptable("unfinished", {}), WorkerUnfinishedReasonReminderError);
+  assert.doesNotThrow(() => loop.assertAcceptable("unfinished", {}));
+  assert.doesNotThrow(() => loop.assertAcceptable("planned"));
+  assert.doesNotThrow(() => loop.assertAcceptable("refused"));
+});
+
 test("① completed/partially_completed zero-commit bounces once then confirm; other statuses free; git failure surfaces; unborn is no-commit", async () => {
   const root = await tempGitRepo();
   const bare = await mkdtemp(join(tmpdir(), "ak-worker-gate-bare-"));
   try {
     const gate = createWorkerSubmissionGate();
     gate.arm(root);
-    for (const status of ["planned", "refused", "unfinished"] as const) {
+    for (const status of ["planned", "refused"] as const) {
       assert.doesNotThrow(() => gate.assertAcceptable(status), status);
     }
+    // unfinished without reason is the reason-gate's concern; with reason it stays commit-free.
+    assert.doesNotThrow(() =>
+      gate.assertAcceptable("unfinished", { reason: "unconstitutional: task contradicts ADR 0055" }),
+    );
     assert.throws(
       () => gate.assertAcceptable("completed"),
       (error: unknown) =>
