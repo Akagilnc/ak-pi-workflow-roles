@@ -234,6 +234,7 @@ test("stable factory registers the complete typed role flag set and stays inert 
     "before_agent_start",
     "session_start",
     "tool_result",
+    "agent_end",
     "agent_settled",
     "session_shutdown",
     "tool_execution_start",
