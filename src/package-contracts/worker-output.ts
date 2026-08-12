@@ -23,7 +23,7 @@ export type WorkerRoleLabel = "Coder" | "Fixer";
 export type CoderOutput =
   | { status: "planned"; report: string }
   | { status: "completed" | "refused"; report: string }
-  | { status: "unfinished"; report: string; remainingScope: string };
+  | { status: "unfinished"; report: string; remainingScope: string; reason?: string };
 export type WorkerOutput = CoderOutput | FixerOutput;
 
 export function validateAcceptedCoderDetails(output: unknown): CoderOutput {

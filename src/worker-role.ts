@@ -61,9 +61,17 @@ const coderOutputVariants = Type.Union([
     report: Type.String({ minLength: 1, description: "Truthful Coder outcome report." }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: StringEnum(["unfinished"] as const, { description: "Honest unfinished apply outcome." }),
+    status: StringEnum(["unfinished"] as const, {
+      description:
+        "Apply outcome when a missing prerequisite or an unconstitutional constraint blocks completing this invocation; state the reason.",
+    }),
     report: Type.String({ minLength: 1, description: "Truthful Coder outcome report." }),
     remainingScope: Type.String({ minLength: 1, description: "Work remaining after this invocation." }),
+    reason: Type.Optional(Type.String({
+      minLength: 1,
+      description:
+        "Blocking reason: prerequisite missing or unconstitutional. A missing pending owner decision or answer is a missing prerequisite.",
+    })),
   }, { additionalProperties: false }),
 ]);
 const coderOutputSchema = openToolObjectFromUnion(coderOutputVariants);
@@ -222,12 +230,13 @@ export function createFixerRoleRuntime(
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "Fixer Output",
           description:
-            "Submit the plan refusal, apply settlement, or honest unfinished handover.",
+            "Submit the plan refusal, apply settlement, or unfinished blocked-handover receipt.",
           promptSnippet: "Submit the final fixer report",
           promptGuidelines: [
             `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
             `${FIXER_OUTPUT_TOOL_NAME} reports only lawful assignment blockers; infrastructure failures abort.`,
             "plan permits planned|refused; apply permits completed|refused|partially_completed|unfinished.",
+            "unfinished is available only when a missing prerequisite or an unconstitutional constraint prevents completing this invocation; state the reason. A missing pending owner decision or answer is a missing prerequisite.",
             "When the diff includes test changes, submit testEvidence: contract proven, one-line minimum necessary cost, measured duration.",
           ],
           parameters: fixerOutputSchema,
@@ -242,7 +251,7 @@ export function createFixerRoleRuntime(
               ctx,
             );
             const output = deepFreeze(validateFixerOutputForPacket(parameters, phase, packet));
-            submissionGate.assertAcceptable(output.status);
+            submissionGate.assertAcceptable(output.status, output);
             return {
               content: [{ type: "text" as const, text: "Fixer report accepted" }],
               details: output,
@@ -345,12 +354,13 @@ export function createCoderRoleRuntime(
           name: CODER_OUTPUT_TOOL_NAME,
           label: "Coder Output",
           description:
-            "Submit a plan, completion, unfinished handoff, or evidence-bearing refusal for the active coder phase.",
+            "Submit a plan, completion, unfinished blocked-handover, or evidence-bearing refusal for the active coder phase.",
           promptSnippet: "Submit the final coder report",
           promptGuidelines: [
             `Use ${CODER_OUTPUT_TOOL_NAME} as the final action for the coder role.`,
             `${CODER_OUTPUT_TOOL_NAME} never escalates; explain authority or task conflicts in report for the caller to dispose.`,
-            "plan permits planned|refused; apply permits completed|unfinished|refused. unfinished requires a non-blank remainingScope.",
+            "plan permits planned|refused; apply permits completed|unfinished|refused.",
+            "unfinished is available only when a missing prerequisite or an unconstitutional constraint prevents completing this invocation; state the reason. A missing pending owner decision or answer is a missing prerequisite.",
             "A completed apply report must preserve evidence for TDD, the same-pattern check, introduced-regression check, and behavior-fact check.",
           ],
           parameters: coderOutputSchema,
@@ -373,7 +383,7 @@ export function createCoderRoleRuntime(
                 "Coder completed requires the Matt tdd skill to be expanded through Pi /skill:tdd",
               );
             }
-            submissionGate.assertAcceptable(output.status);
+            submissionGate.assertAcceptable(output.status, output);
             return {
               content: [{ type: "text" as const, text: "Coder report accepted" }],
               details: output,
