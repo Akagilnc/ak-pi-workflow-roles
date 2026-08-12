@@ -75,7 +75,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
           env: { PI_OFFLINE: "1" },
         },
       );
-      assert.equal(run.timedOut, false, run.stderr);
+      assert.equal(run.localTimeout, false, run.stderr);
       assert.equal(run.code, 1, run.stderr);
       const runsRoot = resolve(home, ".ak-roles", "books", "identity-work", "runs");
       const names = (await readdir(runsRoot)).filter((name) => name.endsWith("@coder")).sort();
@@ -105,7 +105,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
         PI_OFFLINE: "1",
       },
     });
-    assert.equal(repeated.timedOut, false, repeated.stderr);
+    assert.equal(repeated.localTimeout, false, repeated.stderr);
     assert.equal(repeated.code, 0, repeated.stderr);
     await assertHostPeersAbsent();
     await traceInvocationIdentity();
@@ -141,7 +141,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
       home,
       agentDir: piAgentDir,
     });
-    assert.equal(roles.timedOut, false, roles.stderr);
+    assert.equal(roles.localTimeout, false, roles.stderr);
     assert.equal(roles.code, 0, roles.stderr);
     for (const seat of PUBLIC_CONFIGURABLE_SEATS) {
       assert.match(roles.stdout, new RegExp(`^${seat}\\t`, "m"));
@@ -217,7 +217,7 @@ test("ordinary Pi startup does not register Internal --ak-role; ak-role explicit
         PI_OFFLINE: "1",
       },
     });
-    assert.equal(ordinary.timedOut, false, ordinary.stderr);
+    assert.equal(ordinary.localTimeout, false, ordinary.stderr);
     assert.equal(ordinary.code, 0, ordinary.stderr);
     assert.equal(
       /--ak-role\b/.test(ordinary.stdout) || /--ak-role\b/.test(ordinary.stderr),
@@ -274,7 +274,7 @@ child.on("close", (code, signal) => {
         },
       },
     );
-    assert.equal(throughAkRole.timedOut, false, throughAkRole.stderr);
+    assert.equal(throughAkRole.localTimeout, false, throughAkRole.stderr);
     // No active merge → honest activation failure (nonzero), not deferred-slice prose.
     assert.notEqual(throughAkRole.code, 0, throughAkRole.stderr);
     assert.equal(
@@ -325,7 +325,7 @@ test("installed ak-role coder admits plan/apply and binds package-owned tdd with
       ["coder", "plan", "--project", project, "   "],
       { home, agentDir: piAgentDir },
     );
-    assert.equal(blank.timedOut, false, blank.stderr);
+    assert.equal(blank.localTimeout, false, blank.stderr);
     assert.equal(blank.code, 2, blank.stderr);
     assert.equal(blank.stderr.includes("not available in this install slice"), false);
 
@@ -363,7 +363,7 @@ process.exit(1);
         },
       },
     );
-    assert.equal(apply.timedOut, false, apply.stderr);
+    assert.equal(apply.localTimeout, false, apply.stderr);
     assert.equal(apply.stderr.includes("not available in this install slice"), false);
     const recorded = JSON.parse(await readFile(argvLog, "utf8")) as string[];
     assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "coder");
@@ -405,7 +405,7 @@ process.exit(1);
         },
       },
     );
-    assert.equal(plan.timedOut, false, plan.stderr);
+    assert.equal(plan.localTimeout, false, plan.stderr);
     assert.equal(plan.stderr.includes("not available in this install slice"), false);
     const planArgs = JSON.parse(await readFile(planArgvLog, "utf8")) as string[];
     assert.equal(planArgs[planArgs.indexOf("--ak-role") + 1], "coder");
@@ -435,7 +435,7 @@ test("installed ak-role collector admits a PR without observer declarations", as
       ["collector", "--pr", "0", "--project", project],
       { home, agentDir: piAgentDir },
     );
-    assert.equal(badPr.timedOut, false, badPr.stderr);
+    assert.equal(badPr.localTimeout, false, badPr.stderr);
     assert.equal(badPr.code, 2, badPr.stderr);
     assert.equal(badPr.stderr.includes("not available in this install slice"), false);
 
@@ -474,7 +474,7 @@ process.exit(1);
         },
       },
     );
-    assert.equal(run.timedOut, false, run.stderr);
+    assert.equal(run.localTimeout, false, run.stderr);
     assert.equal(run.stderr.includes("not available in this install slice"), false);
     const recorded = JSON.parse(await readFile(argvLog, "utf8")) as string[];
     assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "collector");
@@ -520,7 +520,7 @@ process.exit(1);
         },
       },
     );
-    assert.equal(overridden.timedOut, false, overridden.stderr);
+    assert.equal(overridden.localTimeout, false, overridden.stderr);
     const overrideArgs = JSON.parse(await readFile(overrideLog, "utf8")) as string[];
     assert.equal(
       overrideArgs[overrideArgs.indexOf("--ak-collector-repo") + 1],
@@ -557,7 +557,7 @@ test("installed ak-role fixer admits plan/apply and binds package diagnosing-bug
       ["fixer", "plan", "--project", project, "   "],
       { home, agentDir: piAgentDir },
     );
-    assert.equal(blank.timedOut, false, blank.stderr);
+    assert.equal(blank.localTimeout, false, blank.stderr);
     assert.equal(blank.code, 2, blank.stderr);
     assert.equal(blank.stderr.includes("not available in this install slice"), false);
 
@@ -611,7 +611,7 @@ process.exit(1);
         },
       },
     );
-    assert.equal(apply.timedOut, false, apply.stderr);
+    assert.equal(apply.localTimeout, false, apply.stderr);
     assert.equal(apply.stderr.includes("not available in this install slice"), false);
     const recorded = JSON.parse(await readFile(argvLog, "utf8")) as string[];
     assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "fixer");
@@ -661,7 +661,7 @@ process.exit(1);
         },
       },
     );
-    assert.equal(plan.timedOut, false, plan.stderr);
+    assert.equal(plan.localTimeout, false, plan.stderr);
     assert.equal(plan.stderr.includes("not available in this install slice"), false);
     const planArgs = JSON.parse(await readFile(planArgvLog, "utf8")) as string[];
     assert.equal(planArgs[planArgs.indexOf("--ak-role") + 1], "fixer");

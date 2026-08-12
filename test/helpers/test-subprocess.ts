@@ -16,8 +16,6 @@ export type TestSubprocessResult = {
   localTimeoutOwner: string | null;
   /** Configured deadline ms when localTimeout; otherwise null. */
   localTimeoutMs: number | null;
-  /** Alias of localTimeout for existing call sites. */
-  timedOut: boolean;
 };
 
 export class TestSubprocessOperationalError extends Error {
@@ -70,7 +68,6 @@ function settleResult(input: {
     localTimeout,
     localTimeoutOwner: localTimeout ? input.owner : null,
     localTimeoutMs: localTimeout ? (input.timeoutMs ?? null) : null,
-    timedOut: localTimeout,
   };
 }
 

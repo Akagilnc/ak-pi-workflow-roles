@@ -56,7 +56,7 @@ async function tracePublicMerger(residual?: "sole" | "sibling" | "wrong-attempt"
         const run = await runPiSubprocess([...args], { cwd: options.cwd, timeoutMs: options.timeoutMs ?? 90_000,
           env: { ...options.env, PI_OFFLINE: "1", AK_MERGER_FIXTURE_COMMIT: commit,
             ...(residual === undefined ? {} : { AK_MERGER_FIXTURE_RESIDUAL: residual }) } });
-        return { code: run.code, stdout: run.stdout, stderr: run.stderr, timedOut: run.timedOut, args: [...args] };
+        return { code: run.code, stdout: run.stdout, stderr: run.stderr, timedOut: run.localTimeout, args: [...args] };
       },
     });
   } finally { await rm(home, { recursive: true, force: true }); }
