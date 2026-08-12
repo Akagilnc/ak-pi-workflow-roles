@@ -12,7 +12,6 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { CliUsageError } from "./cli-errors.ts";
-import { clearChildKnownFailure } from "./explicit-internal.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import {
@@ -84,8 +83,6 @@ function typedProviderHttpPath(runDirectory: string): string {
  * Clear any prior attempt's typed provider HTTP observation.
  * Each initial/resume dispatch must start without inherited 429 evidence so
  * only the current attempt can qualify v1 resume.
- * Also clears child-written typed knownFailure so resume cannot inherit a stale
- * ExplicitInternalKnownFailure page.
  */
 export async function clearTypedProviderHttpObservation(
   runDirectory: string,
@@ -98,12 +95,10 @@ export async function clearTypedProviderHttpObservation(
       "code" in error &&
       (error as { code?: unknown }).code === "ENOENT"
     ) {
-      // missing is absence
-    } else {
-      throw error;
+      return;
     }
+    throw error;
   }
-  await clearChildKnownFailure(runDirectory);
 }
 
 /**

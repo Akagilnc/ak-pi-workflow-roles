@@ -783,7 +783,7 @@ export async function resolveAuditedRunnerKnownFailure(input: {
   runner: ExplicitInternalKnownFailure | undefined;
   sessionFile: string;
   credential: ExplicitInternalKnownFailure | undefined;
-  /** When set, recover child-written typed failure after runner omission. */
+  /** Reviewer only: recover child-written rejection page into knownFailure.details. */
   runDirectory?: string;
 }): Promise<ExplicitInternalKnownFailure | undefined> {
   if (input.runner !== undefined) return input.runner;

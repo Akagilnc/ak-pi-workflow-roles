@@ -5,7 +5,7 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { constants, writeFileSync } from "node:fs";
-import { access, readFile, realpath, unlink, writeFile } from "node:fs/promises";
+import { access, readFile, realpath, unlink } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
@@ -18,7 +18,7 @@ import {
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
 import type { ControlledFailureCause } from "./terminal.ts";
 
-/** Durable child→parent typed failure page under AK_ROLE_RUN_DIR (books settle via knownFailure). */
+/** Durable Reviewer-rejection child→parent page under AK_ROLE_RUN_DIR. */
 const CHILD_KNOWN_FAILURE_FILE = "typed-known-failure.json";
 
 const CONTROLLED_FAILURE_CAUSES = [
@@ -42,8 +42,8 @@ function childKnownFailurePath(runDirectory: string): string {
 }
 
 /**
- * Clear any prior attempt's child-written typed failure so resume/retry cannot
- * inherit a stale knownFailure identity.
+ * Clear any prior attempt's Reviewer rejection page so resume/retry cannot
+ * inherit a stale knownFailure.details.
  */
 export async function clearChildKnownFailure(runDirectory: string): Promise<void> {
   try {
@@ -61,7 +61,7 @@ export async function clearChildKnownFailure(runDirectory: string): Promise<void
 }
 
 /**
- * Synchronous durable write for activation-barrier throws (failInfrastructure is sync).
+ * Synchronous durable write for Reviewer dispatch rejection (child process exit is sync).
  * Parent public CLI recovers via readChildKnownFailure into the knownFailure channel.
  */
 export function recordChildKnownFailureSync(
@@ -69,18 +69,6 @@ export function recordChildKnownFailureSync(
   failure: ExplicitInternalKnownFailure,
 ): void {
   writeFileSync(
-    childKnownFailurePath(runDirectory),
-    `${JSON.stringify(failure)}\n`,
-    "utf8",
-  );
-}
-
-/** Async write for callers that already own an async settlement path. */
-export async function recordChildKnownFailure(
-  runDirectory: string,
-  failure: ExplicitInternalKnownFailure,
-): Promise<void> {
-  await writeFile(
     childKnownFailurePath(runDirectory),
     `${JSON.stringify(failure)}\n`,
     "utf8",

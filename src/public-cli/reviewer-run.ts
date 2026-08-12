@@ -14,6 +14,7 @@ import {
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
 import {
+  clearChildKnownFailure,
   runExplicitInternalActivation,
   type ExplicitInternalKnownFailure,
   type ExplicitInternalPiRunner,
@@ -267,6 +268,7 @@ async function dispatchAdmittedReviewer(input: {
     }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
+    await clearChildKnownFailure(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
