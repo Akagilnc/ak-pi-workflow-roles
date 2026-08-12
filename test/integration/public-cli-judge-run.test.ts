@@ -92,7 +92,7 @@ test(
         assert.equal(outcome.terminalToolCalled, scenario.mode === "rejected");
         assert.deepEqual(
           outcome.rejectedReceipts,
-          scenario.mode === "rejected" ? [{ reason: "未观察到 commit" }] : [],
+          scenario.mode === "rejected" ? [{ reason: "未观察到 commit", diagnosticAvailable: true }] : [],
         );
 
         const runDirectory = join(

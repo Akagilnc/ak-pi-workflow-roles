@@ -101,7 +101,7 @@ export async function disposeComplianceDecision(decision, handlers, deliveredOut
             if (handlers.noReceipt === undefined) {
                 throw new Error("Compliance no-receipt projection handler is unavailable");
             }
-            return await handlers.noReceipt(decision);
+            return await handlers.noReceipt(decision, decision.usage === undefined ? {} : { usage: decision.usage });
         case "revise":
             return await handlers.revise(decision.violations);
         case "escalate":
