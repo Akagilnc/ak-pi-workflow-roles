@@ -450,7 +450,7 @@ export function createRoleRuntimeExtension(
     });
     pi.on("tool_result", async (event) => {
       const role = selectedRole;
-      if (role === undefined || navigatorAttendance === undefined) return;
+      if (role === undefined) return;
       const isRoleInfrastructureFailure = pendingInfrastructureToolCallIds.delete(event.toolCallId);
       // Overlay typed infra fact so live settlement and durable session entry agree.
       const infrastructureDetails = isRoleInfrastructureFailure
@@ -459,6 +459,17 @@ export function createRoleRuntimeExtension(
       const classified = infrastructureDetails === undefined
         ? event
         : { ...event, details: infrastructureDetails };
+      const isOutputTool = event.toolName === navigatorOutputTool(role);
+      const outputClassification = isOutputTool ? classifyPackagedRoleTerminalResult(classified) : undefined;
+      if (isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure") {
+        receiptDelivery.stopForInfrastructure();
+      } else if (isOutputTool && outputClassification?.kind === "nonterminal" && event.isError) {
+        const reason = (event.content ?? [])
+          .map((part) => part.type === "text" ? part.text : "")
+          .join("")
+          .trim() || "terminating tool rejected";
+        receiptDelivery.recordRejected(reason);
+      }
       const settlement = publicNavigatorSettlement(
         role,
         navigatorPhase(pi, role),
@@ -466,17 +477,10 @@ export function createRoleRuntimeExtension(
       );
       if (settlement !== undefined) {
         if (settlement.kind === "accepted") receiptDelivery.recordAccepted();
-        else if (settlement.kind === "role_infrastructure_failure") receiptDelivery.stopForInfrastructure();
-        else if (event.isError) {
-          const reason = (event.content ?? [])
-            .map((part) => part.type === "text" ? part.text : "")
-            .join("")
-            .trim() || "terminating tool rejected";
-          receiptDelivery.recordRejected(reason);
-        }
         const attendance = navigatorAttendance;
-        const workContext = navigatorWorkContext;
-        const pending = (async () => {
+        if (attendance !== undefined) {
+          const workContext = navigatorWorkContext;
+          const pending = (async () => {
           // Accepted role terminal starts the post-role Navigator grace (#101/#106).
           if (settlement.kind !== "accepted") {
             await attendance.settle(settlement);
@@ -514,8 +518,9 @@ export function createRoleRuntimeExtension(
             void settlePromise.catch(() => undefined);
           }
         })();
-        pendingNavigatorSettlement = pending;
-        await pending;
+          pendingNavigatorSettlement = pending;
+          await pending;
+        }
       }
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.

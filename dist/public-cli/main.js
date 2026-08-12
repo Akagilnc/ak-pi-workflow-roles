@@ -17767,10 +17767,23 @@ var init_package_owned_tool_idle = __esm({
 });
 
 // src/receipt-delivery-policy.ts
-function noReceiptLifecycleFacts(input) {
-  if (input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT) throw new Error("receipt delivery budget is not exhausted");
-  if (input.runPointer.trim() === "" || input.attemptPointer.trim() === "") throw new Error("no-receipt lifecycle binding is missing");
-  return { ...input, deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT, sessionCompletion: "settled-without-accepted-receipt", acceptedReceipt: false };
+function isRecord4(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function parseNoReceiptLifecycleFacts(input) {
+  const fields = ["acceptedReceipt", "attemptPointer", "deliveryTurns", "rejectedReceipts", "runPointer", "sessionCompletion", "terminalToolCalled"];
+  if (!isRecord4(input) || Object.keys(input).sort().join("\0") !== fields.join("\0") || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord4(item) && Object.keys(item).length === 1 && typeof item.reason === "string" && item.reason.trim() !== "")) {
+    throw new TypeError("malformed no-receipt lifecycle facts");
+  }
+  return {
+    terminalToolCalled: input.terminalToolCalled,
+    rejectedReceipts: input.rejectedReceipts,
+    deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+    sessionCompletion: "settled-without-accepted-receipt",
+    runPointer: input.runPointer,
+    attemptPointer: input.attemptPointer,
+    acceptedReceipt: false
+  };
 }
 var RECEIPT_DELIVERY_TURN_LIMIT, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE;
 var init_receipt_delivery_policy = __esm({
@@ -17817,6 +17830,7 @@ var init_compliance_transport = __esm({
     init_build();
     init_evidence_child_executor();
     init_auditor_dossier_tool();
+    init_receipt_delivery_policy();
     nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
     decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
     complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
@@ -18529,7 +18543,7 @@ function extractSessionProviderStop(entries) {
   for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
-    const response = isRecord4(entry.data) && isRecord4(entry.data.response) ? entry.data.response : void 0;
+    const response = isRecord5(entry.data) && isRecord5(entry.data.response) ? entry.data.response : void 0;
     if (response?.role === "assistant" && response.stopReason === "error") {
       return {
         stopReason: "error",
@@ -18580,7 +18594,7 @@ async function readBoundEvidenceChildKnownFailure(sessionFile) {
       throw sessionReadFailure(error, "failed to read discovered evidence-child session");
     }
     const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord4(header) || header.parentSession !== sessionFile) continue;
+    if (!isRecord5(header) || header.parentSession !== sessionFile) continue;
     const stop = extractSessionProviderStop(entries);
     if (stop === void 0) continue;
     const primary = knownFailureFromProviderStop(stop);
@@ -18628,9 +18642,9 @@ async function readBoundAuditorKnownFailure(sessionFile) {
       throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
     const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord4(header) || header.parentSession !== sessionFile) continue;
+    if (!isRecord5(header) || header.parentSession !== sessionFile) continue;
     const bindingEntry = entries.find((entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE);
-    const bindingParent = isRecord4(bindingEntry?.data) && isRecord4(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
+    const bindingParent = isRecord5(bindingEntry?.data) && isRecord5(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
     const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
@@ -18638,11 +18652,11 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     if (stop === void 0) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
       const entry = entries[i];
-      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord4(entry.data)) continue;
-      const parent = isRecord4(entry.data.parent) ? entry.data.parent : void 0;
-      const failure = isRecord4(entry.data.failure) ? entry.data.failure : void 0;
+      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord5(entry.data)) continue;
+      const parent = isRecord5(entry.data.parent) ? entry.data.parent : void 0;
+      const failure = isRecord5(entry.data.failure) ? entry.data.failure : void 0;
       if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider") continue;
-      const identity = isRecord4(failure.identity) ? failure.identity : void 0;
+      const identity = isRecord5(failure.identity) ? failure.identity : void 0;
       return {
         cause: "provider",
         ...identity === void 0 ? {} : { identity: {
@@ -18650,7 +18664,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
           ...typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}
         } },
         ...typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {},
-        ...isRecord4(failure.details) ? { details: failure.details } : {}
+        ...isRecord5(failure.details) ? { details: failure.details } : {}
       };
     }
     const primary = knownFailureFromProviderStop(stop);
@@ -18681,8 +18695,8 @@ function typedFailedTerminatingToolKnownFailure(entries) {
     if (classification.kind !== "infrastructure") continue;
     if (typeof message.toolCallId !== "string" || typeof message.toolName !== "string") continue;
     if (boundRoleToolCallForResult(attemptEntries, i, message, message.toolName) === void 0) continue;
-    const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord4(part) && part.type === "text" && typeof part.text === "string") : void 0;
-    const diagnostic = isRecord4(textPart) ? textPart.text : void 0;
+    const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord5(part) && part.type === "text" && typeof part.text === "string") : void 0;
+    const diagnostic = isRecord5(textPart) ? textPart.text : void 0;
     return {
       cause: "output",
       identity: { name: message.toolName, code: message.toolCallId },
@@ -18730,7 +18744,7 @@ async function resolveAuditedRunnerKnownFailure(input) {
   const parentStop = await readSessionProviderStop(input.sessionFile);
   return parentStop === void 0 ? input.credential : knownFailureFromProviderStop(parentStop);
 }
-function isRecord4(value) {
+function isRecord5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function safelyRead(object, key) {
@@ -18744,7 +18758,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
   const facts = { judgeStatus };
   if (judgeStatus === "continue") {
     const fix = safelyRead(verdict, "fix");
-    if (fix.readable && isRecord4(fix.value)) {
+    if (fix.readable && isRecord5(fix.value)) {
       const summary = safelyRead(fix.value, "summary");
       if (summary.readable && typeof summary.value === "string") {
         facts.fixSummary = summary.value;
@@ -18754,7 +18768,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
     if (classes.readable && Array.isArray(classes.value)) {
       try {
         facts.classes = classes.value.map((entry) => {
-          if (!isRecord4(entry)) throw new Error("unreadable Judge class");
+          if (!isRecord5(entry)) throw new Error("unreadable Judge class");
           return {
             name: entry.name,
             owner: entry.owner,
@@ -18769,7 +18783,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
   }
   if (judgeStatus === "escalate") {
     const gate = safelyRead(verdict, "decisionGate");
-    if (gate.readable && isRecord4(gate.value)) {
+    if (gate.readable && isRecord5(gate.value)) {
       const question = safelyRead(gate.value, "question");
       const options = safelyRead(gate.value, "options");
       if (question.readable && typeof question.value === "string") {
@@ -18805,7 +18819,7 @@ function fixerDecisiveFacts(output) {
   const remainingScope = safelyRead(candidate, "remainingScope");
   if (status.readable && (status.value === "unfinished" || status.value === "refused") && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
   const blockerRead = safelyRead(candidate, "blocker");
-  if (status.readable && status.value === "refused" && blockerRead.readable && isRecord4(blockerRead.value)) {
+  if (status.readable && status.value === "refused" && blockerRead.readable && isRecord5(blockerRead.value)) {
     const cause = safelyRead(blockerRead.value, "cause");
     if (cause.readable && typeof cause.value === "string") facts.blockerCause = cause.value;
     const prerequisiteId = safelyRead(blockerRead.value, "prerequisiteId");
@@ -18817,13 +18831,13 @@ function fixerDecisiveFacts(output) {
     const blockers = [];
     try {
       for (const entry of classResults.value) {
-        if (!isRecord4(entry)) throw new Error("unreadable class result");
+        if (!isRecord5(entry)) throw new Error("unreadable class result");
         const name = safelyRead(entry, "name");
         const disposition = safelyRead(entry, "disposition");
         if (!name.readable || !disposition.readable) throw new Error("unreadable class result");
         rows.push({ name: name.value, disposition: disposition.value });
         const blocker = safelyRead(entry, "blocker");
-        if (disposition.value === "refused" && blocker.readable && isRecord4(blocker.value)) blockers.push(blocker.value);
+        if (disposition.value === "refused" && blocker.readable && isRecord5(blocker.value)) blockers.push(blocker.value);
       }
       facts.classResultCount = rows.length;
       facts.classDispositions = rows;
@@ -18856,7 +18870,7 @@ function collectorDecisiveFacts(receipt) {
   if (groups.readable && Array.isArray(groups.value)) {
     try {
       facts.groups = groups.value.map((group) => {
-        if (!isRecord4(group)) throw new Error("unreadable Collector group");
+        if (!isRecord5(group)) throw new Error("unreadable Collector group");
         const identity = safelyRead(group, "identity");
         const attendance = safelyRead(group, "attendance");
         const materials = safelyRead(group, "materials");
@@ -18889,7 +18903,7 @@ function doctorDecisiveFacts(output) {
     return facts;
   }
   const caseValue = safelyRead(candidate, "case");
-  if (caseValue.readable && isRecord4(caseValue.value)) {
+  if (caseValue.readable && isRecord5(caseValue.value)) {
     const issueNumber = safelyRead(caseValue.value, "issueNumber");
     const runsPath = safelyRead(caseValue.value, "runsPath");
     if (issueNumber.readable && issueNumber.value !== void 0) facts.issueNumber = issueNumber.value;
@@ -18900,7 +18914,7 @@ function doctorDecisiveFacts(output) {
   return facts;
 }
 function reviewerAxes(value) {
-  if (!isRecord4(value)) return [];
+  if (!isRecord5(value)) return [];
   return ["standards", "spec"].filter((axis) => {
     const projected = safelyRead(value, axis);
     return projected.readable && projected.value !== void 0;
@@ -18995,9 +19009,9 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted) {
   }
 }
 function isComplianceAuditIncomplete(value) {
-  if (!isRecord4(value) || value.status !== "audit-incomplete") return false;
+  if (!isRecord5(value) || value.status !== "audit-incomplete") return false;
   const observation = value.observation;
-  if (!isRecord4(observation)) return false;
+  if (!isRecord5(observation)) return false;
   if (observation.kind === "missing-dossier") return true;
   if (observation.kind === "missing-subject") {
     return typeof observation.subject === "string" && observation.subject.length > 0;
@@ -19047,7 +19061,7 @@ function boundRoleToolCallForResult(entries, resultIndex, message, outputToolNam
     const candidateMessage = entries[index]?.message;
     if (candidateMessage?.role === "assistant" && Array.isArray(candidateMessage.content)) {
       for (const part of candidateMessage.content) {
-        if (!isRecord4(part) || part.type !== "toolCall" || part.id !== callId) {
+        if (!isRecord5(part) || part.type !== "toolCall" || part.id !== callId) {
           continue;
         }
         if (part.name !== outputToolName) return void 0;
@@ -19069,7 +19083,7 @@ function sameAuditValue(left, right) {
       (value, index) => sameAuditValue(value, right[index])
     );
   }
-  if (isRecord4(left) && isRecord4(right)) {
+  if (isRecord5(left) && isRecord5(right)) {
     const leftKeys = Object.keys(left);
     const rightKeys = Object.keys(right);
     return leftKeys.length === rightKeys.length && leftKeys.every((key) => Object.hasOwn(right, key) && sameAuditValue(left[key], right[key]));
@@ -19107,7 +19121,7 @@ function boundAuditEscalationForResult(entries, resultIndex, message, role, outp
     const decision = readComplianceCandidate(retained.candidate);
     if (decision.status !== "escalate") return void 0;
     const details = message.details;
-    if (!isAuditEscalationResult(details) || !isRecord4(details)) return void 0;
+    if (!isAuditEscalationResult(details) || !isRecord5(details)) return void 0;
     const projectedDetails = snapshotAuditDetails(details);
     const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
     const hasDetailsConflicts = Object.hasOwn(projectedDetails, "conflicts");
@@ -19127,7 +19141,7 @@ function isUnboundAuditEscalationFace(details) {
     if (isAuditEscalationResult(details)) return true;
   } catch {
   }
-  if (!isRecord4(details)) return false;
+  if (!isRecord5(details)) return false;
   const kind = safelyRead(details, "kind");
   return kind.readable && kind.value === "audit_escalation";
 }
@@ -19144,11 +19158,11 @@ function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolNa
       continue;
     }
     retainedResponseCount += 1;
-    if (!isRecord4(entry.data) || !isRecord4(entry.data.response)) continue;
+    if (!isRecord5(entry.data) || !isRecord5(entry.data.response)) continue;
     const response = entry.data.response;
     if (!Array.isArray(response.content)) continue;
     const calls = response.content.filter(
-      (part) => isRecord4(part) && part.type === "toolCall"
+      (part) => isRecord5(part) && part.type === "toolCall"
     );
     if (calls.length !== 1 || calls[0]?.name !== auditToolName) continue;
     matches.push({ candidate: calls[0]?.arguments });
@@ -19350,7 +19364,7 @@ function extractJudgeRoleOutcome(entries) {
       };
     }
     if (isUnboundAuditEscalationFace(details)) continue;
-    if (!isRecord4(details)) continue;
+    if (!isRecord5(details)) continue;
     const statusRead = safelyRead(details, "judgeStatus");
     if (!statusRead.readable) continue;
     const judgeStatus = statusRead.value;
@@ -19424,7 +19438,7 @@ function parseNavigatorAttendanceDetails(details) {
   const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string" ? { advisoryDiagnostic: details.routePlaybookReadFailure } : {};
   if (disposition === "recommendation") {
     const next = details.next;
-    if (!isRecord4(next) || typeof next.role !== "string") {
+    if (!isRecord5(next) || typeof next.role !== "string") {
       return {
         disposition: "unavailable",
         source: "unknown",
@@ -19432,7 +19446,7 @@ function parseNavigatorAttendanceDetails(details) {
       };
     }
     const reason = typeof details.reason === "string" ? details.reason : "";
-    const route = Array.isArray(details.route) ? details.route.filter(isRecord4).map((target) => ({
+    const route = Array.isArray(details.route) ? details.route.filter(isRecord5).map((target) => ({
       role: String(target.role),
       phase: navigatorPhaseValue(target.phase)
     })) : void 0;
@@ -19510,7 +19524,7 @@ function extractNavigatorFact(entries, identity) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord4(details)) {
+      if (!isRecord5(details)) {
         return {
           disposition: "unavailable",
           source: "unknown",
@@ -19974,7 +19988,7 @@ async function settleLawfulCollectorTerminalResult(admitted) {
       const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
       if (residual === void 0) continue;
       const candidate = residual.candidate;
-      const duration = isRecord4(candidate) ? candidate.durationMs : void 0;
+      const duration = isRecord5(candidate) ? candidate.durationMs : void 0;
       if (Number.isSafeInteger(duration) && duration >= 1 && duration <= 9e5) {
         continue;
       }
@@ -20434,8 +20448,8 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
       const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
       if (residual === void 0) continue;
       const callMessage = entries[residual.callIndex]?.message;
-      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content) ? callMessage.content.filter((part) => isRecord4(part) && part.type === "toolCall") : [];
-      const attemptId = isRecord4(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
+      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content) ? callMessage.content.filter((part) => isRecord5(part) && part.type === "toolCall") : [];
+      const attemptId = isRecord5(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
       if (calls.length !== 1 || calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME || !attemptId.readable || attemptId.value !== admitted.runId) {
         continue;
       }
@@ -20688,9 +20702,9 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
       }
       const lifecycleEntry = entries.slice(attemptStart).reverse().find((entry) => entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
       const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
-      if (isRecord4(raw)) {
+      if (raw !== void 0) {
         try {
-          const facts = noReceiptLifecycleFacts(raw);
+          const facts = parseNoReceiptLifecycleFacts(raw);
           if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
             const decisiveFacts2 = facts;
             return {

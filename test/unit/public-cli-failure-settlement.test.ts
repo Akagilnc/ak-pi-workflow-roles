@@ -2447,6 +2447,7 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
   let requestCount = 0;
   let tracerFailure: unknown;
   let restoreParent: (() => Promise<void>) | undefined;
+  let retentionInjected = false;
   let restoreInterval: ReturnType<typeof setInterval> | undefined;
   const retainFailure = (error: unknown) => {
     if (tracerFailure === undefined) tracerFailure = error;
@@ -2459,22 +2460,31 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
     const toolNames = (body.tools ?? []).map((tool: any) => tool.function?.name);
     const auditTool = toolNames.find((name: string) => name?.endsWith("_audit_decision"));
     if (auditTool !== undefined) {
+      if (retentionInjected) {
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "WebSocket error" } }));
+        return;
+      }
+      retentionInjected = true;
       const reportedParentFile = (await readFile(marker, "utf8")).trim();
       // Packed/default-Pi fixtures may expose the session principal itself where
       // SessionManager reports the conventional nested session.jsonl path.
       const reportedParentDirectory = dirname(reportedParentFile);
-      let parentFile = (await stat(reportedParentDirectory)).isFile()
-        ? reportedParentDirectory
-        : reportedParentFile;
-      let backup = `${parentFile}.retention-test-backup`;
-      try {
-        await rename(parentFile, backup);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
-        parentFile = reportedParentDirectory;
-        backup = `${parentFile}.retention-test-backup`;
-        await rename(parentFile, backup);
+      // The provider request can race the SessionManager's first durable append.
+      // Wait for the reported principal rather than coupling this tracer to mkdir timing.
+      let parentFile: string | undefined;
+      for (let attempt = 0; attempt < 100 && parentFile === undefined; attempt += 1) {
+        try {
+          await stat(reportedParentFile);
+          parentFile = reportedParentFile;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOTDIR") parentFile = reportedParentDirectory;
+          else await new Promise((resolve) => setTimeout(resolve, 10));
+        }
       }
+      if (parentFile === undefined) throw new Error("reported parent session principal was not created");
+      const parentBytes = await readFile(parentFile);
+      await rm(parentFile, { force: true });
       await mkdir(parentFile);
       let restored = false;
       restoreParent = async () => {
@@ -2483,7 +2493,7 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
         if (restoreInterval !== undefined) clearInterval(restoreInterval);
         clearTimeout(restoreFallback);
         await rm(parentFile, { recursive: true, force: true });
-        await rename(backup, parentFile);
+        await writeFile(parentFile, parentBytes);
       };
       const restoreFallback = setTimeout(() => void restoreParent?.().catch(retainFailure), 10);
       restoreInterval = setInterval(() => {

@@ -15,12 +15,41 @@ export type NoReceiptLifecycleFacts = {
   acceptedReceipt: false;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Sole runtime parser for lifecycle bytes. Producers and consumers share this owner. */
+export function parseNoReceiptLifecycleFacts(input: unknown): NoReceiptLifecycleFacts {
+  const fields = ["acceptedReceipt", "attemptPointer", "deliveryTurns", "rejectedReceipts", "runPointer", "sessionCompletion", "terminalToolCalled"];
+  if (!isRecord(input)
+    || Object.keys(input).sort().join("\0") !== fields.join("\0")
+    || typeof input.terminalToolCalled !== "boolean"
+    || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT
+    || input.sessionCompletion !== "settled-without-accepted-receipt"
+    || input.acceptedReceipt !== false
+    || typeof input.runPointer !== "string" || input.runPointer.trim() === ""
+    || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === ""
+    || !Array.isArray(input.rejectedReceipts)
+    || !input.rejectedReceipts.every((item) => isRecord(item)
+      && Object.keys(item).length === 1 && typeof item.reason === "string" && item.reason.trim() !== "")) {
+    throw new TypeError("malformed no-receipt lifecycle facts");
+  }
+  return {
+    terminalToolCalled: input.terminalToolCalled,
+    rejectedReceipts: input.rejectedReceipts as { reason: string }[],
+    deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+    sessionCompletion: "settled-without-accepted-receipt",
+    runPointer: input.runPointer,
+    attemptPointer: input.attemptPointer,
+    acceptedReceipt: false,
+  };
+}
+
 export function noReceiptLifecycleFacts(
   input: Omit<NoReceiptLifecycleFacts, "deliveryTurns" | "sessionCompletion" | "acceptedReceipt"> & { deliveryTurns: number },
 ): NoReceiptLifecycleFacts {
-  if (input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT) throw new Error("receipt delivery budget is not exhausted");
-  if (input.runPointer.trim() === "" || input.attemptPointer.trim() === "") throw new Error("no-receipt lifecycle binding is missing");
-  return { ...input, deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT, sessionCompletion: "settled-without-accepted-receipt", acceptedReceipt: false };
+  return parseNoReceiptLifecycleFacts({ ...input, sessionCompletion: "settled-without-accepted-receipt", acceptedReceipt: false });
 }
 
 export function createReceiptDeliveryPolicy() {

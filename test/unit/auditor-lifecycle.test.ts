@@ -131,7 +131,7 @@ test("auditor gathers evidence and submits one decision", async () => {
   }
 });
 
-test("auditor exhausts exactly two delivery prompts into typed audit-incomplete without a third", async () => {
+test("auditor exhaustion preserves a typed no-receipt leg without fabricating an audit decision", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-no-receipt-"));
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory);
@@ -150,10 +150,11 @@ test("auditor exhausts exactly two delivery prompts into typed audit-incomplete 
       context: auditExtensionContext(cwd, sessionManager, faux),
     }));
     assert.equal(turns, 3, "initial attempt plus exactly two delivery prompts");
-    assert.equal(decision.status, "audit-incomplete");
-    if (decision.status === "audit-incomplete") {
-      assert.equal((decision.candidate as { acceptedReceipt?: unknown }).acceptedReceipt, false);
-      assert.equal((decision.candidate as { deliveryTurns?: unknown }).deliveryTurns, 2);
+    assert.equal(decision.status, "no-receipt");
+    if (decision.status === "no-receipt") {
+      assert.equal(decision.acceptedReceipt, false);
+      assert.equal(decision.deliveryTurns, 2);
+      assert.equal(decision.terminalToolCalled, false);
     }
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });

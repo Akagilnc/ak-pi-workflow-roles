@@ -758,11 +758,11 @@ test("packaged infrastructure failure silence correlates the exact output call i
         phase: null,
         kind: "role_infrastructure_failure",
       });
-      // Harness prompt returns without prepare-tool submit → affirmative typed unavailable,
-      // never recommendation and never inferred from absence.
+      // Role infrastructure terminality is an affirmative no-advice outcome,
+      // never a recommendation and never inferred from absence.
       assert.equal(events.length, 1, "infrastructure path emits one affirmative attendance fact");
       const attendance = events[0] as { disposition?: string } | undefined;
-      assert.equal(attendance?.disposition, "unavailable");
+      assert.equal(attendance?.disposition, "no-advice");
       assert.notEqual(attendance?.disposition, "recommendation");
       await harness.handlers.get("agent_settled")?.({}, ctx);
       process.exitCode = previousExitCode;
