@@ -1334,6 +1334,13 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
               assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "no-advice");
             }
             assert.equal(navigatorCalls, 1, "no late or overlapping Navigator call may occur after release");
+            if (outcome === "human_decision") {
+              assert.equal(
+                sessionManager.getEntries().some((entry) => entry.type === "custom" && entry.customType === "ak-receipt-delivery-request"),
+                false,
+                "accepted Judge escalation must not request receipt delivery",
+              );
+            }
           });
         }
       } finally {
