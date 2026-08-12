@@ -11,6 +11,7 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.ts";
+import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { settleJudgeTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
@@ -27,6 +28,105 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["config", "user.name", "Judge E2E"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
+
+test(
+  "public Coder entry settles rejected and never-called abandonment as typed no-receipt",
+  { timeout: 120_000 },
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "ak-public-primary-no-receipt-"));
+    try {
+      const project = join(home, "work");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const agentDir = join(home, ".pi", "agent");
+      await mkdir(agentDir, { recursive: true });
+      await writeFile(
+        join(agentDir, "navigator-model.json"),
+        `${JSON.stringify({ model: "ak-primary-no-receipt/faux-1" })}\n`,
+      );
+      const providerPath = resolve(
+        packageRoot,
+        "test/fixtures/primary-no-receipt-provider.ts",
+      );
+      const bookKey = resolveBookKeyFromGit(project);
+
+      for (const scenario of [
+        { mode: "rejected", runId: "run-primary-rejected-001", requests: 1 },
+        { mode: "never-called", runId: "run-primary-never-called-001", requests: 2 },
+      ] as const) {
+        const stdout: string[] = [];
+        const stderr: string[] = [];
+        const result = await runAkRole(
+          [
+            "coder",
+            "--model",
+            "ak-primary-no-receipt/faux-1",
+            "--thinking",
+            "off",
+            "--project",
+            project,
+            "Exercise bounded receipt delivery.",
+          ],
+          {
+            packageRoot,
+            home,
+            agentDir,
+            cwd: project,
+            createRunId: () => scenario.runId,
+            coderExtraPiArgs: ["-e", providerPath],
+            coderTimeoutMs: 90_000,
+            io: {
+              stdout: (text) => stdout.push(text),
+              stderr: (text) => stderr.push(text),
+            },
+          },
+        );
+
+        assert.equal(result.exitCode, 0, stderr.join(""));
+        assert.equal(stdout.length, 1, "public Terminal emits one result");
+        assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
+        const outcome = result.terminal!.roleOutcome;
+        if (outcome.kind !== "no_receipt") throw new Error("expected no-receipt outcome");
+        assert.equal(outcome.acceptedReceipt, false);
+        assert.equal(outcome.deliveryTurns, 2);
+        assert.equal(outcome.terminalToolCalled, scenario.mode === "rejected");
+        assert.deepEqual(
+          outcome.rejectedReceipts,
+          scenario.mode === "rejected" ? [{ reason: "未观察到 commit" }] : [],
+        );
+
+        const runDirectory = join(
+          home,
+          ".ak-roles",
+          "books",
+          bookKey,
+          "runs",
+          `${scenario.runId}@coder`,
+        );
+        assert.equal(outcome.runPointer, runDirectory);
+        assert.equal(outcome.attemptPointer, `current:${runDirectory}`);
+        const rows = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as any);
+        const deliveryRequests = rows.filter((row) =>
+          row.customType === "ak-receipt-delivery-request" ||
+          row.message?.customType === "ak-receipt-delivery-request"
+        );
+        assert.equal(deliveryRequests.length, scenario.requests, "bounded budget emits no third request");
+        const lifecycle = rows.filter((row) =>
+          row.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE ||
+          row.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE
+        );
+        assert.equal(lifecycle.length, 1);
+        assert.equal(stdout.join("").includes("acceptedReceipt"), true);
+        assert.equal(stdout.join("").includes("false"), true);
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   "ak-role Judge settles retained unreadable compliance as a typed incomplete Terminal",

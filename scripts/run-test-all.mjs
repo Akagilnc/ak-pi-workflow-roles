@@ -14,6 +14,9 @@ const HEAVYWEIGHT_MANIFEST = Object.freeze([
   "test/integration/audit-failure-subprocess.test.ts",
   "test/integration/public-cli-judge-run.test.ts",
   "test/package/package-entrypoint.integration.test.ts",
+  // Real cold-installed Pi + nested Doctor auditor process: subprocess startup
+  // is contention-sensitive and belongs with the other heavyweight lifecycles.
+  "test/package/doctor-package-lifecycle.test.ts",
 ]);
 
 const TIERS = Object.freeze([
