@@ -20690,7 +20690,7 @@ function redactNavigatorFactForPublicTerminal(navigator, runId) {
   return { ...navigator, ...advisoryDiagnostic };
 }
 async function settleFailureTerminalResult(admitted, failure, options = {}) {
-  if (failure.cause === "output" && options.resume === void 0) {
+  if (failure.cause === "output") {
     const entries = await readBoundSessionEntries(admitted.sessionFile).catch(() => void 0);
     if (entries !== void 0) {
       let attemptStart = 0;

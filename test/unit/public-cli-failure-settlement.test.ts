@@ -2491,11 +2491,9 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
         if (restored) return;
         restored = true;
         if (restoreInterval !== undefined) clearInterval(restoreInterval);
-        clearTimeout(restoreFallback);
         await rm(parentFile, { recursive: true, force: true });
         await writeFile(parentFile, parentBytes);
       };
-      const restoreFallback = setTimeout(() => void restoreParent?.().catch(retainFailure), 10);
       restoreInterval = setInterval(() => {
         void (async () => {
           try {
