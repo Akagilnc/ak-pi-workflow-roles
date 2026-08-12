@@ -463,6 +463,8 @@ export function createRoleRuntimeExtension(
       const outputClassification = isOutputTool ? classifyPackagedRoleTerminalResult(classified) : undefined;
       if (isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure") {
         receiptDelivery.stopForInfrastructure();
+      } else if (outputClassification?.kind === "accepted") {
+        receiptDelivery.recordAccepted();
       } else if (isOutputTool && outputClassification?.kind === "nonterminal" && event.isError) {
         const reason = (event.content ?? [])
           .map((part) => part.type === "text" ? part.text : "")
@@ -476,7 +478,6 @@ export function createRoleRuntimeExtension(
         classified,
       );
       if (settlement !== undefined) {
-        if (settlement.kind === "accepted") receiptDelivery.recordAccepted();
         const attendance = navigatorAttendance;
         if (attendance !== undefined) {
           const workContext = navigatorWorkContext;
