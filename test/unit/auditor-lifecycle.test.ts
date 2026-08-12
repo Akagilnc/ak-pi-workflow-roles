@@ -18,6 +18,7 @@ import {
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
 } from "../../src/evidence-child-executor.ts";
 import { COMPLIANCE_RESPONSE_ENTRY_TYPE, createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
+import { disposeComplianceDecision } from "../../src/audit-escalation.ts";
 import {
   PackageOwnedToolIdleTimeoutError,
 } from "../../src/package-owned-tool-idle.ts";
@@ -249,7 +250,7 @@ test("two rejected auditor decisions exhaust the shared budget without a third e
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test("blank auditor rejection diagnostics normalize into consumable typed no-receipt facts", async () => {
+test("blank Error auditor rejections reach an accepted parent and public Terminal audit facts on one execution chain", async () => {
   for (const diagnostic of ["", "   \t"]) {
     const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-blank-rejection-"));
     const runDirectory = join(cwd, "run");
@@ -269,12 +270,23 @@ test("blank auditor rejection diagnostics normalize into consumable typed no-rec
         context: auditExtensionContext(cwd, sessionManager, faux),
       }));
       assert.equal(decision.status, "no-receipt");
-      if (decision.status === "no-receipt") {
-        assert.deepEqual(decision.rejectedReceipts, [
-          { reason: "terminal receipt rejected without diagnostic" },
-          { reason: "terminal receipt rejected without diagnostic" },
-        ]);
-      }
+      const terminal = await disposeComplianceDecision(decision, {
+        pass: () => ({ parent: "accepted" as const }),
+        noReceipt: (auditNoReceipt) => ({
+          parent: "accepted" as const,
+          decisiveFacts: { auditNoReceipt },
+        }),
+        revise: () => { throw new Error("unexpected revise"); },
+        escalate: () => { throw new Error("unexpected escalation"); },
+      });
+      assert.equal(terminal.parent, "accepted");
+      const decisiveFacts = "decisiveFacts" in terminal
+        ? terminal.decisiveFacts as { auditNoReceipt: { rejectedReceipts: readonly { reason: string }[] } }
+        : undefined;
+      assert.deepEqual(decisiveFacts?.auditNoReceipt.rejectedReceipts, [
+        { reason: "terminal receipt rejected without diagnostic" },
+        { reason: "terminal receipt rejected without diagnostic" },
+      ]);
     } finally { await rm(cwd, { recursive: true, force: true }); }
   }
 });

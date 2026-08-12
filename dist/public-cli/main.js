@@ -17905,20 +17905,16 @@ var init_package_owned_tool_idle = __esm({
 });
 
 // src/receipt-delivery-policy.ts
-function normalizeRejectionReason(reason) {
-  const rendered = typeof reason === "string" ? reason : String(reason);
-  return rendered.trim() === "" ? REJECTION_REASON_UNAVAILABLE : rendered;
-}
 function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseNoReceiptLifecycleFacts(input) {
-  if (!isRecord4(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord4(item) && typeof item.reason === "string")) {
+  if (!isRecord4(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord4(item) && typeof item.reason === "string" && item.reason.trim() !== "")) {
     throw new TypeError("malformed no-receipt lifecycle facts");
   }
   return {
     terminalToolCalled: input.terminalToolCalled,
-    rejectedReceipts: input.rejectedReceipts.map((item) => ({ reason: normalizeRejectionReason(item.reason) })),
+    rejectedReceipts: input.rejectedReceipts.map((item) => ({ reason: item.reason })),
     deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
     sessionCompletion: "settled-without-accepted-receipt",
     runPointer: input.runPointer,
@@ -17926,13 +17922,12 @@ function parseNoReceiptLifecycleFacts(input) {
     acceptedReceipt: false
   };
 }
-var RECEIPT_DELIVERY_TURN_LIMIT, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, REJECTION_REASON_UNAVAILABLE;
+var RECEIPT_DELIVERY_TURN_LIMIT, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE;
 var init_receipt_delivery_policy = __esm({
   "src/receipt-delivery-policy.ts"() {
     "use strict";
     RECEIPT_DELIVERY_TURN_LIMIT = 2;
     NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle";
-    REJECTION_REASON_UNAVAILABLE = "terminal receipt rejected without diagnostic";
   }
 });
 
