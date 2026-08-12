@@ -6,7 +6,7 @@
  * lease — never table labels/layout/prose classification.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -830,6 +830,10 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     ) as Record<string, unknown>;
     delete legacyState.sessionFile;
     await writeFile(legacyStatePath, `${JSON.stringify(legacyState, null, 2)}\n`, "utf8");
+    // The persisted principal survives project relocation and loss of Git topology.
+    const movedProject = join(home, "moved-non-git-project");
+    await rename(project, movedProject);
+    await rm(join(movedProject, ".git"), { recursive: true, force: true });
     const admittedBefore = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
     ) as {
@@ -848,7 +852,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
       {
         packageRoot,
         home,
-        cwd: project,
+        cwd: movedProject,
         credentials: { "openai-codex": true, xai: true },
         io,
         piRunner: async (args) => {

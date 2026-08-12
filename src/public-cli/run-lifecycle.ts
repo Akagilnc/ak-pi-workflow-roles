@@ -14,7 +14,6 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
-import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
 import {
   type AdmittedCoderInvocation,
   type AdmittedFixerInvocation,
@@ -186,7 +185,7 @@ export async function writeRoleRunState(
 
 export async function readRoleRunState(
   runDirectory: string,
-  home?: string,
+  _home?: string,
   canonicalSessionFile?: string,
 ): Promise<RoleRunRecord | undefined> {
   let raw: unknown;
@@ -229,21 +228,12 @@ export async function readRoleRunState(
       typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
         ? record.runDirectory
         : runDirectory;
-    // Legacy states predate sessionFile. Resume them through the same canonical
-    // coordinate owner used by admission, rather than inventing a second principal.
+    // Legacy states predate sessionFile. Their persisted session directory is
+    // the authority for the historical principal, even if project topology moved.
     const sessionFile =
       typeof record.sessionFile === "string" && record.sessionFile.trim() !== ""
         ? record.sessionFile
-        : canonicalSessionFile ??
-          (home === undefined
-            ? undefined
-            : roleRunSessionCoordinates({
-                cwd: record.projectRoot,
-                runId: record.runId,
-                role: record.role,
-                home,
-              }).sessionFile);
-    if (sessionFile === undefined) return undefined;
+        : canonicalSessionFile ?? join(record.sessionDirectory, "session.jsonl");
     let resumable: TypedHttp429Observation | undefined;
     if (record.resumable !== undefined && record.resumable !== null) {
       if (
