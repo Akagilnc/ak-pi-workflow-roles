@@ -542,7 +542,14 @@ export function createRoleRuntimeExtension(
     // already decided no queued continuation will run, so a triggerTurn there is
     // too late for print/json sessions. `agent_end` is the last production seam
     // whose queued next turn is consumed before settlement.
-    pi.on("agent_end", () => {
+    pi.on("agent_end", (event) => {
+      const lastMessage = event.messages.at(-1);
+      if (lastMessage?.role === "assistant" && lastMessage.stopReason === "error") {
+        // Provider failure has no tool_result event; classify it here so the
+        // receipt policy cannot turn infrastructure death into an exit-0 lifecycle.
+        receiptDelivery.stopForInfrastructure();
+        return;
+      }
       if (receiptDelivery.nextAction() === "request-delivery") {
         receiptDelivery.recordDeliveryRequest();
         // Durable observation stays out of model context; the user-message API is
