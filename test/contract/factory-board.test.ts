@@ -7,17 +7,15 @@
  * Assertions read machine data-* keys only (anchoring constitution).
  */
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import vm from "node:vm";
 
-const execFileAsync = promisify(execFile);
+import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
@@ -838,21 +836,12 @@ test("page write lands outside every ledger and stays read-only on books", async
   }
 });
 
-async function runFactoryBoardCli(
-  args: string[],
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  try {
-    const { stdout, stderr } = await execFileAsync(
-      process.execPath,
-      ["--import", "tsx", join(packageRoot, "scripts/render-factory-board.ts"), ...args],
-      { cwd: packageRoot, encoding: "utf8" },
-    );
-    return { code: 0, stdout, stderr };
-  } catch (error) {
-    const err = error as { code?: number | string | null; stdout?: string; stderr?: string };
-    const code = typeof err.code === "number" ? err.code : 1;
-    return { code, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
-  }
+async function runFactoryBoardCli(args: string[]) {
+  return runTestSubprocess(
+    process.execPath,
+    ["--import", "tsx", join(packageRoot, "scripts/render-factory-board.ts"), ...args],
+    { cwd: packageRoot, owner: "runFactoryBoardCli" },
+  );
 }
 
 test("CLI --out alone writes binding error page and exits nonzero", async () => {

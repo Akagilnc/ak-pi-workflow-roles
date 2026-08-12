@@ -69,7 +69,7 @@ async function runPackagedTracer(marker: string): Promise<{
           AK_DOSSIER_TRACER_TRACE: tracePath,
         },
       });
-      assert.equal(result.timedOut, false, result.stderr);
+      assert.equal(result.localTimeout, false, result.stderr);
       assert.equal(result.code, 0, result.stderr);
 
       const runsRoot = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs");

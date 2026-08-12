@@ -278,7 +278,7 @@ async function installFromTarball(
       PI_OFFLINE: "1",
     },
   });
-  if (result.timedOut) {
+  if (result.localTimeout) {
     throw new Error(`pi install timed out for ${source}`);
   }
   if (result.code !== 0) {
@@ -355,7 +355,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
       agentDir: piAgentDir,
       cwd: project,
     });
-    assert.equal(roles.timedOut, false, roles.stderr);
+    assert.equal(roles.localTimeout, false, roles.stderr);
     assert.equal(roles.code, 0, roles.stderr);
     for (const seat of PUBLIC_CONFIGURABLE_SEATS) {
       assert.match(roles.stdout, new RegExp(`^${seat}\\t`, "m"));
@@ -416,7 +416,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
         ["judge", "--project", project, "Adjudicate the attached plan."],
         { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
       );
-      assert.equal(result.timedOut, false, result.stderr);
+      assert.equal(result.localTimeout, false, result.stderr);
       assertNoDeferredSlice("judge", `${result.stdout}\n${result.stderr}`);
       const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
       assert.equal(flagValue(args, "--ak-role"), "judge");
@@ -440,7 +440,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
         ],
         { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
       );
-      assert.equal(result.timedOut, false, result.stderr);
+      assert.equal(result.localTimeout, false, result.stderr);
       assertNoDeferredSlice("coder", `${result.stdout}\n${result.stderr}`);
       const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
       assert.equal(flagValue(args, "--ak-role"), "coder");
@@ -469,7 +469,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
         ],
         { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
       );
-      assert.equal(result.timedOut, false, result.stderr);
+      assert.equal(result.localTimeout, false, result.stderr);
       assertNoDeferredSlice("fixer", `${result.stdout}\n${result.stderr}`);
       const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
       assert.equal(flagValue(args, "--ak-role"), "fixer");
@@ -497,7 +497,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
         ],
         { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
       );
-      assert.equal(result.timedOut, false, result.stderr);
+      assert.equal(result.localTimeout, false, result.stderr);
       assertNoDeferredSlice("reviewer", `${result.stdout}\n${result.stderr}`);
       const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
       assert.equal(flagValue(args, "--ak-role"), "reviewer");
@@ -525,7 +525,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
         ],
         { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
       );
-      assert.equal(result.timedOut, false, result.stderr);
+      assert.equal(result.localTimeout, false, result.stderr);
       assertNoDeferredSlice("collector", `${result.stdout}\n${result.stderr}`);
       const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
       assert.equal(flagValue(args, "--ak-role"), "collector");
@@ -542,7 +542,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
         ["doctor", "--project", project, "--issue", "115", "Diagnose this case."],
         { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
       );
-      assert.equal(result.timedOut, false, result.stderr);
+      assert.equal(result.localTimeout, false, result.stderr);
       assertNoDeferredSlice("doctor", `${result.stdout}\n${result.stderr}`);
       const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
       assert.equal(flagValue(args, "--ak-role"), "doctor");
@@ -562,7 +562,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
         ],
         { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
       );
-      assert.equal(result.timedOut, false, result.stderr);
+      assert.equal(result.localTimeout, false, result.stderr);
       assertNoDeferredSlice("merger", `${result.stdout}\n${result.stderr}`);
       // Envelope may fail closed before Pi when no merge is active, or dispatch
       // the shell activation path — both are completed public paths.
@@ -599,7 +599,7 @@ test("one cold install exercises all seven public roles plus automatic Navigator
         PI_OFFLINE: "1",
       },
     });
-    assert.equal(ordinary.timedOut, false, ordinary.stderr);
+    assert.equal(ordinary.localTimeout, false, ordinary.stderr);
     assert.equal(ordinary.code, 0, ordinary.stderr);
     assert.equal(
       /--ak-role\b/.test(ordinary.stdout) || /--ak-role\b/.test(ordinary.stderr),
@@ -678,7 +678,7 @@ test("documented Pi package update refreshes CLI and runtime from one private co
           },
         },
       );
-      assert.equal(update.timedOut, false, update.stderr);
+      assert.equal(update.localTimeout, false, update.stderr);
       assert.equal(
         update.code,
         0,
@@ -737,7 +737,7 @@ test("documented Pi package update refreshes CLI and runtime from one private co
         home,
         agentDir: piAgentDir,
       });
-      assert.equal(roles.timedOut, false, roles.stderr);
+      assert.equal(roles.localTimeout, false, roles.stderr);
       assert.equal(roles.code, 0, roles.stderr);
       for (const role of PUBLIC_CALLABLE_ROLES) {
         assert.match(roles.stdout, new RegExp(`^${role}\\t`, "m"));
