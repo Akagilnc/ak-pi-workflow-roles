@@ -44,6 +44,10 @@ import {
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.ts";
+import {
+  ExplicitInternalActivationError,
+  recordChildKnownFailureSync,
+} from "./public-cli/explicit-internal.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
@@ -224,8 +228,13 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
       const activation = await runtime.reviewer.activate(runtime.context);
       const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, { context: runtime.context });
       if (result.status !== "accepted") {
-        throw new Error(
-          `Fixed Reviewer dispatch was not accepted: ${result.status} (${result.violations.join(",")}): ${result.diagnostic}`,
+        throw new ExplicitInternalActivationError(
+          `Fixed Reviewer dispatch was not accepted: ${result.status}: ${result.diagnostic}`,
+          {
+            knownCause: "activation",
+            name: "ReviewerDispatchRejectionError",
+            details: Object.freeze({ violations: Object.freeze([...result.violations]) }),
+          },
         );
       }
     } };
@@ -352,6 +361,44 @@ function abortContext(ctx: ExtensionContext): void {
 function failInfrastructure(error: unknown, ctx: ExtensionContext): never {
   abortContext(ctx);
   if (ctx.mode === "print" || ctx.mode === "json") process.exitCode = 1;
+  // Child→parent typed failure page: Pi stderr cannot carry structured details across
+  // the process boundary. Public CLI recovers via readChildKnownFailure → knownFailure.
+  // Duck-type knownCause (not instanceof): Pi may load a second module copy of the class.
+  const knownCause = (error as { knownCause?: unknown } | null)?.knownCause;
+  if (
+    error instanceof Error &&
+    (knownCause === "provider" ||
+      knownCause === "activation" ||
+      knownCause === "session" ||
+      knownCause === "output" ||
+      knownCause === "timeout" ||
+      knownCause === "unrecognized")
+  ) {
+    const runDir = process.env.AK_ROLE_RUN_DIR;
+    if (typeof runDir === "string" && runDir.trim() !== "") {
+      try {
+        const failureCode = (error as { failureCode?: unknown }).failureCode;
+        const details = (error as { details?: unknown }).details;
+        recordChildKnownFailureSync(runDir, {
+          cause: knownCause,
+          diagnostic: error.message || error.name,
+          identity: {
+            name: error.name,
+            ...(typeof failureCode === "string" || typeof failureCode === "number"
+              ? { code: failureCode }
+              : {}),
+          },
+          ...(typeof details === "object" &&
+          details !== null &&
+          !Array.isArray(details)
+            ? { details: details as Readonly<Record<string, unknown>> }
+            : {}),
+        });
+      } catch {
+        // Still throw the original typed failure; settlement falls back to stderr diagnostic.
+      }
+    }
+  }
   throw error;
 }
 
