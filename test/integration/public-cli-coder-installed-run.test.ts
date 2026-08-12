@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -17,7 +17,7 @@ import {
   piCli,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
-import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
+import { runPublicCliSubprocess } from "../helpers/public-cli-subprocess.ts";
 
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root });
@@ -72,38 +72,14 @@ async function runAkRoleBin(
     cwd: string;
     env?: NodeJS.ProcessEnv;
   },
-): Promise<{
-  code: number | null;
-  stdout: string;
-  stderr: string;
-}> {
-  const { spawn } = await import("node:child_process");
-  return await new Promise((resolvePromise) => {
-    const mergedEnv = isolatedTestProcessEnv({
-      env: { ...process.env, ...options.env },
-      home: options.home,
-      agentDir: options.agentDir,
-    });
-    const pathPrefix = `${dirname(bin)}:${mergedEnv.PATH ?? process.env.PATH ?? ""}`;
-    const child = spawn(bin, args, {
-      cwd: options.cwd,
-      env: {
-        ...mergedEnv,
-        PATH: pathPrefix,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.setEncoding("utf8").on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("close", (code) => {
-      resolvePromise({ code, stdout, stderr });
-    });
+) {
+  return runPublicCliSubprocess(bin, args, {
+    home: options.home,
+    agentDir: options.agentDir,
+    cwd: options.cwd,
+    ...(options.env === undefined ? {} : { env: options.env }),
+    // Historical coder fixture had no harness deadline; do not invent one.
+    timeoutMs: null,
   });
 }
 
