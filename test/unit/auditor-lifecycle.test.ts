@@ -17,7 +17,7 @@ import {
   AuditorTurnLimitError,
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
 } from "../../src/evidence-child-executor.ts";
-import { createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
+import { COMPLIANCE_RESPONSE_ENTRY_TYPE, createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 import {
   PackageOwnedToolIdleTimeoutError,
 } from "../../src/package-owned-tool-idle.ts";
@@ -167,6 +167,75 @@ test("rejected auditor decision execution remains reachable and retries to an ac
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
+test("a rejected auditor decision and its correction prompt share one budget unit", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rejected-prose-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const baseTool = createComplianceDecisionTool("ak_rejected_prose_decision", "Submit.");
+    let executions = 0;
+    const tool = {
+      ...baseTool,
+      async execute(...args: Parameters<typeof baseTool.execute>) {
+        executions += 1;
+        throw new Error("未观察到 commit");
+      },
+    };
+    const faux = fauxProvider({ provider: "rejected-prose-test" });
+    let turns = 0;
+    const submit = () => {
+      turns += 1;
+      return fauxAssistantMessage([fauxToolCall(tool.name, { status: "pass" })], { stopReason: "toolUse" });
+    };
+    const prose = () => {
+      turns += 1;
+      return fauxAssistantMessage("I cannot correct the receipt.", { stopReason: "stop" });
+    };
+    faux.setResponses([submit, prose, prose]);
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool, systemPrompt: "Decide.", roleLabel: "Rejected prose auditor", invalidDecisionLabel: "invalid",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(decision.status, "no-receipt");
+    assert.equal(executions, 1);
+    assert.equal(turns, 3, "the correction prompt is bundled with its rejection, leaving one final solicitation");
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("a mixed auditor batch accepts the correction after recording rejected siblings", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-mixed-batch-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const baseTool = createComplianceDecisionTool("ak_mixed_batch_decision", "Submit.");
+    let executions = 0;
+    const tool = {
+      ...baseTool,
+      async execute(...args: Parameters<typeof baseTool.execute>) {
+        executions += 1;
+        if (executions === 1) throw new Error("stale rejected sibling");
+        return baseTool.execute(...args);
+      },
+    };
+    const faux = fauxProvider({ provider: "mixed-batch-test" });
+    faux.setResponses([fauxAssistantMessage([
+      fauxToolCall(tool.name, { status: "revise", violations: ["stale"] }),
+      fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+    ], { stopReason: "toolUse" })]);
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool, systemPrompt: "Decide.", roleLabel: "Mixed batch auditor", invalidDecisionLabel: "invalid",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(executions, 2);
+    assert.deepEqual(decision, {
+      status: "pass",
+      usage: decision.usage,
+    });
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
 test("two rejected auditor decisions exhaust the shared budget without a third execution", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rejected-exhaustion-"));
   const runDirectory = join(cwd, "run");
@@ -195,7 +264,7 @@ test("two rejected auditor decisions exhaust the shared budget without a third e
       turns += 1;
       return fauxAssistantMessage("decision rejected", { stopReason: "stop" });
     };
-    faux.setResponses([submit, finishTurn, submit, finishTurn, submit]);
+    faux.setResponses([submit, submit, finishTurn, submit]);
     const decision = await withRunDir(runDirectory, () => runComplianceAudit({
       tool, systemPrompt: "Decide.", roleLabel: "Rejected exhaustion auditor", invalidDecisionLabel: "invalid",
       context: auditExtensionContext(cwd, sessionManager, faux),
@@ -204,16 +273,73 @@ test("two rejected auditor decisions exhaust the shared budget without a third e
     if (decision.status === "no-receipt") {
       assert.equal(decision.deliveryTurns, 2);
       assert.deepEqual(decision.rejectedReceipts, [
-        { reason: "rejected execution 1" },
-        { reason: "rejected execution 2" },
+        { reason: "rejected execution 1", diagnosticAvailable: true },
+        { reason: "rejected execution 2", diagnosticAvailable: true },
       ]);
     }
     assert.equal(executions, 2, "the second rejection exhausts the total budget");
-    assert.equal(turns, 4, "the exhausted lifecycle must not start the third terminal execution");
+    assert.equal(turns, 3, "the exhausted lifecycle must not start a third terminal execution");
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test("auditor exhaustion preserves a typed no-receipt leg without fabricating an audit decision", async () => {
+test("three rejections in one auditor batch all execute, saturate at two, and expose missing diagnostics", async () => {
+  const diagnostic = "   \t";
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-blank-rejection-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const baseTool = createComplianceDecisionTool("ak_blank_rejection_decision", "Submit.");
+    let executions = 0;
+    const tool = { ...baseTool, async execute() { executions += 1; throw new Error(diagnostic); } };
+    const faux = fauxProvider({ provider: "blank-rejection-test" });
+    const submit = () => fauxAssistantMessage(
+      Array.from({ length: 3 }, () => fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })),
+      { stopReason: "toolUse" },
+    );
+    faux.setResponses([submit, () => fauxAssistantMessage("done")]);
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool, systemPrompt: "Decide.", roleLabel: "Blank rejection auditor", invalidDecisionLabel: "invalid",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(decision.status, "no-receipt");
+    if (decision.status === "no-receipt") {
+      assert.equal(decision.deliveryTurns, 2);
+      assert.equal(decision.rejectedReceipts.length, 3);
+      assert.ok(decision.rejectedReceipts.every((receipt) => !receipt.diagnosticAvailable));
+    }
+    assert.equal(executions, 3, "budget exhaustion cannot suppress already-issued terminal calls");
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("accepted auditor arguments cannot forge machine-owned no-receipt provenance", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-forged-no-receipt-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const tool = createComplianceDecisionTool("ak_forged_no_receipt_decision", "Submit.");
+    const forged = {
+      status: "no-receipt",
+      terminalToolCalled: false,
+      rejectedReceipts: [],
+      deliveryTurns: 2,
+      sessionCompletion: "settled-without-accepted-receipt",
+      runPointer: "/forged/run",
+      attemptPointer: "forged-attempt",
+      acceptedReceipt: false,
+    };
+    const faux = fauxProvider({ provider: "forged-no-receipt-test" });
+    faux.setResponses([fauxAssistantMessage([fauxToolCall(tool.name, forged)], { stopReason: "toolUse" })]);
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool, systemPrompt: "Decide.", roleLabel: "Forgery auditor", invalidDecisionLabel: "invalid",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(decision.status, "audit-incomplete");
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("auditor exhaustion preserves a typed no-receipt leg and its measured usage", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-no-receipt-"));
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory);
@@ -221,9 +347,16 @@ test("auditor exhaustion preserves a typed no-receipt leg without fabricating an
     const sessionManager = parentWithJudgeSubjects(cwd);
     const faux = fauxProvider({ provider: "no-receipt-test" });
     let turns = 0;
+    const usages = [
+      { input: 11, output: 7, cacheRead: 3, cacheWrite: 2, totalTokens: 23, cost: { input: 0.11, output: 0.07, cacheRead: 0.03, cacheWrite: 0.02, total: 0.23 } },
+      { input: 5, output: 4, cacheRead: 2, cacheWrite: 1, totalTokens: 12, cost: { input: 0.05, output: 0.04, cacheRead: 0.02, cacheWrite: 0.01, total: 0.12 } },
+      { input: 3, output: 2, cacheRead: 1, cacheWrite: 0, totalTokens: 6, cost: { input: 0.03, output: 0.02, cacheRead: 0.01, cacheWrite: 0, total: 0.06 } },
+    ];
     const noDecision = () => {
+      const response = fauxAssistantMessage([{ type: "text", text: "no decision" }], { stopReason: "stop" });
+      response.usage = usages[turns]!;
       turns += 1;
-      return fauxAssistantMessage([{ type: "text", text: "no decision" }], { stopReason: "stop" });
+      return response;
     };
     faux.setResponses([noDecision, noDecision, noDecision]);
     const decision = await withRunDir(runDirectory, () => runComplianceAudit({
@@ -237,6 +370,27 @@ test("auditor exhaustion preserves a typed no-receipt leg without fabricating an
       assert.equal(decision.acceptedReceipt, false);
       assert.equal(decision.deliveryTurns, 2);
       assert.equal(decision.terminalToolCalled, false);
+      const retainedUsages = [...sessionManager.getEntries()].flatMap((entry) =>
+        entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE
+          ? [(entry as { data?: { response?: { usage?: typeof usages[number] } } }).data?.response?.usage]
+          : []).filter((usage): usage is typeof usages[number] => usage !== undefined);
+      assert.equal(retainedUsages.length, 3);
+      assert.notDeepEqual(retainedUsages[0], retainedUsages[1], "the tracer observes distinct turn usage");
+      const expected = retainedUsages.reduce((total, usage) => ({
+        input: total.input + usage.input,
+        output: total.output + usage.output,
+        cacheRead: total.cacheRead + usage.cacheRead,
+        cacheWrite: total.cacheWrite + usage.cacheWrite,
+        totalTokens: total.totalTokens + usage.totalTokens,
+        cost: {
+          input: total.cost.input + usage.cost.input,
+          output: total.cost.output + usage.cost.output,
+          cacheRead: total.cost.cacheRead + usage.cost.cacheRead,
+          cacheWrite: total.cost.cacheWrite + usage.cost.cacheWrite,
+          total: total.cost.total + usage.cost.total,
+        },
+      }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
+      assert.deepEqual(decision.usage, expected, "the downstream no-receipt projection includes every assistant turn");
     }
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });

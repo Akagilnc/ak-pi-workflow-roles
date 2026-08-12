@@ -285,8 +285,8 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       ...lawfulReviewerReceipt(["standards", "spec"]),
       auditNoReceipt: {
         status: "no-receipt",
-        terminalToolCalled: false,
-        rejectedReceipts: [],
+        terminalToolCalled: true,
+        rejectedReceipts: [{ reason: "  \t" }],
         deliveryTurns: 2,
         sessionCompletion: "settled-without-accepted-receipt",
         runPointer: "/reviewer-audit/run",
@@ -342,6 +342,8 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.deepEqual(extracted?.outcome.decisiveFacts.axes, ["standards", "spec"]);
     assert.deepEqual(extracted?.outcome.decisiveFacts.reportAxes, ["standards", "spec"]);
     assert.equal((extracted?.outcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
+    assert.equal((extracted?.outcome.decisiveFacts.auditNoReceipt as { rejectedReceipts?: Array<{ diagnosticAvailable?: unknown }> })
+      ?.rejectedReceipts?.[0]?.diagnosticAvailable, false);
 
     const invocations = extractReviewerMethodInvocations(entries, {
       allowedLocations: [material.skillPath, skillPath],

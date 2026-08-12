@@ -567,8 +567,9 @@ export function createRoleRuntimeExtension(
     // whose queued next turn is consumed before settlement.
     pi.on("agent_end", (event) => {
       const lastMessage = event.messages.at(-1);
-      if (lastMessage?.role === "assistant" && lastMessage.stopReason === "error") {
-        // Provider failure has no tool_result event; classify it here so the
+      if (lastMessage?.role === "assistant"
+        && (lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted")) {
+        // Provider failure/abort has no tool_result event; classify it here so the
         // receipt policy cannot turn infrastructure death into an exit-0 lifecycle.
         receiptDelivery.stopForInfrastructure();
         return;

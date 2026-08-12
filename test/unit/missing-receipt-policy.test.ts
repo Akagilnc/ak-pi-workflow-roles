@@ -19,6 +19,7 @@ test("shared receipt delivery policy accepts after zero, one, or two delivery tu
   exhausted.recordDeliveryRequest();
   assert.equal(exhausted.nextAction(), "no-receipt");
   assert.equal(exhausted.facts({ runPointer: "/run", attemptPointer: "attempt-1" }).deliveryTurns, 2);
+
 });
 
 test("persisted lifecycle readers ignore producer and nested rejection extensions", () => {
@@ -33,13 +34,29 @@ test("persisted lifecycle readers ignore producer and nested rejection extension
     futureProducerField: { version: 2 },
   }), {
     terminalToolCalled: true,
-    rejectedReceipts: [{ reason: "未观察到 commit" }],
+    rejectedReceipts: [{ reason: "未观察到 commit", diagnosticAvailable: true }],
     deliveryTurns: 2,
     sessionCompletion: "settled-without-accepted-receipt",
     runPointer: "/run",
     attemptPointer: "attempt-1",
     acceptedReceipt: false,
   });
+});
+
+test("persisted lifecycle readers retain blank rejection facts and mark the missing diagnostic", () => {
+  const facts = parseNoReceiptLifecycleFacts({
+    terminalToolCalled: true,
+    rejectedReceipts: [{ reason: "  \t" }],
+    deliveryTurns: 2,
+    sessionCompletion: "settled-without-accepted-receipt",
+    runPointer: "/run",
+    attemptPointer: "attempt-1",
+    acceptedReceipt: false,
+  });
+  assert.equal(facts.acceptedReceipt, false);
+  assert.equal(facts.deliveryTurns, 2);
+  assert.equal(facts.rejectedReceipts[0]?.diagnosticAvailable, false);
+  assert.equal(facts.rejectedReceipts[0]?.reason, "  \t");
 });
 
 test("a session that never calls its terminal tool gets the same typed no-receipt facts", () => {

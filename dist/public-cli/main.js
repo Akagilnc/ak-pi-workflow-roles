@@ -17909,12 +17909,15 @@ function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseNoReceiptLifecycleFacts(input) {
-  if (!isRecord4(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord4(item) && typeof item.reason === "string" && item.reason.trim() !== "")) {
+  if (!isRecord4(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord4(item) && typeof item.reason === "string")) {
     throw new TypeError("malformed no-receipt lifecycle facts");
   }
   return {
     terminalToolCalled: input.terminalToolCalled,
-    rejectedReceipts: input.rejectedReceipts.map((item) => ({ reason: item.reason })),
+    rejectedReceipts: input.rejectedReceipts.map((item) => ({
+      reason: item.reason,
+      diagnosticAvailable: item.reason.trim() !== ""
+    })),
     deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
     sessionCompletion: "settled-without-accepted-receipt",
     runPointer: input.runPointer,
@@ -17967,7 +17970,6 @@ var init_compliance_transport = __esm({
     init_build();
     init_evidence_child_executor();
     init_auditor_dossier_tool();
-    init_receipt_delivery_policy();
     nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
     decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
     complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });

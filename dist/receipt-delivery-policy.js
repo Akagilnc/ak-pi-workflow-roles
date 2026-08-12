@@ -16,12 +16,15 @@ export function parseNoReceiptLifecycleFacts(input) {
         || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === ""
         || !Array.isArray(input.rejectedReceipts)
         || !input.rejectedReceipts.every((item) => isRecord(item)
-            && typeof item.reason === "string" && item.reason.trim() !== "")) {
+            && typeof item.reason === "string")) {
         throw new TypeError("malformed no-receipt lifecycle facts");
     }
     return {
         terminalToolCalled: input.terminalToolCalled,
-        rejectedReceipts: input.rejectedReceipts.map((item) => ({ reason: item.reason })),
+        rejectedReceipts: input.rejectedReceipts.map((item) => ({
+            reason: item.reason,
+            diagnosticAvailable: item.reason.trim() !== "",
+        })),
         deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
         sessionCompletion: "settled-without-accepted-receipt",
         runPointer: input.runPointer,
@@ -35,7 +38,10 @@ export function noReceiptLifecycleFacts(input) {
     }
     return {
         terminalToolCalled: input.terminalToolCalled,
-        rejectedReceipts: input.rejectedReceipts.map(({ reason }) => ({ reason })),
+        rejectedReceipts: input.rejectedReceipts.map(({ reason }) => ({
+            reason,
+            diagnosticAvailable: reason.trim() !== "",
+        })),
         deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
         sessionCompletion: "settled-without-accepted-receipt",
         runPointer: input.runPointer,
@@ -49,12 +55,15 @@ export function createReceiptDeliveryPolicy() {
     let deliveryTurns = 0;
     const rejectedReceipts = [];
     return {
-        recordAccepted() { accepted = true; terminalToolCalled = true; },
+        recordAccepted() {
+            accepted = true;
+            terminalToolCalled = true;
+        },
         /** Infrastructure owns terminality and must never trigger receipt催交. */
         stopForInfrastructure() { accepted = true; },
         recordRejected(reason) {
             terminalToolCalled = true;
-            rejectedReceipts.push({ reason });
+            rejectedReceipts.push({ reason, diagnosticAvailable: reason.trim() !== "" });
             deliveryTurns = Math.min(RECEIPT_DELIVERY_TURN_LIMIT, deliveryTurns + 1);
         },
         recordDeliveryRequest() {

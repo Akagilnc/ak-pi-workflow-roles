@@ -228,7 +228,7 @@ test("no-receipt uses its own projection leg instead of collapsing into pass", a
     status: "no-receipt" as const,
     acceptedReceipt: false as const,
     terminalToolCalled: true,
-    rejectedReceipts: [{ reason: "未观察到 commit" }],
+    rejectedReceipts: [{ reason: "未观察到 commit", diagnosticAvailable: true }],
     deliveryTurns: 2 as const,
     sessionCompletion: "settled-without-accepted-receipt" as const,
     runPointer: "/run",
