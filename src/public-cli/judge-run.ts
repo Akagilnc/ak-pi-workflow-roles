@@ -359,7 +359,6 @@ async function dispatchAdmittedJudge(input: {
       runner: result.knownFailure,
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
-      runDirectory: admitted.runDirectory,
     });
     return await presentControlledFailure(
       admitted,
