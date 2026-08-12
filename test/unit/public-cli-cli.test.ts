@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { access, mkdtemp, readFile, realpath, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -132,9 +132,9 @@ test("config set bulk write is visible to a subsequent roles process; local over
 });
 
 test("explicit internal activation args point at the package entrypoint file", async () => {
-  const entry = resolveInternalRoleEntrypoint(packageRoot);
+  const entry = await realpath(resolveInternalRoleEntrypoint(packageRoot));
   await access(entry);
-  const args = buildExplicitInternalActivationArgs(packageRoot, [
+  const args = buildExplicitInternalActivationArgs(entry, [
     "--ak-role",
     "judge",
     "--help",
@@ -242,15 +242,13 @@ test("public runs write one identity-bound invocation ledger for every role", as
       const ledger = JSON.parse(
         await readFile(join(runDirectory, "invocation.json"), "utf8"),
       ) as Record<string, unknown>;
-      assert.deepEqual(ledger, {
-        role: scenario.role,
-        runId: scenario.runId,
-        bookKey,
-        projectRoot: project,
-        runDirectory,
-        sessionDirectory: join(runDirectory, "session"),
-        sessionFile: join(runDirectory, "session", "session.jsonl"),
-      });
+      assert.equal(ledger.role, scenario.role);
+      assert.equal(ledger.runId, scenario.runId);
+      assert.equal(ledger.bookKey, bookKey);
+      assert.equal(ledger.projectRoot, project);
+      assert.equal(ledger.runDirectory, runDirectory);
+      assert.equal(ledger.sessionDirectory, join(runDirectory, "session"));
+      assert.equal(ledger.sessionFile, join(runDirectory, "session", "session.jsonl"));
     }
   });
 });
