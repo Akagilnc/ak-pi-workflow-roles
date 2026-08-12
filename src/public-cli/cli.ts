@@ -1,6 +1,7 @@
 /**
  * Public ak-role CLI dispatcher (roles / config / layered help / Judge run).
  */
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -352,6 +353,9 @@ export async function runAkRole(
   const home = resolveHome(env);
 
   try {
+    // Select the installed package identity once, before any role-owned Skill,
+    // runtime entry, activation argv, or invocation provenance is derived.
+    env = { ...env, packageRoot: await realpath(env.packageRoot) };
     const parsed = parseArgv(argv);
 
     if (

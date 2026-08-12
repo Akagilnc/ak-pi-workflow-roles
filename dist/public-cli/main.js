@@ -23153,6 +23153,7 @@ __export(cli_exports, {
   resolveInternalRoleEntrypoint: () => resolveInternalRoleEntrypoint,
   runAkRole: () => runAkRole
 });
+import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { join as join16 } from "node:path";
 function defaultIo() {
@@ -23346,6 +23347,7 @@ async function runAkRole(argv, env) {
   const io = env.io ?? defaultIo();
   const home = resolveHome(env);
   try {
+    env = { ...env, packageRoot: await realpath5(env.packageRoot) };
     const parsed = parseArgv(argv);
     if (parsed.help || parsed.command === void 0 || parsed.command === "help") {
       if (parsed.command === "help" && parsed.args[0] !== void 0) {
