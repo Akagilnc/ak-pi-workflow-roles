@@ -16842,18 +16842,17 @@ async function readReviewerDispatchRejection(runDirectory) {
     }
     throw error;
   }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return void 0;
-  }
+  const parsed = JSON.parse(raw);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return void 0;
+    const error = new Error("Reviewer dispatch rejection page must be a JSON object");
+    error.name = "ReviewerDispatchRejectionContractError";
+    throw error;
   }
   const record4 = parsed;
   if (typeof record4.diagnostic !== "string" || record4.diagnostic.trim() === "" || !Array.isArray(record4.violations) || record4.violations.length === 0 || record4.violations.some((value) => !isReviewerPreflightViolation(value))) {
-    return void 0;
+    const error = new Error("Reviewer dispatch rejection page has unusable required fields");
+    error.name = "ReviewerDispatchRejectionContractError";
+    throw error;
   }
   return {
     cause: "activation",
@@ -18817,8 +18816,17 @@ function typedFailedTerminatingToolKnownFailure(entries) {
 async function resolveAuditedRunnerKnownFailure(input) {
   if (input.runner !== void 0) return input.runner;
   if (input.runDirectory !== void 0) {
-    const rejection = await readReviewerDispatchRejection(input.runDirectory);
-    if (rejection !== void 0) return rejection;
+    try {
+      const rejection = await readReviewerDispatchRejection(input.runDirectory);
+      if (rejection !== void 0) return rejection;
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      return {
+        cause: "activation",
+        identity: thrownIdentity(failure),
+        diagnostic: failure.message || failure.name
+      };
+    }
   }
   try {
     const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);

@@ -90,14 +90,11 @@ export async function readReviewerDispatchRejection(
     }
     throw error;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
+  const parsed: unknown = JSON.parse(raw);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return undefined;
+    const error = new Error("Reviewer dispatch rejection page must be a JSON object");
+    error.name = "ReviewerDispatchRejectionContractError";
+    throw error;
   }
   const record = parsed as Record<string, unknown>;
   if (
@@ -107,7 +104,9 @@ export async function readReviewerDispatchRejection(
     record.violations.length === 0 ||
     record.violations.some((value) => !isReviewerPreflightViolation(value))
   ) {
-    return undefined;
+    const error = new Error("Reviewer dispatch rejection page has unusable required fields");
+    error.name = "ReviewerDispatchRejectionContractError";
+    throw error;
   }
   return {
     cause: "activation",

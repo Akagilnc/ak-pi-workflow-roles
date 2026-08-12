@@ -3022,7 +3022,10 @@ test("Reviewer rejection sidecar rejects generic controlled failures", async () 
       identity: { name: "ProviderError" },
       details: { arbitrary: true },
     }));
-    assert.equal(await readReviewerDispatchRejection(home), undefined);
+    await assert.rejects(
+      readReviewerDispatchRejection(home),
+      (error: unknown) => error instanceof Error && error.name === "ReviewerDispatchRejectionContractError",
+    );
 
     await writeFile(sidecar, JSON.stringify({
       diagnostic: "Fixed Reviewer dispatch was not accepted",
@@ -3035,6 +3038,17 @@ test("Reviewer rejection sidecar rejects generic controlled failures", async () 
       identity: { name: "ReviewerDispatchRejectionError" },
       details: { violations: ["base-invalid"] },
     });
+
+    await writeFile(sidecar, "{malformed\n");
+    const malformed = await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile: join(home, "missing-session.jsonl"),
+      credential: undefined,
+      runDirectory: home,
+    });
+    assert.equal(malformed?.cause, "activation");
+    assert.equal(malformed?.identity?.name, "SyntaxError");
+    assert.match(malformed?.diagnostic ?? "", /JSON/);
   });
 });
 
