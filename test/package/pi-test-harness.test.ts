@@ -28,7 +28,7 @@ import {
   TestSubprocessOperationalError,
 } from "../helpers/test-subprocess.ts";
 
-test("subprocess result seam classifies localTimeout, signal, nonzero exit, and clean exit", async () => {
+test("subprocess result seam classifies localTimeout, signal, nonzero exit, clean exit, and post-exit deadline", async () => {
   const localTimeoutMs = 0;
   const timed = await runPiSubprocess(["--help"], {
     cwd: packageRoot,
@@ -69,6 +69,34 @@ test("subprocess result seam classifies localTimeout, signal, nonzero exit, and 
   assert.equal(clean.signal, null);
   assert.equal(clean.code, 0);
   assert.equal(clean.stdout, "ok");
+
+  // Child exits first; a detached descendant keeps the harness pipes open past
+  // the deadline. Classification must follow exit facts, not invent localTimeout.
+  const postExitHoldMs = 400;
+  const postExitDeadlineMs = 50;
+  const postExit = await runNodeSubprocess(
+    [
+      "-e",
+      [
+        "const { spawn } = require('node:child_process');",
+        `const hold = spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${postExitHoldMs})'], {`,
+        "  stdio: ['ignore', 'inherit', 'inherit'],",
+        "  detached: true,",
+        "});",
+        "hold.unref();",
+        "process.stdout.write('exited-before-close');",
+        "process.exit(42);",
+      ].join(""),
+    ],
+    { cwd: packageRoot, timeoutMs: postExitDeadlineMs },
+  );
+  assert.equal(postExit.localTimeout, false);
+  assert.equal(postExit.timedOut, false);
+  assert.equal(postExit.localTimeoutOwner, null);
+  assert.equal(postExit.localTimeoutMs, null);
+  assert.equal(postExit.signal, null);
+  assert.equal(postExit.code, 42);
+  assert.equal(postExit.stdout, "exited-before-close");
 
   await assert.rejects(
     () =>

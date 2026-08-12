@@ -109,6 +109,9 @@ export async function runTestSubprocess(
     let stderr = "";
     let localTimeout = false;
     let settled = false;
+    let exited = false;
+    let exitCode: number | null = null;
+    let exitSignal: NodeJS.Signals | null = null;
     let timeout: NodeJS.Timeout | undefined;
 
     const settleOnce = (action: () => void): void => {
@@ -120,6 +123,9 @@ export async function runTestSubprocess(
     const clearDeadline = (): void => {
       if (timeout !== undefined) clearTimeout(timeout);
     };
+
+    const processAlreadyExited = (): boolean =>
+      exited || child.exitCode !== null || child.signalCode !== null;
 
     const rejectOperational = (input: {
       message: string;
@@ -168,12 +174,18 @@ export async function runTestSubprocess(
 
     if (options.timeoutMs !== undefined) {
       timeout = setTimeout(() => {
-        localTimeout = true;
+        // Exit already happened: deadline must not invent localTimeout while
+        // close is still waiting on descendant-held stdio.
+        if (processAlreadyExited()) return;
         if (!child.kill("SIGTERM")) {
+          if (processAlreadyExited()) return;
+          localTimeout = true;
           rejectOperational({
             message: `failed to terminate timed-out subprocess: ${command}`,
           });
+          return;
         }
+        localTimeout = true;
       }, options.timeoutMs);
     }
 
@@ -186,13 +198,20 @@ export async function runTestSubprocess(
       });
     });
 
+    child.once("exit", (code, signal) => {
+      exited = true;
+      exitCode = code;
+      exitSignal = signal;
+      clearDeadline();
+    });
+
     child.once("close", (code, signal) => {
       clearDeadline();
       settleOnce(() => {
         resolveResult(
           settleResult({
-            code,
-            signal,
+            code: exited ? exitCode : code,
+            signal: exited ? exitSignal : signal,
             stdout,
             stderr,
             localTimeout,
