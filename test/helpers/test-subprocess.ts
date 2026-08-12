@@ -135,11 +135,25 @@ export async function runTestSubprocess(
     }): void => {
       clearDeadline();
       settleOnce(() => {
+        // Only the exit event marks real process termination. Spawn failures
+        // (e.g. ENOENT) can set child.exitCode to a sentinel like -2 without
+        // exit — those must keep the operational errno, not wash it away.
+        // After exit, collection errors must carry the recorded code/signal.
+        const code = exited
+          ? exitCode
+          : input.code !== undefined
+            ? input.code
+            : null;
+        const signal = exited
+          ? exitSignal
+          : input.signal !== undefined
+            ? input.signal
+            : null;
         reject(
           new TestSubprocessOperationalError({
             message: input.message,
-            ...(input.code === undefined ? {} : { code: input.code }),
-            ...(input.signal === undefined ? {} : { signal: input.signal }),
+            code,
+            signal,
             localTimeout,
             localTimeoutOwner: localTimeout ? options.owner : null,
             localTimeoutMs: localTimeout ? (options.timeoutMs ?? null) : null,
