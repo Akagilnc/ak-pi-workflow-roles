@@ -343,7 +343,7 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
   }
 });
 
-test("fatal Judge audit failure drains one healthy packaged Navigator without advice", async () => {
+test("no-receipt Judge audit drains one healthy packaged Navigator for the accepted parent", async () => {
   // Process boundary required: process-release evidence is emitted on process exit.
   const result = await runHealthyNavigatorAuditFailureCli("json");
   assert.equal(result.timedOut, false, "subprocess did not time out");
@@ -443,10 +443,10 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
         event.message?.customType === "ak-navigator-attendance") ||
       (event.type === "custom_message" && event.customType === "ak-navigator-attendance"),
   );
-  assert.equal(attendance.length, 1, "infrastructure failure emits affirmative typed no-advice");
+  assert.equal(attendance.length, 1, "accepted parent emits one typed Navigator attendance");
   assert.equal(
     attendance[0]?.message?.details?.disposition ?? attendance[0]?.details?.disposition,
-    "no-advice",
+    "recommendation",
   );
 });
 
