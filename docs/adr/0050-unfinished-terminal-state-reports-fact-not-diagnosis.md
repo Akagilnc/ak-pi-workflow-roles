@@ -39,3 +39,7 @@ Fixer 与 Coder 真干了活、但本次调用干不完时，回执上没有一�
 ## 不做什么
 
 不新增机械校验**去判定「是否真的干不动」**——runtime 已正确拒收过自编的前置条件 ID，闸没坏，是词表缺一格；再加闸只会把模型推向下一个无从核对的格位。这不豁免形状校验：非空 typed 剩余范围、施工阶段限定等仍由边界 Schema 机械拒收。不新增常驻 gate、scanner 或统计机制。不为 Coder 补审刑院——[#77](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/77) 已因无可复现 Red、且与「不新增 gate」相抵而关闭。不改 `partially_completed`、`refused`、`completed`、`planned` 任一既有状态的语义。
+
+## Amendment (2026-08-12)
+
+陛下拍定收窄（原话逐字）：「unfinished只有一种情况可以用。 有前置条件/派单不合理无法完成，或违宪，都要说明理由」。自此 unfinished 仅在前置条件缺失、派单不合理或违宪导致本次调用无法完成时合法，回执必须说明理由；本 ADR 原「不诊断原因」句相应废止。触发实证：#288 施工期两条 coder `unfinished` 均为 ~7 分钟从容检查点退场，终腿 17 分钟单 session 结清全部剩余（books/work-288 runs 019ff4d9/019ff4e1/019ff4fb），「还能干但先撤」已成均衡态。
