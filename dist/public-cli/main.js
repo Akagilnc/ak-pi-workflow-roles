@@ -13968,7 +13968,7 @@ var init_fixer_output = __esm({
     fixerOutputVariants = typebox_exports.Union([
       typebox_exports.Object({ status: typebox_exports.Literal("planned", { description: "Plan-phase proposal outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }) }),
       typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "Lawfully refused outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work that cannot lawfully be performed." }), blocker: typebox_exports.Unsafe({ ...blockerSchema, description: "Lawful blocker preventing completion." }) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "Honest unfinished apply outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work remaining after this invocation." }), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "Apply outcome when a missing prerequisite or an unconstitutional constraint blocks completing this invocation; state the reason." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work remaining after this invocation." }), reason: typebox_exports.Optional(typebox_exports.String({ minLength: 1, description: "Blocking reason: prerequisite missing or unconstitutional. A missing pending owner decision or answer is a missing prerequisite." })), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
       typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "All assigned classes completed." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
       typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "All assigned classes lawfully refused." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class refusal settlements." }) }),
       typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) })
@@ -16718,13 +16718,149 @@ var init_invocation = __esm({
   }
 });
 
+// src/reviewer-git-snapshot.ts
+var init_reviewer_git_snapshot = __esm({
+  "src/reviewer-git-snapshot.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-preflight-error.ts
+var init_reviewer_preflight_error = __esm({
+  "src/reviewer-preflight-error.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-pinned-git.ts
+import { execFile as execFile2 } from "node:child_process";
+import { promisify as promisify2 } from "node:util";
+var execFileAsync2;
+var init_reviewer_pinned_git = __esm({
+  "src/reviewer-pinned-git.ts"() {
+    "use strict";
+    init_reviewer_git_snapshot();
+    init_sha256();
+    init_reviewer_preflight_error();
+    execFileAsync2 = promisify2(execFile2);
+  }
+});
+
+// src/reviewer-prompt-identity.ts
+var init_reviewer_prompt_identity = __esm({
+  "src/reviewer-prompt-identity.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-scope-prompt.ts
+var init_reviewer_scope_prompt = __esm({
+  "src/reviewer-scope-prompt.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-construction.ts
+var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER, REVIEWER_STANDARDS_CONCLUSION_KEYS, REVIEWER_STANDARDS_CONCLUSION_LABELS;
+var init_reviewer_construction = __esm({
+  "src/reviewer-construction.ts"() {
+    "use strict";
+    init_sha256();
+    init_reviewer_scope_prompt();
+    REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
+      recipeId: "reviewer-common-bundle",
+      version: 1,
+      runtimeVersion: "1",
+      implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts")
+    });
+    REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
+      adapterId: "reviewer-axis-output",
+      version: 1,
+      implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities")
+    });
+    REVIEWER_STANDARDS_CONCLUSION_KEYS = Object.freeze([
+      "constitutionality",
+      "minimum-necessary-test-cost",
+      "complexity"
+    ]);
+    REVIEWER_STANDARDS_CONCLUSION_LABELS = Object.freeze({
+      constitutionality: "constitutionality",
+      "minimum-necessary-test-cost": "minimum-necessary test cost",
+      complexity: "complexity"
+    });
+  }
+});
+
+// src/reviewer-dispatch.ts
+var REVIEWER_PREFLIGHT_VIOLATIONS;
+var init_reviewer_dispatch = __esm({
+  "src/reviewer-dispatch.ts"() {
+    "use strict";
+    init_reviewer_git_snapshot();
+    init_reviewer_pinned_git();
+    init_reviewer_pinned_git();
+    init_reviewer_prompt_identity();
+    init_sha256();
+    init_reviewer_construction();
+    init_reviewer_preflight_error();
+    init_sha256();
+    init_reviewer_prompt_identity();
+    REVIEWER_PREFLIGHT_VIOLATIONS = ["base-invalid", "range-invalid", "prompt-identity-invalid", "target-drift"];
+  }
+});
+
 // src/public-cli/explicit-internal.ts
-import { execFile as execFile2, spawn } from "node:child_process";
-import { constants } from "node:fs";
-import { access, realpath as realpath3 } from "node:fs/promises";
+import { execFile as execFile3, spawn } from "node:child_process";
+import { constants, writeFileSync } from "node:fs";
+import { access, readFile as readFile5, realpath as realpath3, unlink } from "node:fs/promises";
 import { delimiter as delimiter2, isAbsolute as isAbsolute4, join as join5, resolve as resolve5 } from "node:path";
 import { platform } from "node:process";
-import { promisify as promisify2 } from "node:util";
+import { promisify as promisify3 } from "node:util";
+function isReviewerPreflightViolation(value) {
+  return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
+}
+function reviewerDispatchRejectionPath(runDirectory) {
+  return join5(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
+}
+async function clearReviewerDispatchRejection(runDirectory) {
+  try {
+    await unlink(reviewerDispatchRejectionPath(runDirectory));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
+async function readReviewerDispatchRejection(runDirectory) {
+  let raw;
+  try {
+    raw = await readFile5(reviewerDispatchRejectionPath(runDirectory), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return void 0;
+    }
+    throw error;
+  }
+  const parsed = JSON.parse(raw);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    const error = new Error("Reviewer dispatch rejection page must be a JSON object");
+    error.name = "ReviewerDispatchRejectionContractError";
+    throw error;
+  }
+  const record4 = parsed;
+  if (typeof record4.diagnostic !== "string" || record4.diagnostic.trim() === "" || !Array.isArray(record4.violations) || record4.violations.length === 0 || record4.violations.some((value) => !isReviewerPreflightViolation(value))) {
+    const error = new Error("Reviewer dispatch rejection page has unusable required fields");
+    error.name = "ReviewerDispatchRejectionContractError";
+    throw error;
+  }
+  return {
+    cause: "activation",
+    diagnostic: record4.diagnostic,
+    identity: { name: "ReviewerDispatchRejectionError" },
+    details: { violations: Object.freeze([...record4.violations]) }
+  };
+}
 function resolveInternalRoleEntrypoint(packageRoot2) {
   return join5(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
 }
@@ -16765,7 +16901,7 @@ async function resolveSelectedPi(command, cwd, env) {
 }
 async function selectedPiIdentity(command, cwd, env) {
   const executable = await resolveSelectedPi(command, cwd, env);
-  const { stdout } = await execFileAsync2(executable, ["--version"], {
+  const { stdout } = await execFileAsync3(executable, ["--version"], {
     cwd,
     env,
     encoding: "utf8"
@@ -16802,13 +16938,15 @@ async function runExplicitInternalActivation(options) {
     env
   });
 }
-var execFileAsync2, defaultExplicitInternalPiRunner;
+var REVIEWER_DISPATCH_REJECTION_FILE, execFileAsync3, defaultExplicitInternalPiRunner;
 var init_explicit_internal = __esm({
   "src/public-cli/explicit-internal.ts"() {
     "use strict";
     init_invocation();
     init_registry2();
-    execFileAsync2 = promisify2(execFile2);
+    init_reviewer_dispatch();
+    REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
+    execFileAsync3 = promisify3(execFile3);
     defaultExplicitInternalPiRunner = async (args, options) => {
       const command = options.env.PI_BINARY ?? "pi";
       const piIdentity = await selectedPiIdentity(command, options.cwd, options.env);
@@ -16863,7 +17001,7 @@ var init_explicit_internal = __esm({
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile5, realpath as realpath4 } from "node:fs/promises";
+import { readFile as readFile6, realpath as realpath4 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
@@ -16982,7 +17120,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const provenancePath = join6(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile5(provenancePath, "utf8");
+    provenanceRaw = await readFile6(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -16999,7 +17137,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
     const absolute = join6(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile5(absolute);
+      bytes = await readFile6(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -17015,7 +17153,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let raw;
   try {
     skillPath = await realpath4(skillPathConfigured);
-    raw = await readFile5(skillPath, "utf8");
+    raw = await readFile6(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -17130,7 +17268,7 @@ var init_public_run_credentials = __esm({
 });
 
 // src/public-cli/run-lifecycle.ts
-import { lstat as lstat2, open, readdir as readdir2, readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
+import { lstat as lstat2, open, readdir as readdir2, readFile as readFile7, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join7 } from "node:path";
 function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
@@ -17140,7 +17278,7 @@ function typedProviderHttpPath(runDirectory) {
 }
 async function clearTypedProviderHttpObservation(runDirectory) {
   try {
-    await unlink(typedProviderHttpPath(runDirectory));
+    await unlink2(typedProviderHttpPath(runDirectory));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return;
@@ -17151,7 +17289,7 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readTypedHttp429Observation(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile6(typedProviderHttpPath(runDirectory), "utf8")
+      await readFile7(typedProviderHttpPath(runDirectory), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
@@ -17184,7 +17322,7 @@ async function writeRoleRunState(runDirectory, record4) {
 async function readRoleRunState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile6(join7(runDirectory, RUN_STATE_FILE), "utf8")
+      await readFile7(join7(runDirectory, RUN_STATE_FILE), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
@@ -17308,7 +17446,7 @@ async function acquireRunWriterLease(runDirectory) {
 `, "utf8");
     } catch (error) {
       await handle.close().catch(() => void 0);
-      await unlink(lockPath).catch(() => void 0);
+      await unlink2(lockPath).catch(() => void 0);
       throw error;
     }
     let released = false;
@@ -17318,7 +17456,7 @@ async function acquireRunWriterLease(runDirectory) {
         if (released) return;
         released = true;
         await handle.close().catch(() => void 0);
-        await unlink(lockPath).catch(() => void 0);
+        await unlink2(lockPath).catch(() => void 0);
       }
     };
   } catch (error) {
@@ -17387,7 +17525,7 @@ async function loadResumableRunRecord(home, runId) {
   let derived;
   try {
     const raw = JSON.parse(
-      await readFile6(run.admittedRequestPath, "utf8")
+      await readFile7(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       const record4 = raw;
@@ -18322,7 +18460,7 @@ var init_terminal = __esm({
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile7, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
+import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile8, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname6, join as join8 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
@@ -18378,7 +18516,7 @@ function presentStructuralRejection(error, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile7(sessionFile, "utf8");
+    await readFile8(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError2(error)) return { state: "missing" };
@@ -18414,8 +18552,7 @@ function classifyPostAdmissionFailure(input) {
       return {
         cause: error.knownCause,
         diagnostic: error.message || error.name || "unrecognized exception",
-        identity,
-        ...error.details === void 0 ? {} : { details: error.details }
+        identity
       };
     }
     if (error instanceof Error) {
@@ -18519,7 +18656,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile7(sessionFile, "utf8");
+  const text = await readFile8(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -18707,6 +18844,19 @@ function typedFailedTerminatingToolKnownFailure(entries) {
 }
 async function resolveAuditedRunnerKnownFailure(input) {
   if (input.runner !== void 0) return input.runner;
+  if (input.runDirectory !== void 0) {
+    try {
+      const rejection = await readReviewerDispatchRejection(input.runDirectory);
+      if (rejection !== void 0) return rejection;
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      return {
+        cause: "activation",
+        identity: thrownIdentity(failure),
+        diagnostic: failure.message || failure.name
+      };
+    }
+  }
   try {
     const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
     if (auditorFailure !== void 0) return auditorFailure;
@@ -18815,6 +18965,10 @@ function coderDecisiveFacts(output) {
   if (status.readable && typeof status.value === "string") facts.coderStatus = status.value;
   const remainingScope = safelyRead(candidate, "remainingScope");
   if (status.readable && status.value === "unfinished" && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  const reason = safelyRead(candidate, "reason");
+  if (status.readable && status.value === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
+    facts.reason = reason.value;
+  }
   const report = safelyRead(candidate, "report");
   if (report.readable && typeof report.value === "string") facts.reportPresent = report.value.trim().length > 0;
   return facts;
@@ -18826,6 +18980,10 @@ function fixerDecisiveFacts(output) {
   if (status.readable && typeof status.value === "string") facts.fixerStatus = status.value;
   const remainingScope = safelyRead(candidate, "remainingScope");
   if (status.readable && (status.value === "unfinished" || status.value === "refused") && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  const reason = safelyRead(candidate, "reason");
+  if (status.readable && status.value === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
+    facts.reason = reason.value;
+  }
   const blockerRead = safelyRead(candidate, "blocker");
   if (status.readable && status.value === "refused" && blockerRead.readable && isRecord5(blockerRead.value)) {
     const cause = safelyRead(blockerRead.value, "cause");
@@ -22958,6 +23116,7 @@ async function dispatchAdmittedReviewer(input) {
     }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
+    await clearReviewerDispatchRejection(admitted.runDirectory);
     const childEnv = {
       ...process.env,
       HOME: env.home,
@@ -23052,7 +23211,8 @@ async function dispatchAdmittedReviewer(input) {
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
-      credential: credentialFailure
+      credential: credentialFailure,
+      runDirectory: admitted.runDirectory
     });
     return await presentControlledFailure7(
       admitted,

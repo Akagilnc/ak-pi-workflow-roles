@@ -286,8 +286,8 @@ test("seven packaged terminating tools expose the provider-open registration inv
 
   const declaredFields = (role: string): readonly string[] => {
     switch (role) {
-      case "coder": return ["status", "report", "remainingScope"];
-      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence"];
+      case "coder": return ["status", "report", "remainingScope", "reason"];
+      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence", "reason"];
       case "reviewer": return ["status", "diagnostic"];
       case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"];
       case "collector": return [];
@@ -1168,7 +1168,7 @@ test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subpro
       timeoutMs: 15_000,
       env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" },
     });
-    assert.equal(result.timedOut, false, "malformed prerequisites subprocess did not time out");
+    assert.equal(result.localTimeout, false, "malformed prerequisites subprocess did not time out");
     assert.equal(result.code, 1);
     assert.match(result.stderr, /CODER_SUCCESS_PROVIDER_CALLS=0/);
     const traces = result.stderr.split("\n").flatMap((line) => {

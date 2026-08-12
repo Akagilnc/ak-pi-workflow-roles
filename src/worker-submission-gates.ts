@@ -24,6 +24,27 @@ export class WorkerCommitReminderError extends Error {
   constructor() { super("未观察到 commit"); this.name = "WorkerCommitReminderError"; }
 }
 
+/** #292 unfinished reason solicitation — same bounce shape as gate ①; in-session only. */
+export class WorkerUnfinishedReasonReminderError extends Error {
+  readonly code = "worker_unfinished_reason_reminder" as const;
+  constructor() {
+    super("补理由（前置缺失/违宪之一）或继续施工");
+    this.name = "WorkerUnfinishedReasonReminderError";
+  }
+}
+
+const UNFINISHED_REASON_BOUNCE_LIMIT = 2;
+
+function unfinishedReasonPresent(details?: unknown): boolean {
+  if (typeof details !== "object" || details === null) return false;
+  try {
+    const reason = (details as { reason?: unknown }).reason;
+    return typeof reason === "string" && reason.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export type WorkerSubmissionGateParent = RecordSessionParent;
 
 function git(cwd: string, args: string[]): string {
@@ -90,7 +111,25 @@ export function installWorkerGitHooks(cwd: string): void {
   try { bareInCommon = gitFile(commonConfig, ["--get", "core.bare"]) === "true"; } catch { /* unset */ }
   try { worktreeInCommon = gitFile(commonConfig, ["--get", "core.worktree"]); } catch { /* unset */ }
 
-  git(cwd, ["config", "extensions.worktreeConfig", "true"]);
+  // Skip shared write when already enabled in *this* repo — concurrent sibling activations
+  // otherwise race on .git/config.lock (#267). Scope must be --local (common config): a
+  // global/system true must not skip the repo's first enable. Value must use Git bool
+  // semantics (true/yes/on/1), not a literal "true" compare. First enable still writes;
+  // real write failures still throw. Only --get exit 1 means unset; other failures stay loud.
+  let worktreeConfigEnabled = false;
+  try {
+    worktreeConfigEnabled =
+      git(cwd, ["config", "--local", "--bool", "--get", "extensions.worktreeConfig"]) === "true";
+  } catch (error) {
+    const status =
+      typeof error === "object" && error !== null && "status" in error
+        ? (error as { status: unknown }).status
+        : undefined;
+    if (status !== 1) throw error;
+  }
+  if (!worktreeConfigEnabled) {
+    git(cwd, ["config", "extensions.worktreeConfig", "true"]);
+  }
 
   // Migrate immediately so sibling trees never observe bare-in-common under worktreeConfig.
   if (bareInCommon) {
@@ -176,11 +215,12 @@ function readGateState(session: SessionManager): {
 
 export function createWorkerSubmissionGate(): {
   arm(cwd: string, parent?: WorkerSubmissionGateParent): void;
-  assertAcceptable(status: string): void;
+  assertAcceptable(status: string, details?: unknown): void;
 } {
   let baseline: string | null | undefined;
   let root: string | undefined;
   let reminded = false;
+  let unfinishedReasonBounces = 0;
   let record: SessionManager | undefined;
   // null = unborn HEAD only; any other git failure throws (no swallow).
   const head = (cwd: string): string | null => {
@@ -209,7 +249,14 @@ export function createWorkerSubmissionGate(): {
         head: baseline,
       });
     },
-    assertAcceptable(status) {
+    assertAcceptable(status, details) {
+      // #292: unfinished without a non-blank reason → in-session bounce (max 2), then accept.
+      if (status === "unfinished" && !unfinishedReasonPresent(details)) {
+        if (unfinishedReasonBounces < UNFINISHED_REASON_BOUNCE_LIMIT) {
+          unfinishedReasonBounces += 1;
+          throw new WorkerUnfinishedReasonReminderError();
+        }
+      }
       if (baseline === undefined || root === undefined || !DONE.has(status)) return;
       const now = head(root);
       if ((now !== null && (baseline === null || now !== baseline)) || reminded) {

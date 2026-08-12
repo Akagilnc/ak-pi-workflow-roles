@@ -98,7 +98,7 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
           },
         );
 
-        assert.equal(result.timedOut, false, result.stderr);
+        assert.equal(result.localTimeout, false, result.stderr);
         assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
         assert.match(result.stderr, /DOCTOR_FRESH_PROVIDER_CALLS=2/);
 

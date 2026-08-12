@@ -287,10 +287,10 @@ async function runCoderSkillFailureCli(
 }
 
 function assertAuditAbortWithoutReceipt(
-  result: { code: number | null; stdout: string; stderr: string; timedOut: boolean },
+  result: { code: number | null; stdout: string; stderr: string; localTimeout: boolean },
   label: string,
 ) {
-  assert.equal(result.timedOut, false, `${label} subprocess did not time out`);
+  assert.equal(result.localTimeout, false, `${label} subprocess did not time out`);
   assert.equal(result.code, 1, `${label} exits nonzero`);
 }
 
@@ -346,7 +346,7 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
 test("no-receipt Judge audit drains one healthy packaged Navigator for the accepted parent", async () => {
   // Process boundary required: process-release evidence is emitted on process exit.
   const result = await runHealthyNavigatorAuditFailureCli("json");
-  assert.equal(result.timedOut, false, "subprocess did not time out");
+  assert.equal(result.localTimeout, false, "subprocess did not time out");
   // Malformed auditor prose is absence of an accepted receipt under #288, not
   // infrastructure failure; the parent candidate remains lawful and exits zero.
   assert.equal(result.code, 0, "typed no-receipt audit leg does not扣押 the parent candidate");
@@ -468,7 +468,7 @@ test("coder apply without skill expansion rejects completed as non-receipt", asy
   // become an accepted receipt (法条③ / AC3).
   for (const mode of ["print", "json"] as const) {
     const result = await runCoderSkillFailureCli(mode, "missing");
-    assert.equal(result.timedOut, false, `${mode} did not time out`);
+    assert.equal(result.localTimeout, false, `${mode} did not time out`);
     if (mode === "json") {
       const events = result.stdout
         .split("\n")
@@ -525,7 +525,7 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
   };
   for (const mode of ["json", "print"] as const) {
     const result = await runReviewerCli(mode, processRow.stage);
-    assert.equal(result.timedOut, false, `${processRow.stage}/${mode} subprocess did not time out`);
+    assert.equal(result.localTimeout, false, `${processRow.stage}/${mode} subprocess did not time out`);
     assert.equal(result.code, 1, `${processRow.stage}/${mode} exits nonzero`);
     if (mode === "json") {
       assertJsonFailureFacts(result, processRow.tool, `${processRow.stage}/${mode}`);

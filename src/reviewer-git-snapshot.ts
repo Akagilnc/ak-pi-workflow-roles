@@ -37,17 +37,9 @@ export function immutableReviewerRefs(refs: ReviewerRefMap): ReviewerRefMap {
 }
 
 export function sameReviewerPinnedTarget(
-  actual: Readonly<{ repositoryRoot: string; objectFormat: "sha1" | "sha256"; targetHead: string; refs: ReviewerRefMap }>,
-  expected: Readonly<{ repositoryRoot: string; objectFormat: "sha1" | "sha256"; targetHead: string; refs: ReviewerRefMap }>,
+  actual: Readonly<{ repositoryRoot: string; objectFormat: "sha1" | "sha256"; targetHead: string; refs?: ReviewerRefMap }>,
+  expected: Readonly<{ repositoryRoot: string; objectFormat: "sha1" | "sha256"; targetHead: string; refs?: ReviewerRefMap }>,
 ): boolean {
   return actual.repositoryRoot === expected.repositoryRoot && actual.objectFormat === expected.objectFormat &&
-    actual.targetHead === expected.targetHead && sameReviewerRefs(actual.refs, expected.refs);
-}
-
-export function sameReviewerRefs(actual: ReviewerRefMap, expected: ReviewerRefMap): boolean {
-  const actualEntries = Object.entries(actual).sort(([left], [right]) => left.localeCompare(right));
-  const expectedEntries = Object.entries(expected).sort(([left], [right]) => left.localeCompare(right));
-  return actualEntries.length === expectedEntries.length && actualEntries.every(([name, value], index) =>
-    name === expectedEntries[index]?.[0] && value.objectId === expectedEntries[index]?.[1].objectId &&
-    value.peeledCommitId === expectedEntries[index]?.[1].peeledCommitId);
+    actual.targetHead === expected.targetHead;
 }

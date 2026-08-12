@@ -13,6 +13,7 @@ import {
   createWorkerSubmissionGate,
   installWorkerGitHooks,
   WorkerCommitReminderError,
+  WorkerUnfinishedReasonReminderError,
   WORKER_COMMIT_BASELINE_ENTRY_TYPE,
   WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
   WORKER_COMMIT_SUBJECT_PREFIX,
@@ -37,15 +38,43 @@ async function tempGitRepo(): Promise<string> {
   return root;
 }
 
+test("unfinished reason gate bounces missing reason up to twice then accepts; reasoned unfinished free; other statuses unchanged", () => {
+  const gate = createWorkerSubmissionGate();
+  assert.throws(
+    () => gate.assertAcceptable("unfinished", {}),
+    (error: unknown) =>
+      error instanceof WorkerUnfinishedReasonReminderError &&
+      error.code === "worker_unfinished_reason_reminder" &&
+      error.message === "补理由（前置缺失/违宪之一）或继续施工",
+  );
+  assert.throws(() => gate.assertAcceptable("unfinished", { reason: "   " }), WorkerUnfinishedReasonReminderError);
+  assert.doesNotThrow(() =>
+    gate.assertAcceptable("unfinished", {
+      reason: "prerequisite_missing: pending owner decision on adapter scope",
+    }),
+  );
+
+  const loop = createWorkerSubmissionGate();
+  assert.throws(() => loop.assertAcceptable("unfinished", {}), WorkerUnfinishedReasonReminderError);
+  assert.throws(() => loop.assertAcceptable("unfinished", {}), WorkerUnfinishedReasonReminderError);
+  assert.doesNotThrow(() => loop.assertAcceptable("unfinished", {}));
+  assert.doesNotThrow(() => loop.assertAcceptable("planned"));
+  assert.doesNotThrow(() => loop.assertAcceptable("refused"));
+});
+
 test("① completed/partially_completed zero-commit bounces once then confirm; other statuses free; git failure surfaces; unborn is no-commit", async () => {
   const root = await tempGitRepo();
   const bare = await mkdtemp(join(tmpdir(), "ak-worker-gate-bare-"));
   try {
     const gate = createWorkerSubmissionGate();
     gate.arm(root);
-    for (const status of ["planned", "refused", "unfinished"] as const) {
+    for (const status of ["planned", "refused"] as const) {
       assert.doesNotThrow(() => gate.assertAcceptable(status), status);
     }
+    // unfinished without reason is the reason-gate's concern; with reason it stays commit-free.
+    assert.doesNotThrow(() =>
+      gate.assertAcceptable("unfinished", { reason: "unconstitutional: task contradicts ADR 0055" }),
+    );
     assert.throws(
       () => gate.assertAcceptable("completed"),
       (error: unknown) =>
@@ -200,6 +229,101 @@ exit 0
     }
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("#267 worktreeConfig enable is local-bool only: global true still enables; common yes skips shared write", async () => {
+  // Real entry: installWorkerGitHooks. Two failure shapes, one bar:
+  // (1) global true must not skip the repo's first enable;
+  // (2) common value "yes" (Git bool) must skip shared write under config.lock.
+  const root = await tempGitRepo();
+  const globalConfig = join(await mkdtemp(join(tmpdir(), "ak-worker-gate-global-")), ".gitconfig");
+  const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
+  try {
+    const wt = join(root, "wt-267");
+    git(root, ["worktree", "add", wt, "HEAD"]);
+
+    // Poison merged-scope reads: global true while local unset.
+    writeFileSync(globalConfig, "[extensions]\n\tworktreeConfig = true\n");
+    process.env.GIT_CONFIG_GLOBAL = globalConfig;
+    assert.equal(git(wt, ["config", "--get", "extensions.worktreeConfig"]), "true");
+    assert.throws(() => git(wt, ["config", "--local", "--get", "extensions.worktreeConfig"]));
+
+    // First arm must still write the repo's local/common config despite global true.
+    installWorkerGitHooks(wt);
+    assert.equal(git(wt, ["config", "--local", "--get", "extensions.worktreeConfig"]), "true");
+
+    // Legitimate Git bool synonym in common config — must count as already enabled.
+    git(wt, ["config", "--local", "extensions.worktreeConfig", "yes"]);
+    assert.equal(git(wt, ["config", "--local", "--get", "extensions.worktreeConfig"]), "yes");
+
+    const commonDir = git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const lockPath = join(commonDir, "config.lock");
+    // Simulate sibling activation holding the shared lock (production race shape).
+    writeFileSync(lockPath, "");
+    try {
+      assert.doesNotThrow(() => installWorkerGitHooks(wt));
+      assert.equal(
+        git(wt, ["config", "--local", "--bool", "--get", "extensions.worktreeConfig"]),
+        "true",
+      );
+    } finally {
+      await rm(lockPath, { force: true });
+    }
+  } finally {
+    if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = previousGlobal;
+    await rm(root, { recursive: true, force: true });
+    await rm(dirname(globalConfig), { recursive: true, force: true });
+  }
+});
+
+test("#267 worktreeConfig bool read: only exit 1 continues; other get failures stay loud", async () => {
+  // Real entry: installWorkerGitHooks. A poisoned extensions.worktreeConfig bricks every git
+  // command (including the early rev-parse), so it cannot reach the bool-get catch. Shim only
+  // the --local --bool --get to exit 128 while leaving the key unset — empty catch would
+  // continue and write true; only exit 1 may mean unset.
+  const root = await tempGitRepo();
+  const bin = await mkdtemp(join(tmpdir(), "ak-git-shim-"));
+  const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const shim = join(bin, "git");
+  writeFileSync(
+    shim,
+    `#!/bin/sh
+if [ "$1" = config ] && [ "$2" = --local ] && [ "$3" = --bool ] && [ "$4" = --get ] && [ "$5" = extensions.worktreeConfig ]; then
+  echo "fatal: bad boolean config value 'notabool' for 'extensions.worktreeconfig'" >&2
+  exit 128
+fi
+exec "${realGit}" "$@"
+`,
+  );
+  chmodSync(shim, 0o755);
+  const previousPath = process.env.PATH;
+  try {
+    const wt = join(root, "wt-267-bool");
+    git(root, ["worktree", "add", wt, "HEAD"]);
+    assert.throws(() => git(wt, ["config", "--local", "--get", "extensions.worktreeConfig"]));
+    process.env.PATH = `${bin}${previousPath === undefined ? "" : `:${previousPath}`}`;
+    assert.throws(
+      () => installWorkerGitHooks(wt),
+      (error: unknown) => {
+        if (!(error instanceof Error)) return false;
+        if (!/bad boolean config value/i.test(error.message)) return false;
+        const status =
+          typeof error === "object" && error !== null && "status" in error
+            ? (error as { status: unknown }).status
+            : undefined;
+        return status === 128;
+      },
+    );
+    process.env.PATH = previousPath;
+    // Must remain unset — continuing after non-1 would have written true.
+    assert.throws(() => git(wt, ["config", "--local", "--get", "extensions.worktreeConfig"]));
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await rm(root, { recursive: true, force: true });
+    await rm(bin, { recursive: true, force: true });
   }
 });
 
