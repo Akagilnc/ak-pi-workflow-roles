@@ -245,9 +245,8 @@ export async function observeLaunchedRolePackageIdentity(
       `role package.json at ${rolePackageRoot} does not declare a nonblank version`,
     );
   }
-  const roleEntry = await realpath(selectedRoleEntry);
   return {
-    roleEntry,
+    roleEntry: selectedRoleEntry,
     rolePackageRoot,
     rolePackageVersion: raw.version,
     entryMode: "public-cli",

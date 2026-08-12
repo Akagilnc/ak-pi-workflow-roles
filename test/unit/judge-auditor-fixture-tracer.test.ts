@@ -37,10 +37,11 @@ async function runPackagedTracer(marker: string): Promise<{
 
       const provider = resolve(packageRoot, "test/fixtures/auditor-dossier-tracer-provider.ts");
       const tracePath = join(home, "auditor-trace.jsonl");
+      const launchArgsPath = join(home, "pi-launch-args.json");
       // PI_BINARY remains the production selection seam; this fixture wrapper only
       // loads the faux provider while preserving --version and the real Pi process.
       const piWrapper = join(home, "pi-with-tracer-provider.mjs");
-      await writeFile(piWrapper, `#!/usr/bin/env node\nimport { spawnSync } from "node:child_process";\nconst args = process.argv.slice(2);\nconst forwarded = args.length === 1 && args[0] === "--version" ? args : ["-e", ${JSON.stringify(provider)}, ...args];\nconst result = spawnSync(${JSON.stringify(piCli)}, forwarded, { stdio: "inherit", env: process.env });\nif (result.error) throw result.error;\nprocess.exit(result.status ?? 1);\n`);
+      await writeFile(piWrapper, `#!/usr/bin/env node\nimport { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nif (!(args.length === 1 && args[0] === "--version")) writeFileSync(${JSON.stringify(launchArgsPath)}, JSON.stringify(args));\nconst forwarded = args.length === 1 && args[0] === "--version" ? args : ["-e", ${JSON.stringify(provider)}, ...args];\nconst result = spawnSync(${JSON.stringify(piCli)}, forwarded, { stdio: "inherit", env: process.env });\nif (result.error) throw result.error;\nprocess.exit(result.status ?? 1);\n`);
       await chmod(piWrapper, 0o755);
 
       const bin = join(fixture, "node_modules", ".bin", "ak-role");
@@ -76,6 +77,12 @@ async function runPackagedTracer(marker: string): Promise<{
       assert.ok(runName);
       const runDirectory = join(runsRoot, runName);
       const invocation = JSON.parse(await readFile(join(runDirectory, "invocation.json"), "utf8")) as Record<string, unknown>;
+      const launchArgs = JSON.parse(await readFile(launchArgsPath, "utf8")) as string[];
+      assert.equal(
+        invocation.roleEntry,
+        launchArgs[launchArgs.indexOf("-e") + 1],
+        "ledger roleEntry must be the exact selected entry passed to Pi",
+      );
       assert.deepEqual(
         {
           roleEntry: invocation.roleEntry,

@@ -132,9 +132,9 @@ test("config set bulk write is visible to a subsequent roles process; local over
 });
 
 test("explicit internal activation args point at the package entrypoint file", async () => {
-  const entry = resolveInternalRoleEntrypoint(packageRoot);
+  const entry = await realpath(resolveInternalRoleEntrypoint(packageRoot));
   await access(entry);
-  const args = buildExplicitInternalActivationArgs(packageRoot, [
+  const args = buildExplicitInternalActivationArgs(entry, [
     "--ak-role",
     "judge",
     "--help",

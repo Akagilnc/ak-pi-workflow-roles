@@ -27,15 +27,10 @@ export function resolveInternalRoleEntrypoint(packageRoot: string): string {
  * Ordinary Pi package auto-registration does not include this entrypoint (ADR 0052).
  */
 export function buildExplicitInternalActivationArgs(
-  packageRoot: string,
+  selectedRoleEntry: string,
   extraArgs: readonly string[] = [],
 ): string[] {
-  return [
-    "--no-extensions",
-    "-e",
-    resolveInternalRoleEntrypoint(packageRoot),
-    ...extraArgs,
-  ];
+  return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
 }
 
 /** Production-owned typed failure carried on a resolved runner result. */
@@ -250,13 +245,13 @@ export async function runExplicitInternalActivation(options: {
   timeoutMs?: number | undefined;
   runner?: ExplicitInternalPiRunner;
 }): Promise<ExplicitInternalPiResult> {
-  const roleEntry = resolveInternalRoleEntrypoint(options.packageRoot);
-  const args = [
-    "--no-extensions",
-    "-e",
+  const roleEntry = await realpath(
+    resolveInternalRoleEntrypoint(options.packageRoot),
+  );
+  const args = buildExplicitInternalActivationArgs(
     roleEntry,
-    ...(options.extraArgs ?? []),
-  ];
+    options.extraArgs ?? [],
+  );
   const runner = options.runner ?? defaultExplicitInternalPiRunner;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
