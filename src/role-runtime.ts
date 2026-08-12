@@ -223,7 +223,11 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "reviewer": return { id: "load-install-and-dispatch", run: async () => {
       const activation = await runtime.reviewer.activate(runtime.context);
       const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, { context: runtime.context });
-      if (result.status !== "accepted") throw new Error(`Fixed Reviewer dispatch was not accepted: ${result.status}`);
+      if (result.status !== "accepted") {
+        throw new Error(
+          `Fixed Reviewer dispatch was not accepted: ${result.status} (${result.violations.join(",")}): ${result.diagnostic}`,
+        );
+      }
     } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };

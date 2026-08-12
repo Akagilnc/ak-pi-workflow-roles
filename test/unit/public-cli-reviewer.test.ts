@@ -17,6 +17,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import {
@@ -35,11 +37,19 @@ import {
 } from "../../src/public-cli/reviewer-run.ts";
 import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
 import {
+  classifyPostAdmissionFailure,
   extractReviewerMethodInvocations,
   extractReviewerRoleOutcome,
+  settleFailureTerminalResult,
   settleReviewerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { ReviewerCorrectablePreflightError } from "../../src/reviewer-preflight-error.ts";
+import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import {
+  activationExtensionContext,
+  packageRoot,
+  withActivationHome,
+} from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -752,4 +762,139 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       "completed",
     );
   });
+});
+
+test("reviewer activation rejection lands violation code and diagnostic in books", async () => {
+  const diagnostic =
+    "base revision must name an existing pinned ref or reachable commit";
+  const priorExitCode = process.exitCode;
+  await withActivationHome({ prefix: "ak-reviewer-reject-books-" }, async ({ home }) => {
+    process.exitCode = undefined;
+    const pin = {
+      repositoryRoot: home,
+      objectFormat: "sha1" as const,
+      targetHead: "a".repeat(40),
+      refs: {},
+    };
+    const handlers = new Map<string, Array<(event: unknown, ctx: ExtensionContext) => unknown>>();
+    const pi = {
+      registerFlag() {},
+      registerTool() {},
+      setActiveTools() {},
+      getActiveTools() {
+        return [];
+      },
+      getAllTools() {
+        return [];
+      },
+      getCommands() {
+        return [];
+      },
+      getFlag(name: string) {
+        if (name === "ak-role") return "reviewer";
+        if (name === "ak-review-base") return "origin/main";
+        return undefined;
+      },
+      on(name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+      appendEntry() {},
+    } as unknown as ExtensionAPI;
+
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "unused",
+      loadReviewerSoul: async () => "reviewer soul",
+      transcriptFromContext: () => "",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+      auditReviewerCompliance: async () => ({ status: "pass" }),
+      createReviewerPinnedGitReader: async () => ({
+        pin,
+        async snapshot() {
+          return pin;
+        },
+        async resolve() {
+          throw new ReviewerCorrectablePreflightError("base-invalid", diagnostic);
+        },
+        async range() {
+          throw new Error("range must not run after base rejection");
+        },
+      }),
+      loadCanonicalSkillBinding: async () => ({
+        name: "code-review" as const,
+        snapshot: {
+          raw: "skill",
+          path: "/skill",
+          baseDir: "/",
+          body: "skill",
+          snapshotIdentity: Object.freeze({ text: "skill" }),
+        },
+        invocation: (request: string) => request,
+        captureExpansion: () => ({
+          name: "code-review" as const,
+          location: "/skill",
+          content: "skill",
+          userMessage: "skill",
+        }),
+      }),
+      runReviewerDispatch: async () => {
+        throw new Error("dispatch must not run after rejection");
+      },
+      activationTraceWriter: () => {},
+    })(pi);
+
+    const ctx = activationExtensionContext({ cwd: home, home, mode: "json" });
+    const sessionStart = handlers.get("session_start")?.[0];
+    assert.ok(sessionStart);
+    let thrown: unknown;
+    try {
+      await sessionStart({ reason: "startup" }, ctx);
+    } catch (error) {
+      thrown = error;
+    }
+    assert.ok(thrown instanceof Error);
+    assert.match(thrown.message, /base-invalid/);
+    assert.match(thrown.message, new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+    const runId = "run-reviewer-reject-diagnostic";
+    const bookKey = resolveBookKeyFromGit(home);
+    const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@reviewer`);
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    await mkdir(join(runDirectory, "artifacts"), { recursive: true });
+    const admitted = {
+      role: "reviewer" as const,
+      runId,
+      bookKey,
+      projectRoot: home,
+      instruction: "",
+      instructionEmpty: true,
+      attachments: [],
+      baseRevision: "origin/main",
+      runDirectory,
+      sessionDirectory: join(runDirectory, "session"),
+      sessionFile: join(runDirectory, "session", "session.jsonl"),
+      admittedRequestPath: join(runDirectory, "admitted-request.json"),
+    };
+    await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
+    const failure = classifyPostAdmissionFailure({
+      timedOut: false,
+      code: 1,
+      stderr: `Error: ${thrown.message}\n`,
+    });
+    const terminal = await settleFailureTerminalResult(admitted, failure);
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
+    assert.match(terminal.roleOutcome.diagnostic, /base-invalid/);
+    assert.match(terminal.roleOutcome.diagnostic, new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+    const errorRef = terminal.artifacts.find((a) => a.kind === "error");
+    assert.ok(errorRef);
+    const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
+      cause: string;
+      diagnostic: string;
+    };
+    assert.equal(errorBody.cause, "activation");
+    assert.match(errorBody.diagnostic, /base-invalid/);
+    assert.match(errorBody.diagnostic, new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  });
+  process.exitCode = priorExitCode;
 });
