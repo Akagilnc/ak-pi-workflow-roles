@@ -843,11 +843,21 @@ function safelyRead(object: object, key: string): { readable: true; value: unkno
   }
 }
 
+function auditNoReceiptDecisiveFact(candidate: object): Record<string, unknown> {
+  const projected = safelyRead(candidate, "auditNoReceipt");
+  if (!projected.readable || projected.value === undefined) return {};
+  try {
+    return { auditNoReceipt: parseNoReceiptLifecycleFacts(projected.value) };
+  } catch {
+    return {};
+  }
+}
+
 function judgeDecisiveFacts(
   verdict: object,
   judgeStatus: JudgeVerdict["judgeStatus"],
 ): Record<string, unknown> {
-  const facts: Record<string, unknown> = { judgeStatus };
+  const facts: Record<string, unknown> = { judgeStatus, ...auditNoReceiptDecisiveFact(verdict) };
   if (judgeStatus === "continue") {
     const fix = safelyRead(verdict, "fix");
     if (fix.readable && isRecord(fix.value)) {
@@ -994,7 +1004,7 @@ function collectorDecisiveFacts(
 function doctorDecisiveFacts(output: DoctorOutput): Record<string, unknown> {
   const candidate = output as unknown as object;
   const status = safelyRead(candidate, "status");
-  const facts: Record<string, unknown> = {};
+  const facts: Record<string, unknown> = { ...auditNoReceiptDecisiveFact(candidate) };
   if (status.readable && typeof status.value === "string") facts.doctorStatus = status.value;
   if (status.readable && status.value === "refused") {
     const reason = safelyRead(candidate, "reason");
@@ -1037,6 +1047,7 @@ function reviewerDecisiveFacts(
     axes,
     reportAxes,
     acceptedBatchPresent: acceptedBatch.readable && acceptedBatch.value !== undefined,
+    ...auditNoReceiptDecisiveFact(candidate),
   };
   if (status.readable && typeof status.value === "string") facts.reviewerStatus = status.value;
   const diagnostic = safelyRead(candidate, "diagnostic");

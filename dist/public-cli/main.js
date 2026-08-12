@@ -17771,13 +17771,12 @@ function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseNoReceiptLifecycleFacts(input) {
-  const fields = ["acceptedReceipt", "attemptPointer", "deliveryTurns", "rejectedReceipts", "runPointer", "sessionCompletion", "terminalToolCalled"];
-  if (!isRecord4(input) || Object.keys(input).sort().join("\0") !== fields.join("\0") || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord4(item) && Object.keys(item).length === 1 && typeof item.reason === "string" && item.reason.trim() !== "")) {
+  if (!isRecord4(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord4(item) && typeof item.reason === "string" && item.reason.trim() !== "")) {
     throw new TypeError("malformed no-receipt lifecycle facts");
   }
   return {
     terminalToolCalled: input.terminalToolCalled,
-    rejectedReceipts: input.rejectedReceipts,
+    rejectedReceipts: input.rejectedReceipts.map((item) => ({ reason: item.reason })),
     deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
     sessionCompletion: "settled-without-accepted-receipt",
     runPointer: input.runPointer,
@@ -18754,8 +18753,17 @@ function safelyRead(object, key) {
     return { readable: false };
   }
 }
+function auditNoReceiptDecisiveFact(candidate) {
+  const projected = safelyRead(candidate, "auditNoReceipt");
+  if (!projected.readable || projected.value === void 0) return {};
+  try {
+    return { auditNoReceipt: parseNoReceiptLifecycleFacts(projected.value) };
+  } catch {
+    return {};
+  }
+}
 function judgeDecisiveFacts(verdict, judgeStatus) {
-  const facts = { judgeStatus };
+  const facts = { judgeStatus, ...auditNoReceiptDecisiveFact(verdict) };
   if (judgeStatus === "continue") {
     const fix = safelyRead(verdict, "fix");
     if (fix.readable && isRecord5(fix.value)) {
@@ -18893,7 +18901,7 @@ function collectorDecisiveFacts(receipt) {
 function doctorDecisiveFacts(output) {
   const candidate = output;
   const status = safelyRead(candidate, "status");
-  const facts = {};
+  const facts = { ...auditNoReceiptDecisiveFact(candidate) };
   if (status.readable && typeof status.value === "string") facts.doctorStatus = status.value;
   if (status.readable && status.value === "refused") {
     const reason = safelyRead(candidate, "reason");
@@ -18931,7 +18939,8 @@ function reviewerDecisiveFacts(output) {
   const facts = {
     axes,
     reportAxes,
-    acceptedBatchPresent: acceptedBatch.readable && acceptedBatch.value !== void 0
+    acceptedBatchPresent: acceptedBatch.readable && acceptedBatch.value !== void 0,
+    ...auditNoReceiptDecisiveFact(candidate)
   };
   if (status.readable && typeof status.value === "string") facts.reviewerStatus = status.value;
   const diagnostic = safelyRead(candidate, "diagnostic");

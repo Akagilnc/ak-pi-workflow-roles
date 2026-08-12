@@ -34,6 +34,7 @@ import {
 } from "../../src/public-cli/invocation.ts";
 import {
   extractDoctorRoleOutcome,
+  formatTerminalResult,
   settleDoctorTerminalResult,
   trySettleDoctorTerminalResult,
 } from "../../src/public-cli/settlement.ts";
@@ -435,7 +436,19 @@ test("extractDoctorRoleOutcome reads completed and refused decisive facts", () =
     issueNumber: 40,
     runsPath: ".ak-roles/books/demo/issues/40/runs",
   };
-  const completed = sampleCompletedDoctorOutput(identity);
+  const completed = {
+    ...sampleCompletedDoctorOutput(identity),
+    auditNoReceipt: {
+      status: "no-receipt",
+      terminalToolCalled: false,
+      rejectedReceipts: [],
+      deliveryTurns: 2,
+      sessionCompletion: "settled-without-accepted-receipt",
+      runPointer: "/doctor-audit/run",
+      attemptPointer: "doctor-audit-attempt",
+      acceptedReceipt: false,
+    },
+  };
   const extracted = extractDoctorRoleOutcome([
     {
       type: "message",
@@ -453,6 +466,13 @@ test("extractDoctorRoleOutcome reads completed and refused decisive facts", () =
   assert.equal(extracted.outcome.status, "completed");
   assert.equal(extracted.outcome.decisiveFacts.issueNumber, 40);
   assert.equal(extracted.outcome.decisiveFacts.findingsCount, 0);
+  assert.equal((extracted.outcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
+  assert.match(formatTerminalResult({
+    roleOutcome: extracted.outcome,
+    navigator: { disposition: "no-advice" },
+    artifacts: [],
+    runId: "doctor-run",
+  }), /auditNoReceipt/);
   assert.equal(
     extracted.outcome.decisiveFacts.runsPath,
     identity.runsPath,

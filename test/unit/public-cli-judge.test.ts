@@ -930,6 +930,16 @@ test("withPhysicalAliasFixture removes root and rethrows original unlink error",
 });
 
 test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {
+  const auditNoReceipt = {
+    status: "no-receipt",
+    terminalToolCalled: false,
+    rejectedReceipts: [],
+    deliveryTurns: 2,
+    sessionCompletion: "settled-without-accepted-receipt",
+    runPointer: "/audit/run",
+    attemptPointer: "audit-attempt",
+    acceptedReceipt: false,
+  };
   const entries = [
     {
       type: "custom",
@@ -951,6 +961,7 @@ test("settlement extracts Judge outcome and Navigator recommendation without mod
           judgeStatus: "continue",
           fix: { summary: "close the gate" },
           classes: [{ name: "A", owner: "o", boundary: "b", disposition: "open" }],
+          auditNoReceipt,
         },
       },
     },
@@ -980,6 +991,13 @@ test("settlement extracts Judge outcome and Navigator recommendation without mod
   assert.equal(outcome?.kind, "accepted");
   assert.equal(outcome?.status, "continue");
   assert.equal(outcome?.decisiveFacts.fixSummary, "close the gate");
+  assert.equal((outcome?.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
+  assert.match(formatTerminalResult({
+    roleOutcome: outcome!,
+    navigator: { disposition: "no-advice" },
+    artifacts: [],
+    runId: "run",
+  }), /auditNoReceipt/);
 
   const navigator = extractNavigatorFact(entries);
   assert.equal(navigator.disposition, "recommendation");

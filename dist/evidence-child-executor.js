@@ -431,6 +431,7 @@ export async function executeAuditorChild(options) {
         let decisionSubmitted = false;
         let decisionCallId;
         let decisionToolFailure;
+        const decisionToolFailures = new Map();
         const tool = wrapPackageOwnedToolDefinition({
             ...options.tool,
             label: options.roleLabel,
@@ -443,11 +444,13 @@ export async function executeAuditorChild(options) {
                     decision = args[1];
                     decisionCallId = args[0];
                     decisionToolFailure = undefined;
+                    decisionToolFailures.delete(args[0]);
                     decisionSubmitted = true;
                     return result;
                 }
                 catch (error) {
                     decisionToolFailure = error;
+                    decisionToolFailures.set(args[0], error);
                     throw error;
                 }
             },
@@ -490,6 +493,8 @@ export async function executeAuditorChild(options) {
         let boundaryResponse;
         let retentionFailure;
         let retainedResponse;
+        let rejectedDecisionResponse;
+        let promptNeighboringFailure;
         const registeredToolNames = new Set(session.getAllTools().map((entry) => entry.name));
         const evidenceToolFailures = new Map();
         for (const name of registeredToolNames) {
@@ -533,21 +538,34 @@ export async function executeAuditorChild(options) {
                 // execute path above is the sole owner of accepted-receipt state; a
                 // rejected execution must remain retryable in this same session.
                 for (const part of event.message.content) {
-                    if (part.type === "toolCall" && part.name === tool.name && decision === undefined) {
-                        decision = part.arguments;
-                        decisionCallId = part.id;
-                        // Pi can reject malformed root arguments before invoking execute;
-                        // that remains the existing typed audit-incomplete candidate path.
-                        if (part.arguments === undefined)
-                            decisionSubmitted = true;
+                    if (part.type === "toolCall" && part.name === tool.name) {
+                        rejectedDecisionResponse = event.message;
+                        if (decision === undefined) {
+                            decision = part.arguments;
+                            decisionCallId = part.id;
+                            // Pi can reject malformed root arguments before invoking execute;
+                            // that remains the existing typed audit-incomplete candidate path.
+                            if (part.arguments === undefined)
+                                decisionSubmitted = true;
+                        }
                     }
                 }
                 if (turns >= AUDITOR_TURN_LIMIT)
                     boundaryResponse = event.message;
             }
-            if (event.type === "turn_end" &&
-                (decisionSubmitted || boundaryResponse !== undefined || retentionFailure !== undefined)) {
-                void session.abort();
+            if (event.type === "turn_end") {
+                if (rejectedDecisionResponse !== undefined) {
+                    promptNeighboringFailure = findToolFailure(rejectedDecisionResponse);
+                    const rejectedCall = rejectedDecisionResponse.content.find((part) => part.type === "toolCall" && part.name === tool.name && decisionToolFailures.has(part.id));
+                    if (rejectedCall?.type === "toolCall") {
+                        decisionToolFailure = decisionToolFailures.get(rejectedCall.id);
+                        decisionToolFailures.delete(rejectedCall.id);
+                    }
+                }
+                if (decisionSubmitted || promptNeighboringFailure !== undefined
+                    || boundaryResponse !== undefined || retentionFailure !== undefined) {
+                    void session.abort();
+                }
             }
         });
         const abort = () => { void session.abort(); };
@@ -559,16 +577,35 @@ export async function executeAuditorChild(options) {
             try {
                 const delivery = createReceiptDeliveryPolicy();
                 const promptAllowingRejectedDecision = async (prompt) => {
+                    rejectedDecisionResponse = undefined;
+                    promptNeighboringFailure = undefined;
+                    decisionToolFailure = undefined;
+                    let promptFailure;
                     try {
                         await session.prompt(prompt);
                     }
                     catch (error) {
-                        // A rejected terminal execution is protocol feedback, not session
-                        // infrastructure failure. Preserve it for the shared budget and let
-                        // this same auditor session correct and resubmit.
-                        if (decisionToolFailure === undefined)
-                            throw error;
+                        promptFailure = error;
                     }
+                    // Prefer turn_end correlation, but Pi may reject prompt() before that
+                    // event. In that case correlate against this prompt's captured decision
+                    // response and call-id maps at the catch boundary.
+                    const correlatedResponse = rejectedDecisionResponse;
+                    if (correlatedResponse !== undefined) {
+                        promptNeighboringFailure ??= findToolFailure(correlatedResponse);
+                        const rejectedCall = correlatedResponse.content.find((part) => part.type === "toolCall" && part.name === tool.name && decisionToolFailures.has(part.id));
+                        if (rejectedCall?.type === "toolCall") {
+                            decisionToolFailure = decisionToolFailures.get(rejectedCall.id);
+                            decisionToolFailures.delete(rejectedCall.id);
+                        }
+                    }
+                    // An adjacent failure outranks correctable decision feedback.
+                    if (promptNeighboringFailure !== undefined)
+                        throw promptNeighboringFailure;
+                    if (decisionToolFailure !== undefined)
+                        return;
+                    if (promptFailure !== undefined)
+                        throw promptFailure;
                 };
                 await promptAllowingRejectedDecision(options.prompt);
                 while (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
@@ -590,6 +627,9 @@ export async function executeAuditorChild(options) {
                     const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
                     const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
                     decision = delivery.facts({ runPointer, attemptPointer });
+                    // Late turn_end feedback cannot overturn a lifecycle that has already
+                    // charged this prompt to the exhausted shared budget.
+                    decisionToolFailure = undefined;
                     auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, decision);
                 }
             }
