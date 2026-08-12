@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, statSync } from "node:fs";
 import {
@@ -14,22 +15,173 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { tmpdir } from "node:os";
 
+import { runPublicCliSubprocess } from "../helpers/public-cli-subprocess.ts";
 import {
   constructionProvenance,
   getSharedIsolatedPack,
   packageRoot,
+  runNodeSubprocess,
   runPiSubprocess,
   withHermeticHome,
   withProcessCwd,
 } from "../helpers/pi-test-harness.ts";
+import {
+  TestSubprocessOperationalError,
+} from "../helpers/test-subprocess.ts";
 
-test("subprocess timeouts are explicit instead of looking like natural no-code closes", async () => {
-  const result = await runPiSubprocess(["--help"], {
+test("subprocess result seam classifies localTimeout, signal, nonzero exit, clean exit, and post-exit deadline", async () => {
+  const localTimeoutMs = 0;
+  const timed = await runPiSubprocess(["--help"], {
     cwd: packageRoot,
-    timeoutMs: 0,
+    timeoutMs: localTimeoutMs,
   });
-  assert.equal(result.timedOut, true);
-  assert.equal(result.code, null);
+  assert.equal(timed.localTimeout, true);
+  assert.equal(timed.localTimeoutOwner, "runPiSubprocess");
+  assert.equal(timed.localTimeoutMs, localTimeoutMs);
+  assert.equal(timed.code, null);
+  assert.equal(timed.signal, "SIGTERM");
+
+  const signaled = await runNodeSubprocess(
+    ["-e", "process.kill(process.pid, 'SIGTERM')"],
+    { cwd: packageRoot, timeoutMs: 15_000 },
+  );
+  assert.equal(signaled.localTimeout, false);
+  assert.equal(signaled.localTimeoutOwner, null);
+  assert.equal(signaled.localTimeoutMs, null);
+  assert.equal(signaled.signal, "SIGTERM");
+  assert.equal(signaled.code, null);
+
+  const failed = await runNodeSubprocess(
+    ["-e", "process.stderr.write('ERR_ASSERTION boom'); process.exit(7)"],
+    { cwd: packageRoot, timeoutMs: 15_000 },
+  );
+  assert.equal(failed.localTimeout, false);
+  assert.equal(failed.signal, null);
+  assert.equal(failed.code, 7);
+  assert.equal(failed.stderr, "ERR_ASSERTION boom");
+
+  const clean = await runNodeSubprocess(
+    ["-e", "process.stdout.write('ok'); process.exit(0)"],
+    { cwd: packageRoot, timeoutMs: 15_000 },
+  );
+  assert.equal(clean.localTimeout, false);
+  assert.equal(clean.signal, null);
+  assert.equal(clean.code, 0);
+  assert.equal(clean.stdout, "ok");
+
+  // Causal order (not a tight timer race): parent exits(42) immediately after
+  // spawning a detached descendant that inherits stdio; deadline has ample
+  // margin so exit precedes it under load; descendant hold strictly past the
+  // deadline keeps close pending. Classification must follow exit facts.
+  const postExitDeadlineMs = 2_000;
+  const postExitHoldMs = postExitDeadlineMs + 500;
+  const postExit = await runNodeSubprocess(
+    [
+      "-e",
+      [
+        "const { spawn } = require('node:child_process');",
+        `const hold = spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${postExitHoldMs})'], {`,
+        "  stdio: ['ignore', 'inherit', 'inherit'],",
+        "  detached: true,",
+        "});",
+        "hold.unref();",
+        "process.stdout.write('exited-before-close');",
+        "process.exit(42);",
+      ].join(""),
+    ],
+    { cwd: packageRoot, timeoutMs: postExitDeadlineMs },
+  );
+  assert.equal(postExit.localTimeout, false);
+  assert.equal(postExit.localTimeoutOwner, null);
+  assert.equal(postExit.localTimeoutMs, null);
+  assert.equal(postExit.signal, null);
+  assert.equal(postExit.code, 42);
+  assert.equal(postExit.stdout, "exited-before-close");
+
+  await assert.rejects(
+    () =>
+      runPublicCliSubprocess("/no/such/ak-roles-bin", ["--help"], {
+        home: packageRoot,
+        agentDir: packageRoot,
+        cwd: packageRoot,
+        timeoutMs: 1_000,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof TestSubprocessOperationalError);
+      // Operational rejection must carry available facts at reject time
+      // (code/signal/local-deadline/collected stdout/stderr) — same contract
+      // for spawn and stdout/stderr collection errors on the unified path.
+      assert.equal(error.code, "ENOENT");
+      assert.equal(error.signal, null);
+      assert.equal(error.localTimeout, false);
+      assert.equal(error.localTimeoutOwner, null);
+      assert.equal(error.localTimeoutMs, null);
+      assert.equal(error.stdout, "");
+      assert.equal(error.stderr, "");
+      return true;
+    },
+  );
+
+  // Post-exit collection error on the real helper: descendant holds stdio so
+  // exit is recorded while pipes stay open; test-side ChildProcess.emit wrap
+  // (not a production hook) destroys stdout after exit listeners run. Must
+  // keep process code/signal — not stream errno — plus localTimeout facts and
+  // collected output. Reverting exited?exitCode/exitSignal selection fails this.
+  const collectionHoldMs = 2_000;
+  const originalEmit = ChildProcess.prototype.emit;
+  ChildProcess.prototype.emit = function (
+    this: ChildProcess,
+    event: string | symbol,
+    ...args: unknown[]
+  ): boolean {
+    if (event === "exit" && args[0] === 7) {
+      const emitted = originalEmit.apply(this, arguments as never);
+      if (this.stdout && !this.stdout.destroyed) {
+        this.stdout.destroy(
+          Object.assign(new Error("forced collection"), {
+            code: "ERR_STREAM_DESTROYED",
+          }),
+        );
+      }
+      return emitted;
+    }
+    return originalEmit.apply(this, arguments as never);
+  };
+  try {
+    await assert.rejects(
+      () =>
+        runNodeSubprocess(
+          [
+            "-e",
+            [
+              "const { spawn } = require('node:child_process');",
+              `const hold = spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${collectionHoldMs})'], {`,
+              "  stdio: ['ignore', 'inherit', 'inherit'],",
+              "  detached: true,",
+              "});",
+              "hold.unref();",
+              "process.stdout.write('out');",
+              "process.stderr.write('err');",
+              "process.exit(7);",
+            ].join(""),
+          ],
+          { cwd: packageRoot, timeoutMs: 15_000 },
+        ),
+      (error: unknown) => {
+        assert.ok(error instanceof TestSubprocessOperationalError);
+        assert.equal(error.code, 7);
+        assert.equal(error.signal, null);
+        assert.equal(error.localTimeout, false);
+        assert.equal(error.localTimeoutOwner, null);
+        assert.equal(error.localTimeoutMs, null);
+        assert.equal(error.stdout, "out");
+        assert.equal(error.stderr, "err");
+        return true;
+      },
+    );
+  } finally {
+    ChildProcess.prototype.emit = originalEmit;
+  }
 });
 
 test("hermetic HOME restores the exact prior value and recursively cleans up after a throw", async () => {

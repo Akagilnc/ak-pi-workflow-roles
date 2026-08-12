@@ -847,7 +847,7 @@ test("coder plan loads its task without construction skill and returns planned",
   assert.deepEqual(result.details, output);
 });
 
-test("coder apply accepts an unfinished handoff with typed remaining scope", async () => {
+test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", async () => {
   const harness = extensionHarness("coder", {
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
@@ -865,14 +865,70 @@ test("coder apply accepts an unfinished handoff with typed remaining scope", asy
   });
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
-  const unfinished = {
+  const bare = {
     status: "unfinished" as const,
     report: "The first implementation is not fully settled.",
     remainingScope: "the unimplemented adapter branch",
   };
+  const reasoned = {
+    ...bare,
+    reason: "prerequisite_missing: owner has not answered which adapter branch is in scope",
+  };
+  // Positive: no reason → bounce → same-run reasoned resubmit accepted.
+  await assert.rejects(
+    tool.execute("unfinished-bare", bare, undefined, undefined, toolCallContext([{ id: "unfinished-bare", name: CODER_OUTPUT_TOOL_NAME }])),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message === "补理由（前置缺失/违宪之一）或继续施工",
+  );
   assert.deepEqual(
-    (await tool.execute("unfinished", unfinished, undefined, undefined, toolCallContext([{ id: "unfinished", name: CODER_OUTPUT_TOOL_NAME }]))).details,
-    unfinished,
+    (await tool.execute("unfinished-reasoned", reasoned, undefined, undefined, toolCallContext([{ id: "unfinished-reasoned", name: CODER_OUTPUT_TOOL_NAME }]))).details,
+    reasoned,
+  );
+  const { extractCoderRoleOutcome } = await import("../../src/public-cli/settlement.ts");
+  const projected = extractCoderRoleOutcome([
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: CODER_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: reasoned,
+      },
+    },
+  ] as never);
+  assert.equal(projected?.outcome.decisiveFacts.reason, reasoned.reason);
+  assert.equal(projected?.outcome.decisiveFacts.remainingScope, reasoned.remainingScope);
+
+  // Negative: continuous bare resubmits bounce at most twice, then accept (no loop).
+  const harness2 = extensionHarness("coder", {
+    "ak-coder-task": "/materials/approved.md",
+    "ak-coder-phase": "apply",
+  });
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "JUDGE LAW",
+    loadCoderSoul: async () => "CODER LAW",
+    loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
+    loadCanonicalSkillBinding: async () => tddBinding(),
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  })(harness2.pi as ExtensionAPI);
+  await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
+    await harness2.handlers.get("session_start")?.({}, activationCtx(home));
+  });
+  const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
+  assert.ok(tool2);
+  await assert.rejects(
+    tool2.execute("u1", bare, undefined, undefined, toolCallContext([{ id: "u1", name: CODER_OUTPUT_TOOL_NAME }])),
+    /补理由（前置缺失\/违宪之一）或继续施工/,
+  );
+  await assert.rejects(
+    tool2.execute("u2", bare, undefined, undefined, toolCallContext([{ id: "u2", name: CODER_OUTPUT_TOOL_NAME }])),
+    /补理由（前置缺失\/违宪之一）或继续施工/,
+  );
+  assert.deepEqual(
+    (await tool2.execute("u3", bare, undefined, undefined, toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }]))).details,
+    bare,
   );
 });
 

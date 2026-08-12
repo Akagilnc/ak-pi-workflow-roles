@@ -110,7 +110,7 @@ if (path.endsWith('/user')) reply(200, {login:'fixture'}); else if (path.include
           env: { ...options.env, PATH: `${binDir}:${dirname(piCli)}:${options.env.PATH ?? ""}`, PI_OFFLINE: "1" },
           timeoutMs: options.timeoutMs ?? 90_000,
         });
-        return { code: subprocess.code, stdout: subprocess.stdout, stderr: subprocess.stderr, timedOut: subprocess.timedOut, args: [...args] };
+        return { code: subprocess.code, stdout: subprocess.stdout, stderr: subprocess.stderr, timedOut: subprocess.localTimeout, args: [...args] };
       },
     });
 

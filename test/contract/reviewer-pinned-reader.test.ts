@@ -8,7 +8,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import { createReviewerPinnedGitReader } from "../../src/reviewer-pinned-git.ts";
-import { immutableReviewerRefs, sameReviewerRefs } from "../../src/reviewer-git-snapshot.ts";
+import { immutableReviewerRefs } from "../../src/reviewer-git-snapshot.ts";
 
 const exec = promisify(execFile);
 async function git(root: string, ...args: string[]): Promise<string> {
@@ -184,10 +184,8 @@ test("pinning rejects non-repositories and bare repositories", async () => {
   } finally { await rm(temporary, { recursive: true, force: true }); }
 });
 
-test("shared ref snapshot helper canonicalizes immutably and compares order-independently", () => {
+test("shared ref snapshot helper canonicalizes refs immutably", () => {
   const refs = immutableReviewerRefs({ "refs/tags/z": { objectId: "2", peeledCommitId: "2" }, "refs/heads/a": { objectId: "1", peeledCommitId: "1" } });
   assert.deepEqual(Object.keys(refs), ["refs/heads/a", "refs/tags/z"]);
-  assert.equal(sameReviewerRefs(refs, { "refs/tags/z": { objectId: "2", peeledCommitId: "2" }, "refs/heads/a": { objectId: "1", peeledCommitId: "1" } }), true);
-  assert.equal(sameReviewerRefs(refs, { "refs/heads/a": { objectId: "different", peeledCommitId: "different" } }), false);
   assert.throws(() => (refs as unknown as Record<string, string>)["refs/heads/a"] = "changed");
 });

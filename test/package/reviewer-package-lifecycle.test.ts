@@ -84,7 +84,7 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
               code: subprocess.code,
               stdout: subprocess.stdout,
               stderr: subprocess.stderr,
-              timedOut: subprocess.timedOut,
+              timedOut: subprocess.localTimeout,
               args: [...args],
             };
           },
@@ -176,7 +176,7 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
               code: subprocess.code,
               stdout: subprocess.stdout,
               stderr: subprocess.stderr,
-              timedOut: subprocess.timedOut,
+              timedOut: subprocess.localTimeout,
               args: [...args],
             };
           },

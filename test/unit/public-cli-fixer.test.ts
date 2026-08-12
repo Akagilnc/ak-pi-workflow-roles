@@ -243,7 +243,11 @@ test("Fixer production activation args reach the real Pi loader for both optiona
             cwd: options.cwd,
             env: options.env,
           });
-          return { ...subprocess, args: [...args] };
+          return {
+            ...subprocess,
+            timedOut: subprocess.localTimeout,
+            args: [...args],
+          };
         },
       });
       assert.equal(result.code, 0, `${row.name}: ${result.stderr}`);
@@ -843,6 +847,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       status: "unfinished" as const,
       report: "Stopped mid-class; remaining work is typed.",
       remainingScope: "TransportCase remaining assertions",
+      reason: "prerequisite_missing: owner decision on TransportCase still pending",
       classResults: [completed("ParserCase", shaA)],
     };
     const applyRefusedReceipt = {
@@ -896,6 +901,10 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
     assert.equal(
       unfinishedExtracted.outcome.decisiveFacts.remainingScope,
       unfinishedReceipt.remainingScope,
+    );
+    assert.equal(
+      unfinishedExtracted.outcome.decisiveFacts.reason,
+      unfinishedReceipt.reason,
     );
     assert.equal(unfinishedExtracted.outcome.decisiveFacts.classResultCount, 1);
 
