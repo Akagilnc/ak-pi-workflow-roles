@@ -203,16 +203,30 @@ exit 0
   }
 });
 
-test("#267 when extensions.worktreeConfig already true, install skips shared .git/config write", async () => {
-  // Real entry: installWorkerGitHooks. Observable: shared config.lock held → still succeeds
-  // (proves no shared write); worktree-local hooks still armed.
+test("#267 worktreeConfig enable is local-bool only: global true still enables; common yes skips shared write", async () => {
+  // Real entry: installWorkerGitHooks. Two failure shapes, one bar:
+  // (1) global true must not skip the repo's first enable;
+  // (2) common value "yes" (Git bool) must skip shared write under config.lock.
   const root = await tempGitRepo();
+  const globalConfig = join(await mkdtemp(join(tmpdir(), "ak-worker-gate-global-")), ".gitconfig");
+  const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
   try {
     const wt = join(root, "wt-267");
     git(root, ["worktree", "add", wt, "HEAD"]);
-    // First arm establishes the extension (shared write once).
-    installWorkerGitHooks(wt);
+
+    // Poison merged-scope reads: global true while local unset.
+    writeFileSync(globalConfig, "[extensions]\n\tworktreeConfig = true\n");
+    process.env.GIT_CONFIG_GLOBAL = globalConfig;
     assert.equal(git(wt, ["config", "--get", "extensions.worktreeConfig"]), "true");
+    assert.throws(() => git(wt, ["config", "--local", "--get", "extensions.worktreeConfig"]));
+
+    // First arm must still write the repo's local/common config despite global true.
+    installWorkerGitHooks(wt);
+    assert.equal(git(wt, ["config", "--local", "--get", "extensions.worktreeConfig"]), "true");
+
+    // Legitimate Git bool synonym in common config — must count as already enabled.
+    git(wt, ["config", "--local", "extensions.worktreeConfig", "yes"]);
+    assert.equal(git(wt, ["config", "--local", "--get", "extensions.worktreeConfig"]), "yes");
 
     const commonDir = git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
     const lockPath = join(commonDir, "config.lock");
@@ -220,7 +234,10 @@ test("#267 when extensions.worktreeConfig already true, install skips shared .gi
     writeFileSync(lockPath, "");
     try {
       assert.doesNotThrow(() => installWorkerGitHooks(wt));
-      assert.equal(git(wt, ["config", "--get", "extensions.worktreeConfig"]), "true");
+      assert.equal(
+        git(wt, ["config", "--local", "--bool", "--get", "extensions.worktreeConfig"]),
+        "true",
+      );
       const hooksDir = git(wt, ["config", "--get", "core.hooksPath"]);
       assert.match(hooksDir, /ak-roles-hooks$/);
       assert.throws(
@@ -231,7 +248,10 @@ test("#267 when extensions.worktreeConfig already true, install skips shared .gi
       await rm(lockPath, { force: true });
     }
   } finally {
+    if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = previousGlobal;
     await rm(root, { recursive: true, force: true });
+    await rm(dirname(globalConfig), { recursive: true, force: true });
   }
 });
 
