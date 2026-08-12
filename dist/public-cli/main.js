@@ -15321,19 +15321,52 @@ async function writeRoleInvocationLedger(source, role) {
     "utf8"
   );
 }
-async function recordLaunchedPiIdentity(runDirectory, identity) {
+async function mergeInvocationIdentityPage(runDirectory, fields) {
   const ledgerPath = join4(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile4(ledgerPath, "utf8"));
   await writeFile2(
     ledgerPath,
     `${JSON.stringify({
       ...current,
-      piExecutable: identity.executable,
-      piVersion: identity.version
+      ...fields
     }, null, 2)}
 `,
     "utf8"
   );
+}
+async function recordLaunchedPiIdentity(runDirectory, identity) {
+  await mergeInvocationIdentityPage(runDirectory, {
+    piExecutable: identity.executable,
+    piVersion: identity.version
+  });
+}
+async function observeLaunchedRolePackageIdentity(packageRoot2) {
+  const rolePackageRoot = await realpath2(packageRoot2);
+  const raw = JSON.parse(
+    await readFile4(join4(rolePackageRoot, "package.json"), "utf8")
+  );
+  if (typeof raw.version !== "string" || raw.version.trim() === "") {
+    throw new Error(
+      `role package.json at ${rolePackageRoot} does not declare a nonblank version`
+    );
+  }
+  const roleEntry = await realpath2(
+    join4(rolePackageRoot, "extensions", "role-runtime.ts")
+  );
+  return {
+    roleEntry,
+    rolePackageRoot,
+    rolePackageVersion: raw.version,
+    entryMode: "public-cli"
+  };
+}
+async function recordLaunchedRolePackageIdentity(runDirectory, identity) {
+  await mergeInvocationIdentityPage(runDirectory, {
+    roleEntry: identity.roleEntry,
+    rolePackageRoot: identity.rolePackageRoot,
+    rolePackageVersion: identity.rolePackageVersion,
+    entryMode: identity.entryMode
+  });
 }
 function requireOptionPath(flag, value) {
   if (value === void 0 || value.trim() === "") {
@@ -16755,15 +16788,23 @@ async function runExplicitInternalActivation(options) {
     options.extraArgs ?? []
   );
   const runner = options.runner ?? defaultExplicitInternalPiRunner;
+  const env = {
+    ...process.env,
+    ...options.env,
+    HOME: options.home,
+    PI_CODING_AGENT_DIR: options.agentDir
+  };
+  const runDirectory = env.AK_ROLE_RUN_DIR;
+  if (typeof runDirectory === "string" && runDirectory !== "") {
+    await recordLaunchedRolePackageIdentity(
+      runDirectory,
+      await observeLaunchedRolePackageIdentity(options.packageRoot)
+    );
+  }
   return await runner(args, {
     cwd: options.cwd,
     ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs },
-    env: {
-      ...process.env,
-      ...options.env,
-      HOME: options.home,
-      PI_CODING_AGENT_DIR: options.agentDir
-    }
+    env
   });
 }
 var execFileAsync2, defaultExplicitInternalPiRunner;
