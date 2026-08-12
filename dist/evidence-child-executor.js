@@ -10,6 +10,7 @@ import { createAssistantMessageEventStream, InMemoryCredentialStore, } from "@ea
 import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch, } from "./compliance-transport.js";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
+import { createReceiptDeliveryPolicy, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 // ── shared constants / types ──────────────────────────────────────────────
 export const AUDITOR_TURN_LIMIT = 32;
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
@@ -553,7 +554,21 @@ export async function executeAuditorChild(options) {
             options.signal?.addEventListener("abort", abort, { once: true });
         try {
             try {
+                const delivery = createReceiptDeliveryPolicy();
                 await session.prompt(options.prompt);
+                while (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
+                    && delivery.nextAction() === "request-delivery") {
+                    if (decisionToolFailure !== undefined) {
+                        delivery.recordRejected(decisionToolFailure instanceof Error ? decisionToolFailure.message : String(decisionToolFailure));
+                        decisionToolFailure = undefined;
+                    }
+                    else {
+                        delivery.recordDeliveryRequest();
+                    }
+                    if (delivery.nextAction() === "no-receipt")
+                        break;
+                    await session.prompt(RECEIPT_DELIVERY_PROMPT);
+                }
             }
             catch (error) {
                 if (options.signal?.aborted)

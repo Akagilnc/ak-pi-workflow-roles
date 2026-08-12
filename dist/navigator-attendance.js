@@ -17,6 +17,7 @@ import { openInProcessAgentSession } from "./in-process-session.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
+import { createReceiptDeliveryPolicy, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
@@ -526,7 +527,12 @@ ${helpContext}
     try {
       try {
         if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+        const delivery = createReceiptDeliveryPolicy();
         await activeSession.prompt(request);
+        while (output === void 0 && delivery.nextAction() === "request-delivery") {
+          delivery.recordDeliveryRequest();
+          await activeSession.prompt(RECEIPT_DELIVERY_PROMPT);
+        }
       } catch (error) {
         throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
       }

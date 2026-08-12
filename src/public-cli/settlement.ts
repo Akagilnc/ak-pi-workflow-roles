@@ -74,6 +74,7 @@ import {
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
+import { RECEIPT_DELIVERY_TURN_LIMIT } from "../receipt-delivery-policy.ts";
 import { packagedRoleMetadata } from "../packaged-role-registry.ts";
 import {
   workSubjectKeyFromProjectRoot,
@@ -3646,6 +3647,37 @@ export async function settleFailureTerminalResult(
   failure: ControlledFailure,
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
+  // #288: an honestly completed session with no accepted Receipt is itself a
+  // current-run-bound lawful lifecycle record. Typed provider/session failures
+  // have already won evidence priority before this output-only fallback.
+  if (failure.cause === "output" && options.resume === undefined) {
+    const entries = await readBoundSessionEntries(admitted.sessionFile).catch(() => undefined);
+    if (entries !== undefined) {
+      const rejectedReceipts = entries.flatMap((entry) => {
+        const message = entry.message;
+        if (entry.type !== "message" || message?.role !== "toolResult" || message.isError !== true
+          || typeof message.toolName !== "string" || !message.toolName.startsWith("ak_") || !message.toolName.endsWith("_output")) return [];
+        const reason = toolResultText(message);
+        return reason === "" ? [] : [{ reason }];
+      }).slice(-RECEIPT_DELIVERY_TURN_LIMIT);
+      const terminalResults = entries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult"
+        && typeof entry.message.toolName === "string" && entry.message.toolName.startsWith("ak_") && entry.message.toolName.endsWith("_output"));
+      const terminalToolCalled = terminalResults.length > 0;
+      // Existing malformed/semantic tool results remain nonzero. #288 admits only
+      // true absence or the named ADR 0066 delivery rejection into this lifecycle.
+      const isDeliveryAbsence = !terminalToolCalled || (terminalResults.every((entry) => entry.message?.isError === true && toolResultText(entry.message) === "未观察到 commit"));
+      if (isDeliveryAbsence) {
+        const deliveryTurns = RECEIPT_DELIVERY_TURN_LIMIT;
+        const decisiveFacts = { terminalToolCalled, rejectedReceipts, deliveryTurns, sessionCompletion: "settled-without-accepted-receipt" as const, runPointer: admitted.runDirectory, acceptedReceipt: false as const };
+        return {
+          roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...decisiveFacts, decisiveFacts },
+          navigator: await extractNavigatorFactFromAdmittedSession(admitted),
+          artifacts: [],
+          runId: admitted.runId,
+        };
+      }
+    }
+  }
   // Exact-session attendance only — never infer no-advice from caller omission.
   const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
@@ -3719,16 +3751,16 @@ export function presentFailureTerminal(
   terminal: TerminalResult,
   io: { stdout: (text: string) => void; stderr: (text: string) => void },
 ): void {
-  if (terminal.roleOutcome.kind !== "failure") {
-    throw new TypeError("presentFailureTerminal requires a failure role outcome");
+  if (terminal.roleOutcome.kind !== "failure" && terminal.roleOutcome.kind !== "no_receipt") {
+    throw new TypeError("presentFailureTerminal requires a failure or no-receipt role outcome");
   }
   io.stdout(formatTerminalResult(terminal));
-  io.stderr(
-    formatFailureStderrDiagnostic({
+  if (terminal.roleOutcome.kind === "failure") {
+    io.stderr(formatFailureStderrDiagnostic({
       cause: terminal.roleOutcome.cause,
       diagnostic: terminal.roleOutcome.diagnostic,
-    }),
-  );
+    }));
+  }
 }
 
 /**

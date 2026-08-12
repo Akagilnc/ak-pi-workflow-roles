@@ -17766,6 +17766,15 @@ var init_package_owned_tool_idle = __esm({
   }
 });
 
+// src/receipt-delivery-policy.ts
+var RECEIPT_DELIVERY_TURN_LIMIT;
+var init_receipt_delivery_policy = __esm({
+  "src/receipt-delivery-policy.ts"() {
+    "use strict";
+    RECEIPT_DELIVERY_TURN_LIMIT = 2;
+  }
+});
+
 // src/evidence-child-executor.ts
 var init_evidence_child_executor = __esm({
   "src/evidence-child-executor.ts"() {
@@ -17773,6 +17782,7 @@ var init_evidence_child_executor = __esm({
     init_compliance_transport();
     init_package_owned_tool_idle();
     init_stream_idle_guard();
+    init_receipt_delivery_policy();
   }
 });
 
@@ -18163,7 +18173,7 @@ function jsonSafeComplianceCandidate(value) {
   return value === void 0 ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
 }
 function isLawfulTypedTerminalOutcome(outcome) {
-  return outcome.kind === "accepted" || outcome.kind === "audit_escalation";
+  return outcome.kind === "accepted" || outcome.kind === "audit_escalation" || outcome.kind === "no_receipt";
 }
 function exitCodeForTerminalOutcome(outcome) {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
@@ -20660,6 +20670,30 @@ function redactNavigatorFactForPublicTerminal(navigator, runId) {
   return { ...navigator, ...advisoryDiagnostic };
 }
 async function settleFailureTerminalResult(admitted, failure, options = {}) {
+  if (failure.cause === "output" && options.resume === void 0) {
+    const entries = await readBoundSessionEntries(admitted.sessionFile).catch(() => void 0);
+    if (entries !== void 0) {
+      const rejectedReceipts = entries.flatMap((entry) => {
+        const message = entry.message;
+        if (entry.type !== "message" || message?.role !== "toolResult" || message.isError !== true || typeof message.toolName !== "string" || !message.toolName.startsWith("ak_") || !message.toolName.endsWith("_output")) return [];
+        const reason = toolResultText(message);
+        return reason === "" ? [] : [{ reason }];
+      }).slice(-RECEIPT_DELIVERY_TURN_LIMIT);
+      const terminalResults = entries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult" && typeof entry.message.toolName === "string" && entry.message.toolName.startsWith("ak_") && entry.message.toolName.endsWith("_output"));
+      const terminalToolCalled = terminalResults.length > 0;
+      const isDeliveryAbsence = !terminalToolCalled || terminalResults.every((entry) => entry.message?.isError === true && toolResultText(entry.message) === "\u672A\u89C2\u5BDF\u5230 commit");
+      if (isDeliveryAbsence) {
+        const deliveryTurns = RECEIPT_DELIVERY_TURN_LIMIT;
+        const decisiveFacts2 = { terminalToolCalled, rejectedReceipts, deliveryTurns, sessionCompletion: "settled-without-accepted-receipt", runPointer: admitted.runDirectory, acceptedReceipt: false };
+        return {
+          roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...decisiveFacts2, decisiveFacts: decisiveFacts2 },
+          navigator: await extractNavigatorFactFromAdmittedSession(admitted),
+          artifacts: [],
+          runId: admitted.runId
+        };
+      }
+    }
+  }
   const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
   const artifacts = await publishFailureArtifacts(admitted, failure);
   const decisiveFacts = {
@@ -20713,16 +20747,16 @@ async function settleJudgeFailureTerminalResult(admitted, failure, options = {})
   return settleFailureTerminalResult(admitted, failure, options);
 }
 function presentFailureTerminal(terminal, io) {
-  if (terminal.roleOutcome.kind !== "failure") {
-    throw new TypeError("presentFailureTerminal requires a failure role outcome");
+  if (terminal.roleOutcome.kind !== "failure" && terminal.roleOutcome.kind !== "no_receipt") {
+    throw new TypeError("presentFailureTerminal requires a failure or no-receipt role outcome");
   }
   io.stdout(formatTerminalResult(terminal));
-  io.stderr(
-    formatFailureStderrDiagnostic({
+  if (terminal.roleOutcome.kind === "failure") {
+    io.stderr(formatFailureStderrDiagnostic({
       cause: terminal.roleOutcome.cause,
       diagnostic: terminal.roleOutcome.diagnostic
-    })
-  );
+    }));
+  }
 }
 var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS;
 var init_settlement = __esm({
@@ -20745,6 +20779,7 @@ var init_settlement = __esm({
     init_merger_contracts();
     init_method_skill();
     init_navigator_invocation_identity();
+    init_receipt_delivery_policy();
     init_packaged_role_registry();
     init_work_subject_identity();
     init_invocation();
