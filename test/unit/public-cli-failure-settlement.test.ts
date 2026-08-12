@@ -13,10 +13,11 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
@@ -2458,18 +2459,33 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
     const toolNames = (body.tools ?? []).map((tool: any) => tool.function?.name);
     const auditTool = toolNames.find((name: string) => name?.endsWith("_audit_decision"));
     if (auditTool !== undefined) {
-      const parentFile = (await readFile(marker, "utf8")).trim();
-      const backup = `${parentFile}.retention-test-backup`;
-      await rename(parentFile, backup);
+      const reportedParentFile = (await readFile(marker, "utf8")).trim();
+      // Packed/default-Pi fixtures may expose the session principal itself where
+      // SessionManager reports the conventional nested session.jsonl path.
+      const reportedParentDirectory = dirname(reportedParentFile);
+      let parentFile = (await stat(reportedParentDirectory)).isFile()
+        ? reportedParentDirectory
+        : reportedParentFile;
+      let backup = `${parentFile}.retention-test-backup`;
+      try {
+        await rename(parentFile, backup);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
+        parentFile = reportedParentDirectory;
+        backup = `${parentFile}.retention-test-backup`;
+        await rename(parentFile, backup);
+      }
       await mkdir(parentFile);
       let restored = false;
       restoreParent = async () => {
         if (restored) return;
         restored = true;
         if (restoreInterval !== undefined) clearInterval(restoreInterval);
+        clearTimeout(restoreFallback);
         await rm(parentFile, { recursive: true, force: true });
         await rename(backup, parentFile);
       };
+      const restoreFallback = setTimeout(() => void restoreParent?.().catch(retainFailure), 10);
       restoreInterval = setInterval(() => {
         void (async () => {
           try {
@@ -2532,6 +2548,7 @@ export default function (pi) {
         retainFailure(error);
       }
       try {
+        server.closeAllConnections();
         await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       } catch (error) {
         retainFailure(error);
@@ -2560,7 +2577,9 @@ test("fast four-role public wiring matrix settles an injected auditor provider s
       piRunner: async (args) => {
         const entries: unknown[] = [];
         const faux = fauxProvider({ provider: "openai-codex" });
-        faux.setResponses([fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" })]);
+        faux.setResponses(Array.from({ length: 3 }, () =>
+          fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" }),
+        ));
         await assert.rejects(runComplianceAudit({
           tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
           systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
