@@ -14,22 +14,78 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { tmpdir } from "node:os";
 
+import { runPublicCliSubprocess } from "../helpers/public-cli-subprocess.ts";
 import {
   constructionProvenance,
   getSharedIsolatedPack,
   packageRoot,
+  runNodeSubprocess,
   runPiSubprocess,
   withHermeticHome,
   withProcessCwd,
 } from "../helpers/pi-test-harness.ts";
+import {
+  TestSubprocessOperationalError,
+} from "../helpers/test-subprocess.ts";
 
-test("subprocess timeouts are explicit instead of looking like natural no-code closes", async () => {
-  const result = await runPiSubprocess(["--help"], {
+test("subprocess result seam classifies localTimeout, signal, nonzero exit, and clean exit", async () => {
+  const localTimeoutMs = 0;
+  const timed = await runPiSubprocess(["--help"], {
     cwd: packageRoot,
-    timeoutMs: 0,
+    timeoutMs: localTimeoutMs,
   });
-  assert.equal(result.timedOut, true);
-  assert.equal(result.code, null);
+  assert.equal(timed.localTimeout, true);
+  assert.equal(timed.timedOut, true);
+  assert.equal(timed.localTimeoutOwner, "runPiSubprocess");
+  assert.equal(timed.localTimeoutMs, localTimeoutMs);
+  assert.equal(timed.code, null);
+  assert.equal(timed.signal, "SIGTERM");
+
+  const signaled = await runNodeSubprocess(
+    ["-e", "process.kill(process.pid, 'SIGTERM')"],
+    { cwd: packageRoot, timeoutMs: 15_000 },
+  );
+  assert.equal(signaled.localTimeout, false);
+  assert.equal(signaled.timedOut, false);
+  assert.equal(signaled.localTimeoutOwner, null);
+  assert.equal(signaled.localTimeoutMs, null);
+  assert.equal(signaled.signal, "SIGTERM");
+  assert.equal(signaled.code, null);
+
+  const failed = await runNodeSubprocess(
+    ["-e", "process.stderr.write('ERR_ASSERTION boom'); process.exit(7)"],
+    { cwd: packageRoot, timeoutMs: 15_000 },
+  );
+  assert.equal(failed.localTimeout, false);
+  assert.equal(failed.signal, null);
+  assert.equal(failed.code, 7);
+  assert.equal(failed.stderr, "ERR_ASSERTION boom");
+
+  const clean = await runNodeSubprocess(
+    ["-e", "process.stdout.write('ok'); process.exit(0)"],
+    { cwd: packageRoot, timeoutMs: 15_000 },
+  );
+  assert.equal(clean.localTimeout, false);
+  assert.equal(clean.signal, null);
+  assert.equal(clean.code, 0);
+  assert.equal(clean.stdout, "ok");
+
+  await assert.rejects(
+    () =>
+      runPublicCliSubprocess("/no/such/ak-roles-bin", ["--help"], {
+        home: packageRoot,
+        agentDir: packageRoot,
+        cwd: packageRoot,
+        timeoutMs: 1_000,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof TestSubprocessOperationalError);
+      assert.equal(error.localTimeout, false);
+      assert.equal(typeof error.stdout, "string");
+      assert.equal(typeof error.stderr, "string");
+      return true;
+    },
+  );
 });
 
 test("hermetic HOME restores the exact prior value and recursively cleans up after a throw", async () => {
