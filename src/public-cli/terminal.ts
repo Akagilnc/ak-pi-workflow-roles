@@ -79,6 +79,19 @@ export function jsonSafeComplianceCandidate(value: unknown): unknown {
   return value === undefined ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
 }
 
+export type NoReceiptTerminalOutcome = {
+  kind: "no_receipt";
+  role: TerminalRoleName;
+  status: "no-accepted-receipt";
+  terminalToolCalled: boolean;
+  rejectedReceipts: readonly { reason: string }[];
+  deliveryTurns: number;
+  sessionCompletion: "settled-without-accepted-receipt";
+  runPointer: string;
+  acceptedReceipt: false;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
 export type TerminalRoleOutcome =
   | {
       kind: "accepted";
@@ -95,6 +108,7 @@ export type TerminalRoleOutcome =
     }
   | AuditIncompleteTerminalOutcome
   | ResidualIncompleteTerminalOutcome
+  | NoReceiptTerminalOutcome
   | {
       kind: "failure";
       role: TerminalRoleName;
@@ -111,7 +125,7 @@ export type TerminalRoleOutcome =
 export function isLawfulTypedTerminalOutcome(
   outcome: TerminalRoleOutcome,
 ): boolean {
-  return outcome.kind === "accepted" || outcome.kind === "audit_escalation";
+  return outcome.kind === "accepted" || outcome.kind === "audit_escalation" || outcome.kind === "no_receipt";
 }
 
 export function exitCodeForTerminalOutcome(

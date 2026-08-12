@@ -32,6 +32,7 @@ import {
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
+import { createReceiptDeliveryPolicy, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 
 // ── shared constants / types ──────────────────────────────────────────────
 
@@ -666,7 +667,19 @@ export async function executeAuditorChild(
 
     try {
       try {
+        const delivery = createReceiptDeliveryPolicy();
         await session.prompt(options.prompt);
+        while (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
+          && delivery.nextAction() === "request-delivery") {
+          if (decisionToolFailure !== undefined) {
+            delivery.recordRejected(decisionToolFailure instanceof Error ? decisionToolFailure.message : String(decisionToolFailure));
+            decisionToolFailure = undefined;
+          } else {
+            delivery.recordDeliveryRequest();
+          }
+          if (delivery.nextAction() === "no-receipt") break;
+          await session.prompt(RECEIPT_DELIVERY_PROMPT);
+        }
       } catch (error) {
         if (options.signal?.aborted) throw options.signal.reason;
         if (inherited.streamFailure !== undefined) throw inherited.streamFailure;

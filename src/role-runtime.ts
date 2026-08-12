@@ -23,6 +23,7 @@ import {
 } from "./tool-execution-observation.ts";
 import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 import { installWorkerGitHooks } from "./worker-submission-gates.ts";
+import { createReceiptDeliveryPolicy, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -404,6 +405,9 @@ export function createRoleRuntimeExtension(
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     const pendingInfrastructureToolCallIds = new Set<string>();
+    // #288 primary-session thin adapter. The policy is the sole budget owner;
+    // terminating-tool rejections and mechanical delivery requests share two turns.
+    const receiptDelivery = createReceiptDeliveryPolicy();
     pi.on("input", () => {
       const role = pi.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
@@ -460,6 +464,14 @@ export function createRoleRuntimeExtension(
         classified,
       );
       if (settlement !== undefined) {
+        if (settlement.kind === "accepted") receiptDelivery.recordAccepted();
+        else if (event.isError) {
+          const reason = event.content
+            .map((part) => part.type === "text" ? part.text : "")
+            .join("")
+            .trim() || "terminating tool rejected";
+          receiptDelivery.recordRejected(reason);
+        }
         const attendance = navigatorAttendance;
         const workContext = navigatorWorkContext;
         const pending = (async () => {
@@ -520,6 +532,14 @@ export function createRoleRuntimeExtension(
       };
     });
     pi.on("agent_settled", async () => {
+      if (receiptDelivery.nextAction() === "request-delivery") {
+        receiptDelivery.recordDeliveryRequest();
+        await pi.sendMessage({
+          customType: "ak-receipt-delivery-request",
+          content: RECEIPT_DELIVERY_PROMPT,
+          display: true,
+        }, { triggerTurn: true, deliverAs: "nextTurn" });
+      }
       if (pendingNavigatorSettlement !== undefined) {
         await pendingNavigatorSettlement;
       }

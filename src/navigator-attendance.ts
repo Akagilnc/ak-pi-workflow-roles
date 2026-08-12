@@ -19,6 +19,7 @@ import { openInProcessAgentSession } from "./in-process-session.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
+import { createReceiptDeliveryPolicy, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
@@ -770,7 +771,12 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       try {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+          const delivery = createReceiptDeliveryPolicy();
           await activeSession.prompt(request);
+          while (output === undefined && delivery.nextAction() === "request-delivery") {
+            delivery.recordDeliveryRequest();
+            await activeSession.prompt(RECEIPT_DELIVERY_PROMPT);
+          }
         } catch (error) {
           throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
         }
