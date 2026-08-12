@@ -407,7 +407,7 @@ export function createRoleRuntimeExtension(
     const pendingInfrastructureToolCallIds = new Set<string>();
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
-    const receiptDelivery = createReceiptDeliveryPolicy();
+    let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
     pi.on("input", () => {
       const role = pi.getFlag(ROLE_FLAG.name);
@@ -538,26 +538,29 @@ export function createRoleRuntimeExtension(
         content: decorated.content as typeof event.content,
       };
     });
-    pi.on("agent_settled", async () => {
+    // Queue receipt delivery before `agent_settled`: that event means Pi has
+    // already decided no queued continuation will run, so a triggerTurn there is
+    // too late for print/json sessions. `agent_end` is the last production seam
+    // whose queued next turn is consumed before settlement.
+    pi.on("agent_end", () => {
       if (receiptDelivery.nextAction() === "request-delivery") {
         receiptDelivery.recordDeliveryRequest();
-        await pi.sendMessage({
-          customType: "ak-receipt-delivery-request",
-          content: RECEIPT_DELIVERY_PROMPT,
-          display: true,
-        }, { triggerTurn: true, deliverAs: "nextTurn" });
+        // Durable observation stays out of model context; the user-message API is
+        // the host's guaranteed continuation path in print/json mode.
+        pi.appendEntry("ak-receipt-delivery-request");
+        pi.sendUserMessage(RECEIPT_DELIVERY_PROMPT, { deliverAs: "followUp" });
       } else if (receiptDelivery.nextAction() === "no-receipt" && !noReceiptRecorded) {
         const runPointer = process.env.AK_ROLE_RUN_DIR;
         if (runPointer !== undefined) {
           noReceiptRecorded = true;
-          await pi.sendMessage({
-            customType: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
-            content: "No accepted receipt after the bounded delivery budget.",
-            display: false,
-            details: receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` }),
-          }, { triggerTurn: false });
+          pi.appendEntry(
+            NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+            receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` }),
+          );
         }
       }
+    });
+    pi.on("agent_settled", async () => {
       if (pendingNavigatorSettlement !== undefined) {
         await pendingNavigatorSettlement;
       }
@@ -790,6 +793,8 @@ export function createRoleRuntimeExtension(
     pi.on("session_start", async (event, ctx) => {
       admitted = false;
       selectedRole = undefined;
+      receiptDelivery = createReceiptDeliveryPolicy();
+      noReceiptRecorded = false;
       observationFace.reset();
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
