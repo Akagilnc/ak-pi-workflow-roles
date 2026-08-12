@@ -647,6 +647,14 @@ export async function executeAuditorChild(
       return [...session.messages].reverse().find((message) =>
         message.role === "toolResult" && callIdSet.has(message.toolCallId) && message.isError);
     };
+    const drainRejectedDecisionFailures = (response: AssistantMessage) => {
+      for (const part of response.content) {
+        if (part.type !== "toolCall" || part.name !== tool.name || !decisionToolFailures.has(part.id)) continue;
+        decisionToolFailure = decisionToolFailures.get(part.id);
+        promptDecisionFailures.push(decisionToolFailure);
+        decisionToolFailures.delete(part.id);
+      }
+    };
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
         turns += 1;
@@ -673,13 +681,7 @@ export async function executeAuditorChild(
       if (event.type === "turn_end") {
         if (rejectedDecisionResponse !== undefined) {
           promptNeighboringFailure = findToolFailure(rejectedDecisionResponse);
-          const rejectedCall = rejectedDecisionResponse.content.find((part) =>
-            part.type === "toolCall" && part.name === tool.name && decisionToolFailures.has(part.id));
-          if (rejectedCall?.type === "toolCall") {
-            decisionToolFailure = decisionToolFailures.get(rejectedCall.id);
-            promptDecisionFailures.push(decisionToolFailure);
-            decisionToolFailures.delete(rejectedCall.id);
-          }
+          drainRejectedDecisionFailures(rejectedDecisionResponse);
         }
         if (decisionSubmitted || promptNeighboringFailure !== undefined
           || boundaryResponse !== undefined || retentionFailure !== undefined) {
@@ -711,13 +713,7 @@ export async function executeAuditorChild(
           const correlatedResponse = rejectedDecisionResponse as AssistantMessage | undefined;
           if (correlatedResponse !== undefined) {
             promptNeighboringFailure ??= findToolFailure(correlatedResponse);
-            const rejectedCall = correlatedResponse.content.find((part) =>
-              part.type === "toolCall" && part.name === tool.name && decisionToolFailures.has(part.id));
-            if (rejectedCall?.type === "toolCall") {
-              decisionToolFailure = decisionToolFailures.get(rejectedCall.id);
-              promptDecisionFailures.push(decisionToolFailure);
-              decisionToolFailures.delete(rejectedCall.id);
-            }
+            drainRejectedDecisionFailures(correlatedResponse);
           }
           // An adjacent failure outranks correctable decision feedback.
           if (promptNeighboringFailure !== undefined) throw promptNeighboringFailure;
@@ -733,7 +729,6 @@ export async function executeAuditorChild(
               : promptDecisionFailures;
             for (const failure of failures) {
               delivery.recordRejected(failure instanceof Error ? failure.message : String(failure));
-              if (delivery.nextAction() === "no-receipt") break;
             }
             decisionToolFailure = undefined;
             promptDecisionFailures = [];
@@ -746,7 +741,6 @@ export async function executeAuditorChild(
                 await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
                 for (const failure of promptDecisionFailures) {
                   delivery.recordRejected(failure instanceof Error ? failure.message : String(failure));
-                  if (delivery.nextAction() === "no-receipt") break;
                 }
                 decisionToolFailure = undefined;
                 promptDecisionFailures = [];

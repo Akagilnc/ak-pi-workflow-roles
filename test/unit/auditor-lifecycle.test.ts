@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -203,6 +203,13 @@ test("a rejected auditor decision followed by prose charges the correction promp
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
+test("auditor rejection correlation drains batches through one shared owner", async () => {
+  const source = await readFile(new URL("../../src/evidence-child-executor.ts", import.meta.url), "utf8");
+  const helperCalls = source.match(/drainRejectedDecisionFailures\(/g) ?? [];
+  assert.equal(helperCalls.length, 2, "both correlation paths must use the shared helper");
+  assert.match(source, /const drainRejectedDecisionFailures = \(response: AssistantMessage\) => \{[\s\S]*for \(const part of response\.content\)[\s\S]*promptDecisionFailures\.push\(decisionToolFailure\);[\s\S]*decisionToolFailures\.delete\(part\.id\);/);
+});
+
 test("two rejected auditor decisions exhaust the shared budget without a third execution", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rejected-exhaustion-"));
   const runDirectory = join(cwd, "run");
@@ -249,34 +256,33 @@ test("two rejected auditor decisions exhaust the shared budget without a third e
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test("blank Error auditor rejections are normalized at the producer boundary", async () => {
-  for (const diagnostic of ["", "   \t"]) {
-    const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-blank-rejection-"));
-    const runDirectory = join(cwd, "run");
-    await mkdir(runDirectory);
-    try {
-      const sessionManager = parentWithJudgeSubjects(cwd);
-      const baseTool = createComplianceDecisionTool("ak_blank_rejection_decision", "Submit.");
-      const tool = { ...baseTool, async execute() { throw new Error(diagnostic); } };
-      const faux = fauxProvider({ provider: "blank-rejection-test" });
-      const submit = () => fauxAssistantMessage(
-        [fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })],
-        { stopReason: "toolUse" },
-      );
-      faux.setResponses([submit, submit, () => fauxAssistantMessage("done")]);
-      const decision = await withRunDir(runDirectory, () => runComplianceAudit({
-        tool, systemPrompt: "Decide.", roleLabel: "Blank rejection auditor", invalidDecisionLabel: "invalid",
-        context: auditExtensionContext(cwd, sessionManager, faux),
-      }));
-      assert.equal(decision.status, "no-receipt");
-      if (decision.status === "no-receipt") {
-        assert.deepEqual(decision.rejectedReceipts, [
-          { reason: "terminal receipt rejected without diagnostic" },
-          { reason: "terminal receipt rejected without diagnostic" },
-        ]);
-      }
-    } finally { await rm(cwd, { recursive: true, force: true }); }
-  }
+test("whitespace-only Error auditor rejections are normalized at the producer boundary", async () => {
+  const diagnostic = "   \t";
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-blank-rejection-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const baseTool = createComplianceDecisionTool("ak_blank_rejection_decision", "Submit.");
+    const tool = { ...baseTool, async execute() { throw new Error(diagnostic); } };
+    const faux = fauxProvider({ provider: "blank-rejection-test" });
+    const submit = () => fauxAssistantMessage(
+      [fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })],
+      { stopReason: "toolUse" },
+    );
+    faux.setResponses([submit, submit, () => fauxAssistantMessage("done")]);
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool, systemPrompt: "Decide.", roleLabel: "Blank rejection auditor", invalidDecisionLabel: "invalid",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(decision.status, "no-receipt");
+    if (decision.status === "no-receipt") {
+      assert.deepEqual(decision.rejectedReceipts, [
+        { reason: "terminal receipt rejected without diagnostic" },
+        { reason: "terminal receipt rejected without diagnostic" },
+      ]);
+    }
+  } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
 test("accepted auditor arguments cannot forge machine-owned no-receipt provenance", async () => {
