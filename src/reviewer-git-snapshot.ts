@@ -43,11 +43,3 @@ export function sameReviewerPinnedTarget(
   return actual.repositoryRoot === expected.repositoryRoot && actual.objectFormat === expected.objectFormat &&
     actual.targetHead === expected.targetHead;
 }
-
-export function sameReviewerRefs(actual: ReviewerRefMap, expected: ReviewerRefMap): boolean {
-  const actualEntries = Object.entries(actual).sort(([left], [right]) => left.localeCompare(right));
-  const expectedEntries = Object.entries(expected).sort(([left], [right]) => left.localeCompare(right));
-  return actualEntries.length === expectedEntries.length && actualEntries.every(([name, value], index) =>
-    name === expectedEntries[index]?.[0] && value.objectId === expectedEntries[index]?.[1].objectId &&
-    value.peeledCommitId === expectedEntries[index]?.[1].peeledCommitId);
-}

@@ -787,8 +787,17 @@ export async function resolveAuditedRunnerKnownFailure(input: {
 }): Promise<ExplicitInternalKnownFailure | undefined> {
   if (input.runner !== undefined) return input.runner;
   if (input.runDirectory !== undefined) {
-    const rejection = await readReviewerDispatchRejection(input.runDirectory);
-    if (rejection !== undefined) return rejection;
+    try {
+      const rejection = await readReviewerDispatchRejection(input.runDirectory);
+      if (rejection !== undefined) return rejection;
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      return {
+        cause: "activation",
+        identity: thrownIdentity(failure),
+        diagnostic: failure.message || failure.name,
+      };
+    }
   }
   // Bound auditor evidence outranks a parent failure that the auditor path itself
   // caused (retention EISDIR race). A typed terminating-tool host failure is next:
