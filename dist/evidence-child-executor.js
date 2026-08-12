@@ -625,6 +625,13 @@ export async function executeAuditorChild(options) {
                     if (promptFailure !== undefined)
                         throw promptFailure;
                 };
+                const chargeAndClearRejectedDecisionFailures = (failures) => {
+                    for (const failure of failures) {
+                        delivery.recordRejected(failure instanceof Error ? failure.message : String(failure));
+                    }
+                    decisionToolFailure = undefined;
+                    promptDecisionFailures = [];
+                };
                 await promptAllowingRejectedDecision(options.prompt);
                 while (!decisionSubmitted && (boundaryResponse === undefined || decisionToolFailure !== undefined)
                     && inherited.streamFailure === undefined && delivery.nextAction() === "request-delivery") {
@@ -632,11 +639,7 @@ export async function executeAuditorChild(options) {
                         const failures = promptDecisionFailures.length === 0
                             ? [decisionToolFailure]
                             : promptDecisionFailures;
-                        for (const failure of failures) {
-                            delivery.recordRejected(failure instanceof Error ? failure.message : String(failure));
-                        }
-                        decisionToolFailure = undefined;
-                        promptDecisionFailures = [];
+                        chargeAndClearRejectedDecisionFailures(failures);
                         if (delivery.nextAction() === "no-receipt")
                             boundaryResponse = undefined;
                         if (delivery.nextAction() === "request-delivery") {
@@ -644,11 +647,7 @@ export async function executeAuditorChild(options) {
                             // recordRejected already charged it.
                             if (retainedResponse === rejectedDecisionResponse) {
                                 await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
-                                for (const failure of promptDecisionFailures) {
-                                    delivery.recordRejected(failure instanceof Error ? failure.message : String(failure));
-                                }
-                                decisionToolFailure = undefined;
-                                promptDecisionFailures = [];
+                                chargeAndClearRejectedDecisionFailures(promptDecisionFailures);
                             }
                         }
                     }
