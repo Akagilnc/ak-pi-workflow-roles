@@ -410,12 +410,24 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
     settledAt <= inputReleasedAt && inputReleasedAt <= processReleasedAt,
     "input and process release must follow the drained Navigator settlement",
   );
-  assert.deepEqual(evidence.role.failedOutput, {
-    toolCallId: "fatal-judge",
-    toolName: "ak_judge_output",
-    isError: false,
-    details: { judgeStatus: "converged" },
-  });
+  assert.equal(evidence.role.failedOutput.toolCallId, "fatal-judge");
+  assert.equal(evidence.role.failedOutput.toolName, "ak_judge_output");
+  assert.equal(evidence.role.failedOutput.isError, false);
+  assert.equal(evidence.role.failedOutput.details.judgeStatus, "converged");
+  const auditNoReceipt = evidence.role.failedOutput.details.auditNoReceipt as {
+    acceptedReceipt: boolean;
+    deliveryTurns: number;
+    terminalToolCalled: boolean;
+    rejectedReceipts: readonly { reason: string }[];
+    runPointer: string;
+    attemptPointer: string;
+  };
+  assert.equal(auditNoReceipt.acceptedReceipt, false);
+  assert.equal(auditNoReceipt.deliveryTurns, 2);
+  assert.equal(auditNoReceipt.terminalToolCalled, false);
+  assert.deepEqual(auditNoReceipt.rejectedReceipts, []);
+  assert.match(auditNoReceipt.runPointer, /judge-navigator/);
+  assert.notEqual(auditNoReceipt.attemptPointer, "");
   assert.equal(
     evidence.role.failedOutputCorrelation,
     true,
