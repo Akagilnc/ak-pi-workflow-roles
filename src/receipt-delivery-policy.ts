@@ -36,12 +36,12 @@ export function parseNoReceiptLifecycleFacts(input: unknown): NoReceiptLifecycle
     || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === ""
     || !Array.isArray(input.rejectedReceipts)
     || !input.rejectedReceipts.every((item) => isRecord(item)
-      && typeof item.reason === "string")) {
+      && typeof item.reason === "string" && item.reason.trim() !== "")) {
     throw new TypeError("malformed no-receipt lifecycle facts");
   }
   return {
     terminalToolCalled: input.terminalToolCalled,
-    rejectedReceipts: input.rejectedReceipts.map((item) => ({ reason: normalizeRejectionReason(item.reason) })),
+    rejectedReceipts: input.rejectedReceipts.map((item) => ({ reason: item.reason as string })),
     deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
     sessionCompletion: "settled-without-accepted-receipt",
     runPointer: input.runPointer,
