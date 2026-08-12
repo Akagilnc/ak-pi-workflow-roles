@@ -74,7 +74,7 @@ import {
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
-import { RECEIPT_DELIVERY_TURN_LIMIT } from "../receipt-delivery-policy.ts";
+import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_TURN_LIMIT, noReceiptLifecycleFacts, type NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 import { packagedRoleMetadata } from "../packaged-role-registry.ts";
 import {
   workSubjectKeyFromProjectRoot,
@@ -3647,44 +3647,30 @@ export async function settleFailureTerminalResult(
   failure: ControlledFailure,
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
-  // #288: an honestly completed session with no accepted Receipt is itself a
-  // current-run-bound lawful lifecycle record. Typed provider/session failures
-  // have already won evidence priority before this output-only fallback.
+  // #288 is lawful only when the lifecycle owner persisted an exhausted,
+  // current-attempt fact. Transcript reconstruction must not turn arbitrary output
+  // failures (or bytes retained from a prior resume attempt) into exit zero.
   if (failure.cause === "output" && options.resume === undefined) {
     const entries = await readBoundSessionEntries(admitted.sessionFile).catch(() => undefined);
     if (entries !== undefined) {
-      const rejectedReceipts = entries.flatMap((entry) => {
-        const message = entry.message;
-        if (entry.type !== "message" || message?.role !== "toolResult" || message.isError !== true
-          || typeof message.toolName !== "string" || !message.toolName.startsWith("ak_") || !message.toolName.endsWith("_output")) return [];
-        const reason = toolResultText(message);
-        return reason === "" ? [] : [{ reason }];
-      }).slice(-RECEIPT_DELIVERY_TURN_LIMIT);
-      const terminalResults = entries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult"
-        && typeof entry.message.toolName === "string" && entry.message.toolName.startsWith("ak_") && entry.message.toolName.endsWith("_output"));
-      const terminalToolCalled = terminalResults.length > 0;
-      // Existing malformed/semantic tool results remain nonzero. #288 admits only
-      // true absence or the named ADR 0066 delivery rejection into this lifecycle.
-      const isDeliveryAbsence = !terminalToolCalled || (terminalResults.every((entry) => entry.message?.isError === true && toolResultText(entry.message) === "未观察到 commit"));
-      if (isDeliveryAbsence) {
-        // Reconstruct the budget from the durable principal rather than assuming
-        // exhaustion. A rejection and each package-owned request are one turn;
-        // cap only guards malformed/replayed transcript bytes.
-        const deliveryRequests = entries.filter((entry) =>
-          entry.customType === "ak-receipt-delivery-request"
-          || entry.message?.customType === "ak-receipt-delivery-request"
-        ).length;
-        const deliveryTurns = Math.min(
-          RECEIPT_DELIVERY_TURN_LIMIT,
-          rejectedReceipts.length + deliveryRequests,
-        );
-        const decisiveFacts = { terminalToolCalled, rejectedReceipts, deliveryTurns, sessionCompletion: "settled-without-accepted-receipt" as const, runPointer: admitted.runDirectory, acceptedReceipt: false as const };
-        return {
-          roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...decisiveFacts, decisiveFacts },
-          navigator: await extractNavigatorFactFromAdmittedSession(admitted),
-          artifacts: [],
-          runId: admitted.runId,
-        };
+      let attemptStart = 0;
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        if (entries[index]?.type === "message" && entries[index]?.message?.role === "user") { attemptStart = index; break; }
+      }
+      const lifecycleEntry = entries.slice(attemptStart).reverse().find((entry: SessionEntry) =>
+        entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
+      const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
+      if (isRecord(raw)) {
+        try {
+          const facts = noReceiptLifecycleFacts(raw as NoReceiptLifecycleFacts);
+          if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
+            const decisiveFacts: NoReceiptLifecycleFacts = facts;
+            return {
+              roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },
+              navigator: await extractNavigatorFactFromAdmittedSession(admitted), artifacts: [], runId: admitted.runId,
+            };
+          }
+        } catch { /* malformed lifecycle bytes remain the existing nonzero output failure */ }
       }
     }
   }

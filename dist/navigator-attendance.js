@@ -17,7 +17,7 @@ import { openInProcessAgentSession } from "./in-process-session.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
-import { createReceiptDeliveryPolicy, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
@@ -328,6 +328,7 @@ function createNavigatorAttendance(options) {
   let settlementTail = Promise.resolve();
   let settlementFailure;
   let preparationFailure;
+  let preparationNoReceipt = false;
   let routePlaybookReadFailure;
   let disposed = false;
   let warmedHelp;
@@ -533,6 +534,13 @@ ${helpContext}
           delivery.recordDeliveryRequest();
           await activeSession.prompt(RECEIPT_DELIVERY_PROMPT);
         }
+        if (output === void 0 && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === void 0) {
+          const facts = delivery.facts({ runPointer: sessionDir, attemptPointer: invocationId });
+          activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          preparationNoReceipt = true;
+          candidates = [];
+          return candidates;
+        }
       } catch (error) {
         throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
       }
@@ -661,22 +669,25 @@ ${helpContext}
             throw new Error("Navigator advice contradicts the accepted settlement");
           }
         }
-        if (selected?.next === void 0) {
+        if (selected?.next === void 0 && preparationNoReceipt) {
+          report = { disposition: "no-advice" };
+        } else if (selected?.next === void 0) {
           throw new Error("Navigator prepared no machine-usable next direction");
-        }
-        const selectedRoute = selected.route;
-        const routeChanged = selectedRoute !== void 0 && !routeEqual(previousRoute, selectedRoute);
-        const command = renderPublicAkRoleCommand(selected.next);
-        report = {
-          disposition: "recommendation",
-          ...routeChanged ? { route: selectedRoute } : {},
-          next: selected.next,
-          ...selected.reason === void 0 ? {} : { reason: oneLine(selected.reason) },
-          ...command === void 0 ? {} : { command }
-        };
-        if (selectedRoute !== void 0) {
-          previousRoute = selectedRoute;
-          session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selectedRoute });
+        } else {
+          const selectedRoute = selected.route;
+          const routeChanged = selectedRoute !== void 0 && !routeEqual(previousRoute, selectedRoute);
+          const command = renderPublicAkRoleCommand(selected.next);
+          report = {
+            disposition: "recommendation",
+            ...routeChanged ? { route: selectedRoute } : {},
+            next: selected.next,
+            ...selected.reason === void 0 ? {} : { reason: oneLine(selected.reason) },
+            ...command === void 0 ? {} : { command }
+          };
+          if (selectedRoute !== void 0) {
+            previousRoute = selectedRoute;
+            session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selectedRoute });
+          }
         }
       } catch (error) {
         report = unavailable(invocationId, error);
@@ -710,6 +721,7 @@ ${helpContext}
     sessionReady = void 0;
     candidates = void 0;
     preparationFailure = void 0;
+    preparationNoReceipt = false;
     routePlaybookSettlement = void 0;
     routePlaybookReadFailure = void 0;
   }

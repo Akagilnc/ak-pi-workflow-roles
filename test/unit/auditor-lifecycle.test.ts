@@ -131,6 +131,33 @@ test("auditor gathers evidence and submits one decision", async () => {
   }
 });
 
+test("auditor exhausts exactly two delivery prompts into typed audit-incomplete without a third", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-no-receipt-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const faux = fauxProvider({ provider: "no-receipt-test" });
+    let turns = 0;
+    const noDecision = () => {
+      turns += 1;
+      return fauxAssistantMessage([{ type: "text", text: "no decision" }], { stopReason: "stop" });
+    };
+    faux.setResponses([noDecision, noDecision, noDecision]);
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool: createComplianceDecisionTool("ak_no_receipt_decision", "Submit."),
+      systemPrompt: "Decide.", roleLabel: "No receipt auditor", invalidDecisionLabel: "invalid",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(turns, 3, "initial attempt plus exactly two delivery prompts");
+    assert.equal(decision.status, "audit-incomplete");
+    if (decision.status === "audit-incomplete") {
+      assert.equal((decision.candidate as { acceptedReceipt?: unknown }).acceptedReceipt, false);
+      assert.equal((decision.candidate as { deliveryTurns?: unknown }).deliveryTurns, 2);
+    }
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
 test("undefined decision candidate settles as typed audit-incomplete", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-undefined-decision-"));
   const runDirectory = join(cwd, "run");

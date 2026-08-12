@@ -1,6 +1,14 @@
 /** Shared accepted-receipt delivery budget for role, auditor, and Navigator sessions (#288). */
 export const RECEIPT_DELIVERY_TURN_LIMIT = 2;
 export const RECEIPT_DELIVERY_PROMPT = "本 session 尚无已接受的 typed 回执。请现在调用具名终局工具交卷；若先前被打回，请按拒因修正后重交。";
+export const NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle";
+export function noReceiptLifecycleFacts(input) {
+    if (input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT)
+        throw new Error("receipt delivery budget is not exhausted");
+    if (input.runPointer.trim() === "" || input.attemptPointer.trim() === "")
+        throw new Error("no-receipt lifecycle binding is missing");
+    return { ...input, deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT, sessionCompletion: "settled-without-accepted-receipt", acceptedReceipt: false };
+}
 export function createReceiptDeliveryPolicy() {
     let accepted = false;
     let terminalToolCalled = false;
@@ -23,8 +31,8 @@ export function createReceiptDeliveryPolicy() {
                 return "accepted";
             return deliveryTurns < RECEIPT_DELIVERY_TURN_LIMIT ? "request-delivery" : "no-receipt";
         },
-        facts() {
-            return { terminalToolCalled, rejectedReceipts: [...rejectedReceipts], deliveryTurns, sessionCompletion: "settled-without-accepted-receipt", acceptedReceipt: false };
+        facts(binding) {
+            return noReceiptLifecycleFacts({ terminalToolCalled, rejectedReceipts: [...rejectedReceipts], deliveryTurns, ...binding });
         },
     };
 }

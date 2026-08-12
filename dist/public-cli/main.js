@@ -17767,11 +17767,17 @@ var init_package_owned_tool_idle = __esm({
 });
 
 // src/receipt-delivery-policy.ts
-var RECEIPT_DELIVERY_TURN_LIMIT;
+function noReceiptLifecycleFacts(input) {
+  if (input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT) throw new Error("receipt delivery budget is not exhausted");
+  if (input.runPointer.trim() === "" || input.attemptPointer.trim() === "") throw new Error("no-receipt lifecycle binding is missing");
+  return { ...input, deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT, sessionCompletion: "settled-without-accepted-receipt", acceptedReceipt: false };
+}
+var RECEIPT_DELIVERY_TURN_LIMIT, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE;
 var init_receipt_delivery_policy = __esm({
   "src/receipt-delivery-policy.ts"() {
     "use strict";
     RECEIPT_DELIVERY_TURN_LIMIT = 2;
+    NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle";
   }
 });
 
@@ -20673,30 +20679,29 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
   if (failure.cause === "output" && options.resume === void 0) {
     const entries = await readBoundSessionEntries(admitted.sessionFile).catch(() => void 0);
     if (entries !== void 0) {
-      const rejectedReceipts = entries.flatMap((entry) => {
-        const message = entry.message;
-        if (entry.type !== "message" || message?.role !== "toolResult" || message.isError !== true || typeof message.toolName !== "string" || !message.toolName.startsWith("ak_") || !message.toolName.endsWith("_output")) return [];
-        const reason = toolResultText(message);
-        return reason === "" ? [] : [{ reason }];
-      }).slice(-RECEIPT_DELIVERY_TURN_LIMIT);
-      const terminalResults = entries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult" && typeof entry.message.toolName === "string" && entry.message.toolName.startsWith("ak_") && entry.message.toolName.endsWith("_output"));
-      const terminalToolCalled = terminalResults.length > 0;
-      const isDeliveryAbsence = !terminalToolCalled || terminalResults.every((entry) => entry.message?.isError === true && toolResultText(entry.message) === "\u672A\u89C2\u5BDF\u5230 commit");
-      if (isDeliveryAbsence) {
-        const deliveryRequests = entries.filter(
-          (entry) => entry.customType === "ak-receipt-delivery-request" || entry.message?.customType === "ak-receipt-delivery-request"
-        ).length;
-        const deliveryTurns = Math.min(
-          RECEIPT_DELIVERY_TURN_LIMIT,
-          rejectedReceipts.length + deliveryRequests
-        );
-        const decisiveFacts2 = { terminalToolCalled, rejectedReceipts, deliveryTurns, sessionCompletion: "settled-without-accepted-receipt", runPointer: admitted.runDirectory, acceptedReceipt: false };
-        return {
-          roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...decisiveFacts2, decisiveFacts: decisiveFacts2 },
-          navigator: await extractNavigatorFactFromAdmittedSession(admitted),
-          artifacts: [],
-          runId: admitted.runId
-        };
+      let attemptStart = 0;
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        if (entries[index]?.type === "message" && entries[index]?.message?.role === "user") {
+          attemptStart = index;
+          break;
+        }
+      }
+      const lifecycleEntry = entries.slice(attemptStart).reverse().find((entry) => entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
+      const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
+      if (isRecord4(raw)) {
+        try {
+          const facts = noReceiptLifecycleFacts(raw);
+          if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
+            const decisiveFacts2 = facts;
+            return {
+              roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts: decisiveFacts2 },
+              navigator: await extractNavigatorFactFromAdmittedSession(admitted),
+              artifacts: [],
+              runId: admitted.runId
+            };
+          }
+        } catch {
+        }
       }
     }
   }

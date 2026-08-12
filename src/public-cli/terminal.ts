@@ -8,6 +8,7 @@
 import { renderPublicAkRoleCommand } from "./command-renderer.ts";
 import type { ComplianceAuditIncomplete } from "../compliance-transport.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
+import type { NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 
 /** Encode one free-text Terminal cell. JSON string form cannot embed raw tab/newline. */
 export function encodeTerminalField(value: string): string {
@@ -79,17 +80,11 @@ export function jsonSafeComplianceCandidate(value: unknown): unknown {
   return value === undefined ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
 }
 
-export type NoReceiptTerminalOutcome = {
+export type NoReceiptTerminalOutcome = NoReceiptLifecycleFacts & {
   kind: "no_receipt";
   role: TerminalRoleName;
   status: "no-accepted-receipt";
-  terminalToolCalled: boolean;
-  rejectedReceipts: readonly { reason: string }[];
-  deliveryTurns: number;
-  sessionCompletion: "settled-without-accepted-receipt";
-  runPointer: string;
-  acceptedReceipt: false;
-  decisiveFacts: Readonly<Record<string, unknown>>;
+  decisiveFacts: NoReceiptLifecycleFacts & Readonly<Record<string, unknown>>;
 };
 
 export type TerminalRoleOutcome =
