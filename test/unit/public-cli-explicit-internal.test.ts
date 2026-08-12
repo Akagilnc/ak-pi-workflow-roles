@@ -200,6 +200,36 @@ setInterval(() => {}, 1000);
   });
 });
 
+test("explicit activation canonicalizes an aliased role entry once for argv and ledger", async () => {
+  await withTempHome(async (home) => {
+    const packageAlias = join(home, "package-alias");
+    const runDirectory = join(home, "run");
+    await symlink(packageRoot, packageAlias);
+    await mkdir(runDirectory);
+    await writeFile(join(runDirectory, "invocation.json"), "{}\n");
+
+    let launchedArgs: readonly string[] = [];
+    await runExplicitInternalActivation({
+      packageRoot: packageAlias,
+      cwd: home,
+      home,
+      agentDir: join(home, ".pi", "agent"),
+      env: { AK_ROLE_RUN_DIR: runDirectory },
+      runner: async (args) => {
+        launchedArgs = args;
+        return { code: 0, stderr: "", timedOut: false, args: [...args] };
+      },
+    });
+
+    const invocation = JSON.parse(
+      await readFile(join(runDirectory, "invocation.json"), "utf8"),
+    ) as { roleEntry: string };
+    const selectedEntry = launchedArgs[launchedArgs.indexOf("-e") + 1];
+    assert.equal(selectedEntry, await realpath(join(packageAlias, "extensions", "role-runtime.ts")));
+    assert.equal(invocation.roleEntry, selectedEntry);
+  });
+});
+
 test("explicit activation masks ambient ledger and machine Pi home after env remerge", async () => {
   await withTempHome(async (home) => {
     const machineRun = join(home, "machine-run");

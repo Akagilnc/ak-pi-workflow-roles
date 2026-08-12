@@ -15350,9 +15350,8 @@ async function observeLaunchedRolePackageIdentity(packageRoot2, selectedRoleEntr
       `role package.json at ${rolePackageRoot} does not declare a nonblank version`
     );
   }
-  const roleEntry = await realpath2(selectedRoleEntry);
   return {
-    roleEntry,
+    roleEntry: selectedRoleEntry,
     rolePackageRoot,
     rolePackageVersion: raw.version,
     entryMode: "public-cli"
@@ -16729,13 +16728,8 @@ import { promisify as promisify2 } from "node:util";
 function resolveInternalRoleEntrypoint(packageRoot2) {
   return join5(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
 }
-function buildExplicitInternalActivationArgs(packageRoot2, extraArgs = []) {
-  return [
-    "--no-extensions",
-    "-e",
-    resolveInternalRoleEntrypoint(packageRoot2),
-    ...extraArgs
-  ];
+function buildExplicitInternalActivationArgs(selectedRoleEntry, extraArgs = []) {
+  return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
 }
 function knownFailureFromProviderStop(input) {
   if (input.stopReason !== "error") return void 0;
@@ -16781,13 +16775,13 @@ async function selectedPiIdentity(command, cwd, env) {
   return { executable, version };
 }
 async function runExplicitInternalActivation(options) {
-  const roleEntry = resolveInternalRoleEntrypoint(options.packageRoot);
-  const args = [
-    "--no-extensions",
-    "-e",
+  const roleEntry = await realpath3(
+    resolveInternalRoleEntrypoint(options.packageRoot)
+  );
+  const args = buildExplicitInternalActivationArgs(
     roleEntry,
-    ...options.extraArgs ?? []
-  ];
+    options.extraArgs ?? []
+  );
   const runner = options.runner ?? defaultExplicitInternalPiRunner;
   const env = {
     ...process.env,
