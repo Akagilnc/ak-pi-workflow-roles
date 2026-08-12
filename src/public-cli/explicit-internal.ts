@@ -16,38 +16,33 @@ import {
   recordLaunchedRolePackageIdentity,
 } from "./invocation.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
+import {
+  REVIEWER_PREFLIGHT_VIOLATIONS,
+  type ReviewerPreflightViolation,
+} from "../reviewer-dispatch.ts";
 import type { ControlledFailureCause } from "./terminal.ts";
 
 /** Durable Reviewer-rejection child→parent page under AK_ROLE_RUN_DIR. */
-const CHILD_KNOWN_FAILURE_FILE = "typed-known-failure.json";
+const REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
 
-const CONTROLLED_FAILURE_CAUSES = [
-  "provider",
-  "activation",
-  "session",
-  "output",
-  "timeout",
-  "unrecognized",
-] as const;
-
-function isControlledFailureCause(value: unknown): value is ControlledFailureCause {
+function isReviewerPreflightViolation(value: unknown): value is ReviewerPreflightViolation {
   return (
     typeof value === "string" &&
-    (CONTROLLED_FAILURE_CAUSES as readonly string[]).includes(value)
+    (REVIEWER_PREFLIGHT_VIOLATIONS as readonly string[]).includes(value)
   );
 }
 
-function childKnownFailurePath(runDirectory: string): string {
-  return join(runDirectory, CHILD_KNOWN_FAILURE_FILE);
+function reviewerDispatchRejectionPath(runDirectory: string): string {
+  return join(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
 }
 
 /**
  * Clear any prior attempt's Reviewer rejection page so resume/retry cannot
  * inherit a stale knownFailure.details.
  */
-export async function clearChildKnownFailure(runDirectory: string): Promise<void> {
+export async function clearReviewerDispatchRejection(runDirectory: string): Promise<void> {
   try {
-    await unlink(childKnownFailurePath(runDirectory));
+    await unlink(reviewerDispatchRejectionPath(runDirectory));
   } catch (error) {
     if (
       error instanceof Error &&
@@ -62,29 +57,29 @@ export async function clearChildKnownFailure(runDirectory: string): Promise<void
 
 /**
  * Synchronous durable write for Reviewer dispatch rejection (child process exit is sync).
- * Parent public CLI recovers via readChildKnownFailure into the knownFailure channel.
+ * Parent public CLI recovers via readReviewerDispatchRejection into knownFailure.
  */
-export function recordChildKnownFailureSync(
+export function recordReviewerDispatchRejectionSync(
   runDirectory: string,
-  failure: ExplicitInternalKnownFailure,
+  rejection: Readonly<{
+    diagnostic: string;
+    violations: readonly ReviewerPreflightViolation[];
+  }>,
 ): void {
   writeFileSync(
-    childKnownFailurePath(runDirectory),
-    `${JSON.stringify(failure)}\n`,
+    reviewerDispatchRejectionPath(runDirectory),
+    `${JSON.stringify(rejection)}\n`,
     "utf8",
   );
 }
 
-/**
- * Recover a child-written ExplicitInternalKnownFailure. Missing/malformed files
- * are absence — never inferred from stderr prose.
- */
-export async function readChildKnownFailure(
+/** Recover a child-written Reviewer dispatch rejection through a fixed mapping. */
+export async function readReviewerDispatchRejection(
   runDirectory: string,
 ): Promise<ExplicitInternalKnownFailure | undefined> {
   let raw: string;
   try {
-    raw = await readFile(childKnownFailurePath(runDirectory), "utf8");
+    raw = await readFile(reviewerDispatchRejectionPath(runDirectory), "utf8");
   } catch (error) {
     if (
       error instanceof Error &&
@@ -105,39 +100,22 @@ export async function readChildKnownFailure(
     return undefined;
   }
   const record = parsed as Record<string, unknown>;
-  if (!isControlledFailureCause(record.cause)) return undefined;
-  const failure: {
-    cause: ControlledFailureCause;
-    identity?: { name?: string; code?: string | number };
-    diagnostic?: string;
-    details?: Readonly<Record<string, unknown>>;
-  } = { cause: record.cause };
-  if (typeof record.diagnostic === "string") {
-    failure.diagnostic = record.diagnostic;
-  }
   if (
-    typeof record.identity === "object" &&
-    record.identity !== null &&
-    !Array.isArray(record.identity)
+    Object.keys(record).some((key) => key !== "diagnostic" && key !== "violations") ||
+    typeof record.diagnostic !== "string" ||
+    record.diagnostic.trim() === "" ||
+    !Array.isArray(record.violations) ||
+    record.violations.length === 0 ||
+    record.violations.some((value) => !isReviewerPreflightViolation(value))
   ) {
-    const identity = record.identity as Record<string, unknown>;
-    const next: { name?: string; code?: string | number } = {};
-    if (typeof identity.name === "string") next.name = identity.name;
-    if (typeof identity.code === "string" || typeof identity.code === "number") {
-      next.code = identity.code;
-    }
-    if (next.name !== undefined || next.code !== undefined) {
-      failure.identity = next;
-    }
+    return undefined;
   }
-  if (
-    typeof record.details === "object" &&
-    record.details !== null &&
-    !Array.isArray(record.details)
-  ) {
-    failure.details = record.details as Readonly<Record<string, unknown>>;
-  }
-  return failure;
+  return {
+    cause: "activation",
+    diagnostic: record.diagnostic,
+    identity: { name: "ReviewerDispatchRejectionError" },
+    details: { violations: Object.freeze([...record.violations]) },
+  };
 }
 
 export function resolveInternalRoleEntrypoint(packageRoot: string): string {
