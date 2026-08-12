@@ -95,6 +95,10 @@ export async function disposeComplianceDecision(decision, handlers, deliveredOut
     switch (decision.status) {
         case "pass":
             return await handlers.pass(decision.usage);
+        case "no-receipt":
+            // The audit leg contributes lifecycle facts, not a fabricated decision.
+            // The already-delivered parent candidate therefore projects unchanged.
+            return await handlers.pass(undefined);
         case "revise":
             return await handlers.revise(decision.violations);
         case "escalate":

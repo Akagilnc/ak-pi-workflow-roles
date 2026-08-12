@@ -7,6 +7,7 @@ import {
 } from "./evidence-child-executor.ts";
 import { createAuditorDossierTool } from "./auditor-dossier-tool.ts";
 import type { DossierObservation } from "./dossier-resolution.ts";
+import { parseNoReceiptLifecycleFacts, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 
 export type ComplianceCompletion = AuditorCompletion;
 export type ComplianceArgumentRootType = "null" | "array" | "undefined" | "string" | "number" | "boolean" | "bigint" | "symbol" | "function";
@@ -15,7 +16,8 @@ export type ComplianceAuditObservation =
   | { kind: "object-status-unreadable"; status: "missing" | "unknown" }
   | DossierObservation;
 export type ComplianceAuditIncomplete = { status: "audit-incomplete"; observation: ComplianceAuditObservation; candidate: unknown; usage?: Usage };
-export type ComplianceDecision = { status: "pass"; usage?: Usage } | { status: "revise"; violations: readonly unknown[]; usage?: Usage } | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage } | ComplianceAuditIncomplete;
+export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt" };
+export type ComplianceDecision = { status: "pass"; usage?: Usage } | { status: "revise"; violations: readonly unknown[]; usage?: Usage } | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage } | ComplianceNoReceipt | ComplianceAuditIncomplete;
 export type ComplianceDispatch = { model: Model<Api>; auth: { apiKey?: string; headers?: Record<string, string | null>; env?: Record<string, string> } };
 
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
@@ -126,5 +128,9 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
-  return readComplianceCandidate(receipt.decision, receipt.response.usage);
+  try {
+    return { status: "no-receipt", ...parseNoReceiptLifecycleFacts(receipt.decision) };
+  } catch {
+    return readComplianceCandidate(receipt.decision, receipt.response.usage);
+  }
 }

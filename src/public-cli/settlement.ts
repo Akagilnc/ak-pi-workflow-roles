@@ -74,7 +74,7 @@ import {
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
-import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_TURN_LIMIT, noReceiptLifecycleFacts, type NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
+import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, parseNoReceiptLifecycleFacts, type NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 import { packagedRoleMetadata } from "../packaged-role-registry.ts";
 import {
   workSubjectKeyFromProjectRoot,
@@ -3660,9 +3660,9 @@ export async function settleFailureTerminalResult(
       const lifecycleEntry = entries.slice(attemptStart).reverse().find((entry: SessionEntry) =>
         entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
       const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
-      if (isRecord(raw)) {
+      if (raw !== undefined) {
         try {
-          const facts = noReceiptLifecycleFacts(raw as NoReceiptLifecycleFacts);
+          const facts = parseNoReceiptLifecycleFacts(raw);
           if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
             const decisiveFacts: NoReceiptLifecycleFacts = facts;
             return {
