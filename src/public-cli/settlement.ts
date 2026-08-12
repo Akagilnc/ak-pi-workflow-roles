@@ -12,7 +12,7 @@ import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
-import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure } from "./explicit-internal.ts";
+import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure, readChildKnownFailure } from "./explicit-internal.ts";
 import {
   AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
   AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
@@ -783,8 +783,14 @@ export async function resolveAuditedRunnerKnownFailure(input: {
   runner: ExplicitInternalKnownFailure | undefined;
   sessionFile: string;
   credential: ExplicitInternalKnownFailure | undefined;
+  /** When set, recover child-written typed failure after runner omission. */
+  runDirectory?: string;
 }): Promise<ExplicitInternalKnownFailure | undefined> {
   if (input.runner !== undefined) return input.runner;
+  if (input.runDirectory !== undefined) {
+    const childFailure = await readChildKnownFailure(input.runDirectory);
+    if (childFailure !== undefined) return childFailure;
+  }
   // Bound auditor evidence outranks a parent failure that the auditor path itself
   // caused (retention EISDIR race). A typed terminating-tool host failure is next:
   // it outranks provider/credential and nonzero fallbacks, but not its recorded cause.

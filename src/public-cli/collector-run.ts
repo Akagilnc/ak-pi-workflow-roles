@@ -299,6 +299,7 @@ async function dispatchAdmittedCollector(input: {
             }),
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
+      runDirectory: admitted.runDirectory,
     });
     return await presentControlledFailure(
       admitted,

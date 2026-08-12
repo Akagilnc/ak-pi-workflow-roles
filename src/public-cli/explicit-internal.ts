@@ -4,8 +4,8 @@
  * this adapter (or an intentional developer `pi -e`) crosses that boundary.
  */
 import { execFile, spawn } from "node:child_process";
-import { constants } from "node:fs";
-import { access, realpath } from "node:fs/promises";
+import { constants, writeFileSync } from "node:fs";
+import { access, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
@@ -17,6 +17,140 @@ import {
 } from "./invocation.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
 import type { ControlledFailureCause } from "./terminal.ts";
+
+/** Durable child→parent typed failure page under AK_ROLE_RUN_DIR (books settle via knownFailure). */
+const CHILD_KNOWN_FAILURE_FILE = "typed-known-failure.json";
+
+const CONTROLLED_FAILURE_CAUSES = [
+  "provider",
+  "activation",
+  "session",
+  "output",
+  "timeout",
+  "unrecognized",
+] as const;
+
+function isControlledFailureCause(value: unknown): value is ControlledFailureCause {
+  return (
+    typeof value === "string" &&
+    (CONTROLLED_FAILURE_CAUSES as readonly string[]).includes(value)
+  );
+}
+
+function childKnownFailurePath(runDirectory: string): string {
+  return join(runDirectory, CHILD_KNOWN_FAILURE_FILE);
+}
+
+/**
+ * Clear any prior attempt's child-written typed failure so resume/retry cannot
+ * inherit a stale knownFailure identity.
+ */
+export async function clearChildKnownFailure(runDirectory: string): Promise<void> {
+  try {
+    await unlink(childKnownFailurePath(runDirectory));
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "ENOENT"
+    ) {
+      return;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Synchronous durable write for activation-barrier throws (failInfrastructure is sync).
+ * Parent public CLI recovers via readChildKnownFailure into the knownFailure channel.
+ */
+export function recordChildKnownFailureSync(
+  runDirectory: string,
+  failure: ExplicitInternalKnownFailure,
+): void {
+  writeFileSync(
+    childKnownFailurePath(runDirectory),
+    `${JSON.stringify(failure)}\n`,
+    "utf8",
+  );
+}
+
+/** Async write for callers that already own an async settlement path. */
+export async function recordChildKnownFailure(
+  runDirectory: string,
+  failure: ExplicitInternalKnownFailure,
+): Promise<void> {
+  await writeFile(
+    childKnownFailurePath(runDirectory),
+    `${JSON.stringify(failure)}\n`,
+    "utf8",
+  );
+}
+
+/**
+ * Recover a child-written ExplicitInternalKnownFailure. Missing/malformed files
+ * are absence — never inferred from stderr prose.
+ */
+export async function readChildKnownFailure(
+  runDirectory: string,
+): Promise<ExplicitInternalKnownFailure | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(childKnownFailurePath(runDirectory), "utf8");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "ENOENT"
+    ) {
+      return undefined;
+    }
+    throw error;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  if (!isControlledFailureCause(record.cause)) return undefined;
+  const failure: {
+    cause: ControlledFailureCause;
+    identity?: { name?: string; code?: string | number };
+    diagnostic?: string;
+    details?: Readonly<Record<string, unknown>>;
+  } = { cause: record.cause };
+  if (typeof record.diagnostic === "string") {
+    failure.diagnostic = record.diagnostic;
+  }
+  if (
+    typeof record.identity === "object" &&
+    record.identity !== null &&
+    !Array.isArray(record.identity)
+  ) {
+    const identity = record.identity as Record<string, unknown>;
+    const next: { name?: string; code?: string | number } = {};
+    if (typeof identity.name === "string") next.name = identity.name;
+    if (typeof identity.code === "string" || typeof identity.code === "number") {
+      next.code = identity.code;
+    }
+    if (next.name !== undefined || next.code !== undefined) {
+      failure.identity = next;
+    }
+  }
+  if (
+    typeof record.details === "object" &&
+    record.details !== null &&
+    !Array.isArray(record.details)
+  ) {
+    failure.details = record.details as Readonly<Record<string, unknown>>;
+  }
+  return failure;
+}
 
 export function resolveInternalRoleEntrypoint(packageRoot: string): string {
   return join(packageRoot, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
@@ -99,10 +233,12 @@ export type ExplicitInternalPiResult = {
 /**
  * Thrown activation failure with a production-owned typed cause.
  * Prefer this over ad-hoc Error property tags so settlement retains typed identity.
+ * Optional details ride the same ControlledFailure.details → error.json.details channel.
  */
 export class ExplicitInternalActivationError extends Error {
   readonly knownCause: ControlledFailureCause;
   readonly failureCode?: string | number;
+  readonly details?: Readonly<Record<string, unknown>>;
 
   constructor(
     message: string,
@@ -111,6 +247,7 @@ export class ExplicitInternalActivationError extends Error {
       code?: string | number;
       name?: string;
       cause?: unknown;
+      details?: Readonly<Record<string, unknown>>;
     },
   ) {
     super(
@@ -121,6 +258,9 @@ export class ExplicitInternalActivationError extends Error {
     this.knownCause = options.knownCause;
     if (options.code !== undefined) {
       this.failureCode = options.code;
+    }
+    if (options.details !== undefined) {
+      this.details = options.details;
     }
   }
 }

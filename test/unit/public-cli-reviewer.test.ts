@@ -759,7 +759,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
 
 test("reviewer activation rejection lands violation code and diagnostic in books", async () => {
   // One true-seam tracer (ADR 0016 / host art. 13): public CLI → real Pi child
-  // ExtensionRunner → stderr → presentControlledFailure → books error.json.
+  // ExtensionRunner → typed knownFailure channel → presentControlledFailure → books error.json.
   // Prior art: test/package/reviewer-package-lifecycle.test.ts (runAkRole + runPiSubprocess).
   // Trigger: local-only repo + --base origin/main → production base-invalid preflight.
   const diagnostic =
@@ -813,23 +813,27 @@ test("reviewer activation rejection lands violation code and diagnostic in books
       throw new Error("expected failure");
     }
     assert.equal(result.terminal.roleOutcome.cause, "activation");
-    assert.match(result.terminal.roleOutcome.diagnostic, /base-invalid/);
     assert.match(
       result.terminal.roleOutcome.diagnostic,
       new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
     );
+    const secondary = result.terminal.roleOutcome.decisiveFacts.secondaryEvidence as
+      | { violations?: unknown }
+      | undefined;
+    assert.deepEqual(secondary?.violations, ["base-invalid"]);
 
     const errorRef = result.terminal.artifacts.find((a) => a.kind === "error");
     assert.ok(errorRef);
     const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
       cause: string;
       diagnostic: string;
+      details?: { violations?: unknown };
     };
     assert.equal(errorBody.cause, "activation");
-    assert.match(errorBody.diagnostic, /base-invalid/);
     assert.match(
       errorBody.diagnostic,
       new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
     );
+    assert.deepEqual(errorBody.details?.violations, ["base-invalid"]);
   });
 });
