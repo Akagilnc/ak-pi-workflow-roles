@@ -17289,7 +17289,7 @@ async function writeRoleRunState(runDirectory, record4) {
     "utf8"
   );
 }
-async function readRoleRunState(runDirectory, home, canonicalSessionFile) {
+async function readRoleRunState(runDirectory, _home, canonicalSessionFile) {
   let raw;
   try {
     raw = JSON.parse(await readFile7(join8(runDirectory, RUN_STATE_FILE), "utf8"));
@@ -17314,13 +17314,7 @@ async function readRoleRunState(runDirectory, home, canonicalSessionFile) {
   if (typeof record4.sessionDirectory !== "string") return void 0;
   if (typeof record4.admittedRequestPath !== "string") return void 0;
   const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
-  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : canonicalSessionFile ?? (home === void 0 ? void 0 : roleRunSessionCoordinates({
-    cwd: record4.projectRoot,
-    runId: record4.runId,
-    role: record4.role,
-    home
-  }).sessionFile);
-  if (sessionFile === void 0) return void 0;
+  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : canonicalSessionFile ?? join8(record4.sessionDirectory, "session.jsonl");
   let resumable;
   if (record4.resumable !== void 0 && record4.resumable !== null) {
     if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
@@ -17783,7 +17777,6 @@ var init_run_lifecycle = __esm({
     "use strict";
     init_activation_ledger_topology();
     init_cli_errors();
-    init_sitian_role_run_coordinates();
     init_invocation();
     V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
     RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
