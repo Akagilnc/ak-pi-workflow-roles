@@ -10,7 +10,7 @@ import {
   ensureRealDirectoryTree,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
-import { roleRunSessionCoordinates } from "../sitian-record-entry.ts";
+import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -285,7 +285,7 @@ async function dispatchAdmittedMerger(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
