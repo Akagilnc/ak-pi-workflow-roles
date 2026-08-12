@@ -16718,22 +16718,113 @@ var init_invocation = __esm({
   }
 });
 
+// src/reviewer-git-snapshot.ts
+var init_reviewer_git_snapshot = __esm({
+  "src/reviewer-git-snapshot.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-preflight-error.ts
+var init_reviewer_preflight_error = __esm({
+  "src/reviewer-preflight-error.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-pinned-git.ts
+import { execFile as execFile2 } from "node:child_process";
+import { promisify as promisify2 } from "node:util";
+var execFileAsync2;
+var init_reviewer_pinned_git = __esm({
+  "src/reviewer-pinned-git.ts"() {
+    "use strict";
+    init_reviewer_git_snapshot();
+    init_sha256();
+    init_reviewer_preflight_error();
+    execFileAsync2 = promisify2(execFile2);
+  }
+});
+
+// src/reviewer-prompt-identity.ts
+var init_reviewer_prompt_identity = __esm({
+  "src/reviewer-prompt-identity.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-scope-prompt.ts
+var init_reviewer_scope_prompt = __esm({
+  "src/reviewer-scope-prompt.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-construction.ts
+var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER, REVIEWER_STANDARDS_CONCLUSION_KEYS, REVIEWER_STANDARDS_CONCLUSION_LABELS;
+var init_reviewer_construction = __esm({
+  "src/reviewer-construction.ts"() {
+    "use strict";
+    init_sha256();
+    init_reviewer_scope_prompt();
+    REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
+      recipeId: "reviewer-common-bundle",
+      version: 1,
+      runtimeVersion: "1",
+      implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts")
+    });
+    REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
+      adapterId: "reviewer-axis-output",
+      version: 1,
+      implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities")
+    });
+    REVIEWER_STANDARDS_CONCLUSION_KEYS = Object.freeze([
+      "constitutionality",
+      "minimum-necessary-test-cost",
+      "complexity"
+    ]);
+    REVIEWER_STANDARDS_CONCLUSION_LABELS = Object.freeze({
+      constitutionality: "constitutionality",
+      "minimum-necessary-test-cost": "minimum-necessary test cost",
+      complexity: "complexity"
+    });
+  }
+});
+
+// src/reviewer-dispatch.ts
+var REVIEWER_PREFLIGHT_VIOLATIONS;
+var init_reviewer_dispatch = __esm({
+  "src/reviewer-dispatch.ts"() {
+    "use strict";
+    init_reviewer_git_snapshot();
+    init_reviewer_pinned_git();
+    init_reviewer_pinned_git();
+    init_reviewer_prompt_identity();
+    init_sha256();
+    init_reviewer_construction();
+    init_reviewer_preflight_error();
+    init_sha256();
+    init_reviewer_prompt_identity();
+    REVIEWER_PREFLIGHT_VIOLATIONS = ["base-invalid", "range-invalid", "prompt-identity-invalid", "target-drift"];
+  }
+});
+
 // src/public-cli/explicit-internal.ts
-import { execFile as execFile2, spawn } from "node:child_process";
+import { execFile as execFile3, spawn } from "node:child_process";
 import { constants, writeFileSync } from "node:fs";
 import { access, readFile as readFile5, realpath as realpath3, unlink } from "node:fs/promises";
 import { delimiter as delimiter2, isAbsolute as isAbsolute4, join as join5, resolve as resolve5 } from "node:path";
 import { platform } from "node:process";
-import { promisify as promisify2 } from "node:util";
-function isControlledFailureCause(value) {
-  return typeof value === "string" && CONTROLLED_FAILURE_CAUSES.includes(value);
+import { promisify as promisify3 } from "node:util";
+function isReviewerPreflightViolation(value) {
+  return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
 }
-function childKnownFailurePath(runDirectory) {
-  return join5(runDirectory, CHILD_KNOWN_FAILURE_FILE);
+function reviewerDispatchRejectionPath(runDirectory) {
+  return join5(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
 }
-async function clearChildKnownFailure(runDirectory) {
+async function clearReviewerDispatchRejection(runDirectory) {
   try {
-    await unlink(childKnownFailurePath(runDirectory));
+    await unlink(reviewerDispatchRejectionPath(runDirectory));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return;
@@ -16741,10 +16832,10 @@ async function clearChildKnownFailure(runDirectory) {
     throw error;
   }
 }
-async function readChildKnownFailure(runDirectory) {
+async function readReviewerDispatchRejection(runDirectory) {
   let raw;
   try {
-    raw = await readFile5(childKnownFailurePath(runDirectory), "utf8");
+    raw = await readFile5(reviewerDispatchRejectionPath(runDirectory), "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
@@ -16761,26 +16852,15 @@ async function readChildKnownFailure(runDirectory) {
     return void 0;
   }
   const record4 = parsed;
-  if (!isControlledFailureCause(record4.cause)) return void 0;
-  const failure = { cause: record4.cause };
-  if (typeof record4.diagnostic === "string") {
-    failure.diagnostic = record4.diagnostic;
+  if (Object.keys(record4).some((key) => key !== "diagnostic" && key !== "violations") || typeof record4.diagnostic !== "string" || record4.diagnostic.trim() === "" || !Array.isArray(record4.violations) || record4.violations.length === 0 || record4.violations.some((value) => !isReviewerPreflightViolation(value))) {
+    return void 0;
   }
-  if (typeof record4.identity === "object" && record4.identity !== null && !Array.isArray(record4.identity)) {
-    const identity = record4.identity;
-    const next = {};
-    if (typeof identity.name === "string") next.name = identity.name;
-    if (typeof identity.code === "string" || typeof identity.code === "number") {
-      next.code = identity.code;
-    }
-    if (next.name !== void 0 || next.code !== void 0) {
-      failure.identity = next;
-    }
-  }
-  if (typeof record4.details === "object" && record4.details !== null && !Array.isArray(record4.details)) {
-    failure.details = record4.details;
-  }
-  return failure;
+  return {
+    cause: "activation",
+    diagnostic: record4.diagnostic,
+    identity: { name: "ReviewerDispatchRejectionError" },
+    details: { violations: Object.freeze([...record4.violations]) }
+  };
 }
 function resolveInternalRoleEntrypoint(packageRoot2) {
   return join5(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
@@ -16822,7 +16902,7 @@ async function resolveSelectedPi(command, cwd, env) {
 }
 async function selectedPiIdentity(command, cwd, env) {
   const executable = await resolveSelectedPi(command, cwd, env);
-  const { stdout } = await execFileAsync2(executable, ["--version"], {
+  const { stdout } = await execFileAsync3(executable, ["--version"], {
     cwd,
     env,
     encoding: "utf8"
@@ -16859,22 +16939,15 @@ async function runExplicitInternalActivation(options) {
     env
   });
 }
-var CHILD_KNOWN_FAILURE_FILE, CONTROLLED_FAILURE_CAUSES, execFileAsync2, defaultExplicitInternalPiRunner;
+var REVIEWER_DISPATCH_REJECTION_FILE, execFileAsync3, defaultExplicitInternalPiRunner;
 var init_explicit_internal = __esm({
   "src/public-cli/explicit-internal.ts"() {
     "use strict";
     init_invocation();
     init_registry2();
-    CHILD_KNOWN_FAILURE_FILE = "typed-known-failure.json";
-    CONTROLLED_FAILURE_CAUSES = [
-      "provider",
-      "activation",
-      "session",
-      "output",
-      "timeout",
-      "unrecognized"
-    ];
-    execFileAsync2 = promisify2(execFile2);
+    init_reviewer_dispatch();
+    REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
+    execFileAsync3 = promisify3(execFile3);
     defaultExplicitInternalPiRunner = async (args, options) => {
       const command = options.env.PI_BINARY ?? "pi";
       const piIdentity = await selectedPiIdentity(command, options.cwd, options.env);
@@ -18745,8 +18818,8 @@ function typedFailedTerminatingToolKnownFailure(entries) {
 async function resolveAuditedRunnerKnownFailure(input) {
   if (input.runner !== void 0) return input.runner;
   if (input.runDirectory !== void 0) {
-    const childFailure = await readChildKnownFailure(input.runDirectory);
-    if (childFailure !== void 0) return childFailure;
+    const rejection = await readReviewerDispatchRejection(input.runDirectory);
+    if (rejection !== void 0) return rejection;
   }
   try {
     const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
@@ -22959,7 +23032,7 @@ async function dispatchAdmittedReviewer(input) {
     }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    await clearChildKnownFailure(admitted.runDirectory);
+    await clearReviewerDispatchRejection(admitted.runDirectory);
     const childEnv = {
       ...process.env,
       HOME: env.home,

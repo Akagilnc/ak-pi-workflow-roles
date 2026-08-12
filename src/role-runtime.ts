@@ -46,7 +46,7 @@ import {
 import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.ts";
 import {
   ExplicitInternalActivationError,
-  recordChildKnownFailureSync,
+  recordReviewerDispatchRejectionSync,
 } from "./public-cli/explicit-internal.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
@@ -228,31 +228,21 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
       const activation = await runtime.reviewer.activate(runtime.context);
       const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, { context: runtime.context });
       if (result.status !== "accepted") {
-        const details = Object.freeze({
-          violations: Object.freeze([...result.violations]),
-        });
         const rejection = new ExplicitInternalActivationError(
           `Fixed Reviewer dispatch was not accepted: ${result.status}: ${result.diagnostic}`,
           {
             knownCause: "activation",
             name: "ReviewerDispatchRejectionError",
-            details,
           },
         );
-        // Child→parent typed page for this rejection only (Pi stderr cannot carry
-        // structured details). Public CLI recovers via readChildKnownFailure.
+        // Pi stderr cannot carry the structured violations. Do not mask a durable
+        // write failure: its infrastructure cause is truer than the unwritten page.
         const runDir = process.env.AK_ROLE_RUN_DIR;
         if (typeof runDir === "string" && runDir.trim() !== "") {
-          try {
-            recordChildKnownFailureSync(runDir, {
-              cause: "activation",
-              diagnostic: rejection.message,
-              identity: { name: "ReviewerDispatchRejectionError" },
-              details,
-            });
-          } catch {
-            // Still throw; settlement falls back to stderr diagnostic.
-          }
+          recordReviewerDispatchRejectionSync(runDir, {
+            diagnostic: rejection.message,
+            violations: result.violations,
+          });
         }
         throw rejection;
       }

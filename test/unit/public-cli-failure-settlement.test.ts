@@ -42,6 +42,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   ExplicitInternalActivationError,
   knownFailureFromProviderStop,
+  readReviewerDispatchRejection,
 } from "../../src/public-cli/explicit-internal.ts";
 import {
   classifyPostAdmissionFailure,
@@ -3009,6 +3010,30 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
     assert.equal(JSON.stringify(durable).includes("VARIABLE DECOY"), false);
     assert.equal(stdout.length, 1);
     assert.ok(stderr.length > 0);
+  });
+});
+
+test("Reviewer rejection sidecar rejects generic controlled failures", async () => {
+  await withTempHome(async (home) => {
+    const sidecar = join(home, "typed-known-failure.json");
+    await writeFile(sidecar, JSON.stringify({
+      cause: "provider",
+      diagnostic: "generic provider failure",
+      identity: { name: "ProviderError" },
+      details: { arbitrary: true },
+    }));
+    assert.equal(await readReviewerDispatchRejection(home), undefined);
+
+    await writeFile(sidecar, JSON.stringify({
+      diagnostic: "Fixed Reviewer dispatch was not accepted",
+      violations: ["base-invalid"],
+    }));
+    assert.deepEqual(await readReviewerDispatchRejection(home), {
+      cause: "activation",
+      diagnostic: "Fixed Reviewer dispatch was not accepted",
+      identity: { name: "ReviewerDispatchRejectionError" },
+      details: { violations: ["base-invalid"] },
+    });
   });
 });
 
