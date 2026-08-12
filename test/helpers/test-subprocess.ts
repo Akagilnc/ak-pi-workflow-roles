@@ -20,9 +20,6 @@ export type TestSubprocessResult = {
   timedOut: boolean;
 };
 
-/** Historical runNodeSubprocess / execFile collection ceiling (10 MiB per stream). */
-const TEST_SUBPROCESS_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
-
 export class TestSubprocessOperationalError extends Error {
   readonly code: number | string | null;
   readonly signal: NodeJS.Signals | null;
@@ -148,29 +145,11 @@ export async function runTestSubprocess(
       });
     };
 
-    const appendStream = (
-      stream: "stdout" | "stderr",
-      chunk: string,
-    ): void => {
-      if (settled) return;
-      if (stream === "stdout") stdout += chunk;
-      else stderr += chunk;
-      const collected = stream === "stdout" ? stdout : stderr;
-      if (Buffer.byteLength(collected, "utf8") <= TEST_SUBPROCESS_MAX_BUFFER_BYTES) {
-        return;
-      }
-      child.kill("SIGTERM");
-      rejectOperational({
-        message: `stdout/stderr maxBuffer length exceeded (${TEST_SUBPROCESS_MAX_BUFFER_BYTES} bytes)`,
-        code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
-      });
-    };
-
     child.stdout.setEncoding("utf8").on("data", (chunk) => {
-      appendStream("stdout", chunk);
+      if (!settled) stdout += chunk;
     });
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
-      appendStream("stderr", chunk);
+      if (!settled) stderr += chunk;
     });
     child.stdout.on("error", (error) => {
       rejectOperational({
