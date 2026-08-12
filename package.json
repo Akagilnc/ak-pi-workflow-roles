@@ -8,7 +8,7 @@
     "pi-package"
   ],
   "bin": {
-    "ak-role": "./dist/public-cli/main.js"
+    "ak-role": "dist/public-cli/main.js"
   },
   "files": [
     "dist",
@@ -65,5 +65,9 @@
     "tsx": "latest",
     "typebox": "1.3.8",
     "typescript": "latest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Akagilnc/ak-pi-workflow-roles.git"
   }
 }
