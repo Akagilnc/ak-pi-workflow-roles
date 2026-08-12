@@ -159,7 +159,7 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
 test("ordinary Navigator attendance persists preparation, settlement, and visible ordering", async () => {
   const manifest = await loadRawPackageManifest();
   const current = await runOrdinaryNavigatorObservation(packageEntrypoint(manifest));
-  assert.equal(current.result.timedOut, false, "ordinary invocation must finish");
+  assert.equal(current.result.localTimeout, false, "ordinary invocation must finish");
   assert.equal(current.result.code, 0, `ordinary invocation must succeed: ${current.result.stderr}`);
   const accepted = current.roleEntries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME && entry.message.isError === false);
   assert.equal(accepted.length, 1, "must persist the accepted Judge output result");
@@ -864,9 +864,9 @@ test("cold-installed live help follows the loaded extension and changes on the n
             env: process.env,
             ...(options.timeout === undefined ? {} : { timeoutMs: options.timeout }),
           });
-          assert.equal(result.timedOut, false, "cold-installed role --help must not time out");
+          assert.equal(result.localTimeout, false, "cold-installed role --help must not time out");
           assert.equal(result.code, 0, "cold-installed role --help must exit 0");
-          return { code: result.code ?? 1, stdout: result.stdout, stderr: result.stderr, killed: result.timedOut };
+          return { code: result.code ?? 1, stdout: result.stdout, stderr: result.stderr, killed: result.localTimeout };
         };
         await writeFile(runtimePath, original.replace("Activate a packaged workflow role:", `${firstMarker}:`));
         const first = await runtime.loadNavigatorRoleHelp({ exec } as never, resolve(installedRoot, "extensions/role-runtime.ts"), fixture, "coder");
@@ -2414,7 +2414,7 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
         PI_OFFLINE: "1",
       },
     });
-    assert.equal(result.timedOut, false, `tool observation subprocess timed out: ${result.stderr}`);
+    assert.equal(result.localTimeout, false, `tool observation subprocess timed out: ${result.stderr}`);
     assert.equal(result.code, 0, `tool observation subprocess failed: ${result.stderr}\n${result.stdout}`);
     assert.equal(result.stdout.includes('"event":"tool_execution_'), false, "tool observation must never write JSONL onto stdout");
 
@@ -2482,7 +2482,7 @@ test("installed composition without --ak-role emits no tool-execution observatio
         PI_OFFLINE: "1",
       },
     });
-    assert.equal(result.timedOut, false, `no-role subprocess timed out: ${result.stderr}`);
+    assert.equal(result.localTimeout, false, `no-role subprocess timed out: ${result.stderr}`);
     assert.deepEqual(parseToolExecutionObservations(result.stderr), []);
   });
 });

@@ -243,7 +243,11 @@ test("Fixer production activation args reach the real Pi loader for both optiona
             cwd: options.cwd,
             env: options.env,
           });
-          return { ...subprocess, args: [...args] };
+          return {
+            ...subprocess,
+            timedOut: subprocess.localTimeout,
+            args: [...args],
+          };
         },
       });
       assert.equal(result.code, 0, `${row.name}: ${result.stderr}`);

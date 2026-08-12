@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
@@ -19,6 +19,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { isolatedTestProcessEnv } from "./test-process-fixtures.ts";
+import {
+  runTestSubprocess,
+  type TestSubprocessResult,
+} from "./test-subprocess.ts";
 
 import {
   type FauxProviderHandle,
@@ -605,7 +609,7 @@ export async function installPackedArtifactIntoPiNpm(
       PI_OFFLINE: "1",
     },
   });
-  if (result.timedOut) {
+  if (result.localTimeout) {
     throw new Error(`pi install timed out for ${source}`);
   }
   if (result.code !== 0) {
@@ -822,12 +826,7 @@ export async function withProcessCwd<T>(
   });
 }
 
-export interface PiSubprocessResult {
-  code: number | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-}
+export type PiSubprocessResult = TestSubprocessResult;
 
 export async function runNodeSubprocess(
   args: string[],
@@ -837,23 +836,12 @@ export async function runNodeSubprocess(
     timeoutMs?: number;
   },
 ): Promise<PiSubprocessResult> {
-  try {
-    const result = await execFileAsync(process.execPath, args, {
-      cwd: options.cwd,
-      env: options.env,
-      timeout: options.timeoutMs ?? 30_000,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    return { code: 0, stdout: result.stdout, stderr: result.stderr, timedOut: false };
-  } catch (error) {
-    const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean; signal?: string };
-    return {
-      code: typeof failure.code === "number" ? failure.code : null,
-      stdout: failure.stdout ?? "",
-      stderr: failure.stderr ?? failure.message ?? "",
-      timedOut: failure.killed === true || failure.signal === "SIGTERM",
-    };
-  }
+  return runTestSubprocess(process.execPath, args, {
+    cwd: options.cwd,
+    ...(options.env === undefined ? {} : { env: options.env }),
+    timeoutMs: options.timeoutMs ?? 30_000,
+    owner: "runNodeSubprocess",
+  });
 }
 
 export async function runPiSubprocess(
@@ -864,40 +852,15 @@ export async function runPiSubprocess(
     timeoutMs?: number;
   },
 ): Promise<PiSubprocessResult> {
-  return await new Promise((resolveResult, reject) => {
-    const child = spawn(piCli, args, {
-      cwd: options.cwd,
-      env: isolatedTestProcessEnv({
-        ...(options.env === undefined ? {} : { env: options.env }),
-        home: options.env?.HOME ?? options.cwd,
-        agentDir: options.env?.PI_CODING_AGENT_DIR ?? join(options.cwd, ".pi-agent"),
-      }),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    child.stdout.setEncoding("utf8").on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.setEncoding("utf8").on("data", (chunk) => {
-      stderr += chunk;
-    });
-    let timeout: NodeJS.Timeout | undefined;
-    if (options.timeoutMs !== undefined) {
-      timeout = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-      }, options.timeoutMs);
-    }
-    child.on("error", (error) => {
-      if (timeout !== undefined) clearTimeout(timeout);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      if (timeout !== undefined) clearTimeout(timeout);
-      resolveResult({ code, stdout, stderr, timedOut });
-    });
+  return runTestSubprocess(piCli, args, {
+    cwd: options.cwd,
+    env: isolatedTestProcessEnv({
+      ...(options.env === undefined ? {} : { env: options.env }),
+      home: options.env?.HOME ?? options.cwd,
+      agentDir: options.env?.PI_CODING_AGENT_DIR ?? join(options.cwd, ".pi-agent"),
+    }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    owner: "runPiSubprocess",
   });
 }
 
