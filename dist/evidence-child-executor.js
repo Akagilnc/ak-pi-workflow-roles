@@ -428,6 +428,7 @@ export async function executeAuditorChild(options) {
         });
         const cwd = options.context.cwd ?? process.cwd();
         let decision;
+        let noReceiptLifecycle;
         let decisionSubmitted = false;
         let decisionCallId;
         let decisionToolFailure;
@@ -495,6 +496,7 @@ export async function executeAuditorChild(options) {
         let retainedResponse;
         let rejectedDecisionResponse;
         let promptNeighboringFailure;
+        let promptDecisionFailures = [];
         const registeredToolNames = new Set(session.getAllTools().map((entry) => entry.name));
         const evidenceToolFailures = new Map();
         for (const name of registeredToolNames) {
@@ -559,6 +561,7 @@ export async function executeAuditorChild(options) {
                     const rejectedCall = rejectedDecisionResponse.content.find((part) => part.type === "toolCall" && part.name === tool.name && decisionToolFailures.has(part.id));
                     if (rejectedCall?.type === "toolCall") {
                         decisionToolFailure = decisionToolFailures.get(rejectedCall.id);
+                        promptDecisionFailures.push(decisionToolFailure);
                         decisionToolFailures.delete(rejectedCall.id);
                     }
                 }
@@ -580,6 +583,7 @@ export async function executeAuditorChild(options) {
                     rejectedDecisionResponse = undefined;
                     promptNeighboringFailure = undefined;
                     decisionToolFailure = undefined;
+                    promptDecisionFailures = [];
                     let promptFailure;
                     try {
                         await session.prompt(prompt);
@@ -596,6 +600,7 @@ export async function executeAuditorChild(options) {
                         const rejectedCall = correlatedResponse.content.find((part) => part.type === "toolCall" && part.name === tool.name && decisionToolFailures.has(part.id));
                         if (rejectedCall?.type === "toolCall") {
                             decisionToolFailure = decisionToolFailures.get(rejectedCall.id);
+                            promptDecisionFailures.push(decisionToolFailure);
                             decisionToolFailures.delete(rejectedCall.id);
                         }
                     }
@@ -611,10 +616,32 @@ export async function executeAuditorChild(options) {
                 while (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
                     && delivery.nextAction() === "request-delivery") {
                     if (decisionToolFailure !== undefined) {
-                        delivery.recordRejected(decisionToolFailure instanceof Error ? decisionToolFailure.message : String(decisionToolFailure));
+                        const failures = promptDecisionFailures.length === 0
+                            ? [decisionToolFailure]
+                            : promptDecisionFailures;
+                        for (const failure of failures) {
+                            delivery.recordRejected(failure instanceof Error ? failure.message : String(failure));
+                            if (delivery.nextAction() === "no-receipt")
+                                break;
+                        }
                         decisionToolFailure = undefined;
+                        promptDecisionFailures = [];
+                        if (delivery.nextAction() === "no-receipt")
+                            boundaryResponse = undefined;
                         if (delivery.nextAction() === "request-delivery") {
-                            await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
+                            // The correction solicitation itself consumes the remaining shared
+                            // turn at issuance; prose cannot defer charging it to a later loop.
+                            delivery.recordDeliveryRequest();
+                            if (retainedResponse === rejectedDecisionResponse) {
+                                await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
+                                for (const failure of promptDecisionFailures) {
+                                    delivery.recordRejected(failure instanceof Error ? failure.message : String(failure));
+                                    if (delivery.nextAction() === "no-receipt")
+                                        break;
+                                }
+                                decisionToolFailure = undefined;
+                                promptDecisionFailures = [];
+                            }
                         }
                     }
                     else {
@@ -626,11 +653,15 @@ export async function executeAuditorChild(options) {
                     && delivery.nextAction() === "no-receipt") {
                     const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
                     const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
-                    decision = delivery.facts({ runPointer, attemptPointer });
+                    const facts = delivery.facts({ runPointer, attemptPointer });
+                    decision = facts;
                     // Late turn_end feedback cannot overturn a lifecycle that has already
                     // charged this prompt to the exhausted shared budget.
                     decisionToolFailure = undefined;
-                    auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, decision);
+                    auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+                    // Provenance is granted only after the lifecycle owner persisted the
+                    // current child record; accepted model arguments can never set it.
+                    noReceiptLifecycle = facts;
                 }
             }
             catch (error) {
@@ -728,7 +759,11 @@ export async function executeAuditorChild(options) {
                 || (!decisionSubmitted && decision === undefined)) {
                 throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
             }
-            return { decision, response };
+            return {
+                decision,
+                response,
+                ...(noReceiptLifecycle === undefined ? {} : { noReceiptLifecycle }),
+            };
         }
         finally {
             options.signal?.removeEventListener("abort", abort);

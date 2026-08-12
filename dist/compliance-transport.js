@@ -1,7 +1,6 @@
 import { Type } from "typebox";
 import { executeAuditorChild, } from "./evidence-child-executor.js";
 import { createAuditorDossierTool } from "./auditor-dossier-tool.js";
-import { parseNoReceiptLifecycleFacts } from "./receipt-delivery-policy.js";
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
 export const AUDITOR_DOSSIER_PROMPT = "Audit the current run dossier.";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
@@ -74,10 +73,12 @@ export async function runComplianceAudit(options) {
         ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
-    try {
-        return { status: "no-receipt", ...parseNoReceiptLifecycleFacts(receipt.decision) };
+    if (receipt.noReceiptLifecycle !== undefined) {
+        return {
+            status: "no-receipt",
+            ...receipt.noReceiptLifecycle,
+            ...(receipt.response.usage === undefined ? {} : { usage: receipt.response.usage }),
+        };
     }
-    catch {
-        return readComplianceCandidate(receipt.decision, receipt.response.usage);
-    }
+    return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }

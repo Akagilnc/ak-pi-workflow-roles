@@ -139,6 +139,7 @@ export function createJudgeRoleRuntime(
                   content: [{ type: "text" as const, text: "Judge verdict accepted; compliance audit produced no receipt" }],
                   details: { ...verdict, auditNoReceipt },
                   terminate: true as const,
+                  ...(auditNoReceipt.usage === undefined ? {} : { usage: auditNoReceipt.usage }),
                 }),
                 revise: (violations) => {
                   throw new Error(

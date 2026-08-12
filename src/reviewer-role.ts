@@ -165,7 +165,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
               },
               noReceipt: async (auditNoReceipt) => {
                 try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                return { content: [{ type: "text" as const, text: "Reviewer report accepted; compliance audit produced no receipt" }], details: { ...candidate, auditNoReceipt }, terminate: true as const };
+                return { content: [{ type: "text" as const, text: "Reviewer report accepted; compliance audit produced no receipt" }], details: { ...candidate, auditNoReceipt }, terminate: true as const, ...(auditNoReceipt.usage === undefined ? {} : { usage: auditNoReceipt.usage }) };
               },
               revise: (violations) => {
                 throw new AggregateError([], `Reviewer receipt rejected:\n${violations.join("\n")}`, { cause: Object.freeze([...violations]) });
