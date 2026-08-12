@@ -70,10 +70,12 @@ test("subprocess result seam classifies localTimeout, signal, nonzero exit, clea
   assert.equal(clean.code, 0);
   assert.equal(clean.stdout, "ok");
 
-  // Child exits first; a detached descendant keeps the harness pipes open past
-  // the deadline. Classification must follow exit facts, not invent localTimeout.
-  const postExitHoldMs = 400;
-  const postExitDeadlineMs = 50;
+  // Causal order (not a tight timer race): parent exits(42) immediately after
+  // spawning a detached descendant that inherits stdio; deadline has ample
+  // margin so exit precedes it under load; descendant hold strictly past the
+  // deadline keeps close pending. Classification must follow exit facts.
+  const postExitDeadlineMs = 2_000;
+  const postExitHoldMs = postExitDeadlineMs + 500;
   const postExit = await runNodeSubprocess(
     [
       "-e",
