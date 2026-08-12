@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, validateToolArguments } from "@earendil-works/pi-ai";
 import {
   createNativeNavigatorSessionFactory,
@@ -85,13 +85,30 @@ function sessionHarness() {
   let tool: any;
   let prompts = 0;
   let releasePrompt: (() => void) | undefined;
+  const rejectedPrepareReasons: string[] = [];
+  const transportFailures: string[] = [];
+  let providerFailure: { source: "transport"; cause: "transport" } | undefined;
   const session: NavigatorPreparationSession = {
     async prompt(_text) {
       prompts += 1;
+      providerFailure = undefined;
+      const rejected = rejectedPrepareReasons.shift();
+      if (rejected !== undefined) {
+        const id = `rejected-prepare-${prompts}`;
+        entries.push({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id, name: NAVIGATOR_PREPARE_TOOL_NAME, arguments: undefined }] } });
+        entries.push({ type: "message", message: { role: "toolResult", toolCallId: id, toolName: NAVIGATOR_PREPARE_TOOL_NAME, isError: true, content: [{ type: "text", text: rejected }] } });
+        throw new Error(rejected);
+      }
+      const transport = transportFailures.shift();
+      if (transport !== undefined) {
+        providerFailure = { source: "transport", cause: "transport" };
+        throw new Error(transport);
+      }
       await new Promise<void>((resolve) => { releasePrompt = resolve; });
     },
     appendEntry(_type, data) { entries.push({ type: "custom", customType: _type, data }); },
     entries: () => entries,
+    providerFailure: () => providerFailure,
     async setModel(model, thinkingLevel) { modelSettings.push({ model, thinkingLevel }); },
     dispose() {},
   };
@@ -100,6 +117,8 @@ function sessionHarness() {
     tool: () => tool,
     release: () => releasePrompt?.(),
     prompts: () => prompts,
+    rejectPrepare(...reasons: string[]) { rejectedPrepareReasons.push(...reasons); },
+    failTransport(...reasons: string[]) { transportFailures.push(...reasons); },
     /** Production-retained typed context fact (ak-navigator-context), not a prompt metadata channel. */
     retainedContext: () => {
       const entry = [...entries].reverse().find((item: any) => item?.customType === "ak-navigator-context");
@@ -163,6 +182,65 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     throw error;
   }
   await cleanupTempDir(root);
+});
+
+test("rejected Navigator prepare consumes budget and correction succeeds in the same session", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-rejected-prepare-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    harness.rejectPrepare("root parameters must be an object");
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events);
+    nav.prepare();
+    while (harness.prompts() < 2 || harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    await harness.tool().execute("corrected-prepare", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 2);
+    assert.equal(events[0]?.disposition, "recommendation");
+  } finally { await cleanupTempDir(root); }
+});
+
+test("two rejected Navigator prepares settle typed no-advice with exact reasons and no third prompt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-rejected-exhaustion-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    harness.rejectPrepare("root rejection one", "root rejection two");
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events);
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 2, "budget exhaustion must not start a third prompt");
+    assert.equal(events[0]?.disposition, "no-advice");
+    const lifecycle = harness.entries.find((entry: any) => entry.customType === "ak-no-receipt-lifecycle") as any;
+    assert.deepEqual(lifecycle?.data.rejectedReceipts, [
+      { reason: "root rejection one" },
+      { reason: "root rejection two" },
+    ]);
+    assert.equal(lifecycle?.data.terminalToolCalled, true);
+  } finally { await cleanupTempDir(root); }
+});
+
+test("Navigator transport failure remains unavailable and does not enter rejected-prepare budget", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-prepare-transport-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    harness.failTransport("socket reset");
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events);
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 1);
+    assert.equal(events[0]?.disposition, "unavailable");
+    assert.equal(events[0]?.unavailableSource, "transport");
+    assert.equal(harness.entries.some((entry: any) => entry.customType === "ak-no-receipt-lifecycle"), false);
+  } finally { await cleanupTempDir(root); }
 });
 
 test("live help changes the next hint without a static template or fabricated task arguments", async () => {
@@ -1984,7 +2062,7 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     const judgePi = { getFlag: () => undefined };
     const judgeCtx = {
       cwd: root,
-      sessionManager: { getSessionDir: () => sessionDir },
+      sessionManager: { getSessionDir: () => join(process.env.AK_ROLE_RUN_DIR!, "session") },
     } as never;
 
     const loaded = await loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" });
@@ -2060,7 +2138,6 @@ test("public admitted-request projects typed subject/authority; missing/malforme
 });
 
 test("role-runtime passes admitted-request subject/authority into Navigator attendance", async () => {
-  const { basename } = await import("node:path");
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
   const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
@@ -2068,22 +2145,21 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
   const root = await mkdtemp(join(tmpdir(), "navigator-admitted-attendance-"));
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   try {
-    const runDir = join(root, "run-dir");
-    await mkdir(runDir, { recursive: true });
     const prose = "Admitted instruction prose observed by Navigator attendance.";
-    await writeFile(
-      join(runDir, "admitted-request.json"),
-      JSON.stringify({
-        role: "judge",
-        instruction: prose,
-        instructionEmpty: false,
-        attachments: [],
-      }),
-      "utf8",
-    );
-    process.env.AK_ROLE_RUN_DIR = runDir;
-
     await withActivationHome({ prefix: "ak-nav-admitted-" }, async ({ home }) => {
+      const runDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-admitted");
+      await mkdir(join(runDir, "session"), { recursive: true });
+      await writeFile(
+        join(runDir, "admitted-request.json"),
+        JSON.stringify({
+          role: "judge",
+          instruction: prose,
+          instructionEmpty: false,
+          attachments: [],
+        }),
+        "utf8",
+      );
+      process.env.AK_ROLE_RUN_DIR = runDir;
       let observed: { subject?: string; authority?: string; subjectKey?: string } | undefined;
       const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
       const appendedEntries: Array<{ customType: string; data?: unknown }> = [];
@@ -2127,15 +2203,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
         },
       })(pi as never);
 
-      const sessionDir = join(
-        home,
-        ".ak-roles",
-        "books",
-        basename(home),
-        "runs",
-        "judge-admitted",
-        "session",
-      );
+      const sessionDir = join(runDir, "session");
       await mkdir(sessionDir, { recursive: true });
       const sessionManager = SessionManager.create(home, sessionDir);
       await handlers.get("session_start")?.({}, {
