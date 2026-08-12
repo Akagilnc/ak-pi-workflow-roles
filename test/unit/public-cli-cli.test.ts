@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { access, mkdtemp, readFile, realpath, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -242,6 +242,7 @@ test("public runs write one identity-bound invocation ledger for every role", as
       const ledger = JSON.parse(
         await readFile(join(runDirectory, "invocation.json"), "utf8"),
       ) as Record<string, unknown>;
+      const rolePackageRoot = await realpath(packageRoot);
       assert.deepEqual(ledger, {
         role: scenario.role,
         runId: scenario.runId,
@@ -250,6 +251,12 @@ test("public runs write one identity-bound invocation ledger for every role", as
         runDirectory,
         sessionDirectory: join(runDirectory, "session"),
         sessionFile: join(runDirectory, "session", "session.jsonl"),
+        roleEntry: await realpath(join(rolePackageRoot, "extensions", "role-runtime.ts")),
+        rolePackageRoot,
+        rolePackageVersion: JSON.parse(
+          await readFile(join(rolePackageRoot, "package.json"), "utf8"),
+        ).version,
+        entryMode: "public-cli",
       });
     }
   });

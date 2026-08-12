@@ -10,7 +10,11 @@ import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
 
-import { recordLaunchedPiIdentity } from "./invocation.ts";
+import {
+  observeLaunchedRolePackageIdentity,
+  recordLaunchedPiIdentity,
+  recordLaunchedRolePackageIdentity,
+} from "./invocation.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
 import type { ControlledFailureCause } from "./terminal.ts";
 
@@ -251,15 +255,26 @@ export async function runExplicitInternalActivation(options: {
     options.extraArgs ?? [],
   );
   const runner = options.runner ?? defaultExplicitInternalPiRunner;
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...options.env,
+    HOME: options.home,
+    PI_CODING_AGENT_DIR: options.agentDir,
+  };
+  // Package provenance is known at the public CLI seam before Pi starts — write it
+  // onto the existing invocation page so runs remain attributable even when the
+  // child runner is injected or Pi identity recording never fires.
+  const runDirectory = env.AK_ROLE_RUN_DIR;
+  if (typeof runDirectory === "string" && runDirectory !== "") {
+    await recordLaunchedRolePackageIdentity(
+      runDirectory,
+      await observeLaunchedRolePackageIdentity(options.packageRoot),
+    );
+  }
   return await runner(args, {
     cwd: options.cwd,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-    env: {
-      ...process.env,
-      ...options.env,
-      HOME: options.home,
-      PI_CODING_AGENT_DIR: options.agentDir,
-    },
+    env,
   });
 }
 

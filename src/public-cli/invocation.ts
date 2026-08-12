@@ -188,10 +188,10 @@ async function writeRoleInvocationLedger(
   );
 }
 
-/** Add the identity returned by the production Pi launch seam to its existing ledger page. */
-export async function recordLaunchedPiIdentity(
+/** Merge observed launch-time fields into the single existing invocation.json identity page. */
+async function mergeInvocationIdentityPage(
   runDirectory: string,
-  identity: { executable: string; version: string },
+  fields: Record<string, unknown>,
 ): Promise<void> {
   const ledgerPath = join(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile(ledgerPath, "utf8")) as Record<string, unknown>;
@@ -199,11 +199,73 @@ export async function recordLaunchedPiIdentity(
     ledgerPath,
     `${JSON.stringify({
       ...current,
-      piExecutable: identity.executable,
-      piVersion: identity.version,
+      ...fields,
     }, null, 2)}\n`,
     "utf8",
   );
+}
+
+/** Add the identity returned by the production Pi launch seam to its existing ledger page. */
+export async function recordLaunchedPiIdentity(
+  runDirectory: string,
+  identity: { executable: string; version: string },
+): Promise<void> {
+  await mergeInvocationIdentityPage(runDirectory, {
+    piExecutable: identity.executable,
+    piVersion: identity.version,
+  });
+}
+
+/**
+ * Observed role-package launch provenance written onto the same invocation.json page.
+ * Values are field observations from the public CLI activation seam — never fixed schema markers.
+ */
+export type LaunchedRolePackageIdentity = {
+  /** Canonical absolute path of the selected Internal role entry (extensions/role-runtime.ts). */
+  readonly roleEntry: string;
+  /** Canonical absolute package root that owns the entry and bin. */
+  readonly rolePackageRoot: string;
+  /** package.json version of that root as read at launch. */
+  readonly rolePackageVersion: string;
+  /** How this process crossed into the role runtime (ADR 0052 public CLI). */
+  readonly entryMode: "public-cli";
+};
+
+/** Read the package root that is about to serve this public run (observed values only). */
+export async function observeLaunchedRolePackageIdentity(
+  packageRoot: string,
+): Promise<LaunchedRolePackageIdentity> {
+  const rolePackageRoot = await realpath(packageRoot);
+  const raw = JSON.parse(
+    await readFile(join(rolePackageRoot, "package.json"), "utf8"),
+  ) as { version?: unknown };
+  if (typeof raw.version !== "string" || raw.version.trim() === "") {
+    throw new Error(
+      `role package.json at ${rolePackageRoot} does not declare a nonblank version`,
+    );
+  }
+  const roleEntry = await realpath(
+    join(rolePackageRoot, "extensions", "role-runtime.ts"),
+  );
+  return {
+    roleEntry,
+    rolePackageRoot,
+    rolePackageVersion: raw.version,
+    entryMode: "public-cli",
+  };
+}
+
+/** Add the role-package identity resolved at the public launch seam to its existing ledger page. */
+export async function recordLaunchedRolePackageIdentity(
+  runDirectory: string,
+  identity: LaunchedRolePackageIdentity,
+): Promise<void> {
+  await mergeInvocationIdentityPage(runDirectory, {
+    roleEntry: identity.roleEntry,
+    rolePackageRoot: identity.rolePackageRoot,
+    rolePackageVersion: identity.rolePackageVersion,
+    entryMode: identity.entryMode,
+  });
 }
 
 export type ParseJudgeArgvResult = {
