@@ -286,8 +286,8 @@ test("seven packaged terminating tools expose the provider-open registration inv
 
   const declaredFields = (role: string): readonly string[] => {
     switch (role) {
-      case "coder": return ["status", "report", "remainingScope"];
-      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence"];
+      case "coder": return ["status", "report", "remainingScope", "reason"];
+      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence", "reason"];
       case "reviewer": return ["status", "diagnostic"];
       case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"];
       case "collector": return [];

@@ -900,6 +900,10 @@ function coderDecisiveFacts(output: CoderOutput): Record<string, unknown> {
   if (status.readable && typeof status.value === "string") facts.coderStatus = status.value;
   const remainingScope = safelyRead(candidate, "remainingScope");
   if (status.readable && status.value === "unfinished" && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  const reason = safelyRead(candidate, "reason");
+  if (status.readable && status.value === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
+    facts.reason = reason.value;
+  }
   const report = safelyRead(candidate, "report");
   if (report.readable && typeof report.value === "string") facts.reportPresent = report.value.trim().length > 0;
   return facts;
@@ -912,6 +916,10 @@ function fixerDecisiveFacts(output: FixerOutput): Record<string, unknown> {
   if (status.readable && typeof status.value === "string") facts.fixerStatus = status.value;
   const remainingScope = safelyRead(candidate, "remainingScope");
   if (status.readable && (status.value === "unfinished" || status.value === "refused") && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  const reason = safelyRead(candidate, "reason");
+  if (status.readable && status.value === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
+    facts.reason = reason.value;
+  }
   const blockerRead = safelyRead(candidate, "blocker");
   if (status.readable && status.value === "refused" && blockerRead.readable && isRecord(blockerRead.value)) {
     const cause = safelyRead(blockerRead.value, "cause");

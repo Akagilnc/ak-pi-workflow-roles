@@ -12,8 +12,8 @@ import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 const legal: Array<{ phase: "plan" | "apply"; output: FixerOutput }> = [
   { phase: "plan", output: { status: "planned", report: "inspect and repair" } },
   { phase: "plan", output: { status: "refused", report: "cannot lawfully plan", remainingScope: "forbidden files", blocker: { cause: "authority_violation", evidence: "packet contradicts owner authority" } } },
-  { phase: "apply", output: { status: "unfinished", report: "handover", remainingScope: "remaining parser cases" } },
-  { phase: "apply", output: { status: "unfinished", report: "handover with completed work", remainingScope: "remaining schema cases", classResults: [completed()] } },
+  { phase: "apply", output: { status: "unfinished", report: "handover", remainingScope: "remaining parser cases", reason: "prerequisite_missing: parser fixture owner answer absent" } },
+  { phase: "apply", output: { status: "unfinished", report: "handover with completed work", remainingScope: "remaining schema cases", reason: "unconstitutional: packet requires shape reject banned by ADR 0057", classResults: [completed()] } },
   { phase: "apply", output: { status: "completed", report: "settled", classResults: [completed()] } },
   // Differently named classes may share one commitSha (absorbed from judge-role production route).
   { phase: "apply", output: { status: "completed", report: "settled both", classResults: [completed(), completed("SchemaCase", shaA)] } },

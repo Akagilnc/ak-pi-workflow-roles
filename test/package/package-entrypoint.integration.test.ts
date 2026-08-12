@@ -1980,6 +1980,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
         status: "unfinished",
         report: "The first implementation is not fully settled.",
         remainingScope: "the unimplemented adapter branch",
+        reason: "prerequisite_missing: owner has not chosen the adapter branch",
       },
       callId: "coder-completed",
     },
@@ -2301,7 +2302,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
 
           const output = phase === "plan"
             ? { status: "planned", report: "Repair plan ready." }
-            : { status: "unfinished", report: "The adapter is not fully settled.", remainingScope: "the remaining adapter branch" };
+            : { status: "unfinished", report: "The adapter is not fully settled.", remainingScope: "the remaining adapter branch", reason: "prerequisite_missing: adapter branch owner answer absent" };
           faux.setResponses([
             fauxAssistantMessage(
               [
