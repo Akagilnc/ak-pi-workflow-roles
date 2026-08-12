@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, validateToolArguments } from "@earendil-works/pi-ai";
 import {
   createNativeNavigatorSessionFactory,
@@ -1984,7 +1984,7 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     const judgePi = { getFlag: () => undefined };
     const judgeCtx = {
       cwd: root,
-      sessionManager: { getSessionDir: () => sessionDir },
+      sessionManager: { getSessionDir: () => join(process.env.AK_ROLE_RUN_DIR!, "session") },
     } as never;
 
     const loaded = await loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" });
@@ -2060,7 +2060,6 @@ test("public admitted-request projects typed subject/authority; missing/malforme
 });
 
 test("role-runtime passes admitted-request subject/authority into Navigator attendance", async () => {
-  const { basename } = await import("node:path");
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
   const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
@@ -2068,22 +2067,21 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
   const root = await mkdtemp(join(tmpdir(), "navigator-admitted-attendance-"));
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   try {
-    const runDir = join(root, "run-dir");
-    await mkdir(runDir, { recursive: true });
     const prose = "Admitted instruction prose observed by Navigator attendance.";
-    await writeFile(
-      join(runDir, "admitted-request.json"),
-      JSON.stringify({
-        role: "judge",
-        instruction: prose,
-        instructionEmpty: false,
-        attachments: [],
-      }),
-      "utf8",
-    );
-    process.env.AK_ROLE_RUN_DIR = runDir;
-
     await withActivationHome({ prefix: "ak-nav-admitted-" }, async ({ home }) => {
+      const runDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-admitted");
+      await mkdir(join(runDir, "session"), { recursive: true });
+      await writeFile(
+        join(runDir, "admitted-request.json"),
+        JSON.stringify({
+          role: "judge",
+          instruction: prose,
+          instructionEmpty: false,
+          attachments: [],
+        }),
+        "utf8",
+      );
+      process.env.AK_ROLE_RUN_DIR = runDir;
       let observed: { subject?: string; authority?: string; subjectKey?: string } | undefined;
       const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
       const appendedEntries: Array<{ customType: string; data?: unknown }> = [];
@@ -2127,15 +2125,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
         },
       })(pi as never);
 
-      const sessionDir = join(
-        home,
-        ".ak-roles",
-        "books",
-        basename(home),
-        "runs",
-        "judge-admitted",
-        "session",
-      );
+      const sessionDir = join(runDir, "session");
       await mkdir(sessionDir, { recursive: true });
       const sessionManager = SessionManager.create(home, sessionDir);
       await handlers.get("session_start")?.({}, {
