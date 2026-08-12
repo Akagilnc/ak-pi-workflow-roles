@@ -843,6 +843,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       status: "unfinished" as const,
       report: "Stopped mid-class; remaining work is typed.",
       remainingScope: "TransportCase remaining assertions",
+      reason: "prerequisite_missing: owner decision on TransportCase still pending",
       classResults: [completed("ParserCase", shaA)],
     };
     const applyRefusedReceipt = {
@@ -896,6 +897,10 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
     assert.equal(
       unfinishedExtracted.outcome.decisiveFacts.remainingScope,
       unfinishedReceipt.remainingScope,
+    );
+    assert.equal(
+      unfinishedExtracted.outcome.decisiveFacts.reason,
+      unfinishedReceipt.reason,
     );
     assert.equal(unfinishedExtracted.outcome.decisiveFacts.classResultCount, 1);
 

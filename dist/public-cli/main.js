@@ -13968,7 +13968,7 @@ var init_fixer_output = __esm({
     fixerOutputVariants = typebox_exports.Union([
       typebox_exports.Object({ status: typebox_exports.Literal("planned", { description: "Plan-phase proposal outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }) }),
       typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "Lawfully refused outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work that cannot lawfully be performed." }), blocker: typebox_exports.Unsafe({ ...blockerSchema, description: "Lawful blocker preventing completion." }) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "Honest unfinished apply outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work remaining after this invocation." }), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "Apply outcome when a missing prerequisite or an unconstitutional constraint blocks completing this invocation; state the reason." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work remaining after this invocation." }), reason: typebox_exports.Optional(typebox_exports.String({ minLength: 1, description: "Blocking reason: prerequisite missing or unconstitutional. A missing pending owner decision or answer is a missing prerequisite." })), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
       typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "All assigned classes completed." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
       typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "All assigned classes lawfully refused." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class refusal settlements." }) }),
       typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) })
@@ -18777,6 +18777,10 @@ function coderDecisiveFacts(output) {
   if (status.readable && typeof status.value === "string") facts.coderStatus = status.value;
   const remainingScope = safelyRead(candidate, "remainingScope");
   if (status.readable && status.value === "unfinished" && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  const reason = safelyRead(candidate, "reason");
+  if (status.readable && status.value === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
+    facts.reason = reason.value;
+  }
   const report = safelyRead(candidate, "report");
   if (report.readable && typeof report.value === "string") facts.reportPresent = report.value.trim().length > 0;
   return facts;
@@ -18788,6 +18792,10 @@ function fixerDecisiveFacts(output) {
   if (status.readable && typeof status.value === "string") facts.fixerStatus = status.value;
   const remainingScope = safelyRead(candidate, "remainingScope");
   if (status.readable && (status.value === "unfinished" || status.value === "refused") && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  const reason = safelyRead(candidate, "reason");
+  if (status.readable && status.value === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
+    facts.reason = reason.value;
+  }
   const blockerRead = safelyRead(candidate, "blocker");
   if (status.readable && status.value === "refused" && blockerRead.readable && isRecord4(blockerRead.value)) {
     const cause = safelyRead(blockerRead.value, "cause");
