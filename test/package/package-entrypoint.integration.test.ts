@@ -88,7 +88,7 @@ function packageEntrypoint(manifest: RawPackageManifest): string {
   assert.ok(manifest.files?.includes("souls"));
   // ADR 0052 / #105: Internal entrypoint is explicit-load only; not auto-registered.
   assert.deepEqual(manifest.pi?.extensions, []);
-  assert.equal(manifest.bin?.["ak-role"], "./dist/public-cli/main.js");
+  assert.equal(manifest.bin?.["ak-role"], "dist/public-cli/main.js");
   return resolvePackageEntrypoint(manifest);
 }
 
@@ -189,7 +189,7 @@ test("ordinary Navigator attendance persists preparation, settlement, and visibl
 test("packed package includes Doctor role, evidence flag, and runtime dependencies", async () => {
   const manifest = await loadRawPackageManifest();
   packageEntrypoint(manifest);
-  assert.equal(manifest.bin?.["ak-role"], "./dist/public-cli/main.js");
+  assert.equal(manifest.bin?.["ak-role"], "dist/public-cli/main.js");
   assert.deepEqual(manifest.pi?.extensions, []);
   assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "merger"]);
   assert.equal(ROLE_FLAG.name, "ak-role");
