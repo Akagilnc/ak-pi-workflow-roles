@@ -167,6 +167,52 @@ test("rejected auditor decision execution remains reachable and retries to an ac
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
+test("two rejected auditor decisions exhaust the shared budget without a third execution", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rejected-exhaustion-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const baseTool = createComplianceDecisionTool("ak_rejected_exhaustion_decision", "Submit.");
+    let executions = 0;
+    const tool = {
+      ...baseTool,
+      async execute(...args: Parameters<typeof baseTool.execute>) {
+        executions += 1;
+        throw new Error(`rejected execution ${executions}`);
+      },
+    };
+    const faux = fauxProvider({ provider: "rejected-exhaustion-test" });
+    let turns = 0;
+    const submit = () => {
+      turns += 1;
+      return fauxAssistantMessage(
+        [fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })],
+        { stopReason: "toolUse" },
+      );
+    };
+    const finishTurn = () => {
+      turns += 1;
+      return fauxAssistantMessage("decision rejected", { stopReason: "stop" });
+    };
+    faux.setResponses([submit, finishTurn, submit, finishTurn, submit]);
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool, systemPrompt: "Decide.", roleLabel: "Rejected exhaustion auditor", invalidDecisionLabel: "invalid",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(decision.status, "no-receipt");
+    if (decision.status === "no-receipt") {
+      assert.equal(decision.deliveryTurns, 2);
+      assert.deepEqual(decision.rejectedReceipts, [
+        { reason: "rejected execution 1" },
+        { reason: "rejected execution 2" },
+      ]);
+    }
+    assert.equal(executions, 2, "the second rejection exhausts the total budget");
+    assert.equal(turns, 4, "the exhausted lifecycle must not start the third terminal execution");
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
 test("auditor exhaustion preserves a typed no-receipt leg without fabricating an audit decision", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-no-receipt-"));
   const runDirectory = join(cwd, "run");
