@@ -16852,7 +16852,7 @@ async function readReviewerDispatchRejection(runDirectory) {
     return void 0;
   }
   const record4 = parsed;
-  if (Object.keys(record4).some((key) => key !== "diagnostic" && key !== "violations") || typeof record4.diagnostic !== "string" || record4.diagnostic.trim() === "" || !Array.isArray(record4.violations) || record4.violations.length === 0 || record4.violations.some((value) => !isReviewerPreflightViolation(value))) {
+  if (typeof record4.diagnostic !== "string" || record4.diagnostic.trim() === "" || !Array.isArray(record4.violations) || record4.violations.length === 0 || record4.violations.some((value) => !isReviewerPreflightViolation(value))) {
     return void 0;
   }
   return {
@@ -18524,8 +18524,7 @@ function classifyPostAdmissionFailure(input) {
       return {
         cause: error.knownCause,
         diagnostic: error.message || error.name || "unrecognized exception",
-        identity,
-        ...error.details === void 0 ? {} : { details: error.details }
+        identity
       };
     }
     if (error instanceof Error) {

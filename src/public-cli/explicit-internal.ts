@@ -101,7 +101,6 @@ export async function readReviewerDispatchRejection(
   }
   const record = parsed as Record<string, unknown>;
   if (
-    Object.keys(record).some((key) => key !== "diagnostic" && key !== "violations") ||
     typeof record.diagnostic !== "string" ||
     record.diagnostic.trim() === "" ||
     !Array.isArray(record.violations) ||
@@ -199,12 +198,10 @@ export type ExplicitInternalPiResult = {
 /**
  * Thrown activation failure with a production-owned typed cause.
  * Prefer this over ad-hoc Error property tags so settlement retains typed identity.
- * Optional details ride the same ControlledFailure.details → error.json.details channel.
  */
 export class ExplicitInternalActivationError extends Error {
   readonly knownCause: ControlledFailureCause;
   readonly failureCode?: string | number;
-  readonly details?: Readonly<Record<string, unknown>>;
 
   constructor(
     message: string,
@@ -213,7 +210,6 @@ export class ExplicitInternalActivationError extends Error {
       code?: string | number;
       name?: string;
       cause?: unknown;
-      details?: Readonly<Record<string, unknown>>;
     },
   ) {
     super(
@@ -224,9 +220,6 @@ export class ExplicitInternalActivationError extends Error {
     this.knownCause = options.knownCause;
     if (options.code !== undefined) {
       this.failureCode = options.code;
-    }
-    if (options.details !== undefined) {
-      this.details = options.details;
     }
   }
 }
