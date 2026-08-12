@@ -615,6 +615,7 @@ export async function executeAuditorChild(
     auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
 
     let turns = 0;
+    const sessionUsage = emptyUsage();
     let boundaryResponse: AssistantMessage | undefined;
     let retentionFailure: unknown;
     let retainedResponse: AssistantMessage | undefined;
@@ -658,6 +659,7 @@ export async function executeAuditorChild(
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
         turns += 1;
+        addUsage(sessionUsage, event.message.usage);
         retainedResponse = event.message;
         try { options.retainResponse?.(event.message); } catch (error) { retentionFailure = error; }
         // A tool call in assistant output is only an observation. Preserve its
@@ -717,6 +719,13 @@ export async function executeAuditorChild(
           }
           // An adjacent failure outranks correctable decision feedback.
           if (promptNeighboringFailure !== undefined) throw promptNeighboringFailure;
+          // An accepted correction in the same response owns the terminal
+          // outcome; correlated rejected siblings remain observations, not a
+          // stale failure capable of replacing that accepted receipt.
+          if (decisionSubmitted) {
+            decisionToolFailure = undefined;
+            return;
+          }
           if (decisionToolFailure !== undefined) return;
           if (promptFailure !== undefined) throw promptFailure;
         };
@@ -772,7 +781,7 @@ export async function executeAuditorChild(
       }
       if (options.signal?.aborted) throw options.signal.reason;
       if (inherited.streamFailure !== undefined) throw inherited.streamFailure;
-      if (decisionToolFailure !== undefined) throw decisionToolFailure;
+      if (!decisionSubmitted && decisionToolFailure !== undefined) throw decisionToolFailure;
       const relevantResponse = !decisionSubmitted
         ? boundaryResponse
         : [...session.messages].reverse().find((message): message is AssistantMessage =>
@@ -865,7 +874,7 @@ export async function executeAuditorChild(
       }
       return {
         decision,
-        response,
+        response: { ...response, usage: sessionUsage },
         ...(noReceiptLifecycle === undefined ? {} : { noReceiptLifecycle }),
       };
     } finally {

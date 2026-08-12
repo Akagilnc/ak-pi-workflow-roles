@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -203,11 +203,37 @@ test("a rejected auditor decision followed by prose charges the correction promp
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test("auditor rejection correlation drains batches through one shared owner", async () => {
-  const source = await readFile(new URL("../../src/evidence-child-executor.ts", import.meta.url), "utf8");
-  const helperCalls = source.match(/drainRejectedDecisionFailures\(/g) ?? [];
-  assert.equal(helperCalls.length, 2, "both correlation paths must use the shared helper");
-  assert.match(source, /const drainRejectedDecisionFailures = \(response: AssistantMessage\) => \{[\s\S]*for \(const part of response\.content\)[\s\S]*promptDecisionFailures\.push\(decisionToolFailure\);[\s\S]*decisionToolFailures\.delete\(part\.id\);/);
+test("a mixed auditor batch accepts the correction after recording rejected siblings", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-mixed-batch-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const baseTool = createComplianceDecisionTool("ak_mixed_batch_decision", "Submit.");
+    let executions = 0;
+    const tool = {
+      ...baseTool,
+      async execute(...args: Parameters<typeof baseTool.execute>) {
+        executions += 1;
+        if (executions === 1) throw new Error("stale rejected sibling");
+        return baseTool.execute(...args);
+      },
+    };
+    const faux = fauxProvider({ provider: "mixed-batch-test" });
+    faux.setResponses([fauxAssistantMessage([
+      fauxToolCall(tool.name, { status: "revise", violations: ["stale"] }),
+      fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+    ], { stopReason: "toolUse" })]);
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool, systemPrompt: "Decide.", roleLabel: "Mixed batch auditor", invalidDecisionLabel: "invalid",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(executions, 2);
+    assert.deepEqual(decision, {
+      status: "pass",
+      usage: decision.usage,
+    });
+  } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
 test("two rejected auditor decisions exhaust the shared budget without a third execution", async () => {
@@ -320,14 +346,15 @@ test("auditor exhaustion preserves a typed no-receipt leg and its measured usage
     const sessionManager = parentWithJudgeSubjects(cwd);
     const faux = fauxProvider({ provider: "no-receipt-test" });
     let turns = 0;
-    const measuredUsage = {
-      input: 11, output: 7, cacheRead: 3, cacheWrite: 2, totalTokens: 23,
-      cost: { input: 0.11, output: 0.07, cacheRead: 0.03, cacheWrite: 0.02, total: 0.23 },
-    };
+    const usages = [
+      { input: 11, output: 7, cacheRead: 3, cacheWrite: 2, totalTokens: 23, cost: { input: 0.11, output: 0.07, cacheRead: 0.03, cacheWrite: 0.02, total: 0.23 } },
+      { input: 5, output: 4, cacheRead: 2, cacheWrite: 1, totalTokens: 12, cost: { input: 0.05, output: 0.04, cacheRead: 0.02, cacheWrite: 0.01, total: 0.12 } },
+      { input: 3, output: 2, cacheRead: 1, cacheWrite: 0, totalTokens: 6, cost: { input: 0.03, output: 0.02, cacheRead: 0.01, cacheWrite: 0, total: 0.06 } },
+    ];
     const noDecision = () => {
-      turns += 1;
       const response = fauxAssistantMessage([{ type: "text", text: "no decision" }], { stopReason: "stop" });
-      response.usage = measuredUsage;
+      response.usage = usages[turns]!;
+      turns += 1;
       return response;
     };
     faux.setResponses([noDecision, noDecision, noDecision]);
@@ -342,11 +369,27 @@ test("auditor exhaustion preserves a typed no-receipt leg and its measured usage
       assert.equal(decision.acceptedReceipt, false);
       assert.equal(decision.deliveryTurns, 2);
       assert.equal(decision.terminalToolCalled, false);
-      const retained = [...sessionManager.getEntries()].reverse().find((entry) =>
-        entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
-      ) as { data?: { response?: { usage?: unknown } } } | undefined;
-      assert.deepEqual(decision.usage, retained?.data?.response?.usage);
-      assert.notDeepEqual(decision.usage, measuredUsage, "the provider's measured usage must not be replaced by submitted fixture values");
+      const retainedUsages = [...sessionManager.getEntries()].flatMap((entry) =>
+        entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE
+          ? [(entry as { data?: { response?: { usage?: typeof usages[number] } } }).data?.response?.usage]
+          : []).filter((usage): usage is typeof usages[number] => usage !== undefined);
+      assert.equal(retainedUsages.length, 3);
+      assert.notDeepEqual(retainedUsages[0], retainedUsages[1], "the tracer observes distinct turn usage");
+      const expected = retainedUsages.reduce((total, usage) => ({
+        input: total.input + usage.input,
+        output: total.output + usage.output,
+        cacheRead: total.cacheRead + usage.cacheRead,
+        cacheWrite: total.cacheWrite + usage.cacheWrite,
+        totalTokens: total.totalTokens + usage.totalTokens,
+        cost: {
+          input: total.cost.input + usage.cost.input,
+          output: total.cost.output + usage.cost.output,
+          cacheRead: total.cost.cacheRead + usage.cost.cacheRead,
+          cacheWrite: total.cost.cacheWrite + usage.cost.cacheWrite,
+          total: total.cost.total + usage.cost.total,
+        },
+      }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
+      assert.deepEqual(decision.usage, expected, "the downstream no-receipt projection includes every assistant turn");
     }
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
