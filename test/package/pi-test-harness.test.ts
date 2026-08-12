@@ -110,9 +110,16 @@ test("subprocess result seam classifies localTimeout, signal, nonzero exit, clea
       }),
     (error: unknown) => {
       assert.ok(error instanceof TestSubprocessOperationalError);
+      // Operational rejection must carry available facts at reject time
+      // (code/signal/local-deadline/collected stdout/stderr) — same contract
+      // for spawn and stdout/stderr collection errors on the unified path.
+      assert.equal(error.code, "ENOENT");
+      assert.equal(error.signal, null);
       assert.equal(error.localTimeout, false);
-      assert.equal(typeof error.stdout, "string");
-      assert.equal(typeof error.stderr, "string");
+      assert.equal(error.localTimeoutOwner, null);
+      assert.equal(error.localTimeoutMs, null);
+      assert.equal(error.stdout, "");
+      assert.equal(error.stderr, "");
       return true;
     },
   );
