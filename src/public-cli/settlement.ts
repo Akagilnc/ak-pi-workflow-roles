@@ -3667,7 +3667,17 @@ export async function settleFailureTerminalResult(
       // true absence or the named ADR 0066 delivery rejection into this lifecycle.
       const isDeliveryAbsence = !terminalToolCalled || (terminalResults.every((entry) => entry.message?.isError === true && toolResultText(entry.message) === "未观察到 commit"));
       if (isDeliveryAbsence) {
-        const deliveryTurns = RECEIPT_DELIVERY_TURN_LIMIT;
+        // Reconstruct the budget from the durable principal rather than assuming
+        // exhaustion. A rejection and each package-owned request are one turn;
+        // cap only guards malformed/replayed transcript bytes.
+        const deliveryRequests = entries.filter((entry) =>
+          entry.customType === "ak-receipt-delivery-request"
+          || entry.message?.customType === "ak-receipt-delivery-request"
+        ).length;
+        const deliveryTurns = Math.min(
+          RECEIPT_DELIVERY_TURN_LIMIT,
+          rejectedReceipts.length + deliveryRequests,
+        );
         const decisiveFacts = { terminalToolCalled, rejectedReceipts, deliveryTurns, sessionCompletion: "settled-without-accepted-receipt" as const, runPointer: admitted.runDirectory, acceptedReceipt: false as const };
         return {
           roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...decisiveFacts, decisiveFacts },

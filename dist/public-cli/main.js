@@ -20683,7 +20683,13 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
       const terminalToolCalled = terminalResults.length > 0;
       const isDeliveryAbsence = !terminalToolCalled || terminalResults.every((entry) => entry.message?.isError === true && toolResultText(entry.message) === "\u672A\u89C2\u5BDF\u5230 commit");
       if (isDeliveryAbsence) {
-        const deliveryTurns = RECEIPT_DELIVERY_TURN_LIMIT;
+        const deliveryRequests = entries.filter(
+          (entry) => entry.customType === "ak-receipt-delivery-request" || entry.message?.customType === "ak-receipt-delivery-request"
+        ).length;
+        const deliveryTurns = Math.min(
+          RECEIPT_DELIVERY_TURN_LIMIT,
+          rejectedReceipts.length + deliveryRequests
+        );
         const decisiveFacts2 = { terminalToolCalled, rejectedReceipts, deliveryTurns, sessionCompletion: "settled-without-accepted-receipt", runPointer: admitted.runDirectory, acceptedReceipt: false };
         return {
           roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...decisiveFacts2, decisiveFacts: decisiveFacts2 },

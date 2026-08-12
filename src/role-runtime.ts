@@ -465,8 +465,9 @@ export function createRoleRuntimeExtension(
       );
       if (settlement !== undefined) {
         if (settlement.kind === "accepted") receiptDelivery.recordAccepted();
+        else if (settlement.kind === "role_infrastructure_failure") receiptDelivery.stopForInfrastructure();
         else if (event.isError) {
-          const reason = event.content
+          const reason = (event.content ?? [])
             .map((part) => part.type === "text" ? part.text : "")
             .join("")
             .trim() || "terminating tool rejected";

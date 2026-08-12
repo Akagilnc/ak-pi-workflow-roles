@@ -3445,7 +3445,7 @@ test("real Coder/Fixer runs require a legal execution status before accepted set
   });
 });
 
-test("older provider error then later end_turn settles as output not provider (AC5)", async () => {
+test("older provider error then later end_turn settles as typed no-receipt, not provider (#288)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -3512,22 +3512,14 @@ test("older provider error then later end_turn settles as output not provider (A
         },
       },
     );
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "output",
-    });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "output");
-      assert.notEqual(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
+    assert.equal(result.exitCode, 0);
+    assert.equal(stdout.length, 1, "exactly one lawful Terminal emission");
+    assert.deepEqual(stderr, []);
+    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
+    if (result.terminal?.roleOutcome.kind === "no_receipt") {
+      assert.equal(result.terminal.roleOutcome.acceptedReceipt, false);
+      assert.equal(result.terminal.roleOutcome.terminalToolCalled, false);
+      assert.equal(result.terminal.roleOutcome.deliveryTurns, 0);
     }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause: string;
-      identity?: { name?: string };
-    };
-    assert.equal(errorBody.cause, "output");
-    assert.notEqual(errorBody.identity?.name, "ProviderStopError");
   });
 });
