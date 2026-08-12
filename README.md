@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev): `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`. 中文说明见 [README.zh-CN.md](README.zh-CN.md)。
+Packaged workflow roles for [Pi](https://pi.dev): `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
 
 ## Install
 
@@ -73,7 +73,7 @@ ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
 ## Names
 
-Roles are named after Tang/Song offices; the full roster and naming rule live in [README.zh-CN.md](README.zh-CN.md).
+Roles are named after Tang/Song offices; the full roster and naming rule live in [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md).
 
 ## Developer seam: raw session invocation (advanced)
 
