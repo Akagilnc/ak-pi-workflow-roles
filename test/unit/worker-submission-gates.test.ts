@@ -203,6 +203,38 @@ exit 0
   }
 });
 
+test("#267 when extensions.worktreeConfig already true, install skips shared .git/config write", async () => {
+  // Real entry: installWorkerGitHooks. Observable: shared config.lock held → still succeeds
+  // (proves no shared write); worktree-local hooks still armed.
+  const root = await tempGitRepo();
+  try {
+    const wt = join(root, "wt-267");
+    git(root, ["worktree", "add", wt, "HEAD"]);
+    // First arm establishes the extension (shared write once).
+    installWorkerGitHooks(wt);
+    assert.equal(git(wt, ["config", "--get", "extensions.worktreeConfig"]), "true");
+
+    const commonDir = git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const lockPath = join(commonDir, "config.lock");
+    // Simulate sibling activation holding the shared lock (production race shape).
+    writeFileSync(lockPath, "");
+    try {
+      assert.doesNotThrow(() => installWorkerGitHooks(wt));
+      assert.equal(git(wt, ["config", "--get", "extensions.worktreeConfig"]), "true");
+      const hooksDir = git(wt, ["config", "--get", "core.hooksPath"]);
+      assert.match(hooksDir, /ak-roles-hooks$/);
+      assert.throws(
+        () => git(wt, ["commit", "--allow-empty", "-m", "no prefix"]),
+        /ak-roles: commit subject must start with ak-roles:/,
+      );
+    } finally {
+      await rm(lockPath, { force: true });
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("① durability: baseline+bounce via real createRecordSession survive resume; no second false bounce", async () => {
   await withHermeticHome({ prefix: "ak-worker-gate-durable-" }, async ({ home }) => {
     const project = join(home, "proj");

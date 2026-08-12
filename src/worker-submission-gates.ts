@@ -90,7 +90,13 @@ export function installWorkerGitHooks(cwd: string): void {
   try { bareInCommon = gitFile(commonConfig, ["--get", "core.bare"]) === "true"; } catch { /* unset */ }
   try { worktreeInCommon = gitFile(commonConfig, ["--get", "core.worktree"]); } catch { /* unset */ }
 
-  git(cwd, ["config", "extensions.worktreeConfig", "true"]);
+  // Skip shared write when already enabled — concurrent sibling activations otherwise race
+  // on .git/config.lock (#267). First enable still writes; real write failures still throw.
+  let worktreeConfigEnabled = false;
+  try { worktreeConfigEnabled = git(cwd, ["config", "--get", "extensions.worktreeConfig"]) === "true"; } catch { /* unset */ }
+  if (!worktreeConfigEnabled) {
+    git(cwd, ["config", "extensions.worktreeConfig", "true"]);
+  }
 
   // Migrate immediately so sibling trees never observe bare-in-common under worktreeConfig.
   if (bareInCommon) {
