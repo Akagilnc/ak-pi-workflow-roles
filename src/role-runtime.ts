@@ -23,7 +23,7 @@ import {
 } from "./tool-execution-observation.ts";
 import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 import { installWorkerGitHooks } from "./worker-submission-gates.ts";
-import { createReceiptDeliveryPolicy, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -408,6 +408,7 @@ export function createRoleRuntimeExtension(
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
     const receiptDelivery = createReceiptDeliveryPolicy();
+    let noReceiptRecorded = false;
     pi.on("input", () => {
       const role = pi.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
@@ -540,6 +541,17 @@ export function createRoleRuntimeExtension(
           content: RECEIPT_DELIVERY_PROMPT,
           display: true,
         }, { triggerTurn: true, deliverAs: "nextTurn" });
+      } else if (receiptDelivery.nextAction() === "no-receipt" && !noReceiptRecorded) {
+        const runPointer = process.env.AK_ROLE_RUN_DIR;
+        if (runPointer !== undefined) {
+          noReceiptRecorded = true;
+          await pi.sendMessage({
+            customType: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+            content: "No accepted receipt after the bounded delivery budget.",
+            display: false,
+            details: receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` }),
+          }, { triggerTurn: false });
+        }
       }
       if (pendingNavigatorSettlement !== undefined) {
         await pendingNavigatorSettlement;

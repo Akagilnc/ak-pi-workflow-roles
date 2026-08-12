@@ -10,7 +10,7 @@ import { createAssistantMessageEventStream, InMemoryCredentialStore, } from "@ea
 import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch, } from "./compliance-transport.js";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
-import { createReceiptDeliveryPolicy, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 // ── shared constants / types ──────────────────────────────────────────────
 export const AUDITOR_TURN_LIMIT = 32;
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
@@ -565,9 +565,14 @@ export async function executeAuditorChild(options) {
                     else {
                         delivery.recordDeliveryRequest();
                     }
-                    if (delivery.nextAction() === "no-receipt")
-                        break;
                     await session.prompt(RECEIPT_DELIVERY_PROMPT);
+                }
+                if (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
+                    && delivery.nextAction() === "no-receipt") {
+                    const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
+                    const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
+                    decision = delivery.facts({ runPointer, attemptPointer });
+                    auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, decision);
                 }
             }
             catch (error) {
@@ -662,7 +667,7 @@ export async function executeAuditorChild(options) {
             if (response === undefined
                 || response.stopReason === "error"
                 || response.stopReason === "aborted"
-                || !decisionSubmitted) {
+                || (!decisionSubmitted && decision === undefined)) {
                 throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
             }
             return { decision, response };

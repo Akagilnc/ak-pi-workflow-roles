@@ -3464,7 +3464,7 @@ test("real Coder/Fixer runs require a legal execution status before accepted set
   });
 });
 
-test("older provider error then later end_turn settles as typed no-receipt, not provider (#288)", async () => {
+test("unbound output failure remains nonzero even after an older provider error (#288)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -3531,14 +3531,11 @@ test("older provider error then later end_turn settles as typed no-receipt, not 
         },
       },
     );
-    assert.equal(result.exitCode, 0);
-    assert.equal(stdout.length, 1, "exactly one lawful Terminal emission");
-    assert.deepEqual(stderr, []);
-    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
-    if (result.terminal?.roleOutcome.kind === "no_receipt") {
-      assert.equal(result.terminal.roleOutcome.acceptedReceipt, false);
-      assert.equal(result.terminal.roleOutcome.terminalToolCalled, false);
-      assert.equal(result.terminal.roleOutcome.deliveryTurns, 0);
-    }
+    assert.notEqual(result.exitCode, 0);
+    assert.equal(stdout.length, 1, "exactly one failure Terminal emission");
+    assert.equal(stderr.length, 1);
+    assert.match(stderr[0]!, /without a lawful typed terminal result/);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    if (result.terminal?.roleOutcome.kind === "failure") assert.equal(result.terminal.roleOutcome.cause, "output");
   });
 });

@@ -32,7 +32,7 @@ import {
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
-import { createReceiptDeliveryPolicy, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 
 // ── shared constants / types ──────────────────────────────────────────────
 
@@ -677,8 +677,14 @@ export async function executeAuditorChild(
           } else {
             delivery.recordDeliveryRequest();
           }
-          if (delivery.nextAction() === "no-receipt") break;
           await session.prompt(RECEIPT_DELIVERY_PROMPT);
+        }
+        if (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
+          && delivery.nextAction() === "no-receipt") {
+          const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
+          const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
+          decision = delivery.facts({ runPointer, attemptPointer });
+          auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, decision);
         }
       } catch (error) {
         if (options.signal?.aborted) throw options.signal.reason;
@@ -774,7 +780,7 @@ export async function executeAuditorChild(
         response === undefined
         || response.stopReason === "error"
         || response.stopReason === "aborted"
-        || !decisionSubmitted
+        || (!decisionSubmitted && decision === undefined)
       ) {
         throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
       }

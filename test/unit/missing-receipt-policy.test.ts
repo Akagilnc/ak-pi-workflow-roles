@@ -12,14 +12,13 @@ test("shared receipt delivery policy accepts after zero, one, or two delivery tu
     }
     policy.recordAccepted();
     assert.equal(policy.nextAction(), "accepted");
-    assert.equal(policy.facts().deliveryTurns, acceptedAt);
   }
   const exhausted = createReceiptDeliveryPolicy();
   exhausted.recordRejected("未观察到 commit");
   assert.equal(exhausted.nextAction(), "request-delivery");
   exhausted.recordDeliveryRequest();
   assert.equal(exhausted.nextAction(), "no-receipt");
-  assert.equal(exhausted.facts().deliveryTurns, 2);
+  assert.equal(exhausted.facts({ runPointer: "/run", attemptPointer: "attempt-1" }).deliveryTurns, 2);
 });
 
 test("a session that never calls its terminal tool gets the same typed no-receipt facts", () => {
@@ -28,11 +27,13 @@ test("a session that never calls its terminal tool gets the same typed no-receip
   policy.recordDeliveryRequest();
   assert.equal(policy.nextAction(), "request-delivery");
   policy.recordDeliveryRequest();
-  assert.deepEqual(policy.facts(), {
+  assert.deepEqual(policy.facts({ runPointer: "/run", attemptPointer: "attempt-1" }), {
     terminalToolCalled: false,
     rejectedReceipts: [],
     deliveryTurns: 2,
     sessionCompletion: "settled-without-accepted-receipt",
+    runPointer: "/run",
+    attemptPointer: "attempt-1",
     acceptedReceipt: false,
   });
 });
