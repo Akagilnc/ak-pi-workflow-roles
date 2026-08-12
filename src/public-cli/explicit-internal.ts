@@ -250,10 +250,13 @@ export async function runExplicitInternalActivation(options: {
   timeoutMs?: number | undefined;
   runner?: ExplicitInternalPiRunner;
 }): Promise<ExplicitInternalPiResult> {
-  const args = buildExplicitInternalActivationArgs(
-    options.packageRoot,
-    options.extraArgs ?? [],
-  );
+  const roleEntry = resolveInternalRoleEntrypoint(options.packageRoot);
+  const args = [
+    "--no-extensions",
+    "-e",
+    roleEntry,
+    ...(options.extraArgs ?? []),
+  ];
   const runner = options.runner ?? defaultExplicitInternalPiRunner;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -268,7 +271,7 @@ export async function runExplicitInternalActivation(options: {
   if (typeof runDirectory === "string" && runDirectory !== "") {
     await recordLaunchedRolePackageIdentity(
       runDirectory,
-      await observeLaunchedRolePackageIdentity(options.packageRoot),
+      await observeLaunchedRolePackageIdentity(options.packageRoot, roleEntry),
     );
   }
   return await runner(args, {

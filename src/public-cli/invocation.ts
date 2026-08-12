@@ -234,6 +234,7 @@ export type LaunchedRolePackageIdentity = {
 /** Read the package root that is about to serve this public run (observed values only). */
 export async function observeLaunchedRolePackageIdentity(
   packageRoot: string,
+  selectedRoleEntry: string,
 ): Promise<LaunchedRolePackageIdentity> {
   const rolePackageRoot = await realpath(packageRoot);
   const raw = JSON.parse(
@@ -244,9 +245,7 @@ export async function observeLaunchedRolePackageIdentity(
       `role package.json at ${rolePackageRoot} does not declare a nonblank version`,
     );
   }
-  const roleEntry = await realpath(
-    join(rolePackageRoot, "extensions", "role-runtime.ts"),
-  );
+  const roleEntry = await realpath(selectedRoleEntry);
   return {
     roleEntry,
     rolePackageRoot,

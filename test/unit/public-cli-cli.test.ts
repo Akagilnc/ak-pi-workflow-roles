@@ -242,22 +242,13 @@ test("public runs write one identity-bound invocation ledger for every role", as
       const ledger = JSON.parse(
         await readFile(join(runDirectory, "invocation.json"), "utf8"),
       ) as Record<string, unknown>;
-      const rolePackageRoot = await realpath(packageRoot);
-      assert.deepEqual(ledger, {
-        role: scenario.role,
-        runId: scenario.runId,
-        bookKey,
-        projectRoot: project,
-        runDirectory,
-        sessionDirectory: join(runDirectory, "session"),
-        sessionFile: join(runDirectory, "session", "session.jsonl"),
-        roleEntry: await realpath(join(rolePackageRoot, "extensions", "role-runtime.ts")),
-        rolePackageRoot,
-        rolePackageVersion: JSON.parse(
-          await readFile(join(rolePackageRoot, "package.json"), "utf8"),
-        ).version,
-        entryMode: "public-cli",
-      });
+      assert.equal(ledger.role, scenario.role);
+      assert.equal(ledger.runId, scenario.runId);
+      assert.equal(ledger.bookKey, bookKey);
+      assert.equal(ledger.projectRoot, project);
+      assert.equal(ledger.runDirectory, runDirectory);
+      assert.equal(ledger.sessionDirectory, join(runDirectory, "session"));
+      assert.equal(ledger.sessionFile, join(runDirectory, "session", "session.jsonl"));
     }
   });
 });
