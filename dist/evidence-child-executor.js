@@ -491,6 +491,7 @@ export async function executeAuditorChild(options) {
         // response could not later be tied to the current parent attempt.
         auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
         let turns = 0;
+        const sessionUsage = emptyUsage();
         let boundaryResponse;
         let retentionFailure;
         let retainedResponse;
@@ -537,6 +538,7 @@ export async function executeAuditorChild(options) {
         const unsubscribe = session.subscribe((event) => {
             if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
                 turns += 1;
+                addUsage(sessionUsage, event.message.usage);
                 retainedResponse = event.message;
                 try {
                     options.retainResponse?.(event.message);
@@ -606,6 +608,13 @@ export async function executeAuditorChild(options) {
                     // An adjacent failure outranks correctable decision feedback.
                     if (promptNeighboringFailure !== undefined)
                         throw promptNeighboringFailure;
+                    // An accepted correction in the same response owns the terminal
+                    // outcome; correlated rejected siblings remain observations, not a
+                    // stale failure capable of replacing that accepted receipt.
+                    if (decisionSubmitted) {
+                        decisionToolFailure = undefined;
+                        return;
+                    }
                     if (decisionToolFailure !== undefined)
                         return;
                     if (promptFailure !== undefined)
@@ -670,7 +679,7 @@ export async function executeAuditorChild(options) {
                 throw options.signal.reason;
             if (inherited.streamFailure !== undefined)
                 throw inherited.streamFailure;
-            if (decisionToolFailure !== undefined)
+            if (!decisionSubmitted && decisionToolFailure !== undefined)
                 throw decisionToolFailure;
             const relevantResponse = !decisionSubmitted
                 ? boundaryResponse
@@ -756,7 +765,7 @@ export async function executeAuditorChild(options) {
             }
             return {
                 decision,
-                response,
+                response: { ...response, usage: sessionUsage },
                 ...(noReceiptLifecycle === undefined ? {} : { noReceiptLifecycle }),
             };
         }

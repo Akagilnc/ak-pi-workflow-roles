@@ -1294,9 +1294,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       true,
     );
 
-    // AC4: one stdout write of presentation; typed facts come from settlement owners.
-    assert.equal(stdout.length, 1);
-
     const bookKey = resolveBookKeyFromGit(project);
     const runDir = join(
       home,
@@ -1319,6 +1316,9 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       attachments: [],
       admittedRequestPath: join(runDir, "admitted-request.json"),
     });
+    assert.equal(stdout.length, 1);
+    assert.notEqual(stdout[0]?.trim(), "");
+    assert.equal(stdout.join(""), formatTerminalResult(terminal));
     assert.equal(terminal.roleOutcome.role, "judge");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(terminal.roleOutcome.status, "converged");
