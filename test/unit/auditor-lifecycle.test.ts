@@ -167,7 +167,7 @@ test("rejected auditor decision execution remains reachable and retries to an ac
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test("a rejected auditor decision followed by prose charges the correction prompt and never solicits a third turn", async () => {
+test("a rejected auditor decision and its correction prompt share one budget unit", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rejected-prose-"));
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory);
@@ -199,7 +199,7 @@ test("a rejected auditor decision followed by prose charges the correction promp
     }));
     assert.equal(decision.status, "no-receipt");
     assert.equal(executions, 1);
-    assert.equal(turns, 2, "the rejected call and its correction prompt consume the total budget");
+    assert.equal(turns, 3, "the correction prompt is bundled with its rejection, leaving one final solicitation");
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
@@ -282,7 +282,7 @@ test("two rejected auditor decisions exhaust the shared budget without a third e
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test("three blank rejections in one auditor batch stop at two and expose missing diagnostics", async () => {
+test("three rejections in one auditor batch all execute, saturate at two, and expose missing diagnostics", async () => {
   const diagnostic = "   \t";
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-blank-rejection-"));
   const runDirectory = join(cwd, "run");
@@ -305,11 +305,10 @@ test("three blank rejections in one auditor batch stop at two and expose missing
     assert.equal(decision.status, "no-receipt");
     if (decision.status === "no-receipt") {
       assert.equal(decision.deliveryTurns, 2);
-      assert.equal(decision.rejectedReceipts.length, 2);
-      assert.equal(decision.rejectedReceipts[0]?.diagnosticAvailable, false);
-      assert.equal(decision.rejectedReceipts[1]?.diagnosticAvailable, false);
+      assert.equal(decision.rejectedReceipts.length, 3);
+      assert.ok(decision.rejectedReceipts.every((receipt) => !receipt.diagnosticAvailable));
     }
-    assert.equal(executions, 2);
+    assert.equal(executions, 3, "budget exhaustion cannot suppress already-issued terminal calls");
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 

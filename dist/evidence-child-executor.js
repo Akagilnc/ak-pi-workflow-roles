@@ -441,12 +441,9 @@ export async function executeAuditorChild(options) {
                 if (decisionSubmitted && decisionCallId !== args[0]) {
                     throw new Error("Auditor decision was submitted more than once");
                 }
-                // Pi may execute several decision calls from one assistant response.
-                // Reserve shared-policy capacity before invoking the role tool so an
-                // excess batched sibling cannot execute before its rejection is drained.
-                if (!delivery.reserveTerminalExecution()) {
-                    throw new Error("Auditor decision rejection budget exhausted");
-                }
+                // Pi may already have issued several decision calls in one assistant
+                // response. Execute every issued call: the budget limits future
+                // solicitations, not terminal calls already in flight.
                 try {
                     const result = await options.tool.execute(...args);
                     delivery.recordAccepted();
@@ -580,7 +577,8 @@ export async function executeAuditorChild(options) {
                     drainRejectedDecisionFailures(rejectedDecisionResponse);
                 }
                 if (decisionSubmitted || promptNeighboringFailure !== undefined
-                    || boundaryResponse !== undefined || retentionFailure !== undefined) {
+                    || (boundaryResponse !== undefined && rejectedDecisionResponse === undefined)
+                    || retentionFailure !== undefined) {
                     void session.abort();
                 }
             }
@@ -628,8 +626,8 @@ export async function executeAuditorChild(options) {
                         throw promptFailure;
                 };
                 await promptAllowingRejectedDecision(options.prompt);
-                while (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
-                    && delivery.nextAction() === "request-delivery") {
+                while (!decisionSubmitted && (boundaryResponse === undefined || decisionToolFailure !== undefined)
+                    && inherited.streamFailure === undefined && delivery.nextAction() === "request-delivery") {
                     if (decisionToolFailure !== undefined) {
                         const failures = promptDecisionFailures.length === 0
                             ? [decisionToolFailure]
@@ -642,9 +640,8 @@ export async function executeAuditorChild(options) {
                         if (delivery.nextAction() === "no-receipt")
                             boundaryResponse = undefined;
                         if (delivery.nextAction() === "request-delivery") {
-                            // The correction solicitation itself consumes the remaining shared
-                            // turn at issuance; prose cannot defer charging it to a later loop.
-                            delivery.recordDeliveryRequest();
+                            // A rejection and its correction solicitation are one budget unit;
+                            // recordRejected already charged it.
                             if (retainedResponse === rejectedDecisionResponse) {
                                 await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
                                 for (const failure of promptDecisionFailures) {
@@ -660,7 +657,7 @@ export async function executeAuditorChild(options) {
                         await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
                     }
                 }
-                if (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
+                if (!decisionSubmitted && inherited.streamFailure === undefined
                     && delivery.nextAction() === "no-receipt") {
                     const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
                     const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
@@ -698,7 +695,7 @@ export async function executeAuditorChild(options) {
             }
             if (retentionFailure !== undefined && retainedResponse?.stopReason !== "error")
                 throw retentionFailure;
-            if (boundaryResponse !== undefined && !decisionSubmitted) {
+            if (boundaryResponse !== undefined && !decisionSubmitted && noReceiptLifecycle === undefined) {
                 const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
                 throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
                     stopReason: boundaryResponse.stopReason,
