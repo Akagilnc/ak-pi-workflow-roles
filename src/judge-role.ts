@@ -135,11 +135,11 @@ export function createJudgeRoleRuntime(
                   terminate: true as const,
                   ...(usage === undefined ? {} : { usage }),
                 }),
-                noReceipt: (auditNoReceipt) => ({
+                noReceipt: (auditNoReceipt, usageProjection) => ({
                   content: [{ type: "text" as const, text: "Judge verdict accepted; compliance audit produced no receipt" }],
                   details: { ...verdict, auditNoReceipt },
                   terminate: true as const,
-                  ...(auditNoReceipt.usage === undefined ? {} : { usage: auditNoReceipt.usage }),
+                  ...usageProjection,
                 }),
                 revise: (violations) => {
                   throw new Error(

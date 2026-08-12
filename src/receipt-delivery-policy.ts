@@ -3,17 +3,11 @@ export const RECEIPT_DELIVERY_TURN_LIMIT = 2 as const;
 export const RECEIPT_DELIVERY_PROMPT = "本 session 尚无已接受的 typed 回执。请现在调用具名终局工具交卷；若先前被打回，请按拒因修正后重交。";
 
 export const NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle" as const;
-export const REJECTION_REASON_UNAVAILABLE = "terminal receipt rejected without diagnostic" as const;
-
-function normalizeRejectionReason(reason: unknown): string {
-  const rendered = typeof reason === "string" ? reason : String(reason);
-  return rendered.trim() === "" ? REJECTION_REASON_UNAVAILABLE : rendered;
-}
 
 /** The sole schema shared by lifecycle owners and Terminal projections. */
 export type NoReceiptLifecycleFacts = {
   terminalToolCalled: boolean;
-  rejectedReceipts: readonly { reason: string }[];
+  rejectedReceipts: readonly { reason: string; diagnosticAvailable: boolean }[];
   deliveryTurns: typeof RECEIPT_DELIVERY_TURN_LIMIT;
   sessionCompletion: "settled-without-accepted-receipt";
   runPointer: string;
@@ -36,12 +30,15 @@ export function parseNoReceiptLifecycleFacts(input: unknown): NoReceiptLifecycle
     || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === ""
     || !Array.isArray(input.rejectedReceipts)
     || !input.rejectedReceipts.every((item) => isRecord(item)
-      && typeof item.reason === "string" && item.reason.trim() !== "")) {
+      && typeof item.reason === "string")) {
     throw new TypeError("malformed no-receipt lifecycle facts");
   }
   return {
     terminalToolCalled: input.terminalToolCalled,
-    rejectedReceipts: input.rejectedReceipts.map((item) => ({ reason: item.reason as string })),
+    rejectedReceipts: input.rejectedReceipts.map((item) => ({
+      reason: item.reason as string,
+      diagnosticAvailable: (item.reason as string).trim() !== "",
+    })),
     deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
     sessionCompletion: "settled-without-accepted-receipt",
     runPointer: input.runPointer,
@@ -51,14 +48,20 @@ export function parseNoReceiptLifecycleFacts(input: unknown): NoReceiptLifecycle
 }
 
 export function noReceiptLifecycleFacts(
-  input: Omit<NoReceiptLifecycleFacts, "deliveryTurns" | "sessionCompletion" | "acceptedReceipt"> & { deliveryTurns: number },
+  input: Omit<NoReceiptLifecycleFacts, "rejectedReceipts" | "deliveryTurns" | "sessionCompletion" | "acceptedReceipt"> & {
+    rejectedReceipts: readonly { reason: string }[];
+    deliveryTurns: number;
+  },
 ): NoReceiptLifecycleFacts {
   if (input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT) {
     throw new TypeError("no-receipt lifecycle requires an exhausted delivery budget");
   }
   return {
     terminalToolCalled: input.terminalToolCalled,
-    rejectedReceipts: input.rejectedReceipts.map(({ reason }) => ({ reason: normalizeRejectionReason(reason) })),
+    rejectedReceipts: input.rejectedReceipts.map(({ reason }) => ({
+      reason,
+      diagnosticAvailable: reason.trim() !== "",
+    })),
     deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
     sessionCompletion: "settled-without-accepted-receipt",
     runPointer: input.runPointer,
@@ -71,15 +74,16 @@ export function createReceiptDeliveryPolicy() {
   let accepted = false;
   let terminalToolCalled = false;
   let deliveryTurns = 0;
-  const rejectedReceipts: { reason: string }[] = [];
+  const rejectedReceipts: { reason: string; diagnosticAvailable: boolean }[] = [];
   return {
     recordAccepted() { accepted = true; terminalToolCalled = true; },
     /** Infrastructure owns terminality and must never trigger receipt催交. */
     stopForInfrastructure() { accepted = true; },
     recordRejected(reason: string) {
       terminalToolCalled = true;
-      rejectedReceipts.push({ reason: normalizeRejectionReason(reason) });
-      deliveryTurns = Math.min(RECEIPT_DELIVERY_TURN_LIMIT, deliveryTurns + 1);
+      if (deliveryTurns >= RECEIPT_DELIVERY_TURN_LIMIT) return;
+      rejectedReceipts.push({ reason, diagnosticAvailable: reason.trim() !== "" });
+      deliveryTurns += 1;
     },
     recordDeliveryRequest() {
       deliveryTurns = Math.min(RECEIPT_DELIVERY_TURN_LIMIT, deliveryTurns + 1);

@@ -273,8 +273,8 @@ test("two rejected auditor decisions exhaust the shared budget without a third e
     if (decision.status === "no-receipt") {
       assert.equal(decision.deliveryTurns, 2);
       assert.deepEqual(decision.rejectedReceipts, [
-        { reason: "rejected execution 1" },
-        { reason: "rejected execution 2" },
+        { reason: "rejected execution 1", diagnosticAvailable: true },
+        { reason: "rejected execution 2", diagnosticAvailable: true },
       ]);
     }
     assert.equal(executions, 2, "the second rejection exhausts the total budget");
@@ -282,7 +282,7 @@ test("two rejected auditor decisions exhaust the shared budget without a third e
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test("whitespace-only Error auditor rejections are normalized at the producer boundary", async () => {
+test("three blank rejections in one auditor batch stop at two and expose missing diagnostics", async () => {
   const diagnostic = "   \t";
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-blank-rejection-"));
   const runDirectory = join(cwd, "run");
@@ -290,24 +290,26 @@ test("whitespace-only Error auditor rejections are normalized at the producer bo
   try {
     const sessionManager = parentWithJudgeSubjects(cwd);
     const baseTool = createComplianceDecisionTool("ak_blank_rejection_decision", "Submit.");
-    const tool = { ...baseTool, async execute() { throw new Error(diagnostic); } };
+    let executions = 0;
+    const tool = { ...baseTool, async execute() { executions += 1; throw new Error(diagnostic); } };
     const faux = fauxProvider({ provider: "blank-rejection-test" });
     const submit = () => fauxAssistantMessage(
-      [fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })],
+      Array.from({ length: 3 }, () => fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })),
       { stopReason: "toolUse" },
     );
-    faux.setResponses([submit, submit, () => fauxAssistantMessage("done")]);
+    faux.setResponses([submit, () => fauxAssistantMessage("done")]);
     const decision = await withRunDir(runDirectory, () => runComplianceAudit({
       tool, systemPrompt: "Decide.", roleLabel: "Blank rejection auditor", invalidDecisionLabel: "invalid",
       context: auditExtensionContext(cwd, sessionManager, faux),
     }));
     assert.equal(decision.status, "no-receipt");
     if (decision.status === "no-receipt") {
-      assert.deepEqual(decision.rejectedReceipts, [
-        { reason: "terminal receipt rejected without diagnostic" },
-        { reason: "terminal receipt rejected without diagnostic" },
-      ]);
+      assert.equal(decision.deliveryTurns, 2);
+      assert.equal(decision.rejectedReceipts.length, 2);
+      assert.equal(decision.rejectedReceipts[0]?.diagnosticAvailable, false);
+      assert.equal(decision.rejectedReceipts[1]?.diagnosticAvailable, false);
     }
+    assert.equal(executions, 2);
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 

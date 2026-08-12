@@ -254,8 +254,8 @@ test("two rejected Navigator prepares settle typed no-advice with exact reasons 
     assert.equal(events[0]?.disposition, "no-advice");
     const lifecycle = harness.entries.find((entry: any) => entry.customType === "ak-no-receipt-lifecycle") as any;
     assert.deepEqual(lifecycle?.data.rejectedReceipts, [
-      { reason: "root rejection one" },
-      { reason: "root rejection two" },
+      { reason: "root rejection one", diagnosticAvailable: true },
+      { reason: "root rejection two", diagnosticAvailable: true },
     ]);
     assert.equal(lifecycle?.data.terminalToolCalled, true);
   } finally { await cleanupTempDir(root); }
