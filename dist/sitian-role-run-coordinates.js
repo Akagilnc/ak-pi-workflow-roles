@@ -5,19 +5,18 @@ import {
   resolveActivationLedgerHome
 } from "./activation-ledger-topology.js";
 function roleRunSessionCoordinates(options) {
+  const ledgerHome = resolveActivationLedgerHome(
+    options.home === void 0 ? void 0 : () => options.home
+  );
   const bookKey = resolveBookKeyFromGit(options.cwd);
   const runDirectory = join(
-    activationBookDirectory(
-      resolveActivationLedgerHome(
-        options.home === void 0 ? void 0 : () => options.home
-      ),
-      bookKey
-    ),
+    activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${options.runId}@${options.role}`
   );
   const sessionDirectory = join(runDirectory, "session");
   return {
+    ledgerHome,
     bookKey,
     runDirectory,
     sessionDirectory,

@@ -7,6 +7,7 @@ import {
 } from "./activation-ledger-topology.ts";
 
 export type RoleRunSessionCoordinates = {
+  readonly ledgerHome: string;
   readonly bookKey: string;
   readonly runDirectory: string;
   readonly sessionDirectory: string;
@@ -24,19 +25,18 @@ export function roleRunSessionCoordinates(options: {
   /** Machine-home identity; not a record destination. */
   readonly home?: string;
 }): RoleRunSessionCoordinates {
+  const ledgerHome = resolveActivationLedgerHome(
+    options.home === undefined ? undefined : () => options.home!,
+  );
   const bookKey = resolveBookKeyFromGit(options.cwd);
   const runDirectory = join(
-    activationBookDirectory(
-      resolveActivationLedgerHome(
-        options.home === undefined ? undefined : () => options.home!,
-      ),
-      bookKey,
-    ),
+    activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${options.runId}@${options.role}`,
   );
   const sessionDirectory = join(runDirectory, "session");
   return {
+    ledgerHome,
     bookKey,
     runDirectory,
     sessionDirectory,

@@ -6,10 +6,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import {
-  ensureRealDirectoryTree,
-  resolveActivationLedgerHome,
-} from "../activation-ledger-topology.ts";
+import { ensureRealDirectoryTree } from "../activation-ledger-topology.ts";
 import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -413,9 +410,8 @@ async function admitMergerShellForActivationFailure(options: {
 }): Promise<AdmittedMergerInvocation> {
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } =
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   await mkdir(runDirectory, { recursive: true });
   const emptyDerived = {

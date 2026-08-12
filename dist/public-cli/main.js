@@ -14847,19 +14847,18 @@ var init_activation_ledger_git = __esm({
 // src/sitian-role-run-coordinates.ts
 import { join as join4 } from "node:path";
 function roleRunSessionCoordinates(options) {
+  const ledgerHome = resolveActivationLedgerHome(
+    options.home === void 0 ? void 0 : () => options.home
+  );
   const bookKey = resolveBookKeyFromGit(options.cwd);
   const runDirectory = join4(
-    activationBookDirectory(
-      resolveActivationLedgerHome(
-        options.home === void 0 ? void 0 : () => options.home
-      ),
-      bookKey
-    ),
+    activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${options.runId}@${options.role}`
   );
   const sessionDirectory = join4(runDirectory, "session");
   return {
+    ledgerHome,
     bookKey,
     runDirectory,
     sessionDirectory,
@@ -15582,8 +15581,7 @@ async function admitJudgeInvocation(options) {
   }
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -15666,8 +15664,7 @@ async function admitCoderInvocation(options) {
   }
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -15749,8 +15746,7 @@ async function admitFixerInvocation(options) {
   }
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -16008,8 +16004,7 @@ async function admitCollectorInvocation(options) {
     repository = resolveGitHubRemoteRepository(projectRoot);
   }
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -16242,8 +16237,7 @@ async function admitDoctorInvocation(options) {
   }
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "doctor", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "doctor", home: options.home });
   let caseRunsPath;
   try {
     caseRunsPath = await resolveDoctorCaseRunsPath({
@@ -16404,8 +16398,7 @@ async function admitReviewerInvocation(options) {
   }
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -16558,8 +16551,7 @@ async function admitMergerInvocation(options) {
     options.gitState ?? createProductionMergerGitState(projectRoot)
   );
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -17298,61 +17290,60 @@ async function writeRoleRunState(runDirectory, record4) {
   );
 }
 async function readRoleRunState(runDirectory, home, canonicalSessionFile) {
+  let raw;
   try {
-    const raw = JSON.parse(
-      await readFile7(join8(runDirectory, RUN_STATE_FILE), "utf8")
-    );
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      return void 0;
-    }
-    const record4 = raw;
-    if (typeof record4.runId !== "string" || record4.runId.trim() === "") {
-      return void 0;
-    }
-    if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger") {
-      return void 0;
-    }
-    if (record4.state !== "admitted" && record4.state !== "running" && record4.state !== "resumable" && record4.state !== "terminal") {
-      return void 0;
-    }
-    if (typeof record4.bookKey !== "string") return void 0;
-    if (typeof record4.projectRoot !== "string") return void 0;
-    if (typeof record4.sessionDirectory !== "string") return void 0;
-    if (typeof record4.admittedRequestPath !== "string") return void 0;
-    const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
-    const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : canonicalSessionFile ?? (home === void 0 ? void 0 : roleRunSessionCoordinates({
-      cwd: record4.projectRoot,
-      runId: record4.runId,
-      role: record4.role,
-      home
-    }).sessionFile);
-    if (sessionFile === void 0) return void 0;
-    let resumable;
-    if (record4.resumable !== void 0 && record4.resumable !== null) {
-      if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
-        const r = record4.resumable;
-        if (r.httpStatus === 429 && typeof r.provider === "string" && isV1ResumableProvider(r.provider)) {
-          resumable = { httpStatus: 429, provider: r.provider };
-        }
-      }
-    }
-    const phase = record4.phase === "plan" || record4.phase === "apply" ? record4.phase : void 0;
-    return {
-      runId: record4.runId,
-      role: record4.role,
-      state: record4.state,
-      bookKey: record4.bookKey,
-      projectRoot: record4.projectRoot,
-      sessionDirectory: record4.sessionDirectory,
-      sessionFile,
-      runDirectory: runDir,
-      admittedRequestPath: record4.admittedRequestPath,
-      ...phase === void 0 ? {} : { phase },
-      ...resumable === void 0 ? {} : { resumable }
-    };
+    raw = JSON.parse(await readFile7(join8(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return void 0;
+  }
+  const record4 = raw;
+  if (typeof record4.runId !== "string" || record4.runId.trim() === "") {
+    return void 0;
+  }
+  if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger") {
+    return void 0;
+  }
+  if (record4.state !== "admitted" && record4.state !== "running" && record4.state !== "resumable" && record4.state !== "terminal") {
+    return void 0;
+  }
+  if (typeof record4.bookKey !== "string") return void 0;
+  if (typeof record4.projectRoot !== "string") return void 0;
+  if (typeof record4.sessionDirectory !== "string") return void 0;
+  if (typeof record4.admittedRequestPath !== "string") return void 0;
+  const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
+  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : canonicalSessionFile ?? (home === void 0 ? void 0 : roleRunSessionCoordinates({
+    cwd: record4.projectRoot,
+    runId: record4.runId,
+    role: record4.role,
+    home
+  }).sessionFile);
+  if (sessionFile === void 0) return void 0;
+  let resumable;
+  if (record4.resumable !== void 0 && record4.resumable !== null) {
+    if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
+      const r = record4.resumable;
+      if (r.httpStatus === 429 && typeof r.provider === "string" && isV1ResumableProvider(r.provider)) {
+        resumable = { httpStatus: 429, provider: r.provider };
+      }
+    }
+  }
+  const phase = record4.phase === "plan" || record4.phase === "apply" ? record4.phase : void 0;
+  return {
+    runId: record4.runId,
+    role: record4.role,
+    state: record4.state,
+    bookKey: record4.bookKey,
+    projectRoot: record4.projectRoot,
+    sessionDirectory: record4.sessionDirectory,
+    sessionFile,
+    runDirectory: runDir,
+    admittedRequestPath: record4.admittedRequestPath,
+    ...phase === void 0 ? {} : { phase },
+    ...resumable === void 0 ? {} : { resumable }
+  };
 }
 async function markRunAdmitted(admitted) {
   await writeRoleRunState(admitted.runDirectory, {
@@ -22750,8 +22741,7 @@ async function loadMergerMethodMaterial(packageRoot2) {
 async function admitMergerShellForActivationFailure(options) {
   const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   await mkdir4(runDirectory, { recursive: true });
   const emptyDerived = {

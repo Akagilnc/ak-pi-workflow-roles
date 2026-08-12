@@ -189,10 +189,12 @@ export async function readRoleRunState(
   home?: string,
   canonicalSessionFile?: string,
 ): Promise<RoleRunRecord | undefined> {
+  let raw: unknown;
   try {
-    const raw: unknown = JSON.parse(
-      await readFile(join(runDirectory, RUN_STATE_FILE), "utf8"),
-    );
+    raw = JSON.parse(await readFile(join(runDirectory, RUN_STATE_FILE), "utf8"));
+  } catch {
+    return undefined;
+  }
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return undefined;
     }
@@ -275,9 +277,6 @@ export async function readRoleRunState(
       ...(phase === undefined ? {} : { phase }),
       ...(resumable === undefined ? {} : { resumable }),
     };
-  } catch {
-    return undefined;
-  }
 }
 
 export async function markRunAdmitted(
