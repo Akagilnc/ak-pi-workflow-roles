@@ -28,7 +28,7 @@ export function immutableReviewerRefs(refs) {
 }
 export function sameReviewerPinnedTarget(actual, expected) {
     return actual.repositoryRoot === expected.repositoryRoot && actual.objectFormat === expected.objectFormat &&
-        actual.targetHead === expected.targetHead && sameReviewerRefs(actual.refs, expected.refs);
+        actual.targetHead === expected.targetHead;
 }
 export function sameReviewerRefs(actual, expected) {
     const actualEntries = Object.entries(actual).sort(([left], [right]) => left.localeCompare(right));

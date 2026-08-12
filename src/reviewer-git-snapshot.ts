@@ -37,11 +37,11 @@ export function immutableReviewerRefs(refs: ReviewerRefMap): ReviewerRefMap {
 }
 
 export function sameReviewerPinnedTarget(
-  actual: Readonly<{ repositoryRoot: string; objectFormat: "sha1" | "sha256"; targetHead: string; refs: ReviewerRefMap }>,
-  expected: Readonly<{ repositoryRoot: string; objectFormat: "sha1" | "sha256"; targetHead: string; refs: ReviewerRefMap }>,
+  actual: Readonly<{ repositoryRoot: string; objectFormat: "sha1" | "sha256"; targetHead: string; refs?: ReviewerRefMap }>,
+  expected: Readonly<{ repositoryRoot: string; objectFormat: "sha1" | "sha256"; targetHead: string; refs?: ReviewerRefMap }>,
 ): boolean {
   return actual.repositoryRoot === expected.repositoryRoot && actual.objectFormat === expected.objectFormat &&
-    actual.targetHead === expected.targetHead && sameReviewerRefs(actual.refs, expected.refs);
+    actual.targetHead === expected.targetHead;
 }
 
 export function sameReviewerRefs(actual: ReviewerRefMap, expected: ReviewerRefMap): boolean {
