@@ -17,6 +17,8 @@ export function createReceiptDeliveryPolicy() {
   const rejectedReceipts: { reason: string }[] = [];
   return {
     recordAccepted() { accepted = true; terminalToolCalled = true; },
+    /** Infrastructure owns terminality and must never trigger receipt催交. */
+    stopForInfrastructure() { accepted = true; },
     recordRejected(reason: string) {
       terminalToolCalled = true;
       rejectedReceipts.push({ reason });
