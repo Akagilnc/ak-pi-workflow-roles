@@ -206,7 +206,7 @@ async function assertInstalledRuntimeResources(installedRoot: string): Promise<v
   };
   assert.equal(manifest.name, "@akagilnc/pi-workflow-roles");
   assert.equal(manifest.license, "Apache-2.0");
-  assert.equal(manifest.bin?.["ak-role"], "./dist/public-cli/main.js");
+  assert.equal(manifest.bin?.["ak-role"], "dist/public-cli/main.js");
   assert.deepEqual(manifest.pi?.extensions ?? ["missing"], []);
   assert.equal(
     typeof manifest.peerDependencies?.["@earendil-works/pi-coding-agent"],
@@ -699,7 +699,7 @@ test("documented Pi package update refreshes CLI and runtime from one private co
         await readFile(resolve(installedRoot, "package.json"), "utf8"),
       ) as { version: string; bin?: Record<string, string>; pi?: { extensions?: unknown[] } };
       assert.equal(versionV2.version, "0.1.0-matrix.2");
-      assert.equal(versionV2.bin?.["ak-role"], "./dist/public-cli/main.js");
+      assert.equal(versionV2.bin?.["ak-role"], "dist/public-cli/main.js");
       assert.deepEqual(versionV2.pi?.extensions ?? ["missing"], []);
 
       const akRoleBin = resolve(piPrivateNpmBinDir(piAgentDir), "ak-role");
@@ -783,7 +783,7 @@ test("packed release artifact carries runtime resources, attribution, and empty 
     };
     assert.equal(manifest.name, "@akagilnc/pi-workflow-roles");
     assert.equal(manifest.license, "Apache-2.0");
-    assert.equal(manifest.bin?.["ak-role"], "./dist/public-cli/main.js");
+    assert.equal(manifest.bin?.["ak-role"], "dist/public-cli/main.js");
     assert.deepEqual(manifest.pi?.extensions, []);
     // Attribution: project Apache text + separate Matt MIT notice.
     const license = await readFile(
