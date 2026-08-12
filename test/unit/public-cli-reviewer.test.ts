@@ -17,8 +17,6 @@ import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import {
@@ -37,18 +35,13 @@ import {
 } from "../../src/public-cli/reviewer-run.ts";
 import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
 import {
-  classifyPostAdmissionFailure,
   extractReviewerMethodInvocations,
   extractReviewerRoleOutcome,
-  settleFailureTerminalResult,
   settleReviewerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
-import { ReviewerCorrectablePreflightError } from "../../src/reviewer-preflight-error.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import {
-  activationExtensionContext,
   packageRoot,
-  withActivationHome,
+  runPiSubprocess,
 } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
@@ -765,128 +758,68 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
 });
 
 test("reviewer activation rejection lands violation code and diagnostic in books", async () => {
+  // One true-seam tracer (ADR 0016 / host art. 13): public CLI → real Pi child
+  // ExtensionRunner → stderr → presentControlledFailure → books error.json.
+  // Prior art: test/package/reviewer-package-lifecycle.test.ts (runAkRole + runPiSubprocess).
+  // Trigger: local-only repo + --base origin/main → production base-invalid preflight.
   const diagnostic =
     "base revision must name an existing pinned ref or reachable commit";
-  const priorExitCode = process.exitCode;
-  await withActivationHome({ prefix: "ak-reviewer-reject-books-" }, async ({ home }) => {
-    process.exitCode = undefined;
-    const pin = {
-      repositoryRoot: home,
-      objectFormat: "sha1" as const,
-      targetHead: "a".repeat(40),
-      refs: {},
-    };
-    const handlers = new Map<string, Array<(event: unknown, ctx: ExtensionContext) => unknown>>();
-    const pi = {
-      registerFlag() {},
-      registerTool() {},
-      setActiveTools() {},
-      getActiveTools() {
-        return [];
-      },
-      getAllTools() {
-        return [];
-      },
-      getCommands() {
-        return [];
-      },
-      getFlag(name: string) {
-        if (name === "ak-role") return "reviewer";
-        if (name === "ak-review-base") return "origin/main";
-        return undefined;
-      },
-      on(name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) {
-        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
-      },
-      appendEntry() {},
-    } as unknown as ExtensionAPI;
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    const agentDir = join(home, ".pi-agent");
+    await mkdir(project, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    seedGitProject(project);
 
-    createRoleRuntimeExtension({
-      loadJudgeSoul: async () => "unused",
-      loadReviewerSoul: async () => "reviewer soul",
-      transcriptFromContext: () => "",
-      auditSoulCompliance: async () => ({ status: "pass" }),
-      auditReviewerCompliance: async () => ({ status: "pass" }),
-      createReviewerPinnedGitReader: async () => ({
-        pin,
-        async snapshot() {
-          return pin;
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["reviewer", "--project", project, "--base", "origin/main"],
+      {
+        packageRoot,
+        home,
+        agentDir,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-reviewer-reject-diagnostic",
+        reviewerTimeoutMs: 60_000,
+        io,
+        piRunner: async (args, options) => {
+          const subprocess = await runPiSubprocess([...args], {
+            cwd: options.cwd,
+            env: {
+              ...options.env,
+              PI_OFFLINE: "1",
+            },
+            timeoutMs: options.timeoutMs ?? 60_000,
+          });
+          return {
+            code: subprocess.code,
+            stderr: subprocess.stderr,
+            timedOut: subprocess.timedOut,
+            args: [...args],
+          };
         },
-        async resolve() {
-          throw new ReviewerCorrectablePreflightError("base-invalid", diagnostic);
-        },
-        async range() {
-          throw new Error("range must not run after base rejection");
-        },
-      }),
-      loadCanonicalSkillBinding: async () => ({
-        name: "code-review" as const,
-        snapshot: {
-          raw: "skill",
-          path: "/skill",
-          baseDir: "/",
-          body: "skill",
-          snapshotIdentity: Object.freeze({ text: "skill" }),
-        },
-        invocation: (request: string) => request,
-        captureExpansion: () => ({
-          name: "code-review" as const,
-          location: "/skill",
-          content: "skill",
-          userMessage: "skill",
-        }),
-      }),
-      runReviewerDispatch: async () => {
-        throw new Error("dispatch must not run after rejection");
       },
-      activationTraceWriter: () => {},
-    })(pi);
+    );
 
-    const ctx = activationExtensionContext({ cwd: home, home, mode: "json" });
-    const sessionStart = handlers.get("session_start")?.[0];
-    assert.ok(sessionStart);
-    let thrown: unknown;
-    try {
-      await sessionStart({ reason: "startup" }, ctx);
-    } catch (error) {
-      thrown = error;
+    assert.equal(
+      result.exitCode,
+      1,
+      stderr.join("") || stdout.join("") || "expected activation rejection",
+    );
+    assert.ok(result.terminal);
+    assert.equal(result.terminal.roleOutcome.kind, "failure");
+    if (result.terminal.roleOutcome.kind !== "failure") {
+      throw new Error("expected failure");
     }
-    assert.ok(thrown instanceof Error);
-    assert.match(thrown.message, /base-invalid/);
-    assert.match(thrown.message, new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.equal(result.terminal.roleOutcome.cause, "activation");
+    assert.match(result.terminal.roleOutcome.diagnostic, /base-invalid/);
+    assert.match(
+      result.terminal.roleOutcome.diagnostic,
+      new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
 
-    const runId = "run-reviewer-reject-diagnostic";
-    const bookKey = resolveBookKeyFromGit(home);
-    const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@reviewer`);
-    await mkdir(join(runDirectory, "session"), { recursive: true });
-    await mkdir(join(runDirectory, "artifacts"), { recursive: true });
-    const admitted = {
-      role: "reviewer" as const,
-      runId,
-      bookKey,
-      projectRoot: home,
-      instruction: "",
-      instructionEmpty: true,
-      attachments: [],
-      baseRevision: "origin/main",
-      runDirectory,
-      sessionDirectory: join(runDirectory, "session"),
-      sessionFile: join(runDirectory, "session", "session.jsonl"),
-      admittedRequestPath: join(runDirectory, "admitted-request.json"),
-    };
-    await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-    const failure = classifyPostAdmissionFailure({
-      timedOut: false,
-      code: 1,
-      stderr: `Error: ${thrown.message}\n`,
-    });
-    const terminal = await settleFailureTerminalResult(admitted, failure);
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
-    assert.match(terminal.roleOutcome.diagnostic, /base-invalid/);
-    assert.match(terminal.roleOutcome.diagnostic, new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-
-    const errorRef = terminal.artifacts.find((a) => a.kind === "error");
+    const errorRef = result.terminal.artifacts.find((a) => a.kind === "error");
     assert.ok(errorRef);
     const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
       cause: string;
@@ -894,7 +827,9 @@ test("reviewer activation rejection lands violation code and diagnostic in books
     };
     assert.equal(errorBody.cause, "activation");
     assert.match(errorBody.diagnostic, /base-invalid/);
-    assert.match(errorBody.diagnostic, new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(
+      errorBody.diagnostic,
+      new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
   });
-  process.exitCode = priorExitCode;
 });
