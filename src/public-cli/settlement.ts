@@ -3650,7 +3650,7 @@ export async function settleFailureTerminalResult(
   // #288 is lawful only when the lifecycle owner persisted an exhausted,
   // current-attempt fact. Transcript reconstruction must not turn arbitrary output
   // failures (or bytes retained from a prior resume attempt) into exit zero.
-  if (failure.cause === "output" && options.resume === undefined) {
+  if (failure.cause === "output") {
     const entries = await readBoundSessionEntries(admitted.sessionFile).catch(() => undefined);
     if (entries !== undefined) {
       let attemptStart = 0;

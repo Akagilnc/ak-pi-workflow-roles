@@ -131,6 +131,42 @@ test("auditor gathers evidence and submits one decision", async () => {
   }
 });
 
+test("rejected auditor decision execution remains reachable and retries to an accepted receipt", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rejected-retry-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const baseTool = createComplianceDecisionTool("ak_rejected_retry_decision", "Submit.");
+    let executions = 0;
+    const tool = {
+      ...baseTool,
+      async execute(...args: Parameters<typeof baseTool.execute>) {
+        executions += 1;
+        if (executions === 1) throw new Error("未观察到 commit");
+        return baseTool.execute(...args);
+      },
+    };
+    const faux = fauxProvider({ provider: "rejected-retry-test" });
+    let turns = 0;
+    const submit = () => {
+      turns += 1;
+      return fauxAssistantMessage(
+        [fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })],
+        { stopReason: "toolUse" },
+      );
+    };
+    faux.setResponses([submit, submit]);
+    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      tool, systemPrompt: "Decide.", roleLabel: "Retry auditor", invalidDecisionLabel: "invalid",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+    }));
+    assert.equal(decision.status, "pass");
+    assert.equal(executions, 2, "the rejected terminal call must execute again");
+    assert.equal(turns, 2, "one rejection consumes one of the shared two-turn budget");
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
 test("auditor exhaustion preserves a typed no-receipt leg without fabricating an audit decision", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-no-receipt-"));
   const runDirectory = join(cwd, "run");

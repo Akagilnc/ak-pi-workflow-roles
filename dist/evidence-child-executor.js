@@ -442,6 +442,7 @@ export async function executeAuditorChild(options) {
                     const result = await options.tool.execute(...args);
                     decision = args[1];
                     decisionCallId = args[0];
+                    decisionToolFailure = undefined;
                     decisionSubmitted = true;
                     return result;
                 }
@@ -527,16 +528,18 @@ export async function executeAuditorChild(options) {
                 catch (error) {
                     retentionFailure = error;
                 }
+                // A tool call in assistant output is only an observation. Preserve its
+                // candidate for typed malformed-decision settlement, but the wrapped
+                // execute path above is the sole owner of accepted-receipt state; a
+                // rejected execution must remain retryable in this same session.
                 for (const part of event.message.content) {
-                    if (part.type !== "toolCall" || part.name !== tool.name)
-                        continue;
-                    if (!decisionSubmitted) {
+                    if (part.type === "toolCall" && part.name === tool.name && decision === undefined) {
                         decision = part.arguments;
                         decisionCallId = part.id;
-                        decisionSubmitted = true;
-                    }
-                    else if (decisionCallId !== part.id) {
-                        decisionToolFailure = new Error("Auditor decision was submitted more than once");
+                        // Pi can reject malformed root arguments before invoking execute;
+                        // that remains the existing typed audit-incomplete candidate path.
+                        if (part.arguments === undefined)
+                            decisionSubmitted = true;
                     }
                 }
                 if (turns >= AUDITOR_TURN_LIMIT)
@@ -555,7 +558,19 @@ export async function executeAuditorChild(options) {
         try {
             try {
                 const delivery = createReceiptDeliveryPolicy();
-                await session.prompt(options.prompt);
+                const promptAllowingRejectedDecision = async (prompt) => {
+                    try {
+                        await session.prompt(prompt);
+                    }
+                    catch (error) {
+                        // A rejected terminal execution is protocol feedback, not session
+                        // infrastructure failure. Preserve it for the shared budget and let
+                        // this same auditor session correct and resubmit.
+                        if (decisionToolFailure === undefined)
+                            throw error;
+                    }
+                };
+                await promptAllowingRejectedDecision(options.prompt);
                 while (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
                     && delivery.nextAction() === "request-delivery") {
                     if (decisionToolFailure !== undefined) {
@@ -565,7 +580,7 @@ export async function executeAuditorChild(options) {
                     else {
                         delivery.recordDeliveryRequest();
                     }
-                    await session.prompt(RECEIPT_DELIVERY_PROMPT);
+                    await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
                 }
                 if (!decisionSubmitted && boundaryResponse === undefined && inherited.streamFailure === undefined
                     && delivery.nextAction() === "no-receipt") {
