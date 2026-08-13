@@ -10,6 +10,7 @@ import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-out
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { parseCollectorArgv } from "../../src/public-cli/invocation.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 
 function seedProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
@@ -58,6 +59,7 @@ test("typed groups travel from real output settlement into the report artifact",
     const project = join(home, "project");
     await mkdir(project);
     seedProject(project);
+    offerTestDispatchLease(home, project);
     const stdout: string[] = [];
     const result = await runAkRole(["collector", "--pr", "1168", "--repo", "acme/widgets", "--project", project], {
       packageRoot,
