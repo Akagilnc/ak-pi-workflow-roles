@@ -162,5 +162,5 @@ if (ordinaryCode !== 0) {
   process.exit(ordinaryCode);
 }
 
-const heavyCode = await runNodeTest(heavy, { concurrency: 1 });
+const heavyCode = await runNodeTest(heavy, { concurrency: 2 });
 process.exit(heavyCode);
