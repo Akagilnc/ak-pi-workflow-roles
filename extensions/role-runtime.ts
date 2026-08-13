@@ -23,7 +23,6 @@ import {
   createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
   navigatorUnavailableError,
-  navigatorSessionDirectory,
   navigatorSubjectKey,
   navigatorSubjectKeyForInput,
   registerNavigatorModelCommand,
@@ -261,14 +260,11 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     auditDoctorCompliance: createPiDoctorAuditor(),
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
     createNavigatorAttendance: (options) => {
-      const sessionDir = navigatorSessionDirectory(options.context, options.subjectKey);
       return createNavigatorAttendance({
         context: options.context,
         role: options.role,
         phase: options.phase,
         subjectKey: options.subjectKey,
-        sessionDir,
-        sessionDirectory: (subjectKey) => navigatorSessionDirectory(options.context, subjectKey),
         subject: options.subject,
         authority: options.authority,
         invocationId: options.invocationId,

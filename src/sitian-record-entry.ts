@@ -3,6 +3,8 @@
  * 调用方只声明自己是谁的什么；落点由候簿拓扑算出，签名不含任何落点/路径参数。
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
+import { createHash } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -30,6 +32,8 @@ export type CreateRecordSessionOptions = {
   readonly kind: string;
   /** Optional parent session — supplies parentSession link; nest under parent only when that parent already lives under the ledger home. */
   readonly parent?: RecordSessionParent;
+  /** Stable work identity for book-level records which continue across role runs. */
+  readonly subject?: string;
 };
 
 /**
@@ -39,12 +43,31 @@ export type CreateRecordSessionOptions = {
 export function createRecordSession(options: CreateRecordSessionOptions): SessionManager {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
+  const ledgerHome = resolveActivationLedgerHome();
+
+  if (options.subject !== undefined) {
+    const digest = createHash("sha256").update(options.subject).digest("hex").slice(0, 32);
+    const sessionDir = join(
+      activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)),
+      options.kind,
+      digest,
+    );
+    ensureRealDirectoryTree(ledgerHome, sessionDir);
+    const recentFile = readdirSync(sessionDir)
+      .filter((name) => name.endsWith(".jsonl"))
+      .sort()
+      .at(-1);
+    if (recentFile !== undefined) return SessionManager.open(join(sessionDir, recentFile), sessionDir, cwd);
+    return SessionManager.create(cwd, sessionDir, parentFile
+      ? { parentSession: parentFile }
+      : undefined);
+  }
+
   if (parentFile === undefined || parentFile.length === 0) {
     // No durable parent principal — preserve prior in-memory child behavior.
     return SessionManager.inMemory(cwd);
   }
 
-  const ledgerHome = resolveActivationLedgerHome();
   const parentResolved = resolve(parentFile);
 
   // Nest under parent only when the parent record already lives under the package home.
