@@ -5,17 +5,34 @@
  * does not statically reach @earendil-works/pi-coding-agent.
  */
 import { createAgentSession, DefaultResourceLoader, SettingsManager, } from "@earendil-works/pi-coding-agent";
+import { createRecordSession } from "./sitian-record-entry.js";
+function resolveSessionManager(options) {
+    if (options.sessionManager !== undefined)
+        return options.sessionManager;
+    if (options.kind === undefined) {
+        throw new Error("openInProcessAgentSession requires sessionManager or kind");
+    }
+    return createRecordSession({
+        cwd: options.cwd,
+        kind: options.kind,
+        ...(options.subject === undefined ? {} : { subject: options.subject }),
+        ...(options.parent === undefined ? {} : { parent: options.parent }),
+    });
+}
 /**
  * Single createAgentSession + Settings construction for all in-process children.
+ * Child SessionManager construction for identity-declared records lives here so
+ * role modules do not call createRecordSession directly.
  */
 export async function openInProcessAgentSession(options) {
     const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
+    const sessionManager = resolveSessionManager(options);
     const createArgs = {
         cwd: options.cwd,
         model: options.model,
         thinkingLevel: options.thinkingLevel ?? "off",
         modelRuntime: options.modelRuntime,
-        sessionManager: options.sessionManager,
+        sessionManager,
         settingsManager: settings,
         ...(options.noTools === undefined ? {} : { noTools: options.noTools }),
         ...(options.tools === undefined ? {} : { tools: options.tools }),

@@ -14,6 +14,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 
+import { createRecordSession } from "./sitian-record-entry.ts";
+
 export type OpenInProcessAgentSessionOptions = {
   readonly cwd: string;
   /** Required when loading a resource loader / systemPrompt. Callers own scratch lifecycle. */
@@ -21,7 +23,17 @@ export type OpenInProcessAgentSessionOptions = {
   readonly model: Model<Api>;
   readonly modelRuntime: ModelRuntime;
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  readonly sessionManager: SessionManager;
+  /**
+   * Pre-built manager. When omitted, the shared seam obtains a Sitian SessionManager
+   * from cwd/kind/subject/parent identity relations (no destination parameters).
+   */
+  readonly sessionManager?: SessionManager;
+  /** Record kind for the Sitian entry when sessionManager is omitted. */
+  readonly kind?: string;
+  /** Stable work identity for book-level records which continue across role runs. */
+  readonly subject?: string;
+  /** Optional parent session — supplies parentSession link / nest principal. */
+  readonly parent?: { getSessionFile(): string | undefined };
   readonly systemPrompt?: string;
   readonly customTools?: ToolDefinition[];
   readonly noTools?: "all" | "builtin";
@@ -29,20 +41,36 @@ export type OpenInProcessAgentSessionOptions = {
   readonly tools?: string[];
 };
 
+function resolveSessionManager(options: OpenInProcessAgentSessionOptions): SessionManager {
+  if (options.sessionManager !== undefined) return options.sessionManager;
+  if (options.kind === undefined) {
+    throw new Error("openInProcessAgentSession requires sessionManager or kind");
+  }
+  return createRecordSession({
+    cwd: options.cwd,
+    kind: options.kind,
+    ...(options.subject === undefined ? {} : { subject: options.subject }),
+    ...(options.parent === undefined ? {} : { parent: options.parent }),
+  });
+}
+
 /**
  * Single createAgentSession + Settings construction for all in-process children.
+ * Child SessionManager construction for identity-declared records lives here so
+ * role modules do not call createRecordSession directly.
  */
 export async function openInProcessAgentSession(
   options: OpenInProcessAgentSessionOptions,
 ): Promise<{ session: Awaited<ReturnType<typeof createAgentSession>>["session"]; dispose(): void }> {
   const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
+  const sessionManager = resolveSessionManager(options);
 
   const createArgs: Parameters<typeof createAgentSession>[0] = {
     cwd: options.cwd,
     model: options.model,
     thinkingLevel: options.thinkingLevel ?? "off",
     modelRuntime: options.modelRuntime,
-    sessionManager: options.sessionManager,
+    sessionManager,
     settingsManager: settings,
     ...(options.noTools === undefined ? {} : { noTools: options.noTools }),
     ...(options.tools === undefined ? {} : { tools: options.tools }),
