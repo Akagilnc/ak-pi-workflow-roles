@@ -6,8 +6,16 @@ import {
   type Provider,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { REVIEWER_AXIS_OUTPUT_ADAPTER } from "../../src/reviewer-construction.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
+
+function axisFromPrompt(text: string): "standards" | "spec" | undefined {
+  const prefix = `Axis-Output-Adapter: ${REVIEWER_AXIS_OUTPUT_ADAPTER.adapterId}@${REVIEWER_AXIS_OUTPUT_ADAPTER.version}`;
+  if (text.includes(`${prefix}:standards`)) return "standards";
+  if (text.includes(`${prefix}:spec`)) return "spec";
+  return undefined;
+}
 
 function userText(context: Context): string {
   const message = context.messages.find((item) => item.role === "user");
@@ -27,12 +35,7 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
   const axisSeen = new Set<string>();
   faux.setResponses([
     (context) => {
-      const text = userText(context);
-      const axis = text.includes("Axis-Output-Adapter: reviewer-axis-output@1:standards")
-        ? "standards"
-        : text.includes("Axis-Output-Adapter: reviewer-axis-output@1:spec")
-          ? "spec"
-          : undefined;
+      const axis = axisFromPrompt(userText(context));
       if (axis === undefined) throw new Error("child prompt missing typed axis adapter");
       axisSeen.add(axis);
       return fauxAssistantMessage(
@@ -42,12 +45,7 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
       );
     },
     (context) => {
-      const text = userText(context);
-      const axis = text.includes("Axis-Output-Adapter: reviewer-axis-output@1:standards")
-        ? "standards"
-        : text.includes("Axis-Output-Adapter: reviewer-axis-output@1:spec")
-          ? "spec"
-          : undefined;
+      const axis = axisFromPrompt(userText(context));
       if (axis === undefined) throw new Error("second child prompt missing typed axis adapter");
       axisSeen.add(axis);
       return fauxAssistantMessage(

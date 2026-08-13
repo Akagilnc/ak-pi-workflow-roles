@@ -16731,7 +16731,7 @@ var init_reviewer_scope_prompt = __esm({
 });
 
 // src/reviewer-construction.ts
-var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER, REVIEWER_STANDARDS_CONCLUSION_KEYS, REVIEWER_STANDARDS_CONCLUSION_LABELS;
+var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER, REVIEWER_VERIFICATION_BOUNDARY, REVIEWER_STANDARDS_CONCLUSION_KEYS, REVIEWER_STANDARDS_CONCLUSION_LABELS;
 var init_reviewer_construction = __esm({
   "src/reviewer-construction.ts"() {
     "use strict";
@@ -16741,13 +16741,22 @@ var init_reviewer_construction = __esm({
       recipeId: "reviewer-common-bundle",
       version: 1,
       runtimeVersion: "1",
-      implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts")
+      implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts+verification-boundary")
     });
     REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
       adapterId: "reviewer-axis-output",
-      version: 1,
-      implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities")
+      version: 2,
+      implementationSha256: sha256Hex(
+        "reviewer-axis-output:v2:single-axis-verbatim-report+standards-three-priorities+verification-boundary"
+      )
     });
+    REVIEWER_VERIFICATION_BOUNDARY = [
+      "Verification-Boundary: during this review turn do not execute product verification command families",
+      "(pytest, compileall, repository-wide or focused product test runners, build-as-test, or equivalent product gate runners).",
+      "The sole source of test facts is independently discovered existing coder/fixer accepted receipts",
+      "(their testEvidence and verification results already recorded in those reports); do not treat caller prose as that source.",
+      "Do not write freshly executed test results from this turn into the review report."
+    ].join(" ");
     REVIEWER_STANDARDS_CONCLUSION_KEYS = Object.freeze([
       "constitutionality",
       "minimum-necessary-test-cost",
@@ -17909,6 +17918,7 @@ var init_evidence_child_executor = __esm({
     "use strict";
     init_compliance_transport();
     init_package_owned_tool_idle();
+    init_reviewer_construction();
     init_stream_idle_guard();
     init_receipt_delivery_policy();
   }
