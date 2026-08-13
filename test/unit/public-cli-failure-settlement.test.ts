@@ -739,6 +739,7 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
     // Counterexample 2: single oversized diagnostic line — durable full, presentation bound.
     {
       const full = "x".repeat(CONCISE_DIAGNOSTIC_MAX_CHARS + 200);
+      offerTestDispatchLease(home, project);
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(
         ["judge", "--project", project, "oversized diagnostic"],
@@ -3505,6 +3506,7 @@ test("real Coder/Fixer runs require a legal execution status before accepted set
     for (const row of rows) {
       for (const details of [{}, ...row.statuses.map((status) => ({ status }))]) {
         const status = "status" in details ? details.status : "missing";
+        offerTestDispatchLease(home, project);
         const { io } = captureIo();
         const result = await runAkRole(
           [row.role, row.phase, "--project", project, `${row.role} ${status} discriminator`],
