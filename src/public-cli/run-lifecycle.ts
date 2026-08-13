@@ -15,7 +15,6 @@ import { CliUsageError } from "./cli-errors.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import {
-  roleRunSessionFile,
   type AdmittedCoderInvocation,
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
@@ -187,10 +186,12 @@ export async function writeRoleRunState(
 export async function readRoleRunState(
   runDirectory: string,
 ): Promise<RoleRunRecord | undefined> {
+  let raw: unknown;
   try {
-    const raw: unknown = JSON.parse(
-      await readFile(join(runDirectory, RUN_STATE_FILE), "utf8"),
-    );
+    raw = JSON.parse(await readFile(join(runDirectory, RUN_STATE_FILE), "utf8"));
+  } catch {
+    return undefined;
+  }
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return undefined;
     }
@@ -225,12 +226,12 @@ export async function readRoleRunState(
       typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
         ? record.runDirectory
         : runDirectory;
-    // Prefer durable principal; fall back only for in-progress records that
-    // predate the field but still own a private session directory.
+    // Legacy states predate sessionFile. Their persisted session directory is
+    // the authority for the historical principal, even if project topology moved.
     const sessionFile =
       typeof record.sessionFile === "string" && record.sessionFile.trim() !== ""
         ? record.sessionFile
-        : roleRunSessionFile(record.sessionDirectory);
+        : join(record.sessionDirectory, "session.jsonl");
     let resumable: TypedHttp429Observation | undefined;
     if (record.resumable !== undefined && record.resumable !== null) {
       if (
@@ -264,9 +265,6 @@ export async function readRoleRunState(
       ...(phase === undefined ? {} : { phase }),
       ...(resumable === undefined ? {} : { resumable }),
     };
-  } catch {
-    return undefined;
-  }
 }
 
 export async function markRunAdmitted(

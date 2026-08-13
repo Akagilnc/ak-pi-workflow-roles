@@ -6,7 +6,7 @@
  * lease — never table labels/layout/prose classification.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -766,6 +766,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     await writeFile(attachmentSrc, "authority-bytes-v1\n", "utf8");
     const runId = "run-resume-restore-001";
     const instruction = "original admitted instruction must not be resubmitted";
+    const openedPrincipals = new Set<string>();
 
     // First admission interrupted by typed 429.
     {
@@ -788,6 +789,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
           io,
           piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            openedPrincipals.add(args[args.indexOf("--session") + 1]!);
             await mkdir(sessionDir, { recursive: true });
             await observeTyped429ViaProductionHandler({
               runDirectory: join(sessionDir, ".."),
@@ -821,6 +823,17 @@ test("resume restores admitted identity and exact Pi session without resubmittin
       `${runId}@judge`,
     );
     const sessionDirectory = join(runDirectory, "session");
+    // Simulate a resumable run-state written before sessionFile was persisted.
+    const legacyStatePath = join(runDirectory, "run-state.json");
+    const legacyState = JSON.parse(
+      await readFile(legacyStatePath, "utf8"),
+    ) as Record<string, unknown>;
+    delete legacyState.sessionFile;
+    await writeFile(legacyStatePath, `${JSON.stringify(legacyState, null, 2)}\n`, "utf8");
+    // The persisted principal survives project relocation and loss of Git topology.
+    const movedProject = join(home, "moved-non-git-project");
+    await rename(project, movedProject);
+    await rm(join(movedProject, ".git"), { recursive: true, force: true });
     const admittedBefore = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
     ) as {
@@ -832,20 +845,21 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     const frozenPath = admittedBefore.attachments[0]!.frozenPath;
     const frozenSha = admittedBefore.attachments[0]!.sha256;
 
-    const { io, stdout } = captureIo();
+    const { io, stdout, stderr } = captureIo();
     let resumeArgs: string[] | undefined;
     const resumed = await runAkRole(
       ["--model", "xai/grok-4.5:high", "resume", runId],
       {
         packageRoot,
         home,
-        cwd: project,
+        cwd: movedProject,
         credentials: { "openai-codex": true, xai: true },
         io,
         piRunner: async (args) => {
           resumeArgs = [...args];
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const sessionFile = args[args.indexOf("--session") + 1]!;
+          openedPrincipals.add(sessionFile);
           assert.equal(sessionDir, sessionDirectory);
           assert.equal(sessionFile, join(sessionDirectory, "session.jsonl"));
           // Exact principal reopen — never directory-latest --continue.
@@ -880,7 +894,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
       },
     );
 
-    assert.ok(resumeArgs);
+    assert.ok(resumeArgs, stderr.join(""));
     assert.equal(resumed.exitCode, 0);
     assert.ok(resumed.terminal);
     assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
@@ -899,6 +913,9 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     const durable = await readRoleRunState(runDirectory);
     assert.equal(durable?.state, "terminal");
     assert.equal(durable?.sessionFile, join(sessionDirectory, "session.jsonl"));
+    assert.deepEqual([...openedPrincipals], [
+      join(sessionDirectory, "session.jsonl"),
+    ]);
   });
 });
 
