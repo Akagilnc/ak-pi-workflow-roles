@@ -269,8 +269,9 @@ async function dispatchAdmittedJudge(input: {
       // and role-runtime can record typed provider HTTP observations.
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
-    if (env.correlationId !== undefined && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== undefined && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
 
     let result: ExplicitInternalPiResult;
@@ -502,7 +503,10 @@ export async function runPublicResume(
 
   return await dispatchAdmittedJudge({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+    },
     io,
     extraArgs,
     lease,

@@ -291,8 +291,9 @@ async function dispatchAdmittedMerger(input: {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
-    if (env.correlationId !== undefined && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== undefined && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
 
     let result: ExplicitInternalPiResult;
@@ -661,7 +662,10 @@ export async function runPublicMergerResume(
 
   return await dispatchAdmittedMerger({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+    },
     io,
     extraArgs,
     lease,
