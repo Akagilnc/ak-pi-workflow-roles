@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -43,16 +42,6 @@ import {
 } from "../../src/role-runtime.ts";
 import { Value } from "typebox/value";
 import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { activationBookDirectory, resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
-
-function expectedNavigatorDirectory(context: { cwd: string }, subjectKey: string): string {
-  return join(
-    activationBookDirectory(resolveActivationLedgerHome(), resolveBookKeyFromGit(context.cwd)),
-    "navigator",
-    createHash("sha256").update(subjectKey).digest("hex").slice(0, 32),
-  );
-}
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
@@ -115,10 +104,70 @@ async function readLatestSession(directory: string): Promise<PersistedEntry[]> {
     .map((line) => JSON.parse(line) as PersistedEntry);
 }
 
-function navigatorSubjectFromRole(entries: PersistedEntry[]): string {
-  const invocation = [...entries].reverse().find((entry) => entry.customType === "ak-navigator-invocation");
-  if (typeof invocation?.data?.subjectKey !== "string") throw new Error("role session is missing Navigator subject identity");
-  return invocation.data.subjectKey;
+type ObservedNavigatorSession = {
+  directory: string;
+  file: string;
+  entries: PersistedEntry[];
+};
+
+function persistedNavigatorSubjectKey(entries: PersistedEntry[]): string | undefined {
+  const invocation = [...entries].reverse().find(
+    (entry) => entry.customType === "ak-navigator-invocation" && typeof entry.data?.subjectKey === "string",
+  );
+  return invocation?.data?.subjectKey;
+}
+
+async function listObservedNavigatorSessions(home: string): Promise<ObservedNavigatorSession[]> {
+  const booksRoot = join(home, ".ak-roles", "books");
+  let books: string[];
+  try {
+    books = await readdir(booksRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const observed: ObservedNavigatorSession[] = [];
+  for (const book of books) {
+    const navigatorRoot = join(booksRoot, book, "navigator");
+    let digests: string[];
+    try {
+      digests = await readdir(navigatorRoot);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    for (const digest of digests) {
+      const directory = join(navigatorRoot, digest);
+      let files: string[];
+      try {
+        files = (await readdir(directory)).filter((file) => file.endsWith(".jsonl")).sort();
+      } catch {
+        continue;
+      }
+      if (files.length === 0) continue;
+      const file = join(directory, files.at(-1)!);
+      const entries = (await readFile(file, "utf8"))
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as PersistedEntry);
+      observed.push({ directory, file, entries });
+    }
+  }
+  return observed;
+}
+
+async function uniqueObservedNavigatorSession(home: string, subjectKey?: string): Promise<ObservedNavigatorSession> {
+  const sessions = await listObservedNavigatorSessions(home);
+  const matched = subjectKey === undefined
+    ? sessions
+    : sessions.filter((session) => persistedNavigatorSubjectKey(session.entries) === subjectKey);
+  assert.equal(
+    matched.length,
+    1,
+    `expected a unique persisted navigator session${subjectKey === undefined ? "" : ` for ${subjectKey}`}, found ${matched.map((session) => session.directory).join(", ") || "none"}`,
+  );
+  return matched[0]!;
 }
 
 
@@ -159,8 +208,7 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
         },
       });
       const roleEntries = await readLatestSession(sessionDirectory);
-      const navigatorDirectory = expectedNavigatorDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, navigatorSubjectFromRole(roleEntries));
-      const navigatorEntries = await readLatestSession(navigatorDirectory);
+      const navigatorEntries = (await uniqueObservedNavigatorSession(home)).entries;
       return { result, roleEntries, navigatorEntries };
     },
   );
@@ -1063,10 +1111,8 @@ test("cold-installed live help follows the loaded extension and changes on the n
             const visible = sessionManager.getEntries().find((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
             event = visible?.type === "custom_message" ? visible.details : undefined;
             if (event?.disposition !== "recommendation") return;
-            const navigatorDirectory = expectedNavigatorDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, resolve(issueRoot));
-            const navigatorFiles = (await readdir(navigatorDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
-            assert.ok(navigatorFiles.length > 0, `${label} must persist a Navigator session (${JSON.stringify({ event, modelRequests, navigatorDirectory })})`);
-            const persisted = (await readFile(join(navigatorDirectory, navigatorFiles.at(-1)!), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
+            const observed = await uniqueObservedNavigatorSession(home, resolve(issueRoot));
+            const persisted = observed.entries;
             const prepared = [...persisted].reverse().find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolName === NAVIGATOR_PREPARE_TOOL_NAME);
             const settled = [...persisted].reverse().find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
             const preparedAt = prepared?.timestamp;
@@ -1232,8 +1278,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         });
         assert.equal(navigatorCalls, 1);
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
-      const navigatorSession = SessionManager.continueRecent(issueRoot, expectedNavigatorDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot));
-      const navigatorEntries = (await readFile(navigatorSession.getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: unknown });
+      const navigatorEntries = (await uniqueObservedNavigatorSession(home, issueRoot)).entries as Array<{ type?: string; customType?: string; data?: unknown }>;
       const invocations = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
       const settlements = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
       const routes = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-route");
@@ -1423,12 +1468,11 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
         assert.equal(attendance.length, 1);
         assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "recommendation");
         assert.equal(navigatorCalls, 1, "mid-turn agent_settled must not discard a healthy prepare");
-        const navigatorDir = expectedNavigatorDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot);
-        const persisted = (await readFile(SessionManager.continueRecent(issueRoot, navigatorDir).getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
+        const persisted = (await uniqueObservedNavigatorSession(home, issueRoot)).entries;
         const settlements = persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
         const invocations = persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
         assert.equal(settlements.length, 1);
-        assert.equal(settlements[0].data.kind, "accepted");
+        assert.equal(settlements[0]?.data?.kind, "accepted");
         assert.equal(invocations.length, 1);
       });
       if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
@@ -1504,9 +1548,49 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               await mkdir(resolve(issueRoot, "authority.md"), { recursive: true });
             }
             if (scenario.name === "session") {
-              const navigatorDirectory = expectedNavigatorDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot);
-              await mkdir(resolve(navigatorDirectory, ".."), { recursive: true });
-              await writeFile(navigatorDirectory, "not a session directory", "utf8");
+              const seedFaux = fauxProvider({
+                api: "ak-navigator-session-seed",
+                provider: "ak-navigator-session-seed",
+                tokenSize: { min: 1000, max: 1000 },
+              });
+              const seedModel = seedFaux.getModel();
+              await writeNavigatorModelSetting(`${seedModel.provider}/${seedModel.id}`, resolve(agentDir, "navigator-model.json"));
+              const seedResponse = (context: Context) => {
+                const names = context.tools?.map((tool) => tool.name) ?? [];
+                if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+                  return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+                    candidates: [{
+                      id: "session-seed-route",
+                      matches: { role: "judge", phase: null, kind: "accepted" },
+                      route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+                      next: { role: "reviewer", phase: null },
+                      reason: "seed observed navigator directory",
+                      command: "Usage: pi --ak-role reviewer --help",
+                    }],
+                  }), { stopReason: "toolUse" });
+                }
+                if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+                  return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+                }
+                return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
+              };
+              seedFaux.setResponses([seedResponse, seedResponse, seedResponse]);
+              await withInProcessPi({
+                activationLedgerSession: true,
+                cwd: issueRoot,
+                agentDir,
+                faux: seedFaux,
+                additionalExtensionPaths: [packageEntrypoint(manifest)],
+                systemPrompt: "NAVIGATOR SESSION SEED",
+                mode: "json",
+                flags: { "ak-role": "judge" },
+                noTools: "builtin",
+              }, async ({ session }) => {
+                await session.prompt("Seed the observed Navigator session directory through the real entry.");
+              });
+              const observed = await uniqueObservedNavigatorSession(home, issueRoot);
+              await rm(observed.directory, { recursive: true, force: true });
+              await writeFile(observed.directory, "not a session directory", "utf8");
             }
             const faux = fauxProvider({ api: `ak-navigator-${scenario.name}-${diagnosticIndex}`, provider: `ak-navigator-${scenario.name}-${diagnosticIndex}`, tokenSize: { min: 1000, max: 1000 } });
             const model = faux.getModel();
@@ -1692,8 +1776,8 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
       });
 
       assert.ok(sharedSubjectKey);
-      const navigatorSession = SessionManager.continueRecent(issueRoot, expectedNavigatorDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, sharedSubjectKey));
-      const entries = (await readFile(navigatorSession.getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: any });
+      const navigatorSession = await uniqueObservedNavigatorSession(home, sharedSubjectKey);
+      const entries = navigatorSession.entries as Array<{ type?: string; customType?: string; data?: any }>;
       const contexts = entries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-context");
       assert.deepEqual(contexts.slice(0, 2).map((entry) => ({
         subjectKey: entry.data?.subjectKey,
@@ -1730,10 +1814,8 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         assert.notEqual(isolatedSubjectKey, sharedSubjectKey);
         assert.deepEqual(event.next, { role: "fixer", phase: "plan" });
       });
-      assert.notEqual(
-        navigatorSession.getSessionFile(),
-        SessionManager.continueRecent(otherRoot, expectedNavigatorDirectory({ cwd: otherRoot, sessionManager: { getSessionDir: () => "" } } as never, isolatedSubjectKey!)).getSessionFile(),
-      );
+      const isolatedSession = await uniqueObservedNavigatorSession(home, isolatedSubjectKey!);
+      assert.notEqual(navigatorSession.file, isolatedSession.file);
       if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
     },
   );
@@ -1796,11 +1878,7 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
           assert.equal(event.unavailableSource, undefined);
 
           const subjectKey = (attendance[0] as { details: { subjectKey: string } }).details.subjectKey;
-          const navigatorSession = SessionManager.continueRecent(
-            outsideRoot,
-            expectedNavigatorDirectory({ cwd: outsideRoot, sessionManager: { getSessionDir: () => "" } } as never, subjectKey),
-          );
-          const entries = (await readFile(navigatorSession.getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: { authority?: string; subject?: string } });
+          const entries = (await uniqueObservedNavigatorSession(home, subjectKey)).entries as Array<{ type?: string; customType?: string; data?: { authority?: string; subject?: string } }>;
           const contexts = entries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-context");
           assert.ok(contexts.length >= 1, JSON.stringify(entries));
           assert.equal(contexts[0]?.data?.authority, packetBytes);
@@ -1892,8 +1970,7 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
         porcelainBefore,
         "role/Navigator session transport must preserve consumer porcelain bytes exactly",
       );
-      const navigatorSession = SessionManager.continueRecent(root, expectedNavigatorDirectory({ cwd: root, sessionManager: { getSessionDir: () => "" } } as never, first.subjectKey));
-      const persisted = (await readFile(navigatorSession.getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: { role?: string; phase?: string | null } });
+      const persisted = (await uniqueObservedNavigatorSession(home, first.subjectKey)).entries as Array<{ type?: string; customType?: string; data?: { role?: string; phase?: string | null } }>;
       assert.deepEqual(persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation").slice(0, 2).map((entry) => ({ role: entry.data?.role, phase: entry.data?.phase })), [
         { role: "coder", phase: "plan" },
         { role: "fixer", phase: "plan" },
@@ -2454,8 +2531,7 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
     );
 
     const roleEntries = await readLatestSession(sessionDirectory);
-    const navigatorDirectory = expectedNavigatorDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, navigatorSubjectFromRole(roleEntries));
-    const navigatorEntries = await readLatestSession(navigatorDirectory);
+    const navigatorEntries = (await uniqueObservedNavigatorSession(home)).entries;
     const navigatorPrepare = navigatorEntries.find(
       (entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === NAVIGATOR_PREPARE_TOOL_NAME,
     );
