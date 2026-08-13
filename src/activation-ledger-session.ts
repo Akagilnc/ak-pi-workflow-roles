@@ -4,7 +4,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import {
   activationBookDirectory,
   ensureRealDirectoryTree,
