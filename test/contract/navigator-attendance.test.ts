@@ -26,8 +26,6 @@ import {
   selectNavigatorCandidate,
   subjectPath,
 } from "../../src/navigator-attendance.ts";
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { activationBookDirectory, resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
@@ -852,17 +850,56 @@ test("settlement decoration carries recommendation only; unavailable and no-advi
   );
 });
 
-test("work subjects remain stable and isolate ad hoc work", () => {
+test("work subjects remain stable and isolate ad hoc work", async () => {
+  const issue = subjectPath("/repo/.ak/work/issues/28/runs/one/session", "/repo");
+  assert.equal(issue, "/repo/.ak/work/issues/28");
+  assert.equal(subjectPath(".ak/work/issues/28/runs/two/session", "/repo"), issue);
+  assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/coder/task.md", "/repo"), "/repo/.ak/work/ad-hoc");
+  assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/reviewer/fix-packet.json", "/repo"), "/repo/.ak/work/ad-hoc");
+
   const adHocRoot = "/repo/.ak/work/ad-hoc";
-  assert.equal(subjectPath("/repo/.ak/work/issues/28/runs/one/session", "/repo"), "/repo/.ak/work/issues/28");
   assert.equal(navigatorSubjectKey(adHocRoot, "same concrete task"), navigatorSubjectKey(adHocRoot, "same   concrete task"));
   assert.notEqual(navigatorSubjectKey(adHocRoot, "same concrete task"), navigatorSubjectKey(adHocRoot, "different task"));
   assert.equal(
-    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/coder/task.md", "/repo"),
+    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/coder/other-task.md", "/repo"),
     navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/reviewer/fix-packet.json", "/repo"),
+    "natural role-specific filenames remain one work subject",
+  );
+  assert.notEqual(
+    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/coder/task.md", "/repo"),
+    navigatorSubjectKeyForInput("/repo/.ak/work/other-ad-hoc", "/repo/.ak/work/other-ad-hoc/runs/reviewer/fix-packet.json", "/repo"),
+    "distinct work roots remain isolated",
   );
   assert.equal(navigatorSubjectKey("/repo/task.md", "task text"), "/repo/task.md");
+
+  const ledgerSession = join(process.env.HOME!, ".ak-roles", "books", "repo", "issues", "28", "runs", "judge@src", "session");
+  assert.equal(subjectPath(ledgerSession, "/repo"), "/repo/.ak/work");
+  assert.equal(subjectPath("", "/repo"), "/repo/.ak/work");
+  assert.equal(subjectPath(ledgerSession, issue), issue);
+  assert.equal(subjectPath("/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session", "/repo"), "/repo/.ak-roles/books/repo/issues/28");
+
+  const home = await mkdtemp(join(tmpdir(), "ak-nav-physical-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const { realpathSync } = await import("node:fs");
+    const physicalIssue = resolve(home, ".ak/work/issues/28");
+    const session = resolve(home, ".ak-roles/books/h/runs/judge-navigator/session");
+    await mkdir(physicalIssue, { recursive: true });
+    await mkdir(session, { recursive: true });
+    assert.equal(subjectPath(session, physicalIssue), physicalIssue);
+    assert.equal(subjectPath(realpathSync(session), physicalIssue), physicalIssue);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+
   assert.equal(navigatorSubjectKey(adHocRoot, `work subject: ${adHocRoot}`, "placeholder"), adHocRoot);
+  const legitimate = `work subject: ${adHocRoot} with real task bytes`;
+  const hashed = navigatorSubjectKey(adHocRoot, legitimate, "role_input");
+  assert.equal(hashed, `${adHocRoot}#${createHash("sha256").update(legitimate.trim().replace(/\s+/g, " ")).digest("hex").slice(0, 32)}`);
+  assert.equal(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "placeholder"), adHocRoot);
+  assert.notEqual(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "user_prompt"), adHocRoot);
 });
 
 test("dispose during pending createSession drains the created session without prompt or assignment", async () => {
