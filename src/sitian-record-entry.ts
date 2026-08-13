@@ -14,6 +14,7 @@ export {
   type RoleRunSessionCoordinates,
 } from "./sitian-role-run-coordinates.ts";
 import {
+  ActivationLedgerError,
   activationBookDirectory,
   ensureRealDirectoryTree,
   physicallyContainedIn,
@@ -47,8 +48,23 @@ export type CreateRecordSessionOptions = {
 export const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
 
 /**
+ * Enforce the moved activation-layer placement lock (ADR 0065 / #221): every durable
+ * principal that leaves this entry must sit under the machine ledger home. Typed
+ * ActivationLedgerError keeps the failure discriminable; no prose-wash fallback.
+ */
+function assertRecordUnderLedgerHome(ledgerHome: string, candidate: string): void {
+  if (!physicallyContainedIn(ledgerHome, candidate)) {
+    throw new ActivationLedgerError(
+      `sitian record session must be under the machine ledger home (${ledgerHome}): ${candidate}`,
+    );
+  }
+}
+
+/**
  * Sole package entry that constructs a durable Pi session record (ADR 0065).
  * No destination/path parameters — location is computed from ledger topology only.
+ * Every durable principal opened or minted here is verified under the ledger home
+ * (placement lock moved off the activation gate onto this entry).
  * Resume via Pi findMostRecentSession is limited to subject-keyed identity and the
  * authorized worker-submission-gate durable path. Ordinary no-subject children
  * (evidence-children, auditor-roles, …) always mint a fresh session — never reopen
@@ -88,6 +104,7 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
     parentSession = parentFile;
   }
 
+  assertRecordUnderLedgerHome(ledgerHome, sessionDir);
   ensureRealDirectoryTree(ledgerHome, sessionDir);
   // Subject-keyed nests continue by subject digest; gate durable resume is the only
   // authorized no-subject same-nest continuation. All other kinds mint fresh.
@@ -95,7 +112,10 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
     options.subject !== undefined || options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest) {
     const recentFile = findMostRecentSession(sessionDir, cwd);
-    if (recentFile !== null) return SessionManager.open(recentFile, sessionDir, cwd);
+    if (recentFile !== null) {
+      assertRecordUnderLedgerHome(ledgerHome, recentFile);
+      return SessionManager.open(recentFile, sessionDir, cwd);
+    }
   }
 
   const session = SessionManager.create(
@@ -116,6 +136,11 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
         session.setSessionFile(file);
       }
     }
+  }
+  // Post-condition: every durable principal that leaves this entry sits under home.
+  const principal = session.getSessionFile();
+  if (typeof principal === "string" && principal.length > 0) {
+    assertRecordUnderLedgerHome(ledgerHome, principal);
   }
   return session;
 }

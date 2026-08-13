@@ -7,6 +7,7 @@ import {
   roleRunSessionCoordinates
 } from "./sitian-role-run-coordinates.js";
 import {
+  ActivationLedgerError,
   activationBookDirectory,
   ensureRealDirectoryTree,
   physicallyContainedIn,
@@ -14,6 +15,13 @@ import {
 } from "./activation-ledger-topology.js";
 const { findMostRecentSession } = await import(new URL("./core/session-manager.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href);
 const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
+function assertRecordUnderLedgerHome(ledgerHome, candidate) {
+  if (!physicallyContainedIn(ledgerHome, candidate)) {
+    throw new ActivationLedgerError(
+      `sitian record session must be under the machine ledger home (${ledgerHome}): ${candidate}`
+    );
+  }
+}
 function createRecordSession(options) {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
@@ -35,11 +43,15 @@ function createRecordSession(options) {
     sessionDir = physicallyContainedIn(ledgerHome, parentResolved) ? join(dirname(parentResolved), options.kind) : join(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
     parentSession = parentFile;
   }
+  assertRecordUnderLedgerHome(ledgerHome, sessionDir);
   ensureRealDirectoryTree(ledgerHome, sessionDir);
   const mayResumeSameNest = options.subject !== void 0 || options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest) {
     const recentFile = findMostRecentSession(sessionDir, cwd);
-    if (recentFile !== null) return SessionManager.open(recentFile, sessionDir, cwd);
+    if (recentFile !== null) {
+      assertRecordUnderLedgerHome(ledgerHome, recentFile);
+      return SessionManager.open(recentFile, sessionDir, cwd);
+    }
   }
   const session = SessionManager.create(
     cwd,
@@ -56,6 +68,10 @@ function createRecordSession(options) {
         session.setSessionFile(file);
       }
     }
+  }
+  const principal = session.getSessionFile();
+  if (typeof principal === "string" && principal.length > 0) {
+    assertRecordUnderLedgerHome(ledgerHome, principal);
   }
   return session;
 }

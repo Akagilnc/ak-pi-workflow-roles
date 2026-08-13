@@ -869,7 +869,7 @@ export function createRoleRuntimeExtension(
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
         const ledgerHome = resolveActivationLedgerHome();
-        const session = durableSessionPointer(ctx.sessionManager, { ledgerHome, bookKey });
+        const session = durableSessionPointer(ctx.sessionManager, { ledgerHome });
 
         if (dependencies.createNavigatorAttendance !== undefined) {
           let work: NavigatorWorkContext;

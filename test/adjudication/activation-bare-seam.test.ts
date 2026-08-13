@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import {
   chmodSync,
   mkdirSync,
-  symlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -194,23 +192,18 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     mkdirSync(dirPrincipal, { recursive: true });
     await rejectSessionClass("directory principal", dirPrincipal);
 
-    // Relative path rejected (not absolute under the ledger book).
+    // Relative path rejected (must be absolute — placement under the book is sitian's job).
     await rejectSessionClass("relative path", "relative/session.jsonl");
 
-    // Outside-home /tmp pointer rejected with topology cause.
+    // Outside-home /tmp pointer with no file: still rejected (cannot materialize outside home).
     await rejectSessionClass("outside-home /tmp", join(tmpdir(), "ak-act-outside-session.jsonl"));
 
-    // Consumer-repository pointer rejected (cwd-relative durable claim).
+    // Consumer-repository pointer with no file: still rejected (cannot materialize outside home).
     await rejectSessionClass("consumer repository", join(home, "repo-session.jsonl"));
 
-    // Symlink escape: path lexically under the book but real file outside.
-    const escapeOutside = join(home, "escape-target.jsonl");
-    writeFileSync(escapeOutside, "{ steals: true }\n");
-    const linkDir = join(machineLedgerHome(home), "books", bookKey, "runs", "link-escape");
-    mkdirSync(linkDir, { recursive: true });
-    const linkPrincipal = join(linkDir, "session.jsonl");
-    symlinkSync(escapeOutside, linkPrincipal);
-    await rejectSessionClass("symlink escape", linkPrincipal);
+    // Symlink escape is no longer an activation rejection class (ADR 0065 / #221):
+    // record-placement enforcement moved to createRecordSession. An existing regular
+    // file principal is admitted even when realpath leaves the book.
   });
 });
 

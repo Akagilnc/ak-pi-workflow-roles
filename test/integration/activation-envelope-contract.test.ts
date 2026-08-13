@@ -1089,7 +1089,7 @@ test("ledger append rejects cross-book directory symlink without writing the tar
   });
 });
 
-test("ledger append and durable session admission reject symlink component escapes", async () => {
+test("ledger append rejects symlink component escapes; activation admits durable principal without book placement check", async () => {
   await withActivationHome({ prefix: "ak-act-symlink-" }, async ({ home }) => {
     const bookKey = activationBookKeyFor(home);
     const ledgerHome = machineLedgerHome(home);
@@ -1116,6 +1116,8 @@ test("ledger append and durable session admission reject symlink component escap
     assert.equal(existsSync(join(outside, bookKey, "waiting.jsonl")), false);
 
     // Session path lexically under book but final realpath escapes.
+    // ADR 0065 / #221: activation no longer polices record placement — admit the
+    // existing regular-file principal; sitian createRecordSession owns that lock.
     rmSync(join(ledgerHome, "books"), { force: true });
     const sessionFile = persistActivationSessionFile({ home, bookKey, cwd: home });
     const realSession = resolve(sessionFile);
@@ -1130,13 +1132,12 @@ test("ledger append and durable session admission reject symlink component escap
     const decoyFile = join(decoyDir, "session.jsonl");
     writeFileSync(decoyFile, `${JSON.stringify({ type: "session", version: 3, id: "decoy", timestamp: "2025-01-01T00:00:00.000Z", cwd: home })}\n`);
     symlinkSync(join(home, "decoy-runs"), runsDir);
-    assert.throws(
-      () => durableSessionPointer(
-        { getSessionFile: () => join(runsDir, "activation", "default", "session.jsonl") },
-        { ledgerHome, bookKey },
-      ),
-      (error: unknown) => error instanceof Error,
+    const pointer = durableSessionPointer(
+      { getSessionFile: () => join(runsDir, "activation", "default", "session.jsonl") },
+      { ledgerHome },
     );
+    assert.equal(pointer.kind, "session-file");
+    assert.equal(pointer.path, realpathSync(decoyFile));
     assert.notEqual(realSession, decoyFile);
   });
 });
