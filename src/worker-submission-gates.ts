@@ -13,11 +13,12 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   createRecordSession,
   type RecordSessionParent,
+  WORKER_SUBMISSION_GATE_KIND,
 } from "./sitian-record-entry.ts";
 
 export const WORKER_COMMIT_SUBJECT_PREFIX = "ak-roles:";
 /** Sitian kind for gate ① durable baseline / bounce records (single path segment, not a destination). */
-export const WORKER_SUBMISSION_GATE_RECORD_KIND = "worker-submission-gate";
+export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
 export const WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE = "commit-reminder-bounce";
 

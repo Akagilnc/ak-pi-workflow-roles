@@ -43,8 +43,8 @@ export type CreateRecordSessionOptions = {
   readonly subject?: string;
 };
 
-/** Authorized no-subject kind that may resume the most recent same-nest peer (ADR 0066). */
-const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
+/** Authorized no-subject kind that may resume the most recent same-nest peer (ADR 0066). Sole string true source for gate resume identity. */
+export const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
 
 /**
  * Sole package entry that constructs a durable Pi session record (ADR 0065).
