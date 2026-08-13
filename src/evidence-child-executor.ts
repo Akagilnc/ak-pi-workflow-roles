@@ -186,15 +186,31 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
         const idle = createStreamIdleGuard(
           options.signal === undefined ? {} : { parentSignal: options.signal },
         );
+        // Typed HTTP status observed via onResponse — never inferred from prose.
+        let observedHttpStatus: number | undefined;
         try {
           const requestSignal = request?.signal;
           const streamSignal = requestSignal === undefined
             ? idle.signal
             : AbortSignal.any([idle.signal, requestSignal]);
+          const priorOnResponse = request?.onResponse;
+          const priorFetch = request?.fetch;
           const inheritedRequest = {
             ...(request ?? {}),
             ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }),
             signal: streamSignal,
+            // Observe the HTTP status directly from the response (and via onResponse).
+            // Do not infer status from errorMessage prose after the SDK folds it.
+            fetch: (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+              const fetchImpl = priorFetch ?? globalThis.fetch;
+              const response = await fetchImpl(input, init);
+              if (typeof response?.status === "number") observedHttpStatus = response.status;
+              return response;
+            }) as typeof fetch,
+            onResponse: (response: { status: number }, responseModel: Model<Api>) => {
+              if (typeof response?.status === "number") observedHttpStatus = response.status;
+              return priorOnResponse?.(response as never, responseModel as never);
+            },
           } as ProviderStreamOptions;
           if (options.runCompletion !== undefined) {
             await new Promise<void>((resolve) => setImmediate(resolve));
@@ -209,12 +225,12 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
               ),
               streamSignal,
             );
-            const response: AssistantMessage = {
+            const response: AssistantMessage = attachObservedHttpStatus({
               ...completed,
               api: model.api,
               provider: model.provider,
               model: model.id,
-            };
+            }, observedHttpStatus);
             if (response.stopReason === "error" || response.stopReason === "aborted") {
               wrapped.push({ type: "error", reason: response.stopReason, error: response });
             } else {
@@ -232,9 +248,12 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
             if (next.done) break;
             sawEvent = true;
             idle.poke();
-            wrapped.push(next.value as any);
+            wrapped.push(enrichStreamEvent(next.value, observedHttpStatus) as any);
           }
-          const response = await waitForStream(source.result(), idle.signal);
+          const response = attachObservedHttpStatus(
+            await waitForStream(source.result(), idle.signal),
+            observedHttpStatus,
+          );
           if (!sawEvent) wrapped.end(response);
           return;
         } catch (error) {
@@ -265,6 +284,7 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
           }
           state.streamFailure = failure;
           const status = structuredRemoteStatus(failure);
+          const payload = structuredRemotePayload(failure);
           const failureRecord = typeof failure === "object" && failure !== null
             ? failure as Record<string, unknown>
             : undefined;
@@ -277,10 +297,14 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
             model: model.id,
             usage: emptyUsage(),
             stopReason: "error",
+            // Preserve the held failure message bytes — do not rewrite.
             errorMessage: failure instanceof Error ? failure.message : String(failure),
             timestamp: Date.now(),
             ...(diagnostics === undefined ? {} : { diagnostics }),
             ...(status === undefined ? {} : { status, statusCode: status }),
+            ...(payload.body === undefined ? {} : { body: payload.body }),
+            ...(payload.code === undefined ? {} : { code: payload.code }),
+            ...(payload.errno === undefined ? {} : { errno: payload.errno }),
           } as AssistantMessage;
           wrapped.push({ type: "error", reason: "error", error: response });
           wrapped.end(response);
@@ -362,21 +386,53 @@ function numericHttpStatus(value: unknown): number | undefined {
   if (typeof value === "number" && (value < 200 || value >= 300)) return value;
   return undefined;
 }
-const LEADING_HTTP_STATUS = /^(?:[A-Za-z][\w.-]*\s+)?\((\d{3})\)|^(\d{3})\s*:/;
-function httpStatusFromMessage(value: unknown): number | undefined {
-  if (typeof value !== "string") return undefined;
-  const match = LEADING_HTTP_STATUS.exec(value.trim());
-  if (match === null) return undefined;
-  const status = Number(match[1] ?? match[2]);
-  return numericHttpStatus(status);
+/**
+ * Attach a directly observed HTTP status onto an error/aborted assistant message.
+ * Does not invent status from errorMessage prose; skips when already held.
+ */
+function attachObservedHttpStatus<T extends AssistantMessage>(
+  message: T,
+  observedHttpStatus: number | undefined,
+): T {
+  if (observedHttpStatus === undefined) return message;
+  if (message.stopReason !== "error" && message.stopReason !== "aborted") return message;
+  if (numericHttpStatus(observedHttpStatus) === undefined) return message;
+  if (structuredRemoteStatus(message) !== undefined) return message;
+  return Object.assign(message, {
+    status: observedHttpStatus,
+    statusCode: observedHttpStatus,
+  });
 }
+function enrichStreamEvent(event: unknown, observedHttpStatus: number | undefined): unknown {
+  if (observedHttpStatus === undefined || event === null || typeof event !== "object") return event;
+  const record = event as Record<string, unknown>;
+  if (record.type === "error" && record.error !== null && typeof record.error === "object") {
+    return {
+      ...record,
+      error: attachObservedHttpStatus(record.error as AssistantMessage, observedHttpStatus),
+    };
+  }
+  if (record.type === "done" && record.message !== null && typeof record.message === "object") {
+    return {
+      ...record,
+      message: attachObservedHttpStatus(record.message as AssistantMessage, observedHttpStatus),
+    };
+  }
+  if (record.partial !== null && typeof record.partial === "object") {
+    return {
+      ...record,
+      partial: attachObservedHttpStatus(record.partial as AssistantMessage, observedHttpStatus),
+    };
+  }
+  return event;
+}
+/** Typed HTTP status only — never infer from errorMessage/message prose. */
 function structuredRemoteStatus(error: unknown): number | undefined {
   if (typeof error !== "object" || error === null) return undefined;
   const record = error as Record<string, unknown>;
   return numericHttpStatus(record.statusCode)
     ?? numericHttpStatus(record.status)
-    ?? httpStatusFromMessage(record.errorMessage)
-    ?? httpStatusFromMessage(record.message)
+    ?? numericHttpStatus(record.httpStatus)
     ?? structuredRemoteStatus(record.cause);
 }
 function hasStructuredRemoteError(error: unknown): boolean {
@@ -385,6 +441,25 @@ function hasStructuredRemoteError(error: unknown): boolean {
   const record = error as Record<string, unknown>;
   if (Array.isArray(record.diagnostics) && record.diagnostics.length > 0) return true;
   return hasStructuredRemoteError(record.cause);
+}
+/** SDK structured payload fields held on the call surface — project only when present. */
+function structuredRemotePayload(error: unknown): {
+  readonly body?: unknown;
+  readonly code?: unknown;
+  readonly errno?: unknown;
+} {
+  if (typeof error !== "object" || error === null) return {};
+  const record = error as Record<string, unknown>;
+  const nested = record.cause === undefined ? {} : structuredRemotePayload(record.cause);
+  return {
+    ...(nested.body !== undefined ? { body: nested.body } : {}),
+    ...(nested.code !== undefined ? { code: nested.code } : {}),
+    ...(nested.errno !== undefined ? { errno: nested.errno } : {}),
+    // Prefer fields on the current object over nested cause.
+    ...(record.body !== undefined ? { body: record.body } : {}),
+    ...(record.code !== undefined ? { code: record.code } : {}),
+    ...(record.errno !== undefined ? { errno: record.errno } : {}),
+  };
 }
 function classifiedError(error: unknown, evidenceChildFailure: EvidenceChildFailureClassification): ClassifiedReviewerError {
   const diagnostic = typeof error === "object" && error !== null && typeof (error as { errorMessage?: unknown }).errorMessage === "string"
@@ -858,8 +933,12 @@ export async function executeAuditorChild(
           else if (retentionFailure !== undefined) throw retentionFailure;
         } catch (retentionFailure) {
           if (response.stopReason !== "error") throw retentionFailure;
-          const diagnostic = response.errorMessage?.trim();
+          // Do not trim/rewrite the held errorMessage bytes.
+          const diagnostic = typeof response.errorMessage === "string" && response.errorMessage.trim() !== ""
+            ? response.errorMessage
+            : undefined;
           const httpStatus = structuredRemoteStatus(response);
+          const payload = structuredRemotePayload(response);
           const hasTestimony = hasStructuredRemoteError(response);
           const failure = new Error(
             diagnostic ?? "",
@@ -877,13 +956,16 @@ export async function executeAuditorChild(
           const retentionError = retentionFailure instanceof Error ? retentionFailure : undefined;
           const retentionCause = retentionError?.cause;
           failure.details = {
-            ...(diagnostic ? { errorMessage: diagnostic } : {}),
+            ...(diagnostic === undefined ? {} : { errorMessage: diagnostic }),
             ...(response.provider ? { provider: response.provider } : {}),
             ...(response.model ? { model: response.model } : {}),
             ...(response.api ? { api: response.api } : {}),
             ...(response.rawStopReason ? { rawStopReason: response.rawStopReason } : {}),
             ...(httpStatus === undefined ? {} : { httpStatus }),
             ...(response.diagnostics === undefined ? {} : { diagnostics: response.diagnostics }),
+            ...(payload.body === undefined ? {} : { body: payload.body }),
+            ...(payload.code === undefined ? {} : { code: payload.code }),
+            ...(payload.errno === undefined ? {} : { errno: payload.errno }),
             retentionFailure: {
               name: retentionError?.name ?? typeof retentionFailure,
               message: retentionError?.message ?? String(retentionFailure),

@@ -16843,17 +16843,8 @@ function nonEmptyString(value) {
 function isNonSuccessHttpStatus(status) {
   return typeof status === "number" && (status < 200 || status >= 300);
 }
-function httpStatusFromDiagnostic(value) {
-  if (typeof value !== "string") return void 0;
-  const match = LEADING_HTTP_STATUS.exec(value.trim());
-  if (match === null) return void 0;
-  const status = Number(match[1] ?? match[2]);
-  return isNonSuccessHttpStatus(status) ? status : void 0;
-}
 function hasUpstreamErrorTestimony(input) {
-  if (isNonSuccessHttpStatus(input.httpStatus) || httpStatusFromDiagnostic(input.errorMessage) !== void 0) {
-    return true;
-  }
+  if (isNonSuccessHttpStatus(input.httpStatus)) return true;
   return Array.isArray(input.diagnostics) && input.diagnostics.length > 0;
 }
 function sessionStopDetails(input) {
@@ -16868,9 +16859,11 @@ function sessionStopDetails(input) {
   if (api !== void 0) details.api = api;
   const rawStopReason = nonEmptyString(input.rawStopReason);
   if (rawStopReason !== void 0) details.rawStopReason = rawStopReason;
-  const httpStatus = typeof input.httpStatus === "number" ? input.httpStatus : httpStatusFromDiagnostic(input.errorMessage);
-  if (httpStatus !== void 0) details.httpStatus = httpStatus;
+  if (typeof input.httpStatus === "number") details.httpStatus = input.httpStatus;
   if (input.diagnostics !== void 0) details.diagnostics = input.diagnostics;
+  if (input.body !== void 0) details.body = input.body;
+  if (input.code !== void 0) details.code = input.code;
+  if (input.errno !== void 0) details.errno = input.errno;
   return details;
 }
 function knownFailureFromProviderStop(input) {
@@ -16937,7 +16930,7 @@ async function runExplicitInternalActivation(options) {
     env
   });
 }
-var REVIEWER_DISPATCH_REJECTION_FILE, LEADING_HTTP_STATUS, execFileAsync3, defaultExplicitInternalPiRunner;
+var REVIEWER_DISPATCH_REJECTION_FILE, execFileAsync3, defaultExplicitInternalPiRunner;
 var init_explicit_internal = __esm({
   "src/public-cli/explicit-internal.ts"() {
     "use strict";
@@ -16945,7 +16938,6 @@ var init_explicit_internal = __esm({
     init_registry2();
     init_reviewer_dispatch();
     REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
-    LEADING_HTTP_STATUS = /^(?:[A-Za-z][\w.-]*\s+)?\((\d{3})\)|^(\d{3})\s*:/;
     execFileAsync3 = promisify3(execFile3);
     defaultExplicitInternalPiRunner = async (args, options) => {
       const command = options.env.PI_BINARY ?? "pi";
@@ -18676,16 +18668,28 @@ async function readBoundSessionEntries(sessionFile) {
   }
   return entries;
 }
+function typedHttpStatusFromMessage(message) {
+  for (const candidate of [message.httpStatus, message.statusCode, message.status]) {
+    if (typeof candidate === "number" && (candidate < 200 || candidate >= 300)) return candidate;
+  }
+  return void 0;
+}
 function sessionProviderStopFromAssistant(message) {
   if (message?.role !== "assistant" || message.stopReason !== "error") return void 0;
+  const httpStatus = typedHttpStatusFromMessage(message);
   return {
     stopReason: "error",
+    // Preserve held errorMessage bytes — emptiness check must not rewrite.
     ...typeof message.errorMessage === "string" && message.errorMessage.trim() !== "" ? { errorMessage: message.errorMessage } : {},
     ...typeof message.provider === "string" && message.provider.trim() !== "" ? { provider: message.provider } : {},
     ...typeof message.model === "string" && message.model.trim() !== "" ? { model: message.model } : {},
     ...typeof message.api === "string" && message.api.trim() !== "" ? { api: message.api } : {},
     ...typeof message.rawStopReason === "string" && message.rawStopReason.trim() !== "" ? { rawStopReason: message.rawStopReason } : {},
-    ...message.diagnostics === void 0 ? {} : { diagnostics: message.diagnostics }
+    ...message.diagnostics === void 0 ? {} : { diagnostics: message.diagnostics },
+    ...httpStatus === void 0 ? {} : { httpStatus },
+    ...message.body === void 0 ? {} : { body: message.body },
+    ...message.code === void 0 ? {} : { code: message.code },
+    ...message.errno === void 0 ? {} : { errno: message.errno }
   };
 }
 function extractSessionProviderStop(entries) {
@@ -18904,12 +18908,17 @@ async function resolveAuditedRunnerKnownFailure(input) {
     if (httpObservation === void 0) return void 0;
     return knownFailureFromProviderStop({
       stopReason: "error",
-      httpStatus: httpObservation.httpStatus
+      httpStatus: httpObservation.httpStatus,
+      provider: httpObservation.provider
     });
   }
   return knownFailureFromProviderStop({
     ...parentStop,
-    ...httpObservation === void 0 ? {} : { httpStatus: httpObservation.httpStatus }
+    ...httpObservation === void 0 ? {} : {
+      httpStatus: httpObservation.httpStatus,
+      // Observation association outranks session-configured provider name alone.
+      provider: httpObservation.provider
+    }
   });
 }
 function isRecord5(value) {
