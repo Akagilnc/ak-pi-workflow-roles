@@ -15,6 +15,7 @@ const entries = [
   "sitian-role-run-coordinates",
   "sitian-record-entry",
   "typed-provider-http",
+  "upstream-error-testimony",
 ];
 
 /**

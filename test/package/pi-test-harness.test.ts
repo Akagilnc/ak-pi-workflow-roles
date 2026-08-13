@@ -327,6 +327,12 @@ async function exerciseSharedPackageContracts(): Promise<void> {
   assert.equal(typeof typedHttp.recordTypedProviderHttpStatus, "function");
   assert.equal(typeof typedHttp.clearTypedProviderHttpObservation, "function");
   assert.equal(typeof typedHttp.readLatestTypedProviderHttpObservation, "function");
+  const testimonyUrl = pathToFileURL(
+    resolve(packageRoot, "dist/upstream-error-testimony.js"),
+  ).href;
+  const testimony = await import(`${testimonyUrl}?t=${Date.now()}-${Math.random()}`);
+  assert.equal(typeof testimony.hasUpstreamErrorTestimony, "function");
+  assert.equal(typeof testimony.isNonSuccessHttpStatus, "function");
   const navigatorSource = await readFile(
     resolve(packageRoot, "dist/navigator-attendance.js"),
     "utf8",
@@ -335,6 +341,11 @@ async function exerciseSharedPackageContracts(): Promise<void> {
     navigatorSource,
     /from\s+["']\.\/typed-provider-http\.js["']/,
     "navigator-attendance must statically import the shared typed-provider-http owner",
+  );
+  assert.match(
+    navigatorSource,
+    /from\s+["']\.\/upstream-error-testimony\.js["']/,
+    "navigator-attendance must statically import the shared upstream-error testimony authority",
   );
   assert.equal(
     navigatorSource.includes("public-cli/run-lifecycle"),
@@ -420,6 +431,7 @@ test("isolated packs leave shared dist identity stable under concurrent contract
   assert.ok(paths.includes("dist/package-contracts/judge-output.js"));
   assert.ok(paths.includes("dist/navigator-attendance.js"));
   assert.ok(paths.includes("dist/typed-provider-http.js"));
+  assert.ok(paths.includes("dist/upstream-error-testimony.js"));
   assert.ok(paths.includes("dist/activation-ledger-topology.js"));
   assert.ok(paths.includes("dist/activation-reconciliation.js"));
   assert.ok(!paths.some((path) => path.includes("recorder")));

@@ -21,6 +21,11 @@ import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
+import {
+  hasUpstreamErrorTestimony,
+  isNonSuccessHttpStatus,
+  projectConfirmedRemotePayload,
+} from "./upstream-error-testimony.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
@@ -1119,6 +1124,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
     /** Project only fields actually held on the call surface — never forge upstream payload. */
     const projectHeldUpstream = (error: unknown): Record<string, unknown> => {
       if (!exactRecord(error)) return {};
+      // Shape reading stays local; testimony + confirmed-remote payload use shared authority.
       const status = typeof error.statusCode === "number"
         ? error.statusCode
         : typeof error.status === "number"
@@ -1126,17 +1132,18 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
           : typeof error.httpStatus === "number"
             ? error.httpStatus
             : undefined;
-      const nonSuccess = typeof status === "number" && (status < 200 || status >= 300);
+      const httpStatus = isNonSuccessHttpStatus(status) ? status : undefined;
       const diagnostics = Array.isArray(error.diagnostics) && error.diagnostics.length > 0
         ? error.diagnostics
         : undefined;
-      const remoteConfirmed = nonSuccess || diagnostics !== undefined;
-      return {
-        ...(nonSuccess ? { statusCode: status, status } : {}),
+      const testimony = hasUpstreamErrorTestimony({
+        ...(httpStatus === undefined ? {} : { httpStatus }),
         ...(diagnostics === undefined ? {} : { diagnostics }),
-        ...(remoteConfirmed && error.body !== undefined ? { body: error.body } : {}),
-        ...(remoteConfirmed && error.code !== undefined ? { code: error.code } : {}),
-        ...(remoteConfirmed && error.errno !== undefined ? { errno: error.errno } : {}),
+      });
+      return {
+        ...(httpStatus === undefined ? {} : { statusCode: httpStatus, status: httpStatus }),
+        ...(diagnostics === undefined ? {} : { diagnostics }),
+        ...(testimony ? projectConfirmedRemotePayload(error) : {}),
       };
     };
     /** Keep held upstream fields; strip only the local navigatorFailure classification marker. */

@@ -21,6 +21,12 @@ import {
   type ReviewerPreflightViolation,
 } from "../reviewer-dispatch.ts";
 import type { ControlledFailureCause } from "./terminal.ts";
+import {
+  hasUpstreamErrorTestimony,
+  projectConfirmedRemotePayload,
+} from "../upstream-error-testimony.ts";
+
+export { hasUpstreamErrorTestimony } from "../upstream-error-testimony.ts";
 
 /** Durable Reviewer-rejection child→parent page under AK_ROLE_RUN_DIR. */
 const REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
@@ -151,24 +157,6 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
-function isNonSuccessHttpStatus(status: unknown): status is number {
-  return typeof status === "number" && (status < 200 || status >= 300);
-}
-
-/**
- * Upstream testimony is a directly observed HTTP response or SDK-structured
- * remote error. Pi stopReason, selected provider/model names, silent stream
- * death, errorMessage prose (e.g. "500: …"), and locally synthesized errors
- * are not testimony.
- */
-export function hasUpstreamErrorTestimony(input: {
-  readonly httpStatus?: number;
-  readonly diagnostics?: unknown;
-}): boolean {
-  if (isNonSuccessHttpStatus(input.httpStatus)) return true;
-  return Array.isArray(input.diagnostics) && input.diagnostics.length > 0;
-}
-
 function sessionStopDetails(input: {
   readonly errorMessage?: string | null;
   readonly provider?: string;
@@ -197,10 +185,8 @@ function sessionStopDetails(input: {
   }
   if (typeof input.httpStatus === "number") details.httpStatus = input.httpStatus;
   if (input.diagnostics !== undefined) details.diagnostics = input.diagnostics;
-  // SDK structured payload fields: project only when actually held on a confirmed-remote node.
-  if (testimony && input.body !== undefined) details.body = input.body;
-  if (testimony && input.code !== undefined) details.code = input.code;
-  if (testimony && input.errno !== undefined) details.errno = input.errno;
+  // SDK structured payload fields: project only when held on a confirmed-remote node.
+  if (testimony) Object.assign(details, projectConfirmedRemotePayload(input));
   return details;
 }
 
