@@ -14,6 +14,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   createRoleRuntimeExtension,
@@ -32,6 +33,7 @@ import {
 } from "../../src/worker-submission-gates.ts";
 import {
   machineLedgerHome,
+  packageRoot,
   seedGitRepository,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
@@ -488,160 +490,230 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     );
 
     // (b) chmod 444 on gate file → real worker output tool append fails with EACCES
-    // through createRoleRuntimeExtension hostActions + tool_result overlay (typed
-    // infrastructure fact, print/public nonzero exit; not a host stand-in).
-    const toolsF = new Map<string, { execute: (...args: any[]) => Promise<any> }>();
-    const handlersF = new Map<string, (...args: any[]) => any>();
-    const piF = {
-      registerFlag() {},
-      getFlag(name: string) {
-        if (name === "ak-role") return "fixer";
-        if (name === "ak-fix-packet") return "/packet.md";
-        if (name === "ak-fixer-phase") return "apply";
-        return undefined;
-      },
-      registerTool(tool: { name: string; execute: (...args: any[]) => Promise<any> }) {
-        toolsF.set(tool.name, tool);
-      },
-      on(name: string, handler: (...args: any[]) => any) {
-        handlersF.set(name, handler);
-      },
-      getAllTools() {
-        return [...toolsF.keys()].map((name) => ({ name }));
-      },
-      setActiveTools() {},
-      appendEntry() {},
+    // through createRoleRuntimeExtension hostActions + tool_result overlay, then
+    // public CLI lifecycle (runAkRole) settles terminal failure + nonzero exit.
+    const projectF = join(home, "proj-f-eacces");
+    await mkdir(projectF, { recursive: true });
+    seedGitRepository(projectF);
+    git(projectF, ["config", "user.email", "gate@test.local"]);
+    git(projectF, ["config", "user.name", "Gate Test"]);
+    git(projectF, ["commit", "--allow-empty", "-m", "seed-f"]);
+
+    const callIdF = "fixer-eacces";
+    const completed = {
+      status: "completed" as const,
+      report: "done",
+      classResults: [{
+        name: "Contract",
+        disposition: "completed" as const,
+        searchScope: "all",
+        exceptions: [] as string[],
+        commitSha: "a".repeat(40),
+      }],
     };
-    let abortF = false;
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    // Real hostActions may stamp print-mode exitCode; scrub so the file runner stays clean.
+    // Public nonzero proof is runAkRole.exitCode below, not this process stamp.
     const prevExitF = process.exitCode;
     process.exitCode = undefined;
+    let result: Awaited<ReturnType<typeof runAkRole>>;
     try {
-      createRoleRuntimeExtension({
-        loadJudgeSoul: async () => "judge",
-        loadFixerSoul: async () => "FIXER LAW",
-        loadFixPacket: async () => "Repair the assigned findings.",
-        transcriptFromContext: () => "",
-        auditSoulCompliance: async () => ({ status: "pass" }),
-      })(piF as unknown as ExtensionAPI);
-
-      const projectF = join(home, "proj-f-eacces");
-      await mkdir(projectF, { recursive: true });
-      seedGitRepository(projectF);
-      git(projectF, ["config", "user.email", "gate@test.local"]);
-      git(projectF, ["config", "user.name", "Gate Test"]);
-      git(projectF, ["commit", "--allow-empty", "-m", "seed-f"]);
-      const parentFDir = join(
-        machineLedgerHome(home),
-        "books",
-        "proj-f-eacces",
-        "runs",
-        "activation",
-        "worker-run-f",
-      );
-      await mkdir(parentFDir, { recursive: true });
-      const parentFFile = join(parentFDir, "session.jsonl");
-      await writeFile(
-        parentFFile,
-        `${JSON.stringify({
-          type: "session",
-          version: 3,
-          id: "worker-parent-f",
-          timestamp: "2025-01-01T00:00:00.000Z",
-          cwd: projectF,
-        })}\n`,
-      );
-      const parentF = SessionManager.open(parentFFile);
-      const sessionStart = handlersF.get("session_start");
-      assert.ok(sessionStart, "createRoleRuntimeExtension must register session_start");
-      // Admit fixer via public lifecycle: real hostActions + armSubmissionGate on parent.
-      await sessionStart({}, {
+    result = await runAkRole(
+      ["fixer", "--project", projectF, "Exercise gate EACCES durability."],
+      {
+        packageRoot,
+        home,
         cwd: projectF,
-        sessionManager: parentF,
-        abort: () => {},
-      } as unknown as ExtensionContext);
-
-      const nestF = join(dirname(parentFFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
-      const filesF = readdirSync(nestF).filter((name) => name.endsWith(".jsonl"));
-      assert.equal(filesF.length, 1);
-      const gatePathF = join(nestF, filesF[0]!);
-      chmodSync(gatePathF, 0o444);
-
-      const toolF = toolsF.get(FIXER_OUTPUT_TOOL_NAME);
-      assert.ok(toolF);
-      const callIdF = "fixer-eacces";
-      const smF = SessionManager.inMemory();
-      const completed = {
-        status: "completed" as const,
-        report: "done",
-        classResults: [{
-          name: "Contract",
-          disposition: "completed" as const,
-          searchScope: "all",
-          exceptions: [] as string[],
-          commitSha: "a".repeat(40),
-        }],
-      };
-      smF.appendMessage({
-        role: "assistant",
-        content: [{
-          type: "toolCall",
-          id: callIdF,
-          name: FIXER_OUTPUT_TOOL_NAME,
-          arguments: completed,
-        }],
-        api: "openai-responses",
-        provider: "test",
-        model: "fixer",
-        usage,
-        stopReason: "toolUse",
-        timestamp: Date.now(),
-      } as AssistantMessage);
-      const ctxF = {
-        sessionManager: smF,
-        abort: () => { abortF = true; },
-        mode: "print",
-      } as unknown as ExtensionContext;
-
-      await assert.rejects(
-        toolF.execute(callIdF, completed, undefined, undefined, ctxF),
-        (error: unknown) => {
-          assert.equal(
-            typeof error === "object" && error !== null && "code" in error
-              && (error as { code: unknown }).code === "EACCES",
-            true,
-            `expected EACCES identity, got ${String(error)}`,
-          );
-          assert.equal(error instanceof WorkerCommitReminderError, false);
-          return true;
+        createRunId: () => "run-gate-eacces-001",
+        io: {
+          stdout: (text: string) => { stdout.push(text); },
+          stderr: (text: string) => { stderr.push(text); },
         },
-      );
-      assert.equal(abortF, true, "real hostActions.failInfrastructure aborts context");
-      assert.equal(process.exitCode, 1, "print/json public lifecycle nonzero exit");
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await mkdir(dirname(sessionFile), { recursive: true });
+          await writeFile(
+            sessionFile,
+            `${JSON.stringify({
+              type: "session",
+              version: 3,
+              id: "worker-parent-f",
+              timestamp: "2025-01-01T00:00:00.000Z",
+              cwd: projectF,
+            })}\n`,
+          );
 
-      // Drive production tool_result overlay (src/role-runtime.ts:473-551):
-      // pendingInfrastructureToolCallIds → buildNavigatorInfrastructureFailureFact.
-      const toolResult = handlersF.get("tool_result");
-      assert.ok(toolResult, "createRoleRuntimeExtension must register tool_result");
-      const overlay = await toolResult({
-        toolName: FIXER_OUTPUT_TOOL_NAME,
-        toolCallId: callIdF,
-        isError: true,
-        details: { message: "native provider wording" },
-        content: [{ type: "text", text: "EACCES" }],
-      });
-      assert.deepEqual(overlay, {
-        details: buildNavigatorInfrastructureFailureFact(),
-        isError: true,
-      });
-      assert.equal(
-        isNavigatorInfrastructureFailureFact(
-          (overlay as { details?: unknown } | undefined)?.details,
-        ),
-        true,
-        "tool_result overlay must surface typed infrastructure details",
-      );
+          // Minimal ExtensionAPI surface only to load production role-runtime — not a
+          // public lifecycle stand-in; terminal/exit proof is runAkRole below.
+          const toolsF = new Map<string, { execute: (...args: any[]) => Promise<any> }>();
+          const handlersF = new Map<string, (...args: any[]) => any>();
+          const piF = {
+            registerFlag() {},
+            getFlag(name: string) {
+              if (name === "ak-role") return "fixer";
+              if (name === "ak-fix-packet") {
+                const idx = args.indexOf("--ak-fix-packet");
+                return idx >= 0 ? args[idx + 1] : "/packet.md";
+              }
+              if (name === "ak-fixer-phase") {
+                const idx = args.indexOf("--ak-fixer-phase");
+                return idx >= 0 ? args[idx + 1] : "apply";
+              }
+              return undefined;
+            },
+            registerTool(tool: { name: string; execute: (...args: any[]) => Promise<any> }) {
+              toolsF.set(tool.name, tool);
+            },
+            on(name: string, handler: (...args: any[]) => any) {
+              handlersF.set(name, handler);
+            },
+            getAllTools() {
+              return [...toolsF.keys()].map((name) => ({ name }));
+            },
+            setActiveTools() {},
+          };
+          createRoleRuntimeExtension({
+            loadJudgeSoul: async () => "judge",
+            loadFixerSoul: async () => "FIXER LAW",
+            loadFixPacket: async () => "Repair the assigned findings.",
+            transcriptFromContext: () => "",
+            auditSoulCompliance: async () => ({ status: "pass" }),
+          })(piF as unknown as ExtensionAPI);
+
+          const parentF = SessionManager.open(sessionFile);
+          const sessionStart = handlersF.get("session_start");
+          assert.ok(sessionStart, "createRoleRuntimeExtension must register session_start");
+          await sessionStart({}, {
+            cwd: projectF,
+            sessionManager: parentF,
+            abort: () => {},
+          } as unknown as ExtensionContext);
+
+          const nestF = join(dirname(sessionFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
+          const filesF = readdirSync(nestF).filter((name) => name.endsWith(".jsonl"));
+          assert.equal(filesF.length, 1);
+          chmodSync(join(nestF, filesF[0]!), 0o444);
+
+          const toolF = toolsF.get(FIXER_OUTPUT_TOOL_NAME);
+          assert.ok(toolF);
+          const smF = SessionManager.inMemory();
+          smF.appendMessage({
+            role: "assistant",
+            content: [{
+              type: "toolCall",
+              id: callIdF,
+              name: FIXER_OUTPUT_TOOL_NAME,
+              arguments: completed,
+            }],
+            api: "openai-responses",
+            provider: "test",
+            model: "fixer",
+            usage,
+            stopReason: "toolUse",
+            timestamp: Date.now(),
+          } as AssistantMessage);
+
+          await assert.rejects(
+            toolF.execute(callIdF, completed, undefined, undefined, {
+              sessionManager: smF,
+              abort: () => {},
+              mode: "print",
+            } as unknown as ExtensionContext),
+            (error: unknown) => {
+              assert.equal(
+                typeof error === "object" && error !== null && "code" in error
+                  && (error as { code: unknown }).code === "EACCES",
+                true,
+                `expected EACCES identity, got ${String(error)}`,
+              );
+              assert.equal(error instanceof WorkerCommitReminderError, false);
+              return true;
+            },
+          );
+
+          // Production tool_result overlay (src/role-runtime.ts:473-551).
+          const toolResult = handlersF.get("tool_result");
+          assert.ok(toolResult, "createRoleRuntimeExtension must register tool_result");
+          const overlay = await toolResult({
+            toolName: FIXER_OUTPUT_TOOL_NAME,
+            toolCallId: callIdF,
+            isError: true,
+            details: { message: "native provider wording" },
+            content: [{ type: "text", text: "EACCES" }],
+          });
+          assert.deepEqual(overlay, {
+            details: buildNavigatorInfrastructureFailureFact(),
+            isError: true,
+          });
+          assert.equal(
+            isNavigatorInfrastructureFailureFact(
+              (overlay as { details?: unknown } | undefined)?.details,
+            ),
+            true,
+            "tool_result overlay must surface typed infrastructure details",
+          );
+
+          // Persist bound toolCall + typed infra toolResult for public CLI settlement.
+          await writeFile(
+            sessionFile,
+            [
+              { type: "session", id: "worker-parent-f" },
+              { type: "message", id: "current-user", message: { role: "user" } },
+              {
+                type: "message",
+                id: "output-call",
+                message: {
+                  role: "assistant",
+                  content: [{
+                    type: "toolCall",
+                    id: callIdF,
+                    name: FIXER_OUTPUT_TOOL_NAME,
+                    arguments: completed,
+                  }],
+                },
+              },
+              {
+                type: "message",
+                id: "output-result",
+                parentId: "output-call",
+                message: {
+                  role: "toolResult",
+                  toolCallId: callIdF,
+                  toolName: FIXER_OUTPUT_TOOL_NAME,
+                  isError: true,
+                  content: [{ type: "text", text: "EACCES" }],
+                  details: (overlay as { details: unknown }).details,
+                },
+              },
+            ].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+          );
+          return {
+            code: 1,
+            stderr: "EACCES",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
     } finally {
       process.exitCode = prevExitF;
+    }
+
+    assert.equal(result.exitCode, 1, stdout.join("") || stderr.join("") || "public CLI must exit nonzero");
+    assert.ok(result.terminal, "public CLI must settle a terminal result");
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    if (result.terminal!.roleOutcome.kind === "failure") {
+      assert.equal(result.terminal!.roleOutcome.cause, "output");
+      assert.match(result.terminal!.roleOutcome.diagnostic, /EACCES/);
+      // Public settlement retains the closed infra fact and stamps exit code onto details.
+      assert.deepEqual(result.terminal!.roleOutcome.decisiveFacts.secondaryEvidence, {
+        ...buildNavigatorInfrastructureFailureFact(),
+        code: 1,
+      });
+      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorName, FIXER_OUTPUT_TOOL_NAME);
+      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, callIdF);
     }
   });
 });
