@@ -1551,49 +1551,9 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               await mkdir(resolve(issueRoot, "authority.md"), { recursive: true });
             }
             if (scenario.name === "session") {
-              const seedFaux = fauxProvider({
-                api: "ak-navigator-session-seed",
-                provider: "ak-navigator-session-seed",
-                tokenSize: { min: 1000, max: 1000 },
-              });
-              const seedModel = seedFaux.getModel();
-              await writeNavigatorModelSetting(`${seedModel.provider}/${seedModel.id}`, resolve(agentDir, "navigator-model.json"));
-              const seedResponse = (context: Context) => {
-                const names = context.tools?.map((tool) => tool.name) ?? [];
-                if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-                  return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
-                    candidates: [{
-                      id: "session-seed-route",
-                      matches: { role: "judge", phase: null, kind: "accepted" },
-                      route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
-                      next: { role: "reviewer", phase: null },
-                      reason: "seed observed navigator directory",
-                      command: "Usage: pi --ak-role reviewer --help",
-                    }],
-                  }), { stopReason: "toolUse" });
-                }
-                if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
-                  return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
-                }
-                return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
-              };
-              seedFaux.setResponses([seedResponse, seedResponse, seedResponse]);
-              await withInProcessPi({
-                activationLedgerSession: true,
-                cwd: issueRoot,
-                agentDir,
-                faux: seedFaux,
-                additionalExtensionPaths: [packageEntrypoint(manifest)],
-                systemPrompt: "NAVIGATOR SESSION SEED",
-                mode: "json",
-                flags: { "ak-role": "judge" },
-                noTools: "builtin",
-              }, async ({ session }) => {
-                await session.prompt("Seed the observed Navigator session directory through the real entry.");
-              });
-              const observed = await uniqueObservedNavigatorSession(home, issueRoot, issueRoot);
-              await rm(observed.directory, { recursive: true, force: true });
-              await writeFile(observed.directory, "not a session directory", "utf8");
+              const navigatorDirectory = expectedNavigatorSessionDirectory(home, issueRoot, issueRoot);
+              await mkdir(resolve(navigatorDirectory, ".."), { recursive: true });
+              await writeFile(navigatorDirectory, "not a session directory", "utf8");
             }
             const faux = fauxProvider({ api: `ak-navigator-${scenario.name}-${diagnosticIndex}`, provider: `ak-navigator-${scenario.name}-${diagnosticIndex}`, tokenSize: { min: 1000, max: 1000 } });
             const model = faux.getModel();
