@@ -318,7 +318,29 @@ async function exerciseSharedPackageContracts(): Promise<void> {
   assert.equal(judge.JUDGE_OUTPUT_TOOL_NAME, mod.JUDGE_OUTPUT_TOOL_NAME);
   assert.equal(typeof judge.validateAcceptedJudgeDetails, "function");
 
-  // Navigator package graph: attendance imports topology + registry from emitted dist.
+  // Navigator package graph: attendance imports topology + registry + shared
+  // typed-provider-http owner from emitted dist (never a non-entry public-cli path).
+  const typedHttpUrl = pathToFileURL(
+    resolve(packageRoot, "dist/typed-provider-http.js"),
+  ).href;
+  const typedHttp = await import(`${typedHttpUrl}?t=${Date.now()}-${Math.random()}`);
+  assert.equal(typeof typedHttp.recordTypedProviderHttpStatus, "function");
+  assert.equal(typeof typedHttp.clearTypedProviderHttpObservation, "function");
+  assert.equal(typeof typedHttp.readLatestTypedProviderHttpObservation, "function");
+  const navigatorSource = await readFile(
+    resolve(packageRoot, "dist/navigator-attendance.js"),
+    "utf8",
+  );
+  assert.match(
+    navigatorSource,
+    /from\s+["']\.\/typed-provider-http\.js["']/,
+    "navigator-attendance must statically import the shared typed-provider-http owner",
+  );
+  assert.equal(
+    navigatorSource.includes("public-cli/run-lifecycle"),
+    false,
+    "navigator-attendance must not import non-entry public-cli/run-lifecycle",
+  );
   const navigatorUrl = pathToFileURL(
     resolve(packageRoot, "dist/navigator-attendance.js"),
   ).href;
@@ -397,6 +419,7 @@ test("isolated packs leave shared dist identity stable under concurrent contract
   assert.ok(paths.includes("dist/package-contracts/terminating-tools.js"));
   assert.ok(paths.includes("dist/package-contracts/judge-output.js"));
   assert.ok(paths.includes("dist/navigator-attendance.js"));
+  assert.ok(paths.includes("dist/typed-provider-http.js"));
   assert.ok(paths.includes("dist/activation-ledger-topology.js"));
   assert.ok(paths.includes("dist/activation-reconciliation.js"));
   assert.ok(!paths.some((path) => path.includes("recorder")));

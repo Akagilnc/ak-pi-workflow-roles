@@ -14,6 +14,7 @@ const entries = [
   "activation-reconciliation",
   "sitian-role-run-coordinates",
   "sitian-record-entry",
+  "typed-provider-http",
 ];
 
 /**

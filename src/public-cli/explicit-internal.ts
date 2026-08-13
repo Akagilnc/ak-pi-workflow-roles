@@ -184,20 +184,23 @@ function sessionStopDetails(input: {
   const details: Record<string, unknown> = {};
   const errorMessage = nonEmptyString(input.errorMessage);
   if (errorMessage !== undefined) details.errorMessage = errorMessage;
-  const provider = nonEmptyString(input.provider);
-  if (provider !== undefined) details.provider = provider;
-  const model = nonEmptyString(input.model);
-  if (model !== undefined) details.model = model;
   const api = nonEmptyString(input.api);
   if (api !== undefined) details.api = api;
   const rawStopReason = nonEmptyString(input.rawStopReason);
   if (rawStopReason !== undefined) details.rawStopReason = rawStopReason;
+  const testimony = hasUpstreamErrorTestimony(input);
+  if (testimony) {
+    const provider = nonEmptyString(input.provider);
+    if (provider !== undefined) details.provider = provider;
+    const model = nonEmptyString(input.model);
+    if (model !== undefined) details.model = model;
+  }
   if (typeof input.httpStatus === "number") details.httpStatus = input.httpStatus;
   if (input.diagnostics !== undefined) details.diagnostics = input.diagnostics;
-  // SDK structured payload fields: project only when actually held.
-  if (input.body !== undefined) details.body = input.body;
-  if (input.code !== undefined) details.code = input.code;
-  if (input.errno !== undefined) details.errno = input.errno;
+  // SDK structured payload fields: project only when actually held on a confirmed-remote node.
+  if (testimony && input.body !== undefined) details.body = input.body;
+  if (testimony && input.code !== undefined) details.code = input.code;
+  if (testimony && input.errno !== undefined) details.errno = input.errno;
   return details;
 }
 

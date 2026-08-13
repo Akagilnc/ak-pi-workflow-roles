@@ -368,14 +368,16 @@ export function classifyPostAdmissionFailure(input: {
       input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
         ? input.knownDiagnostic
         : conciseChildDiagnostic(input.stderr, fallback);
-    const { code: _knownCode, timedOut: _knownTimedOut, ...knownDetails } =
+    const { timedOut: _knownTimedOut, ...knownDetails } =
       input.knownDetails ?? {};
+    const remoteCode = knownDetails.code;
     return {
       cause: input.knownCause,
       diagnostic,
       details: {
         ...knownDetails,
-        code: input.code,
+        ...(remoteCode === undefined ? {} : { code: remoteCode }),
+        exitCode: input.code,
         ...(input.timedOut ? { timedOut: true as const } : {}),
       },
       ...(input.knownIdentity === undefined
@@ -387,7 +389,7 @@ export function classifyPostAdmissionFailure(input: {
     return {
       cause: "timeout",
       diagnostic: "role run timed out",
-      details: { timedOut: true, code: input.code },
+      details: { timedOut: true, exitCode: input.code },
     };
   }
   if (input.code !== 0) {
@@ -395,27 +397,27 @@ export function classifyPostAdmissionFailure(input: {
     return {
       cause: "activation",
       diagnostic: conciseChildDiagnostic(input.stderr, fallback),
-      details: { code: input.code },
+      details: { exitCode: input.code },
     };
   }
   if (input.session?.state === "missing") {
     return {
       cause: "session",
       diagnostic: "role run left no readable session transcript",
-      details: { code: input.code, session: "missing" },
+      details: { exitCode: input.code, session: "missing" },
     };
   }
   if (input.session?.state === "unreadable") {
     return {
       cause: "session",
       diagnostic: input.session.diagnostic,
-      details: { code: input.code, session: "unreadable" },
+      details: { exitCode: input.code, session: "unreadable" },
     };
   }
   return {
     cause: "output",
     diagnostic: "role run completed without a lawful typed terminal result",
-    details: { code: input.code },
+    details: { exitCode: input.code },
   };
 }
 

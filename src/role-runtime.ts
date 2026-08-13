@@ -44,7 +44,7 @@ import {
   NAVIGATOR_INVOCATION_ENTRY,
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
-import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.ts";
+import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import {
   ExplicitInternalActivationError,
   recordReviewerDispatchRejectionSync,
@@ -822,7 +822,15 @@ export function createRoleRuntimeExtension(
           provider,
         });
       } catch (error) {
-        if (status >= 200 && status < 300) return;
+        if (
+          status >= 200 &&
+          status < 300 &&
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code?: unknown }).code === "ENOENT"
+        ) {
+          return;
+        }
         failInfrastructure(error, ctx);
       }
     });
