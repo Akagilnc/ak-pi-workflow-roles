@@ -17940,6 +17940,20 @@ async function findRunDirectoryById(home, runId) {
   }
   return void 0;
 }
+function parsePersistedLeaseIdentity(record4) {
+  const correlationId = typeof record4.correlationId === "string" && record4.correlationId.trim() !== "" ? record4.correlationId : void 0;
+  const ticketNumber = typeof record4.ticketNumber === "number" && Number.isInteger(record4.ticketNumber) && record4.ticketNumber >= 1 ? record4.ticketNumber : void 0;
+  return {
+    ...correlationId === void 0 ? {} : { correlationId },
+    ...ticketNumber === void 0 ? {} : { ticketNumber }
+  };
+}
+function restoredLeaseFields(fields) {
+  return {
+    ...fields.correlationId === void 0 ? {} : { correlationId: fields.correlationId },
+    ...fields.ticketNumber === void 0 ? {} : { ticketNumber: fields.ticketNumber }
+  };
+}
 async function loadResumableRunRecord(home, runId) {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === void 0) {
@@ -17971,6 +17985,8 @@ async function loadResumableRunRecord(home, runId) {
   let baseRevision;
   let mergerInputPath;
   let derived;
+  let correlationId;
+  let ticketNumber;
   try {
     const raw = JSON.parse(
       await readFile7(run.admittedRequestPath, "utf8")
@@ -18019,11 +18035,35 @@ async function loadResumableRunRecord(home, runId) {
           };
         }
       }
+      const fromAdmitted = parsePersistedLeaseIdentity(record4);
+      correlationId = fromAdmitted.correlationId;
+      ticketNumber = fromAdmitted.ticketNumber;
     }
   } catch {
     throw new CliUsageError(
       `role run admitted request is unreadable: ${runId}`
     );
+  }
+  if (correlationId === void 0 || ticketNumber === void 0) {
+    try {
+      const invocationRaw = JSON.parse(
+        await readFile7(join9(run.runDirectory, "invocation.json"), "utf8")
+      );
+      if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
+        const fromInvocation = parsePersistedLeaseIdentity(
+          invocationRaw
+        );
+        if (correlationId === void 0) correlationId = fromInvocation.correlationId;
+        if (ticketNumber === void 0) ticketNumber = fromInvocation.ticketNumber;
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw new CliUsageError(
+          `role run invocation identity is unreadable: ${runId}`,
+          { cause: error }
+        );
+      }
+    }
   }
   return {
     run,
@@ -18039,7 +18079,9 @@ async function loadResumableRunRecord(home, runId) {
       ...prerequisites === void 0 ? {} : { prerequisites },
       ...baseRevision === void 0 ? {} : { baseRevision },
       ...mergerInputPath === void 0 ? {} : { mergerInputPath },
-      ...derived === void 0 ? {} : { derived }
+      ...derived === void 0 ? {} : { derived },
+      ...correlationId === void 0 ? {} : { correlationId },
+      ...ticketNumber === void 0 ? {} : { ticketNumber }
     }
   };
 }
@@ -18061,7 +18103,8 @@ async function loadResumableJudgeRun(home, runId) {
     runDirectory: loaded.run.runDirectory,
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
-    admittedRequestPath: loaded.run.admittedRequestPath
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...restoredLeaseFields(loaded.admittedFields)
   };
   return {
     admitted,
@@ -18106,7 +18149,8 @@ async function loadResumableCoderRun(home, runId) {
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
-    taskPath
+    taskPath,
+    ...restoredLeaseFields(loaded.admittedFields)
   };
   return {
     admitted,
@@ -18154,7 +18198,8 @@ async function loadResumableFixerRun(home, runId) {
     admittedRequestPath: loaded.run.admittedRequestPath,
     packetPath,
     ...loaded.admittedFields.prerequisitesPath === void 0 ? {} : { prerequisitesPath: loaded.admittedFields.prerequisitesPath },
-    prerequisites
+    prerequisites,
+    ...restoredLeaseFields(loaded.admittedFields)
   };
   return {
     admitted,
@@ -18187,7 +18232,8 @@ async function loadResumableReviewerRun(home, runId) {
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
-    baseRevision
+    baseRevision,
+    ...restoredLeaseFields(loaded.admittedFields)
   };
   return {
     admitted,
@@ -18232,7 +18278,8 @@ async function loadResumableMergerRun(home, runId) {
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
-    derived
+    derived,
+    ...restoredLeaseFields(loaded.admittedFields)
   };
   return {
     admitted,
@@ -21568,8 +21615,9 @@ async function dispatchAdmittedCoder(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -21791,7 +21839,10 @@ async function runPublicCoderResume(argv, env, io) {
   });
   return await dispatchAdmittedCoder({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -21896,8 +21947,9 @@ async function dispatchAdmittedCollector(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -22421,8 +22473,9 @@ async function dispatchAdmittedFixer(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -22653,7 +22706,10 @@ async function runPublicFixerResume(argv, env, io) {
   });
   return await dispatchAdmittedFixer({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -22789,8 +22845,9 @@ async function dispatchAdmittedJudge(input) {
       // and role-runtime can record typed provider HTTP observations.
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -22974,7 +23031,10 @@ async function runPublicResume(argv, env, io) {
   });
   return await dispatchAdmittedJudge({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease
@@ -23124,8 +23184,9 @@ async function dispatchAdmittedMerger(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -23427,7 +23488,10 @@ async function runPublicMergerResume(argv, env, io) {
   });
   return await dispatchAdmittedMerger({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -23580,8 +23644,9 @@ async function dispatchAdmittedReviewer(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -23812,7 +23877,10 @@ async function runPublicReviewerResume(argv, env, io) {
   });
   return await dispatchAdmittedReviewer({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
