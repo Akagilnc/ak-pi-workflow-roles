@@ -120,7 +120,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     if (!registered) {
       registered = true;
       pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`,
-          "This runtime provides no sub-agent tool; produce the Standards and Spec review legs sequentially in this session yourself — that is the canonical execution of the review Skill here."], parameters: reviewerOutputSchema,
+          "This runtime executes the Standards and Spec review legs for you as package-managed evidence-child sessions — that IS this runtime's implementation of the review Skill's parallel sub-agents. Do not refuse because no Agent tool appears in your tool list, and do not substitute your own sub-processes; work with the legs the runtime provides."], parameters: reviewerOutputSchema,
         async execute(id, parameters, signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
           if (!soul || !binding) throw new Error("Reviewer inputs were not loaded");
           requireSoleReviewerOutputCall(id, toolCtx);
