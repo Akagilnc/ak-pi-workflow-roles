@@ -21,6 +21,11 @@ import {
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
 import {
+  claimTicketDispatchLease,
+  TicketDispatchLeaseError,
+  type ClaimedTicketDispatchLease,
+} from "../ticket-dispatch-lease.ts";
+import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
@@ -73,6 +78,10 @@ export type AdmittedRoleInvocationBase = {
   /** Exact Pi session file principal (bound at admission; reopened on resume). */
   readonly sessionFile: string;
   readonly admittedRequestPath: string;
+  /** Opaque invocation correlation generated at lease claim. Absent on doctor. */
+  readonly correlationId?: string;
+  /** Ticket identity from the claimed dispatch lease. Absent on doctor. */
+  readonly ticketNumber?: number;
 };
 
 export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
@@ -153,7 +162,7 @@ export type AdmittedRoleInvocation =
 
 type RoleInvocationLedgerSource = Pick<
   AdmittedRoleInvocationBase,
-  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "sessionDirectory" | "sessionFile"
+  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "sessionDirectory" | "sessionFile" | "correlationId" | "ticketNumber"
 >;
 
 /**
@@ -173,6 +182,8 @@ async function writeRoleInvocationLedger(
     runDirectory: source.runDirectory,
     sessionDirectory: source.sessionDirectory,
     sessionFile: source.sessionFile,
+    ...(source.correlationId === undefined ? {} : { correlationId: source.correlationId }),
+    ...(source.ticketNumber === undefined ? {} : { ticketNumber: source.ticketNumber }),
   };
   await writeFile(
     join(source.runDirectory, "invocation.json"),
@@ -568,6 +579,26 @@ export type AdmitJudgeInvocationOptions = {
  * Atomically admit a Judge Role run: freeze Attachments, persist the request,
  * and reserve session placement under the #78 ledger book.
  */
+
+function claimTicketDispatchLeaseForAdmit(input: {
+  readonly ledgerHome: string;
+  readonly bookKey: string;
+  readonly siteIdentity: string;
+}): ClaimedTicketDispatchLease {
+  try {
+    return claimTicketDispatchLease({
+      ledgerHome: input.ledgerHome,
+      bookKey: input.bookKey,
+      siteIdentity: input.siteIdentity,
+    });
+  } catch (error) {
+    if (error instanceof TicketDispatchLeaseError) {
+      throw new CliUsageError(error.message, { cause: error });
+    }
+    throw error;
+  }
+}
+
 export async function admitJudgeInvocation(
   options: AdmitJudgeInvocationOptions,
 ): Promise<AdmittedJudgeInvocation> {
@@ -579,6 +610,11 @@ export async function admitJudgeInvocation(
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -604,6 +640,8 @@ export async function admitJudgeInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -630,6 +668,8 @@ export async function admitJudgeInvocation(
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
   };
 }
 
@@ -717,6 +757,11 @@ export async function admitCoderInvocation(
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -744,6 +789,8 @@ export async function admitCoderInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -773,6 +820,8 @@ export async function admitCoderInvocation(
     sessionFile,
     admittedRequestPath,
     taskPath,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
   };
 }
 
@@ -832,6 +881,11 @@ export async function admitFixerInvocation(
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -890,6 +944,8 @@ export async function admitFixerInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty: false,
     packetPath,
@@ -926,6 +982,8 @@ export async function admitFixerInvocation(
     packetPath,
     ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
     prerequisites,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
   };
 }
 
@@ -1106,6 +1164,11 @@ export async function admitCollectorInvocation(
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1145,6 +1208,8 @@ export async function admitCollectorInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty,
     prNumber,
@@ -1184,6 +1249,8 @@ export async function admitCollectorInvocation(
     repository,
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     manifestDigest,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
   };
 }
 
@@ -1620,6 +1687,11 @@ export async function admitReviewerInvocation(
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1646,6 +1718,8 @@ export async function admitReviewerInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
@@ -1678,6 +1752,8 @@ export async function admitReviewerInvocation(
     sessionFile,
     admittedRequestPath,
     baseRevision: options.baseRevision,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
   };
 }
 
@@ -1841,6 +1917,11 @@ export async function admitMergerInvocation(
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1898,6 +1979,8 @@ export async function admitMergerInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty: false,
     mergerInputPath,
@@ -1938,6 +2021,8 @@ export async function admitMergerInvocation(
     admittedRequestPath,
     mergerInputPath,
     derived: admitted.derived,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
   };
 }
 

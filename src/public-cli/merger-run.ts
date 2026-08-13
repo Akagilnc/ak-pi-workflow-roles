@@ -571,7 +571,10 @@ export async function runPublicMerger(
 
   return await dispatchAdmittedMerger({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+    },
     io,
     extraArgs,
     lease,

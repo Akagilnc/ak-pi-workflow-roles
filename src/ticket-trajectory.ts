@@ -37,6 +37,15 @@ import {
   type TerminatingToolName,
 } from "./package-contracts/terminating-tools.ts";
 import { PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
+import {
+  ACCEPTED_ACTIVATION_EVENT,
+  type AcceptedActivationFact,
+} from "./activation-ledger.ts";
+import {
+  listTicketBindingFactsFromBookDir,
+  readWaitingJsonlRecords,
+  TicketRunAttributionError,
+} from "./ticket-dispatch-lease.ts";
 
 /** Declared refresh bound for the same viewing surface (seconds). */
 export const DEFAULT_REFRESH_BOUNDARY_SECONDS = 30;
@@ -408,9 +417,8 @@ async function maxMtimeMs(paths: readonly string[]): Promise<number> {
   return max;
 }
 
-async function parseRun(ledgerDir: string, issueNumber: number, runId: string): Promise<ParsedRun> {
-  const runDir = join(ledgerDir, "issues", String(issueNumber), "runs", runId);
-  const ledgerCoord = ["issues", String(issueNumber), "runs", runId].join("/");
+async function parseRunDirectory(runDir: string, ledgerCoord: string): Promise<ParsedRun> {
+  const runId = basename(runDir);
   const evidenceTarget = await realpathOrLexicalIfMissing(runDir);
   const evidenceHref = pathToFileURL(evidenceTarget).href;
   const sessionDir = join(runDir, "session");
@@ -494,6 +502,12 @@ async function parseRun(ledgerDir: string, issueNumber: number, runId: string): 
     provider,
     thinking,
   };
+}
+
+async function parseRun(ledgerDir: string, issueNumber: number, runId: string): Promise<ParsedRun> {
+  const runDir = join(ledgerDir, "issues", String(issueNumber), "runs", runId);
+  const ledgerCoord = ["issues", String(issueNumber), "runs", runId].join("/");
+  return parseRunDirectory(runDir, ledgerCoord);
 }
 
 async function listRunIds(ledgerDir: string, issueNumber: number): Promise<string[]> {
@@ -687,6 +701,59 @@ ${stationBlocks || "<p data-empty=\"true\">no runs</p>"}
  * Load one ticket's runs via the S1 tracer path (read-only ledger scan).
  * Factory board reuses this — no parallel receipt parser.
  */
+function callerCorrelationId(correlation: unknown): string | undefined {
+  if (correlation === null || typeof correlation !== "object" || Array.isArray(correlation)) {
+    return undefined;
+  }
+  const record = correlation as Record<string, unknown>;
+  if (record.kind !== "caller" || typeof record.id !== "string" || record.id.length === 0) {
+    return undefined;
+  }
+  return record.id;
+}
+
+function parseAcceptedActivationFact(value: unknown): AcceptedActivationFact | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.event !== ACCEPTED_ACTIVATION_EVENT) return undefined;
+  if (typeof record.role !== "string" || record.role.length === 0) return undefined;
+  if (typeof record.observedAt !== "string" || record.observedAt.length === 0) return undefined;
+  if (typeof record.bookKey !== "string" || record.bookKey.length === 0) return undefined;
+  const session = record.session;
+  if (session === null || typeof session !== "object" || Array.isArray(session)) return undefined;
+  const sessionRecord = session as Record<string, unknown>;
+  if (sessionRecord.kind !== "session-file" || typeof sessionRecord.path !== "string" || sessionRecord.path.length === 0) {
+    return undefined;
+  }
+  const correlation = record.correlation;
+  if (correlation === null || typeof correlation !== "object" || Array.isArray(correlation)) {
+    return undefined;
+  }
+  const corr = correlation as Record<string, unknown>;
+  const closedCorrelation =
+    corr.kind === "caller" && typeof corr.id === "string" && corr.id.length > 0
+      ? { kind: "caller" as const, id: corr.id }
+      : corr.kind === "absent"
+        ? { kind: "absent" as const }
+        : undefined;
+  if (closedCorrelation === undefined) return undefined;
+  return {
+    event: ACCEPTED_ACTIVATION_EVENT,
+    role: record.role,
+    observedAt: record.observedAt,
+    bookKey: record.bookKey,
+    session: { kind: "session-file", path: sessionRecord.path },
+    correlation: closedCorrelation,
+  };
+}
+
+function runDirectoryFromSessionPath(sessionPath: string): string {
+  // session file lives at runs/<id>@<role>/session/session.jsonl
+  return dirname(dirname(sessionPath));
+}
+
 export async function loadTicketTrajectoryRuns(
   ledgerDir: string,
   issueNumber: number,
@@ -695,11 +762,63 @@ export async function loadTicketTrajectoryRuns(
     throw new Error("issueNumber must be a positive integer");
   }
   const root = resolve(ledgerDir);
-  const runIds = await listRunIds(root, issueNumber);
-  const runs: ParsedRun[] = [];
-  for (const runId of runIds) {
-    runs.push(await parseRun(root, issueNumber, runId));
+  const bindings = listTicketBindingFactsFromBookDir(root);
+  const correlationTickets = new Map<string, Set<number>>();
+  for (const binding of bindings) {
+    const tickets = correlationTickets.get(binding.correlation.id) ?? new Set<number>();
+    tickets.add(binding.ticketNumber);
+    correlationTickets.set(binding.correlation.id, tickets);
   }
+  for (const [correlationId, tickets] of correlationTickets) {
+    if (tickets.size > 1) {
+      const listed = [...tickets].sort((a, b) => a - b).join(", ");
+      throw new TicketRunAttributionError(
+        "ambiguous",
+        `correlation ${correlationId} is bound to multiple tickets (${listed})`,
+      );
+    }
+  }
+
+  const waitingRows = readWaitingJsonlRecords(join(root, "waiting.jsonl"));
+  const activations: AcceptedActivationFact[] = [];
+  for (const row of waitingRows) {
+    const fact = parseAcceptedActivationFact(row);
+    if (fact !== undefined) activations.push(fact);
+  }
+
+  const runs: ParsedRun[] = [];
+  const seenRunDirs = new Set<string>();
+
+  const runIds = await listRunIds(root, issueNumber);
+  for (const runId of runIds) {
+    const parsed = await parseRun(root, issueNumber, runId);
+    const legacyDir = join(root, "issues", String(issueNumber), "runs", runId);
+    seenRunDirs.add(resolve(legacyDir));
+    runs.push(parsed);
+  }
+
+  const activationsByCorrelation = new Map<string, AcceptedActivationFact[]>();
+  for (const activation of activations) {
+    const id = callerCorrelationId(activation.correlation);
+    if (id === undefined) continue;
+    const list = activationsByCorrelation.get(id) ?? [];
+    list.push(activation);
+    activationsByCorrelation.set(id, list);
+  }
+
+  for (const binding of bindings) {
+    if (binding.ticketNumber !== issueNumber) continue;
+    const matched = activationsByCorrelation.get(binding.correlation.id) ?? [];
+    for (const activation of matched) {
+      const runDir = runDirectoryFromSessionPath(activation.session.path);
+      const resolvedRunDir = resolve(runDir);
+      if (seenRunDirs.has(resolvedRunDir)) continue;
+      seenRunDirs.add(resolvedRunDir);
+      const ledgerCoord = ["runs", basename(runDir)].join("/");
+      runs.push(await parseRunDirectory(runDir, ledgerCoord));
+    }
+  }
+
   return runs;
 }
 
