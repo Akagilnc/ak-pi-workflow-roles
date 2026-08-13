@@ -113,9 +113,8 @@ async function runPackagedTracer(marker: string): Promise<{
   }
 }
 
-test("tarball-installed .bin judge auditor locates and reads its real run dossier", { timeout: 120_000 }, async () => {
-  await runPackagedTracer("single");
-});
+// Single-tracer case deleted: each half of the dual isolation case already runs
+// the full packaged .bin → dossier read helper (Batch 1 R4 / court missedDeletion).
 
 test("two independent packaged Pi processes cannot cross auditor dossiers", { timeout: 180_000 }, async () => {
   const [a, b] = await Promise.all([runPackagedTracer("parallel-a"), runPackagedTracer("parallel-b")]);

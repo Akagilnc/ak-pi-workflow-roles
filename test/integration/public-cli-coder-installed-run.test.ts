@@ -3,6 +3,9 @@
  * installed `ak-role coder apply` → real Pi child + explicit extension →
  * package Skill expansion/gates → shared Terminal + report/evidence refs.
  * Only the model provider is faux.
+ *
+ * #319 Batch 2 (M3): sole owner of the coder installed deep chain 🔒.
+ * public-cli-install keeps only shallow bin/skill-path admits.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
