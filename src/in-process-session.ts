@@ -16,24 +16,13 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 
 import { createRecordSession } from "./sitian-record-entry.ts";
 
-export type OpenInProcessAgentSessionOptions = {
+type OpenInProcessAgentSessionBase = {
   readonly cwd: string;
   /** Required when loading a resource loader / systemPrompt. Callers own scratch lifecycle. */
   readonly agentDir?: string;
   readonly model: Model<Api>;
   readonly modelRuntime: ModelRuntime;
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  /**
-   * Pre-built manager. When omitted, the shared seam obtains a Sitian SessionManager
-   * from cwd/kind/subject/parent identity relations (no destination parameters).
-   */
-  readonly sessionManager?: SessionManager;
-  /** Record kind for the Sitian entry when sessionManager is omitted. */
-  readonly kind?: string;
-  /** Stable work identity for book-level records which continue across role runs. */
-  readonly subject?: string;
-  /** Optional parent session — supplies parentSession link / nest principal. */
-  readonly parent?: { getSessionFile(): string | undefined };
   readonly systemPrompt?: string;
   readonly customTools?: ToolDefinition[];
   readonly noTools?: "all" | "builtin";
@@ -41,11 +30,31 @@ export type OpenInProcessAgentSessionOptions = {
   readonly tools?: string[];
 };
 
+/**
+ * Shared open admits exactly one session source:
+ * - pre-built sessionManager, or
+ * - kind/subject/parent identity relations (Sitian obtains the manager).
+ * Encoded as a type relation — no runtime missing-arg guard.
+ */
+export type OpenInProcessAgentSessionOptions =
+  | (OpenInProcessAgentSessionBase & {
+      readonly sessionManager: SessionManager;
+      readonly kind?: never;
+      readonly subject?: never;
+      readonly parent?: never;
+    })
+  | (OpenInProcessAgentSessionBase & {
+      readonly sessionManager?: undefined;
+      /** Record kind for the Sitian entry. */
+      readonly kind: string;
+      /** Stable work identity for book-level records which continue across role runs. */
+      readonly subject?: string;
+      /** Optional parent session — supplies parentSession link / nest principal. */
+      readonly parent?: { getSessionFile(): string | undefined };
+    });
+
 function resolveSessionManager(options: OpenInProcessAgentSessionOptions): SessionManager {
   if (options.sessionManager !== undefined) return options.sessionManager;
-  if (options.kind === undefined) {
-    throw new Error("openInProcessAgentSession requires sessionManager or kind");
-  }
   return createRecordSession({
     cwd: options.cwd,
     kind: options.kind,

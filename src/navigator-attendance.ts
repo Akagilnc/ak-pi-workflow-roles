@@ -231,8 +231,8 @@ export type NavigatorPreparationSession = {
   providerFailure?(): NavigatorProviderFailureFact | undefined;
   setModel?(model: string, thinkingLevel: "off" | "max"): Promise<void>;
   getThinkingLevel?(): string;
-  /** Durable record pointer for unchanged no-receipt lifecycle facts. */
-  recordPointer?(): string;
+  /** Durable record pointer for unchanged no-receipt lifecycle facts. Required — missing pointer fails honestly. */
+  recordPointer(): string;
   dispose(): void;
 };
 
@@ -829,7 +829,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
           }
           if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
-            const facts = delivery.facts({ runPointer: activeSession.recordPointer?.() ?? subjectKey, attemptPointer: invocationId });
+            const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
             activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
             preparationNoReceipt = true;
             candidates = [];

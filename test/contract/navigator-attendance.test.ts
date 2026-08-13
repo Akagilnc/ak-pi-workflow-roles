@@ -108,6 +108,7 @@ function sessionHarness() {
     entries: () => entries,
     providerFailure: () => providerFailure,
     async setModel(model, thinkingLevel) { modelSettings.push({ model, thinkingLevel }); },
+    recordPointer: () => "/fixture/navigator-record",
     dispose() {},
   };
   return {
@@ -931,6 +932,7 @@ test("dispose during pending createSession drains the created session without pr
           entries: () => [],
           async setModel() { setModelCalls += 1; },
           getThinkingLevel: () => "off",
+          recordPointer: () => "/fixture/navigator-record",
           dispose() { disposeCalls += 1; },
         };
       },
@@ -1528,6 +1530,7 @@ test("resumed setModel and thinking failures preserve typed source and cause", a
               }
             },
             getThinkingLevel: () => "off",
+            recordPointer: () => "/fixture/navigator-record",
             dispose() {},
           };
         },
@@ -2614,6 +2617,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
             },
             appendEntry() {},
             entries: () => [],
+            recordPointer: () => "/fixture/navigator-record",
             dispose() {},
           }),
           onEvent: async (event, report) => {
@@ -3021,6 +3025,7 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
             },
             appendEntry() {},
             entries: () => [],
+            recordPointer: () => "/fixture/navigator-record",
             dispose() {},
           }),
           onEvent: async (event, report) => {

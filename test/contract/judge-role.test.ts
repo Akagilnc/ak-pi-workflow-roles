@@ -688,6 +688,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
         entries.push({ type: "custom", customType, data });
       },
       entries: () => entries,
+      recordPointer: () => "/fixture/navigator-record",
       dispose() {},
     };
     let navigator: ReturnType<typeof createNavigatorAttendance> | undefined;
@@ -1490,6 +1491,7 @@ test(
               },
               appendEntry() {},
               entries: () => [],
+              recordPointer: () => "/fixture/navigator-record",
               dispose() {
                 disposeCalls += 1;
               },

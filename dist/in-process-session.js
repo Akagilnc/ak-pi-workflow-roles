@@ -9,9 +9,6 @@ import { createRecordSession } from "./sitian-record-entry.js";
 function resolveSessionManager(options) {
     if (options.sessionManager !== undefined)
         return options.sessionManager;
-    if (options.kind === undefined) {
-        throw new Error("openInProcessAgentSession requires sessionManager or kind");
-    }
     return createRecordSession({
         cwd: options.cwd,
         kind: options.kind,

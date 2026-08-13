@@ -573,7 +573,7 @@ ${helpContext}
           await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
         }
         if (output === void 0 && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === void 0) {
-          const facts = delivery.facts({ runPointer: activeSession.recordPointer?.() ?? subjectKey, attemptPointer: invocationId });
+          const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
           activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
           preparationNoReceipt = true;
           candidates = [];
