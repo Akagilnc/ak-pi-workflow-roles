@@ -43,10 +43,16 @@ export type CreateRecordSessionOptions = {
   readonly subject?: string;
 };
 
+/** Authorized no-subject kind that may resume the most recent same-nest peer (ADR 0066). */
+const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
+
 /**
  * Sole package entry that constructs a durable Pi session record (ADR 0065).
  * No destination/path parameters — location is computed from ledger topology only.
- * Same-nest resume reuses Pi findMostRecentSession (valid header, cwd filter, mtime).
+ * Resume via Pi findMostRecentSession is limited to subject-keyed identity and the
+ * authorized worker-submission-gate durable path. Ordinary no-subject children
+ * (evidence-children, auditor-roles, …) always mint a fresh session — never reopen
+ * a sibling volume selected only by kind/cwd/mtime.
  * New persisted principals materialize their deferred session header before return so
  * custom-entry-only writers do not need a parallel delayed-header helper.
  */
@@ -83,10 +89,14 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
   }
 
   ensureRealDirectoryTree(ledgerHome, sessionDir);
-  // Delegate discovery to Pi so custom-directory continuation retains its
-  // mtime ordering, valid-header scan, and cwd filtering semantics.
-  const recentFile = findMostRecentSession(sessionDir, cwd);
-  if (recentFile !== null) return SessionManager.open(recentFile, sessionDir, cwd);
+  // Subject-keyed nests continue by subject digest; gate durable resume is the only
+  // authorized no-subject same-nest continuation. All other kinds mint fresh.
+  const mayResumeSameNest =
+    options.subject !== undefined || options.kind === WORKER_SUBMISSION_GATE_KIND;
+  if (mayResumeSameNest) {
+    const recentFile = findMostRecentSession(sessionDir, cwd);
+    if (recentFile !== null) return SessionManager.open(recentFile, sessionDir, cwd);
+  }
 
   const session = SessionManager.create(
     cwd,

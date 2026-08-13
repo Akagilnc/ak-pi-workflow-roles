@@ -19,6 +19,7 @@ import {
   buildNavigatorInfrastructureFailureFact,
   FIXER_OUTPUT_TOOL_NAME,
 } from "../../src/role-runtime.ts";
+import { createRecordSession } from "../../src/sitian-record-entry.ts";
 import {
   createWorkerSubmissionGate,
   installWorkerGitHooks,
@@ -406,6 +407,36 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     );
     // Fresh gate instance ≡ process resume: must not re-bounce; baseline still first tip.
     assert.doesNotThrow(() => resumed.assertAcceptable("completed"));
+
+    // Ordinary no-subject children under the same parent must mint fresh sessions — never
+    // reopen a sibling volume selected only by kind/cwd/mtime (S1 / ADR 0065 caller-identity).
+    const evidenceA = createRecordSession({
+      cwd: project,
+      kind: "evidence-children",
+      parent,
+    });
+    const evidenceAFile = evidenceA.getSessionFile();
+    assert.ok(evidenceAFile, "first ordinary child must materialize a session file");
+    evidenceA.appendCustomEntry("evidence-probe", { n: 1 });
+    const evidenceB = createRecordSession({
+      cwd: project,
+      kind: "evidence-children",
+      parent,
+    });
+    const evidenceBFile = evidenceB.getSessionFile();
+    assert.ok(evidenceBFile, "second ordinary child must materialize its own session file");
+    assert.notEqual(
+      evidenceBFile,
+      evidenceAFile,
+      "later ordinary child under same parent must not reopen the prior sibling volume",
+    );
+    const auditorA = createRecordSession({ cwd: project, kind: "auditor-roles", parent });
+    const auditorB = createRecordSession({ cwd: project, kind: "auditor-roles", parent });
+    assert.notEqual(
+      auditorA.getSessionFile(),
+      auditorB.getSessionFile(),
+      "later auditor-roles child under same parent must not reopen the prior sibling volume",
+    );
 
     // Baseline persistence (no bounce path): new arm after only baseline, HEAD unchanged → bounce;
     // then a third instance that only saw the bounce record must accept without re-firing.
