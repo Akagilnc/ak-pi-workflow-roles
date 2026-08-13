@@ -18,6 +18,7 @@ import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
+import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
@@ -831,19 +832,25 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
       }
       assignProviderFailure(navigatorProviderFailureFromStatus(status));
     };
-    const humanProviderError = (error) => {
-      const human = { ...error };
-      delete human.statusCode;
-      delete human.code;
-      delete human.navigatorFailure;
-      return human;
+    const projectHeldUpstream = (error) => {
+      if (!exactRecord(error)) return {};
+      const status = typeof error.statusCode === "number" ? error.statusCode : typeof error.status === "number" ? error.status : typeof error.httpStatus === "number" ? error.httpStatus : void 0;
+      const nonSuccess = typeof status === "number" && (status < 200 || status >= 300);
+      const diagnostics = Array.isArray(error.diagnostics) && error.diagnostics.length > 0 ? error.diagnostics : void 0;
+      const remoteConfirmed = nonSuccess || diagnostics !== void 0;
+      return {
+        ...nonSuccess ? { statusCode: status, status } : {},
+        ...diagnostics === void 0 ? {} : { diagnostics },
+        ...remoteConfirmed && error.body !== void 0 ? { body: error.body } : {},
+        ...remoteConfirmed && error.code !== void 0 ? { code: error.code } : {},
+        ...remoteConfirmed && error.errno !== void 0 ? { errno: error.errno } : {}
+      };
     };
-    let providerFailureEvidenceNumber = 0;
-    let providerFailureEvidence;
-    const retainProviderFailure = (error) => {
-      const id = `navigator-provider-failure-${++providerFailureEvidenceNumber}`;
-      providerFailureEvidence = { id, error };
-      return id;
+    const retainUpstreamMessage = (error) => {
+      if (!("navigatorFailure" in error)) return error;
+      const copy = { ...error };
+      delete copy.navigatorFailure;
+      return copy;
     };
     const setupFailureMessage = (error) => ({
       role: "assistant",
@@ -854,22 +861,38 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       stopReason: "error",
       errorMessage: error instanceof Error ? error.message : String(error),
-      navigatorFailureEvidenceId: retainProviderFailure(error),
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      ...projectHeldUpstream(error)
     });
+    const persistNavigatorHttpObservation = async (status, model2) => {
+      const runDir = process.env.AK_ROLE_RUN_DIR;
+      if (typeof runDir !== "string" || runDir.trim() === "") return;
+      const provider2 = exactRecord(model2) && typeof model2.provider === "string" && model2.provider.trim() !== "" ? model2.provider : void 0;
+      if (provider2 === void 0) return;
+      await recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider: provider2 });
+    };
     const instrumentProvider = (sourceProvider) => {
-      const instrumentStreamOptions = (options) => {
+      const instrumentStreamOptions = (options, observedStatus) => {
         const record = exactRecord(options) ? options : {};
         const previous = typeof record.onResponse === "function" ? record.onResponse : void 0;
         return {
           ...record,
           onResponse: async (response, model2) => {
+            observedStatus.value = response.status;
             classifyProviderResponseStatus(response.status);
+            await persistNavigatorHttpObservation(response.status, model2);
             await previous?.(response, model2);
           }
         };
       };
-      const wrapProviderStream = (source) => {
+      const withObservedStatus = (message, observedStatus) => {
+        if (observedStatus === void 0 || observedStatus >= 200 && observedStatus < 300) return message;
+        if (typeof message.statusCode === "number" || typeof message.status === "number" || typeof message.httpStatus === "number") {
+          return message;
+        }
+        return { ...message, statusCode: observedStatus, status: observedStatus };
+      };
+      const wrapProviderStream = (source, observedStatus) => {
         const wrapped = createAssistantMessageEventStream();
         void (async () => {
           let result;
@@ -880,13 +903,13 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
                 sawTerminal = true;
                 if (event.type === "done" && exactRecord(event.message)) {
                   assignProviderFailure(navigatorProviderFailureFromDiagnostics(event.message.diagnostics));
-                  result = humanProviderError(event.message);
+                  result = withObservedStatus(retainUpstreamMessage(event.message), observedStatus.value);
                   wrapped.push({ ...event, message: result });
                   continue;
                 }
                 if (event.type === "error" && exactRecord(event.error)) {
                   classifyProviderStreamError(event.error);
-                  result = humanProviderError(event.error);
+                  result = withObservedStatus(retainUpstreamMessage(event.error), observedStatus.value);
                   wrapped.push({ ...event, error: result });
                   continue;
                 }
@@ -895,14 +918,15 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
             }
             if (sawTerminal) {
               const terminal = await source.result();
-              if (result === void 0 && exactRecord(terminal)) result = humanProviderError(terminal);
-              else if (result === void 0) result = terminal;
+              if (result === void 0 && exactRecord(terminal)) {
+                result = withObservedStatus(retainUpstreamMessage(terminal), observedStatus.value);
+              } else if (result === void 0) result = terminal;
             }
           } catch (error) {
             classifyProviderStreamError(error);
             if (providerFailure === void 0) providerFailure = { source: "unknown", cause: "unknown" };
             if (!sawTerminal) {
-              const message = setupFailureMessage(error);
+              const message = withObservedStatus(setupFailureMessage(error), observedStatus.value);
               wrapped.push({ type: "error", reason: "error", error: message });
               result = message;
               sawTerminal = true;
@@ -922,8 +946,9 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
       };
       const invokeInstrumentedStream = (invoke) => {
         providerFailure = void 0;
+        const observedStatus = {};
         try {
-          return wrapProviderStream(invoke());
+          return wrapProviderStream(invoke(observedStatus), observedStatus);
         } catch (error) {
           classifyProviderStreamError(error);
           if (providerFailure === void 0) providerFailure = { source: "unknown", cause: "unknown" };
@@ -939,12 +964,16 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
       return {
         ...sourceProvider,
         stream(model2, streamContext, options) {
-          const instrumented = instrumentStreamOptions(options);
-          return invokeInstrumentedStream(() => sourceProvider.stream(model2, streamContext, instrumented));
+          return invokeInstrumentedStream((observedStatus) => {
+            const instrumented = instrumentStreamOptions(options, observedStatus);
+            return sourceProvider.stream(model2, streamContext, instrumented);
+          });
         },
         streamSimple(model2, streamContext, options) {
-          const instrumented = instrumentStreamOptions(options);
-          return invokeInstrumentedStream(() => sourceProvider.streamSimple(model2, streamContext, instrumented));
+          return invokeInstrumentedStream((observedStatus) => {
+            const instrumented = instrumentStreamOptions(options, observedStatus);
+            return sourceProvider.streamSimple(model2, streamContext, instrumented);
+          });
         }
       };
     };

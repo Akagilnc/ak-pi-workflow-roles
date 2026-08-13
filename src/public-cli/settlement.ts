@@ -556,13 +556,13 @@ async function readBoundSessionEntries(
 }
 
 /**
- * Latest native assistant provider-stop in a session (stopReason === "error").
+ * Latest native assistant provider-stop in a session (stopReason error|aborted).
  * Only the final assistant turn decides terminality — an older error followed by a
  * later non-error stop is not a provider failure (would wash a no-lawful-output path).
  * Typed production source for provider cause — not child stderr prose.
  */
 type SessionProviderStop = {
-  stopReason: "error";
+  stopReason: "error" | "aborted";
   errorMessage?: string;
   provider?: string;
   model?: string;
@@ -583,10 +583,11 @@ function typedHttpStatusFromMessage(message: SessionMessage): number | undefined
 }
 
 function sessionProviderStopFromAssistant(message: SessionMessage | undefined): SessionProviderStop | undefined {
-  if (message?.role !== "assistant" || message.stopReason !== "error") return undefined;
+  if (message?.role !== "assistant") return undefined;
+  if (message.stopReason !== "error" && message.stopReason !== "aborted") return undefined;
   const httpStatus = typedHttpStatusFromMessage(message);
   return {
-    stopReason: "error",
+    stopReason: message.stopReason,
     // Preserve held errorMessage bytes — emptiness check must not rewrite.
     ...(typeof message.errorMessage === "string" && message.errorMessage.trim() !== ""
       ? { errorMessage: message.errorMessage }

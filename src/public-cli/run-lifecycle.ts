@@ -107,14 +107,18 @@ export async function clearTypedProviderHttpObservation(
 
 /**
  * Record a typed provider HTTP status observation for the admitted run.
- * The latest observation is authoritative: only a current HTTP 429 from
- * Codex/xAI is retained for v1 resume; any other status or provider clears
- * prior within-attempt 429 evidence. Never inspects diagnostic prose.
+ * Only non-success HTTP statuses are persisted (authorized error evidence).
+ * A 2xx response clears any prior observation so success cannot leave stale
+ * error evidence. Never inspects diagnostic prose.
  */
 export async function recordTypedProviderHttpStatus(
   runDirectory: string,
   observation: { readonly httpStatus: number; readonly provider: string },
 ): Promise<void> {
+  if (observation.httpStatus >= 200 && observation.httpStatus < 300) {
+    await clearTypedProviderHttpObservation(runDirectory);
+    return;
+  }
   const body: TypedProviderHttpObservation = {
     httpStatus: observation.httpStatus,
     provider: observation.provider,
