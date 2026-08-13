@@ -13,6 +13,7 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { settleJudgeTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
   packageRoot,
@@ -56,6 +57,7 @@ test(
       ] as const) {
         const stdout: string[] = [];
         const stderr: string[] = [];
+        offerTestDispatchLease(home, project);
         const result = await runAkRole(
           [
             "coder",
@@ -138,6 +140,7 @@ test(
       await mkdir(project, { recursive: true });
       seedGitProject(project);
       const providerPath = resolve(packageRoot, "test/fixtures/primary-no-receipt-provider.ts");
+      offerTestDispatchLease(home, project);
       const result = await runAkRole([
         "coder", "--model", "ak-primary-no-receipt/faux-1", "--thinking", "off",
         "--project", project, "Exercise aborted infrastructure settlement.",
@@ -173,6 +176,7 @@ test(
         packageRoot,
         "test/fixtures/audit-failure-provider.ts",
       );
+      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "judge",
@@ -319,6 +323,7 @@ test(
         "test/fixtures/audit-failure-provider.ts",
       );
 
+      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "judge",

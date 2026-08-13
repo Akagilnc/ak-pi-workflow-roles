@@ -2,16 +2,16 @@ import { resolve } from "node:path";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
-import { offerTicketDispatchLease } from "../../src/ticket-dispatch-lease.ts";
+import { offerSelectedTicketDispatchLease } from "../../src/factory-board-ticket-dispatch.ts";
 
-/** Test-only: offer a pending one-shot lease for public admit/claim. Does not swallow HeldError. */
+/** Offer via the production board-select seam. Does not swallow HeldError. */
 export function offerTestDispatchLease(
   home: string,
   projectRoot: string,
   ticketNumber = 176,
 ): void {
   const siteIdentity = resolve(projectRoot);
-  offerTicketDispatchLease({
+  offerSelectedTicketDispatchLease({
     ledgerHome: resolveActivationLedgerHome(() => home),
     bookKey: resolveBookKeyFromGit(siteIdentity),
     siteIdentity,
