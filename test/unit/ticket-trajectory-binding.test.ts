@@ -5,7 +5,11 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { ACCEPTED_ACTIVATION_EVENT } from "../../src/activation-ledger.ts";
-import { loadTicketTrajectoryRuns } from "../../src/ticket-trajectory.ts";
+import { DISPATCH_STUB_EVENT } from "../../src/activation-reconciliation.ts";
+import {
+  buildTicketTrajectoryBookIndex,
+  loadTicketTrajectoryRuns,
+} from "../../src/ticket-trajectory.ts";
 import {
   TICKET_BINDING_EVENT,
   TicketRunAttributionError,
@@ -85,7 +89,7 @@ test("binding + activation + flat run is included for that ticket", async () => 
   });
 });
 
-test("same flat run without binding is loud unbound", async () => {
+test("same flat run without binding is isolated (not joined, not board-wide error)", async () => {
   await withBookDir(async (ledgerDir) => {
     const runFolder = "01jrun@judge";
     const sessionFile = await seedFlatRun(ledgerDir, runFolder);
@@ -99,11 +103,10 @@ test("same flat run without binding is loud unbound", async () => {
         correlation: { kind: "caller", id: "corr-unbound-1" },
       },
     ]);
-    await assert.rejects(
-      () => loadTicketTrajectoryRuns(ledgerDir, 176),
-      (error: unknown) =>
-        error instanceof TicketRunAttributionError && error.kind === "unbound",
-    );
+    // Unbound activations never join any ticket and never poison empty tickets.
+    const runs = await loadTicketTrajectoryRuns(ledgerDir, 176);
+    assert.equal(runs.length, 0);
+    assert.equal(runs.some((run) => run.runId === runFolder), false);
   });
 });
 
@@ -187,6 +190,99 @@ test("ticket load does not fail when another activation is unbound", async () =>
     const runs = await loadTicketTrajectoryRuns(ledgerDir, 176);
     assert.equal(runs.some((run) => run.runId === "01bound@judge"), true);
     assert.equal(runs.some((run) => run.runId === "01other@fixer"), false);
+  });
+});
+
+test("empty ticket is not poisoned by unrelated unbound activations", async () => {
+  await withBookDir(async (ledgerDir) => {
+    const sessionFile = await seedFlatRun(ledgerDir, "01jrun@judge");
+    await writeJsonl(join(ledgerDir, "waiting.jsonl"), [
+      {
+        event: ACCEPTED_ACTIVATION_EVENT,
+        role: "judge",
+        observedAt: "2026-08-07T00:00:00.100Z",
+        bookKey: "demo-book",
+        session: { kind: "session-file", path: sessionFile },
+        correlation: { kind: "caller", id: "corr-unbound-other" },
+      },
+    ]);
+    // Ticket 177 has nothing of its own; unbound activation must not throw.
+    const runs = await loadTicketTrajectoryRuns(ledgerDir, 177);
+    assert.equal(runs.length, 0);
+  });
+});
+
+test("dispatch-only binding appears on the ticket before activation", async () => {
+  await withBookDir(async (ledgerDir) => {
+    await writeJsonl(join(ledgerDir, "waiting.jsonl"), [
+      {
+        event: TICKET_BINDING_EVENT,
+        observedAt: "2026-08-07T00:00:00.000Z",
+        bookKey: "demo-book",
+        siteIdentity: "/site/demo",
+        ticketNumber: 176,
+        correlation: { kind: "caller", id: "corr-dispatch-only" },
+      },
+      {
+        event: DISPATCH_STUB_EVENT,
+        observedAt: "2026-08-07T00:00:00.050Z",
+        bookKey: "demo-book",
+        dispatch: { kind: "process", pid: 4242 },
+        correlation: { kind: "caller", id: "corr-dispatch-only" },
+      },
+    ]);
+    const runs = await loadTicketTrajectoryRuns(ledgerDir, 176);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]?.runId, "dispatch:corr-dispatch-only");
+    assert.equal(runs[0]?.hasResult, false);
+    assert.equal(runs[0]?.startedAt, "2026-08-07T00:00:00.050Z");
+    // Other tickets do not inherit the dispatch-only run.
+    const other = await loadTicketTrajectoryRuns(ledgerDir, 177);
+    assert.equal(other.length, 0);
+  });
+});
+
+test("book index is reusable across tickets without re-scanning semantics", async () => {
+  await withBookDir(async (ledgerDir) => {
+    await writeJsonl(join(ledgerDir, "waiting.jsonl"), [
+      {
+        event: TICKET_BINDING_EVENT,
+        observedAt: "2026-08-07T00:00:00.000Z",
+        bookKey: "demo-book",
+        siteIdentity: "/site/demo",
+        ticketNumber: 176,
+        correlation: { kind: "caller", id: "corr-a" },
+      },
+      {
+        event: DISPATCH_STUB_EVENT,
+        observedAt: "2026-08-07T00:00:00.050Z",
+        bookKey: "demo-book",
+        dispatch: { kind: "process", pid: 1 },
+        correlation: { kind: "caller", id: "corr-a" },
+      },
+      {
+        event: TICKET_BINDING_EVENT,
+        observedAt: "2026-08-07T00:00:00.100Z",
+        bookKey: "demo-book",
+        siteIdentity: "/site/demo",
+        ticketNumber: 177,
+        correlation: { kind: "caller", id: "corr-b" },
+      },
+      {
+        event: DISPATCH_STUB_EVENT,
+        observedAt: "2026-08-07T00:00:00.150Z",
+        bookKey: "demo-book",
+        dispatch: { kind: "process", pid: 2 },
+        correlation: { kind: "caller", id: "corr-b" },
+      },
+    ]);
+    const index = buildTicketTrajectoryBookIndex(ledgerDir);
+    assert.equal(index.bindings.length, 2);
+    assert.equal(index.dispatchStubs.length, 2);
+    const a = await loadTicketTrajectoryRuns(ledgerDir, 176, index);
+    const b = await loadTicketTrajectoryRuns(ledgerDir, 177, index);
+    assert.equal(a.some((run) => run.runId === "dispatch:corr-a"), true);
+    assert.equal(b.some((run) => run.runId === "dispatch:corr-b"), true);
   });
 });
 

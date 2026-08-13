@@ -91,7 +91,6 @@ function seedGitProject(root: string): void {
 async function admitFixerInvocation(
   options: Parameters<typeof admitFixerInvocationRaw>[0],
 ): ReturnType<typeof admitFixerInvocationRaw> {
-  offerTestDispatchLease(options.home, options.project ?? options.cwd);
   return admitFixerInvocationRaw(options);
 }
 
@@ -460,7 +459,6 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       const bad = join(home, "bad.json");
       await writeFile(bad, "{", "utf8");
       const { io } = captureIo();
-      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         ["fixer", "--project", project, "--prerequisites", bad, "Repair."],
         {
@@ -479,7 +477,6 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "fixer",
@@ -555,7 +552,6 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
     {
       const { io } = captureIo();
       let captured: string[] | undefined;
-      offerTestDispatchLease(home, project);
       await runAkRole(
         ["fixer", "--project", project, "Settle the approved repair."],
         {
@@ -587,12 +583,13 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    // Binding path under test: machine dispatch lease must be claimed on admit.
+    offerTestDispatchLease(home, project);
     const runId = "run-cli-fixer-resume-plan";
     const instruction = "Propose the first repair plan for resume.";
 
     {
       const { io } = captureIo();
-      offerTestDispatchLease(home, project);
       const first = await runAkRole(
         ["fixer", "plan", "--project", project, instruction],
         {
@@ -806,7 +803,6 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
 
     // Full public CLI path: same judgment exits 0 with retained blocker facts.
     const { io, stdout, stderr } = captureIo();
-    offerTestDispatchLease(home, project);
     const result = await runAkRole(
       [
         "fixer",
@@ -1071,7 +1067,6 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         row.phase === "plan"
           ? (["fixer", "plan", "--project", project, `CLI ${row.status}`] as string[])
           : (["fixer", "--project", project, `CLI ${row.status}`] as string[]);
-      offerTestDispatchLease(home, project);
       const result = await runAkRole(cliArgs, {
         packageRoot,
         home,

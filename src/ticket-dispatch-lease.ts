@@ -31,7 +31,6 @@ export type SiteIdentity = string;
 export const TICKET_BINDING_EVENT = "ticket-binding" as const;
 
 export const DISPATCH_LEASE_PENDING_FILE = "dispatch-lease.json" as const;
-export const DISPATCH_LEASE_CLAIMED_FILE = "dispatch-lease.claimed.json" as const;
 
 export type PendingTicketDispatchLease = {
   readonly ticketNumber: TicketIdentity;
@@ -137,8 +136,12 @@ function pendingLeasePath(ledgerHome: string, bookKey: string): string {
   return join(activationBookDirectory(ledgerHome, bookKey), DISPATCH_LEASE_PENDING_FILE);
 }
 
-function claimedLeasePath(ledgerHome: string, bookKey: string): string {
-  return join(activationBookDirectory(ledgerHome, bookKey), DISPATCH_LEASE_CLAIMED_FILE);
+/** Unique per-claim path so acquire and read bind the same object; never a shared sidecar. */
+function exclusiveClaimPath(ledgerHome: string, bookKey: string, claimToken: string): string {
+  return join(
+    activationBookDirectory(ledgerHome, bookKey),
+    `dispatch-lease.claimed.${claimToken}.json`,
+  );
 }
 
 export function buildTicketBindingDispatchFact(input: {
@@ -306,9 +309,13 @@ export function offerTicketDispatchLease(options: {
 }
 
 /**
- * Atomically claim the book's pending lease. Generates an opaque correlation,
- * appends ticket-binding + dispatch-stub onto waiting.jsonl, and empties the slot.
- * Resume must not call this.
+ * Atomically claim the book's pending lease. Acquire and read bind the same
+ * exclusive object (rename pending → unique claim path, then read that path).
+ * Generates an opaque correlation, appends ticket-binding + dispatch-stub onto
+ * waiting.jsonl, and empties the slot. Resume must not call this.
+ *
+ * Crash ownership: a leftover unique claim file is orphaned and never blocks the
+ * next claim (no shared sidecar, no recovery protocol).
  */
 export function claimTicketDispatchLease(options: {
   readonly ledgerHome: string;
@@ -321,11 +328,11 @@ export function claimTicketDispatchLease(options: {
   const bookKey = requireNonemptyString(options.bookKey, "bookKey");
   const siteIdentity = requireNonemptyString(options.siteIdentity, "siteIdentity");
   const pendingPath = pendingLeasePath(options.ledgerHome, bookKey);
-  const claimedPath = claimedLeasePath(options.ledgerHome, bookKey);
+  const claimToken = randomUUID();
+  const claimedPath = exclusiveClaimPath(options.ledgerHome, bookKey, claimToken);
 
-  let raw: string;
   try {
-    raw = readFileSync(pendingPath, "utf8");
+    renameSync(pendingPath, claimedPath);
   } catch (error) {
     if (errnoCode(error) === "ENOENT") {
       throw new TicketDispatchLeaseMissingError(
@@ -334,25 +341,42 @@ export function claimTicketDispatchLease(options: {
       );
     }
     throw new TicketDispatchLeaseError(
-      `failed to read ticket dispatch lease (${pendingPath}): ${errorText(error)}`,
+      `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(error)}`,
       { cause: error },
     );
   }
-  const pending = parsePendingLease(raw, pendingPath);
-  if (pending.bookKey !== bookKey) {
-    throw new TicketDispatchLeaseError(
-      `ticket dispatch lease bookKey mismatch for book ${bookKey}`,
-    );
-  }
-  if (pending.siteIdentity !== siteIdentity) {
-    throw new TicketDispatchLeaseSiteMismatchError(
-      `ticket dispatch lease siteIdentity does not match claimer for book ${bookKey}`,
-    );
-  }
-
-  consumePendingLeaseByRename(pendingPath, claimedPath, bookKey);
 
   try {
+    let raw: string;
+    try {
+      raw = readFileSync(claimedPath, "utf8");
+    } catch (error) {
+      throw new TicketDispatchLeaseError(
+        `failed to read claimed ticket dispatch lease (${claimedPath}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+    const pending = parsePendingLease(raw, claimedPath);
+    if (pending.bookKey !== bookKey) {
+      throw new TicketDispatchLeaseError(
+        `ticket dispatch lease bookKey mismatch for book ${bookKey}`,
+      );
+    }
+    if (pending.siteIdentity !== siteIdentity) {
+      // Return the exclusive object to the pending slot so the correct site can claim.
+      try {
+        renameSync(claimedPath, pendingPath);
+      } catch (restoreError) {
+        throw new TicketDispatchLeaseSiteMismatchError(
+          `ticket dispatch lease siteIdentity does not match claimer for book ${bookKey}`,
+          { cause: restoreError },
+        );
+      }
+      throw new TicketDispatchLeaseSiteMismatchError(
+        `ticket dispatch lease siteIdentity does not match claimer for book ${bookKey}`,
+      );
+    }
+
     const correlationId = (options.createCorrelationId ?? randomUUID)();
     if (typeof correlationId !== "string" || correlationId.length === 0) {
       throw new TicketDispatchLeaseError("claimed correlation id must be a nonempty string");
@@ -389,75 +413,9 @@ export function claimTicketDispatchLease(options: {
     try {
       unlinkSync(claimedPath);
     } catch {
-      // Slot already consumed. Next claim recovers a leftover claimed sidecar.
+      // Exclusive claim file is ours only. Already restored to pending on site mismatch,
+      // or leftover on crash — never a shared sidecar that blocks the next claim.
     }
-  }
-}
-
-/**
- * Exclusive rename pending → claimed. A leftover claimed sidecar (failed unlink
- * after a prior claim) is stale iff pending still exists: clear it and retry.
- * Pending gone on EEXIST/ENOENT is a live claimer.
- */
-function consumePendingLeaseByRename(
-  pendingPath: string,
-  claimedPath: string,
-  bookKey: string,
-): void {
-  try {
-    renameSync(pendingPath, claimedPath);
-    return;
-  } catch (error) {
-    if (errnoCode(error) === "ENOENT") {
-      throw new TicketDispatchLeaseHeldError(
-        `ticket dispatch lease is held or not unique for book ${bookKey}`,
-        { cause: error },
-      );
-    }
-    if (errnoCode(error) !== "EEXIST") {
-      throw new TicketDispatchLeaseError(
-        `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(error)}`,
-        { cause: error },
-      );
-    }
-  }
-  try {
-    readFileSync(pendingPath);
-  } catch (pendingError) {
-    if (errnoCode(pendingError) === "ENOENT") {
-      throw new TicketDispatchLeaseHeldError(
-        `ticket dispatch lease is held or not unique for book ${bookKey}`,
-        { cause: pendingError },
-      );
-    }
-    throw new TicketDispatchLeaseError(
-      `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(pendingError)}`,
-      { cause: pendingError },
-    );
-  }
-  try {
-    unlinkSync(claimedPath);
-  } catch (unlinkError) {
-    if (errnoCode(unlinkError) !== "ENOENT") {
-      throw new TicketDispatchLeaseError(
-        `failed to clear leftover claimed ticket dispatch lease for book ${bookKey} (${claimedPath}): ${errorText(unlinkError)}`,
-        { cause: unlinkError },
-      );
-    }
-  }
-  try {
-    renameSync(pendingPath, claimedPath);
-  } catch (retryError) {
-    if (errnoCode(retryError) === "ENOENT" || errnoCode(retryError) === "EEXIST") {
-      throw new TicketDispatchLeaseHeldError(
-        `ticket dispatch lease is held or not unique for book ${bookKey}`,
-        { cause: retryError },
-      );
-    }
-    throw new TicketDispatchLeaseError(
-      `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(retryError)}`,
-      { cause: retryError },
-    );
   }
 }
 
@@ -511,4 +469,9 @@ export function listTicketBindingFactsFromBookDir(
 
 export function readWaitingJsonlRecords(waitingPath: string): unknown[] {
   return readWaitingJsonlLines(waitingPath);
+}
+
+/** One-shot book-level waiting.jsonl scan for trajectory join reuse. */
+export function loadBookWaitingRecords(ledgerDir: string): unknown[] {
+  return readWaitingJsonlLines(join(ledgerDir, "waiting.jsonl"));
 }

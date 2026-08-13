@@ -18,7 +18,6 @@ import {
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 import { runPublicCliSubprocess } from "../helpers/public-cli-subprocess.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root });
@@ -194,7 +193,6 @@ test(
 
         const instruction =
           "Implement the approved vertical slice with package TDD.";
-        offerTestDispatchLease(home, project);
         const result = await runAkRoleBin(
           installed.akRoleBin,
           [
@@ -318,7 +316,6 @@ test(
 
         await chmod(installedRoutebook, 0o000);
         const runWithUnreadableRoutebook = async (unavailable: boolean) => {
-          offerTestDispatchLease(home, project);
           return runAkRoleBin(
             installed.akRoleBin,
             [

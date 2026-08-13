@@ -17,8 +17,8 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -77,7 +77,6 @@ function seedGitProject(root: string): void {
 async function admitCoderInvocation(
   options: Parameters<typeof admitCoderInvocationRaw>[0],
 ): ReturnType<typeof admitCoderInvocationRaw> {
-  offerTestDispatchLease(options.home, options.project ?? options.cwd);
   return admitCoderInvocationRaw(options);
 }
 
@@ -354,7 +353,6 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "coder",
@@ -434,7 +432,6 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
     {
       const { io } = captureIo();
       let captured: string[] | undefined;
-      offerTestDispatchLease(home, project);
       await runAkRole(
         ["coder", "--project", project, "Implement the approved slice."],
         {
@@ -469,12 +466,13 @@ test("ak-role resume continues coder with preserved plan phase and exact session
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    // Binding path under test: machine dispatch lease must be claimed on admit.
+    offerTestDispatchLease(home, project);
     const runId = "run-cli-coder-resume-plan";
     const instruction = "Propose the first implementation plan for resume.";
 
     {
       const { io } = captureIo();
-      offerTestDispatchLease(home, project);
       const first = await runAkRole(
         ["coder", "plan", "--project", project, instruction],
         {

@@ -15052,8 +15052,11 @@ function requireNonemptyString(value, label) {
 function pendingLeasePath(ledgerHome, bookKey) {
   return join5(activationBookDirectory(ledgerHome, bookKey), DISPATCH_LEASE_PENDING_FILE);
 }
-function claimedLeasePath(ledgerHome, bookKey) {
-  return join5(activationBookDirectory(ledgerHome, bookKey), DISPATCH_LEASE_CLAIMED_FILE);
+function exclusiveClaimPath(ledgerHome, bookKey, claimToken) {
+  return join5(
+    activationBookDirectory(ledgerHome, bookKey),
+    `dispatch-lease.claimed.${claimToken}.json`
+  );
 }
 function buildTicketBindingDispatchFact(input) {
   return {
@@ -15112,10 +15115,10 @@ function claimTicketDispatchLease(options) {
   const bookKey = requireNonemptyString(options.bookKey, "bookKey");
   const siteIdentity = requireNonemptyString(options.siteIdentity, "siteIdentity");
   const pendingPath = pendingLeasePath(options.ledgerHome, bookKey);
-  const claimedPath = claimedLeasePath(options.ledgerHome, bookKey);
-  let raw;
+  const claimToken = randomUUID();
+  const claimedPath = exclusiveClaimPath(options.ledgerHome, bookKey, claimToken);
   try {
-    raw = readFileSync(pendingPath, "utf8");
+    renameSync(pendingPath, claimedPath);
   } catch (error) {
     if (errnoCode(error) === "ENOENT") {
       throw new TicketDispatchLeaseMissingError(
@@ -15124,23 +15127,39 @@ function claimTicketDispatchLease(options) {
       );
     }
     throw new TicketDispatchLeaseError(
-      `failed to read ticket dispatch lease (${pendingPath}): ${errorText(error)}`,
+      `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(error)}`,
       { cause: error }
     );
   }
-  const pending = parsePendingLease(raw, pendingPath);
-  if (pending.bookKey !== bookKey) {
-    throw new TicketDispatchLeaseError(
-      `ticket dispatch lease bookKey mismatch for book ${bookKey}`
-    );
-  }
-  if (pending.siteIdentity !== siteIdentity) {
-    throw new TicketDispatchLeaseSiteMismatchError(
-      `ticket dispatch lease siteIdentity does not match claimer for book ${bookKey}`
-    );
-  }
-  consumePendingLeaseByRename(pendingPath, claimedPath, bookKey);
   try {
+    let raw;
+    try {
+      raw = readFileSync(claimedPath, "utf8");
+    } catch (error) {
+      throw new TicketDispatchLeaseError(
+        `failed to read claimed ticket dispatch lease (${claimedPath}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+    const pending = parsePendingLease(raw, claimedPath);
+    if (pending.bookKey !== bookKey) {
+      throw new TicketDispatchLeaseError(
+        `ticket dispatch lease bookKey mismatch for book ${bookKey}`
+      );
+    }
+    if (pending.siteIdentity !== siteIdentity) {
+      try {
+        renameSync(claimedPath, pendingPath);
+      } catch (restoreError) {
+        throw new TicketDispatchLeaseSiteMismatchError(
+          `ticket dispatch lease siteIdentity does not match claimer for book ${bookKey}`,
+          { cause: restoreError }
+        );
+      }
+      throw new TicketDispatchLeaseSiteMismatchError(
+        `ticket dispatch lease siteIdentity does not match claimer for book ${bookKey}`
+      );
+    }
     const correlationId = (options.createCorrelationId ?? randomUUID)();
     if (typeof correlationId !== "string" || correlationId.length === 0) {
       throw new TicketDispatchLeaseError("claimed correlation id must be a nonempty string");
@@ -15180,64 +15199,7 @@ function claimTicketDispatchLease(options) {
     }
   }
 }
-function consumePendingLeaseByRename(pendingPath, claimedPath, bookKey) {
-  try {
-    renameSync(pendingPath, claimedPath);
-    return;
-  } catch (error) {
-    if (errnoCode(error) === "ENOENT") {
-      throw new TicketDispatchLeaseHeldError(
-        `ticket dispatch lease is held or not unique for book ${bookKey}`,
-        { cause: error }
-      );
-    }
-    if (errnoCode(error) !== "EEXIST") {
-      throw new TicketDispatchLeaseError(
-        `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-  try {
-    readFileSync(pendingPath);
-  } catch (pendingError) {
-    if (errnoCode(pendingError) === "ENOENT") {
-      throw new TicketDispatchLeaseHeldError(
-        `ticket dispatch lease is held or not unique for book ${bookKey}`,
-        { cause: pendingError }
-      );
-    }
-    throw new TicketDispatchLeaseError(
-      `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(pendingError)}`,
-      { cause: pendingError }
-    );
-  }
-  try {
-    unlinkSync(claimedPath);
-  } catch (unlinkError) {
-    if (errnoCode(unlinkError) !== "ENOENT") {
-      throw new TicketDispatchLeaseError(
-        `failed to clear leftover claimed ticket dispatch lease for book ${bookKey} (${claimedPath}): ${errorText(unlinkError)}`,
-        { cause: unlinkError }
-      );
-    }
-  }
-  try {
-    renameSync(pendingPath, claimedPath);
-  } catch (retryError) {
-    if (errnoCode(retryError) === "ENOENT" || errnoCode(retryError) === "EEXIST") {
-      throw new TicketDispatchLeaseHeldError(
-        `ticket dispatch lease is held or not unique for book ${bookKey}`,
-        { cause: retryError }
-      );
-    }
-    throw new TicketDispatchLeaseError(
-      `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(retryError)}`,
-      { cause: retryError }
-    );
-  }
-}
-var TICKET_BINDING_EVENT, DISPATCH_LEASE_PENDING_FILE, DISPATCH_LEASE_CLAIMED_FILE, TicketDispatchLeaseError, TicketDispatchLeaseMissingError, TicketDispatchLeaseHeldError, TicketDispatchLeaseSiteMismatchError;
+var TICKET_BINDING_EVENT, DISPATCH_LEASE_PENDING_FILE, TicketDispatchLeaseError, TicketDispatchLeaseMissingError, TicketDispatchLeaseHeldError, TicketDispatchLeaseSiteMismatchError;
 var init_ticket_dispatch_lease = __esm({
   "src/ticket-dispatch-lease.ts"() {
     "use strict";
@@ -15246,7 +15208,6 @@ var init_ticket_dispatch_lease = __esm({
     init_activation_ledger_topology();
     TICKET_BINDING_EVENT = "ticket-binding";
     DISPATCH_LEASE_PENDING_FILE = "dispatch-lease.json";
-    DISPATCH_LEASE_CLAIMED_FILE = "dispatch-lease.claimed.json";
     TicketDispatchLeaseError = class extends Error {
       code = "AK_TICKET_DISPATCH_LEASE";
       constructor(message, options) {
@@ -15993,11 +15954,21 @@ function claimTicketDispatchLeaseForAdmit(input) {
       siteIdentity: input.siteIdentity
     });
   } catch (error) {
+    if (error instanceof TicketDispatchLeaseMissingError || error instanceof TicketDispatchLeaseHeldError) {
+      return void 0;
+    }
     if (error instanceof TicketDispatchLeaseError) {
       throw new CliUsageError(error.message, { cause: error });
     }
     throw error;
   }
+}
+function leaseAdmissionFields(lease) {
+  if (lease === void 0) return {};
+  return {
+    correlationId: lease.correlationId,
+    ticketNumber: lease.ticketNumber
+  };
 }
 async function admitJudgeInvocation(options) {
   if (options.project !== void 0) {
@@ -16006,11 +15977,6 @@ async function admitJudgeInvocation(options) {
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot
-  });
   const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -16024,6 +15990,12 @@ async function admitJudgeInvocation(options) {
       )
     );
   }
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const leaseFields = leaseAdmissionFields(dispatchLease);
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
@@ -16034,8 +16006,7 @@ async function admitJudgeInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber,
+    ...leaseFields,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -16062,8 +16033,7 @@ async function admitJudgeInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber
+    ...leaseFields
   };
 }
 function buildJudgeTransportPrompt(admitted) {
@@ -16098,11 +16068,6 @@ async function admitCoderInvocation(options) {
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot
-  });
   const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -16116,6 +16081,12 @@ async function admitCoderInvocation(options) {
       )
     );
   }
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const leaseFields = leaseAdmissionFields(dispatchLease);
   const taskPath = join6(runDirectory, "task.md");
   await writeFile2(taskPath, instruction, "utf8");
   const admitted = {
@@ -16127,8 +16098,7 @@ async function admitCoderInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber,
+    ...leaseFields,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -16158,8 +16128,7 @@ async function admitCoderInvocation(options) {
     sessionFile,
     admittedRequestPath,
     taskPath,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber
+    ...leaseFields
   };
 }
 function buildCoderTransportPrompt(admitted) {
@@ -16186,14 +16155,30 @@ async function admitFixerInvocation(options) {
   if (options.phase !== "plan" && options.phase !== "apply") {
     throw new CliUsageError("fixer phase must be plan or apply");
   }
+  let prerequisites = Object.freeze([]);
+  let prerequisitesSource;
+  if (options.prerequisitesPath !== void 0) {
+    const absolutePrereq = isAbsolute4(options.prerequisitesPath) ? options.prerequisitesPath : resolve5(options.prerequisitesPath);
+    try {
+      prerequisitesSource = await readFile4(absolutePrereq, "utf8");
+    } catch (error) {
+      throw new CliUsageError(
+        `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
+        { cause: error }
+      );
+    }
+    try {
+      prerequisites = parseFixerPrerequisites(prerequisitesSource);
+    } catch (error) {
+      if (error instanceof FixerPacketValidationError) {
+        throw new CliUsageError(error.message, { cause: error });
+      }
+      throw error;
+    }
+  }
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot
-  });
   const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -16207,27 +16192,14 @@ async function admitFixerInvocation(options) {
       )
     );
   }
-  let prerequisites = Object.freeze([]);
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const leaseFields = leaseAdmissionFields(dispatchLease);
   let prerequisitesPath;
-  if (options.prerequisitesPath !== void 0) {
-    const absolutePrereq = isAbsolute4(options.prerequisitesPath) ? options.prerequisitesPath : resolve5(options.prerequisitesPath);
-    let source;
-    try {
-      source = await readFile4(absolutePrereq, "utf8");
-    } catch (error) {
-      throw new CliUsageError(
-        `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
-        { cause: error }
-      );
-    }
-    try {
-      prerequisites = parseFixerPrerequisites(source);
-    } catch (error) {
-      if (error instanceof FixerPacketValidationError) {
-        throw new CliUsageError(error.message, { cause: error });
-      }
-      throw error;
-    }
+  if (prerequisitesSource !== void 0) {
     prerequisitesPath = join6(runDirectory, "prerequisites.json");
     await writeFile2(
       prerequisitesPath,
@@ -16247,8 +16219,7 @@ async function admitFixerInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber,
+    ...leaseFields,
     instruction,
     instructionEmpty: false,
     packetPath,
@@ -16285,8 +16256,7 @@ async function admitFixerInvocation(options) {
     packetPath,
     ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
     prerequisites,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber
+    ...leaseFields
   };
 }
 function buildFixerTransportPrompt(admitted) {
@@ -16454,13 +16424,19 @@ async function admitCollectorInvocation(options) {
   } else {
     repository = resolveGitHubRemoteRepository(projectRoot);
   }
+  let manifest = emptyCollectorManifest();
+  let manifestCanonicalJson;
+  if (options.requestManifestPath !== void 0) {
+    try {
+      manifest = await loadCollectorManifest(options.requestManifestPath);
+      manifestCanonicalJson = manifest.canonicalJson;
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+  }
+  const manifestDigest = manifest.digest;
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot
-  });
   const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -16475,18 +16451,17 @@ async function admitCollectorInvocation(options) {
       )
     );
   }
-  let manifest = emptyCollectorManifest();
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const leaseFields = leaseAdmissionFields(dispatchLease);
   let requestManifestPath;
-  if (options.requestManifestPath !== void 0) {
-    try {
-      manifest = await loadCollectorManifest(options.requestManifestPath);
-    } catch (error) {
-      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
-    }
+  if (manifestCanonicalJson !== void 0) {
     requestManifestPath = join6(runDirectory, "request-manifest.json");
-    await writeFile2(requestManifestPath, manifest.canonicalJson, "utf8");
+    await writeFile2(requestManifestPath, manifestCanonicalJson, "utf8");
   }
-  const manifestDigest = manifest.digest;
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
@@ -16497,8 +16472,7 @@ async function admitCollectorInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber,
+    ...leaseFields,
     instruction,
     instructionEmpty,
     prNumber,
@@ -16538,8 +16512,7 @@ async function admitCollectorInvocation(options) {
     repository,
     ...requestManifestPath === void 0 ? {} : { requestManifestPath },
     manifestDigest,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber
+    ...leaseFields
   };
 }
 function buildCollectorTransportPrompt(_admitted) {
@@ -16859,11 +16832,6 @@ async function admitReviewerInvocation(options) {
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot
-  });
   const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -16877,6 +16845,12 @@ async function admitReviewerInvocation(options) {
       )
     );
   }
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const leaseFields = leaseAdmissionFields(dispatchLease);
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
@@ -16887,8 +16861,7 @@ async function admitReviewerInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber,
+    ...leaseFields,
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
@@ -16921,8 +16894,7 @@ async function admitReviewerInvocation(options) {
     sessionFile,
     admittedRequestPath,
     baseRevision: options.baseRevision,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber
+    ...leaseFields
   };
 }
 function buildReviewerTransportPrompt(admitted) {
@@ -17021,11 +16993,6 @@ async function admitMergerInvocation(options) {
   );
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot
-  });
   const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -17063,6 +17030,12 @@ async function admitMergerInvocation(options) {
     // Authorized checks remain available on the assignment; default none.
     authorizedChecks: []
   });
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const leaseFields = leaseAdmissionFields(dispatchLease);
   const mergerInputPath = join6(runDirectory, "merger-input.json");
   await writeFile2(
     mergerInputPath,
@@ -17078,8 +17051,7 @@ async function admitMergerInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber,
+    ...leaseFields,
     instruction,
     instructionEmpty: false,
     mergerInputPath,
@@ -17120,8 +17092,7 @@ async function admitMergerInvocation(options) {
     admittedRequestPath,
     mergerInputPath,
     derived: admitted.derived,
-    correlationId: dispatchLease.correlationId,
-    ticketNumber: dispatchLease.ticketNumber
+    ...leaseFields
   };
 }
 function buildMergerTransportPrompt(admitted) {

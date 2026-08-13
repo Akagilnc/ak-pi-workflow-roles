@@ -26,7 +26,6 @@ import { execFileSync } from "node:child_process";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 import { AUDIT_ESCALATION_KIND, buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
@@ -221,7 +220,6 @@ test("malformed CLI structure rejects before admission with no model dispatch", 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     let ran = false;
     const result = await runAkRole(
@@ -256,7 +254,6 @@ test("empty --project= rejects structurally before admission with no model dispa
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     let dispatched = 0;
     const result = await runAkRole(["judge", "--project=", "task"], {
@@ -289,7 +286,6 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout } = captureIo();
     let dispatchedPrompt: string | undefined;
     const domainProse =
@@ -489,7 +485,6 @@ test("failure settlement durably records Error Artifact before presentation retu
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const bookKey = resolveBookKeyFromGit(project);
     const runId = "run-fail-durable-001";
     const runDirectory = join(
@@ -559,7 +554,6 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const bookKey = resolveBookKeyFromGit(project);
     const runId = "run-fail-attendance-001";
     const runDirectory = join(
@@ -644,7 +638,6 @@ test("controlled failure emits one stdout Terminal and one concise stderr diagno
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
 
     const result = await runAkRole(
@@ -694,7 +687,6 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
 
     // Counterexample 1: Error then real-shaped JSONL tool_execution_end.
     {
@@ -739,7 +731,6 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
     // Counterexample 2: single oversized diagnostic line — durable full, presentation bound.
     {
       const full = "x".repeat(CONCISE_DIAGNOSTIC_MAX_CHARS + 200);
-      offerTestDispatchLease(home, project);
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(
         ["judge", "--project", project, "oversized diagnostic"],
@@ -790,7 +781,6 @@ test("audit_escalation is a lawful typed terminal result exiting zero without be
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
 
     const auditCandidate = {
@@ -901,7 +891,6 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "needs owner decision"],
@@ -958,7 +947,6 @@ test("no lawful typed terminal result exits nonzero; unrecognized keeps identity
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
 
     const result = await runAkRole(
@@ -995,7 +983,6 @@ test("post-admission throw undefined stays unrecognized (not activation/null-exi
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
 
     const result = await runAkRole(
@@ -1034,7 +1021,6 @@ test("artifact publication EISDIR retains unrecognized identity (not washed to o
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "lawful then publish fails"],
@@ -1104,7 +1090,6 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "slow"],
@@ -1503,7 +1488,6 @@ test("public audit evidence collision returns a typed nonzero Terminal with resi
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "audit evidence collision"],
@@ -1615,7 +1599,6 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const bookKey = resolveBookKeyFromGit(project);
     const causes: ControlledFailureCause[] = [
       "activation",
@@ -1683,7 +1666,6 @@ test("zero-exit missing session classifies as session cause via public entry", a
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "no session bytes"],
@@ -1720,7 +1702,6 @@ test("zero-exit invalid coder details retain coder typed identity through shared
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io } = captureIo();
     const result = await runAkRole(
       ["coder", "apply", "--project", project, "bogus details"],
@@ -1764,7 +1745,6 @@ test("zero-exit invalid judge details classifies as output cause via public entr
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "bogus details"],
@@ -1813,7 +1793,6 @@ test("production knownFailure channel reaches settlement as provider with typed 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     // Resolved runner result — production-owned channel on ExplicitInternalPiResult,
     // not an ad-hoc thrown Error property and not stderr-prose inference.
@@ -1875,7 +1854,6 @@ test("production ExplicitInternalActivationError throw keeps provider cause and 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "provider throw"],
@@ -1911,7 +1889,6 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     // Real production shape: default runner has no knownFailure field; public CLI
     // owns credential presence and must not wash missing public-provider auth into activation.
@@ -1984,7 +1961,6 @@ test("default runner empty-auth retains provider cause, identity, and primary di
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     // No piRunner: production defaultExplicitInternalPiRunner subprocess.
     // Empty auth.json + selected xai is the live counterexample from Judge apply.
@@ -2037,7 +2013,6 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "already settled"],
@@ -2088,7 +2063,6 @@ test("Error Artifact primary collision retains original failure cause with Termi
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "activation then error artifact collision"],
@@ -2153,7 +2127,6 @@ test("exhausted fixed Error Artifact names still settle original cause via uniqu
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "exhaust fixed error artifact names"],
@@ -2219,7 +2192,6 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "malformed session transcript"],
@@ -2279,7 +2251,6 @@ test("unwritable run directory retains activation cause with durable Error Artif
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     let runDir: string | undefined;
     try {
@@ -2356,7 +2327,6 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["judge", "--project", project, "stderr log blocked"],
@@ -2414,7 +2384,6 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const multiline = [
       "provider boom with details",
@@ -2609,7 +2578,6 @@ test("fast four-role public wiring matrix settles an injected auditor provider s
     const project = join(home, `proj-${role}`);
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(argv[role](project), {
       packageRoot, home, cwd: project, io,
@@ -2652,7 +2620,6 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
     const project = join(home, "proj-judge-retention");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const retentionIo = captureIo();
     const tracer = await createJudgeAuditorRetentionTracer(home);
     let retentionResult;
@@ -2743,7 +2710,6 @@ test("public Reviewer no-task dispatch retains evidence-child provider identity"
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       [
@@ -3019,7 +2985,6 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["--model", "xai/grok-4:off", "judge", "--project", project, "typed output host failure"],
@@ -3144,7 +3109,6 @@ test("session provider-stop produces provider cause without injected knownFailur
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     // Real production shape: default runner never sets knownFailure; Pi leaves a
     // native assistant stopReason=error in the session (print-mode provider path).
@@ -3319,7 +3283,6 @@ test("zero-exit session provider-stop retains provider cause (not washed to outp
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     // Counterexample class: Pi leaves typed stopReason=error but runner code=0.
     // No-lawful path must still read session provider-stop — exit code must not
@@ -3415,7 +3378,6 @@ test("timedOut with session provider-stop retains provider identity (AC2)", asyn
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       [
@@ -3505,7 +3467,6 @@ test("real Coder/Fixer runs require a legal execution status before accepted set
     for (const row of rows) {
       for (const details of [{}, ...row.statuses.map((status) => ({ status }))]) {
         const status = "status" in details ? details.status : "missing";
-        offerTestDispatchLease(home, project);
         const { io } = captureIo();
         const result = await runAkRole(
           [row.role, row.phase, "--project", project, `${row.role} ${status} discriminator`],
@@ -3556,7 +3517,6 @@ test("unbound output failure remains nonzero even after an older provider error 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       [

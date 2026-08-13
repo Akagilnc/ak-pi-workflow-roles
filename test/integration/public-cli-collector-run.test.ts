@@ -5,7 +5,6 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
 import { packageRoot, piCli, runPiSubprocess, withHermeticHome } from "../helpers/pi-test-harness.ts";
 
@@ -26,7 +25,6 @@ test("public Collector request manifest executes request, re-observes it, and pu
     await mkdir(agentDir, { recursive: true });
     await mkdir(binDir, { recursive: true });
     seedProject(project);
-    offerTestDispatchLease(home, project);
     const manifest = resolve(home, "requests.json");
     await writeFile(manifest, JSON.stringify({ requests: [{ id: "codex", body: "Please review." }] }));
 
@@ -85,7 +83,6 @@ test("public Collector preserves a real HTTP 404 as typed activation failure and
     await mkdir(agentDir, { recursive: true });
     await mkdir(binDir, { recursive: true });
     seedProject(project);
-    offerTestDispatchLease(home, project);
 
     const gh = resolve(binDir, "gh");
     await writeFile(gh, `#!/usr/bin/env node

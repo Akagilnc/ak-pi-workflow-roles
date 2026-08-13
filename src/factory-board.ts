@@ -28,8 +28,10 @@ import {
 } from "./human-format.ts";
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
+  buildTicketTrajectoryBookIndex,
   loadTicketTrajectoryRuns,
   renderTicketTrajectoryStationHtml,
+  type TicketTrajectoryBookIndex,
   type TicketTrajectoryRun,
   type TrajectoryClock,
   type TrajectoryScheduler,
@@ -682,8 +684,9 @@ async function prepareTicket(
   ledgerDir: string,
   ticket: SnapshotTicket,
   now: Date,
+  bookIndex?: TicketTrajectoryBookIndex,
 ): Promise<PreparedTicket> {
-  const runs = await loadTicketTrajectoryRuns(ledgerDir, ticket.issueNumber);
+  const runs = await loadTicketTrajectoryRuns(ledgerDir, ticket.issueNumber, bookIndex);
   const pending = ticket.state !== "closed" && runs.length === 0;
   const currentState = decideTicketCurrentState({
     ticketState: ticket.state,
@@ -863,9 +866,11 @@ async function renderLaneHtml(
   now: Date,
   options?: { hidden?: boolean },
 ): Promise<RenderedLane> {
+  // One book-level waiting.jsonl index shared by every ticket in this lane.
+  const bookIndex = buildTicketTrajectoryBookIndex(ledgerDir);
   const prepared = new Map<number, PreparedTicket>();
   for (const ticket of tickets) {
-    prepared.set(ticket.issueNumber, await prepareTicket(ledgerDir, ticket, now));
+    prepared.set(ticket.issueNumber, await prepareTicket(ledgerDir, ticket, now, bookIndex));
   }
 
   const childrenByParent = buildDirectChildrenByParent(prepared);

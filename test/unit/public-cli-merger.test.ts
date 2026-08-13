@@ -116,7 +116,6 @@ async function materializeConflictedRepo(root: string): Promise<{
 async function admitMergerInvocation(
   options: Parameters<typeof admitMergerInvocationRaw>[0],
 ): ReturnType<typeof admitMergerInvocationRaw> {
-  offerTestDispatchLease(options.home, options.project ?? options.cwd);
   return admitMergerInvocationRaw(options);
 }
 
@@ -512,7 +511,6 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
     {
       seedGitProject(project);
       const { io, stdout, stderr } = captureIo();
-      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         ["merger", "Resolve whatever is open."],
         {
@@ -544,7 +542,6 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
         packageRoot,
         "resolving-merge-conflicts",
       );
-      offerTestDispatchLease(home, conflicted);
       const result = await runAkRole(
         ["merger", "--project", conflicted, "Reconcile both intents."],
         {
@@ -646,6 +643,8 @@ test("ak-role resume continues merger with package method and exact session", as
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     await materializeConflictedRepo(project);
+    // Binding path under test: machine dispatch lease must be claimed on admit.
+    offerTestDispatchLease(home, project);
     const runId = "run-cli-merger-resume-001";
     const instruction = "Start merge resolution for resume.";
     const material = await loadPackagedMethodSkillMaterial(
@@ -655,7 +654,6 @@ test("ak-role resume continues merger with package method and exact session", as
 
     {
       const { io } = captureIo();
-      offerTestDispatchLease(home, project);
       const first = await runAkRole(
         ["merger", "--project", project, instruction],
         {
@@ -782,7 +780,6 @@ test("public Merger retains malformed output candidate as typed incomplete", asy
     await mkdir(project, { recursive: true });
     await materializeConflictedRepo(project);
     const candidate = { status: "unknown-shape", attemptId: "run-merger-residual-182", report: 7 };
-    offerTestDispatchLease(home, project);
     const result = await runAkRole(["merger", "--project", project, "merge"], {
       packageRoot, home, cwd: project,
       credentials: { "openai-codex": true, xai: true },

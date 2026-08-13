@@ -13,8 +13,10 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { settleJudgeTerminalResult } from "../../src/public-cli/settlement.ts";
+import { DISPATCH_STUB_EVENT } from "../../src/activation-reconciliation.ts";
+import { TICKET_BINDING_EVENT } from "../../src/ticket-dispatch-lease.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import {
   packageRoot,
   piCli,
@@ -57,7 +59,6 @@ test(
       ] as const) {
         const stdout: string[] = [];
         const stderr: string[] = [];
-        offerTestDispatchLease(home, project);
         const result = await runAkRole(
           [
             "coder",
@@ -140,7 +141,6 @@ test(
       await mkdir(project, { recursive: true });
       seedGitProject(project);
       const providerPath = resolve(packageRoot, "test/fixtures/primary-no-receipt-provider.ts");
-      offerTestDispatchLease(home, project);
       const result = await runAkRole([
         "coder", "--model", "ak-primary-no-receipt/faux-1", "--thinking", "off",
         "--project", project, "Exercise aborted infrastructure settlement.",
@@ -176,7 +176,6 @@ test(
         packageRoot,
         "test/fixtures/audit-failure-provider.ts",
       );
-      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "judge",
@@ -323,6 +322,7 @@ test(
         "test/fixtures/audit-failure-provider.ts",
       );
 
+      // Machine dispatch context: lease claim generates opaque correlation (not env).
       offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
@@ -342,6 +342,7 @@ test(
           home,
           agentDir,
           cwd: project,
+          // Deprecated caller-correlation env must not become the ledger truth.
           correlationId: "corr-106-e2e",
           createRunId: () => "run-e2e-judge-001",
           judgeExtraPiArgs: ["-e", providerPath],
@@ -447,7 +448,27 @@ test(
         false,
       );
       assert.match(indexText, /"event":"accepted-activation"/);
-      assert.match(indexText, /"id":"corr-106-e2e"/);
+      // binding + dispatch-stub + accepted-activation share one opaque machine correlation.
+      const rows = indexText
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line) as {
+          event?: string;
+          correlation?: { kind?: string; id?: string };
+        });
+      const binding = rows.find((row) => row.event === TICKET_BINDING_EVENT);
+      const stub = rows.find((row) => row.event === DISPATCH_STUB_EVENT);
+      const activation = rows.find((row) => row.event === "accepted-activation");
+      assert.ok(binding, "ticket-binding fact required");
+      assert.ok(stub, "dispatch-stub fact required");
+      assert.ok(activation, "accepted-activation fact required");
+      const corr = binding!.correlation?.id;
+      assert.equal(typeof corr, "string");
+      assert.ok((corr ?? "").length > 0);
+      assert.notEqual(corr, "corr-106-e2e");
+      assert.notEqual(corr, "176");
+      assert.equal(stub!.correlation?.id, corr);
+      assert.equal(activation!.correlation?.id, corr);
 
       // pi binary used by harness exists (sanity for runner wiring).
       assert.equal(piCli.endsWith("/pi"), true);
