@@ -73,8 +73,9 @@ test("subprocess result seam classifies localTimeout, signal, nonzero exit, clea
   // spawning a detached descendant that inherits stdio; deadline has ample
   // margin so exit precedes it under load; descendant hold strictly past the
   // deadline keeps close pending. Classification must follow exit facts.
-  const postExitDeadlineMs = 2_000;
-  const postExitHoldMs = postExitDeadlineMs + 500;
+  // Keep well above the 50ms load-race floor (#271); compress idle wait only.
+  const postExitDeadlineMs = 500;
+  const postExitHoldMs = postExitDeadlineMs + 250;
   const postExit = await runNodeSubprocess(
     [
       "-e",
@@ -127,7 +128,7 @@ test("subprocess result seam classifies localTimeout, signal, nonzero exit, clea
   // (not a production hook) destroys stdout after exit listeners run. Must
   // keep process code/signal — not stream errno — plus localTimeout facts and
   // collected output. Reverting exited?exitCode/exitSignal selection fails this.
-  const collectionHoldMs = 2_000;
+  const collectionHoldMs = 500;
   const originalEmit = ChildProcess.prototype.emit;
   ChildProcess.prototype.emit = function (
     this: ChildProcess,
