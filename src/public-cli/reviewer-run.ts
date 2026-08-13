@@ -44,11 +44,11 @@ import {
   markRunResumable,
   markRunRunning,
   markRunTerminal,
-  readTypedHttp429Observation,
   renderResumeCommand,
   RESUME_TRANSPORT_ENVELOPE,
   RunWriterLeaseHeldError,
   type RunWriterLease,
+  type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
 import {
   classifyPostAdmissionFailure,
@@ -60,7 +60,9 @@ import {
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   presentStructuralRejection,
-  resolveAuditedRunnerKnownFailure,
+  resolveAuditedRunnerFailureResolution,
+  resolveControlledFailureResumeObservation,
+  controlledFailureInputFromResolution,
   explicitInternalKnownFailureClassificationInput,
   settleFailureTerminalResult,
   trySettleReviewerTerminalResult,
@@ -186,6 +188,8 @@ async function presentControlledFailure(
     stderr: string;
     thrown?: unknown;
     knownFailure?: ExplicitInternalKnownFailure;
+    typedHttpObservationSettled?: true;
+    typedHttpObservation?: TypedProviderHttpObservation;
   },
   io: CliIo,
 ): Promise<{
@@ -194,10 +198,23 @@ async function presentControlledFailure(
   terminal: TerminalResult;
 }> {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const resumeObservation = await resolveControlledFailureResumeObservation({
+    runDirectory: admitted.runDirectory,
+    ...(failureInput.typedHttpObservationSettled === true
+      ? {
+        typedHttpObservationSettled: true as const,
+        ...(failureInput.typedHttpObservation === undefined
+          ? {}
+          : { typedHttpObservation: failureInput.typedHttpObservation }),
+      }
+      : {}),
+  });
+  const knownFailure =
+    failureInput.knownFailure ?? resumeObservation.observationReadFailure;
   const session =
     !hasThrown &&
     !failureInput.timedOut &&
-    failureInput.knownFailure === undefined
+    knownFailure === undefined
       ? await inspectJudgeSession(admitted.sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
@@ -205,12 +222,12 @@ async function presentControlledFailure(
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...explicitInternalKnownFailureClassificationInput(knownFailure),
     ...(session === undefined ? {} : { session }),
   });
 
   const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted);
-  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
     admitted.sessionFile,
   );
@@ -367,7 +384,7 @@ async function dispatchAdmittedReviewer(input: {
       env.model,
       env.credentials,
     );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
+    const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result.knownFailure,
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
@@ -379,7 +396,7 @@ async function dispatchAdmittedReviewer(input: {
         timedOut: result.timedOut,
         code: result.code,
         stderr: result.stderr,
-        ...(knownFailure === undefined ? {} : { knownFailure }),
+        ...controlledFailureInputFromResolution(resolution),
       },
       io,
     );

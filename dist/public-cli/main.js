@@ -18891,53 +18891,64 @@ function typedFailedTerminatingToolKnownFailure(entries) {
   }
   return void 0;
 }
-async function resolveAuditedRunnerKnownFailure(input) {
-  if (input.runner !== void 0) return input.runner;
+function resolutionOf(knownFailure, typedHttp = { settled: false }) {
+  return {
+    ...knownFailure === void 0 ? {} : { knownFailure },
+    ...typedHttp.observation === void 0 ? {} : { typedHttpObservation: typedHttp.observation },
+    typedHttpObservationSettled: typedHttp.settled
+  };
+}
+async function resolveAuditedRunnerFailureResolution(input) {
+  if (input.runner !== void 0) return resolutionOf(input.runner);
   if (input.runDirectory !== void 0) {
     try {
       const rejection = await readReviewerDispatchRejection(input.runDirectory);
-      if (rejection !== void 0) return rejection;
+      if (rejection !== void 0) return resolutionOf(rejection);
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
-      return {
+      return resolutionOf({
         cause: "activation",
         identity: thrownIdentity(failure),
         diagnostic: failure.message || failure.name
-      };
+      });
     }
   }
   try {
     const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
-    if (auditorFailure !== void 0) return auditorFailure;
+    if (auditorFailure !== void 0) return resolutionOf(auditorFailure);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
-    return {
+    return resolutionOf({
       cause: "session",
       identity: thrownIdentity(failure),
       diagnostic: failure.message || failure.name
-    };
+    });
   }
   try {
     const terminatingFailure = typedFailedTerminatingToolKnownFailure(
       await readBoundSessionEntries(input.sessionFile)
     );
-    if (terminatingFailure !== void 0) return terminatingFailure;
+    if (terminatingFailure !== void 0) return resolutionOf(terminatingFailure);
   } catch (error) {
     if (!isMissingPathError2(error)) {
       const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
-      return { cause: "session", identity: thrownIdentity(failure), diagnostic: failure.message || failure.name };
+      return resolutionOf({
+        cause: "session",
+        identity: thrownIdentity(failure),
+        diagnostic: failure.message || failure.name
+      });
     }
   }
   try {
     const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
-    if (evidenceChildFailure !== void 0) return evidenceChildFailure;
+    if (evidenceChildFailure !== void 0) return resolutionOf(evidenceChildFailure);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound evidence-child failure");
-    return {
+    return resolutionOf({
       cause: "session",
       identity: thrownIdentity(failure),
       diagnostic: failure.message || failure.name
-    };
+    });
   }
   const parentStop = await readSessionProviderStop(input.sessionFile);
   let httpObservation;
@@ -18946,30 +18957,79 @@ async function resolveAuditedRunnerKnownFailure(input) {
       httpObservation = await readLatestTypedProviderHttpObservation(input.runDirectory);
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
+      return resolutionOf(
+        {
+          cause: "session",
+          identity: thrownIdentity(failure),
+          diagnostic: failure.message || failure.name
+        },
+        { settled: true }
+      );
+    }
+  }
+  const typedHttp = {
+    settled: input.runDirectory !== void 0,
+    ...httpObservation === void 0 ? {} : { observation: httpObservation }
+  };
+  if (parentStop === void 0) {
+    if (input.credential !== void 0) return resolutionOf(input.credential, typedHttp);
+    if (httpObservation === void 0) return resolutionOf(void 0, typedHttp);
+    return resolutionOf(
+      knownFailureFromProviderStop({
+        stopReason: "error",
+        httpStatus: httpObservation.httpStatus,
+        provider: httpObservation.provider
+      }),
+      typedHttp
+    );
+  }
+  return resolutionOf(
+    knownFailureFromProviderStop({
+      ...parentStop,
+      ...httpObservation === void 0 ? {} : {
+        httpStatus: httpObservation.httpStatus,
+        // Observation association outranks session-configured provider name alone.
+        provider: httpObservation.provider
+      }
+    }),
+    typedHttp
+  );
+}
+async function resolveAuditedRunnerKnownFailure(input) {
+  return (await resolveAuditedRunnerFailureResolution(input)).knownFailure;
+}
+async function resolveControlledFailureResumeObservation(input) {
+  if (input.typedHttpObservationSettled === true) {
+    const observation = input.typedHttpObservation;
+    if (observation !== void 0 && observation.httpStatus === 429 && isV1ResumableProvider(observation.provider)) {
       return {
+        typedHttp429: { httpStatus: 429, provider: observation.provider }
+      };
+    }
+    return {};
+  }
+  try {
+    const typedHttp429 = await readTypedHttp429Observation(input.runDirectory);
+    return typedHttp429 === void 0 ? {} : { typedHttp429 };
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    return {
+      observationReadFailure: {
         cause: "session",
         identity: thrownIdentity(failure),
         diagnostic: failure.message || failure.name
-      };
-    }
+      }
+    };
   }
-  if (parentStop === void 0) {
-    if (input.credential !== void 0) return input.credential;
-    if (httpObservation === void 0) return void 0;
-    return knownFailureFromProviderStop({
-      stopReason: "error",
-      httpStatus: httpObservation.httpStatus,
-      provider: httpObservation.provider
-    });
-  }
-  return knownFailureFromProviderStop({
-    ...parentStop,
-    ...httpObservation === void 0 ? {} : {
-      httpStatus: httpObservation.httpStatus,
-      // Observation association outranks session-configured provider name alone.
-      provider: httpObservation.provider
-    }
-  });
+}
+function controlledFailureInputFromResolution(resolution) {
+  return {
+    ...resolution.knownFailure === void 0 ? {} : { knownFailure: resolution.knownFailure },
+    ...resolution.typedHttpObservationSettled ? {
+      typedHttpObservationSettled: true,
+      ...resolution.typedHttpObservation === void 0 ? {} : { typedHttpObservation: resolution.typedHttpObservation }
+    } : {}
+  };
 }
 function isRecord5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -21137,20 +21197,28 @@ function buildCoderResumeActivationExtraArgs(admitted, options) {
 }
 async function presentControlledFailure(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const resumeObservation = await resolveControlledFailureResumeObservation({
+    runDirectory: admitted.runDirectory,
+    ...failureInput.typedHttpObservationSettled === true ? {
+      typedHttpObservationSettled: true,
+      ...failureInput.typedHttpObservation === void 0 ? {} : { typedHttpObservation: failureInput.typedHttpObservation }
+    } : {}
+  });
+  const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
+  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...explicitInternalKnownFailureClassificationInput(knownFailure),
     ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
     ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
     ...session === void 0 ? {} : { session }
   });
   const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted);
-  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
     admitted.sessionFile
   );
@@ -21263,7 +21331,7 @@ async function dispatchAdmittedCoder(input) {
       env.model,
       env.credentials
     );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
+    const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
@@ -21275,7 +21343,7 @@ async function dispatchAdmittedCoder(input) {
         timedOut: result2.timedOut,
         code: result2.code,
         stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : { knownFailure }
+        ...controlledFailureInputFromResolution(resolution)
       },
       io
     );
@@ -21990,17 +22058,25 @@ function buildFixerResumeActivationExtraArgs(admitted, options) {
 }
 async function presentControlledFailure4(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const resumeObservation = await resolveControlledFailureResumeObservation({
+    runDirectory: admitted.runDirectory,
+    ...failureInput.typedHttpObservationSettled === true ? {
+      typedHttpObservationSettled: true,
+      ...failureInput.typedHttpObservation === void 0 ? {} : { typedHttpObservation: failureInput.typedHttpObservation }
+    } : {}
+  });
+  const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
+  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...explicitInternalKnownFailureClassificationInput(knownFailure),
     ...session === void 0 ? {} : { session }
   });
   const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
-  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
     admitted.sessionFile
   );
@@ -22132,7 +22208,7 @@ async function dispatchAdmittedFixer(input) {
       env.model,
       env.credentials
     );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
+    const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
@@ -22144,7 +22220,7 @@ async function dispatchAdmittedFixer(input) {
         timedOut: result2.timedOut,
         code: result2.code,
         stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : { knownFailure }
+        ...controlledFailureInputFromResolution(resolution)
       },
       io
     );
@@ -22354,17 +22430,25 @@ function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
 }
 async function presentControlledFailure5(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const resumeObservation = await resolveControlledFailureResumeObservation({
+    runDirectory: admitted.runDirectory,
+    ...failureInput.typedHttpObservationSettled === true ? {
+      typedHttpObservationSettled: true,
+      ...failureInput.typedHttpObservation === void 0 ? {} : { typedHttpObservation: failureInput.typedHttpObservation }
+    } : {}
+  });
+  const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
+  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...explicitInternalKnownFailureClassificationInput(knownFailure),
     ...session === void 0 ? {} : { session }
   });
   const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
-  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
     admitted.sessionFile
   );
@@ -22491,7 +22575,7 @@ async function dispatchAdmittedJudge(input) {
       env.model,
       env.credentials
     );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
+    const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
@@ -22503,7 +22587,7 @@ async function dispatchAdmittedJudge(input) {
         timedOut: result2.timedOut,
         code: result2.code,
         stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : { knownFailure }
+        ...controlledFailureInputFromResolution(resolution)
       },
       io
     );
@@ -22686,20 +22770,28 @@ function buildMergerResumeActivationExtraArgs(admitted, options) {
 }
 async function presentControlledFailure6(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const resumeObservation = await resolveControlledFailureResumeObservation({
+    runDirectory: admitted.runDirectory,
+    ...failureInput.typedHttpObservationSettled === true ? {
+      typedHttpObservationSettled: true,
+      ...failureInput.typedHttpObservation === void 0 ? {} : { typedHttpObservation: failureInput.typedHttpObservation }
+    } : {}
+  });
+  const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
+  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...explicitInternalKnownFailureClassificationInput(knownFailure),
     ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
     ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
     ...session === void 0 ? {} : { session }
   });
   const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted);
-  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
     admitted.sessionFile
   );
@@ -22817,7 +22909,7 @@ async function dispatchAdmittedMerger(input) {
       env.model,
       env.credentials
     );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
+    const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
@@ -22829,7 +22921,7 @@ async function dispatchAdmittedMerger(input) {
         timedOut: result2.timedOut,
         code: result2.code,
         stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : { knownFailure }
+        ...controlledFailureInputFromResolution(resolution)
       },
       io
     );
@@ -23142,17 +23234,25 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
 }
 async function presentControlledFailure7(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const resumeObservation = await resolveControlledFailureResumeObservation({
+    runDirectory: admitted.runDirectory,
+    ...failureInput.typedHttpObservationSettled === true ? {
+      typedHttpObservationSettled: true,
+      ...failureInput.typedHttpObservation === void 0 ? {} : { typedHttpObservation: failureInput.typedHttpObservation }
+    } : {}
+  });
+  const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
+  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...explicitInternalKnownFailureClassificationInput(knownFailure),
     ...session === void 0 ? {} : { session }
   });
   const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted);
-  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
     admitted.sessionFile
   );
@@ -23285,7 +23385,7 @@ async function dispatchAdmittedReviewer(input) {
       env.model,
       env.credentials
     );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
+    const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
@@ -23297,7 +23397,7 @@ async function dispatchAdmittedReviewer(input) {
         timedOut: result2.timedOut,
         code: result2.code,
         stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : { knownFailure }
+        ...controlledFailureInputFromResolution(resolution)
       },
       io
     );

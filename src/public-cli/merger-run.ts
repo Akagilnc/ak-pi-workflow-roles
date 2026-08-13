@@ -50,7 +50,7 @@ import {
   RESUME_TRANSPORT_ENVELOPE,
   RunWriterLeaseHeldError,
   type RunWriterLease,
-  readTypedHttp429Observation,
+  type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
 import {
   classifyPostAdmissionFailure,
@@ -62,7 +62,9 @@ import {
   presentFailureTerminal,
   presentStructuralRejection,
   explicitInternalKnownFailureClassificationInput,
-  resolveAuditedRunnerKnownFailure,
+  resolveAuditedRunnerFailureResolution,
+  resolveControlledFailureResumeObservation,
+  controlledFailureInputFromResolution,
   settleFailureTerminalResult,
   trySettleMergerTerminalResult,
 } from "./settlement.ts";
@@ -192,6 +194,8 @@ async function presentControlledFailure(
       readonly code?: string | number;
     };
     knownDiagnostic?: string;
+    typedHttpObservationSettled?: true;
+    typedHttpObservation?: TypedProviderHttpObservation;
   },
   io: CliIo,
 ): Promise<{
@@ -200,10 +204,23 @@ async function presentControlledFailure(
   terminal: TerminalResult;
 }> {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const resumeObservation = await resolveControlledFailureResumeObservation({
+    runDirectory: admitted.runDirectory,
+    ...(failureInput.typedHttpObservationSettled === true
+      ? {
+        typedHttpObservationSettled: true as const,
+        ...(failureInput.typedHttpObservation === undefined
+          ? {}
+          : { typedHttpObservation: failureInput.typedHttpObservation }),
+      }
+      : {}),
+  });
+  const knownFailure =
+    failureInput.knownFailure ?? resumeObservation.observationReadFailure;
   const session =
     !hasThrown &&
     !failureInput.timedOut &&
-    failureInput.knownFailure === undefined &&
+    knownFailure === undefined &&
     failureInput.knownCause === undefined
       ? await inspectJudgeSession(admitted.sessionFile)
       : undefined;
@@ -212,7 +229,7 @@ async function presentControlledFailure(
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...explicitInternalKnownFailureClassificationInput(knownFailure),
     ...(failureInput.knownCause === undefined
       ? {}
       : { knownCause: failureInput.knownCause }),
@@ -226,7 +243,7 @@ async function presentControlledFailure(
   });
 
   const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted);
-  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
     admitted.sessionFile,
   );
@@ -367,7 +384,7 @@ async function dispatchAdmittedMerger(input: {
       env.model,
       env.credentials,
     );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
+    const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result.knownFailure,
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
@@ -379,7 +396,7 @@ async function dispatchAdmittedMerger(input: {
         timedOut: result.timedOut,
         code: result.code,
         stderr: result.stderr,
-        ...(knownFailure === undefined ? {} : { knownFailure }),
+        ...controlledFailureInputFromResolution(resolution),
       },
       io,
     );
