@@ -13,42 +13,47 @@ import {
   resolveActivationLedgerHome
 } from "./activation-ledger-topology.js";
 const { findMostRecentSession } = await import(new URL("./core/session-manager.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href);
-function materializeDeferredRecordHeader(session) {
-  if (!session.isPersisted()) return session;
-  const file = session.getSessionFile();
-  if (file === void 0 || existsSync(file)) return session;
-  const header = session.getHeader();
-  if (header === null || header.type !== "session") return session;
-  writeFileSync(file, `${JSON.stringify(header)}
-`, { flag: "wx" });
-  session.setSessionFile(file);
-  return session;
-}
 function createRecordSession(options) {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
   const ledgerHome = resolveActivationLedgerHome();
+  let sessionDir;
+  let parentSession;
   if (options.subject !== void 0) {
     const digest = createHash("sha256").update(options.subject).digest("hex").slice(0, 32);
-    const sessionDir2 = join(
+    sessionDir = join(
       activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)),
       options.kind,
       digest
     );
-    ensureRealDirectoryTree(ledgerHome, sessionDir2);
-    const recentFile = findMostRecentSession(sessionDir2, cwd);
-    if (recentFile !== null) return SessionManager.open(recentFile, sessionDir2, cwd);
-    return materializeDeferredRecordHeader(SessionManager.create(cwd, sessionDir2, parentFile ? { parentSession: parentFile } : void 0));
-  }
-  if (parentFile === void 0 || parentFile.length === 0) {
+    parentSession = parentFile && parentFile.length > 0 ? parentFile : void 0;
+  } else if (parentFile === void 0 || parentFile.length === 0) {
     return SessionManager.inMemory(cwd);
+  } else {
+    const parentResolved = resolve(parentFile);
+    sessionDir = physicallyContainedIn(ledgerHome, parentResolved) ? join(dirname(parentResolved), options.kind) : join(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
+    parentSession = parentFile;
   }
-  const parentResolved = resolve(parentFile);
-  const sessionDir = physicallyContainedIn(ledgerHome, parentResolved) ? join(dirname(parentResolved), options.kind) : join(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
   ensureRealDirectoryTree(ledgerHome, sessionDir);
-  return materializeDeferredRecordHeader(
-    SessionManager.create(cwd, sessionDir, { parentSession: parentFile })
+  const recentFile = findMostRecentSession(sessionDir, cwd);
+  if (recentFile !== null) return SessionManager.open(recentFile, sessionDir, cwd);
+  const session = SessionManager.create(
+    cwd,
+    sessionDir,
+    parentSession === void 0 ? void 0 : { parentSession }
   );
+  if (session.isPersisted()) {
+    const file = session.getSessionFile();
+    if (file !== void 0 && !existsSync(file)) {
+      const header = session.getHeader();
+      if (header !== null && header.type === "session") {
+        writeFileSync(file, `${JSON.stringify(header)}
+`, { flag: "wx" });
+        session.setSessionFile(file);
+      }
+    }
+  }
+  return session;
 }
 export {
   createRecordSession,

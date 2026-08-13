@@ -383,7 +383,8 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     const nest = join(dirname(parentFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
     const files = readdirSync(nest).filter((name) => name.endsWith(".jsonl"));
     assert.equal(files.length, 1);
-    const body = readFileSync(join(nest, files[0]!), "utf8");
+    const gatePath = join(nest, files[0]!);
+    const body = readFileSync(gatePath, "utf8");
     assert.match(body, new RegExp(WORKER_COMMIT_BASELINE_ENTRY_TYPE));
     assert.match(body, new RegExp(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE));
     assert.match(body, new RegExp(baselineHead));
@@ -391,9 +392,19 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     // Advance HEAD after bounce — baseline must stay the first-arm tip across resume.
     git(project, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} after bounce`]);
 
-    // Fresh gate instance ≡ process resume: must not re-bounce; baseline still first tip.
+    // (a) same-nest second open on the live resume path: file identity + bytes unchanged.
+    const bytesBefore = readFileSync(gatePath);
     const resumed = createWorkerSubmissionGate();
     resumed.arm(project, parent);
+    const filesAfterResume = readdirSync(nest).filter((name) => name.endsWith(".jsonl"));
+    assert.equal(filesAfterResume.length, 1);
+    assert.equal(filesAfterResume[0], files[0]);
+    assert.equal(
+      Buffer.compare(bytesBefore, readFileSync(gatePath)),
+      0,
+      "same-nest second open must not rewrite existing gate file bytes",
+    );
+    // Fresh gate instance ≡ process resume: must not re-bounce; baseline still first tip.
     assert.doesNotThrow(() => resumed.assertAcceptable("completed"));
 
     // Baseline persistence (no bounce path): new arm after only baseline, HEAD unchanged → bounce;
@@ -434,55 +445,9 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     assert.doesNotThrow(() => b.assertAcceptable("completed"));
     assert.doesNotThrow(() => b.assertAcceptable("partially_completed"));
 
-    // (a) same-nest second open: existing gate file bytes unchanged (UUIDv7 path + early-return).
-    const projectA = join(home, "proj-a-bytes");
-    await mkdir(projectA, { recursive: true });
-    seedGitRepository(projectA);
-    git(projectA, ["config", "user.email", "gate@test.local"]);
-    git(projectA, ["config", "user.name", "Gate Test"]);
-    git(projectA, ["commit", "--allow-empty", "-m", "seed-a"]);
-    const parentADir = join(
-      machineLedgerHome(home),
-      "books",
-      "proj-a-bytes",
-      "runs",
-      "activation",
-      "worker-run-a",
-    );
-    await mkdir(parentADir, { recursive: true });
-    const parentAFile = join(parentADir, "session.jsonl");
-    await writeFile(
-      parentAFile,
-      `${JSON.stringify({
-        type: "session",
-        version: 3,
-        id: "worker-parent-a",
-        timestamp: "2025-01-01T00:00:00.000Z",
-        cwd: projectA,
-      })}\n`,
-    );
-    const parentA = SessionManager.open(parentAFile);
-    const openA = createWorkerSubmissionGate();
-    openA.arm(projectA, parentA);
-    const nestA = join(dirname(parentAFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
-    const filesA = readdirSync(nestA).filter((name) => name.endsWith(".jsonl"));
-    assert.equal(filesA.length, 1);
-    const gatePathA = join(nestA, filesA[0]!);
-    const bytesBefore = readFileSync(gatePathA);
-    const openA2 = createWorkerSubmissionGate();
-    openA2.arm(projectA, parentA);
-    const filesA2 = readdirSync(nestA).filter((name) => name.endsWith(".jsonl"));
-    assert.equal(filesA2.length, 1);
-    assert.equal(filesA2[0], filesA[0]);
-    assert.equal(
-      Buffer.compare(bytesBefore, readFileSync(gatePathA)),
-      0,
-      "same-nest second open must not rewrite existing gate file bytes",
-    );
-
-    // (b) chmod 444 on gate file → real worker output tool append fails with EACCES
-    // through production hostActions + tool_result overlay under shared Pi harness,
-    // then public CLI lifecycle (runAkRole) settles terminal failure + nonzero exit.
+    // (b) first entry materializes → chmod 444 → same-nest second entry reopen →
+    // real worker output tool append fails with EACCES through production hostActions +
+    // tool_result overlay under shared Pi harness; public CLI settles terminal failure.
     const projectF = join(home, "proj-f-eacces");
     await mkdir(projectF, { recursive: true });
     seedGitRepository(projectF);
@@ -531,6 +496,16 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
             const agentDir = typeof options.env.PI_CODING_AGENT_DIR === "string"
               ? options.env.PI_CODING_AGENT_DIR
               : agentDirF;
+
+            // First production entry via real gate/sitian API (fixture constructs nest facts).
+            const parentF = SessionManager.open(sessionFile, sessionDir, projectF);
+            createWorkerSubmissionGate().arm(projectF, parentF);
+            const nestF = join(dirname(sessionFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
+            const filesF = readdirSync(nestF).filter((name) => name.endsWith(".jsonl"));
+            assert.equal(filesF.length, 1, "first entry must materialize one gate record");
+            chmodSync(join(nestF, filesF[0]!), 0o444);
+
+            // Second production entry: session_start re-arms same nest, then worker tool append.
             const faux = fauxProvider({
               api: "ak-gate-eacces",
               provider: "ak-gate-eacces",
@@ -559,11 +534,6 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
               // Drain production session_shutdown so Navigator attendance timers do not pin the runner.
               reviewerShutdown: true,
             }, async ({ session }) => {
-              // session_start already armed the gate; lock the durable append seam.
-              const nestF = join(dirname(sessionFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
-              const filesF = readdirSync(nestF).filter((name) => name.endsWith(".jsonl"));
-              assert.equal(filesF.length, 1, "session_start must materialize one gate record");
-              chmodSync(join(nestF, filesF[0]!), 0o444);
               await session.prompt("Exercise gate EACCES durability.").catch(() => undefined);
             });
             return {
