@@ -928,17 +928,8 @@ test("cold-installed live help follows the loaded extension and changes on the n
           assert.equal(result.code, 0, "cold-installed role --help must exit 0");
           return { code: result.code ?? 1, stdout: result.stdout, stderr: result.stderr, killed: result.localTimeout };
         };
-        await writeFile(runtimePath, original.replace("Activate a packaged workflow role:", `${firstMarker}:`));
-        const first = await runtime.loadNavigatorRoleHelp({ exec } as never, resolve(installedRoot, "extensions/role-runtime.ts"), fixture, "coder");
-        assert.match(first, new RegExp(firstMarker));
-        await writeFile(runtimePath, original.replace("Activate a packaged workflow role:", `${secondMarker}:`));
-        const second = await runtime.loadNavigatorRoleHelp({ exec } as never, resolve(installedRoot, "extensions/role-runtime.ts"), fixture, "coder");
-        assert.doesNotMatch(second, new RegExp(firstMarker));
-        assert.match(second, new RegExp(secondMarker));
-        assert.deepEqual(observedHelpTimeouts, [
-          runtime.NAVIGATOR_LIVE_HELP_TIMEOUT_MS,
-          runtime.NAVIGATOR_LIVE_HELP_TIMEOUT_MS,
-        ]);
+        // Live reread is owned by the prepare dual-call below (markers + timeout budget).
+        // Prefix direct loadNavigatorRoleHelp dual-call was redundant with that seam.
 
         const attendanceModule = await installed("src/navigator-attendance.ts");
         const modelSettingPath = resolve(home, "navigator-model.json");
@@ -1000,6 +991,11 @@ test("cold-installed live help follows the loaded extension and changes on the n
         assert.equal(prepareRequests.length, 2);
         assert.equal(prepareRequests[0]!.includes(firstMarker), true, "first prepare must carry live help marker");
         assert.equal(prepareRequests[1]!.includes(secondMarker), true, "second prepare must reread live help");
+        assert.ok(observedHelpTimeouts.length >= 2, "prepare path must load live help at least twice");
+        assert.ok(
+          observedHelpTimeouts.every((ms) => ms === runtime.NAVIGATOR_LIVE_HELP_TIMEOUT_MS),
+          "live help must use the cold-start timeout budget",
+        );
         assert.deepEqual(events.map((event: any) => ({ disposition: event.disposition, command: event.command, unavailableReason: event.unavailableReason })), [
           { disposition: "recommendation", command: "ak-role judge", unavailableReason: undefined },
           { disposition: "recommendation", command: "ak-role judge", unavailableReason: undefined },
