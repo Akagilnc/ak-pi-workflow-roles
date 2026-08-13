@@ -107,9 +107,11 @@ test("createRecordSession nests by parent file and continues subject-keyed navig
     await symlink(foreignFile, linkName);
     assert.throws(
       () => createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent }),
-      (error: unknown) =>
-        error instanceof ActivationLedgerError
-        && error.message.includes("must be under the ledger book"),
+      (error: unknown) => {
+        assert.ok(error instanceof ActivationLedgerError);
+        assert.equal(error.code, "AK_ACTIVATION_LEDGER");
+        return true;
+      },
     );
     // Restore a regular principal so later subject-a reads stay honest about in-book bytes.
     await rm(linkName);
