@@ -19,7 +19,6 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
-import { TicketDispatchLeaseHeldError } from "../../src/ticket-dispatch-lease.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -131,11 +130,7 @@ function lawfulReviewerReceipt(
 async function admitReviewerInvocation(
   options: Parameters<typeof admitReviewerInvocationRaw>[0],
 ): ReturnType<typeof admitReviewerInvocationRaw> {
-  try {
-    offerTestDispatchLease(options.home, options.project ?? options.cwd);
-  } catch (error) {
-    if (!(error instanceof TicketDispatchLeaseHeldError)) throw error;
-  }
+  offerTestDispatchLease(options.home, options.project ?? options.cwd);
   return admitReviewerInvocationRaw(options);
 }
 

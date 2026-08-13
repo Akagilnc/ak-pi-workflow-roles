@@ -3496,7 +3496,6 @@ test("real Coder/Fixer runs require a legal execution status before accepted set
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
 
     const rows = [
       { role: "coder", phase: "plan", tool: CODER_OUTPUT_TOOL_NAME, statuses: ["planned", "completed", "refused", "unfinished"] },

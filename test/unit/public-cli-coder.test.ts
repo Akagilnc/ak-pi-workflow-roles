@@ -18,7 +18,6 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
-import { TicketDispatchLeaseHeldError } from "../../src/ticket-dispatch-lease.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -78,11 +77,7 @@ function seedGitProject(root: string): void {
 async function admitCoderInvocation(
   options: Parameters<typeof admitCoderInvocationRaw>[0],
 ): ReturnType<typeof admitCoderInvocationRaw> {
-  try {
-    offerTestDispatchLease(options.home, options.project ?? options.cwd);
-  } catch (error) {
-    if (!(error instanceof TicketDispatchLeaseHeldError)) throw error;
-  }
+  offerTestDispatchLease(options.home, options.project ?? options.cwd);
   return admitCoderInvocationRaw(options);
 }
 
@@ -129,7 +124,7 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
 
     await assert.rejects(
       () =>
-        admitCoderInvocation({
+        admitCoderInvocationRaw({
           home,
           cwd: project,
           phase: "apply",
@@ -342,7 +337,6 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
     // Blank task → structural reject, no run.
     {
       const { io, stderr } = captureIo();
-      offerTestDispatchLease(home, project);
       const result = await runAkRole(["coder", "plan", "   "], {
         packageRoot,
         home,
