@@ -155,29 +155,17 @@ function isNonSuccessHttpStatus(status: unknown): status is number {
   return typeof status === "number" && (status < 200 || status >= 300);
 }
 
-const LEADING_HTTP_STATUS = /^(?:[A-Za-z][\w.-]*\s+)?\((\d{3})\)|^(\d{3})\s*:/;
-
-function httpStatusFromDiagnostic(value: unknown): number | undefined {
-  if (typeof value !== "string") return undefined;
-  const match = LEADING_HTTP_STATUS.exec(value.trim());
-  if (match === null) return undefined;
-  const status = Number(match[1] ?? match[2]);
-  return isNonSuccessHttpStatus(status) ? status : undefined;
-}
-
 /**
  * Upstream testimony is a directly observed HTTP response or SDK-structured
  * remote error. Pi stopReason, selected provider/model names, silent stream
- * death, and locally synthesized errors are not testimony.
+ * death, errorMessage prose (e.g. "500: …"), and locally synthesized errors
+ * are not testimony.
  */
 export function hasUpstreamErrorTestimony(input: {
   readonly httpStatus?: number;
   readonly diagnostics?: unknown;
-  readonly errorMessage?: string | null;
 }): boolean {
-  if (isNonSuccessHttpStatus(input.httpStatus) || httpStatusFromDiagnostic(input.errorMessage) !== undefined) {
-    return true;
-  }
+  if (isNonSuccessHttpStatus(input.httpStatus)) return true;
   return Array.isArray(input.diagnostics) && input.diagnostics.length > 0;
 }
 
@@ -189,6 +177,9 @@ function sessionStopDetails(input: {
   readonly rawStopReason?: string;
   readonly httpStatus?: number;
   readonly diagnostics?: unknown;
+  readonly body?: unknown;
+  readonly code?: unknown;
+  readonly errno?: unknown;
 }): Record<string, unknown> {
   const details: Record<string, unknown> = {};
   const errorMessage = nonEmptyString(input.errorMessage);
@@ -201,19 +192,21 @@ function sessionStopDetails(input: {
   if (api !== undefined) details.api = api;
   const rawStopReason = nonEmptyString(input.rawStopReason);
   if (rawStopReason !== undefined) details.rawStopReason = rawStopReason;
-  const httpStatus = typeof input.httpStatus === "number"
-    ? input.httpStatus
-    : httpStatusFromDiagnostic(input.errorMessage);
-  if (httpStatus !== undefined) details.httpStatus = httpStatus;
+  if (typeof input.httpStatus === "number") details.httpStatus = input.httpStatus;
   if (input.diagnostics !== undefined) details.diagnostics = input.diagnostics;
+  // SDK structured payload fields: project only when actually held.
+  if (input.body !== undefined) details.body = input.body;
+  if (input.code !== undefined) details.code = input.code;
+  if (input.errno !== undefined) details.errno = input.errno;
   return details;
 }
 
 /**
  * Project a native session assistant stop onto the existing knownFailure chain.
- * Classification follows two-way testimony: HTTP/SDK structure keeps provider;
- * stopReason or configured provider/model alone is the existing unrecognized value.
- * Present upstream payload is preserved in details; missing fields are omitted.
+ * Classification follows two-way testimony: typed HTTP status or SDK structure
+ * keeps provider; stopReason, configured provider/model, or errorMessage prose
+ * alone is the existing unrecognized value. Present upstream payload is preserved
+ * in details without rewriting; missing fields are omitted.
  */
 export function knownFailureFromProviderStop(input: {
   readonly stopReason?: string;
@@ -224,6 +217,9 @@ export function knownFailureFromProviderStop(input: {
   readonly rawStopReason?: string;
   readonly httpStatus?: number;
   readonly diagnostics?: unknown;
+  readonly body?: unknown;
+  readonly code?: unknown;
+  readonly errno?: unknown;
 }): ExplicitInternalKnownFailure | undefined {
   if (input.stopReason !== "error") return undefined;
   const diagnostic = nonEmptyString(input.errorMessage);

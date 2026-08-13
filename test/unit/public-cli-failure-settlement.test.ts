@@ -64,6 +64,7 @@ import {
   resolveAuditedRunnerKnownFailure,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
+import { recordTypedProviderHttpStatus } from "../../src/public-cli/run-lifecycle.ts";
 import {
   buildAuditIncompleteTerminalOutcome,
   type ControlledFailureCause,
@@ -3201,16 +3202,38 @@ test("session provider-stop produces provider cause without injected knownFailur
       fromStop?.details,
       { errorMessage: "WebSocket error", provider: "xai" },
     );
+    // Synthetic "500: …" prose alone is not upstream testimony.
+    const fromProseOnly = knownFailureFromProviderStop({
+      stopReason: "error",
+      errorMessage: "500: Internal error during token generation",
+      provider: "openai-codex",
+    });
+    assert.equal(fromProseOnly?.cause, "unrecognized");
+    assert.equal(fromProseOnly?.diagnostic, "500: Internal error during token generation");
+    assert.equal(fromProseOnly?.details?.httpStatus, undefined);
+    assert.deepEqual(fromProseOnly?.details, {
+      errorMessage: "500: Internal error during token generation",
+      provider: "openai-codex",
+    });
+    // Typed HTTP status is testimony; prose digits are preserved verbatim, not parsed.
     const fromHttpStop = knownFailureFromProviderStop({
       stopReason: "error",
       errorMessage: "500: Internal error during token generation",
       httpStatus: 500,
+      provider: "openai-codex",
+      body: "{\"err\":\"token\"}",
+      code: "remote_5xx",
+      errno: -1,
     });
     assert.equal(fromHttpStop?.cause, "provider");
     assert.equal(fromHttpStop?.diagnostic, "500: Internal error during token generation");
     assert.deepEqual(fromHttpStop?.details, {
       errorMessage: "500: Internal error during token generation",
+      provider: "openai-codex",
       httpStatus: 500,
+      body: "{\"err\":\"token\"}",
+      code: "remote_5xx",
+      errno: -1,
     });
     assert.equal(
       knownFailureFromProviderStop({ stopReason: "end_turn", errorMessage: "ok" }),
@@ -3600,5 +3623,160 @@ test("unbound output failure remains nonzero even after an older provider error 
     assert.match(stderr[0]!, /without a lawful typed terminal result/);
     assert.equal(result.terminal?.roleOutcome.kind, "failure");
     if (result.terminal?.roleOutcome.kind === "failure") assert.equal(result.terminal.roleOutcome.cause, "output");
+  });
+});
+
+test("synthetic 500 prose stays unrecognized; typed HTTP 500 projects status+provider into error.json", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj-typed-http-500");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    // Unit seam: prose-only 500 never becomes provider testimony.
+    const proseOnly = knownFailureFromProviderStop({
+      stopReason: "error",
+      errorMessage: "500: Internal error during token generation",
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+    });
+    assert.equal(proseOnly?.cause, "unrecognized");
+    assert.equal(
+      proseOnly?.diagnostic,
+      "500: Internal error during token generation",
+      "diagnostic bytes must match held errorMessage exactly",
+    );
+    assert.equal(proseOnly?.details?.httpStatus, undefined);
+    assert.equal(proseOnly?.details?.errorMessage, "500: Internal error during token generation");
+
+    // Exact payload bytes (including surrounding whitespace) are not rewritten.
+    const padded = "  500: keep surrounding spaces  ";
+    const verbatim = knownFailureFromProviderStop({
+      stopReason: "error",
+      errorMessage: padded,
+      httpStatus: 500,
+      provider: "xai",
+      body: "{\"upstream\":\"raw-body-bytes\"}",
+      code: "remote_internal",
+      errno: 61,
+    });
+    assert.equal(verbatim?.cause, "provider");
+    assert.equal(verbatim?.diagnostic, padded);
+    assert.equal(verbatim?.details?.errorMessage, padded);
+    assert.equal(verbatim?.details?.body, "{\"upstream\":\"raw-body-bytes\"}");
+    assert.equal(verbatim?.details?.code, "remote_internal");
+    assert.equal(verbatim?.details?.errno, 61);
+    assert.equal(verbatim?.details?.httpStatus, 500);
+    assert.equal(verbatim?.details?.provider, "xai");
+
+    // Session extract keeps typed statusCode and payload fields without prose parse.
+    assert.deepEqual(
+      extractSessionProviderStop([
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: padded,
+            provider: "configured-name-alone",
+            statusCode: 500,
+            body: "{\"upstream\":\"raw-body-bytes\"}",
+            code: "remote_internal",
+            errno: 61,
+          },
+        },
+      ]),
+      {
+        stopReason: "error",
+        errorMessage: padded,
+        provider: "configured-name-alone",
+        httpStatus: 500,
+        body: "{\"upstream\":\"raw-body-bytes\"}",
+        code: "remote_internal",
+        errno: 61,
+      },
+    );
+
+    // Public seam: no assistant stop, only typed HTTP 500 observation.
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      [
+        "--model",
+        "openai-codex/gpt-5.6-sol:off",
+        "judge",
+        "--project",
+        project,
+        "typed http 500 observation only",
+      ],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-typed-http-500-observation-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          const runDir = join(sessionDir, "..");
+          // No assistant stop — only the durable typed HTTP observation.
+          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+          await recordTypedProviderHttpStatus(runDir, {
+            httpStatus: 500,
+            provider: "openai-codex",
+          });
+          return {
+            code: 1,
+            stderr: "activation wrapper exited nonzero\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "provider");
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      details?: { httpStatus?: number; provider?: string };
+    };
+    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.details?.httpStatus, 500);
+    assert.equal(errorBody.details?.provider, "openai-codex");
+
+    // resolveAuditedRunnerKnownFailure alone: observation projects status+provider.
+    const sessionDir = join(home, "resolve-only-session");
+    const runDir = join(home, "resolve-only-run");
+    await mkdir(sessionDir, { recursive: true });
+    await mkdir(runDir, { recursive: true });
+    const sessionFile = join(sessionDir, "session.jsonl");
+    await writeFile(sessionFile, "", "utf8");
+    await recordTypedProviderHttpStatus(runDir, {
+      httpStatus: 500,
+      provider: "xai",
+    });
+    assert.deepEqual(
+      await resolveAuditedRunnerKnownFailure({
+        runner: undefined,
+        sessionFile,
+        credential: undefined,
+        runDirectory: runDir,
+      }),
+      {
+        cause: "provider",
+        details: {
+          httpStatus: 500,
+          provider: "xai",
+        },
+      },
+    );
   });
 });

@@ -451,6 +451,13 @@ type SessionMessage = {
   api?: string;
   rawStopReason?: string;
   diagnostics?: unknown;
+  /** Typed HTTP / SDK structured fields when held on the call surface. */
+  statusCode?: number;
+  status?: number;
+  httpStatus?: number;
+  body?: unknown;
+  code?: unknown;
+  errno?: unknown;
 };
 
 type SessionEntry = {
@@ -562,12 +569,25 @@ type SessionProviderStop = {
   api?: string;
   rawStopReason?: string;
   diagnostics?: unknown;
+  httpStatus?: number;
+  body?: unknown;
+  code?: unknown;
+  errno?: unknown;
 };
+
+function typedHttpStatusFromMessage(message: SessionMessage): number | undefined {
+  for (const candidate of [message.httpStatus, message.statusCode, message.status]) {
+    if (typeof candidate === "number" && (candidate < 200 || candidate >= 300)) return candidate;
+  }
+  return undefined;
+}
 
 function sessionProviderStopFromAssistant(message: SessionMessage | undefined): SessionProviderStop | undefined {
   if (message?.role !== "assistant" || message.stopReason !== "error") return undefined;
+  const httpStatus = typedHttpStatusFromMessage(message);
   return {
     stopReason: "error",
+    // Preserve held errorMessage bytes — emptiness check must not rewrite.
     ...(typeof message.errorMessage === "string" && message.errorMessage.trim() !== ""
       ? { errorMessage: message.errorMessage }
       : {}),
@@ -584,6 +604,10 @@ function sessionProviderStopFromAssistant(message: SessionMessage | undefined): 
       ? { rawStopReason: message.rawStopReason }
       : {}),
     ...(message.diagnostics === undefined ? {} : { diagnostics: message.diagnostics }),
+    ...(httpStatus === undefined ? {} : { httpStatus }),
+    ...(message.body === undefined ? {} : { body: message.body }),
+    ...(message.code === undefined ? {} : { code: message.code }),
+    ...(message.errno === undefined ? {} : { errno: message.errno }),
   };
 }
 
@@ -849,14 +873,22 @@ export async function resolveAuditedRunnerKnownFailure(input: {
   if (parentStop === undefined) {
     if (input.credential !== undefined) return input.credential;
     if (httpObservation === undefined) return undefined;
+    // Project the HTTP observation's status + provider/source association.
     return knownFailureFromProviderStop({
       stopReason: "error",
       httpStatus: httpObservation.httpStatus,
+      provider: httpObservation.provider,
     });
   }
   return knownFailureFromProviderStop({
     ...parentStop,
-    ...(httpObservation === undefined ? {} : { httpStatus: httpObservation.httpStatus }),
+    ...(httpObservation === undefined
+      ? {}
+      : {
+        httpStatus: httpObservation.httpStatus,
+        // Observation association outranks session-configured provider name alone.
+        provider: httpObservation.provider,
+      }),
   });
 }
 
