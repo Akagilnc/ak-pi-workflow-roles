@@ -194,22 +194,17 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
             ? idle.signal
             : AbortSignal.any([idle.signal, requestSignal]);
           const priorOnResponse = request?.onResponse;
-          const priorFetch = request?.fetch;
           const inheritedRequest = {
             ...(request ?? {}),
             ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }),
             signal: streamSignal,
-            // Single HTTP observation at fetch. openai-completions throws APIError
-            // before onResponse, so the typed callback never sees non-2xx on that
-            // path (default-Pi auditor retention tracer). Never infer from prose.
-            fetch: (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-              const fetchImpl = priorFetch ?? globalThis.fetch;
-              const response = await fetchImpl(input, init);
+            onResponse: async (
+              response: { status: number; headers: Record<string, string> },
+              model: Model<Api>,
+            ) => {
               if (typeof response?.status === "number") observedHttpStatus = response.status;
-              return response;
-            }) as typeof fetch,
-            // Preserve prior onResponse chain; do not maintain a second status write.
-            ...(priorOnResponse === undefined ? {} : { onResponse: priorOnResponse }),
+              await priorOnResponse?.(response, model);
+            },
           } as ProviderStreamOptions;
           if (options.runCompletion !== undefined) {
             await new Promise<void>((resolve) => setImmediate(resolve));
@@ -970,8 +965,8 @@ export async function executeAuditorChild(
           const retentionCause = retentionError?.cause;
           failure.details = {
             ...(diagnostic === undefined ? {} : { errorMessage: diagnostic }),
-            ...(response.provider ? { provider: response.provider } : {}),
-            ...(response.model ? { model: response.model } : {}),
+            ...(projected.hasTestimony && response.provider ? { provider: response.provider } : {}),
+            ...(projected.hasTestimony && response.model ? { model: response.model } : {}),
             ...(response.api ? { api: response.api } : {}),
             ...(response.rawStopReason ? { rawStopReason: response.rawStopReason } : {}),
             ...(projected.httpStatus === undefined ? {} : { httpStatus: projected.httpStatus }),

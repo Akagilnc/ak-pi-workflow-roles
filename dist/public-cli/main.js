@@ -16851,19 +16851,22 @@ function sessionStopDetails(input) {
   const details = {};
   const errorMessage = nonEmptyString(input.errorMessage);
   if (errorMessage !== void 0) details.errorMessage = errorMessage;
-  const provider = nonEmptyString(input.provider);
-  if (provider !== void 0) details.provider = provider;
-  const model = nonEmptyString(input.model);
-  if (model !== void 0) details.model = model;
   const api = nonEmptyString(input.api);
   if (api !== void 0) details.api = api;
   const rawStopReason = nonEmptyString(input.rawStopReason);
   if (rawStopReason !== void 0) details.rawStopReason = rawStopReason;
+  const testimony = hasUpstreamErrorTestimony(input);
+  if (testimony) {
+    const provider = nonEmptyString(input.provider);
+    if (provider !== void 0) details.provider = provider;
+    const model = nonEmptyString(input.model);
+    if (model !== void 0) details.model = model;
+  }
   if (typeof input.httpStatus === "number") details.httpStatus = input.httpStatus;
   if (input.diagnostics !== void 0) details.diagnostics = input.diagnostics;
-  if (input.body !== void 0) details.body = input.body;
-  if (input.code !== void 0) details.code = input.code;
-  if (input.errno !== void 0) details.errno = input.errno;
+  if (testimony && input.body !== void 0) details.body = input.body;
+  if (testimony && input.code !== void 0) details.code = input.code;
+  if (testimony && input.errno !== void 0) details.errno = input.errno;
   return details;
 }
 function knownFailureFromProviderStop(input) {
@@ -17259,12 +17262,9 @@ var init_public_run_credentials = __esm({
   }
 });
 
-// src/public-cli/run-lifecycle.ts
-import { lstat as lstat2, open, readdir as readdir2, readFile as readFile7, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
+// src/typed-provider-http.ts
+import { readFile as readFile7, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join8 } from "node:path";
-function isV1ResumableProvider(provider) {
-  return V1_RESUMABLE_PROVIDERS.includes(provider);
-}
 function typedProviderHttpPath(runDirectory) {
   return join8(runDirectory, TYPED_HTTP_FILE);
 }
@@ -17296,6 +17296,20 @@ async function readLatestTypedProviderHttpObservation(runDirectory) {
     return void 0;
   }
 }
+var TYPED_HTTP_FILE;
+var init_typed_provider_http = __esm({
+  "src/typed-provider-http.ts"() {
+    "use strict";
+    TYPED_HTTP_FILE = "typed-provider-http.json";
+  }
+});
+
+// src/public-cli/run-lifecycle.ts
+import { lstat as lstat2, open, readdir as readdir2, readFile as readFile8, unlink as unlink3, writeFile as writeFile4 } from "node:fs/promises";
+import { join as join9 } from "node:path";
+function isV1ResumableProvider(provider) {
+  return V1_RESUMABLE_PROVIDERS.includes(provider);
+}
 async function readTypedHttp429Observation(runDirectory) {
   const observation = await readLatestTypedProviderHttpObservation(runDirectory);
   if (observation === void 0) return void 0;
@@ -17312,8 +17326,8 @@ function renderResumeCommand(runId) {
 }
 async function writeRoleRunState(runDirectory, record4) {
   const payload = { ...record4, runDirectory };
-  await writeFile3(
-    join8(runDirectory, RUN_STATE_FILE),
+  await writeFile4(
+    join9(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
 `,
     "utf8"
@@ -17322,7 +17336,7 @@ async function writeRoleRunState(runDirectory, record4) {
 async function readRoleRunState(runDirectory) {
   let raw;
   try {
-    raw = JSON.parse(await readFile7(join8(runDirectory, RUN_STATE_FILE), "utf8"));
+    raw = JSON.parse(await readFile8(join9(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
@@ -17344,7 +17358,7 @@ async function readRoleRunState(runDirectory) {
   if (typeof record4.sessionDirectory !== "string") return void 0;
   if (typeof record4.admittedRequestPath !== "string") return void 0;
   const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
-  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join8(record4.sessionDirectory, "session.jsonl");
+  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join9(record4.sessionDirectory, "session.jsonl");
   let resumable;
   if (record4.resumable !== void 0 && record4.resumable !== null) {
     if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
@@ -17437,7 +17451,7 @@ async function isSessionPrincipalAvailable(sessionFile) {
   }
 }
 async function acquireRunWriterLease(runDirectory) {
-  const lockPath = join8(runDirectory, WRITER_LOCK_FILE);
+  const lockPath = join9(runDirectory, WRITER_LOCK_FILE);
   try {
     const handle = await open(lockPath, "wx");
     try {
@@ -17445,7 +17459,7 @@ async function acquireRunWriterLease(runDirectory) {
 `, "utf8");
     } catch (error) {
       await handle.close().catch(() => void 0);
-      await unlink2(lockPath).catch(() => void 0);
+      await unlink3(lockPath).catch(() => void 0);
       throw error;
     }
     let released = false;
@@ -17455,7 +17469,7 @@ async function acquireRunWriterLease(runDirectory) {
         if (released) return;
         released = true;
         await handle.close().catch(() => void 0);
-        await unlink2(lockPath).catch(() => void 0);
+        await unlink3(lockPath).catch(() => void 0);
       }
     };
   } catch (error) {
@@ -17468,7 +17482,7 @@ async function acquireRunWriterLease(runDirectory) {
 async function findRunDirectoryById(home, runId) {
   if (runId.trim() === "") return void 0;
   const ledgerHome = resolveActivationLedgerHome(() => home);
-  const booksRoot = join8(ledgerHome, "books");
+  const booksRoot = join9(ledgerHome, "books");
   let bookKeys;
   try {
     bookKeys = await readdir2(booksRoot);
@@ -17476,7 +17490,7 @@ async function findRunDirectoryById(home, runId) {
     return void 0;
   }
   for (const bookKey of bookKeys) {
-    const runsDir = join8(activationBookDirectory(ledgerHome, bookKey), "runs");
+    const runsDir = join9(activationBookDirectory(ledgerHome, bookKey), "runs");
     let entries;
     try {
       entries = await readdir2(runsDir);
@@ -17485,7 +17499,7 @@ async function findRunDirectoryById(home, runId) {
     }
     for (const entry of entries) {
       if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join8(runsDir, entry);
+        return join9(runsDir, entry);
       }
     }
   }
@@ -17524,7 +17538,7 @@ async function loadResumableRunRecord(home, runId) {
   let derived;
   try {
     const raw = JSON.parse(
-      await readFile7(run.admittedRequestPath, "utf8")
+      await readFile8(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       const record4 = raw;
@@ -17797,17 +17811,18 @@ async function peekRoleRunRole(home, runId) {
   const run = await readRoleRunState(runDirectory);
   return run?.role;
 }
-var V1_RESUMABLE_PROVIDERS, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, TYPED_HTTP_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
+var V1_RESUMABLE_PROVIDERS, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
 var init_run_lifecycle = __esm({
   "src/public-cli/run-lifecycle.ts"() {
     "use strict";
     init_activation_ledger_topology();
     init_cli_errors();
+    init_typed_provider_http();
+    init_typed_provider_http();
     init_invocation();
     V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
     RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
     RUN_STATE_FILE = "run-state.json";
-    TYPED_HTTP_FILE = "typed-provider-http.json";
     WRITER_LOCK_FILE = "writer.lock";
     RunWriterLeaseHeldError = class extends Error {
       code = "AK_RUN_WRITER_LEASE_HELD";
@@ -18461,8 +18476,8 @@ var init_terminal = __esm({
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile8, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname6, join as join9 } from "node:path";
+import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
+import { dirname as dirname6, join as join10 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
   if (line2.startsWith("event:")) return true;
@@ -18517,7 +18532,7 @@ function presentStructuralRejection(error, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile8(sessionFile, "utf8");
+    await readFile9(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError2(error)) return { state: "missing" };
@@ -18572,13 +18587,15 @@ function classifyPostAdmissionFailure(input) {
   if (input.knownCause !== void 0) {
     const fallback = input.knownCause === "provider" ? "provider failure" : input.knownCause === "session" ? "session unreadable" : input.knownCause === "output" ? "role run completed without a lawful typed terminal result" : `role run failed (${input.knownCause})`;
     const diagnostic = input.knownDiagnostic !== void 0 && input.knownDiagnostic.trim() !== "" ? input.knownDiagnostic : conciseChildDiagnostic(input.stderr, fallback);
-    const { code: _knownCode, timedOut: _knownTimedOut, ...knownDetails } = input.knownDetails ?? {};
+    const { timedOut: _knownTimedOut, ...knownDetails } = input.knownDetails ?? {};
+    const remoteCode = knownDetails.code;
     return {
       cause: input.knownCause,
       diagnostic,
       details: {
         ...knownDetails,
-        code: input.code,
+        ...remoteCode === void 0 ? {} : { code: remoteCode },
+        exitCode: input.code,
         ...input.timedOut ? { timedOut: true } : {}
       },
       ...input.knownIdentity === void 0 ? {} : { identity: input.knownIdentity }
@@ -18588,7 +18605,7 @@ function classifyPostAdmissionFailure(input) {
     return {
       cause: "timeout",
       diagnostic: "role run timed out",
-      details: { timedOut: true, code: input.code }
+      details: { timedOut: true, exitCode: input.code }
     };
   }
   if (input.code !== 0) {
@@ -18596,27 +18613,27 @@ function classifyPostAdmissionFailure(input) {
     return {
       cause: "activation",
       diagnostic: conciseChildDiagnostic(input.stderr, fallback),
-      details: { code: input.code }
+      details: { exitCode: input.code }
     };
   }
   if (input.session?.state === "missing") {
     return {
       cause: "session",
       diagnostic: "role run left no readable session transcript",
-      details: { code: input.code, session: "missing" }
+      details: { exitCode: input.code, session: "missing" }
     };
   }
   if (input.session?.state === "unreadable") {
     return {
       cause: "session",
       diagnostic: input.session.diagnostic,
-      details: { code: input.code, session: "unreadable" }
+      details: { exitCode: input.code, session: "unreadable" }
     };
   }
   return {
     cause: "output",
     diagnostic: "role run completed without a lawful typed terminal result",
-    details: { code: input.code }
+    details: { exitCode: input.code }
   };
 }
 function explicitInternalKnownFailureClassificationInput(failure) {
@@ -18657,7 +18674,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile8(sessionFile, "utf8");
+  const text = await readFile9(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -18728,7 +18745,7 @@ async function readSessionProviderStop(sessionFile) {
   }
 }
 async function readBoundEvidenceChildKnownFailure(sessionFile) {
-  const childDirectory = join9(dirname6(sessionFile), "evidence-children");
+  const childDirectory = join10(dirname6(sessionFile), "evidence-children");
   let names;
   try {
     names = await readdir3(childDirectory);
@@ -18739,7 +18756,7 @@ async function readBoundEvidenceChildKnownFailure(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join9(childDirectory, file));
+      entries = await readBoundSessionEntries(join10(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered evidence-child session");
     }
@@ -18775,7 +18792,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
       break;
     }
   }
-  const childDirectory = join9(dirname6(sessionFile), "auditor-roles");
+  const childDirectory = join10(dirname6(sessionFile), "auditor-roles");
   let names;
   try {
     names = await readdir3(childDirectory);
@@ -18786,7 +18803,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join9(childDirectory, file));
+      entries = await readBoundSessionEntries(join10(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
@@ -19416,7 +19433,7 @@ function auditArtifactPublicationError(message, code) {
   return error;
 }
 async function ensureAuditEvidenceDirectory(runDirectory) {
-  const artifactsDir = join9(runDirectory, "artifacts");
+  const artifactsDir = join10(runDirectory, "artifacts");
   const runStat = await lstat3(runDirectory);
   if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
     throw auditArtifactPublicationError(
@@ -19453,7 +19470,7 @@ async function ensureAuditEvidenceDirectory(runDirectory) {
 }
 async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
   const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
-  const evidencePath = join9(artifactsDir, "audit-incomplete.json");
+  const evidencePath = join10(artifactsDir, "audit-incomplete.json");
   try {
     const existing = await lstat3(evidencePath);
     throw auditArtifactPublicationError(
@@ -19475,7 +19492,7 @@ async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
 }
 function auditPublicationFailureTerminal(admitted, entries, outcome, error) {
   const attempt = publicationAttemptFromError(
-    join9(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
+    join10(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
     error
   );
   const diagnostic = `audit-incomplete evidence publication failed: ${attempt.diagnostic}`;
@@ -19769,9 +19786,9 @@ async function extractNavigatorFactFromAdmittedSession(admitted) {
 }
 async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
-  await writeFile4(
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
+  await writeFile5(
     reportPath,
     `${JSON.stringify(
       {
@@ -19785,7 +19802,7 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
 `,
     "utf8"
   );
-  await writeFile4(
+  await writeFile5(
     evidencePath,
     `${JSON.stringify(
       {
@@ -19813,9 +19830,9 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
 }
 async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
-  await writeFile4(
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
+  await writeFile5(
     reportPath,
     `${JSON.stringify(
       {
@@ -19831,7 +19848,7 @@ async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, op
 `,
     "utf8"
   );
-  await writeFile4(
+  await writeFile5(
     evidencePath,
     `${JSON.stringify(
       {
@@ -19988,9 +20005,9 @@ function extractFixerMethodInvocations(entries, options) {
 }
 async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
-  await writeFile4(
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
+  await writeFile5(
     reportPath,
     `${JSON.stringify(
       {
@@ -20006,7 +20023,7 @@ async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, op
 `,
     "utf8"
   );
-  await writeFile4(
+  await writeFile5(
     evidencePath,
     `${JSON.stringify(
       {
@@ -20102,9 +20119,9 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
 }
 async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
-  await writeFile4(
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
+  await writeFile5(
     reportPath,
     `${JSON.stringify(
       {
@@ -20119,7 +20136,7 @@ async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory
 `,
     "utf8"
   );
-  await writeFile4(
+  await writeFile5(
     evidencePath,
     `${JSON.stringify(
       {
@@ -20224,9 +20241,9 @@ async function trySettleCollectorTerminalResult(admitted) {
 }
 async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
-  await writeFile4(
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
+  await writeFile5(
     reportPath,
     `${JSON.stringify(
       {
@@ -20241,7 +20258,7 @@ async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, o
 `,
     "utf8"
   );
-  await writeFile4(
+  await writeFile5(
     evidencePath,
     `${JSON.stringify(
       {
@@ -20393,9 +20410,9 @@ function extractReviewerMethodInvocations(entries, options) {
 }
 async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
-  await writeFile4(
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
+  await writeFile5(
     reportPath,
     `${JSON.stringify(
       {
@@ -20410,7 +20427,7 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
 `,
     "utf8"
   );
-  await writeFile4(
+  await writeFile5(
     evidencePath,
     `${JSON.stringify(
       {
@@ -20560,9 +20577,9 @@ function extractMergerMethodInvocations(entries, options) {
 }
 async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
-  await writeFile4(
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
+  await writeFile5(
     reportPath,
     `${JSON.stringify(
       {
@@ -20577,7 +20594,7 @@ async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, o
 `,
     "utf8"
   );
-  await writeFile4(
+  await writeFile5(
     evidencePath,
     `${JSON.stringify(
       {
@@ -20732,7 +20749,7 @@ function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   return dirs;
 }
 async function resolveFailureArtifactsBase(runDirectory) {
-  const artifactsDir = join9(runDirectory, "artifacts");
+  const artifactsDir = join10(runDirectory, "artifacts");
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -20748,13 +20765,13 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   const candidates = [
     ...preferredCandidates,
     // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join9(dir, `${stem}.${randomUUID()}.json`))
+    ...uniqueFallbackDirs.map((dir) => join10(dir, `${stem}.${randomUUID()}.json`))
   ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
     const payload = issues.length === 0 ? basePayload : { ...basePayload, publicationIssues: issues };
     try {
-      await writeFile4(
+      await writeFile5(
         path,
         `${JSON.stringify(payload, null, 2)}
 `,
@@ -20783,26 +20800,26 @@ async function publishFailureArtifacts(admitted, failure) {
     admitted.runDirectory
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
-  const underArtifacts = baseDir === join9(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === join10(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir
   );
   const errorCandidates = underArtifacts ? [
-    join9(baseDir, "error.json"),
-    join9(baseDir, "error.settlement.json"),
-    join9(admitted.runDirectory, "error.settlement.json")
+    join10(baseDir, "error.json"),
+    join10(baseDir, "error.settlement.json"),
+    join10(admitted.runDirectory, "error.settlement.json")
   ] : [
-    join9(baseDir, "error.settlement.json"),
-    join9(baseDir, "error.json")
+    join10(baseDir, "error.settlement.json"),
+    join10(baseDir, "error.json")
   ];
   const evidenceCandidates = underArtifacts ? [
-    join9(baseDir, "evidence.json"),
-    join9(baseDir, "evidence.settlement.json"),
-    join9(admitted.runDirectory, "evidence.settlement.json")
+    join10(baseDir, "evidence.json"),
+    join10(baseDir, "evidence.settlement.json"),
+    join10(admitted.runDirectory, "evidence.settlement.json")
   ] : [
-    join9(baseDir, "evidence.settlement.json"),
-    join9(baseDir, "evidence.json")
+    join10(baseDir, "evidence.settlement.json"),
+    join10(baseDir, "evidence.json")
   ];
   const errorPayloadBase = {
     kind: "error",
@@ -21016,8 +21033,8 @@ var init_settlement = __esm({
 });
 
 // src/public-cli/coder-run.ts
-import { writeFile as writeFile5 } from "node:fs/promises";
-import { join as join10 } from "node:path";
+import { writeFile as writeFile6 } from "node:fs/promises";
+import { join as join11 } from "node:path";
 function buildModelArgs(model) {
   if (model === void 0) return [];
   return [
@@ -21176,8 +21193,8 @@ async function dispatchAdmittedCoder(input) {
       );
     }
     try {
-      await writeFile5(
-        join10(admitted.runDirectory, "stderr.log"),
+      await writeFile6(
+        join11(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -21391,8 +21408,8 @@ var init_coder_run = __esm({
 });
 
 // src/public-cli/collector-run.ts
-import { writeFile as writeFile6 } from "node:fs/promises";
-import { join as join11 } from "node:path";
+import { writeFile as writeFile7 } from "node:fs/promises";
+import { join as join12 } from "node:path";
 function buildModelArgs2(model) {
   if (model === void 0) return [];
   return [
@@ -21502,8 +21519,8 @@ async function dispatchAdmittedCollector(input) {
       );
     }
     try {
-      await writeFile6(
-        join11(admitted.runDirectory, "stderr.log"),
+      await writeFile7(
+        join12(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -21624,8 +21641,8 @@ var init_collector_run = __esm({
 });
 
 // src/public-cli/doctor-run.ts
-import { writeFile as writeFile7 } from "node:fs/promises";
-import { join as join12 } from "node:path";
+import { writeFile as writeFile8 } from "node:fs/promises";
+import { join as join13 } from "node:path";
 function buildModelArgs3(model) {
   if (model === void 0) return [];
   return [
@@ -21729,8 +21746,8 @@ async function dispatchAdmittedDoctor(input) {
       );
     }
     try {
-      await writeFile7(
-        join12(admitted.runDirectory, "stderr.log"),
+      await writeFile8(
+        join13(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -21857,8 +21874,8 @@ var init_doctor_run = __esm({
 });
 
 // src/public-cli/fixer-run.ts
-import { writeFile as writeFile8 } from "node:fs/promises";
-import { join as join13 } from "node:path";
+import { writeFile as writeFile9 } from "node:fs/promises";
+import { join as join14 } from "node:path";
 function buildModelArgs4(model) {
   if (model === void 0) return [];
   return [
@@ -22026,8 +22043,8 @@ async function dispatchAdmittedFixer(input) {
       );
     }
     try {
-      await writeFile8(
-        join13(admitted.runDirectory, "stderr.log"),
+      await writeFile9(
+        join14(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -22250,8 +22267,8 @@ var init_fixer_run = __esm({
 });
 
 // src/public-cli/judge-run.ts
-import { writeFile as writeFile9 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { writeFile as writeFile10 } from "node:fs/promises";
+import { join as join15 } from "node:path";
 function buildModelArgs5(model) {
   if (model === void 0) return [];
   return [
@@ -22392,8 +22409,8 @@ async function dispatchAdmittedJudge(input) {
       );
     }
     try {
-      await writeFile9(
-        join14(admitted.runDirectory, "stderr.log"),
+      await writeFile10(
+        join15(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -22567,8 +22584,8 @@ var init_judge_run = __esm({
 });
 
 // src/public-cli/merger-run.ts
-import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
-import { join as join15, resolve as resolve7 } from "node:path";
+import { mkdir as mkdir4, writeFile as writeFile11 } from "node:fs/promises";
+import { join as join16, resolve as resolve7 } from "node:path";
 function buildModelArgs6(model) {
   if (model === void 0) return [];
   return [
@@ -22725,8 +22742,8 @@ async function dispatchAdmittedMerger(input) {
       );
     }
     try {
-      await writeFile10(
-        join15(admitted.runDirectory, "stderr.log"),
+      await writeFile11(
+        join16(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -22807,9 +22824,9 @@ async function admitMergerShellForActivationFailure(options) {
     expectedConflictPaths: [],
     resolutionScope: []
   };
-  const admittedRequestPath = join15(runDirectory, "admitted-request.json");
-  const mergerInputPath = join15(runDirectory, "merger-input.json");
-  await writeFile10(
+  const admittedRequestPath = join16(runDirectory, "admitted-request.json");
+  const mergerInputPath = join16(runDirectory, "merger-input.json");
+  await writeFile11(
     admittedRequestPath,
     `${JSON.stringify(
       {
@@ -23023,8 +23040,8 @@ var init_merger_run = __esm({
 });
 
 // src/public-cli/reviewer-run.ts
-import { writeFile as writeFile11 } from "node:fs/promises";
-import { join as join16 } from "node:path";
+import { writeFile as writeFile12 } from "node:fs/promises";
+import { join as join17 } from "node:path";
 function buildModelArgs7(model) {
   if (model === void 0) return [];
   return [
@@ -23179,8 +23196,8 @@ async function dispatchAdmittedReviewer(input) {
       );
     }
     try {
-      await writeFile11(
-        join16(admitted.runDirectory, "stderr.log"),
+      await writeFile12(
+        join17(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -23412,7 +23429,7 @@ __export(cli_exports, {
 });
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 function defaultIo() {
   return {
     stdout: (text) => {
@@ -23427,7 +23444,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join17(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join18(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -24067,7 +24084,7 @@ var init_cli = __esm({
 });
 
 // src/public-cli/main.ts
-import { dirname as dirname7, join as join18 } from "node:path";
+import { dirname as dirname7, join as join19 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -24155,7 +24172,7 @@ function linkPackage(packageRoot2, name, targetDir) {
 
 // src/public-cli/main.ts
 var here = dirname7(fileURLToPath2(import.meta.url));
-var packageRoot = join18(here, "..", "..");
+var packageRoot = join19(here, "..", "..");
 ensureHostPiRuntimeResolvable(packageRoot);
 var { runAkRole: runAkRole2 } = await Promise.resolve().then(() => (init_cli(), cli_exports));
 var result = await runAkRole2(process.argv.slice(2), { packageRoot });

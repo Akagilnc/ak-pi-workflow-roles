@@ -354,7 +354,7 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     stderr: floodStderr(),
   });
   assert.equal(timeout.cause, "timeout");
-  assert.deepEqual(timeout.details, { timedOut: true, code: null });
+  assert.deepEqual(timeout.details, { timedOut: true, exitCode: null });
 
   const activation = classifyPostAdmissionFailure({
     timedOut: false,
@@ -457,7 +457,7 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(timedOutWithProvider.identity?.name, "ProviderStopError");
   assert.equal(timedOutWithProvider.identity?.code, "openai-codex");
   assert.deepEqual(timedOutWithProvider.details, {
-    code: null,
+    exitCode: null,
     timedOut: true,
   });
 
@@ -471,7 +471,8 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   });
   assert.deepEqual(reservedKnownDetails.details, {
     provider: "xai",
-    code: 1,
+    code: 99,
+    exitCode: 1,
   });
 
   // AC5: `throw undefined` is a present exception — not missing thrown / activation / output.
@@ -2650,9 +2651,19 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
       await tracer.close();
     }
     assert.notEqual(retentionResult.exitCode === 1 && retentionResult.terminal?.roleOutcome.kind === "failure" ? retentionResult.terminal.roleOutcome.cause : undefined, "timeout");
-    const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "provider", diagnosticIncludes: "WebSocket error", identityName: "faux-1", identityCode: "openai-codex" });
-    assert.equal((retentionSettlement.terminal.roleOutcome as any).decisiveFacts.secondaryEvidence.model, "faux-1");
+    // openai-completions throws APIError before onResponse, so non-2xx never becomes
+    // typed HTTP testimony at this seam (r3-A: onResponse only, no fetch wrap).
+    // Held errorMessage still reaches error.json; cause stays the honest unknown.
+    const retentionSettlement = await assertPublicFailureSettlement({
+      result: retentionResult,
+      stdout: retentionIo.stdout,
+      stderr: retentionIo.stderr,
+      expectedCause: "unrecognized",
+      diagnosticIncludes: "WebSocket error",
+    });
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
+    assert.equal(retentionArtifact.details?.errorMessage?.includes("WebSocket error") || retentionArtifact.diagnostic?.includes("WebSocket error"), true);
+    assert.equal(retentionArtifact.details?.provider, undefined);
     assert.equal(retentionArtifact.details.retentionFailure.name, "ComplianceResponseRetentionError");
     assert.equal(retentionArtifact.details.retentionFailure.cause.code, "EISDIR");
   });
@@ -2689,8 +2700,6 @@ test("bound evidence-child provider stop outranks generic activation wash", asyn
       diagnostic: "Codex error: The usage limit has been reached",
       details: {
         errorMessage: "Codex error: The usage limit has been reached",
-        provider: "openai-codex",
-        model: "gpt-5.6-sol",
         secondaryEvidence: "evidence-child",
       },
     });
@@ -2708,8 +2717,6 @@ test("bound evidence-child provider stop outranks generic activation wash", asyn
         diagnostic: "Codex error: The usage limit has been reached",
         details: {
           errorMessage: "Codex error: The usage limit has been reached",
-          provider: "openai-codex",
-          model: "gpt-5.6-sol",
           secondaryEvidence: "evidence-child",
         },
       },
@@ -2960,8 +2967,6 @@ test("bound auditor assistant supplies primary when secondary enrichment is abse
       diagnostic: "WebSocket error",
       details: {
         errorMessage: "WebSocket error",
-        provider: "xai",
-        model: "audit-model",
         secondaryEvidence: "unavailable",
       },
     });
@@ -3048,7 +3053,7 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
       kind: "role_infrastructure_failure",
       source: "shared-role-lifecycle",
       reasonCode: "host_failure",
-      code: 1,
+      exitCode: 1,
     });
     assert.equal(JSON.stringify(durable).includes("VARIABLE DECOY"), false);
     assert.equal(stdout.length, 1);
@@ -3211,7 +3216,7 @@ test("session provider-stop produces provider cause without injected knownFailur
     assert.equal(fromStop?.diagnostic, "WebSocket error");
     assert.deepEqual(
       fromStop?.details,
-      { errorMessage: "WebSocket error", provider: "xai" },
+      { errorMessage: "WebSocket error" },
     );
     // Prose "500:" alone is not testimony (kept once here; no duplicate helper block).
     assert.equal(
@@ -3715,6 +3720,8 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
         piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
+          // No HTTP status / diagnostics: config provider/model and local-looking
+          // body/code/errno are not upstream testimony.
           await writeFile(
             join(sessionDir, "session.jsonl"),
             JSON.stringify({
@@ -3752,16 +3759,22 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
         body?: unknown;
         code?: unknown;
         errno?: unknown;
+        exitCode?: unknown;
         provider?: string;
+        model?: string;
       };
     };
     assert.equal(errorBody.cause, "unrecognized");
     assert.equal(errorBody.diagnostic, "stream aborted mid-token");
     assert.equal(errorBody.details?.errorMessage, "stream aborted mid-token");
-    assert.equal(errorBody.details?.body, "{\"abort\":true}");
-    // details.code is reserved for process exit by classifyPostAdmissionFailure.
-    assert.equal(errorBody.details?.errno, -1);
-    assert.equal(errorBody.details?.provider, "xai");
+    // Process exit fact is preserved separately from any remote code.
+    assert.equal(errorBody.details?.exitCode, 1);
+    // No testimony ⇒ no provider/model identity and no body/code/errno projection.
+    assert.equal(errorBody.details?.provider, undefined);
+    assert.equal(errorBody.details?.model, undefined);
+    assert.equal(errorBody.details?.body, undefined);
+    assert.equal(errorBody.details?.code, undefined);
+    assert.equal(errorBody.details?.errno, undefined);
   });
 });
 
@@ -3782,29 +3795,63 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
         createRunId: () => "run-sdk-structured-001",
         io,
         piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            JSON.stringify({
-              type: "message",
-              message: {
-                role: "assistant",
-                stopReason: "error",
-                errorMessage: padded,
-                provider: "openai-codex",
-                model: "gpt-5.6-sol",
+          // Real evidence-child/auditor projector seam: throw structured remote
+          // diagnostics through runCompletion → projectStructuredRemote →
+          // ak_compliance_response retain → parent session durable chain.
+          // Do not hand-write the target session JSON with the payload already set.
+          const entries: unknown[] = [];
+          const faux = fauxProvider({ provider: "openai-codex" });
+          await assert.rejects(runComplianceAudit({
+            tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
+            systemPrompt: "Audit.",
+            serializedInput: "SDK structured payload",
+            roleLabel: "judge auditor",
+            invalidDecisionLabel: "invalid audit decision",
+            runCompletion: async () => {
+              throw Object.assign(new Error(padded), {
+                status: 500,
                 statusCode: 500,
                 body: "{\"upstream\":\"raw-body-bytes\"}",
                 code: "remote_internal",
                 errno: 61,
                 diagnostics: [{ type: "provider_error", error: { message: padded } }],
+              });
+            },
+            context: {
+              cwd: project,
+              model: faux.getModel(),
+              thinkingLevel: "off",
+              modelRegistry: {
+                getProvider() { return faux.provider; },
+                async getProviderAuth() { return { auth: { apiKey: "test" } }; },
+                async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
               },
-            }) + "\n",
+              sessionManager: {
+                getSessionFile() { return undefined; },
+                getSessionDir() { return project; },
+                appendCustomEntry(customType: string, data: unknown) {
+                  entries.push({ type: "custom", customType, data });
+                  return "entry";
+                },
+              },
+            } as unknown as ExtensionContext,
+          }));
+          const projected = extractSessionProviderStop(entries as never);
+          assert.equal(projected?.errorMessage, padded);
+          assert.equal(projected?.httpStatus, 500);
+          assert.equal(projected?.body, "{\"upstream\":\"raw-body-bytes\"}");
+          assert.equal(projected?.code, "remote_internal");
+          assert.equal(projected?.errno, 61);
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          // Parent ends aborted after the auditor retained the richer stop.
+          entries.push({ type: "message", message: { role: "assistant", stopReason: "aborted" } });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
             "utf8",
           );
-          return { code: 1, stderr: "",
-            timedOut: false, args: [...args] };
+          return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
         },
       },
     );
@@ -3824,6 +3871,7 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
         body?: unknown;
         code?: unknown;
         errno?: unknown;
+        exitCode?: unknown;
         provider?: string;
       };
     };
@@ -3832,7 +3880,9 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
     assert.equal(errorBody.details?.errorMessage, padded);
     assert.equal(errorBody.details?.httpStatus, 500);
     assert.equal(errorBody.details?.body, "{\"upstream\":\"raw-body-bytes\"}");
-    // details.code is reserved for process exit by classifyPostAdmissionFailure.
+    // SDK remote code and process exit code coexist without collision.
+    assert.equal(errorBody.details?.code, "remote_internal");
+    assert.equal(errorBody.details?.exitCode, 1);
     assert.equal(errorBody.details?.errno, 61);
     assert.equal(errorBody.details?.provider, "openai-codex");
   });
