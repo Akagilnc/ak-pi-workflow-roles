@@ -586,13 +586,13 @@ export type AdmitJudgeInvocationOptions = {
  * Optional machine-dispatch binding: missing/held lease → admit without ticket.
  * Site mismatch and other lease faults stay loud. Never a require-always gate.
  */
-async function claimTicketDispatchLeaseForAdmit(input: {
+function claimTicketDispatchLeaseForAdmit(input: {
   readonly ledgerHome: string;
   readonly bookKey: string;
   readonly siteIdentity: string;
-}): Promise<ClaimedTicketDispatchLease | undefined> {
+}): ClaimedTicketDispatchLease | undefined {
   try {
-    return await claimTicketDispatchLease({
+    return claimTicketDispatchLease({
       ledgerHome: input.ledgerHome,
       bookKey: input.bookKey,
       siteIdentity: input.siteIdentity,
@@ -648,7 +648,7 @@ export async function admitJudgeInvocation(
     );
   }
 
-  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot,
@@ -796,7 +796,7 @@ export async function admitCoderInvocation(
     );
   }
 
-  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot,
@@ -945,7 +945,7 @@ export async function admitFixerInvocation(
     );
   }
 
-  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot,
@@ -1221,7 +1221,7 @@ export async function admitCollectorInvocation(
     );
   }
 
-  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot,
@@ -1737,7 +1737,7 @@ export async function admitReviewerInvocation(
     );
   }
 
-  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot,
@@ -1994,7 +1994,7 @@ export async function admitMergerInvocation(
     authorizedChecks: [],
   });
 
-  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot,

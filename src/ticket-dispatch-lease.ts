@@ -6,7 +6,6 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -355,18 +354,17 @@ function restoreExclusiveClaimToPendingSlot(options: {
  * Crash ownership: a leftover unique claim file is orphaned and never blocks the
  * next claim (no shared sidecar, no recovery protocol).
  *
- * The await after exclusive acquire is a real I/O boundary: a concurrent offer
- * may fill the pending slot before site-mismatch restore runs; restore never
- * rename-overwrites that newer offer.
+ * Site-mismatch restore never rename-overwrites pending: a concurrent offer may
+ * fill the slot after exclusive acquire; restore uses wx and leaves that offer.
  */
-export async function claimTicketDispatchLease(options: {
+export function claimTicketDispatchLease(options: {
   readonly ledgerHome: string;
   readonly bookKey: string;
   readonly siteIdentity: SiteIdentity;
   readonly createCorrelationId?: () => string;
   readonly pid?: number;
   readonly now?: Date;
-}): Promise<ClaimedTicketDispatchLease> {
+}): ClaimedTicketDispatchLease {
   const bookKey = requireNonemptyString(options.bookKey, "bookKey");
   const siteIdentity = requireNonemptyString(options.siteIdentity, "siteIdentity");
   const pendingPath = pendingLeasePath(options.ledgerHome, bookKey);
@@ -391,9 +389,7 @@ export async function claimTicketDispatchLease(options: {
   try {
     let raw: string;
     try {
-      // Yield after exclusive acquire so a concurrent offer can occupy pending
-      // before site-mismatch restore; restore uses wx and will not clobber it.
-      raw = await readFile(claimedPath, "utf8");
+      raw = readFileSync(claimedPath, "utf8");
     } catch (error) {
       throw new TicketDispatchLeaseError(
         `failed to read claimed ticket dispatch lease (${claimedPath}): ${errorText(error)}`,
