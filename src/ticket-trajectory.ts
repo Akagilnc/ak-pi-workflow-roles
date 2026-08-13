@@ -786,20 +786,6 @@ export async function loadTicketTrajectoryRuns(
     if (fact !== undefined) activations.push(fact);
   }
 
-  for (const activation of activations) {
-    // Doctor is not on the ticket-dispatch lease rope (ADR 0012 / admit boundary).
-    if (activation.role === "doctor") continue;
-    const id = callerCorrelationId(activation.correlation);
-    if (id === undefined || !correlationTickets.has(id)) {
-      throw new TicketRunAttributionError(
-        "unbound",
-        id === undefined
-          ? `activation ${activation.role} at ${activation.observedAt} has no caller correlation ticket-binding`
-          : `activation correlation ${id} has no ticket-binding`,
-      );
-    }
-  }
-
   const runs: ParsedRun[] = [];
   const seenRunDirs = new Set<string>();
 
@@ -830,6 +816,25 @@ export async function loadTicketTrajectoryRuns(
       seenRunDirs.add(resolvedRunDir);
       const ledgerCoord = ["runs", basename(runDir)].join("/");
       runs.push(await parseRunDirectory(runDir, ledgerCoord));
+    }
+  }
+
+  // Loud unbound is per-ticket: never abort THIS ticket's legacy listing because
+  // another activation in the book is unbound, and never path-guess a flat run
+  // onto this ticket. If this ticket has nothing of its own to list, remaining
+  // unbound non-doctor activations stay loud rather than silently omitted.
+  if (runs.length === 0) {
+    for (const activation of activations) {
+      if (activation.role === "doctor") continue;
+      const id = callerCorrelationId(activation.correlation);
+      if (id === undefined || !correlationTickets.has(id)) {
+        throw new TicketRunAttributionError(
+          "unbound",
+          id === undefined
+            ? `activation ${activation.role} at ${activation.observedAt} has no caller correlation ticket-binding`
+            : `activation correlation ${id} has no ticket-binding`,
+        );
+      }
     }
   }
 
