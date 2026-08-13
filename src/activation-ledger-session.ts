@@ -6,11 +6,9 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import {
-  activationBookDirectory,
   ensureRealDirectoryTree,
   errnoCode,
   errorText,
-  pathContainedIn,
 } from "./activation-ledger-topology.ts";
 
 /** Durable pointer to the authoritative Pi session file principal (ADR 0048/0049). */
@@ -73,22 +71,26 @@ function materializeDeferredSessionFile(
 }
 
 /**
- * Admit only a durable Pi session file principal under the resolved machine ledger
- * book (ADR 0048). Requires an existing regular file at admission: resolve real paths
- * and prove containment under the real book. Reject relative paths, outside-book paths,
- * directories, symlink escapes, and nonexistent paths that cannot be materialized from
- * the live SessionManager header. Original filesystem causes are retained.
+ * Admit a durable Pi session file principal (ADR 0048/0065).
+ * Requires an existing regular file at admission (or a live SessionManager header that
+ * can be materialized onto the same path). Rejects relative paths, directories,
+ * non-files, and nonexistent paths that cannot be materialized. Original filesystem
+ * causes are retained.
+ *
+ * Record-placement (session must live under the ledger book) is NOT enforced here —
+ * that check lives on the sitian record entry (createRecordSession). Activation only
+ * binds the durable principal identity for the role run.
  *
  * Upstream Pi defers exclusive create until the first assistant message. When the path
- * is the live SessionManager principal under the book and only the header is in memory,
- * admission materializes that header onto the same path before the fact is written so
- * the role fact never points at a session that may be created later.
+ * is the live SessionManager principal and only the header is in memory, admission
+ * materializes that header onto the same path before the fact is written so the role
+ * fact never points at a session that may be created later. Materialization still goes
+ * through ledger-home directory creation (cannot invent trees outside the machine home).
  */
 export function durableSessionPointer(
   sessionManager: ActivationSessionManager,
   options: {
     ledgerHome: string;
-    bookKey: string;
   },
 ): ActivationSessionPointer {
   const file = sessionManager.getSessionFile?.();
@@ -99,17 +101,11 @@ export function durableSessionPointer(
   }
   if (!isAbsolute(file)) {
     throw new Error(
-      `Workflow role activation requires an absolute durable session file path under the machine ledger book; got relative path: ${file}`,
+      `Workflow role activation requires an absolute durable session file path; got relative path: ${file}`,
     );
   }
 
   const resolvedFile = resolve(file);
-  const bookRoot = resolve(activationBookDirectory(options.ledgerHome, options.bookKey));
-  if (!pathContainedIn(bookRoot, resolvedFile)) {
-    throw new Error(
-      `Workflow role activation requires the durable session file principal under the machine ledger book (${bookRoot}); got: ${resolvedFile}`,
-    );
-  }
 
   try {
     lstatSync(resolvedFile);
@@ -132,27 +128,11 @@ export function durableSessionPointer(
     }
   }
 
-  let realBook: string;
-  try {
-    realBook = realpathSync(bookRoot);
-  } catch (error) {
-    throw new Error(
-      `Workflow role activation machine ledger book is not resolvable (${bookRoot}): ${errorText(error)}`,
-      { cause: error },
-    );
-  }
-
   let realFile: string;
   try {
     realFile = realpathSync(resolvedFile);
   } catch (error) {
     throw new ActivationSessionFileMissingError(resolvedFile, { cause: error });
-  }
-
-  if (!pathContainedIn(realBook, realFile)) {
-    throw new Error(
-      `Workflow role activation requires the durable session file principal under the machine ledger book (${realBook}); got: ${realFile}`,
-    );
   }
 
   let info: ReturnType<typeof statSync>;
