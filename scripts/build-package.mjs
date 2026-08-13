@@ -12,6 +12,8 @@ const entries = [
   "activation-ledger-git",
   "activation-ledger-topology",
   "activation-reconciliation",
+  "sitian-role-run-coordinates",
+  "sitian-record-entry",
 ];
 
 /**

@@ -6,12 +6,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
-import {
-  activationBookDirectory,
-  ensureRealDirectoryTree,
-  resolveActivationLedgerHome,
-} from "../activation-ledger-topology.ts";
+import { ensureRealDirectoryTree } from "../activation-ledger-topology.ts";
+import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -30,7 +26,6 @@ import {
   admitMergerInvocation,
   buildMergerTransportPrompt,
   MergerEnvelopeDerivationError,
-  roleRunSessionFile,
   type AdmittedMergerInvocation,
 } from "./invocation.ts";
 import {
@@ -414,16 +409,9 @@ async function admitMergerShellForActivationFailure(options: {
   createRunId?: () => string;
 }): Promise<AdmittedMergerInvocation> {
   const projectRoot = resolve(options.project ?? options.cwd);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
-  const runDirectory = join(
-    activationBookDirectory(ledgerHome, bookKey),
-    "runs",
-    `${runId}@merger`,
-  );
-  const sessionDirectory = join(runDirectory, "session");
-  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   await mkdir(runDirectory, { recursive: true });
   const emptyDerived = {

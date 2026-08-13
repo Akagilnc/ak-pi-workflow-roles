@@ -7,6 +7,10 @@ import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
+export {
+  roleRunSessionCoordinates,
+  type RoleRunSessionCoordinates,
+} from "./sitian-role-run-coordinates.ts";
 import {
   activationBookDirectory,
   ensureRealDirectoryTree,
