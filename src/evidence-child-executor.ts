@@ -411,7 +411,7 @@ export async function executeEvidenceChild(
     },
     async (childConfigDir) => {
       const { openInProcessAgentSession } = await import("./in-process-session.ts");
-      const { childSessionManager } = await import("./activation-ledger-session.ts");
+      const { createRecordSession } = await import("./sitian-record-entry.ts");
       let inherited: InheritedRuntime;
       try {
         inherited = await createInheritedRuntime({
@@ -434,7 +434,11 @@ export async function executeEvidenceChild(
           "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
           "Return one substantive non-blank report.",
         ].join("\n"),
-        sessionManager: childSessionManager(context.sessionManager, workspace, "evidence-children"),
+        sessionManager: createRecordSession({
+          cwd: workspace,
+          kind: "evidence-children",
+          ...(context.sessionManager === undefined ? {} : { parent: context.sessionManager }),
+        }),
       });
       const usage = emptyUsage();
       const unsubscribe = session.subscribe((event) => {
