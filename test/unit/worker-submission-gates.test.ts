@@ -15,9 +15,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import {
-  createFixerRoleRuntime,
+  buildNavigatorInfrastructureFailureFact,
+  createRoleRuntimeExtension,
   FIXER_OUTPUT_TOOL_NAME,
-} from "../../src/worker-role.ts";
+  isNavigatorInfrastructureFailureFact,
+} from "../../src/role-runtime.ts";
 import {
   createWorkerSubmissionGate,
   installWorkerGitHooks,
@@ -486,11 +488,14 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     );
 
     // (b) chmod 444 on gate file → real worker output tool append fails with EACCES
-    // via existing failInfrastructure (identity preserved, print nonzero, not reminder).
+    // through createRoleRuntimeExtension hostActions + tool_result overlay (typed
+    // infrastructure fact, print/public nonzero exit; not a host stand-in).
     const toolsF = new Map<string, { execute: (...args: any[]) => Promise<any> }>();
+    const handlersF = new Map<string, (...args: any[]) => any>();
     const piF = {
       registerFlag() {},
       getFlag(name: string) {
+        if (name === "ak-role") return "fixer";
         if (name === "ak-fix-packet") return "/packet.md";
         if (name === "ak-fixer-phase") return "apply";
         return undefined;
@@ -498,33 +503,27 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
       registerTool(tool: { name: string; execute: (...args: any[]) => Promise<any> }) {
         toolsF.set(tool.name, tool);
       },
-      on() {},
+      on(name: string, handler: (...args: any[]) => any) {
+        handlersF.set(name, handler);
+      },
+      getAllTools() {
+        return [...toolsF.keys()].map((name) => ({ name }));
+      },
+      setActiveTools() {},
+      appendEntry() {},
     };
-    const infraF: Array<{ error: unknown; toolCallId?: string }> = [];
     let abortF = false;
     const prevExitF = process.exitCode;
     process.exitCode = undefined;
     try {
-      const runtimeF = createFixerRoleRuntime(
-        piF as unknown as ExtensionAPI,
-        {
-          loadSoul: async () => "FIXER LAW",
-          loadPacket: async () => "Repair the assigned findings.",
-        },
-        {
-          failInfrastructure(error, ctx, toolCallId): never {
-            infraF.push(toolCallId === undefined ? { error } : { error, toolCallId });
-            const abort = (ctx as ExtensionContext & { abort?: () => void }).abort;
-            if (typeof abort === "function") {
-              abortF = true;
-              abort.call(ctx);
-            }
-            if (ctx.mode === "print" || ctx.mode === "json") process.exitCode = 1;
-            throw error;
-          },
-        },
-      );
-      await runtimeF.activate();
+      createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "judge",
+        loadFixerSoul: async () => "FIXER LAW",
+        loadFixPacket: async () => "Repair the assigned findings.",
+        transcriptFromContext: () => "",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+      })(piF as unknown as ExtensionAPI);
+
       const projectF = join(home, "proj-f-eacces");
       await mkdir(projectF, { recursive: true });
       seedGitRepository(projectF);
@@ -552,7 +551,15 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
         })}\n`,
       );
       const parentF = SessionManager.open(parentFFile);
-      runtimeF.armSubmissionGate(projectF, parentF);
+      const sessionStart = handlersF.get("session_start");
+      assert.ok(sessionStart, "createRoleRuntimeExtension must register session_start");
+      // Admit fixer via public lifecycle: real hostActions + armSubmissionGate on parent.
+      await sessionStart({}, {
+        cwd: projectF,
+        sessionManager: parentF,
+        abort: () => {},
+      } as unknown as ExtensionContext);
+
       const nestF = join(dirname(parentFFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
       const filesF = readdirSync(nestF).filter((name) => name.endsWith(".jsonl"));
       assert.equal(filesF.length, 1);
@@ -604,20 +611,35 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
             true,
             `expected EACCES identity, got ${String(error)}`,
           );
+          assert.equal(error instanceof WorkerCommitReminderError, false);
           return true;
         },
       );
-      assert.equal(infraF.length, 1, "failInfrastructure must receive the IO error");
-      assert.equal(infraF[0]!.toolCallId, callIdF);
-      assert.equal(
-        typeof infraF[0]!.error === "object" && infraF[0]!.error !== null
-          && "code" in (infraF[0]!.error as object)
-          && (infraF[0]!.error as { code: unknown }).code === "EACCES",
-        true,
-      );
-      assert.equal(infraF[0]!.error instanceof WorkerCommitReminderError, false);
-      assert.equal(abortF, true, "failInfrastructure aborts context");
+      assert.equal(abortF, true, "real hostActions.failInfrastructure aborts context");
       assert.equal(process.exitCode, 1, "print/json public lifecycle nonzero exit");
+
+      // Drive production tool_result overlay (src/role-runtime.ts:473-551):
+      // pendingInfrastructureToolCallIds → buildNavigatorInfrastructureFailureFact.
+      const toolResult = handlersF.get("tool_result");
+      assert.ok(toolResult, "createRoleRuntimeExtension must register tool_result");
+      const overlay = await toolResult({
+        toolName: FIXER_OUTPUT_TOOL_NAME,
+        toolCallId: callIdF,
+        isError: true,
+        details: { message: "native provider wording" },
+        content: [{ type: "text", text: "EACCES" }],
+      });
+      assert.deepEqual(overlay, {
+        details: buildNavigatorInfrastructureFailureFact(),
+        isError: true,
+      });
+      assert.equal(
+        isNavigatorInfrastructureFailureFact(
+          (overlay as { details?: unknown } | undefined)?.details,
+        ),
+        true,
+        "tool_result overlay must surface typed infrastructure details",
+      );
     } finally {
       process.exitCode = prevExitF;
     }
