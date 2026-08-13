@@ -541,7 +541,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           runtime = workerRole.createFixerRoleRuntime(harness.pi, {
             loadSoul: async () => "fixer law",
             loadPacket: async () => "repair packet",
-          });
+          }, { failInfrastructure(error: unknown) { throw error; } });
         } else if (role === "doctor") {
           runtime = doctorRole.createDoctorRoleRuntime(harness.pi, {
             loadSoul: async () => "doctor law",

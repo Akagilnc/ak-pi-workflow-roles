@@ -4,6 +4,7 @@
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
 import { createHash } from "node:crypto";
+import { existsSync, writeFileSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -43,8 +44,28 @@ export type CreateRecordSessionOptions = {
 };
 
 /**
+ * Pi defers session-file create until the first assistant message. Custom-entry-only
+ * records (gate baseline/bounce, auditor bindings, …) never get that turn, so the
+ * sole record entry materializes the in-memory header onto the UUIDv7 path before
+ * returning. Existing path → early return (no rewrite/truncate). No destination param.
+ */
+function materializeDeferredRecordHeader(session: SessionManager): SessionManager {
+  if (!session.isPersisted()) return session;
+  const file = session.getSessionFile();
+  if (file === undefined || existsSync(file)) return session;
+  const header = session.getHeader();
+  if (header === null || header.type !== "session") return session;
+  writeFileSync(file, `${JSON.stringify(header)}\n`, { flag: "wx" });
+  // Rebind so subsequent appendCustomEntry uses O_APPEND (flushed=true).
+  session.setSessionFile(file);
+  return session;
+}
+
+/**
  * Sole package entry that constructs a durable Pi session record (ADR 0065).
  * No destination/path parameters — location is computed from ledger topology only.
+ * New persisted principals materialize their session header before return so
+ * custom-entry-only writers do not need a parallel delayed-header helper.
  */
 export function createRecordSession(options: CreateRecordSessionOptions): SessionManager {
   const cwd = options.cwd;
@@ -63,9 +84,9 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
     // mtime ordering, valid-header scan, and cwd filtering semantics.
     const recentFile = findMostRecentSession(sessionDir, cwd);
     if (recentFile !== null) return SessionManager.open(recentFile, sessionDir, cwd);
-    return SessionManager.create(cwd, sessionDir, parentFile
+    return materializeDeferredRecordHeader(SessionManager.create(cwd, sessionDir, parentFile
       ? { parentSession: parentFile }
-      : undefined);
+      : undefined));
   }
 
   if (parentFile === undefined || parentFile.length === 0) {
@@ -85,5 +106,7 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
     : join(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
 
   ensureRealDirectoryTree(ledgerHome, sessionDir);
-  return SessionManager.create(cwd, sessionDir, { parentSession: parentFile });
+  return materializeDeferredRecordHeader(
+    SessionManager.create(cwd, sessionDir, { parentSession: parentFile }),
+  );
 }

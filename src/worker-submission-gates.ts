@@ -1,7 +1,16 @@
 /** #242 worker gates ①②④. ① durability: ADR 0065/#216 createRecordSession only — no appendCustomEntry bypass / parallel ledger. */
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -163,22 +172,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Pi defers session-file create until the first assistant message. Gate records are
- * custom-entry only (no LLM turn), so materialize the header first — same shape as
- * activation-ledger-session materializeDeferredSessionFile — then custom entries append.
+ * Open gate ① record via sitian entry (header materialization lives in createRecordSession).
+ * First arm: entry returns a new UUIDv7 principal already on disk.
+ * Resume: entry always allocates a fresh UUIDv7 path — drop that empty discovery
+ * principal and reopen the prior nest file so baseline/bounce survive (ADR 0066).
  */
-function materializeSessionHeader(session: SessionManager): void {
-  if (!session.isPersisted()) return;
-  const file = session.getSessionFile();
-  if (file === undefined || existsSync(file)) return;
-  const header = session.getHeader();
-  if (header === null || header.type !== "session") return;
-  writeFileSync(file, `${JSON.stringify(header)}\n`, { flag: "wx" });
-  // Rebind so subsequent appendCustomEntry uses O_APPEND (flushed=true).
-  session.setSessionFile(file);
-}
-
-/** Open gate ① record via sitian entry; resume continues the nest the entry resolved (no self-computed destination). */
 function openGateRecord(cwd: string, parent?: WorkerSubmissionGateParent): SessionManager {
   const discovered = createRecordSession({
     cwd,
@@ -187,10 +185,18 @@ function openGateRecord(cwd: string, parent?: WorkerSubmissionGateParent): Sessi
   });
   // No durable parent principal → in-memory only (same-process bounce still works).
   if (!discovered.isPersisted()) return discovered;
-  // Destination came from createRecordSession; continueRecent only picks the latest file in that nest.
-  const session = SessionManager.continueRecent(cwd, discovered.getSessionDir());
-  materializeSessionHeader(session);
-  return session;
+  const nest = discovered.getSessionDir();
+  const discoveredFile = discovered.getSessionFile();
+  if (discoveredFile === undefined) return discovered;
+  const peers = readdirSync(nest)
+    .filter((name) => name.endsWith(".jsonl"))
+    .map((name) => join(nest, name))
+    .filter((path) => path !== discoveredFile);
+  if (peers.length === 0) return discovered;
+  // Resume: reopen the most recent prior principal; discard empty discovery file.
+  peers.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  unlinkSync(discoveredFile);
+  return SessionManager.open(peers[0]!, nest, cwd);
 }
 
 function readGateState(session: SessionManager): {

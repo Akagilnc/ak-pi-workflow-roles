@@ -7,8 +7,17 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
+import {
+  SessionManager,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 
+import {
+  createFixerRoleRuntime,
+  FIXER_OUTPUT_TOOL_NAME,
+} from "../../src/worker-role.ts";
 import {
   createWorkerSubmissionGate,
   installWorkerGitHooks,
@@ -24,6 +33,15 @@ import {
   seedGitRepository,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
+
+const usage = {
+  input: 1,
+  output: 1,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 2,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+} satisfies Usage;
 
 function git(cwd: string, args: readonly string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -327,6 +345,7 @@ exec "${realGit}" "$@"
   }
 });
 
+
 test("① durability: baseline+bounce via real createRecordSession survive resume; no second false bounce", async () => {
   await withHermeticHome({ prefix: "ak-worker-gate-durable-" }, async ({ home }) => {
     const project = join(home, "proj");
@@ -419,5 +438,188 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     // Same HEAD, already reminded once on durable record — confirm path, no second bounce.
     assert.doesNotThrow(() => b.assertAcceptable("completed"));
     assert.doesNotThrow(() => b.assertAcceptable("partially_completed"));
+
+    // (a) same-nest second open: existing gate file bytes unchanged (UUIDv7 path + early-return).
+    const projectA = join(home, "proj-a-bytes");
+    await mkdir(projectA, { recursive: true });
+    seedGitRepository(projectA);
+    git(projectA, ["config", "user.email", "gate@test.local"]);
+    git(projectA, ["config", "user.name", "Gate Test"]);
+    git(projectA, ["commit", "--allow-empty", "-m", "seed-a"]);
+    const parentADir = join(
+      machineLedgerHome(home),
+      "books",
+      "proj-a-bytes",
+      "runs",
+      "activation",
+      "worker-run-a",
+    );
+    await mkdir(parentADir, { recursive: true });
+    const parentAFile = join(parentADir, "session.jsonl");
+    await writeFile(
+      parentAFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "worker-parent-a",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: projectA,
+      })}\n`,
+    );
+    const parentA = SessionManager.open(parentAFile);
+    const openA = createWorkerSubmissionGate();
+    openA.arm(projectA, parentA);
+    const nestA = join(dirname(parentAFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
+    const filesA = readdirSync(nestA).filter((name) => name.endsWith(".jsonl"));
+    assert.equal(filesA.length, 1);
+    const gatePathA = join(nestA, filesA[0]!);
+    const bytesBefore = readFileSync(gatePathA);
+    const openA2 = createWorkerSubmissionGate();
+    openA2.arm(projectA, parentA);
+    const filesA2 = readdirSync(nestA).filter((name) => name.endsWith(".jsonl"));
+    assert.equal(filesA2.length, 1);
+    assert.equal(filesA2[0], filesA[0]);
+    assert.equal(
+      Buffer.compare(bytesBefore, readFileSync(gatePathA)),
+      0,
+      "same-nest second open must not rewrite existing gate file bytes",
+    );
+
+    // (b) chmod 444 on gate file → real worker output tool append fails with EACCES
+    // via existing failInfrastructure (identity preserved, print nonzero, not reminder).
+    const toolsF = new Map<string, { execute: (...args: any[]) => Promise<any> }>();
+    const piF = {
+      registerFlag() {},
+      getFlag(name: string) {
+        if (name === "ak-fix-packet") return "/packet.md";
+        if (name === "ak-fixer-phase") return "apply";
+        return undefined;
+      },
+      registerTool(tool: { name: string; execute: (...args: any[]) => Promise<any> }) {
+        toolsF.set(tool.name, tool);
+      },
+      on() {},
+    };
+    const infraF: Array<{ error: unknown; toolCallId?: string }> = [];
+    let abortF = false;
+    const prevExitF = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      const runtimeF = createFixerRoleRuntime(
+        piF as unknown as ExtensionAPI,
+        {
+          loadSoul: async () => "FIXER LAW",
+          loadPacket: async () => "Repair the assigned findings.",
+        },
+        {
+          failInfrastructure(error, ctx, toolCallId): never {
+            infraF.push(toolCallId === undefined ? { error } : { error, toolCallId });
+            const abort = (ctx as ExtensionContext & { abort?: () => void }).abort;
+            if (typeof abort === "function") {
+              abortF = true;
+              abort.call(ctx);
+            }
+            if (ctx.mode === "print" || ctx.mode === "json") process.exitCode = 1;
+            throw error;
+          },
+        },
+      );
+      await runtimeF.activate();
+      const projectF = join(home, "proj-f-eacces");
+      await mkdir(projectF, { recursive: true });
+      seedGitRepository(projectF);
+      git(projectF, ["config", "user.email", "gate@test.local"]);
+      git(projectF, ["config", "user.name", "Gate Test"]);
+      git(projectF, ["commit", "--allow-empty", "-m", "seed-f"]);
+      const parentFDir = join(
+        machineLedgerHome(home),
+        "books",
+        "proj-f-eacces",
+        "runs",
+        "activation",
+        "worker-run-f",
+      );
+      await mkdir(parentFDir, { recursive: true });
+      const parentFFile = join(parentFDir, "session.jsonl");
+      await writeFile(
+        parentFFile,
+        `${JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "worker-parent-f",
+          timestamp: "2025-01-01T00:00:00.000Z",
+          cwd: projectF,
+        })}\n`,
+      );
+      const parentF = SessionManager.open(parentFFile);
+      runtimeF.armSubmissionGate(projectF, parentF);
+      const nestF = join(dirname(parentFFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
+      const filesF = readdirSync(nestF).filter((name) => name.endsWith(".jsonl"));
+      assert.equal(filesF.length, 1);
+      const gatePathF = join(nestF, filesF[0]!);
+      chmodSync(gatePathF, 0o444);
+
+      const toolF = toolsF.get(FIXER_OUTPUT_TOOL_NAME);
+      assert.ok(toolF);
+      const callIdF = "fixer-eacces";
+      const smF = SessionManager.inMemory();
+      const completed = {
+        status: "completed" as const,
+        report: "done",
+        classResults: [{
+          name: "Contract",
+          disposition: "completed" as const,
+          searchScope: "all",
+          exceptions: [] as string[],
+          commitSha: "a".repeat(40),
+        }],
+      };
+      smF.appendMessage({
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: callIdF,
+          name: FIXER_OUTPUT_TOOL_NAME,
+          arguments: completed,
+        }],
+        api: "openai-responses",
+        provider: "test",
+        model: "fixer",
+        usage,
+        stopReason: "toolUse",
+        timestamp: Date.now(),
+      } as AssistantMessage);
+      const ctxF = {
+        sessionManager: smF,
+        abort: () => { abortF = true; },
+        mode: "print",
+      } as unknown as ExtensionContext;
+
+      await assert.rejects(
+        toolF.execute(callIdF, completed, undefined, undefined, ctxF),
+        (error: unknown) => {
+          assert.equal(
+            typeof error === "object" && error !== null && "code" in error
+              && (error as { code: unknown }).code === "EACCES",
+            true,
+            `expected EACCES identity, got ${String(error)}`,
+          );
+          return true;
+        },
+      );
+      assert.equal(infraF.length, 1, "failInfrastructure must receive the IO error");
+      assert.equal(infraF[0]!.toolCallId, callIdF);
+      assert.equal(
+        typeof infraF[0]!.error === "object" && infraF[0]!.error !== null
+          && "code" in (infraF[0]!.error as object)
+          && (infraF[0]!.error as { code: unknown }).code === "EACCES",
+        true,
+      );
+      assert.equal(infraF[0]!.error instanceof WorkerCommitReminderError, false);
+      assert.equal(abortF, true, "failInfrastructure aborts context");
+      assert.equal(process.exitCode, 1, "print/json public lifecycle nonzero exit");
+    } finally {
+      process.exitCode = prevExitF;
+    }
   });
 });
