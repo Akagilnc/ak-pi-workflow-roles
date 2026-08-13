@@ -47,7 +47,7 @@ import {
 } from "./activation-reconciliation.ts";
 import {
   loadBookWaitingRecords,
-  TICKET_BINDING_EVENT,
+  parseTicketBindingFact,
   TicketRunAttributionError,
   type TicketBindingDispatchFact,
 } from "./ticket-dispatch-lease.ts";
@@ -717,34 +717,6 @@ function callerCorrelationId(correlation: unknown): string | undefined {
   return record.id;
 }
 
-function parseTicketBindingFact(value: unknown): TicketBindingDispatchFact | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  if (record.event !== TICKET_BINDING_EVENT) return undefined;
-  if (typeof record.observedAt !== "string" || record.observedAt.length === 0) return undefined;
-  if (typeof record.bookKey !== "string" || record.bookKey.length === 0) return undefined;
-  if (typeof record.siteIdentity !== "string" || record.siteIdentity.length === 0) return undefined;
-  if (
-    typeof record.ticketNumber !== "number" ||
-    !Number.isInteger(record.ticketNumber) ||
-    record.ticketNumber < 1
-  ) {
-    return undefined;
-  }
-  const id = callerCorrelationId(record.correlation);
-  if (id === undefined) return undefined;
-  return {
-    event: TICKET_BINDING_EVENT,
-    observedAt: record.observedAt,
-    bookKey: record.bookKey,
-    siteIdentity: record.siteIdentity,
-    ticketNumber: record.ticketNumber,
-    correlation: { kind: "caller", id },
-  };
-}
-
 function parseAcceptedActivationFact(value: unknown): AcceptedActivationFact | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
@@ -819,6 +791,7 @@ function runDirectoryFromSessionPath(sessionPath: string): string {
 /**
  * Book-level waiting.jsonl index built once per lane/render and reused per ticket.
  * Not a parallel ledger — pure derived view of the existing waiting.jsonl truth.
+ * Lookups are pre-built: per-ticket queries must not re-walk whole-book rows.
  */
 export type TicketTrajectoryBookIndex = {
   readonly bindings: readonly TicketBindingDispatchFact[];
@@ -826,6 +799,18 @@ export type TicketTrajectoryBookIndex = {
   readonly dispatchStubs: readonly DispatchStubFact[];
   /** correlation id → ticket numbers (size>1 is ambiguous). */
   readonly correlationTickets: ReadonlyMap<string, ReadonlySet<number>>;
+  /** ticket number → bindings for that ticket (direct consume). */
+  readonly bindingsByTicket: ReadonlyMap<number, readonly TicketBindingDispatchFact[]>;
+  /** correlation id → accepted activations (direct consume). */
+  readonly activationsByCorrelation: ReadonlyMap<string, readonly AcceptedActivationFact[]>;
+  /** correlation id → dispatch stubs (direct consume). */
+  readonly stubsByCorrelation: ReadonlyMap<string, readonly DispatchStubFact[]>;
+  /**
+   * Caller-correlation activations with no ticket-binding.
+   * Isolated from every ticket; exposed via the board unknown presentation seam.
+   * Doctor/absent correlations are not unbound.
+   */
+  readonly unboundActivations: readonly AcceptedActivationFact[];
 };
 
 export function buildTicketTrajectoryBookIndex(ledgerDir: string): TicketTrajectoryBookIndex {
@@ -850,10 +835,14 @@ export function buildTicketTrajectoryBookIndex(ledgerDir: string): TicketTraject
   }
 
   const correlationTickets = new Map<string, Set<number>>();
+  const bindingsByTicket = new Map<number, TicketBindingDispatchFact[]>();
   for (const binding of bindings) {
     const tickets = correlationTickets.get(binding.correlation.id) ?? new Set<number>();
     tickets.add(binding.ticketNumber);
     correlationTickets.set(binding.correlation.id, tickets);
+    const list = bindingsByTicket.get(binding.ticketNumber) ?? [];
+    list.push(binding);
+    bindingsByTicket.set(binding.ticketNumber, list);
   }
   for (const [correlationId, tickets] of correlationTickets) {
     if (tickets.size > 1) {
@@ -865,7 +854,36 @@ export function buildTicketTrajectoryBookIndex(ledgerDir: string): TicketTraject
     }
   }
 
-  return { bindings, activations, dispatchStubs, correlationTickets };
+  const activationsByCorrelation = new Map<string, AcceptedActivationFact[]>();
+  const unboundActivations: AcceptedActivationFact[] = [];
+  for (const activation of activations) {
+    const id = callerCorrelationId(activation.correlation);
+    if (id === undefined) continue; // doctor/absent — not unbound
+    const list = activationsByCorrelation.get(id) ?? [];
+    list.push(activation);
+    activationsByCorrelation.set(id, list);
+    if (!correlationTickets.has(id)) {
+      unboundActivations.push(activation);
+    }
+  }
+
+  const stubsByCorrelation = new Map<string, DispatchStubFact[]>();
+  for (const stub of dispatchStubs) {
+    const list = stubsByCorrelation.get(stub.correlation.id) ?? [];
+    list.push(stub);
+    stubsByCorrelation.set(stub.correlation.id, list);
+  }
+
+  return {
+    bindings,
+    activations,
+    dispatchStubs,
+    correlationTickets,
+    bindingsByTicket,
+    activationsByCorrelation,
+    stubsByCorrelation,
+    unboundActivations,
+  };
 }
 
 function dispatchOnlyRun(stub: DispatchStubFact, ledgerDir: string): ParsedRun {
@@ -892,6 +910,44 @@ function dispatchOnlyRun(stub: DispatchStubFact, ledgerDir: string): ParsedRun {
   };
 }
 
+export type UnboundTrajectoryRun = {
+  readonly run: TicketTrajectoryRun;
+  readonly correlationId: string;
+  readonly role: string;
+  readonly observedAt: string;
+};
+
+/**
+ * Load unbound activations as trajectory runs for the board unknown seam.
+ * Never joins any ticket. Built from the book index (once) — no second waiting scan.
+ */
+export async function loadUnboundTrajectoryRuns(
+  ledgerDir: string,
+  bookIndex?: TicketTrajectoryBookIndex,
+): Promise<readonly UnboundTrajectoryRun[]> {
+  const root = resolve(ledgerDir);
+  const index = bookIndex ?? buildTicketTrajectoryBookIndex(root);
+  const out: UnboundTrajectoryRun[] = [];
+  const seenRunDirs = new Set<string>();
+  for (const activation of index.unboundActivations) {
+    const correlationId = callerCorrelationId(activation.correlation);
+    if (correlationId === undefined) continue;
+    const runDir = runDirectoryFromSessionPath(activation.session.path);
+    const resolvedRunDir = resolve(runDir);
+    if (seenRunDirs.has(resolvedRunDir)) continue;
+    seenRunDirs.add(resolvedRunDir);
+    const ledgerCoord = ["runs", basename(runDir)].join("/");
+    const run = await parseRunDirectory(runDir, ledgerCoord);
+    out.push({
+      run,
+      correlationId,
+      role: activation.role,
+      observedAt: activation.observedAt,
+    });
+  }
+  return out;
+}
+
 export async function loadTicketTrajectoryRuns(
   ledgerDir: string,
   issueNumber: number,
@@ -902,7 +958,6 @@ export async function loadTicketTrajectoryRuns(
   }
   const root = resolve(ledgerDir);
   const index = bookIndex ?? buildTicketTrajectoryBookIndex(root);
-  const { bindings, activations, dispatchStubs } = index;
 
   const runs: ParsedRun[] = [];
   const seenRunDirs = new Set<string>();
@@ -916,26 +971,11 @@ export async function loadTicketTrajectoryRuns(
     runs.push(parsed);
   }
 
-  const activationsByCorrelation = new Map<string, AcceptedActivationFact[]>();
-  for (const activation of activations) {
-    const id = callerCorrelationId(activation.correlation);
-    if (id === undefined) continue;
-    const list = activationsByCorrelation.get(id) ?? [];
-    list.push(activation);
-    activationsByCorrelation.set(id, list);
-  }
-
-  const stubsByCorrelation = new Map<string, DispatchStubFact[]>();
-  for (const stub of dispatchStubs) {
-    const list = stubsByCorrelation.get(stub.correlation.id) ?? [];
-    list.push(stub);
-    stubsByCorrelation.set(stub.correlation.id, list);
-  }
-
-  for (const binding of bindings) {
-    if (binding.ticketNumber !== issueNumber) continue;
+  // Direct ticket/correlation lookups — no whole-book rebuild per ticket.
+  const ticketBindings = index.bindingsByTicket.get(issueNumber) ?? [];
+  for (const binding of ticketBindings) {
     const correlationId = binding.correlation.id;
-    const matched = activationsByCorrelation.get(correlationId) ?? [];
+    const matched = index.activationsByCorrelation.get(correlationId) ?? [];
     if (matched.length > 0) {
       for (const activation of matched) {
         const runDir = runDirectoryFromSessionPath(activation.session.path);
@@ -948,15 +988,14 @@ export async function loadTicketTrajectoryRuns(
       continue;
     }
     // ADR 0049: dispatch-only (claimed, not yet activated / activation failed) stays on board.
-    const stubs = stubsByCorrelation.get(correlationId) ?? [];
+    const stubs = index.stubsByCorrelation.get(correlationId) ?? [];
     if (stubs.length === 0 || seenDispatchIds.has(correlationId)) continue;
     seenDispatchIds.add(correlationId);
     runs.push(dispatchOnlyRun(stubs[0]!, root));
   }
 
-  // Unbound activations are isolated: never path-guess onto this ticket, never
-  // abort this ticket (or the whole board) because another activation lacks binding.
-  // They simply do not join any ticket; ambiguous multi-ticket bindings stay loud above.
+  // Unbound activations stay isolated from every ticket (see loadUnboundTrajectoryRuns
+  // + factory-board unknown presentation). Ambiguous multi-ticket bindings stay loud above.
 
   return runs;
 }

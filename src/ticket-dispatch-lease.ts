@@ -205,7 +205,8 @@ function parsePendingLease(raw: string, sourcePath: string): PendingTicketDispat
   };
 }
 
-function parseTicketBindingFact(value: unknown): TicketBindingDispatchFact | undefined {
+/** Parse one waiting.jsonl row as a closed ticket-binding fact (or undefined). */
+export function parseTicketBindingFact(value: unknown): TicketBindingDispatchFact | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
@@ -309,6 +310,46 @@ export function offerTicketDispatchLease(options: {
 }
 
 /**
+ * Put an exclusively-owned claim body back into the pending slot only when the
+ * slot is empty. Never rename-over: a concurrent offer may already occupy pending.
+ * Returns whether the body was restored; either way the claimer must treat the
+ * site as mismatched. Leftover claimed files remain crash-orphans (never shared).
+ */
+export function restoreExclusiveClaimToPendingSlot(options: {
+  readonly pendingPath: string;
+  readonly claimedPath: string;
+  readonly raw: string;
+}): "restored" | "slot-occupied" {
+  const bytes = Buffer.from(options.raw, "utf8");
+  let fd: number | undefined;
+  try {
+    fd = openSync(options.pendingPath, "wx", 0o644);
+  } catch (error) {
+    if (errnoCode(error) === "EEXIST") {
+      return "slot-occupied";
+    }
+    throw new TicketDispatchLeaseError(
+      `failed to restore ticket dispatch lease to pending (${options.pendingPath}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+  try {
+    const written = writeSync(fd, bytes, 0, bytes.length, null);
+    if (written !== bytes.length) {
+      throw new TicketDispatchLeaseError(
+        `ticket dispatch lease restore short write: wrote ${written} of ${bytes.length} bytes to ${options.pendingPath}`,
+      );
+    }
+  } finally {
+    closeSync(fd);
+  }
+  // Claimed path is unlinked by the claim finally; leave it here so callers that
+  // only exercise restore can also clean up explicitly if needed.
+  void options.claimedPath;
+  return "restored";
+}
+
+/**
  * Atomically claim the book's pending lease. Acquire and read bind the same
  * exclusive object (rename pending → unique claim path, then read that path).
  * Generates an opaque correlation, appends ticket-binding + dispatch-stub onto
@@ -363,15 +404,13 @@ export function claimTicketDispatchLease(options: {
       );
     }
     if (pending.siteIdentity !== siteIdentity) {
-      // Return the exclusive object to the pending slot so the correct site can claim.
-      try {
-        renameSync(claimedPath, pendingPath);
-      } catch (restoreError) {
-        throw new TicketDispatchLeaseSiteMismatchError(
-          `ticket dispatch lease siteIdentity does not match claimer for book ${bookKey}`,
-          { cause: restoreError },
-        );
-      }
+      // Exclusive restore only. POSIX rename would clobber a newer offer that
+      // filled the pending slot after we acquired this exclusive object.
+      restoreExclusiveClaimToPendingSlot({
+        pendingPath,
+        claimedPath,
+        raw,
+      });
       throw new TicketDispatchLeaseSiteMismatchError(
         `ticket dispatch lease siteIdentity does not match claimer for book ${bookKey}`,
       );

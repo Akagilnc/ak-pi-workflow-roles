@@ -9,6 +9,7 @@ import { DISPATCH_STUB_EVENT } from "../../src/activation-reconciliation.ts";
 import {
   buildTicketTrajectoryBookIndex,
   loadTicketTrajectoryRuns,
+  loadUnboundTrajectoryRuns,
 } from "../../src/ticket-trajectory.ts";
 import {
   TICKET_BINDING_EVENT,
@@ -107,6 +108,14 @@ test("same flat run without binding is isolated (not joined, not board-wide erro
     const runs = await loadTicketTrajectoryRuns(ledgerDir, 176);
     assert.equal(runs.length, 0);
     assert.equal(runs.some((run) => run.runId === runFolder), false);
+    // Honest unknown-seam exposure: unbound fact is visible via book index / loader.
+    const index = buildTicketTrajectoryBookIndex(ledgerDir);
+    assert.equal(index.unboundActivations.length, 1);
+    assert.equal(index.unboundActivations[0]?.correlation.kind, "caller");
+    const unbound = await loadUnboundTrajectoryRuns(ledgerDir, index);
+    assert.equal(unbound.length, 1);
+    assert.equal(unbound[0]?.run.runId, runFolder);
+    assert.equal(unbound[0]?.correlationId, "corr-unbound-1");
   });
 });
 
@@ -206,9 +215,12 @@ test("empty ticket is not poisoned by unrelated unbound activations", async () =
         correlation: { kind: "caller", id: "corr-unbound-other" },
       },
     ]);
-    // Ticket 177 has nothing of its own; unbound activation must not throw.
+    // Ticket 177 has nothing of its own; unbound activation must not throw or join.
     const runs = await loadTicketTrajectoryRuns(ledgerDir, 177);
     assert.equal(runs.length, 0);
+    // Unbound remains visible on the book unknown surface.
+    const unbound = await loadUnboundTrajectoryRuns(ledgerDir);
+    assert.equal(unbound.some((item) => item.correlationId === "corr-unbound-other"), true);
   });
 });
 
@@ -279,6 +291,12 @@ test("book index is reusable across tickets without re-scanning semantics", asyn
     const index = buildTicketTrajectoryBookIndex(ledgerDir);
     assert.equal(index.bindings.length, 2);
     assert.equal(index.dispatchStubs.length, 2);
+    // Book-level lookups are pre-built for direct per-ticket consume.
+    assert.equal(index.bindingsByTicket.get(176)?.length, 1);
+    assert.equal(index.bindingsByTicket.get(177)?.length, 1);
+    assert.equal(index.stubsByCorrelation.get("corr-a")?.length, 1);
+    assert.equal(index.stubsByCorrelation.get("corr-b")?.length, 1);
+    assert.equal(index.unboundActivations.length, 0);
     const a = await loadTicketTrajectoryRuns(ledgerDir, 176, index);
     const b = await loadTicketTrajectoryRuns(ledgerDir, 177, index);
     assert.equal(a.some((run) => run.runId === "dispatch:corr-a"), true);

@@ -5,20 +5,26 @@ import {
 } from "./ticket-dispatch-lease.ts";
 
 /**
- * Production producer: offer the book's unique one-shot dispatch lease for a
- * board-selected ticket. Ticket identity is the GitHub snapshot issue number
- * (typed), never inferred from worktree/branch/path.
+ * Real machine dispatcher for a board-selected ticket.
  *
- * Does not start a role run. ak-role claims this lease on admit.
- * Factory-board HTML render/watch must not call this (one pending slot per book).
+ * The selecting process already holds typed ticket/book/site identity (board
+ * snapshot issue number + ledger book + site equality string). This seam:
+ *   1) offers the book's unique one-shot dispatch lease, then
+ *   2) ignites the role (caller-supplied; typically spawn/run ak-role at site).
+ *
+ * ak-role claims the lease on admit. No separate human CLI channel may carry
+ * --book/--site/--ticket; callers without a selected ticket simply do not call
+ * this, and admit stays unbound. Factory-board HTML render/watch must not call
+ * this (one pending slot per book).
  */
-export function offerSelectedTicketDispatchLease(input: {
+export function dispatchSelectedTicketRole<T>(input: {
   readonly ledgerHome: string;
   readonly bookKey: string;
   readonly siteIdentity: SiteIdentity;
   readonly ticketNumber: TicketIdentity;
   readonly now?: Date;
-}): void {
+  readonly ignite: () => T;
+}): T {
   offerTicketDispatchLease({
     ledgerHome: input.ledgerHome,
     bookKey: input.bookKey,
@@ -26,4 +32,5 @@ export function offerSelectedTicketDispatchLease(input: {
     ticketNumber: input.ticketNumber,
     ...(input.now !== undefined ? { now: input.now } : {}),
   });
+  return input.ignite();
 }

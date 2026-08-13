@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +12,7 @@ import {
   DISPATCH_LEASE_PENDING_FILE,
   listTicketBindingFacts,
   offerTicketDispatchLease,
+  restoreExclusiveClaimToPendingSlot,
   TICKET_BINDING_EVENT,
   TicketDispatchLeaseHeldError,
   TicketDispatchLeaseMissingError,
@@ -210,5 +211,57 @@ test("claim reads the exclusive acquired object (no shared claimed sidecar)", as
     assert.equal(existsSync(pendingPath), false);
     // No shared dispatch-lease.claimed.json sidecar remains.
     assert.equal(existsSync(join(bookDir, "dispatch-lease.claimed.json")), false);
+  });
+});
+
+test("site mismatch restore does not swallow a newer pending offer (demonstrated schedule)", async () => {
+  await withLedgerHome(async (ledgerHome) => {
+    // Schedule from the race repro:
+    // 1) offer A (ticket 111 / site-A)
+    // 2) claimer acquires A (pending → exclusive claimed path)
+    // 3) dispatcher offers B (ticket 222 / site-B) into the empty pending slot
+    // 4) claimer A discovers site mismatch and must restore without clobbering B
+    offerTicketDispatchLease({
+      ledgerHome,
+      bookKey: "demo-book",
+      siteIdentity: "/site-A",
+      ticketNumber: 111,
+    });
+    const bookDir = activationBookDirectory(ledgerHome, "demo-book");
+    const pendingPath = join(bookDir, DISPATCH_LEASE_PENDING_FILE);
+    const claimedA = join(bookDir, "dispatch-lease.claimed.sim-a.json");
+    const rawA = readFileSync(pendingPath, "utf8");
+    renameSync(pendingPath, claimedA);
+
+    offerTicketDispatchLease({
+      ledgerHome,
+      bookKey: "demo-book",
+      siteIdentity: "/site-B",
+      ticketNumber: 222,
+    });
+
+    const outcome = restoreExclusiveClaimToPendingSlot({
+      pendingPath,
+      claimedPath: claimedA,
+      raw: rawA,
+    });
+    assert.equal(outcome, "slot-occupied");
+
+    const pendingBody = JSON.parse(readFileSync(pendingPath, "utf8")) as {
+      ticketNumber: number;
+      siteIdentity: string;
+    };
+    assert.equal(pendingBody.ticketNumber, 222);
+    assert.equal(pendingBody.siteIdentity, "/site-B");
+
+    const claimed = claimTicketDispatchLease({
+      ledgerHome,
+      bookKey: "demo-book",
+      siteIdentity: "/site-B",
+      createCorrelationId: () => "corr-after-race",
+    });
+    assert.equal(claimed.ticketNumber, 222);
+    assert.equal(claimed.siteIdentity, "/site-B");
+    assert.equal(claimed.correlationId, "corr-after-race");
   });
 });
