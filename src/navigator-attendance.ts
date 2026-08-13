@@ -1192,7 +1192,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
           } catch (error) {
             // Contract: README.md#Navigator-attendance — synthetic provider errors retain a stable pointer to the raw rejection while exposing only human-safe text.
             classifyProviderStreamError(error);
-            if (providerFailure === undefined) providerFailure = { source: "transport", cause: "transport" };
+            if (providerFailure === undefined) providerFailure = { source: "unknown", cause: "unknown" };
             if (!sawTerminal) {
               const message = setupFailureMessage(error);
               wrapped.push({ type: "error", reason: "error", error: message });
@@ -1203,7 +1203,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
             // No terminal stream event means the provider produced no response.
             // Emit a synthetic error so callers do not hang waiting for done/error, and never await an unresolved source.result().
             if (!sawTerminal) {
-              if (providerFailure === undefined) providerFailure = { source: "transport", cause: "transport" };
+              if (providerFailure === undefined) providerFailure = { source: "unknown", cause: "unknown" };
               const message = setupFailureMessage(new Error("Navigator provider produced no response"));
               wrapped.push({ type: "error", reason: "error", error: message });
               result = message;
@@ -1222,7 +1222,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         } catch (error) {
           // Contract: README.md#Navigator-attendance — setup failures become terminal synthetic errors, with the raw rejection retained by stable evidence pointer.
           classifyProviderStreamError(error);
-          if (providerFailure === undefined) providerFailure = { source: "transport", cause: "transport" };
+          if (providerFailure === undefined) providerFailure = { source: "unknown", cause: "unknown" };
           const wrapped = createAssistantMessageEventStream();
           const message = setupFailureMessage(error);
           queueMicrotask(() => {

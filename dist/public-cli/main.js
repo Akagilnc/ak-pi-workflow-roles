@@ -16837,21 +16837,50 @@ function resolveInternalRoleEntrypoint(packageRoot2) {
 function buildExplicitInternalActivationArgs(selectedRoleEntry, extraArgs = []) {
   return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
 }
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== "" ? value : void 0;
+}
+function isNonSuccessHttpStatus(status) {
+  return typeof status === "number" && (status < 200 || status >= 300);
+}
+function httpStatusFromDiagnostic(value) {
+  if (typeof value !== "string") return void 0;
+  const match = LEADING_HTTP_STATUS.exec(value.trim());
+  if (match === null) return void 0;
+  const status = Number(match[1] ?? match[2]);
+  return isNonSuccessHttpStatus(status) ? status : void 0;
+}
+function hasUpstreamErrorTestimony(input) {
+  if (isNonSuccessHttpStatus(input.httpStatus) || httpStatusFromDiagnostic(input.errorMessage) !== void 0) {
+    return true;
+  }
+  return Array.isArray(input.diagnostics) && input.diagnostics.length > 0;
+}
+function sessionStopDetails(input) {
+  const details = {};
+  const errorMessage = nonEmptyString(input.errorMessage);
+  if (errorMessage !== void 0) details.errorMessage = errorMessage;
+  const provider = nonEmptyString(input.provider);
+  if (provider !== void 0) details.provider = provider;
+  const model = nonEmptyString(input.model);
+  if (model !== void 0) details.model = model;
+  const api = nonEmptyString(input.api);
+  if (api !== void 0) details.api = api;
+  const rawStopReason = nonEmptyString(input.rawStopReason);
+  if (rawStopReason !== void 0) details.rawStopReason = rawStopReason;
+  const httpStatus = typeof input.httpStatus === "number" ? input.httpStatus : httpStatusFromDiagnostic(input.errorMessage);
+  if (httpStatus !== void 0) details.httpStatus = httpStatus;
+  if (input.diagnostics !== void 0) details.diagnostics = input.diagnostics;
+  return details;
+}
 function knownFailureFromProviderStop(input) {
   if (input.stopReason !== "error") return void 0;
-  const diagnostic = typeof input.errorMessage === "string" && input.errorMessage.trim() !== "" ? input.errorMessage.trim() : "provider failure";
-  const identity = {
-    name: "ProviderStopError"
-  };
-  if (typeof input.provider === "string" && input.provider.trim() !== "") {
-    identity.code = input.provider;
-  } else if (typeof input.model === "string" && input.model.trim() !== "") {
-    identity.code = input.model;
-  }
+  const diagnostic = nonEmptyString(input.errorMessage);
+  const details = sessionStopDetails(input);
   return {
-    cause: "provider",
-    identity,
-    diagnostic
+    cause: hasUpstreamErrorTestimony(input) ? "provider" : "unrecognized",
+    ...diagnostic === void 0 ? {} : { diagnostic },
+    ...Object.keys(details).length === 0 ? {} : { details }
   };
 }
 async function resolveSelectedPi(command, cwd, env) {
@@ -16908,7 +16937,7 @@ async function runExplicitInternalActivation(options) {
     env
   });
 }
-var REVIEWER_DISPATCH_REJECTION_FILE, execFileAsync3, defaultExplicitInternalPiRunner;
+var REVIEWER_DISPATCH_REJECTION_FILE, LEADING_HTTP_STATUS, execFileAsync3, defaultExplicitInternalPiRunner;
 var init_explicit_internal = __esm({
   "src/public-cli/explicit-internal.ts"() {
     "use strict";
@@ -16916,6 +16945,7 @@ var init_explicit_internal = __esm({
     init_registry2();
     init_reviewer_dispatch();
     REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
+    LEADING_HTTP_STATUS = /^(?:[A-Za-z][\w.-]*\s+)?\((\d{3})\)|^(\d{3})\s*:/;
     execFileAsync3 = promisify3(execFile3);
     defaultExplicitInternalPiRunner = async (args, options) => {
       const command = options.env.PI_BINARY ?? "pi";
@@ -17256,7 +17286,7 @@ async function clearTypedProviderHttpObservation(runDirectory) {
     throw error;
   }
 }
-async function readTypedHttp429Observation(runDirectory) {
+async function readLatestTypedProviderHttpObservation(runDirectory) {
   try {
     const raw = JSON.parse(
       await readFile7(typedProviderHttpPath(runDirectory), "utf8")
@@ -17265,13 +17295,21 @@ async function readTypedHttp429Observation(runDirectory) {
       return void 0;
     }
     const record4 = raw;
-    if (record4.httpStatus !== 429) return void 0;
-    if (typeof record4.provider !== "string") return void 0;
-    if (!isV1ResumableProvider(record4.provider)) return void 0;
-    return { httpStatus: 429, provider: record4.provider };
+    if (typeof record4.httpStatus !== "number") return void 0;
+    if (typeof record4.provider !== "string" || record4.provider.trim() === "") {
+      return void 0;
+    }
+    return { httpStatus: record4.httpStatus, provider: record4.provider };
   } catch {
     return void 0;
   }
+}
+async function readTypedHttp429Observation(runDirectory) {
+  const observation = await readLatestTypedProviderHttpObservation(runDirectory);
+  if (observation === void 0) return void 0;
+  if (observation.httpStatus !== 429) return void 0;
+  if (!isV1ResumableProvider(observation.provider)) return void 0;
+  return { httpStatus: 429, provider: observation.provider };
 }
 function isV1ResumableFailure(input) {
   if (input.hasLawfulTerminalResult) return false;
@@ -18638,6 +18676,18 @@ async function readBoundSessionEntries(sessionFile) {
   }
   return entries;
 }
+function sessionProviderStopFromAssistant(message) {
+  if (message?.role !== "assistant" || message.stopReason !== "error") return void 0;
+  return {
+    stopReason: "error",
+    ...typeof message.errorMessage === "string" && message.errorMessage.trim() !== "" ? { errorMessage: message.errorMessage } : {},
+    ...typeof message.provider === "string" && message.provider.trim() !== "" ? { provider: message.provider } : {},
+    ...typeof message.model === "string" && message.model.trim() !== "" ? { model: message.model } : {},
+    ...typeof message.api === "string" && message.api.trim() !== "" ? { api: message.api } : {},
+    ...typeof message.rawStopReason === "string" && message.rawStopReason.trim() !== "" ? { rawStopReason: message.rawStopReason } : {},
+    ...message.diagnostics === void 0 ? {} : { diagnostics: message.diagnostics }
+  };
+}
 function extractSessionProviderStop(entries) {
   let attemptStart = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -18651,14 +18701,8 @@ function extractSessionProviderStop(entries) {
     const entry = entries[i];
     if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
     const response = isRecord5(entry.data) && isRecord5(entry.data.response) ? entry.data.response : void 0;
-    if (response?.role === "assistant" && response.stopReason === "error") {
-      return {
-        stopReason: "error",
-        ...typeof response.errorMessage === "string" && response.errorMessage.trim() !== "" ? { errorMessage: response.errorMessage } : {},
-        ...typeof response.provider === "string" && response.provider.trim() !== "" ? { provider: response.provider } : {},
-        ...typeof response.model === "string" && response.model.trim() !== "" ? { model: response.model } : {}
-      };
-    }
+    const stop = sessionProviderStopFromAssistant(response);
+    if (stop !== void 0) return stop;
     break;
   }
   for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
@@ -18666,13 +18710,7 @@ function extractSessionProviderStop(entries) {
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "assistant") continue;
-    if (message.stopReason !== "error") return void 0;
-    return {
-      stopReason: "error",
-      ...typeof message.errorMessage === "string" && message.errorMessage.trim() !== "" ? { errorMessage: message.errorMessage } : {},
-      ...typeof message.provider === "string" && message.provider.trim() !== "" ? { provider: message.provider } : {},
-      ...typeof message.model === "string" && message.model.trim() !== "" ? { model: message.model } : {}
-    };
+    return sessionProviderStopFromAssistant(message);
   }
   return void 0;
 }
@@ -18708,8 +18746,7 @@ async function readBoundEvidenceChildKnownFailure(sessionFile) {
     return {
       ...primary,
       details: {
-        ...stop.provider === void 0 ? {} : { provider: stop.provider },
-        ...stop.model === void 0 ? {} : { model: stop.model },
+        ...primary.details ?? {},
         secondaryEvidence: "evidence-child"
       }
     };
@@ -18762,10 +18799,10 @@ async function readBoundAuditorKnownFailure(sessionFile) {
       if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord5(entry.data)) continue;
       const parent = isRecord5(entry.data.parent) ? entry.data.parent : void 0;
       const failure = isRecord5(entry.data.failure) ? entry.data.failure : void 0;
-      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider") continue;
+      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider" && failure?.cause !== "unrecognized") continue;
       const identity = isRecord5(failure.identity) ? failure.identity : void 0;
       return {
-        cause: "provider",
+        cause: failure.cause === "provider" ? "provider" : "unrecognized",
         ...identity === void 0 ? {} : { identity: {
           ...typeof identity.name === "string" ? { name: identity.name } : {},
           ...typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}
@@ -18778,8 +18815,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     return {
       ...primary,
       details: {
-        ...stop.provider === void 0 ? {} : { provider: stop.provider },
-        ...stop.model === void 0 ? {} : { model: stop.model },
+        ...primary.details ?? {},
         secondaryEvidence: "unavailable"
       }
     };
@@ -18862,7 +18898,19 @@ async function resolveAuditedRunnerKnownFailure(input) {
     };
   }
   const parentStop = await readSessionProviderStop(input.sessionFile);
-  return parentStop === void 0 ? input.credential : knownFailureFromProviderStop(parentStop);
+  const httpObservation = input.runDirectory === void 0 ? void 0 : await readLatestTypedProviderHttpObservation(input.runDirectory);
+  if (parentStop === void 0) {
+    if (input.credential !== void 0) return input.credential;
+    if (httpObservation === void 0) return void 0;
+    return knownFailureFromProviderStop({
+      stopReason: "error",
+      httpStatus: httpObservation.httpStatus
+    });
+  }
+  return knownFailureFromProviderStop({
+    ...parentStop,
+    ...httpObservation === void 0 ? {} : { httpStatus: httpObservation.httpStatus }
+  });
 }
 function isRecord5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -20931,6 +20979,7 @@ var init_settlement = __esm({
     init_judge_auditor();
     init_reviewer_auditor();
     init_explicit_internal();
+    init_run_lifecycle();
     init_compliance_transport();
     init_collector_ledger();
     init_judge_output();
@@ -21158,7 +21207,8 @@ async function dispatchAdmittedCoder(input) {
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
-      credential: credentialFailure
+      credential: credentialFailure,
+      runDirectory: admitted.runDirectory
     });
     return await presentControlledFailure(
       admitted,
@@ -21488,7 +21538,8 @@ async function dispatchAdmittedCollector(input) {
         ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
       }),
       sessionFile: admitted.sessionFile,
-      credential: credentialFailure
+      credential: credentialFailure,
+      runDirectory: admitted.runDirectory
     });
     return await presentControlledFailure2(
       admitted,
@@ -21721,7 +21772,8 @@ async function dispatchAdmittedDoctor(input) {
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
-      credential: credentialFailure
+      credential: credentialFailure,
+      runDirectory: admitted.runDirectory
     });
     return await presentControlledFailure3(
       admitted,
@@ -22024,7 +22076,8 @@ async function dispatchAdmittedFixer(input) {
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
-      credential: credentialFailure
+      credential: credentialFailure,
+      runDirectory: admitted.runDirectory
     });
     return await presentControlledFailure4(
       admitted,
@@ -22382,7 +22435,8 @@ async function dispatchAdmittedJudge(input) {
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
-      credential: credentialFailure
+      credential: credentialFailure,
+      runDirectory: admitted.runDirectory
     });
     return await presentControlledFailure5(
       admitted,
@@ -22707,7 +22761,8 @@ async function dispatchAdmittedMerger(input) {
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
       sessionFile: admitted.sessionFile,
-      credential: credentialFailure
+      credential: credentialFailure,
+      runDirectory: admitted.runDirectory
     });
     return await presentControlledFailure6(
       admitted,

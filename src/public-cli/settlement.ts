@@ -13,6 +13,7 @@ import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
 import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure, readReviewerDispatchRejection } from "./explicit-internal.ts";
+import { readLatestTypedProviderHttpObservation } from "./run-lifecycle.ts";
 import {
   AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
   AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
@@ -448,6 +449,8 @@ type SessionMessage = {
   provider?: string;
   model?: string;
   api?: string;
+  rawStopReason?: string;
+  diagnostics?: unknown;
 };
 
 type SessionEntry = {
@@ -551,14 +554,42 @@ async function readBoundSessionEntries(
  * later non-error stop is not a provider failure (would wash a no-lawful-output path).
  * Typed production source for provider cause — not child stderr prose.
  */
-export function extractSessionProviderStop(
-  entries: readonly SessionEntry[],
-): {
+type SessionProviderStop = {
   stopReason: "error";
   errorMessage?: string;
   provider?: string;
   model?: string;
-} | undefined {
+  api?: string;
+  rawStopReason?: string;
+  diagnostics?: unknown;
+};
+
+function sessionProviderStopFromAssistant(message: SessionMessage | undefined): SessionProviderStop | undefined {
+  if (message?.role !== "assistant" || message.stopReason !== "error") return undefined;
+  return {
+    stopReason: "error",
+    ...(typeof message.errorMessage === "string" && message.errorMessage.trim() !== ""
+      ? { errorMessage: message.errorMessage }
+      : {}),
+    ...(typeof message.provider === "string" && message.provider.trim() !== ""
+      ? { provider: message.provider }
+      : {}),
+    ...(typeof message.model === "string" && message.model.trim() !== ""
+      ? { model: message.model }
+      : {}),
+    ...(typeof message.api === "string" && message.api.trim() !== ""
+      ? { api: message.api }
+      : {}),
+    ...(typeof message.rawStopReason === "string" && message.rawStopReason.trim() !== ""
+      ? { rawStopReason: message.rawStopReason }
+      : {}),
+    ...(message.diagnostics === undefined ? {} : { diagnostics: message.diagnostics }),
+  };
+}
+
+export function extractSessionProviderStop(
+  entries: readonly SessionEntry[],
+): SessionProviderStop | undefined {
   // A resumed dispatch appends a typed top-level user turn to the same session.
   // Retained audit state from an older attempt must not replace the newer attempt's
   // native provider stop. Sessions without a user turn are the initial attempt.
@@ -578,14 +609,8 @@ export function extractSessionProviderStop(
     const entry = entries[i];
     if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
     const response = isRecord(entry.data) && isRecord(entry.data.response) ? entry.data.response : undefined;
-    if (response?.role === "assistant" && response.stopReason === "error") {
-      return {
-        stopReason: "error",
-        ...(typeof response.errorMessage === "string" && response.errorMessage.trim() !== "" ? { errorMessage: response.errorMessage } : {}),
-        ...(typeof response.provider === "string" && response.provider.trim() !== "" ? { provider: response.provider } : {}),
-        ...(typeof response.model === "string" && response.model.trim() !== "" ? { model: response.model } : {}),
-      };
-    }
+    const stop = sessionProviderStopFromAssistant(response);
+    if (stop !== undefined) return stop;
     break;
   }
   for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
@@ -594,19 +619,7 @@ export function extractSessionProviderStop(
     const message = entry.message;
     if (message?.role !== "assistant") continue;
     // Latest assistant in the current attempt only (reviewer-child-executor lastAssistant pattern).
-    if (message.stopReason !== "error") return undefined;
-    return {
-      stopReason: "error",
-      ...(typeof message.errorMessage === "string" && message.errorMessage.trim() !== ""
-        ? { errorMessage: message.errorMessage }
-        : {}),
-      ...(typeof message.provider === "string" && message.provider.trim() !== ""
-        ? { provider: message.provider }
-        : {}),
-      ...(typeof message.model === "string" && message.model.trim() !== ""
-        ? { model: message.model }
-        : {}),
-    };
+    return sessionProviderStopFromAssistant(message);
   }
   return undefined;
 }
@@ -614,15 +627,7 @@ export function extractSessionProviderStop(
 /** Read the bound session principal and extract a typed provider-stop, if any. */
 export async function readSessionProviderStop(
   sessionFile: string,
-): Promise<
-  | {
-      stopReason: "error";
-      errorMessage?: string;
-      provider?: string;
-      model?: string;
-    }
-  | undefined
-> {
+): Promise<SessionProviderStop | undefined> {
   try {
     const entries = await readBoundSessionEntries(sessionFile);
     return extractSessionProviderStop(entries);
@@ -662,8 +667,7 @@ export async function readBoundEvidenceChildKnownFailure(
     return {
       ...primary,
       details: {
-        ...(stop.provider === undefined ? {} : { provider: stop.provider }),
-        ...(stop.model === undefined ? {} : { model: stop.model }),
+        ...(primary.details ?? {}),
         secondaryEvidence: "evidence-child",
       },
     };
@@ -721,10 +725,10 @@ export async function readBoundAuditorKnownFailure(
       if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord(entry.data)) continue;
       const parent = isRecord(entry.data.parent) ? entry.data.parent : undefined;
       const failure = isRecord(entry.data.failure) ? entry.data.failure : undefined;
-      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider") continue;
+      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || (failure?.cause !== "provider" && failure?.cause !== "unrecognized")) continue;
       const identity = isRecord(failure.identity) ? failure.identity : undefined;
       return {
-        cause: "provider",
+        cause: failure.cause === "provider" ? "provider" : "unrecognized",
         ...(identity === undefined ? {} : { identity: {
           ...(typeof identity.name === "string" ? { name: identity.name } : {}),
           ...(typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}),
@@ -737,8 +741,7 @@ export async function readBoundAuditorKnownFailure(
     return {
       ...primary,
       details: {
-        ...(stop.provider === undefined ? {} : { provider: stop.provider }),
-        ...(stop.model === undefined ? {} : { model: stop.model }),
+        ...(primary.details ?? {}),
         secondaryEvidence: "unavailable",
       },
     };
@@ -840,9 +843,21 @@ export async function resolveAuditedRunnerKnownFailure(input: {
     };
   }
   const parentStop = await readSessionProviderStop(input.sessionFile);
-  return parentStop === undefined
-    ? input.credential
-    : knownFailureFromProviderStop(parentStop);
+  const httpObservation = input.runDirectory === undefined
+    ? undefined
+    : await readLatestTypedProviderHttpObservation(input.runDirectory);
+  if (parentStop === undefined) {
+    if (input.credential !== undefined) return input.credential;
+    if (httpObservation === undefined) return undefined;
+    return knownFailureFromProviderStop({
+      stopReason: "error",
+      httpStatus: httpObservation.httpStatus,
+    });
+  }
+  return knownFailureFromProviderStop({
+    ...parentStop,
+    ...(httpObservation === undefined ? {} : { httpStatus: httpObservation.httpStatus }),
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
