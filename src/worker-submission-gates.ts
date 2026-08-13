@@ -1,17 +1,24 @@
 /** #242 worker gates ①②④. ① durability: ADR 0065/#216 createRecordSession only — no appendCustomEntry bypass / parallel ledger. */
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
   createRecordSession,
   type RecordSessionParent,
+  WORKER_SUBMISSION_GATE_KIND,
 } from "./sitian-record-entry.ts";
 
 export const WORKER_COMMIT_SUBJECT_PREFIX = "ak-roles:";
 /** Sitian kind for gate ① durable baseline / bounce records (single path segment, not a destination). */
-export const WORKER_SUBMISSION_GATE_RECORD_KIND = "worker-submission-gate";
+export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
 export const WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE = "commit-reminder-bounce";
 
@@ -163,34 +170,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Pi defers session-file create until the first assistant message. Gate records are
- * custom-entry only (no LLM turn), so materialize the header first — same shape as
- * activation-ledger-session materializeDeferredSessionFile — then custom entries append.
+ * Open gate ① record via sitian entry only — resume/lifecycle live in createRecordSession.
+ * Gate consumes the returned session; no nest scan, unlink, or peer reopen.
  */
-function materializeSessionHeader(session: SessionManager): void {
-  if (!session.isPersisted()) return;
-  const file = session.getSessionFile();
-  if (file === undefined || existsSync(file)) return;
-  const header = session.getHeader();
-  if (header === null || header.type !== "session") return;
-  writeFileSync(file, `${JSON.stringify(header)}\n`, { flag: "wx" });
-  // Rebind so subsequent appendCustomEntry uses O_APPEND (flushed=true).
-  session.setSessionFile(file);
-}
-
-/** Open gate ① record via sitian entry; resume continues the nest the entry resolved (no self-computed destination). */
 function openGateRecord(cwd: string, parent?: WorkerSubmissionGateParent): SessionManager {
-  const discovered = createRecordSession({
+  return createRecordSession({
     cwd,
     kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
     ...(parent === undefined ? {} : { parent }),
   });
-  // No durable parent principal → in-memory only (same-process bounce still works).
-  if (!discovered.isPersisted()) return discovered;
-  // Destination came from createRecordSession; continueRecent only picks the latest file in that nest.
-  const session = SessionManager.continueRecent(cwd, discovered.getSessionDir());
-  materializeSessionHeader(session);
-  return session;
 }
 
 function readGateState(session: SessionManager): {
