@@ -16867,7 +16867,7 @@ function sessionStopDetails(input) {
   return details;
 }
 function knownFailureFromProviderStop(input) {
-  if (input.stopReason !== "error") return void 0;
+  if (input.stopReason !== "error" && input.stopReason !== "aborted") return void 0;
   const diagnostic = nonEmptyString(input.errorMessage);
   const details = sessionStopDetails(input);
   return {
@@ -18675,10 +18675,11 @@ function typedHttpStatusFromMessage(message) {
   return void 0;
 }
 function sessionProviderStopFromAssistant(message) {
-  if (message?.role !== "assistant" || message.stopReason !== "error") return void 0;
+  if (message?.role !== "assistant") return void 0;
+  if (message.stopReason !== "error" && message.stopReason !== "aborted") return void 0;
   const httpStatus = typedHttpStatusFromMessage(message);
   return {
-    stopReason: "error",
+    stopReason: message.stopReason,
     // Preserve held errorMessage bytes — emptiness check must not rewrite.
     ...typeof message.errorMessage === "string" && message.errorMessage.trim() !== "" ? { errorMessage: message.errorMessage } : {},
     ...typeof message.provider === "string" && message.provider.trim() !== "" ? { provider: message.provider } : {},

@@ -608,12 +608,15 @@ test("native provider stream seam classifies auth/quota/transport after setModel
         assert.deepEqual(session.providerFailure?.(), { source: scenario.source, cause: scenario.source }, `${scenario.name}:${diagnostic}`);
         const assistant = [...session.entries()].reverse().find((entry: any) => entry?.type === "message" && entry?.message?.role === "assistant") as any;
         assert.equal(assistant?.message?.errorMessage, diagnostic, `${scenario.name}:${diagnostic}`);
-        assert.equal(assistant?.message?.statusCode, undefined, `${scenario.name}:${diagnostic}`);
-        assert.equal(assistant?.message?.code, undefined, `${scenario.name}:${diagnostic}`);
-        assert.equal(assistant?.message?.navigatorFailure, undefined, `${scenario.name}:${diagnostic}`);
+        // Classification still comes from onResponse/diagnostics — not statusCode as oracle.
+        // Held upstream status remains on the durable session message when the provider supplied it.
         if ("status" in scenario) {
+          assert.equal(assistant?.message?.statusCode, scenario.status, `${scenario.name}:${diagnostic}`);
           assert.deepEqual(observedCallbacks, [scenario.status], `${scenario.name}:${diagnostic}`);
+        } else {
+          assert.equal(assistant?.message?.statusCode, undefined, `${scenario.name}:${diagnostic}`);
         }
+        assert.equal(assistant?.message?.navigatorFailure, undefined, `${scenario.name}:${diagnostic}`);
       }
       session.dispose();
     }

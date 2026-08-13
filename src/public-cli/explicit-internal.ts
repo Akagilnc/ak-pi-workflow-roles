@@ -221,7 +221,7 @@ export function knownFailureFromProviderStop(input: {
   readonly code?: unknown;
   readonly errno?: unknown;
 }): ExplicitInternalKnownFailure | undefined {
-  if (input.stopReason !== "error") return undefined;
+  if (input.stopReason !== "error" && input.stopReason !== "aborted") return undefined;
   const diagnostic = nonEmptyString(input.errorMessage);
   const details = sessionStopDetails(input);
   return {

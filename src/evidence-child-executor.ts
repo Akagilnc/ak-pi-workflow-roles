@@ -199,18 +199,17 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
             ...(request ?? {}),
             ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }),
             signal: streamSignal,
-            // Observe the HTTP status directly from the response (and via onResponse).
-            // Do not infer status from errorMessage prose after the SDK folds it.
+            // Single HTTP observation at fetch. openai-completions throws APIError
+            // before onResponse, so the typed callback never sees non-2xx on that
+            // path (default-Pi auditor retention tracer). Never infer from prose.
             fetch: (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
               const fetchImpl = priorFetch ?? globalThis.fetch;
               const response = await fetchImpl(input, init);
               if (typeof response?.status === "number") observedHttpStatus = response.status;
               return response;
             }) as typeof fetch,
-            onResponse: (response: { status: number }, responseModel: Model<Api>) => {
-              if (typeof response?.status === "number") observedHttpStatus = response.status;
-              return priorOnResponse?.(response as never, responseModel as never);
-            },
+            // Preserve prior onResponse chain; do not maintain a second status write.
+            ...(priorOnResponse === undefined ? {} : { onResponse: priorOnResponse }),
           } as ProviderStreamOptions;
           if (options.runCompletion !== undefined) {
             await new Promise<void>((resolve) => setImmediate(resolve));
@@ -283,29 +282,26 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
             continue;
           }
           state.streamFailure = failure;
-          const status = structuredRemoteStatus(failure);
-          const payload = structuredRemotePayload(failure);
-          const failureRecord = typeof failure === "object" && failure !== null
-            ? failure as Record<string, unknown>
-            : undefined;
-          const diagnostics = Array.isArray(failureRecord?.diagnostics) ? failureRecord.diagnostics : undefined;
-          const response: AssistantMessage = {
-            role: "assistant",
-            content: [],
+          const projected = projectStructuredRemote(failure);
+          // Prefer structured fields on the thrown failure; fall back to onResponse observation.
+          const httpStatus = projected.httpStatus ?? numericHttpStatus(observedHttpStatus);
+          const response = {
+            role: "assistant" as const,
+            content: [] as [],
             api: model.api,
             provider: model.provider,
             model: model.id,
             usage: emptyUsage(),
-            stopReason: "error",
+            stopReason: "error" as const,
             // Preserve the held failure message bytes — do not rewrite.
             errorMessage: failure instanceof Error ? failure.message : String(failure),
             timestamp: Date.now(),
-            ...(diagnostics === undefined ? {} : { diagnostics }),
-            ...(status === undefined ? {} : { status, statusCode: status }),
-            ...(payload.body === undefined ? {} : { body: payload.body }),
-            ...(payload.code === undefined ? {} : { code: payload.code }),
-            ...(payload.errno === undefined ? {} : { errno: payload.errno }),
-          } as AssistantMessage;
+            ...(projected.diagnostics === undefined ? {} : { diagnostics: projected.diagnostics }),
+            ...(httpStatus === undefined ? {} : { status: httpStatus, statusCode: httpStatus }),
+            ...(projected.body === undefined ? {} : { body: projected.body }),
+            ...(projected.code === undefined ? {} : { code: projected.code }),
+            ...(projected.errno === undefined ? {} : { errno: projected.errno }),
+          } as unknown as AssistantMessage;
           wrapped.push({ type: "error", reason: "error", error: response });
           wrapped.end(response);
           return;
@@ -386,6 +382,60 @@ function numericHttpStatus(value: unknown): number | undefined {
   if (typeof value === "number" && (value < 200 || value >= 300)) return value;
   return undefined;
 }
+
+type StructuredRemoteProjection = {
+  readonly hasTestimony: boolean;
+  readonly httpStatus?: number;
+  readonly diagnostics?: unknown;
+  readonly body?: unknown;
+  readonly code?: unknown;
+  readonly errno?: unknown;
+};
+
+/**
+ * Single-pass structured remote testimony/payload projection.
+ * Testimony = non-success HTTP status or non-empty diagnostics on the held chain.
+ * body/code/errno project only from a node that already carries remote testimony
+ * (status or diagnostics) so a plain local Error.code is never provider testimony.
+ */
+function projectStructuredRemote(error: unknown): StructuredRemoteProjection {
+  let httpStatus: number | undefined;
+  let diagnostics: unknown;
+  let body: unknown;
+  let code: unknown;
+  let errno: unknown;
+  let cursor: unknown = error;
+  const seen = new Set<unknown>();
+  while (typeof cursor === "object" && cursor !== null && !seen.has(cursor)) {
+    seen.add(cursor);
+    const record = cursor as Record<string, unknown>;
+    const nodeStatus = numericHttpStatus(record.statusCode)
+      ?? numericHttpStatus(record.status)
+      ?? numericHttpStatus(record.httpStatus);
+    const nodeDiagnostics = Array.isArray(record.diagnostics) && record.diagnostics.length > 0
+      ? record.diagnostics
+      : undefined;
+    const nodeHasTestimony = nodeStatus !== undefined || nodeDiagnostics !== undefined;
+    if (httpStatus === undefined && nodeStatus !== undefined) httpStatus = nodeStatus;
+    if (diagnostics === undefined && nodeDiagnostics !== undefined) diagnostics = nodeDiagnostics;
+    // Payload only from confirmed-remote nodes — never arbitrary local Error.code.
+    if (nodeHasTestimony) {
+      if (body === undefined && record.body !== undefined) body = record.body;
+      if (code === undefined && record.code !== undefined) code = record.code;
+      if (errno === undefined && record.errno !== undefined) errno = record.errno;
+    }
+    cursor = record.cause;
+  }
+  return {
+    hasTestimony: httpStatus !== undefined || diagnostics !== undefined,
+    ...(httpStatus === undefined ? {} : { httpStatus }),
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+    ...(body === undefined ? {} : { body }),
+    ...(code === undefined ? {} : { code }),
+    ...(errno === undefined ? {} : { errno }),
+  };
+}
+
 /**
  * Attach a directly observed HTTP status onto an error/aborted assistant message.
  * Does not invent status from errorMessage prose; skips when already held.
@@ -397,7 +447,7 @@ function attachObservedHttpStatus<T extends AssistantMessage>(
   if (observedHttpStatus === undefined) return message;
   if (message.stopReason !== "error" && message.stopReason !== "aborted") return message;
   if (numericHttpStatus(observedHttpStatus) === undefined) return message;
-  if (structuredRemoteStatus(message) !== undefined) return message;
+  if (projectStructuredRemote(message).httpStatus !== undefined) return message;
   return Object.assign(message, {
     status: observedHttpStatus,
     statusCode: observedHttpStatus,
@@ -426,41 +476,6 @@ function enrichStreamEvent(event: unknown, observedHttpStatus: number | undefine
   }
   return event;
 }
-/** Typed HTTP status only — never infer from errorMessage/message prose. */
-function structuredRemoteStatus(error: unknown): number | undefined {
-  if (typeof error !== "object" || error === null) return undefined;
-  const record = error as Record<string, unknown>;
-  return numericHttpStatus(record.statusCode)
-    ?? numericHttpStatus(record.status)
-    ?? numericHttpStatus(record.httpStatus)
-    ?? structuredRemoteStatus(record.cause);
-}
-function hasStructuredRemoteError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  if (structuredRemoteStatus(error) !== undefined) return true;
-  const record = error as Record<string, unknown>;
-  if (Array.isArray(record.diagnostics) && record.diagnostics.length > 0) return true;
-  return hasStructuredRemoteError(record.cause);
-}
-/** SDK structured payload fields held on the call surface — project only when present. */
-function structuredRemotePayload(error: unknown): {
-  readonly body?: unknown;
-  readonly code?: unknown;
-  readonly errno?: unknown;
-} {
-  if (typeof error !== "object" || error === null) return {};
-  const record = error as Record<string, unknown>;
-  const nested = record.cause === undefined ? {} : structuredRemotePayload(record.cause);
-  return {
-    ...(nested.body !== undefined ? { body: nested.body } : {}),
-    ...(nested.code !== undefined ? { code: nested.code } : {}),
-    ...(nested.errno !== undefined ? { errno: nested.errno } : {}),
-    // Prefer fields on the current object over nested cause.
-    ...(record.body !== undefined ? { body: record.body } : {}),
-    ...(record.code !== undefined ? { code: record.code } : {}),
-    ...(record.errno !== undefined ? { errno: record.errno } : {}),
-  };
-}
 function classifiedError(error: unknown, evidenceChildFailure: EvidenceChildFailureClassification): ClassifiedReviewerError {
   const diagnostic = typeof error === "object" && error !== null && typeof (error as { errorMessage?: unknown }).errorMessage === "string"
     ? (error as { errorMessage: string }).errorMessage
@@ -470,7 +485,7 @@ function classifiedError(error: unknown, evidenceChildFailure: EvidenceChildFail
     : Object.assign(new Error(diagnostic, { cause: error }), { evidenceChildOriginal: error });
   const classification = "evidenceChildFailure" in wrapped
     ? (wrapped as ClassifiedReviewerError).evidenceChildFailure
-    : evidenceChildFailure === "provider" && !hasStructuredRemoteError(error)
+    : evidenceChildFailure === "provider" && !projectStructuredRemote(error).hasTestimony
       ? "unknown"
       : evidenceChildFailure;
   return Object.assign(wrapped, { evidenceChildFailure: classification });
@@ -577,7 +592,7 @@ export async function executeEvidenceChild(
         if (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "error") {
           throw classifiedError(
             new Error(lastAssistant.errorMessage ?? "", { cause: lastAssistant }),
-            hasStructuredRemoteError(lastAssistant) ? "provider" : "unknown",
+            projectStructuredRemote(lastAssistant).hasTestimony ? "provider" : "unknown",
           );
         }
         if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
@@ -937,9 +952,7 @@ export async function executeAuditorChild(
           const diagnostic = typeof response.errorMessage === "string" && response.errorMessage.trim() !== ""
             ? response.errorMessage
             : undefined;
-          const httpStatus = structuredRemoteStatus(response);
-          const payload = structuredRemotePayload(response);
-          const hasTestimony = hasStructuredRemoteError(response);
+          const projected = projectStructuredRemote(response);
           const failure = new Error(
             diagnostic ?? "",
             { cause: retentionFailure },
@@ -948,11 +961,11 @@ export async function executeAuditorChild(
             failureCode?: string;
             details: Record<string, unknown>;
           };
-          if (hasTestimony && (response.model || response.provider)) {
+          if (projected.hasTestimony && (response.model || response.provider)) {
             failure.name = response.model || response.provider || "Error";
             failure.failureCode = response.provider || response.model;
           }
-          failure.knownCause = hasTestimony ? "provider" : "unrecognized";
+          failure.knownCause = projected.hasTestimony ? "provider" : "unrecognized";
           const retentionError = retentionFailure instanceof Error ? retentionFailure : undefined;
           const retentionCause = retentionError?.cause;
           failure.details = {
@@ -961,11 +974,11 @@ export async function executeAuditorChild(
             ...(response.model ? { model: response.model } : {}),
             ...(response.api ? { api: response.api } : {}),
             ...(response.rawStopReason ? { rawStopReason: response.rawStopReason } : {}),
-            ...(httpStatus === undefined ? {} : { httpStatus }),
-            ...(response.diagnostics === undefined ? {} : { diagnostics: response.diagnostics }),
-            ...(payload.body === undefined ? {} : { body: payload.body }),
-            ...(payload.code === undefined ? {} : { code: payload.code }),
-            ...(payload.errno === undefined ? {} : { errno: payload.errno }),
+            ...(projected.httpStatus === undefined ? {} : { httpStatus: projected.httpStatus }),
+            ...(projected.diagnostics === undefined ? {} : { diagnostics: projected.diagnostics }),
+            ...(projected.body === undefined ? {} : { body: projected.body }),
+            ...(projected.code === undefined ? {} : { code: projected.code }),
+            ...(projected.errno === undefined ? {} : { errno: projected.errno }),
             retentionFailure: {
               name: retentionError?.name ?? typeof retentionFailure,
               message: retentionError?.message ?? String(retentionFailure),
