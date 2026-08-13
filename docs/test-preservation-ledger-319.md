@@ -25,10 +25,10 @@
 
 | # | 断言 | 承载 | 🔒 |
 |---|------|------|:--:|
-| M2.1 | blank admission 拒（coder/fixer 缺 phase） | `test/package/public-cli-install.test.ts` · coder/fixer admits 案 `blank.code === 2` | 🔒 |
+| M2.1 | blank admission 拒（coder/fixer 缺 phase） | `test/package/public-cli-install.test.ts` · admits 共装案 `blank.code === 2` | 🔒 |
 | M2.2 | malformed admission 拒 | 同上 · fixer malformed prerequisites `code === 2` | 🔒 |
 | M2.3 | 无 ambient home skills | 同上 · empty home；`public-cli-cold-matrix.test.ts` · empty ambient home | 🔒 |
-| M2.4 | 无自动 Internal `--ak-role` 注册 | `public-cli-install.test.ts` · `ordinary Pi startup does not register Internal --ak-role...`；cold-matrix 同构 | 🔒 |
+| M2.4 | 无自动 Internal `--ak-role` 注册 | `public-cli-install.test.ts` · admits 共装案 ordinary help；cold-matrix 同构 | 🔒 |
 | M2.5 | Navigator 非 caller command（推荐 command 不含 task 路径等） | `package-entrypoint.integration.test.ts` · live-help / attendance 案 `command` 形态 | 🔒 |
 | M2.6 | Merger fail-closed 与深链失败 | `test/integration/merger-role.test.ts` · `Merger terminal contract and singleton failures abort without accepting a receipt`；`public-cli-merger-run.test.ts` residual precedence | 🔒 |
 
@@ -113,6 +113,28 @@ R8 可压缩 timeout 类 sleep；不得删 R8.1–R8.3 负向。R9 本批仅登�
 | R4 | 迁 `test/package/` + 去单 tracer 重复 | **R4.1 全留** |
 | R6 | 缺账改显式 `t.skip` | **R6.1–R6.3**；禁 opt-in-only |
 | R8 | 压缩 harness 因果等待 | **R8.1–R8.3 全留** |
+
+---
+
+## Batch 2 触及面与保留核对（M2 / M3 / R5）
+
+| 项 | 动作 | 本 ledger 必留项 |
+|----|------|------------------|
+| M2 | cold-matrix = 全角色冒烟真源；lifecycle 只留角色独有深链（Reviewer→auditor→Judge、Doctor audited output、Collector default gh receipt） | **M2.1–M2.6 全留**（blank/malformed、无 ambient、无自动 Internal、Navigator 非 command、Merger fail-closed/深链失败） |
+| M3 | `public-cli-install` coder admits 只留 blank + bin/技能路径 argv；深链唯一承载 `public-cli-coder-installed-run` 🔒 | **M2.1 coder blank** + skill 路径不经 `.agents/skills`；深链失败面不迁入 install |
+| R5 | install 确认共享 tarball（`getSharedIsolatedPack`）；discovery 一案独占 live `pi install`/settings；admits 矩阵共一次 install，禁每角色重装 | 不删 M2.1–M2.4；不把 settings 写路径断言从 discovery 案拿掉 |
+
+承载对照（Batch 2 后）：
+
+| 断言 | 承载 |
+|------|------|
+| M2.1 blank coder/fixer | `public-cli-install.test.ts` · admits 共装案 |
+| M2.2 malformed fixer prerequisites | 同上 |
+| M2.3 无 ambient home skills | 同上 + `public-cli-cold-matrix.test.ts` |
+| M2.4 无自动 Internal `--ak-role` | 同上 + cold-matrix |
+| M2.5 Navigator 非 caller command | cold-matrix + `package-entrypoint.integration.test.ts` |
+| M2.6 Merger fail-closed / 深链失败 | `merger-role.test.ts` + `public-cli-merger-run.test.ts` |
+| M3 coder 深链 | **仅** `public-cli-coder-installed-run.test.ts` 🔒 |
 
 ---
 
