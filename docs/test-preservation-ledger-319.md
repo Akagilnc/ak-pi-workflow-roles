@@ -13,11 +13,11 @@
 
 | # | 断言 | 承载 | 🔒 |
 |---|------|------|:--:|
-| M1.1 | completed 绑定**紧随**的 canonical native tdd 展开 | `test/contract/judge-role.test.ts` · `coder apply binds completion to the immediately following canonical tdd expansion` | 🔒 |
+| M1.1 | completed 绑定**紧随**的 canonical native tdd 展开 | `test/contract/judge-role.test.ts` · 轻量 `createCoderRoleRuntime` 展开绑定 API（unarmed gate ①）· `coder apply binds completion to the immediately following canonical tdd expansion` | 🔒 |
 | M1.2 | malformed expansion 拒 completed（门禁样本） | 同上 · malformed-gate `assert.rejects(submitCompleted(...))` | 🔒 |
 | M1.3 | later / 非紧随展开不得充当 completed 依据 | 同上（immediate-following 合同的反面） | 🔒 |
-| M1.4 | 已有 skill 不重写 / 包内路径为准 | `test/package/package-entrypoint.integration.test.ts` · `packaged coder apply proves canonical native tdd expansion including colliding prefix`（空 home + package-owned path） | 🔒 |
-| M1.5 | prefix collision（`/skill:tddfoo` ≠ `/skill:tdd`） | 同上 · colliding prefix 行 | 🔒 |
+| M1.4 | 已有 skill 不重写 / 包内路径为准 | `test/package/package-entrypoint.integration.test.ts` · `packaged coder apply proves canonical native tdd expansion including colliding prefix`（空 home + package-owned path）**发布面** | 🔒 |
+| M1.5 | prefix collision（`/skill:tddfoo` ≠ `/skill:tdd`） | packaged 缝真实 Pi 展开；contract 轻量缝保留 transform→completed 绑定 | 🔒 |
 
 ---
 
@@ -38,10 +38,10 @@
 
 | # | 断言 | 承载 | 🔒 |
 |---|------|------|:--:|
-| M4.1 | installed Reviewer fatal stages **abort without a receipt** | `test/integration/audit-failure-subprocess.test.ts` · `installed Reviewer fatal stages abort without a receipt` | 🔒 |
-| M4.2 | in-process Reviewer fatal **fail closed without a receipt** | 同上 · `Reviewer fatal audit stages fail closed in-process without a receipt` | 🔒 |
+| M4.1 | installed Reviewer fatal stages **abort without a receipt** | `test/integration/audit-failure-subprocess.test.ts` · 表驱动 `Reviewer fatal stages abort without a receipt on installed and in-process seams` · `seam: "installed"` 行 | 🔒 |
+| M4.2 | in-process Reviewer fatal **fail closed without a receipt** | 同上 · `seam: "in-process"` 行 | 🔒 |
 
-两条缝均保留；不得并成零。
+两条缝均保留；不得并成零。Batch 3：两缝表驱动、共享一次 `withReviewerFatalCold`。
 
 ---
 
@@ -135,6 +135,15 @@ R8 可压缩 timeout 类 sleep；不得删 R8.1–R8.3 负向。R9 本批仅登�
 | M2.5 Navigator 非 caller command | cold-matrix + `package-entrypoint.integration.test.ts` |
 | M2.6 Merger fail-closed / 深链失败 | `merger-role.test.ts` + `public-cli-merger-run.test.ts` |
 | M3 coder 深链 | **仅** `public-cli-coder-installed-run.test.ts` 🔒 |
+
+---
+
+## Batch 3 触及面与保留核对（M1 / M4）
+
+| 项 | 动作 | 本 ledger 必留项 |
+|----|------|------------------|
+| M1 | packaged 缝保留为发布面；contract 降为轻量 `createCoderRoleRuntime` 展开绑定 API（去 per-case git/session_start/gate ①） | **M1.1–M1.5 全留**（immediate / malformed reject / later reject / 包内路径不重写 / prefix collision） |
+| M4 | 两 no-receipt 闸表驱动化，共享一次 cold 夹具 | **M4.1 + M4.2 全留**；不得并成零 |
 
 ---
 

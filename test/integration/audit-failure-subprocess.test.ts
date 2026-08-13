@@ -161,13 +161,24 @@ async function materializeReviewerTarget(dest: string): Promise<void> {
   await cp(template, dest, { recursive: true });
 }
 
-async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStage) {
+type ReviewerFatalCold = {
+  home: string;
+  agentDir: string;
+  cwd: string;
+  skillPath: string;
+  base: string;
+};
+
+/** One cold fixture for both installed + in-process Reviewer fatal seams. */
+async function withReviewerFatalCold<T>(
+  run: (cold: ReviewerFatalCold) => Promise<T>,
+): Promise<T> {
   return withHermeticHome(
-    { prefix: "ak-reviewer-fatal-cli-" },
+    { prefix: "ak-reviewer-fatal-cold-" },
     async ({ home, agentDir }) => {
-      const { path: canonicalSkillPath } = await writeTestSkill(home, "code-review");
+      const { path: skillPath } = await writeTestSkill(home, "code-review");
       await writeFile(
-        canonicalSkillPath,
+        skillPath,
         await readFile(resolve(packageRoot, "test/fixtures/canonical-code-review-SKILL.md")),
       );
       const cwd = resolve(home, "review-target");
@@ -176,44 +187,168 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
         cwd,
         encoding: "utf8",
       }).trim();
-      const sessionDirectory = resolve(home, ".ak-roles/books/review-target/runs/reviewer-fatal/session");
-      await mkdir(sessionDirectory, { recursive: true });
-      const args = [
-        "--no-extensions",
-        "--no-skills",
-        "--skill",
-        canonicalSkillPath,
-        "--no-prompt-templates",
-        "--no-themes",
-        "--no-context-files",
-        "--session-dir",
-        sessionDirectory,
-        "-e",
-        resolve(packageRoot, "extensions/role-runtime.ts"),
-        "-e",
-        resolve(packageRoot, "test/fixtures/reviewer-failure-provider.ts"),
-        "--ak-role",
-        "reviewer",
-        "--ak-review-base",
-        base,
-        "--provider",
-        "ak-reviewer-failure",
-        "--model",
-        "faux-1",
-        ...(mode === "print" ? ["-p", "Review."] : ["--mode", "json", "Review."]),
-      ];
-      return runPiSubprocess(args, {
-        cwd,
-        env: {
-          ...process.env,
-          HOME: home,
-          AK_REVIEWER_FAILURE_STAGE: stage,
-          PI_CODING_AGENT_DIR: agentDir,
-          PI_OFFLINE: "1",
-        },
-      });
+      return run({ home, agentDir, cwd, skillPath, base });
     },
   );
+}
+
+async function runReviewerCliOnCold(
+  cold: ReviewerFatalCold,
+  mode: "print" | "json",
+  stage: ReviewerFailureStage,
+  label: string,
+) {
+  const sessionDirectory = resolve(
+    cold.home,
+    `.ak-roles/books/review-target/runs/reviewer-fatal-${label}/session`,
+  );
+  await mkdir(sessionDirectory, { recursive: true });
+  const rowAgentDir = resolve(cold.agentDir, `cli-${label}`);
+  await mkdir(rowAgentDir, { recursive: true });
+  const args = [
+    "--no-extensions",
+    "--no-skills",
+    "--skill",
+    cold.skillPath,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session-dir",
+    sessionDirectory,
+    "-e",
+    resolve(packageRoot, "extensions/role-runtime.ts"),
+    "-e",
+    resolve(packageRoot, "test/fixtures/reviewer-failure-provider.ts"),
+    "--ak-role",
+    "reviewer",
+    "--ak-review-base",
+    cold.base,
+    "--provider",
+    "ak-reviewer-failure",
+    "--model",
+    "faux-1",
+    ...(mode === "print" ? ["-p", "Review."] : ["--mode", "json", "Review."]),
+  ];
+  return runPiSubprocess(args, {
+    cwd: cold.cwd,
+    env: {
+      ...process.env,
+      HOME: cold.home,
+      AK_REVIEWER_FAILURE_STAGE: stage,
+      PI_CODING_AGENT_DIR: rowAgentDir,
+      PI_OFFLINE: "1",
+    },
+  });
+}
+
+async function assertInProcessReviewerFatalNoReceipt(
+  cold: ReviewerFatalCold,
+  stage: "audit-auth" | "audit-malformed-decision",
+): Promise<void> {
+  const previous = process.env.AK_REVIEWER_FAILURE_STAGE;
+  const previousExitCode = process.exitCode;
+  process.env.AK_REVIEWER_FAILURE_STAGE = stage;
+  try {
+    const faux = fauxProvider({
+      api: "ak-reviewer-failure-inproc",
+      provider: "ak-reviewer-failure-inproc",
+      tokenSize: { min: 1000, max: 1000 },
+    });
+    // Drive the same fatal output call the CLI fixture uses; audit injection
+    // still comes from the staged failure extension below.
+    faux.setResponses([
+      fauxAssistantMessage("Independent standards review found no findings."),
+      fauxAssistantMessage("Independent spec review found no findings."),
+      fauxAssistantMessage(
+        fauxToolCall(
+          REVIEWER_OUTPUT_TOOL_NAME,
+          {
+            status: "refused",
+            diagnostic:
+              "The requested review cannot proceed because its runtime stage failed.",
+          },
+          { id: "fatal-reviewer-output" },
+        ),
+        { stopReason: "toolUse" },
+      ),
+      stage === "audit-malformed-decision"
+        ? fauxAssistantMessage("MALFORMED_REVIEWER_AUDIT_DECISION_STAGE")
+        : async () => {
+            throw new Error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
+          },
+      fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE"),
+    ]);
+
+    let sawError = false;
+    await withInProcessPi(
+      {
+        activationLedgerSession: true,
+        cwd: cold.cwd,
+        agentDir: resolve(cold.agentDir, `inproc-${stage}`),
+        faux,
+        modelsPath: null,
+        additionalExtensionPaths: [
+          resolve(packageRoot, "extensions/role-runtime.ts"),
+        ],
+        additionalSkillPaths: [cold.skillPath],
+        noExtensions: true,
+        systemPrompt: "REVIEWER FATAL INPROC",
+        mode: "print",
+        flags: {
+          "ak-role": "reviewer",
+          "ak-review-base": cold.base,
+        },
+        reviewerShutdown: true,
+        extensionFactories: [
+          (pi) => {
+            pi.on("tool_call", (event, ctx) => {
+              if (
+                stage === "audit-auth" &&
+                event.toolName === REVIEWER_OUTPUT_TOOL_NAME
+              ) {
+                (ctx.modelRegistry as any).getProviderAuth = async () => {
+                  throw new Error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
+                };
+              }
+            });
+          },
+        ],
+      },
+      async ({ session, sessionManager }) => {
+        try {
+          await session.prompt("Review.");
+        } catch {
+          sawError = true;
+        }
+        const results = sessionManager
+          .getEntries()
+          .filter(
+            (entry) =>
+              entry.type === "message" && entry.message.role === "toolResult",
+          ) as Array<{ message: { toolName?: string; isError?: boolean; details?: any } }>;
+        const output = results.find(
+          (entry) => entry.message.toolName === REVIEWER_OUTPUT_TOOL_NAME,
+        );
+        // Gate negative: no accepted Reviewer receipt.
+        if (output !== undefined) {
+          assert.notEqual(output.message.isError, false);
+          assert.equal(output.message.details?.status === "completed", false);
+        }
+        assert.ok(
+          sawError ||
+            output?.message.isError === true ||
+            results.some((entry) => entry.message.isError === true),
+          `${stage} must fail closed without an accepted receipt`,
+        );
+      },
+    );
+  } finally {
+    // Production print/json audit failure sets process.exitCode = 1; restore so
+    // the in-process host test file does not inherit a failing exit status.
+    process.exitCode = previousExitCode;
+    if (previous === undefined) delete process.env.AK_REVIEWER_FAILURE_STAGE;
+    else process.env.AK_REVIEWER_FAILURE_STAGE = previous;
+  }
 }
 
 async function runCoderSkillFailureCli(
@@ -520,160 +655,52 @@ test("coder apply without skill expansion rejects completed as non-receipt", asy
   }
 });
 
-test("installed Reviewer fatal stages abort without a receipt", async () => {
-  // Process-level negative: one stage × print+json proves abort-without-receipt
-  // crosses the real CLI boundary for both modes (法条③).
-  const processRow = {
-    stage: "audit-auth" as const,
-    tool: "ak_reviewer_output" as const,
-  };
-  for (const mode of ["json", "print"] as const) {
-    const result = await runReviewerCli(mode, processRow.stage);
-    assert.equal(result.localTimeout, false, `${processRow.stage}/${mode} subprocess did not time out`);
-    assert.equal(result.code, 1, `${processRow.stage}/${mode} exits nonzero`);
-    if (mode === "json") {
-      assertJsonFailureFacts(result, processRow.tool, `${processRow.stage}/${mode}`);
-    }
-  }
+test("Reviewer fatal stages abort without a receipt on installed and in-process seams", async () => {
+  // #319 Batch 3 (M4): both no-receipt gates retained; table-driven on one cold fixture.
+  // M4.1 installed process boundary + M4.2 in-process fail-closed share skill/target/base.
+  await withReviewerFatalCold(async (cold) => {
+    type InstalledRow = {
+      seam: "installed";
+      mode: "json" | "print";
+      stage: ReviewerFailureStage;
+      tool: "Agent" | "ak_reviewer_output";
+      requireError?: boolean;
+    };
+    type InProcessRow = {
+      seam: "in-process";
+      stage: "audit-auth" | "audit-malformed-decision";
+    };
+    const rows: Array<InstalledRow | InProcessRow> = [
+      // Process-level negative: one stage × print+json proves abort-without-receipt
+      // crosses the real CLI boundary for both modes (法条③).
+      { seam: "installed", mode: "json", stage: "audit-auth", tool: "ak_reviewer_output" },
+      { seam: "installed", mode: "print", stage: "audit-auth", tool: "ak_reviewer_output" },
+      // Remaining installed stages: one JSON process each.
+      { seam: "installed", mode: "json", stage: "preflight-git", tool: "ak_reviewer_output", requireError: false },
+      { seam: "installed", mode: "json", stage: "audit-provider", tool: "ak_reviewer_output" },
+      { seam: "installed", mode: "json", stage: "audit-malformed-decision", tool: "ak_reviewer_output" },
+      // In-process seam for the audit-stage family (no CLI boot per row).
+      { seam: "in-process", stage: "audit-auth" },
+      { seam: "in-process", stage: "audit-malformed-decision" },
+    ];
 
-  // Remaining stages: shared template + one JSON process each (template cp
-  // replaces per-row git clone). Assert exit code + typed isError/stopReason.
-  const matrix: Array<{
-    stage: ReviewerFailureStage;
-    tool: "Agent" | "ak_reviewer_output";
-  }> = [
-    { stage: "preflight-git", tool: "ak_reviewer_output" },
-    { stage: "audit-provider", tool: "ak_reviewer_output" },
-    { stage: "audit-malformed-decision", tool: "ak_reviewer_output" },
-  ];
-  for (const row of matrix) {
-    const result = await runReviewerCli("json", row.stage);
-    assert.equal(result.code, 1, `${row.stage} exits nonzero`);
-    assertJsonFailureFacts(result, row.tool, row.stage, row.stage !== "preflight-git");
-  }
-});
-
-test("Reviewer fatal audit stages fail closed in-process without a receipt", async () => {
-  // Cheaper in-process seam for the audit-stage family: same role-runtime path,
-  // no CLI boot / no fresh git clone per row.
-  await withHermeticHome({ prefix: "ak-reviewer-fatal-inproc-" }, async ({ home, agentDir }) => {
-    const { path: canonicalSkillPath } = await writeTestSkill(home, "code-review");
-    await writeFile(
-      canonicalSkillPath,
-      await readFile(resolve(packageRoot, "test/fixtures/canonical-code-review-SKILL.md")),
-    );
-    const cwd = resolve(home, "review-target");
-    await materializeReviewerTarget(cwd);
-    const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
-      cwd,
-      encoding: "utf8",
-    }).trim();
-
-    for (const stage of ["audit-auth", "audit-malformed-decision"] as const) {
-      const previous = process.env.AK_REVIEWER_FAILURE_STAGE;
-      const previousExitCode = process.exitCode;
-      process.env.AK_REVIEWER_FAILURE_STAGE = stage;
-      try {
-        const faux = fauxProvider({
-          api: "ak-reviewer-failure-inproc",
-          provider: "ak-reviewer-failure-inproc",
-          tokenSize: { min: 1000, max: 1000 },
-        });
-        // Drive the same fatal output call the CLI fixture uses; audit injection
-        // still comes from the staged failure extension below.
-        faux.setResponses([
-          fauxAssistantMessage("Independent standards review found no findings."),
-          fauxAssistantMessage("Independent spec review found no findings."),
-          fauxAssistantMessage(
-            fauxToolCall(
-              REVIEWER_OUTPUT_TOOL_NAME,
-              {
-                status: "refused",
-                diagnostic:
-                  "The requested review cannot proceed because its runtime stage failed.",
-              },
-              { id: "fatal-reviewer-output" },
-            ),
-            { stopReason: "toolUse" },
-          ),
-          stage === "audit-malformed-decision"
-            ? fauxAssistantMessage("MALFORMED_REVIEWER_AUDIT_DECISION_STAGE")
-            : async () => {
-                throw new Error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
-              },
-          fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE"),
-        ]);
-
-        let sawError = false;
-        await withInProcessPi(
-          {
-            activationLedgerSession: true,
-            cwd,
-            agentDir: resolve(agentDir, stage),
-            faux,
-            modelsPath: null,
-            additionalExtensionPaths: [
-              resolve(packageRoot, "extensions/role-runtime.ts"),
-            ],
-            additionalSkillPaths: [canonicalSkillPath],
-            noExtensions: true,
-            systemPrompt: "REVIEWER FATAL INPROC",
-            mode: "print",
-            flags: {
-              "ak-role": "reviewer",
-              "ak-review-base": base,
-            },
-            reviewerShutdown: true,
-            extensionFactories: [
-              (pi) => {
-                pi.on("tool_call", (event, ctx) => {
-                  if (
-                    stage === "audit-auth" &&
-                    event.toolName === REVIEWER_OUTPUT_TOOL_NAME
-                  ) {
-                    (ctx.modelRegistry as any).getProviderAuth = async () => {
-                      throw new Error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
-                    };
-                  }
-                });
-              },
-            ],
-          },
-          async ({ session, sessionManager }) => {
-            try {
-              await session.prompt("Review.");
-            } catch {
-              sawError = true;
-            }
-            const results = sessionManager
-              .getEntries()
-              .filter(
-                (entry) =>
-                  entry.type === "message" && entry.message.role === "toolResult",
-              ) as Array<{ message: { toolName?: string; isError?: boolean; details?: any } }>;
-            const output = results.find(
-              (entry) => entry.message.toolName === REVIEWER_OUTPUT_TOOL_NAME,
-            );
-            // Gate negative: no accepted Reviewer receipt.
-            if (output !== undefined) {
-              assert.notEqual(output.message.isError, false);
-              assert.equal(output.message.details?.status === "completed", false);
-            }
-            assert.ok(
-              sawError ||
-                output?.message.isError === true ||
-                results.some((entry) => entry.message.isError === true),
-              `${stage} must fail closed without an accepted receipt`,
-            );
-          },
-        );
-      } finally {
-        // Production print/json audit failure sets process.exitCode = 1; restore so
-        // the in-process host test file does not inherit a failing exit status.
-        process.exitCode = previousExitCode;
-        if (previous === undefined) delete process.env.AK_REVIEWER_FAILURE_STAGE;
-        else process.env.AK_REVIEWER_FAILURE_STAGE = previous;
+    for (const row of rows) {
+      if (row.seam === "installed") {
+        const label = `${row.stage}-${row.mode}`;
+        const result = await runReviewerCliOnCold(cold, row.mode, row.stage, label);
+        assert.equal(result.localTimeout, false, `${label} subprocess did not time out`);
+        assert.equal(result.code, 1, `${label} exits nonzero`);
+        if (row.mode === "json") {
+          assertJsonFailureFacts(
+            result,
+            row.tool,
+            label,
+            row.requireError ?? true,
+          );
+        }
+        continue;
       }
+      await assertInProcessReviewerFatalNoReceipt(cold, row.stage);
     }
   });
 });
