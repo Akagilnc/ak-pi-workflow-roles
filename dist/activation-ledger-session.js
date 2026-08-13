@@ -1,13 +1,6 @@
 import { lstatSync, realpathSync, statSync, writeFileSync, } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { activationBookDirectory, ensureRealDirectoryTree, errnoCode, errorText, pathContainedIn, } from "./activation-ledger-topology.js";
-export function childSessionManager(parent, cwd, childDirectory) {
-    const parentSession = parent?.getSessionFile();
-    return parentSession === undefined
-        ? SessionManager.inMemory(cwd)
-        : SessionManager.create(cwd, join(parent.getSessionDir(), childDirectory), { parentSession });
-}
 /**
  * Typed missing durable session principal. Callers discriminate with instanceof/code;
  * never by parsing message prose. Original filesystem causes are retained.

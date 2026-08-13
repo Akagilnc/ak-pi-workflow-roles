@@ -5,8 +5,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
-
 import {
   activationBookDirectory,
   ensureRealDirectoryTree,
@@ -14,13 +12,6 @@ import {
   errorText,
   pathContainedIn,
 } from "./activation-ledger-topology.ts";
-
-export function childSessionManager(parent: { getSessionFile(): string | undefined; getSessionDir(): string } | undefined, cwd: string, childDirectory: string): SessionManager {
-  const parentSession = parent?.getSessionFile();
-  return parentSession === undefined
-    ? SessionManager.inMemory(cwd)
-    : SessionManager.create(cwd, join(parent!.getSessionDir(), childDirectory), { parentSession });
-}
 
 /** Durable pointer to the authoritative Pi session file principal (ADR 0048/0049). */
 export type ActivationSessionPointer = {
