@@ -6,6 +6,7 @@
  * lease — never table labels/layout/prose classification.
  */
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -209,6 +210,114 @@ test("typed HTTP 429 observation is field-based; quota-like prose alone is never
       isV1ResumableFailure({ hasLawfulTerminalResult: false }),
       false,
     );
+  });
+});
+
+
+test("resume restores lease correlation from admitted request and does not claim", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    offerTestDispatchLease(home, project);
+    const runId = "run-resume-lease-corr-001";
+    const { io } = captureIo();
+    const first = await runAkRole(
+      ["judge", "--project", project, "quota interrupted"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await observeTyped429ViaProductionHandler({
+            runDirectory: join(sessionDir, ".."),
+            provider: "openai-codex",
+          });
+          await writeSessionProviderStop(sessionDir, {
+            provider: "openai-codex",
+            errorMessage: "upstream declined",
+          });
+          return {
+            code: 1,
+            stderr: "fail\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+    assert.ok(first.terminal?.resume);
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@judge`,
+    );
+    const admittedPersisted = JSON.parse(
+      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
+    ) as { correlationId?: string; ticketNumber?: number };
+    assert.equal(typeof admittedPersisted.correlationId, "string");
+    assert.ok((admittedPersisted.correlationId ?? "").length > 0);
+    assert.equal(admittedPersisted.ticketNumber, 176);
+
+    const loaded = await loadResumableJudgeRun(home, runId);
+    assert.equal(loaded.admitted.correlationId, admittedPersisted.correlationId);
+    assert.equal(loaded.admitted.ticketNumber, 176);
+
+    // A fresh pending lease must remain unclaimed across resume reconstruction.
+    offerTestDispatchLease(home, project);
+    const pendingPath = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "dispatch-lease.json",
+    );
+    assert.equal(existsSync(pendingPath), true);
+
+    let resumeCorrelation: string | undefined;
+    const resumed = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: captureIo().io,
+      piRunner: async (args, options) => {
+        resumeCorrelation = options.env.AK_CORRELATION_ID;
+        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+        await writeFile(
+          join(sessionDir, "session.jsonl"),
+          `${JSON.stringify({
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolName: JUDGE_OUTPUT_TOOL_NAME,
+              isError: false,
+              details: { judgeStatus: "converged" },
+            },
+          })}\n`,
+          "utf8",
+        );
+        return {
+          code: 0,
+          stderr: "",
+          timedOut: false,
+          args: [...args],
+        };
+      },
+    });
+    assert.equal(resumed.exitCode, 0, "resume should settle");
+    assert.equal(resumeCorrelation, admittedPersisted.correlationId);
+    assert.equal(existsSync(pendingPath), true);
   });
 });
 

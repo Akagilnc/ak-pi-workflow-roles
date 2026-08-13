@@ -698,19 +698,24 @@ test("ak-role resume continues merger with package method and exact session", as
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { role: string; mergerInputPath: string };
+    ) as { role: string; mergerInputPath: string; correlationId: string; ticketNumber: number };
     assert.equal(admitted.role, "merger");
+    assert.equal(typeof admitted.correlationId, "string");
+    assert.notEqual(admitted.correlationId, "");
+    assert.equal(admitted.ticketNumber, 176);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
+    let resumeEnv: NodeJS.ProcessEnv | undefined;
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
       home,
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      piRunner: async (args, options) => {
         resumeArgs = [...args];
+        resumeEnv = options.env;
         assert.equal(args[args.indexOf("--ak-role") + 1], "merger");
         assert.equal(
           args[args.indexOf("--ak-merger-input") + 1],
@@ -767,6 +772,7 @@ test("ak-role resume continues merger with package method and exact session", as
         : undefined,
       "escalate",
     );
+    assert.equal(resumeEnv?.AK_CORRELATION_ID, admitted.correlationId);
   });
 });
 

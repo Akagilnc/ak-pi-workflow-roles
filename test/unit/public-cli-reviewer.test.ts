@@ -716,22 +716,27 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as Record<string, unknown> & { role: string; baseRevision?: string };
+    ) as Record<string, unknown> & { role: string; baseRevision?: string; correlationId?: string; ticketNumber?: number };
     assert.equal(admitted.role, "reviewer");
     assert.equal(admitted.baseRevision, "main");
+    assert.equal(typeof admitted.correlationId, "string");
+    assert.notEqual(admitted.correlationId, "");
+    assert.equal(admitted.ticketNumber, 176);
     assert.equal("taskPath" in admitted, false);
     assert.equal("taskSha256" in admitted, false);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
+    let resumeEnv: NodeJS.ProcessEnv | undefined;
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
       home,
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      piRunner: async (args, options) => {
         resumeArgs = [...args];
+        resumeEnv = options.env;
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
         assert.equal(args.includes("--ak-review-task"), false);
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
@@ -785,6 +790,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         : undefined,
       "completed",
     );
+    assert.equal(resumeEnv?.AK_CORRELATION_ID, admitted.correlationId);
   });
 });
 
