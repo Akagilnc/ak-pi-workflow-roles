@@ -429,6 +429,7 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
       loadSoul: async () => "\n FIXER LAW \n",
       loadPacket: async () => emptyFixPacket,
     },
+    { failInfrastructure(error) { throw error; } },
   );
   assert.deepEqual(new Set(fixer.flags.keys()), new Set(["ak-fix-packet", "ak-fixer-prerequisites", "ak-fixer-phase"]));
   await fixerRuntime.activate();
@@ -515,6 +516,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
             loadSoul: async () => "fixer",
             loadPacket: async () => emptyFixPacket,
           },
+          { failInfrastructure(error) { throw error; } },
         );
         await runtime.activate();
         return harness;
