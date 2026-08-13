@@ -8,6 +8,7 @@ import test from "node:test";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { packageRoot, piCli, withColdInstalledPackage } from "../helpers/pi-test-harness.ts";
 import { runPublicCliSubprocess } from "../helpers/public-cli-subprocess.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 
 function seedProject(project: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: project });
@@ -54,6 +55,7 @@ async function runPackagedTracer(marker: string): Promise<{
         join(installedRoot, "dist", "public-cli", "main.js"),
         "tracer must execute the cold-installed package bin",
       );
+      offerTestDispatchLease(home, project);
       const result = await runPublicCliSubprocess(bin, [
         "judge", "--model", "ak-dossier-tracer/faux-1", "--thinking", "off",
         "--attach", attachment, "--project", project, `request-${marker}`,
