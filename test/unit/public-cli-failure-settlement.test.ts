@@ -2610,7 +2610,7 @@ test("fast four-role public wiring matrix settles an injected auditor provider s
         return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
       },
     });
-    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "provider", diagnosticEquals: "WebSocket error", identityName: "ProviderStopError", identityCode: "openai-codex" });
+    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "unrecognized", diagnosticEquals: "WebSocket error" });
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
@@ -2673,10 +2673,10 @@ test("bound evidence-child provider stop outranks generic activation wash", asyn
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
 
     assert.deepEqual(await readBoundEvidenceChildKnownFailure(sessionFile), {
-      cause: "provider",
-      identity: { name: "ProviderStopError", code: "openai-codex" },
+      cause: "unrecognized",
       diagnostic: "Codex error: The usage limit has been reached",
       details: {
+        errorMessage: "Codex error: The usage limit has been reached",
         provider: "openai-codex",
         model: "gpt-5.6-sol",
         secondaryEvidence: "evidence-child",
@@ -2692,10 +2692,10 @@ test("bound evidence-child provider stop outranks generic activation wash", asyn
         },
       }),
       {
-        cause: "provider",
-        identity: { name: "ProviderStopError", code: "openai-codex" },
+        cause: "unrecognized",
         diagnostic: "Codex error: The usage limit has been reached",
         details: {
+          errorMessage: "Codex error: The usage limit has been reached",
           provider: "openai-codex",
           model: "gpt-5.6-sol",
           secondaryEvidence: "evidence-child",
@@ -2781,14 +2781,12 @@ test("public Reviewer no-task dispatch retains evidence-child provider identity"
       result,
       stdout,
       stderr,
-      expectedCause: "provider",
+      expectedCause: "unrecognized",
       diagnosticEquals: "Codex error: The usage limit has been reached",
-      identityName: "ProviderStopError",
-      identityCode: "openai-codex",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(terminal.roleOutcome.cause, "unrecognized");
       assert.equal(
         terminal.roleOutcome.diagnostic,
         "Codex error: The usage limit has been reached",
@@ -2797,9 +2795,11 @@ test("public Reviewer no-task dispatch retains evidence-child provider identity"
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
       diagnostic: string;
+      details?: { errorMessage?: string };
     };
-    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.cause, "unrecognized");
     assert.equal(errorBody.diagnostic, "Codex error: The usage limit has been reached");
+    assert.equal(errorBody.details?.errorMessage, "Codex error: The usage limit has been reached");
   });
 });
 
@@ -2944,10 +2944,14 @@ test("bound auditor assistant supplies primary when secondary enrichment is abse
       { type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "WebSocket error", provider: "xai", model: "audit-model" } },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
     assert.deepEqual(await readBoundAuditorKnownFailure(sessionFile), {
-      cause: "provider",
-      identity: { name: "ProviderStopError", code: "xai" },
+      cause: "unrecognized",
       diagnostic: "WebSocket error",
-      details: { provider: "xai", model: "audit-model", secondaryEvidence: "unavailable" },
+      details: {
+        errorMessage: "WebSocket error",
+        provider: "xai",
+        model: "audit-model",
+        secondaryEvidence: "unavailable",
+      },
     });
   });
 });
@@ -3164,36 +3168,50 @@ test("session provider-stop produces provider cause without injected knownFailur
       result,
       stdout,
       stderr,
-      expectedCause: "provider",
+      expectedCause: "unrecognized",
       diagnosticEquals: "WebSocket error",
-      identityName: "ProviderStopError",
-      identityCode: "xai",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.equal(terminal.roleOutcome.cause, "unrecognized");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined);
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined);
       assert.equal(terminal.roleOutcome.diagnostic, "WebSocket error");
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
       diagnostic: string;
       identity?: { name?: string; code?: string | number };
+      details?: { errorMessage?: string };
     };
-    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.cause, "unrecognized");
     assert.equal(errorBody.diagnostic, "WebSocket error");
-    assert.equal(errorBody.identity?.name, "ProviderStopError");
-    assert.equal(errorBody.identity?.code, "xai");
-    // Typed seam unit: stopReason error → knownFailure provider; other stops ignored.
+    assert.equal(errorBody.identity, undefined);
+    assert.equal(errorBody.details?.errorMessage, "WebSocket error");
+    // Typed seam unit: stopReason error without upstream testimony is unknown; other stops ignored.
     const fromStop = knownFailureFromProviderStop({
       stopReason: "error",
       errorMessage: "WebSocket error",
       provider: "xai",
     });
-    assert.equal(fromStop?.cause, "provider");
-    assert.equal(fromStop?.identity?.name, "ProviderStopError");
+    assert.equal(fromStop?.cause, "unrecognized");
+    assert.equal(fromStop?.identity, undefined);
     assert.equal(fromStop?.diagnostic, "WebSocket error");
+    assert.deepEqual(
+      fromStop?.details,
+      { errorMessage: "WebSocket error", provider: "xai" },
+    );
+    const fromHttpStop = knownFailureFromProviderStop({
+      stopReason: "error",
+      errorMessage: "500: Internal error during token generation",
+      httpStatus: 500,
+    });
+    assert.equal(fromHttpStop?.cause, "provider");
+    assert.equal(fromHttpStop?.diagnostic, "500: Internal error during token generation");
+    assert.deepEqual(fromHttpStop?.details, {
+      errorMessage: "500: Internal error during token generation",
+      httpStatus: 500,
+    });
     assert.equal(
       knownFailureFromProviderStop({ stopReason: "end_turn", errorMessage: "ok" }),
       undefined,
@@ -3344,27 +3362,26 @@ test("zero-exit session provider-stop retains provider cause (not washed to outp
       result,
       stdout,
       stderr,
-      expectedCause: "provider",
+      expectedCause: "unrecognized",
       diagnosticEquals: "upstream websocket failed",
-      identityName: "ProviderStopError",
-      identityCode: "xai",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.equal(terminal.roleOutcome.cause, "unrecognized");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined);
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined);
       assert.equal(terminal.roleOutcome.diagnostic, "upstream websocket failed");
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
       diagnostic: string;
       identity?: { name?: string; code?: string | number };
+      details?: { errorMessage?: string };
     };
-    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.cause, "unrecognized");
     assert.equal(errorBody.diagnostic, "upstream websocket failed");
-    assert.equal(errorBody.identity?.name, "ProviderStopError");
-    assert.equal(errorBody.identity?.code, "xai");
+    assert.equal(errorBody.identity, undefined);
+    assert.equal(errorBody.details?.errorMessage, "upstream websocket failed");
     assert.equal(stdout.length, 1);
     assert.equal(
       stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
@@ -3427,29 +3444,27 @@ test("timedOut with session provider-stop retains provider identity (AC2)", asyn
       result,
       stdout,
       stderr,
-      expectedCause: "provider",
+      expectedCause: "unrecognized",
       diagnosticEquals: "provider hung then killed",
-      identityName: "ProviderStopError",
-      identityCode: "xai",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(terminal.roleOutcome.cause, "unrecognized");
       assert.equal(terminal.roleOutcome.diagnostic, "provider hung then killed");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined);
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined);
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
       diagnostic: string;
       identity?: { name?: string; code?: string | number };
-      details?: { timedOut?: boolean };
+      details?: { timedOut?: boolean; errorMessage?: string };
     };
-    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.cause, "unrecognized");
     assert.equal(errorBody.diagnostic, "provider hung then killed");
-    assert.equal(errorBody.identity?.name, "ProviderStopError");
-    assert.equal(errorBody.identity?.code, "xai");
+    assert.equal(errorBody.identity, undefined);
     assert.equal(errorBody.details?.timedOut, true);
+    assert.equal(errorBody.details?.errorMessage, "provider hung then killed");
   });
 });
 

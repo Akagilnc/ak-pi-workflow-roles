@@ -900,7 +900,7 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
             }
           } catch (error) {
             classifyProviderStreamError(error);
-            if (providerFailure === void 0) providerFailure = { source: "transport", cause: "transport" };
+            if (providerFailure === void 0) providerFailure = { source: "unknown", cause: "unknown" };
             if (!sawTerminal) {
               const message = setupFailureMessage(error);
               wrapped.push({ type: "error", reason: "error", error: message });
@@ -909,7 +909,7 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
             }
           } finally {
             if (!sawTerminal) {
-              if (providerFailure === void 0) providerFailure = { source: "transport", cause: "transport" };
+              if (providerFailure === void 0) providerFailure = { source: "unknown", cause: "unknown" };
               const message = setupFailureMessage(new Error("Navigator provider produced no response"));
               wrapped.push({ type: "error", reason: "error", error: message });
               result = message;
@@ -926,7 +926,7 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
           return wrapProviderStream(invoke());
         } catch (error) {
           classifyProviderStreamError(error);
-          if (providerFailure === void 0) providerFailure = { source: "transport", cause: "transport" };
+          if (providerFailure === void 0) providerFailure = { source: "unknown", cause: "unknown" };
           const wrapped = createAssistantMessageEventStream();
           const message = setupFailureMessage(error);
           queueMicrotask(() => {

@@ -37,6 +37,11 @@ export type TypedHttp429Observation = {
   readonly provider: V1ResumableProvider;
 };
 
+export type TypedProviderHttpObservation = {
+  readonly httpStatus: number;
+  readonly provider: string;
+};
+
 export type RoleRunRecord = {
   readonly runId: string;
   readonly role:
@@ -110,23 +115,15 @@ export async function recordTypedProviderHttpStatus(
   runDirectory: string,
   observation: { readonly httpStatus: number; readonly provider: string },
 ): Promise<void> {
-  if (
-    observation.httpStatus === 429 &&
-    isV1ResumableProvider(observation.provider)
-  ) {
-    const body: TypedHttp429Observation = {
-      httpStatus: 429,
-      provider: observation.provider,
-    };
-    await writeFile(
-      typedProviderHttpPath(runDirectory),
-      `${JSON.stringify(body)}\n`,
-      "utf8",
-    );
-    return;
-  }
-  // Non-qualifying latest response supersedes any earlier 429 in this attempt.
-  await clearTypedProviderHttpObservation(runDirectory);
+  const body: TypedProviderHttpObservation = {
+    httpStatus: observation.httpStatus,
+    provider: observation.provider,
+  };
+  await writeFile(
+    typedProviderHttpPath(runDirectory),
+    `${JSON.stringify(body)}\n`,
+    "utf8",
+  );
 }
 
 /**
@@ -134,9 +131,9 @@ export async function recordTypedProviderHttpStatus(
  * httpStatus === 429 and provider is a v1-resumable provider are present as
  * typed fields (never inferred from prose).
  */
-export async function readTypedHttp429Observation(
+export async function readLatestTypedProviderHttpObservation(
   runDirectory: string,
-): Promise<TypedHttp429Observation | undefined> {
+): Promise<TypedProviderHttpObservation | undefined> {
   try {
     const raw: unknown = JSON.parse(
       await readFile(typedProviderHttpPath(runDirectory), "utf8"),
@@ -145,13 +142,24 @@ export async function readTypedHttp429Observation(
       return undefined;
     }
     const record = raw as Record<string, unknown>;
-    if (record.httpStatus !== 429) return undefined;
-    if (typeof record.provider !== "string") return undefined;
-    if (!isV1ResumableProvider(record.provider)) return undefined;
-    return { httpStatus: 429, provider: record.provider };
+    if (typeof record.httpStatus !== "number") return undefined;
+    if (typeof record.provider !== "string" || record.provider.trim() === "") {
+      return undefined;
+    }
+    return { httpStatus: record.httpStatus, provider: record.provider };
   } catch {
     return undefined;
   }
+}
+
+export async function readTypedHttp429Observation(
+  runDirectory: string,
+): Promise<TypedHttp429Observation | undefined> {
+  const observation = await readLatestTypedProviderHttpObservation(runDirectory);
+  if (observation === undefined) return undefined;
+  if (observation.httpStatus !== 429) return undefined;
+  if (!isV1ResumableProvider(observation.provider)) return undefined;
+  return { httpStatus: 429, provider: observation.provider };
 }
 
 /**

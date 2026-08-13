@@ -190,6 +190,11 @@ export async function createInheritedRuntime(options) {
                         continue;
                     }
                     state.streamFailure = failure;
+                    const status = structuredRemoteStatus(failure);
+                    const failureRecord = typeof failure === "object" && failure !== null
+                        ? failure
+                        : undefined;
+                    const diagnostics = Array.isArray(failureRecord?.diagnostics) ? failureRecord.diagnostics : undefined;
                     const response = {
                         role: "assistant",
                         content: [],
@@ -200,6 +205,8 @@ export async function createInheritedRuntime(options) {
                         stopReason: "error",
                         errorMessage: failure instanceof Error ? failure.message : String(failure),
                         timestamp: Date.now(),
+                        ...(diagnostics === undefined ? {} : { diagnostics }),
+                        ...(status === undefined ? {} : { status, statusCode: status }),
                     };
                     wrapped.push({ type: "error", reason: "error", error: response });
                     wrapped.end(response);
@@ -270,6 +277,41 @@ export async function createInheritedRuntime(options) {
     runtime.registerNativeProvider(provider);
     return state;
 }
+function numericHttpStatus(value) {
+    if (typeof value === "number" && (value < 200 || value >= 300))
+        return value;
+    return undefined;
+}
+const LEADING_HTTP_STATUS = /^(?:[A-Za-z][\w.-]*\s+)?\((\d{3})\)|^(\d{3})\s*:/;
+function httpStatusFromMessage(value) {
+    if (typeof value !== "string")
+        return undefined;
+    const match = LEADING_HTTP_STATUS.exec(value.trim());
+    if (match === null)
+        return undefined;
+    const status = Number(match[1] ?? match[2]);
+    return numericHttpStatus(status);
+}
+function structuredRemoteStatus(error) {
+    if (typeof error !== "object" || error === null)
+        return undefined;
+    const record = error;
+    return numericHttpStatus(record.statusCode)
+        ?? numericHttpStatus(record.status)
+        ?? httpStatusFromMessage(record.errorMessage)
+        ?? httpStatusFromMessage(record.message)
+        ?? structuredRemoteStatus(record.cause);
+}
+function hasStructuredRemoteError(error) {
+    if (typeof error !== "object" || error === null)
+        return false;
+    if (structuredRemoteStatus(error) !== undefined)
+        return true;
+    const record = error;
+    if (Array.isArray(record.diagnostics) && record.diagnostics.length > 0)
+        return true;
+    return hasStructuredRemoteError(record.cause);
+}
 function classifiedError(error, evidenceChildFailure) {
     const diagnostic = typeof error === "object" && error !== null && typeof error.errorMessage === "string"
         ? error.errorMessage
@@ -279,7 +321,9 @@ function classifiedError(error, evidenceChildFailure) {
         : Object.assign(new Error(diagnostic, { cause: error }), { evidenceChildOriginal: error });
     const classification = "evidenceChildFailure" in wrapped
         ? wrapped.evidenceChildFailure
-        : evidenceChildFailure;
+        : evidenceChildFailure === "provider" && !hasStructuredRemoteError(error)
+            ? "unknown"
+            : evidenceChildFailure;
     return Object.assign(wrapped, { evidenceChildFailure: classification });
 }
 function emptyUsage() {
@@ -369,7 +413,7 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
                 .reverse()
                 .find((message) => message.role === "assistant");
             if (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "error") {
-                throw classifiedError(new Error(lastAssistant.errorMessage ?? "", { cause: lastAssistant }), "provider");
+                throw classifiedError(new Error(lastAssistant.errorMessage ?? "", { cause: lastAssistant }), hasStructuredRemoteError(lastAssistant) ? "provider" : "unknown");
             }
             if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
                 throw classifiedError(new Error("Evidence child child terminated without a report", {
@@ -721,15 +765,25 @@ export async function executeAuditorChild(options) {
                 catch (retentionFailure) {
                     if (response.stopReason !== "error")
                         throw retentionFailure;
-                    const failure = new Error(response.errorMessage?.trim() || "provider failure", { cause: retentionFailure });
-                    failure.name = response.model || response.provider || "Error";
-                    failure.knownCause = "provider";
-                    failure.failureCode = response.provider || response.model;
+                    const diagnostic = response.errorMessage?.trim();
+                    const httpStatus = structuredRemoteStatus(response);
+                    const hasTestimony = hasStructuredRemoteError(response);
+                    const failure = new Error(diagnostic ?? "", { cause: retentionFailure });
+                    if (hasTestimony && (response.model || response.provider)) {
+                        failure.name = response.model || response.provider || "Error";
+                        failure.failureCode = response.provider || response.model;
+                    }
+                    failure.knownCause = hasTestimony ? "provider" : "unrecognized";
                     const retentionError = retentionFailure instanceof Error ? retentionFailure : undefined;
                     const retentionCause = retentionError?.cause;
                     failure.details = {
+                        ...(diagnostic ? { errorMessage: diagnostic } : {}),
                         ...(response.provider ? { provider: response.provider } : {}),
                         ...(response.model ? { model: response.model } : {}),
+                        ...(response.api ? { api: response.api } : {}),
+                        ...(response.rawStopReason ? { rawStopReason: response.rawStopReason } : {}),
+                        ...(httpStatus === undefined ? {} : { httpStatus }),
+                        ...(response.diagnostics === undefined ? {} : { diagnostics: response.diagnostics }),
                         retentionFailure: {
                             name: retentionError?.name ?? typeof retentionFailure,
                             message: retentionError?.message ?? String(retentionFailure),
@@ -756,8 +810,8 @@ export async function executeAuditorChild(options) {
                         parent: binding.parent,
                         failure: {
                             cause: failure.knownCause,
-                            identity: { name: failure.name, code: failure.failureCode },
-                            diagnostic: failure.message,
+                            ...(failure.failureCode === undefined ? {} : { identity: { name: failure.name, code: failure.failureCode } }),
+                            ...(failure.message === "" ? {} : { diagnostic: failure.message }),
                             details: failure.details,
                         },
                     });

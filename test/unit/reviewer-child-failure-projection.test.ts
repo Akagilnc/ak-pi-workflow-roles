@@ -3,8 +3,8 @@ import test from "node:test";
 
 import { projectSharedChildFailure } from "../../src/reviewer-child-executor.ts";
 
-test("shared evidence-child provider/child classifications project to reviewerFailure", () => {
-  for (const classification of ["provider", "child"] as const) {
+test("shared evidence-child classifications project to reviewerFailure without inventing provider", () => {
+  for (const classification of ["provider", "child", "unknown"] as const) {
     const error = Object.assign(new Error(`${classification} boom`), {
       evidenceChildFailure: classification,
     });

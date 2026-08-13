@@ -681,7 +681,7 @@ test("native provider stream seam resets per call and classifies terminal-less c
       assert.deepEqual(session.providerFailure?.(), { source: "quota", cause: "quota" });
       await session.setModel?.(`${model.provider}/${model.id}`, "off");
       await session.prompt("second");
-      assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
+      assert.deepEqual(session.providerFailure?.(), { source: "unknown", cause: "unknown" });
       assert.equal(calls, 2);
       session.dispose();
     }
@@ -721,7 +721,7 @@ test("native provider stream seam resets per call and classifies terminal-less c
         new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 200)),
       ]);
       assert.equal(outcome, "resolved");
-      assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
+      assert.deepEqual(session.providerFailure?.(), { source: "unknown", cause: "unknown" });
       session.dispose();
     }
   } catch (error) {
