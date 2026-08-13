@@ -134,6 +134,62 @@ test("legacy issues/<n>/runs is still included", async () => {
   });
 });
 
+test("legacy issues/<n>/runs is listed even when another activation is unbound", async () => {
+  await withBookDir(async (ledgerDir) => {
+    await seedLegacyRun(ledgerDir, 176, "legacy-coder-1");
+    const sessionFile = await seedFlatRun(ledgerDir, "01jrun@judge");
+    await writeJsonl(join(ledgerDir, "waiting.jsonl"), [
+      {
+        event: ACCEPTED_ACTIVATION_EVENT,
+        role: "judge",
+        observedAt: "2026-08-07T00:00:00.100Z",
+        bookKey: "demo-book",
+        session: { kind: "session-file", path: sessionFile },
+        correlation: { kind: "caller", id: "corr-other-unbound" },
+      },
+    ]);
+    const runs = await loadTicketTrajectoryRuns(ledgerDir, 176);
+    assert.equal(runs.some((run) => run.runId === "legacy-coder-1"), true);
+    assert.equal(runs.some((run) => run.runId === "01jrun@judge"), false);
+  });
+});
+
+test("ticket load does not fail when another activation is unbound", async () => {
+  await withBookDir(async (ledgerDir) => {
+    const boundSession = await seedFlatRun(ledgerDir, "01bound@judge");
+    const otherSession = await seedFlatRun(ledgerDir, "01other@fixer");
+    await writeJsonl(join(ledgerDir, "waiting.jsonl"), [
+      {
+        event: TICKET_BINDING_EVENT,
+        observedAt: "2026-08-07T00:00:00.000Z",
+        bookKey: "demo-book",
+        siteIdentity: "/site/demo",
+        ticketNumber: 176,
+        correlation: { kind: "caller", id: "corr-bound-176" },
+      },
+      {
+        event: ACCEPTED_ACTIVATION_EVENT,
+        role: "judge",
+        observedAt: "2026-08-07T00:00:00.100Z",
+        bookKey: "demo-book",
+        session: { kind: "session-file", path: boundSession },
+        correlation: { kind: "caller", id: "corr-bound-176" },
+      },
+      {
+        event: ACCEPTED_ACTIVATION_EVENT,
+        role: "fixer",
+        observedAt: "2026-08-07T00:00:00.200Z",
+        bookKey: "demo-book",
+        session: { kind: "session-file", path: otherSession },
+        correlation: { kind: "caller", id: "corr-unbound-other" },
+      },
+    ]);
+    const runs = await loadTicketTrajectoryRuns(ledgerDir, 176);
+    assert.equal(runs.some((run) => run.runId === "01bound@judge"), true);
+    assert.equal(runs.some((run) => run.runId === "01other@fixer"), false);
+  });
+});
+
 test("two tickets binding the same correlation are ambiguous", async () => {
   await withBookDir(async (ledgerDir) => {
     const runFolder = "01jrun@judge";
