@@ -16,7 +16,7 @@
 | M1.1 | completed 绑定**紧随**的 canonical native tdd 展开 | `test/contract/judge-role.test.ts` · 轻量 `createCoderRoleRuntime` 展开绑定 API（unarmed gate ①）· `coder apply binds completion to the immediately following canonical tdd expansion` | 🔒 |
 | M1.2 | malformed expansion 拒 completed（门禁样本） | 同上 · malformed-gate `assert.rejects(submitCompleted(...))` | 🔒 |
 | M1.3 | later / 非紧随展开不得充当 completed 依据 | 同上（immediate-following 合同的反面） | 🔒 |
-| M1.4 | 已有 skill 不重写 / 包内路径为准 | `test/package/package-entrypoint.integration.test.ts` · `packaged coder apply proves canonical native tdd expansion including colliding prefix`（空 home + package-owned path）**发布面** | 🔒 |
+| M1.4 | 已有 skill 不重写 / 包内路径为准 | `test/package/package-entrypoint-packaged-workers.integration.test.ts` · `packaged coder apply proves canonical native tdd expansion including colliding prefix`（空 home + package-owned path）**发布面** | 🔒 |
 | M1.5 | prefix collision（`/skill:tddfoo` ≠ `/skill:tdd`） | packaged 缝真实 Pi 展开；contract 轻量缝保留 transform→completed 绑定 | 🔒 |
 
 ---
@@ -29,7 +29,7 @@
 | M2.2 | malformed admission 拒 | 同上 · fixer malformed prerequisites `code === 2` | 🔒 |
 | M2.3 | 无 ambient home skills | 同上 · empty home；`public-cli-cold-matrix.test.ts` · empty ambient home | 🔒 |
 | M2.4 | 无自动 Internal `--ak-role` 注册 | `public-cli-install.test.ts` · admits 共装案 ordinary help；cold-matrix 同构 | 🔒 |
-| M2.5 | Navigator 非 caller command（推荐 command 不含 task 路径等） | `package-entrypoint.integration.test.ts` · live-help / attendance 案 `command` 形态 | 🔒 |
+| M2.5 | Navigator 非 caller command（推荐 command 不含 task 路径等） | `package-entrypoint-cold-help.integration.test.ts` · live-help 案 `command` 形态 | 🔒 |
 | M2.6 | Merger fail-closed 与深链失败 | `test/integration/merger-role.test.ts` · `Merger terminal contract and singleton failures abort without accepting a receipt`；`public-cli-merger-run.test.ts` residual precedence | 🔒 |
 
 ---
@@ -49,10 +49,10 @@
 
 | # | 断言 | 承载 | 🔒 |
 |---|------|------|:--:|
-| R1.1 | tool-execution JSONL **never for Navigator prepare** | `package-entrypoint.integration.test.ts` · `...never for Navigator prepare` | 🔒 |
+| R1.1 | tool-execution JSONL **never for Navigator prepare** | `package-entrypoint-observation.integration.test.ts` · `...never for Navigator prepare` | 🔒 |
 | R1.2 | 无 `--ak-role` → **零** observation | 同上 · `without --ak-role emits no tool-execution observation records` | 🔒 |
-| R1.3 | packaged fixer bash **seatbelt** + **singleton** output | 同上 · `packaged fixer applies its both-phase bash seatbelt...singleton output` | 🔒 |
-| R3.1 | help 新旧 marker：二次 prepare 必见新 marker（live reread） | 同上 · `cold-installed live help...` · `first prepare must carry live help marker` / `second prepare must reread live help` | 🔒 |
+| R1.3 | packaged fixer bash **seatbelt** + **singleton** output | `package-entrypoint-packaged-workers.integration.test.ts` · `packaged fixer applies its both-phase bash seatbelt...singleton output` | 🔒 |
+| R3.1 | help 新旧 marker：二次 prepare 必见新 marker（live reread） | `package-entrypoint-cold-help.integration.test.ts` · `cold-installed live help...` · `first prepare must carry live help marker` / `second prepare must reread live help` | 🔒 |
 | R3.2 | routebook/context cause 不串 | 同上 · `settled routebook diagnosis must not leak into the next preparation`；`unavailableSource === "context"` | 🔒 |
 
 否决：产品 help 缓存（会破坏 R3.1 live reread）。
@@ -132,7 +132,7 @@ R8 可压缩 timeout 类 sleep；不得删 R8.1–R8.3 负向。R9 本批仅登�
 | M2.2 malformed fixer prerequisites | 同上 |
 | M2.3 无 ambient home skills | 同上 + `public-cli-cold-matrix.test.ts` |
 | M2.4 无自动 Internal `--ak-role` | 同上 + cold-matrix |
-| M2.5 Navigator 非 caller command | cold-matrix + `package-entrypoint.integration.test.ts` |
+| M2.5 Navigator 非 caller command | cold-matrix + `package-entrypoint-cold-help.integration.test.ts` |
 | M2.6 Merger fail-closed / 深链失败 | `merger-role.test.ts` + `public-cli-merger-run.test.ts` |
 | M3 coder 深链 | **仅** `public-cli-coder-installed-run.test.ts` 🔒 |
 
@@ -144,6 +144,26 @@ R8 可压缩 timeout 类 sleep；不得删 R8.1–R8.3 负向。R9 本批仅登�
 |----|------|------------------|
 | M1 | packaged 缝保留为发布面；contract 降为轻量 `createCoderRoleRuntime` 展开绑定 API（去 per-case git/session_start/gate ①） | **M1.1–M1.5 全留**（immediate / malformed reject / later reject / 包内路径不重写 / prefix collision） |
 | M4 | 两 no-receipt 闸表驱动化，共享一次 cold 夹具 | **M4.1 + M4.2 全留**；不得并成零 |
+
+---
+
+## Batch 4 触及面与保留核对（R1）
+
+| 项 | 动作 | 本 ledger 必留项 |
+|----|------|------------------|
+| R1 | 拆 `package-entrypoint.integration.test.ts` 为 navigator / cold-help / observation / packaged-workers 四主题文件；共享 helper → `test/helpers/package-entrypoint-fixtures.ts`；**全部拆出文件仍留 heavy 串行清单**（先拆且全留 heavy；re-分区属 Batch 5 R9） | **R1.1–R1.3 + R3.1–R3.2 全留**（observation 不泄露 Navigator / 无角色零观察 / Fixer seatbelt+singleton / help marker live reread / routebook cause 不串）；19 案一条不得丢 |
+
+承载对照（Batch 4 后）：
+
+| 断言 | 承载 |
+|------|------|
+| R1.1 never for Navigator prepare | `package-entrypoint-observation.integration.test.ts` |
+| R1.2 无 `--ak-role` 零 observation | 同上 |
+| R1.3 fixer seatbelt + singleton | `package-entrypoint-packaged-workers.integration.test.ts` |
+| R3.1 help 新旧 marker live reread | `package-entrypoint-cold-help.integration.test.ts` |
+| R3.2 routebook/context cause 不串 | 同上 |
+| M1.4/M1.5 packaged coder tdd | `package-entrypoint-packaged-workers.integration.test.ts` |
+| Navigator continuity / failure matrix | `package-entrypoint-navigator.integration.test.ts` |
 
 ---
 

@@ -23,11 +23,14 @@ import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
 const THIS_CONTRACT_REL = "test/contract/run-test-all.test.ts";
 
-/** Exact heavy set from Issue #160 ticket — independent expected literals, not runner import. */
+/** Exact heavy set — independent expected literals, not runner import (#160; #319 Batch 4 R1 split). */
 const TICKET_HEAVYWEIGHT = [
   "test/integration/audit-failure-subprocess.test.ts",
   "test/integration/public-cli-judge-run.test.ts",
-  "test/package/package-entrypoint.integration.test.ts",
+  "test/package/package-entrypoint-cold-help.integration.test.ts",
+  "test/package/package-entrypoint-navigator.integration.test.ts",
+  "test/package/package-entrypoint-observation.integration.test.ts",
+  "test/package/package-entrypoint-packaged-workers.integration.test.ts",
 ] as const;
 
 type ChildRecord = {
@@ -222,7 +225,7 @@ test("runner partitions discovered universe into ordinary default-parallel then 
   );
 });
 
-test("runner discovers the live package tree as ordinary ⊎ exact three heavy, including this contract once", async () => {
+test("runner discovers the live package tree as ordinary ⊎ exact heavy manifest, including this contract once", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-live-"));
   await withPrimaryAwareCleanup(
     async () => {
