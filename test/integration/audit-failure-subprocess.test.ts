@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync, renameSync, rmSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
@@ -19,8 +20,8 @@ import {
   withActivationHome,
   withHermeticHome,
   withInProcessPi,
-  writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
+import { resolvePackagedMethodSkillPath } from "../../src/package-resources/method-skill.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 
 async function runCli(mode: "print" | "json") {
@@ -142,6 +143,40 @@ type ReviewerFailureStage =
   | "audit-provider"
   | "audit-malformed-decision";
 
+/** Per-stage stderr identity — proves fail-closed came from this row's injection. */
+const REVIEWER_FATAL_STAGE_MARKERS: Record<ReviewerFailureStage, RegExp> = {
+  "preflight-git": /INJECTED_REVIEWER_GIT_IO_FAILURE/,
+  "audit-auth": /INJECTED_REVIEWER_AUDIT_AUTH_FAILURE/,
+  "audit-provider": /Reviewer compliance audit provider not found/,
+  "audit-malformed-decision":
+    /invalid reviewer audit decision|MALFORMED_REVIEWER_AUDIT_DECISION_STAGE/,
+};
+
+function assertHealthyReviewerGitTree(cwd: string, label: string): void {
+  assert.equal(
+    existsSync(resolve(cwd, ".git")),
+    true,
+    `${label}: shared review-target must keep .git`,
+  );
+  assert.equal(
+    existsSync(resolve(cwd, ".git-injected-failure")),
+    false,
+    `${label}: must not carry residual .git-injected-failure poison`,
+  );
+}
+
+/** preflight-git renames .git in the shared cwd; always undo before the next row. */
+function restoreReviewerGitTreeAfterInjection(cwd: string): void {
+  const gitDir = resolve(cwd, ".git");
+  const poisoned = resolve(cwd, ".git-injected-failure");
+  if (existsSync(poisoned) && !existsSync(gitDir)) {
+    renameSync(poisoned, gitDir);
+  } else if (existsSync(poisoned)) {
+    // Both present is unexpected; drop the residual marker so later rows stay clean.
+    rmSync(poisoned, { recursive: true, force: true });
+  }
+}
+
 /** One shared review-target clone for the whole file — rows cp -R it. */
 let reviewerTargetTemplateMemo: Promise<string> | undefined;
 async function reviewerTargetTemplate(): Promise<string> {
@@ -176,11 +211,8 @@ async function withReviewerFatalCold<T>(
   return withHermeticHome(
     { prefix: "ak-reviewer-fatal-cold-" },
     async ({ home, agentDir }) => {
-      const { path: skillPath } = await writeTestSkill(home, "code-review");
-      await writeFile(
-        skillPath,
-        await readFile(resolve(packageRoot, "test/fixtures/canonical-code-review-SKILL.md")),
-      );
+      // Package-owned path only — captureExpansion rejects home copies (#binding contract).
+      const skillPath = resolvePackagedMethodSkillPath(packageRoot, "code-review");
       const cwd = resolve(home, "review-target");
       await materializeReviewerTarget(cwd);
       const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
@@ -687,19 +719,51 @@ test("Reviewer fatal stages abort without a receipt on installed and in-process 
     for (const row of rows) {
       if (row.seam === "installed") {
         const label = `${row.stage}-${row.mode}`;
-        const result = await runReviewerCliOnCold(cold, row.mode, row.stage, label);
-        assert.equal(result.localTimeout, false, `${label} subprocess did not time out`);
-        assert.equal(result.code, 1, `${label} exits nonzero`);
-        if (row.mode === "json") {
-          assertJsonFailureFacts(
-            result,
-            row.tool,
-            label,
-            row.requireError ?? true,
+        // Shared cwd: later rows must not inherit a poisoned tree from preflight-git.
+        assertHealthyReviewerGitTree(cold.cwd, `before ${label}`);
+        try {
+          const result = await runReviewerCliOnCold(cold, row.mode, row.stage, label);
+          assert.equal(result.localTimeout, false, `${label} subprocess did not time out`);
+          assert.equal(result.code, 1, `${label} exits nonzero`);
+          assert.match(
+            `${result.stderr}\n${result.stdout}`,
+            REVIEWER_FATAL_STAGE_MARKERS[row.stage],
+            `${label} must fail closed from its own ${row.stage} injection, not residual poison`,
           );
+          if (row.mode === "json") {
+            if (row.stage === "preflight-git") {
+              // Preflight aborts at activate/git pin — before any output tool — so
+              // the no-receipt proof is exit 1 + own injection marker + zero accepted receipt.
+              const events = jsonEvents(result.stdout);
+              assert.equal(
+                events.some(
+                  (event) =>
+                    event.type === "message_end" &&
+                    event.message?.role === "toolResult" &&
+                    event.message.toolName === row.tool &&
+                    event.message.isError === false,
+                ),
+                false,
+                `${label} must not accept a ${row.tool} receipt`,
+              );
+            } else {
+              assertJsonFailureFacts(
+                result,
+                row.tool,
+                label,
+                row.requireError ?? true,
+              );
+            }
+          }
+        } finally {
+          if (row.stage === "preflight-git") {
+            restoreReviewerGitTreeAfterInjection(cold.cwd);
+            assertHealthyReviewerGitTree(cold.cwd, `after ${label} restore`);
+          }
         }
         continue;
       }
+      assertHealthyReviewerGitTree(cold.cwd, `before in-process ${row.stage}`);
       await assertInProcessReviewerFatalNoReceipt(cold, row.stage);
     }
   });
