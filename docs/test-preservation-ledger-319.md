@@ -98,7 +98,7 @@
 | R8.1 | ordinary ⊎ exact heavy 分区完备 | `test/contract/run-test-all.test.ts` · partition / live tree / missing manifest fail-closed | 🔒 |
 | R8.2 | child 非零 exit / SIGTERM→143 诚实传播 | 同上 · propagate / SIGTERM 案 | 🔒 |
 | R8.3 | subprocess process-fact 负向：localTimeout / signal / nonzero / clean / post-exit deadline / operational ENOENT / post-exit collection error | `test/package/pi-test-harness.test.ts` · `subprocess result seam classifies...` | 🔒 |
-| R9.1 | heavy 三文件串行清单（#160） | `scripts/run-test-all.mjs` `HEAVYWEIGHT_MANIFEST` ↔ `run-test-all.test.ts` `TICKET_HEAVYWEIGHT` | 🔒 |
+| R9.1 | heavy 六文件清单 + concurrency=2（#160/#319 Batch 5 R9） | `scripts/run-test-all.mjs` `HEAVYWEIGHT_MANIFEST` ↔ `run-test-all.test.ts` `TICKET_HEAVYWEIGHT` | 🔒 |
 
 R8 可压缩 timeout 类 sleep；不得删 R8.1–R8.3 负向。R9 本批仅登记。
 
