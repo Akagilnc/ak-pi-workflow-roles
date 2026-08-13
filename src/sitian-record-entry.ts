@@ -5,7 +5,7 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, resolve, join } from "node:path";
+import { dirname, isAbsolute, resolve, join, relative, sep } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -53,18 +53,44 @@ export const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
  * Sole file-level placement lock for a resumed same-nest principal (ADR 0065 / #221).
  * ensureRealDirectoryTree already owns the sessionDir chain; a final .jsonl symlink is
  * invisible to that directory walk, so this runs once before SessionManager.open.
+ * Circle is the book physical root that owns sessionDir — not merely ledger home — so a
+ * books/A nest cannot resume a final file whose realpath lands in books/B.
  * realpath/stat failures stay typed ActivationLedgerError with original cause — never
  * wash through physicalPathIdentity's non-ENOENT lexical fallback.
  */
-function assertRecentFinalFileUnderLedgerHome(ledgerHome: string, recentFile: string): void {
+function assertRecentFinalFileUnderLedgerHome(
+  ledgerHome: string,
+  sessionDir: string,
+  recentFile: string,
+): void {
   const absoluteHome = resolve(ledgerHome);
+  const absoluteSessionDir = resolve(sessionDir);
   const absoluteFile = resolve(recentFile);
-  let realHome: string;
+  // sessionDir just passed ensureRealDirectoryTree: derive the owning book lexically.
+  const relToHome = relative(absoluteHome, absoluteSessionDir);
+  const segments = relToHome.split(sep);
+  if (
+    relToHome === ""
+    || isAbsolute(relToHome)
+    || relToHome === ".."
+    || relToHome.startsWith(`..${sep}`)
+    || segments[0] !== "books"
+    || segments[1] === undefined
+    || segments[1] === ""
+    || segments[1] === "."
+    || segments[1] === ".."
+  ) {
+    throw new ActivationLedgerError(
+      `sitian record sessionDir must be under a ledger book (${ledgerHome}): ${sessionDir}`,
+    );
+  }
+  const bookRoot = join(absoluteHome, "books", segments[1]);
+  let realBookRoot: string;
   try {
-    realHome = realpathSync(absoluteHome);
+    realBookRoot = realpathSync(bookRoot);
   } catch (error) {
     throw new ActivationLedgerError(
-      `activation ledger home is not resolvable (${absoluteHome}): ${errorText(error)}`,
+      `activation ledger book is not resolvable (${bookRoot}): ${errorText(error)}`,
       { cause: error },
     );
   }
@@ -77,9 +103,9 @@ function assertRecentFinalFileUnderLedgerHome(ledgerHome: string, recentFile: st
       { cause: error },
     );
   }
-  if (realFile !== realHome && !pathContainedIn(realHome, realFile)) {
+  if (realFile !== realBookRoot && !pathContainedIn(realBookRoot, realFile)) {
     throw new ActivationLedgerError(
-      `sitian record session must be under the machine ledger home (${ledgerHome}): ${recentFile}`,
+      `sitian record session must be under the ledger book (${bookRoot}): ${recentFile}`,
     );
   }
 }
@@ -139,7 +165,7 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
   if (mayResumeSameNest) {
     const recentFile = findMostRecentSession(sessionDir, cwd);
     if (recentFile !== null) {
-      assertRecentFinalFileUnderLedgerHome(ledgerHome, recentFile);
+      assertRecentFinalFileUnderLedgerHome(ledgerHome, sessionDir, recentFile);
       return SessionManager.open(recentFile, sessionDir, cwd);
     }
   }
