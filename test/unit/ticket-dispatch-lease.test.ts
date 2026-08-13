@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import { activationBookDirectory, resolveActivationLedgerHome } from "../../src/
 import { DISPATCH_STUB_EVENT } from "../../src/activation-reconciliation.ts";
 import {
   claimTicketDispatchLease,
+  DISPATCH_LEASE_CLAIMED_FILE,
   DISPATCH_LEASE_PENDING_FILE,
   listTicketBindingFacts,
   offerTicketDispatchLease,
@@ -176,5 +177,33 @@ test("generated correlation is not the ticket number string", async () => {
     assert.notEqual(claimed.correlationId, "176");
     assert.notEqual(claimed.correlationId, String(claimed.ticketNumber));
     assert.ok(claimed.correlationId.length > 0);
+  });
+});
+
+test("leftover claimed sidecar does not wedge the next claim", async () => {
+  await withLedgerHome(async (ledgerHome) => {
+    offerTicketDispatchLease({
+      ledgerHome,
+      bookKey: "demo-book",
+      siteIdentity: "/site/demo",
+      ticketNumber: 176,
+    });
+    const bookDir = activationBookDirectory(ledgerHome, "demo-book");
+    const claimedPath = join(bookDir, DISPATCH_LEASE_CLAIMED_FILE);
+    const pendingPath = join(bookDir, DISPATCH_LEASE_PENDING_FILE);
+    await writeFile(claimedPath, "{}\n", "utf8");
+    assert.equal(existsSync(claimedPath), true);
+    assert.equal(existsSync(pendingPath), true);
+
+    const claimed = claimTicketDispatchLease({
+      ledgerHome,
+      bookKey: "demo-book",
+      siteIdentity: "/site/demo",
+      createCorrelationId: () => "corr-reclaim-1",
+    });
+    assert.equal(claimed.correlationId, "corr-reclaim-1");
+    assert.equal(claimed.ticketNumber, 176);
+    assert.equal(existsSync(pendingPath), false);
+    assert.equal(existsSync(claimedPath), false);
   });
 });

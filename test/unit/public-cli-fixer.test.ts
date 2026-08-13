@@ -18,7 +18,6 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
-import { TicketDispatchLeaseHeldError } from "../../src/ticket-dispatch-lease.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -92,11 +91,7 @@ function seedGitProject(root: string): void {
 async function admitFixerInvocation(
   options: Parameters<typeof admitFixerInvocationRaw>[0],
 ): ReturnType<typeof admitFixerInvocationRaw> {
-  try {
-    offerTestDispatchLease(options.home, options.project ?? options.cwd);
-  } catch (error) {
-    if (!(error instanceof TicketDispatchLeaseHeldError)) throw error;
-  }
+  offerTestDispatchLease(options.home, options.project ?? options.cwd);
   return admitFixerInvocationRaw(options);
 }
 
@@ -147,7 +142,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
 
     await assert.rejects(
       () =>
-        admitFixerInvocation({
+        admitFixerInvocationRaw({
           home,
           cwd: project,
           phase: "apply",
@@ -448,7 +443,6 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
 
     {
       const { io, stderr } = captureIo();
-      offerTestDispatchLease(home, project);
       const result = await runAkRole(["fixer", "plan", "   "], {
         packageRoot,
         home,

@@ -350,20 +350,7 @@ export function claimTicketDispatchLease(options: {
     );
   }
 
-  try {
-    renameSync(pendingPath, claimedPath);
-  } catch (error) {
-    if (errnoCode(error) === "ENOENT") {
-      throw new TicketDispatchLeaseHeldError(
-        `ticket dispatch lease is held or not unique for book ${bookKey}`,
-        { cause: error },
-      );
-    }
-    throw new TicketDispatchLeaseError(
-      `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(error)}`,
-      { cause: error },
-    );
-  }
+  consumePendingLeaseByRename(pendingPath, claimedPath, bookKey);
 
   try {
     const correlationId = (options.createCorrelationId ?? randomUUID)();
@@ -402,8 +389,75 @@ export function claimTicketDispatchLease(options: {
     try {
       unlinkSync(claimedPath);
     } catch {
-      // Pending slot is already consumed; leftover claimed sidecar is not a live offer.
+      // Slot already consumed. Next claim recovers a leftover claimed sidecar.
     }
+  }
+}
+
+/**
+ * Exclusive rename pending → claimed. A leftover claimed sidecar (failed unlink
+ * after a prior claim) is stale iff pending still exists: clear it and retry.
+ * Pending gone on EEXIST/ENOENT is a live claimer.
+ */
+function consumePendingLeaseByRename(
+  pendingPath: string,
+  claimedPath: string,
+  bookKey: string,
+): void {
+  try {
+    renameSync(pendingPath, claimedPath);
+    return;
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") {
+      throw new TicketDispatchLeaseHeldError(
+        `ticket dispatch lease is held or not unique for book ${bookKey}`,
+        { cause: error },
+      );
+    }
+    if (errnoCode(error) !== "EEXIST") {
+      throw new TicketDispatchLeaseError(
+        `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+  }
+  try {
+    readFileSync(pendingPath);
+  } catch (pendingError) {
+    if (errnoCode(pendingError) === "ENOENT") {
+      throw new TicketDispatchLeaseHeldError(
+        `ticket dispatch lease is held or not unique for book ${bookKey}`,
+        { cause: pendingError },
+      );
+    }
+    throw new TicketDispatchLeaseError(
+      `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(pendingError)}`,
+      { cause: pendingError },
+    );
+  }
+  try {
+    unlinkSync(claimedPath);
+  } catch (unlinkError) {
+    if (errnoCode(unlinkError) !== "ENOENT") {
+      throw new TicketDispatchLeaseError(
+        `failed to clear leftover claimed ticket dispatch lease for book ${bookKey} (${claimedPath}): ${errorText(unlinkError)}`,
+        { cause: unlinkError },
+      );
+    }
+  }
+  try {
+    renameSync(pendingPath, claimedPath);
+  } catch (retryError) {
+    if (errnoCode(retryError) === "ENOENT" || errnoCode(retryError) === "EEXIST") {
+      throw new TicketDispatchLeaseHeldError(
+        `ticket dispatch lease is held or not unique for book ${bookKey}`,
+        { cause: retryError },
+      );
+    }
+    throw new TicketDispatchLeaseError(
+      `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(retryError)}`,
+      { cause: retryError },
+    );
   }
 }
 

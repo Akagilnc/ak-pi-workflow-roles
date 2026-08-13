@@ -17,7 +17,6 @@ import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
-import { TicketDispatchLeaseHeldError } from "../../src/ticket-dispatch-lease.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { validateMergerInput } from "../../src/merger-contracts.ts";
 import {
@@ -117,11 +116,7 @@ async function materializeConflictedRepo(root: string): Promise<{
 async function admitMergerInvocation(
   options: Parameters<typeof admitMergerInvocationRaw>[0],
 ): ReturnType<typeof admitMergerInvocationRaw> {
-  try {
-    offerTestDispatchLease(options.home, options.project ?? options.cwd);
-  } catch (error) {
-    if (!(error instanceof TicketDispatchLeaseHeldError)) throw error;
-  }
+  offerTestDispatchLease(options.home, options.project ?? options.cwd);
   return admitMergerInvocationRaw(options);
 }
 
@@ -190,7 +185,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
 
     await assert.rejects(
       () =>
-        admitMergerInvocation({
+        admitMergerInvocationRaw({
           home,
           cwd: project,
           instruction: "   ",
