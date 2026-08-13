@@ -4,7 +4,7 @@
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
 import { createHash } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -53,11 +53,11 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
       digest,
     );
     ensureRealDirectoryTree(ledgerHome, sessionDir);
-    const recentFile = readdirSync(sessionDir)
-      .filter((name) => name.endsWith(".jsonl"))
-      .sort()
-      .at(-1);
-    if (recentFile !== undefined) return SessionManager.open(join(sessionDir, recentFile), sessionDir, cwd);
+    // Delegate discovery to Pi so custom-directory continuation retains its
+    // mtime ordering, valid-header scan, and cwd filtering semantics.
+    const recent = SessionManager.continueRecent(cwd, sessionDir);
+    const recentFile = recent.getSessionFile();
+    if (recentFile !== undefined && existsSync(recentFile)) return recent;
     return SessionManager.create(cwd, sessionDir, parentFile
       ? { parentSession: parentFile }
       : undefined);

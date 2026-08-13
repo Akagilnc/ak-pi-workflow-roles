@@ -1834,6 +1834,9 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
       await writeFile(fixerPacket, "Fresh-process fixer packet.\n", "utf8");
       execFileSync("git", ["add", "."], { cwd: root });
       execFileSync("git", ["commit", "-m", "fixture inputs"], { cwd: root });
+      await writeFile(resolve(root, "consumer-local-state.txt"), "pre-existing consumer bytes\n", "utf8");
+      const porcelainBefore = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: root });
+      assert.ok(porcelainBefore.byteLength > 0, "fixture must prove non-empty initial consumer state");
       const child = String.raw`
         import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
         import { writeNavigatorModelSetting } from "./src/role-runtime.ts";
@@ -1885,10 +1888,11 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
       assert.equal(first.subjectKey, second.subjectKey);
       assert.deepEqual(first.next, { role: "fixer", phase: "plan" });
       assert.deepEqual(second.next, { role: "reviewer", phase: null });
-      assert.equal(
-        execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: root }).byteLength,
-        0,
-        "role/Navigator session transport must leave the consumer repository byte-empty",
+      const porcelainAfter = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: root });
+      assert.deepEqual(
+        porcelainAfter,
+        porcelainBefore,
+        "role/Navigator session transport must preserve consumer porcelain bytes exactly",
       );
       const navigatorSession = SessionManager.continueRecent(root, expectedNavigatorDirectory({ cwd: root, sessionManager: { getSessionDir: () => "" } } as never, first.subjectKey));
       const persisted = (await readFile(navigatorSession.getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: { role?: string; phase?: string | null } });

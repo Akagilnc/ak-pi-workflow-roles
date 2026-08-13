@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
@@ -24,8 +24,9 @@ function createRecordSession(options) {
       digest
     );
     ensureRealDirectoryTree(ledgerHome, sessionDir2);
-    const recentFile = readdirSync(sessionDir2).filter((name) => name.endsWith(".jsonl")).sort().at(-1);
-    if (recentFile !== void 0) return SessionManager.open(join(sessionDir2, recentFile), sessionDir2, cwd);
+    const recent = SessionManager.continueRecent(cwd, sessionDir2);
+    const recentFile = recent.getSessionFile();
+    if (recentFile !== void 0 && existsSync(recentFile)) return recent;
     return SessionManager.create(cwd, sessionDir2, parentFile ? { parentSession: parentFile } : void 0);
   }
   if (parentFile === void 0 || parentFile.length === 0) {
