@@ -11,9 +11,7 @@ import {
   physicallyContainedIn,
   resolveActivationLedgerHome
 } from "./activation-ledger-topology.js";
-const { findMostRecentSession } = await import(
-  new URL("./core/session-manager.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
-);
+const { findMostRecentSession } = await import(new URL("./core/session-manager.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href);
 function createRecordSession(options) {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
