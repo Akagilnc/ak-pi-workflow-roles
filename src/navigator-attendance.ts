@@ -13,7 +13,6 @@ import {
   mintNavigatorInvocationId,
 } from "./navigator-invocation-identity.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
-import { createRecordSession } from "./sitian-record-entry.ts";
 import { openInProcessAgentSession } from "./in-process-session.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
@@ -1231,19 +1230,15 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
     }
     let opened: Awaited<ReturnType<typeof openInProcessAgentSession>>;
     try {
-      const recordSession = createRecordSession({
+      // Shared in-process session open (#233) — Sitian SessionManager from identity relations.
+      opened = await openInProcessAgentSession({
         cwd: context.cwd,
         kind: "navigator",
         subject,
         parent: context.sessionManager,
-      });
-      // Shared in-process session open (#233) — same ModelRuntime module instance.
-      opened = await openInProcessAgentSession({
-        cwd: context.cwd,
         model,
         modelRuntime,
         thinkingLevel: parsed.thinkingLevel,
-        sessionManager: recordSession,
         noTools: "all",
         tools: [NAVIGATOR_PREPARE_TOOL_NAME],
         customTools: [tool],

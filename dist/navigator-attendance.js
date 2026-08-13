@@ -11,7 +11,6 @@ import {
   mintNavigatorInvocationId
 } from "./navigator-invocation-identity.js";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
-import { createRecordSession } from "./sitian-record-entry.js";
 import { openInProcessAgentSession } from "./in-process-session.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
@@ -937,18 +936,14 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
     }
     let opened;
     try {
-      const recordSession = createRecordSession({
+      opened = await openInProcessAgentSession({
         cwd: context.cwd,
         kind: "navigator",
         subject,
-        parent: context.sessionManager
-      });
-      opened = await openInProcessAgentSession({
-        cwd: context.cwd,
+        parent: context.sessionManager,
         model,
         modelRuntime,
         thinkingLevel: parsed.thinkingLevel,
-        sessionManager: recordSession,
         noTools: "all",
         tools: [NAVIGATOR_PREPARE_TOOL_NAME],
         customTools: [tool]
