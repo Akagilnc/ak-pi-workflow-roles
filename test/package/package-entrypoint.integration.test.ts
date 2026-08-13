@@ -3,10 +3,8 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
-
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 
 import {
   type Context,
@@ -114,10 +112,34 @@ type ObservedNavigatorSession = {
   entries: PersistedEntry[];
 };
 
+/**
+ * Independent book-key oracle for placement tracers.
+ * Derives from git common-dir host basename directly — must not call production
+ * resolveBookKeyFromGit (shared source would make expected/observed tautological).
+ */
+function independentBookKeyFromGit(cwd: string): string {
+  const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  assert.ok(commonDir.length > 0, "git rev-parse --git-common-dir returned an empty path");
+  const absoluteCommon = isAbsolute(commonDir) ? commonDir : resolve(cwd, commonDir);
+  const hostDirectory = basename(absoluteCommon) === ".git"
+    ? dirname(absoluteCommon)
+    : absoluteCommon;
+  const bookKey = basename(hostDirectory);
+  assert.ok(
+    bookKey.length > 0 && bookKey !== "." && bookKey !== "/",
+    `unable to derive independent book key from git common dir: ${absoluteCommon}`,
+  );
+  return bookKey;
+}
+
 /** Independent exact-placement oracle: `<book>/navigator/<sha256(subjectKey)[0:32]>`. */
 function expectedNavigatorSessionDirectory(home: string, subjectKey: string, cwd: string): string {
   const digest = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
-  return join(machineLedgerHome(home), "books", resolveBookKeyFromGit(cwd), "navigator", digest);
+  return join(machineLedgerHome(home), "books", independentBookKeyFromGit(cwd), "navigator", digest);
 }
 
 async function uniqueObservedNavigatorSession(
