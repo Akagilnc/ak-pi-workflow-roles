@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +9,6 @@ import { activationBookDirectory, resolveActivationLedgerHome } from "../../src/
 import { DISPATCH_STUB_EVENT } from "../../src/activation-reconciliation.ts";
 import {
   claimTicketDispatchLease,
-  DISPATCH_LEASE_CLAIMED_FILE,
   DISPATCH_LEASE_PENDING_FILE,
   listTicketBindingFacts,
   offerTicketDispatchLease,
@@ -139,7 +138,7 @@ test("sequential double-claim: one success, one fail", async () => {
   });
 });
 
-test("site mismatch fails loudly and leaves pending in place", async () => {
+test("site mismatch fails loudly and restores pending for the correct site", async () => {
   await withLedgerHome(async (ledgerHome) => {
     offerTicketDispatchLease({
       ledgerHome,
@@ -158,6 +157,14 @@ test("site mismatch fails loudly and leaves pending in place", async () => {
     );
     const pendingPath = join(activationBookDirectory(ledgerHome, "demo-book"), DISPATCH_LEASE_PENDING_FILE);
     assert.equal(existsSync(pendingPath), true);
+    const claimed = claimTicketDispatchLease({
+      ledgerHome,
+      bookKey: "demo-book",
+      siteIdentity: "/site/demo",
+      createCorrelationId: () => "corr-after-mismatch",
+    });
+    assert.equal(claimed.correlationId, "corr-after-mismatch");
+    assert.equal(claimed.ticketNumber, 176);
   });
 });
 
@@ -180,7 +187,7 @@ test("generated correlation is not the ticket number string", async () => {
   });
 });
 
-test("leftover claimed sidecar does not wedge the next claim", async () => {
+test("claim reads the exclusive acquired object (no shared claimed sidecar)", async () => {
   await withLedgerHome(async (ledgerHome) => {
     offerTicketDispatchLease({
       ledgerHome,
@@ -189,21 +196,19 @@ test("leftover claimed sidecar does not wedge the next claim", async () => {
       ticketNumber: 176,
     });
     const bookDir = activationBookDirectory(ledgerHome, "demo-book");
-    const claimedPath = join(bookDir, DISPATCH_LEASE_CLAIMED_FILE);
     const pendingPath = join(bookDir, DISPATCH_LEASE_PENDING_FILE);
-    await writeFile(claimedPath, "{}\n", "utf8");
-    assert.equal(existsSync(claimedPath), true);
     assert.equal(existsSync(pendingPath), true);
 
     const claimed = claimTicketDispatchLease({
       ledgerHome,
       bookKey: "demo-book",
       siteIdentity: "/site/demo",
-      createCorrelationId: () => "corr-reclaim-1",
+      createCorrelationId: () => "corr-exclusive-1",
     });
-    assert.equal(claimed.correlationId, "corr-reclaim-1");
+    assert.equal(claimed.correlationId, "corr-exclusive-1");
     assert.equal(claimed.ticketNumber, 176);
     assert.equal(existsSync(pendingPath), false);
-    assert.equal(existsSync(claimedPath), false);
+    // No shared dispatch-lease.claimed.json sidecar remains.
+    assert.equal(existsSync(join(bookDir, "dispatch-lease.claimed.json")), false);
   });
 });

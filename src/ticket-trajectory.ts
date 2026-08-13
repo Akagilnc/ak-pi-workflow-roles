@@ -42,9 +42,14 @@ import {
   type AcceptedActivationFact,
 } from "./activation-ledger.ts";
 import {
-  listTicketBindingFactsFromBookDir,
-  readWaitingJsonlRecords,
+  DISPATCH_STUB_EVENT,
+  type DispatchStubFact,
+} from "./activation-reconciliation.ts";
+import {
+  loadBookWaitingRecords,
+  TICKET_BINDING_EVENT,
   TicketRunAttributionError,
+  type TicketBindingDispatchFact,
 } from "./ticket-dispatch-lease.ts";
 
 /** Declared refresh bound for the same viewing surface (seconds). */
@@ -712,6 +717,34 @@ function callerCorrelationId(correlation: unknown): string | undefined {
   return record.id;
 }
 
+function parseTicketBindingFact(value: unknown): TicketBindingDispatchFact | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.event !== TICKET_BINDING_EVENT) return undefined;
+  if (typeof record.observedAt !== "string" || record.observedAt.length === 0) return undefined;
+  if (typeof record.bookKey !== "string" || record.bookKey.length === 0) return undefined;
+  if (typeof record.siteIdentity !== "string" || record.siteIdentity.length === 0) return undefined;
+  if (
+    typeof record.ticketNumber !== "number" ||
+    !Number.isInteger(record.ticketNumber) ||
+    record.ticketNumber < 1
+  ) {
+    return undefined;
+  }
+  const id = callerCorrelationId(record.correlation);
+  if (id === undefined) return undefined;
+  return {
+    event: TICKET_BINDING_EVENT,
+    observedAt: record.observedAt,
+    bookKey: record.bookKey,
+    siteIdentity: record.siteIdentity,
+    ticketNumber: record.ticketNumber,
+    correlation: { kind: "caller", id },
+  };
+}
+
 function parseAcceptedActivationFact(value: unknown): AcceptedActivationFact | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
@@ -749,20 +782,73 @@ function parseAcceptedActivationFact(value: unknown): AcceptedActivationFact | u
   };
 }
 
+function parseDispatchStubFact(value: unknown): DispatchStubFact | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.event !== DISPATCH_STUB_EVENT) return undefined;
+  if (typeof record.observedAt !== "string" || record.observedAt.length === 0) return undefined;
+  if (typeof record.bookKey !== "string" || record.bookKey.length === 0) return undefined;
+  const dispatch = record.dispatch;
+  if (dispatch === null || typeof dispatch !== "object" || Array.isArray(dispatch)) return undefined;
+  const d = dispatch as Record<string, unknown>;
+  const closedDispatch =
+    d.kind === "process" && typeof d.pid === "number"
+      ? { kind: "process" as const, pid: d.pid }
+      : d.kind === "opaque" && typeof d.ref === "string" && d.ref.length > 0
+        ? { kind: "opaque" as const, ref: d.ref }
+        : undefined;
+  if (closedDispatch === undefined) return undefined;
+  const id = callerCorrelationId(record.correlation);
+  if (id === undefined) return undefined;
+  return {
+    event: DISPATCH_STUB_EVENT,
+    observedAt: record.observedAt,
+    bookKey: record.bookKey,
+    dispatch: closedDispatch,
+    correlation: { kind: "caller", id },
+  };
+}
+
 function runDirectoryFromSessionPath(sessionPath: string): string {
   // session file lives at runs/<id>@<role>/session/session.jsonl
   return dirname(dirname(sessionPath));
 }
 
-export async function loadTicketTrajectoryRuns(
-  ledgerDir: string,
-  issueNumber: number,
-): Promise<TicketTrajectoryRun[]> {
-  if (!Number.isInteger(issueNumber) || issueNumber < 1) {
-    throw new Error("issueNumber must be a positive integer");
-  }
+/**
+ * Book-level waiting.jsonl index built once per lane/render and reused per ticket.
+ * Not a parallel ledger — pure derived view of the existing waiting.jsonl truth.
+ */
+export type TicketTrajectoryBookIndex = {
+  readonly bindings: readonly TicketBindingDispatchFact[];
+  readonly activations: readonly AcceptedActivationFact[];
+  readonly dispatchStubs: readonly DispatchStubFact[];
+  /** correlation id → ticket numbers (size>1 is ambiguous). */
+  readonly correlationTickets: ReadonlyMap<string, ReadonlySet<number>>;
+};
+
+export function buildTicketTrajectoryBookIndex(ledgerDir: string): TicketTrajectoryBookIndex {
   const root = resolve(ledgerDir);
-  const bindings = listTicketBindingFactsFromBookDir(root);
+  const waitingRows = loadBookWaitingRecords(root);
+  const bindings: TicketBindingDispatchFact[] = [];
+  const activations: AcceptedActivationFact[] = [];
+  const dispatchStubs: DispatchStubFact[] = [];
+  for (const row of waitingRows) {
+    const binding = parseTicketBindingFact(row);
+    if (binding !== undefined) {
+      bindings.push(binding);
+      continue;
+    }
+    const activation = parseAcceptedActivationFact(row);
+    if (activation !== undefined) {
+      activations.push(activation);
+      continue;
+    }
+    const stub = parseDispatchStubFact(row);
+    if (stub !== undefined) dispatchStubs.push(stub);
+  }
+
   const correlationTickets = new Map<string, Set<number>>();
   for (const binding of bindings) {
     const tickets = correlationTickets.get(binding.correlation.id) ?? new Set<number>();
@@ -779,15 +865,48 @@ export async function loadTicketTrajectoryRuns(
     }
   }
 
-  const waitingRows = readWaitingJsonlRecords(join(root, "waiting.jsonl"));
-  const activations: AcceptedActivationFact[] = [];
-  for (const row of waitingRows) {
-    const fact = parseAcceptedActivationFact(row);
-    if (fact !== undefined) activations.push(fact);
+  return { bindings, activations, dispatchStubs, correlationTickets };
+}
+
+function dispatchOnlyRun(stub: DispatchStubFact, ledgerDir: string): ParsedRun {
+  const observedMs = Date.parse(stub.observedAt);
+  const waitingPath = join(resolve(ledgerDir), "waiting.jsonl");
+  return {
+    runId: `dispatch:${stub.correlation.id}`,
+    ledgerCoord: `waiting.jsonl#dispatch/${stub.correlation.id}`,
+    evidenceHref: pathToFileURL(waitingPath).href,
+    startedAt: stub.observedAt,
+    mtimeMs: Number.isFinite(observedMs) ? observedMs : 0,
+    costUsd: 0,
+    totalTokens: 0,
+    axisWallMs: 0,
+    // Role is unknown until activation; board unknown-set reuses existing display.
+    station: "unknown",
+    stationSource: "unknown",
+    attemptCount: 0,
+    hasResult: false,
+    resultStatus: "",
+    model: "",
+    provider: "",
+    thinking: "",
+  };
+}
+
+export async function loadTicketTrajectoryRuns(
+  ledgerDir: string,
+  issueNumber: number,
+  bookIndex?: TicketTrajectoryBookIndex,
+): Promise<TicketTrajectoryRun[]> {
+  if (!Number.isInteger(issueNumber) || issueNumber < 1) {
+    throw new Error("issueNumber must be a positive integer");
   }
+  const root = resolve(ledgerDir);
+  const index = bookIndex ?? buildTicketTrajectoryBookIndex(root);
+  const { bindings, activations, dispatchStubs } = index;
 
   const runs: ParsedRun[] = [];
   const seenRunDirs = new Set<string>();
+  const seenDispatchIds = new Set<string>();
 
   const runIds = await listRunIds(root, issueNumber);
   for (const runId of runIds) {
@@ -806,37 +925,38 @@ export async function loadTicketTrajectoryRuns(
     activationsByCorrelation.set(id, list);
   }
 
-  for (const binding of bindings) {
-    if (binding.ticketNumber !== issueNumber) continue;
-    const matched = activationsByCorrelation.get(binding.correlation.id) ?? [];
-    for (const activation of matched) {
-      const runDir = runDirectoryFromSessionPath(activation.session.path);
-      const resolvedRunDir = resolve(runDir);
-      if (seenRunDirs.has(resolvedRunDir)) continue;
-      seenRunDirs.add(resolvedRunDir);
-      const ledgerCoord = ["runs", basename(runDir)].join("/");
-      runs.push(await parseRunDirectory(runDir, ledgerCoord));
-    }
+  const stubsByCorrelation = new Map<string, DispatchStubFact[]>();
+  for (const stub of dispatchStubs) {
+    const list = stubsByCorrelation.get(stub.correlation.id) ?? [];
+    list.push(stub);
+    stubsByCorrelation.set(stub.correlation.id, list);
   }
 
-  // Loud unbound is per-ticket: never abort THIS ticket's legacy listing because
-  // another activation in the book is unbound, and never path-guess a flat run
-  // onto this ticket. If this ticket has nothing of its own to list, remaining
-  // unbound non-doctor activations stay loud rather than silently omitted.
-  if (runs.length === 0) {
-    for (const activation of activations) {
-      if (activation.role === "doctor") continue;
-      const id = callerCorrelationId(activation.correlation);
-      if (id === undefined || !correlationTickets.has(id)) {
-        throw new TicketRunAttributionError(
-          "unbound",
-          id === undefined
-            ? `activation ${activation.role} at ${activation.observedAt} has no caller correlation ticket-binding`
-            : `activation correlation ${id} has no ticket-binding`,
-        );
+  for (const binding of bindings) {
+    if (binding.ticketNumber !== issueNumber) continue;
+    const correlationId = binding.correlation.id;
+    const matched = activationsByCorrelation.get(correlationId) ?? [];
+    if (matched.length > 0) {
+      for (const activation of matched) {
+        const runDir = runDirectoryFromSessionPath(activation.session.path);
+        const resolvedRunDir = resolve(runDir);
+        if (seenRunDirs.has(resolvedRunDir)) continue;
+        seenRunDirs.add(resolvedRunDir);
+        const ledgerCoord = ["runs", basename(runDir)].join("/");
+        runs.push(await parseRunDirectory(runDir, ledgerCoord));
       }
+      continue;
     }
+    // ADR 0049: dispatch-only (claimed, not yet activated / activation failed) stays on board.
+    const stubs = stubsByCorrelation.get(correlationId) ?? [];
+    if (stubs.length === 0 || seenDispatchIds.has(correlationId)) continue;
+    seenDispatchIds.add(correlationId);
+    runs.push(dispatchOnlyRun(stubs[0]!, root));
   }
+
+  // Unbound activations are isolated: never path-guess onto this ticket, never
+  // abort this ticket (or the whole board) because another activation lacks binding.
+  // They simply do not join any ticket; ambiguous multi-ticket bindings stay loud above.
 
   return runs;
 }

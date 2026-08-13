@@ -5,7 +5,6 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { withColdInstalledPackage, withHermeticHome, packageRoot } from "../helpers/pi-test-harness.ts";
 import { runPiSubprocess } from "../helpers/pi-test-harness.ts";
 
@@ -43,7 +42,6 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
       const stderr: string[] = [];
 
       // #236 no-caller-instruction path: fixed base alone must launch real two-axis dispatch.
-      offerTestDispatchLease(home, fixture);
       const reviewer = await runAkRole(
         [
           "reviewer",
@@ -136,7 +134,6 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
       const judgeProvider = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
       const judgeStdout: string[] = [];
       const judgeStderr: string[] = [];
-      offerTestDispatchLease(home, fixture);
       const judge = await runAkRole(
         [
           "judge",

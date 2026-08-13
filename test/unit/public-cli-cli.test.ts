@@ -18,7 +18,6 @@ import {
 } from "../../src/public-cli/cli.ts";
 import { PUBLIC_CALLABLE_ROLES, PUBLIC_CONFIGURABLE_SEATS } from "../../src/public-cli/registry.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-cli-"));
@@ -228,7 +227,6 @@ test("public runs write one identity-bound invocation ledger for every role", as
     for (const scenario of cases) {
       // Doctor is not on the ticket-dispatch lease rope (ADR 0012).
       if (scenario.role !== "doctor") {
-        offerTestDispatchLease(home, project);
       }
       await runAkRole(scenario.args, {
         packageRoot,

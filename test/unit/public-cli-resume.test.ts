@@ -14,6 +14,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
@@ -33,7 +34,6 @@ import {
 import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 /** Typed-region proof: run ID appears only inside resume.command. */
@@ -219,6 +219,7 @@ test("resume restores lease correlation from admitted request and does not claim
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    // First offer is claimed on admit; resume must restore that correlation without claiming again.
     offerTestDispatchLease(home, project);
     const runId = "run-resume-lease-corr-001";
     const { io } = captureIo();
@@ -326,7 +327,6 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout, stderr } = captureIo();
     const runId = "run-resume-429-001";
 
@@ -417,7 +417,6 @@ test("quota-like prose without typed 429 is not resumable", async () => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io } = captureIo();
     const runId = "run-prose-not-resume-001";
 
@@ -464,7 +463,6 @@ test("lawful terminal result wins over typed 429 observation", async () => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io } = captureIo();
     const runId = "run-lawful-wins-001";
 
@@ -528,7 +526,6 @@ test("within-attempt earlier 429 does not qualify resume after a later non-429 r
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const { io, stdout } = captureIo();
     const runId = "run-within-attempt-stale-429-001";
 
@@ -601,7 +598,6 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const runId = "run-attempt-scope-001";
     const bookKey = resolveBookKeyFromGit(project);
 
@@ -703,7 +699,6 @@ test("lawful result with publication failure is not resumable even with attempt 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const runId = "run-lawful-publish-fail-001";
     const { io, stdout } = captureIo();
 
@@ -783,7 +778,6 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const runId = "run-diagnostic-disclosure-001";
     const { io, stdout, stderr } = captureIo();
 
@@ -879,7 +873,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const attachmentSrc = join(home, "authority.md");
     await writeFile(attachmentSrc, "authority-bytes-v1\n", "utf8");
     const runId = "run-resume-restore-001";
@@ -1042,7 +1035,6 @@ test("resume model override is temporary and does not rewrite persistent config"
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
 
     // Seed persistent judge config.
     {
@@ -1135,7 +1127,6 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     let dispatches = 0;
     const runner = async (args: readonly string[]) => {
       dispatches += 1;
@@ -1213,7 +1204,6 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const runId = "run-lease-001";
     const { io } = captureIo();
     await runAkRole(["judge", "--project", project, "lease setup"], {
@@ -1296,7 +1286,6 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const bookKey = resolveBookKeyFromGit(project);
     const runId = "run-settle-resume-unit";
     const runDirectory = join(
@@ -1359,7 +1348,6 @@ test("initial activation and resume bind the exact Pi session file principal", a
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const runId = "run-session-principal-001";
 
     let initialArgs: string[] | undefined;
@@ -1460,7 +1448,6 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const runId = "run-missing-principal-001";
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
@@ -1544,7 +1531,6 @@ test("typed 429 without a session principal is not offered as resumable", async 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
     const runId = "run-429-no-session-file";
 
     const { io, stdout } = captureIo();

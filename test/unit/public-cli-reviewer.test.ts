@@ -130,7 +130,6 @@ function lawfulReviewerReceipt(
 async function admitReviewerInvocation(
   options: Parameters<typeof admitReviewerInvocationRaw>[0],
 ): ReturnType<typeof admitReviewerInvocationRaw> {
-  offerTestDispatchLease(options.home, options.project ?? options.cwd);
   return admitReviewerInvocationRaw(options);
 }
 
@@ -469,7 +468,6 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "reviewer",
@@ -573,7 +571,6 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "reviewer",
@@ -668,12 +665,13 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    // Binding path under test: machine dispatch lease must be claimed on admit.
+    offerTestDispatchLease(home, project);
     const runId = "run-cli-reviewer-resume";
     const instruction = "Review the branch after quota recovery.";
 
     {
       const { io } = captureIo();
-      offerTestDispatchLease(home, project);
       const first = await runAkRole(
         ["reviewer", "--project", project, "--base", "main", instruction],
         {
@@ -809,7 +807,6 @@ test("reviewer activation rejection lands violation code and diagnostic in books
     seedGitProject(project);
 
     const { io, stdout, stderr } = captureIo();
-    offerTestDispatchLease(home, project);
     const result = await runAkRole(
       ["reviewer", "--project", project, "--base", "origin/main"],
       {

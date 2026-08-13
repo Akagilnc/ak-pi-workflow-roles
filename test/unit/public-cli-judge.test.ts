@@ -24,8 +24,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
-import { offerTicketDispatchLease } from "../../src/ticket-dispatch-lease.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -153,15 +152,6 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-function offerLeaseForProject(home: string, projectRoot: string, ticketNumber = 176): void {
-  const siteIdentity = resolve(projectRoot);
-  offerTicketDispatchLease({
-    ledgerHome: resolveActivationLedgerHome(() => home),
-    bookKey: resolveBookKeyFromGit(siteIdentity),
-    siteIdentity,
-    ticketNumber,
-  });
-}
 
 
 test("S1: judge escalate public CLI prints every decisionGate option text in order", async () => {
@@ -169,7 +159,6 @@ test("S1: judge escalate public CLI prints every decisionGate option text in ord
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerLeaseForProject(home, project);
     const { io, stdout } = captureIo();
     const options = ["采纳既有法源", "改采审刑院意见"];
     const result = await runAkRole(
@@ -260,7 +249,6 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerLeaseForProject(home, project);
     const source = join(home, "evidence.txt");
     await writeFile(source, "admitted-bytes-v1", "utf8");
 
@@ -293,10 +281,15 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
     );
     assert.equal(admitted.sessionDirectory, join(admitted.runDirectory, "session"));
     await access(admitted.admittedRequestPath);
-    // Index file (waiting.jsonl) may hold ticket-binding + dispatch-stub; never request content.
-    const waiting = await readFile(join(home, ".ak-roles", "books", bookKey, "waiting.jsonl"), "utf8");
-    assert.equal(waiting.includes("review the attachment"), false);
-    assert.equal(waiting.includes("admitted-bytes-v1"), false);
+    // Unbound admit writes no waiting.jsonl; when present it must never hold request content.
+    const waitingPath = join(home, ".ak-roles", "books", bookKey, "waiting.jsonl");
+    try {
+      const waiting = await readFile(waitingPath, "utf8");
+      assert.equal(waiting.includes("review the attachment"), false);
+      assert.equal(waiting.includes("admitted-bytes-v1"), false);
+    } catch (error) {
+      assert.equal((error as NodeJS.ErrnoException).code, "ENOENT");
+    }
   });
 });
 
@@ -1182,7 +1175,8 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerLeaseForProject(home, project);
+    // Machine lease claim owns correlation; deprecated env id must not win.
+    offerTestDispatchLease(home, project);
     const attachment = join(home, "note.txt");
     await writeFile(attachment, "freeze-me", "utf8");
 
@@ -1381,7 +1375,6 @@ test("runAkRole judge empty request does not invent semantic task content on the
     const project = join(home, "empty-proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerLeaseForProject(home, project);
     const { io, stdout } = captureIo();
     let prompt: string | undefined;
 

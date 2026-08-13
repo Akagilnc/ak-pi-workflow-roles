@@ -17,7 +17,6 @@ import {
   PUBLIC_CONFIGURABLE_SEATS,
 } from "../../src/public-cli/registry.ts";
 import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { TEST_PI_VERSION_BRANCH } from "../helpers/test-process-fixtures.ts";
 
 function seedGitProject(root: string): void {
@@ -67,7 +66,6 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     const traceInvocationIdentity = async (): Promise<void> => {
       // Coder with no credentials reaches its documented activation-failure
       // terminal without consulting a model provider.
-      offerTestDispatchLease(home, project);
       const run = await runAkRoleBin(
         installed.akRoleBin,
         ["coder", "plan", "--project", project, "Trace the selected Pi identity."],
@@ -263,7 +261,6 @@ child.on("close", (code, signal) => {
     const project = resolve(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    offerTestDispatchLease(home, project);
 
     const throughAkRole = await runAkRoleBin(
       installed.akRoleBin,
@@ -349,7 +346,6 @@ process.exit(1);
     );
     await chmod(shimPath, 0o755);
 
-    offerTestDispatchLease(home, project);
     const apply = await runAkRoleBin(
       installed.akRoleBin,
       [
@@ -391,7 +387,6 @@ process.exit(1);
       "utf8",
     );
     await chmod(shimPath, 0o755);
-    offerTestDispatchLease(home, project);
     const plan = await runAkRoleBin(
       installed.akRoleBin,
       [
@@ -461,7 +456,6 @@ process.exit(1);
     );
     await chmod(shimPath, 0o755);
 
-    offerTestDispatchLease(home, project);
     const run = await runAkRoleBin(
       installed.akRoleBin,
       [
@@ -506,7 +500,6 @@ process.exit(1);
       "utf8",
     );
     await chmod(shimPath, 0o755);
-    offerTestDispatchLease(home, project);
     const overridden = await runAkRoleBin(
       installed.akRoleBin,
       [
@@ -570,7 +563,6 @@ test("installed ak-role fixer admits plan/apply and binds package diagnosing-bug
 
     const badPrereq = resolve(home, "bad-prereq.json");
     await writeFile(badPrereq, JSON.stringify([{ id: "bad/id", requirement: "x" }]), "utf8");
-    offerTestDispatchLease(home, project);
     const malformed = await runAkRoleBin(
       installed.akRoleBin,
       [
@@ -602,7 +594,6 @@ process.exit(1);
     );
     await chmod(shimPath, 0o755);
 
-    offerTestDispatchLease(home, project);
     const apply = await runAkRoleBin(
       installed.akRoleBin,
       [
@@ -652,7 +643,6 @@ process.exit(1);
       "utf8",
     );
     await chmod(shimPath, 0o755);
-    offerTestDispatchLease(home, project);
     const plan = await runAkRoleBin(
       installed.akRoleBin,
       [

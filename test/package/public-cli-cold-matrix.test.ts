@@ -39,7 +39,6 @@ import {
 } from "../../src/public-cli/registry.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { TEST_PI_VERSION_BRANCH } from "../helpers/test-process-fixtures.ts";
 
 /** Required package-owned method trees shipped in the release artifact. */
@@ -412,7 +411,6 @@ test("one cold install exercises all seven public roles plus automatic Navigator
 
     // judge — retained role gate: Internal --ak-role judge, no ambient skills.
     {
-      offerTestDispatchLease(home, project);
       const result = await runAkRoleBin(
         installed.akRoleBin,
         ["judge", "--project", project, "Adjudicate the attached plan."],
@@ -431,7 +429,6 @@ test("one cold install exercises all seven public roles plus automatic Navigator
 
     // coder apply — package tdd method forced; home skills excluded.
     {
-      offerTestDispatchLease(home, project);
       const result = await runAkRoleBin(
         installed.akRoleBin,
         [
@@ -461,7 +458,6 @@ test("one cold install exercises all seven public roles plus automatic Navigator
 
     // fixer apply — package diagnosing-bugs available, not home-bound.
     {
-      offerTestDispatchLease(home, project);
       const result = await runAkRoleBin(
         installed.akRoleBin,
         [
@@ -489,7 +485,6 @@ test("one cold install exercises all seven public roles plus automatic Navigator
 
     // reviewer — derived capabilities + package code-review method.
     {
-      offerTestDispatchLease(home, project);
       const result = await runAkRoleBin(
         installed.akRoleBin,
         [
@@ -519,7 +514,6 @@ test("one cold install exercises all seven public roles plus automatic Navigator
 
     // collector — explicit PR isolation profile; no ambient skills.
     {
-      offerTestDispatchLease(home, project);
       const result = await runAkRoleBin(
         installed.akRoleBin,
         [
@@ -558,7 +552,6 @@ test("one cold install exercises all seven public roles plus automatic Navigator
 
     // merger — package merge-only method; honest path without active merge.
     {
-      offerTestDispatchLease(home, project);
       const result = await runAkRoleBin(
         installed.akRoleBin,
         [
