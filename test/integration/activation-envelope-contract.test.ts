@@ -1134,7 +1134,6 @@ test("ledger append rejects symlink component escapes; activation admits durable
     symlinkSync(join(home, "decoy-runs"), runsDir);
     const pointer = durableSessionPointer(
       { getSessionFile: () => join(runsDir, "activation", "default", "session.jsonl") },
-      { ledgerHome },
     );
     assert.equal(pointer.kind, "session-file");
     assert.equal(pointer.path, realpathSync(decoyFile));

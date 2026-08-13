@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
@@ -10,15 +10,37 @@ import {
   ActivationLedgerError,
   activationBookDirectory,
   ensureRealDirectoryTree,
+  errorText,
+  pathContainedIn,
   physicallyContainedIn,
   resolveActivationLedgerHome
 } from "./activation-ledger-topology.js";
 const { findMostRecentSession } = await import(new URL("./core/session-manager.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href);
 const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
-function assertRecordUnderLedgerHome(ledgerHome, candidate) {
-  if (!physicallyContainedIn(ledgerHome, candidate)) {
+function assertRecentFinalFileUnderLedgerHome(ledgerHome, recentFile) {
+  const absoluteHome = resolve(ledgerHome);
+  const absoluteFile = resolve(recentFile);
+  let realHome;
+  try {
+    realHome = realpathSync(absoluteHome);
+  } catch (error) {
     throw new ActivationLedgerError(
-      `sitian record session must be under the machine ledger home (${ledgerHome}): ${candidate}`
+      `activation ledger home is not resolvable (${absoluteHome}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  let realFile;
+  try {
+    realFile = realpathSync(absoluteFile);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `sitian record session file is not resolvable (${absoluteFile}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  if (realFile !== realHome && !pathContainedIn(realHome, realFile)) {
+    throw new ActivationLedgerError(
+      `sitian record session must be under the machine ledger home (${ledgerHome}): ${recentFile}`
     );
   }
 }
@@ -43,13 +65,12 @@ function createRecordSession(options) {
     sessionDir = physicallyContainedIn(ledgerHome, parentResolved) ? join(dirname(parentResolved), options.kind) : join(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
     parentSession = parentFile;
   }
-  assertRecordUnderLedgerHome(ledgerHome, sessionDir);
   ensureRealDirectoryTree(ledgerHome, sessionDir);
   const mayResumeSameNest = options.subject !== void 0 || options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest) {
     const recentFile = findMostRecentSession(sessionDir, cwd);
     if (recentFile !== null) {
-      assertRecordUnderLedgerHome(ledgerHome, recentFile);
+      assertRecentFinalFileUnderLedgerHome(ledgerHome, recentFile);
       return SessionManager.open(recentFile, sessionDir, cwd);
     }
   }
@@ -68,10 +89,6 @@ function createRecordSession(options) {
         session.setSessionFile(file);
       }
     }
-  }
-  const principal = session.getSessionFile();
-  if (typeof principal === "string" && principal.length > 0) {
-    assertRecordUnderLedgerHome(ledgerHome, principal);
   }
   return session;
 }

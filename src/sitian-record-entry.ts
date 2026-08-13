@@ -4,7 +4,7 @@
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
 import { createHash } from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -17,6 +17,8 @@ import {
   ActivationLedgerError,
   activationBookDirectory,
   ensureRealDirectoryTree,
+  errorText,
+  pathContainedIn,
   physicallyContainedIn,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
@@ -48,14 +50,36 @@ export type CreateRecordSessionOptions = {
 export const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
 
 /**
- * Enforce the moved activation-layer placement lock (ADR 0065 / #221): every durable
- * principal that leaves this entry must sit under the machine ledger home. Typed
- * ActivationLedgerError keeps the failure discriminable; no prose-wash fallback.
+ * Sole file-level placement lock for a resumed same-nest principal (ADR 0065 / #221).
+ * ensureRealDirectoryTree already owns the sessionDir chain; a final .jsonl symlink is
+ * invisible to that directory walk, so this runs once before SessionManager.open.
+ * realpath/stat failures stay typed ActivationLedgerError with original cause — never
+ * wash through physicalPathIdentity's non-ENOENT lexical fallback.
  */
-function assertRecordUnderLedgerHome(ledgerHome: string, candidate: string): void {
-  if (!physicallyContainedIn(ledgerHome, candidate)) {
+function assertRecentFinalFileUnderLedgerHome(ledgerHome: string, recentFile: string): void {
+  const absoluteHome = resolve(ledgerHome);
+  const absoluteFile = resolve(recentFile);
+  let realHome: string;
+  try {
+    realHome = realpathSync(absoluteHome);
+  } catch (error) {
     throw new ActivationLedgerError(
-      `sitian record session must be under the machine ledger home (${ledgerHome}): ${candidate}`,
+      `activation ledger home is not resolvable (${absoluteHome}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+  let realFile: string;
+  try {
+    realFile = realpathSync(absoluteFile);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `sitian record session file is not resolvable (${absoluteFile}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+  if (realFile !== realHome && !pathContainedIn(realHome, realFile)) {
+    throw new ActivationLedgerError(
+      `sitian record session must be under the machine ledger home (${ledgerHome}): ${recentFile}`,
     );
   }
 }
@@ -63,8 +87,10 @@ function assertRecordUnderLedgerHome(ledgerHome: string, candidate: string): voi
 /**
  * Sole package entry that constructs a durable Pi session record (ADR 0065).
  * No destination/path parameters — location is computed from ledger topology only.
- * Every durable principal opened or minted here is verified under the ledger home
- * (placement lock moved off the activation gate onto this entry).
+ * SessionDir placement is owned by ensureRealDirectoryTree; resumed recent final-file
+ * identity is checked once before SessionManager.open (directory walk cannot see a
+ * trailing .jsonl symlink). New principals mint under the already-validated sessionDir
+ * via destination-free SessionManager.create — no derived postcondition.
  * Resume via Pi findMostRecentSession is limited to subject-keyed identity and the
  * authorized worker-submission-gate durable path. Ordinary no-subject children
  * (evidence-children, auditor-roles, …) always mint a fresh session — never reopen
@@ -104,7 +130,7 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
     parentSession = parentFile;
   }
 
-  assertRecordUnderLedgerHome(ledgerHome, sessionDir);
+  // Directory-chain ownership: containment + physical components (no parallel assert).
   ensureRealDirectoryTree(ledgerHome, sessionDir);
   // Subject-keyed nests continue by subject digest; gate durable resume is the only
   // authorized no-subject same-nest continuation. All other kinds mint fresh.
@@ -113,7 +139,7 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
   if (mayResumeSameNest) {
     const recentFile = findMostRecentSession(sessionDir, cwd);
     if (recentFile !== null) {
-      assertRecordUnderLedgerHome(ledgerHome, recentFile);
+      assertRecentFinalFileUnderLedgerHome(ledgerHome, recentFile);
       return SessionManager.open(recentFile, sessionDir, cwd);
     }
   }
@@ -136,11 +162,6 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
         session.setSessionFile(file);
       }
     }
-  }
-  // Post-condition: every durable principal that leaves this entry sits under home.
-  const principal = session.getSessionFile();
-  if (typeof principal === "string" && principal.length > 0) {
-    assertRecordUnderLedgerHome(ledgerHome, principal);
   }
   return session;
 }
