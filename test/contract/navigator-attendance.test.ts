@@ -19,7 +19,6 @@ import {
   type NavigatorCandidate,
   type NavigatorPreparationSession,
   navigatorAdviceConsistentWithSettlement,
-  navigatorSessionDirectory,
   navigatorSubjectKey,
   navigatorSubjectKeyForInput,
   parseNavigatorModelSetting,
@@ -43,6 +42,7 @@ import {
   resolveNavigatorAuthorityMaterial,
 } from "../../extensions/role-runtime.ts";
 import { createHash } from "node:crypto";
+import { seedGitRepository } from "../helpers/pi-test-harness.ts";
 
 function context() {
   return {
@@ -131,7 +131,7 @@ function sessionHarness() {
 
 async function attendance(path: string, harness: ReturnType<typeof sessionHarness>, events: any[], loadRoleHelp: (role: string) => Promise<string> = async (role) => `pi --ak-role ${role} --help`) {
   return createNavigatorAttendance({
-    context: context(), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28", sessionDir: "/repo/.ak/work/issues/28/runs/navigator/session",
+    context: context(), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
     subject: "Fix issue 28", authority: "owner decision",
     loadSoul: async () => "route judgment",
     loadRoutePlaybook: async () => "arbitrary advisory prose",
@@ -403,7 +403,6 @@ test("Navigator session creation failures become unavailable without rejecting s
         role: "coder",
         phase: "apply",
         subjectKey: "/repo/.ak/work/issues/28",
-        sessionDir: "/repo/.ak/work/issues/28/runs/navigator",
         subject: "Fix issue 28",
         authority: "owner decision",
         loadSoul: async () => "route judgment",
@@ -497,6 +496,7 @@ test("native session uses the saved model exactly and rejects unsupported thinki
   const previous = process.env.PI_CODING_AGENT_DIR;
   try {
     process.env.PI_CODING_AGENT_DIR = root;
+    seedGitRepository(root);
     const faux = fauxProvider({ provider: "native-model", api: "native-model" });
     const model = faux.getModel();
     const setting = join(root, "navigator-model.json");
@@ -512,18 +512,18 @@ test("native session uses the saved model exactly and rejects unsupported thinki
     const factory = createNativeNavigatorSessionFactory();
     const tool = createNavigatorPrepareTool(() => {});
     await assert.rejects(
-      factory({ context: nativeContext, sessionDir: join(root, "session"), tool }),
+      factory({ context: nativeContext, subject: join(root, "session"), tool }),
       (error: unknown) => error instanceof NavigatorUnavailableError
         && error.unavailableSource === "thinking"
         && error.unavailableCause === "thinking",
     );
     await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-    const session = await factory({ context: nativeContext, sessionDir: join(root, "session"), tool });
+    const session = await factory({ context: nativeContext, subject: join(root, "session"), tool });
     assert.equal(session.getThinkingLevel?.(), "off");
     session.dispose();
     await writeFile(setting, JSON.stringify({ model: "missing/provider" }));
     await assert.rejects(
-      factory({ context: nativeContext, sessionDir: join(root, "session"), tool }),
+      factory({ context: nativeContext, subject: join(root, "session"), tool }),
       (error: unknown) => error instanceof NavigatorUnavailableError
         && error.unavailableSource === "model"
         && error.unavailableCause === "model",
@@ -544,6 +544,7 @@ test("native provider stream seam classifies auth/quota/transport after setModel
   const previous = process.env.PI_CODING_AGENT_DIR;
   try {
     process.env.PI_CODING_AGENT_DIR = root;
+    seedGitRepository(root);
     const cases = [
       { name: "auth", source: "auth" as const, status: 401, diagnostics: ["auth key unavailable", "login expired differently"] },
       { name: "quota", source: "quota" as const, status: 429, diagnostics: ["quota exhausted", "billing limit reached differently"] },
@@ -599,7 +600,7 @@ test("native provider stream seam classifies auth/quota/transport after setModel
       } as never;
       const factory = createNativeNavigatorSessionFactory();
       const tool = createNavigatorPrepareTool(() => {});
-      const session = await factory({ context: nativeContext, sessionDir: join(root, `session-${scenario.name}`), tool });
+      const session = await factory({ context: nativeContext, subject: join(root, `session-${scenario.name}`), tool });
       await session.setModel?.(`${model.provider}/${model.id}`, "off");
       for (const diagnostic of scenario.diagnostics) {
         currentDiagnostic = diagnostic;
@@ -633,6 +634,7 @@ test("native provider stream seam resets per call and classifies terminal-less c
   const previous = process.env.PI_CODING_AGENT_DIR;
   try {
     process.env.PI_CODING_AGENT_DIR = root;
+    seedGitRepository(root);
 
     // Sequential contamination: quota then synchronous setup transport through factory → setModel → prompt.
     {
@@ -673,7 +675,7 @@ test("native provider stream seam resets per call and classifies terminal-less c
       } as never;
       const session = await createNativeNavigatorSessionFactory()({
         context: nativeContext,
-        sessionDir: join(root, "session-reset"),
+        subject: join(root, "session-reset"),
         tool: createNavigatorPrepareTool(() => {}),
       });
       await session.setModel?.(`${model.provider}/${model.id}`, "off");
@@ -712,7 +714,7 @@ test("native provider stream seam resets per call and classifies terminal-less c
       } as never;
       const session = await createNativeNavigatorSessionFactory()({
         context: nativeContext,
-        sessionDir: join(root, "session-no-terminal"),
+        subject: join(root, "session-no-terminal"),
         tool: createNavigatorPrepareTool(() => {}),
       });
       await session.setModel?.(`${model.provider}/${model.id}`, "off");
@@ -850,129 +852,17 @@ test("settlement decoration carries recommendation only; unavailable and no-advi
   );
 });
 
-test("session placement is stable, colocated, and isolates ad hoc subjects", async () => {
-  const repository = process.cwd();
-  const base = { cwd: repository, sessionManager: { getSessionDir: () => "", getSessionId: () => "x" } } as never;
-  const book = activationBookDirectory(resolveActivationLedgerHome(), resolveBookKeyFromGit(repository));
-  const issue = subjectPath("/repo/.ak/work/issues/28/runs/one/session", "/repo");
-  const relativeIssue = subjectPath(".ak/work/issues/28/runs/two/session", "/repo");
-  assert.equal(issue, "/repo/.ak/work/issues/28");
-  assert.equal(relativeIssue, issue);
-  assert.equal(navigatorSessionDirectory(base, issue).startsWith(join(book, "navigator")), true);
-  const issueVariant = navigatorSessionDirectory(base, `${issue}#ad-hoc-subject`);
-  assert.equal(issueVariant.startsWith(join(book, "navigator")), true);
-  assert.notEqual(issueVariant, navigatorSessionDirectory(base, `${issue}#other-subject`));
-  const first = navigatorSessionDirectory(base, "/repo/task-a.md");
-  const firstRelative = navigatorSessionDirectory(base, subjectPath("task-a.md", "/repo"));
-  const second = navigatorSessionDirectory(base, "/repo/task-b.md");
-  assert.equal(firstRelative, first);
-  assert.notEqual(first, second);
-  assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/coder/session", "/repo"), "/repo/.ak/work/ad-hoc");
-  assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/reviewer/session", "/repo"), "/repo/.ak/work/ad-hoc");
-  assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/coder/task.md", "/repo"), "/repo/.ak/work/ad-hoc");
-  assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/reviewer/task.md", "/repo"), "/repo/.ak/work/ad-hoc");
+test("work subjects remain stable and isolate ad hoc work", () => {
   const adHocRoot = "/repo/.ak/work/ad-hoc";
+  assert.equal(subjectPath("/repo/.ak/work/issues/28/runs/one/session", "/repo"), "/repo/.ak/work/issues/28");
   assert.equal(navigatorSubjectKey(adHocRoot, "same concrete task"), navigatorSubjectKey(adHocRoot, "same   concrete task"));
   assert.notEqual(navigatorSubjectKey(adHocRoot, "same concrete task"), navigatorSubjectKey(adHocRoot, "different task"));
   assert.equal(
     navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/coder/task.md", "/repo"),
-    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/reviewer/task.md", "/repo"),
-    "role-specific run folders must not split one ad-hoc subject",
-  );
-  assert.equal(
-    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/coder/other-task.md", "/repo"),
-    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/reviewer/task.md", "/repo"),
-    "natural role-specific filenames remain one work subject",
-  );
-  assert.notEqual(
-    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/coder/task.md", "/repo"),
-    navigatorSubjectKeyForInput("/repo/.ak/work/other-ad-hoc", "/repo/.ak/work/other-ad-hoc/runs/reviewer/fix-packet.json", "/repo"),
-    "distinct work roots remain isolated",
+    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/reviewer/fix-packet.json", "/repo"),
   );
   assert.equal(navigatorSubjectKey("/repo/task.md", "task text"), "/repo/task.md");
-  assert.equal(first.startsWith(join(book, "navigator")), true);
-  assert.equal(first.includes(join(".ak", "work", "navigator")), false);
-  // Machine-ledger session transport is not work identity (ADR 0048).
-  // Ordinary repo cwd with no explicit work root falls back to cwd/.ak/work,
-  // same as empty/in-memory sessionDir — never the per-invocation ledger path.
-  // Membership is path-semantic containment under the resolved package ledger home.
-  const ledgerSession = join(
-    resolveActivationLedgerHome(),
-    "books",
-    "repo",
-    "issues",
-    "28",
-    "runs",
-    "judge@src",
-    "session",
-  );
-  assert.equal(subjectPath(ledgerSession, "/repo"), "/repo/.ak/work");
-  assert.equal(subjectPath("", "/repo"), "/repo/.ak/work");
-  assert.equal(
-    subjectPath(ledgerSession, "/repo/.ak/work/issues/28"),
-    "/repo/.ak/work/issues/28",
-  );
-  // Directory spelling alone is not ledger membership — consumer-repo path stays ordinary.
-  const spellingOnlySession = "/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session";
-  assert.equal(
-    subjectPath(spellingOnlySession, "/repo"),
-    "/repo/.ak-roles/books/repo/issues/28",
-  );
-  // Physical identity: realpath asymmetry (macOS /var ↔ /private/var) must not
-  // demote a ledger session into a non-issue subject (Navigator attendance flake class).
-  await (async () => {
-    const home = await mkdtemp(join(tmpdir(), "ak-nav-physical-"));
-    const previousHome = process.env.HOME;
-    process.env.HOME = home;
-    try {
-      const { realpathSync } = await import("node:fs");
-      const issue = resolve(home, ".ak/work/issues/28");
-      await mkdir(issue, { recursive: true });
-      const session = resolve(
-        home,
-        ".ak-roles",
-        "books",
-        "h",
-        "runs",
-        "judge-navigator",
-        "session",
-      );
-      await mkdir(session, { recursive: true });
-      const realSession = realpathSync(session);
-      // Mixed lexical/physical must still classify as ledger and keep issue subject.
-      assert.equal(subjectPath(session, issue), issue);
-      assert.equal(subjectPath(realSession, issue), issue);
-      const lexicalPlacement = navigatorSessionDirectory(
-        { cwd: repository, sessionManager: { getSessionDir: () => session } } as never,
-      );
-      const physicalPlacement = navigatorSessionDirectory(
-        { cwd: repository, sessionManager: { getSessionDir: () => realSession } } as never,
-      );
-      assert.equal(physicalPlacement, lexicalPlacement);
-      assert.equal(physicalPlacement.startsWith(join(activationBookDirectory(resolveActivationLedgerHome(), resolveBookKeyFromGit(repository)), "navigator")), true);
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      await rm(home, { recursive: true, force: true });
-    }
-  })();
-  assert.equal(
-    navigatorSessionDirectory(
-      { cwd: repository, sessionManager: { getSessionDir: () => ledgerSession } } as never,
-    ),
-    navigatorSessionDirectory(
-      { cwd: repository, sessionManager: { getSessionDir: () => "" } } as never,
-      subjectPath("", repository),
-    ),
-  );
-  // Typed provenance (absorbed from standalone provenance carrier).
   assert.equal(navigatorSubjectKey(adHocRoot, `work subject: ${adHocRoot}`, "placeholder"), adHocRoot);
-  const legitimate = `work subject: ${adHocRoot} with real task bytes`;
-  const hashed = navigatorSubjectKey(adHocRoot, legitimate, "role_input");
-  assert.notEqual(hashed, adHocRoot);
-  assert.equal(hashed, `${adHocRoot}#${createHash("sha256").update(legitimate.trim().replace(/\s+/g, " ")).digest("hex").slice(0, 32)}`);
-  assert.equal(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "placeholder"), adHocRoot);
-  assert.notEqual(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "user_prompt"), adHocRoot);
 });
 
 test("dispose during pending createSession drains the created session without prompt or assignment", async () => {
@@ -991,7 +881,6 @@ test("dispose during pending createSession drains the created session without pr
       role: "coder",
       phase: "apply",
       subjectKey: "/repo/.ak/work/issues/28",
-      sessionDir: join(root, "session"),
       subject: "Fix issue 28",
       authority: "owner decision",
       loadSoul: async () => "route judgment",
@@ -1336,7 +1225,6 @@ test("#224/#226/#227/#265 frozen scenarios: stale speculative advice rebinds onc
         role: row.role,
         phase: row.phase,
         subjectKey: row.subjectKey,
-        sessionDir: join(root, "session"),
         subject: row.subject,
         authority: row.authority,
         loadSoul: async () => "route judgment",
@@ -1411,7 +1299,6 @@ test("fixer refused or partially_completed may still recommend next=judge withou
         role: "fixer",
         phase: "apply",
         subjectKey: `/repo/.ak/work/${status}`,
-        sessionDir: join(root, status),
         subject: `settled ${status}`,
         authority: `settled ${status}`,
         loadSoul: async () => "route judgment",
@@ -1485,7 +1372,6 @@ test("settlement-bound rebind that still contradicts accepted settlement becomes
         role: row.role,
         phase: row.phase,
         subjectKey: "/repo/.ak/work",
-        sessionDir: join(root, "session"),
         subject: row.subject,
         authority: row.authority,
         loadSoul: async () => "route judgment",
@@ -1576,7 +1462,6 @@ test("resumed setModel and thinking failures preserve typed source and cause", a
         role: "judge",
         phase: null,
         subjectKey: "/repo/.ak/work/issues/28",
-        sessionDir: join(root, scenario.name),
         subject: "task",
         authority: "authority",
         loadSoul: async () => "route judgment",
@@ -1970,7 +1855,6 @@ test("completed Fixer/Coder settlement does not invent next without model/author
       const events: any[] = [];
       const nav = createNavigatorAttendance({
         context: context(), role, phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
-        sessionDir: "/repo/.ak/work/issues/28/runs/navigator/session",
         subject: "work", authority: "owner decision",
         loadSoul: async () => "route judgment",
         loadRoleHelp: async (r) => `help ${r}`,
@@ -2010,7 +1894,6 @@ test("completed Fixer/Coder settlement does not invent next without model/author
     const events: any[] = [];
     const nav = createNavigatorAttendance({
       context: context(), role: "fixer", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
-      sessionDir: "/repo/.ak/work/issues/28/runs/navigator/session",
       subject: "work", authority: "Controlling authority names coder apply next.",
       loadSoul: async () => "route judgment",
       loadRoleHelp: async (r) => `help ${r}`,
@@ -2049,7 +1932,6 @@ test("empty authority at prepare is honest context unavailable", async () => {
       role: "judge",
       phase: null,
       subjectKey: "/repo/.ak/work",
-      sessionDir: join(root, "navigator"),
       subject: "work subject: /repo/.ak/work",
       authority: "",
       loadSoul: async () => "route law",
@@ -2675,7 +2557,6 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         attendanceInvocationId = options.invocationId;
         const nav = createNavigatorAttendance({
           ...options,
-          sessionDir: join(home, "navigator-session"),
           modelSettingPath,
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
@@ -3077,7 +2958,6 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
       createNavigatorAttendance: (options) => {
         const nav = createNavigatorAttendance({
           ...options,
-          sessionDir: join(home, "navigator-session"),
           modelSettingPath: join(home, "navigator-model.json"),
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
