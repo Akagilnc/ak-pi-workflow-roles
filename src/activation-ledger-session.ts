@@ -4,9 +4,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import {
-  ensureRealDirectoryTree,
   errnoCode,
   errorText,
 } from "./activation-ledger-topology.ts";
@@ -45,13 +44,14 @@ export class ActivationSessionFileMissingError extends Error {
 function materializeDeferredSessionFile(
   sessionManager: ActivationSessionManager,
   resolvedFile: string,
-  ledgerHome: string,
 ): void {
   const header = sessionManager.getHeader?.();
   if (header === null || header === undefined || header.type !== "session") {
     throw new ActivationSessionFileMissingError(resolvedFile);
   }
-  ensureRealDirectoryTree(ledgerHome, dirname(resolvedFile));
+  // Activation does not own record placement (ADR 0065 / #221). Parent directory is the
+  // SessionManager principal's own dir — write the header in place; do not pull ledgerHome
+  // containment or ensureRealDirectoryTree back onto this admission path.
   try {
     writeFileSync(resolvedFile, `${JSON.stringify(header)}\n`, { flag: "wx" });
   } catch (error) {
@@ -84,14 +84,10 @@ function materializeDeferredSessionFile(
  * Upstream Pi defers exclusive create until the first assistant message. When the path
  * is the live SessionManager principal and only the header is in memory, admission
  * materializes that header onto the same path before the fact is written so the role
- * fact never points at a session that may be created later. Materialization still goes
- * through ledger-home directory creation (cannot invent trees outside the machine home).
+ * fact never points at a session that may be created later.
  */
 export function durableSessionPointer(
   sessionManager: ActivationSessionManager,
-  options: {
-    ledgerHome: string;
-  },
 ): ActivationSessionPointer {
   const file = sessionManager.getSessionFile?.();
   if (typeof file !== "string" || file.length === 0) {
@@ -117,7 +113,7 @@ export function durableSessionPointer(
       );
     }
     try {
-      materializeDeferredSessionFile(sessionManager, resolvedFile, options.ledgerHome);
+      materializeDeferredSessionFile(sessionManager, resolvedFile);
     } catch (materializeError) {
       // Missing principal: rethrow typed missing-file identity with the original ENOENT cause.
       // Other materialize failures keep their own typed/native identity.
