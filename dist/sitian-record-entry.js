@@ -13,7 +13,6 @@ import {
   resolveActivationLedgerHome
 } from "./activation-ledger-topology.js";
 const { findMostRecentSession } = await import(new URL("./core/session-manager.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href);
-/** Authorized no-subject kind that may resume the most recent same-nest peer (ADR 0066). Sole string true source for gate resume identity. */
 const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
 function createRecordSession(options) {
   const cwd = options.cwd;
@@ -37,8 +36,6 @@ function createRecordSession(options) {
     parentSession = parentFile;
   }
   ensureRealDirectoryTree(ledgerHome, sessionDir);
-  // Subject-keyed nests continue by subject digest; gate durable resume is the only
-  // authorized no-subject same-nest continuation. All other kinds mint fresh.
   const mayResumeSameNest = options.subject !== void 0 || options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest) {
     const recentFile = findMostRecentSession(sessionDir, cwd);
