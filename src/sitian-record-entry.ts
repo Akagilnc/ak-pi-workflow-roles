@@ -4,7 +4,6 @@
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -19,6 +18,13 @@ import {
   physicallyContainedIn,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
+
+// continueRecent always allocates a deferred sessionFile; this is the discovery result.
+const { findMostRecentSession } = await import(
+  new URL("./core/session-manager.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href,
+) as {
+  findMostRecentSession: (sessionDir: string, cwd?: string) => string | null;
+};
 
 /** Parent session surface needed to link and (when already under home) nest the record. */
 export type RecordSessionParent = {
@@ -55,9 +61,8 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
     ensureRealDirectoryTree(ledgerHome, sessionDir);
     // Delegate discovery to Pi so custom-directory continuation retains its
     // mtime ordering, valid-header scan, and cwd filtering semantics.
-    const recent = SessionManager.continueRecent(cwd, sessionDir);
-    const recentFile = recent.getSessionFile();
-    if (recentFile !== undefined && existsSync(recentFile)) return recent;
+    const recentFile = findMostRecentSession(sessionDir, cwd);
+    if (recentFile !== null) return SessionManager.open(recentFile, sessionDir, cwd);
     return SessionManager.create(cwd, sessionDir, parentFile
       ? { parentSession: parentFile }
       : undefined);

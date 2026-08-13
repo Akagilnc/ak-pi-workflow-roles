@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
@@ -12,6 +11,9 @@ import {
   physicallyContainedIn,
   resolveActivationLedgerHome
 } from "./activation-ledger-topology.js";
+const { findMostRecentSession } = await import(
+  new URL("./core/session-manager.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
+);
 function createRecordSession(options) {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
@@ -24,9 +26,8 @@ function createRecordSession(options) {
       digest
     );
     ensureRealDirectoryTree(ledgerHome, sessionDir2);
-    const recent = SessionManager.continueRecent(cwd, sessionDir2);
-    const recentFile = recent.getSessionFile();
-    if (recentFile !== void 0 && existsSync(recentFile)) return recent;
+    const recentFile = findMostRecentSession(sessionDir2, cwd);
+    if (recentFile !== null) return SessionManager.open(recentFile, sessionDir2, cwd);
     return SessionManager.create(cwd, sessionDir2, parentFile ? { parentSession: parentFile } : void 0);
   }
   if (parentFile === void 0 || parentFile.length === 0) {
