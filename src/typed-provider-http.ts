@@ -65,25 +65,35 @@ export async function recordTypedProviderHttpStatus(
 
 /**
  * Read the latest durable typed provider HTTP observation, if any.
- * Returns undefined unless both httpStatus and provider are present as typed fields.
+ * Only ENOENT means absence (undefined). Read/parse/shape failures preserve the
+ * real cause for the existing controlled-failure chain — never laundered as absence.
  */
 export async function readLatestTypedProviderHttpObservation(
   runDirectory: string,
 ): Promise<TypedProviderHttpObservation | undefined> {
+  let text: string;
   try {
-    const raw: unknown = JSON.parse(
-      await readFile(typedProviderHttpPath(runDirectory), "utf8"),
-    );
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    text = await readFile(typedProviderHttpPath(runDirectory), "utf8");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "ENOENT"
+    ) {
       return undefined;
     }
-    const record = raw as Record<string, unknown>;
-    if (typeof record.httpStatus !== "number") return undefined;
-    if (typeof record.provider !== "string" || record.provider.trim() === "") {
-      return undefined;
-    }
-    return { httpStatus: record.httpStatus, provider: record.provider };
-  } catch {
-    return undefined;
+    throw error;
   }
+  const raw: unknown = JSON.parse(text);
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("typed provider HTTP observation must be a JSON object");
+  }
+  const record = raw as Record<string, unknown>;
+  if (typeof record.httpStatus !== "number") {
+    throw new Error("typed provider HTTP observation missing numeric httpStatus");
+  }
+  if (typeof record.provider !== "string" || record.provider.trim() === "") {
+    throw new Error("typed provider HTTP observation missing non-empty provider");
+  }
+  return { httpStatus: record.httpStatus, provider: record.provider };
 }

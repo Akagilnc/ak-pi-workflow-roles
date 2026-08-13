@@ -31,22 +31,27 @@ async function recordTypedProviderHttpStatus(runDirectory, observation) {
   );
 }
 async function readLatestTypedProviderHttpObservation(runDirectory) {
+  let text;
   try {
-    const raw = JSON.parse(
-      await readFile(typedProviderHttpPath(runDirectory), "utf8")
-    );
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    text = await readFile(typedProviderHttpPath(runDirectory), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
     }
-    const record = raw;
-    if (typeof record.httpStatus !== "number") return void 0;
-    if (typeof record.provider !== "string" || record.provider.trim() === "") {
-      return void 0;
-    }
-    return { httpStatus: record.httpStatus, provider: record.provider };
-  } catch {
-    return void 0;
+    throw error;
   }
+  const raw = JSON.parse(text);
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("typed provider HTTP observation must be a JSON object");
+  }
+  const record = raw;
+  if (typeof record.httpStatus !== "number") {
+    throw new Error("typed provider HTTP observation missing numeric httpStatus");
+  }
+  if (typeof record.provider !== "string" || record.provider.trim() === "") {
+    throw new Error("typed provider HTTP observation missing non-empty provider");
+  }
+  return { httpStatus: record.httpStatus, provider: record.provider };
 }
 export {
   clearTypedProviderHttpObservation,

@@ -33,6 +33,11 @@ import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
+import {
+  hasUpstreamErrorTestimony,
+  isNonSuccessHttpStatus,
+  projectConfirmedRemotePayload,
+} from "./upstream-error-testimony.ts";
 
 // ── shared constants / types ──────────────────────────────────────────────
 
@@ -374,8 +379,7 @@ type ClassifiedReviewerError = Error & Readonly<{
   evidenceChildOriginal?: unknown;
 }>;
 function numericHttpStatus(value: unknown): number | undefined {
-  if (typeof value === "number" && (value < 200 || value >= 300)) return value;
-  return undefined;
+  return isNonSuccessHttpStatus(value) ? value : undefined;
 }
 
 type StructuredRemoteProjection = {
@@ -388,10 +392,8 @@ type StructuredRemoteProjection = {
 };
 
 /**
- * Single-pass structured remote testimony/payload projection.
- * Testimony = non-success HTTP status or non-empty diagnostics on the held chain.
- * body/code/errno project only from a node that already carries remote testimony
- * (status or diagnostics) so a plain local Error.code is never provider testimony.
+ * Cause-chain reader over the shared upstream-testimony authority.
+ * Shape walking stays here; testimony + confirmed-remote payload rules are shared.
  */
 function projectStructuredRemote(error: unknown): StructuredRemoteProjection {
   let httpStatus: number | undefined;
@@ -410,19 +412,26 @@ function projectStructuredRemote(error: unknown): StructuredRemoteProjection {
     const nodeDiagnostics = Array.isArray(record.diagnostics) && record.diagnostics.length > 0
       ? record.diagnostics
       : undefined;
-    const nodeHasTestimony = nodeStatus !== undefined || nodeDiagnostics !== undefined;
+    const nodeHasTestimony = hasUpstreamErrorTestimony({
+      ...(nodeStatus === undefined ? {} : { httpStatus: nodeStatus }),
+      ...(nodeDiagnostics === undefined ? {} : { diagnostics: nodeDiagnostics }),
+    });
     if (httpStatus === undefined && nodeStatus !== undefined) httpStatus = nodeStatus;
     if (diagnostics === undefined && nodeDiagnostics !== undefined) diagnostics = nodeDiagnostics;
     // Payload only from confirmed-remote nodes — never arbitrary local Error.code.
     if (nodeHasTestimony) {
-      if (body === undefined && record.body !== undefined) body = record.body;
-      if (code === undefined && record.code !== undefined) code = record.code;
-      if (errno === undefined && record.errno !== undefined) errno = record.errno;
+      const payload = projectConfirmedRemotePayload(record);
+      if (body === undefined && payload.body !== undefined) body = payload.body;
+      if (code === undefined && payload.code !== undefined) code = payload.code;
+      if (errno === undefined && payload.errno !== undefined) errno = payload.errno;
     }
     cursor = record.cause;
   }
   return {
-    hasTestimony: httpStatus !== undefined || diagnostics !== undefined,
+    hasTestimony: hasUpstreamErrorTestimony({
+      ...(httpStatus === undefined ? {} : { httpStatus }),
+      ...(diagnostics === undefined ? {} : { diagnostics }),
+    }),
     ...(httpStatus === undefined ? {} : { httpStatus }),
     ...(diagnostics === undefined ? {} : { diagnostics }),
     ...(body === undefined ? {} : { body }),
@@ -584,13 +593,19 @@ export async function executeEvidenceChild(
         const lastAssistant = [...session.messages]
           .reverse()
           .find((message) => message.role === "assistant");
-        if (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "error") {
+        // error|aborted assistant stops share the upstream-testimony rule: provider only
+        // with direct HTTP/SDK testimony, otherwise existing unknown. child is reserved
+        // for real local child/report failures (no assistant / blank report / cleanup).
+        if (
+          lastAssistant?.role === "assistant"
+          && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted")
+        ) {
           throw classifiedError(
             new Error(lastAssistant.errorMessage ?? "", { cause: lastAssistant }),
             projectStructuredRemote(lastAssistant).hasTestimony ? "provider" : "unknown",
           );
         }
-        if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
+        if (lastAssistant?.role !== "assistant") {
           throw classifiedError(
             new Error("Evidence child child terminated without a report", {
               cause: lastAssistant ?? session.messages,

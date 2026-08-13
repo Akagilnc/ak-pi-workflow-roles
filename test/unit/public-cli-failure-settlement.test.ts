@@ -3976,3 +3976,60 @@ test("#307 2xx clears prior typed HTTP observation rather than persisting succes
     await rm(runDir, { recursive: true, force: true });
   }
 });
+
+test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep real cause", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj-typed-http-read");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-typed-http-read-001";
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`);
+    await mkdir(runDirectory, { recursive: true });
+    const sessionFile = join(runDirectory, "session", "missing-session.jsonl");
+
+    // Absence (no sidecar): ENOENT → undefined observation, no forged failure.
+    assert.equal(await readLatestTypedProviderHttpObservation(runDirectory), undefined);
+    assert.equal(await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+      runDirectory,
+    }), undefined);
+
+    // Non-absence: existing sidecar with illegal typed shape keeps real cause on settlement chain.
+    await writeFile(join(runDirectory, "typed-provider-http.json"), JSON.stringify({ httpStatus: 500 }), "utf8");
+    const badShape = await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+      runDirectory,
+    });
+    assert.equal(badShape?.cause, "session");
+    assert.match(badShape?.diagnostic ?? "", /provider/);
+
+    // Non-absence: malformed JSON keeps SyntaxError identity (not laundered as absence).
+    await writeFile(join(runDirectory, "typed-provider-http.json"), "{not-json\n", "utf8");
+    const malformed = await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+      runDirectory,
+    });
+    assert.equal(malformed?.cause, "session");
+    assert.equal(malformed?.identity?.name, "SyntaxError");
+    assert.match(malformed?.diagnostic ?? "", /JSON/i);
+
+    // Non-absence: EISDIR on the observation path keeps real errno cause.
+    await rm(join(runDirectory, "typed-provider-http.json"), { force: true });
+    await mkdir(join(runDirectory, "typed-provider-http.json"));
+    const eisdir = await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+      runDirectory,
+    });
+    assert.equal(eisdir?.cause, "session");
+    assert.equal(eisdir?.identity?.code, "EISDIR");
+  });
+});

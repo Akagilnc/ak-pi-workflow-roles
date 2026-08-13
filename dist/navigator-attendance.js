@@ -19,6 +19,11 @@ import { issueRoot, subjectPath } from "./work-subject-identity.js";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.js";
+import {
+  hasUpstreamErrorTestimony,
+  isNonSuccessHttpStatus,
+  projectConfirmedRemotePayload
+} from "./upstream-error-testimony.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
@@ -835,15 +840,16 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
     const projectHeldUpstream = (error) => {
       if (!exactRecord(error)) return {};
       const status = typeof error.statusCode === "number" ? error.statusCode : typeof error.status === "number" ? error.status : typeof error.httpStatus === "number" ? error.httpStatus : void 0;
-      const nonSuccess = typeof status === "number" && (status < 200 || status >= 300);
+      const httpStatus = isNonSuccessHttpStatus(status) ? status : void 0;
       const diagnostics = Array.isArray(error.diagnostics) && error.diagnostics.length > 0 ? error.diagnostics : void 0;
-      const remoteConfirmed = nonSuccess || diagnostics !== void 0;
+      const testimony = hasUpstreamErrorTestimony({
+        ...httpStatus === void 0 ? {} : { httpStatus },
+        ...diagnostics === void 0 ? {} : { diagnostics }
+      });
       return {
-        ...nonSuccess ? { statusCode: status, status } : {},
+        ...httpStatus === void 0 ? {} : { statusCode: httpStatus, status: httpStatus },
         ...diagnostics === void 0 ? {} : { diagnostics },
-        ...remoteConfirmed && error.body !== void 0 ? { body: error.body } : {},
-        ...remoteConfirmed && error.code !== void 0 ? { code: error.code } : {},
-        ...remoteConfirmed && error.errno !== void 0 ? { errno: error.errno } : {}
+        ...testimony ? projectConfirmedRemotePayload(error) : {}
       };
     };
     const retainUpstreamMessage = (error) => {

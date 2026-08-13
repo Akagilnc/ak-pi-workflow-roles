@@ -16779,6 +16779,27 @@ var init_reviewer_dispatch = __esm({
   }
 });
 
+// src/upstream-error-testimony.ts
+function isNonSuccessHttpStatus(status) {
+  return typeof status === "number" && (status < 200 || status >= 300);
+}
+function hasUpstreamErrorTestimony(input) {
+  if (isNonSuccessHttpStatus(input.httpStatus)) return true;
+  return Array.isArray(input.diagnostics) && input.diagnostics.length > 0;
+}
+function projectConfirmedRemotePayload(input) {
+  return {
+    ...input.body === void 0 ? {} : { body: input.body },
+    ...input.code === void 0 ? {} : { code: input.code },
+    ...input.errno === void 0 ? {} : { errno: input.errno }
+  };
+}
+var init_upstream_error_testimony = __esm({
+  "src/upstream-error-testimony.ts"() {
+    "use strict";
+  }
+});
+
 // src/public-cli/explicit-internal.ts
 import { execFile as execFile3, spawn } from "node:child_process";
 import { constants, writeFileSync } from "node:fs";
@@ -16840,13 +16861,6 @@ function buildExplicitInternalActivationArgs(selectedRoleEntry, extraArgs = []) 
 function nonEmptyString(value) {
   return typeof value === "string" && value.trim() !== "" ? value : void 0;
 }
-function isNonSuccessHttpStatus(status) {
-  return typeof status === "number" && (status < 200 || status >= 300);
-}
-function hasUpstreamErrorTestimony(input) {
-  if (isNonSuccessHttpStatus(input.httpStatus)) return true;
-  return Array.isArray(input.diagnostics) && input.diagnostics.length > 0;
-}
 function sessionStopDetails(input) {
   const details = {};
   const errorMessage = nonEmptyString(input.errorMessage);
@@ -16864,9 +16878,7 @@ function sessionStopDetails(input) {
   }
   if (typeof input.httpStatus === "number") details.httpStatus = input.httpStatus;
   if (input.diagnostics !== void 0) details.diagnostics = input.diagnostics;
-  if (testimony && input.body !== void 0) details.body = input.body;
-  if (testimony && input.code !== void 0) details.code = input.code;
-  if (testimony && input.errno !== void 0) details.errno = input.errno;
+  if (testimony) Object.assign(details, projectConfirmedRemotePayload(input));
   return details;
 }
 function knownFailureFromProviderStop(input) {
@@ -16940,6 +16952,8 @@ var init_explicit_internal = __esm({
     init_invocation();
     init_registry2();
     init_reviewer_dispatch();
+    init_upstream_error_testimony();
+    init_upstream_error_testimony();
     REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
     execFileAsync3 = promisify3(execFile3);
     defaultExplicitInternalPiRunner = async (args, options) => {
@@ -17279,22 +17293,27 @@ async function clearTypedProviderHttpObservation(runDirectory) {
   }
 }
 async function readLatestTypedProviderHttpObservation(runDirectory) {
+  let text;
   try {
-    const raw = JSON.parse(
-      await readFile7(typedProviderHttpPath(runDirectory), "utf8")
-    );
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    text = await readFile7(typedProviderHttpPath(runDirectory), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
     }
-    const record4 = raw;
-    if (typeof record4.httpStatus !== "number") return void 0;
-    if (typeof record4.provider !== "string" || record4.provider.trim() === "") {
-      return void 0;
-    }
-    return { httpStatus: record4.httpStatus, provider: record4.provider };
-  } catch {
-    return void 0;
+    throw error;
   }
+  const raw = JSON.parse(text);
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("typed provider HTTP observation must be a JSON object");
+  }
+  const record4 = raw;
+  if (typeof record4.httpStatus !== "number") {
+    throw new Error("typed provider HTTP observation missing numeric httpStatus");
+  }
+  if (typeof record4.provider !== "string" || record4.provider.trim() === "") {
+    throw new Error("typed provider HTTP observation missing non-empty provider");
+  }
+  return { httpStatus: record4.httpStatus, provider: record4.provider };
 }
 var TYPED_HTTP_FILE;
 var init_typed_provider_http = __esm({
@@ -17956,6 +17975,7 @@ var init_evidence_child_executor = __esm({
     init_package_owned_tool_idle();
     init_stream_idle_guard();
     init_receipt_delivery_policy();
+    init_upstream_error_testimony();
   }
 });
 
@@ -18920,7 +18940,19 @@ async function resolveAuditedRunnerKnownFailure(input) {
     };
   }
   const parentStop = await readSessionProviderStop(input.sessionFile);
-  const httpObservation = input.runDirectory === void 0 ? void 0 : await readLatestTypedProviderHttpObservation(input.runDirectory);
+  let httpObservation;
+  if (input.runDirectory !== void 0) {
+    try {
+      httpObservation = await readLatestTypedProviderHttpObservation(input.runDirectory);
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      return {
+        cause: "session",
+        identity: thrownIdentity(failure),
+        diagnostic: failure.message || failure.name
+      };
+    }
+  }
   if (parentStop === void 0) {
     if (input.credential !== void 0) return input.credential;
     if (httpObservation === void 0) return void 0;

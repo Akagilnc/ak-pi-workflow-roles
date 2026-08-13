@@ -870,9 +870,20 @@ export async function resolveAuditedRunnerKnownFailure(input: {
     };
   }
   const parentStop = await readSessionProviderStop(input.sessionFile);
-  const httpObservation = input.runDirectory === undefined
-    ? undefined
-    : await readLatestTypedProviderHttpObservation(input.runDirectory);
+  // Typed HTTP observation: ENOENT=absence; other read/parse/shape failures keep real cause.
+  let httpObservation: Awaited<ReturnType<typeof readLatestTypedProviderHttpObservation>> | undefined;
+  if (input.runDirectory !== undefined) {
+    try {
+      httpObservation = await readLatestTypedProviderHttpObservation(input.runDirectory);
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      return {
+        cause: "session",
+        identity: thrownIdentity(failure),
+        diagnostic: failure.message || failure.name,
+      };
+    }
+  }
   if (parentStop === undefined) {
     if (input.credential !== undefined) return input.credential;
     if (httpObservation === undefined) return undefined;
