@@ -44,27 +44,10 @@ export type CreateRecordSessionOptions = {
 };
 
 /**
- * Pi defers session-file create until the first assistant message. Custom-entry-only
- * records (gate baseline/bounce, auditor bindings, …) never get that turn, so the
- * sole record entry materializes the in-memory header onto the UUIDv7 path before
- * returning. Existing path → early return (no rewrite/truncate). No destination param.
- */
-function materializeDeferredRecordHeader(session: SessionManager): SessionManager {
-  if (!session.isPersisted()) return session;
-  const file = session.getSessionFile();
-  if (file === undefined || existsSync(file)) return session;
-  const header = session.getHeader();
-  if (header === null || header.type !== "session") return session;
-  writeFileSync(file, `${JSON.stringify(header)}\n`, { flag: "wx" });
-  // Rebind so subsequent appendCustomEntry uses O_APPEND (flushed=true).
-  session.setSessionFile(file);
-  return session;
-}
-
-/**
  * Sole package entry that constructs a durable Pi session record (ADR 0065).
  * No destination/path parameters — location is computed from ledger topology only.
- * New persisted principals materialize their session header before return so
+ * Same-nest resume reuses Pi findMostRecentSession (valid header, cwd filter, mtime).
+ * New persisted principals materialize their deferred session header before return so
  * custom-entry-only writers do not need a parallel delayed-header helper.
  */
 export function createRecordSession(options: CreateRecordSessionOptions): SessionManager {
@@ -72,41 +55,57 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
   const parentFile = options.parent?.getSessionFile();
   const ledgerHome = resolveActivationLedgerHome();
 
+  let sessionDir: string;
+  let parentSession: string | undefined;
+
   if (options.subject !== undefined) {
     const digest = createHash("sha256").update(options.subject).digest("hex").slice(0, 32);
-    const sessionDir = join(
+    sessionDir = join(
       activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)),
       options.kind,
       digest,
     );
-    ensureRealDirectoryTree(ledgerHome, sessionDir);
-    // Delegate discovery to Pi so custom-directory continuation retains its
-    // mtime ordering, valid-header scan, and cwd filtering semantics.
-    const recentFile = findMostRecentSession(sessionDir, cwd);
-    if (recentFile !== null) return SessionManager.open(recentFile, sessionDir, cwd);
-    return materializeDeferredRecordHeader(SessionManager.create(cwd, sessionDir, parentFile
-      ? { parentSession: parentFile }
-      : undefined));
-  }
-
-  if (parentFile === undefined || parentFile.length === 0) {
+    parentSession = parentFile && parentFile.length > 0 ? parentFile : undefined;
+  } else if (parentFile === undefined || parentFile.length === 0) {
     // No durable parent principal — preserve prior in-memory child behavior.
     return SessionManager.inMemory(cwd);
+  } else {
+    const parentResolved = resolve(parentFile);
+    // Nest under parent only when the parent record already lives under the package home.
+    // Nest base is dirname(parent file) — the durable principal's directory — never a
+    // separate getSessionDir() that can diverge (empty in-memory dir + durable file).
+    // Otherwise the book is resolved from cwd (ADR 0048) and the kind sits under that book —
+    // workspace / foreign parents cannot drag records out of home.
+    sessionDir = physicallyContainedIn(ledgerHome, parentResolved)
+      ? join(dirname(parentResolved), options.kind)
+      : join(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
+    parentSession = parentFile;
   }
 
-  const parentResolved = resolve(parentFile);
-
-  // Nest under parent only when the parent record already lives under the package home.
-  // Nest base is dirname(parent file) — the durable principal's directory — never a
-  // separate getSessionDir() that can diverge (empty in-memory dir + durable file).
-  // Otherwise the book is resolved from cwd (ADR 0048) and the kind sits under that book —
-  // workspace / foreign parents cannot drag records out of home.
-  const sessionDir = physicallyContainedIn(ledgerHome, parentResolved)
-    ? join(dirname(parentResolved), options.kind)
-    : join(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
-
   ensureRealDirectoryTree(ledgerHome, sessionDir);
-  return materializeDeferredRecordHeader(
-    SessionManager.create(cwd, sessionDir, { parentSession: parentFile }),
+  // Delegate discovery to Pi so custom-directory continuation retains its
+  // mtime ordering, valid-header scan, and cwd filtering semantics.
+  const recentFile = findMostRecentSession(sessionDir, cwd);
+  if (recentFile !== null) return SessionManager.open(recentFile, sessionDir, cwd);
+
+  const session = SessionManager.create(
+    cwd,
+    sessionDir,
+    parentSession === undefined ? undefined : { parentSession },
   );
+  // Pi defers session-file create until the first assistant message. Custom-entry-only
+  // records never get that turn, so the sole record entry materializes the in-memory
+  // header onto the UUIDv7 path before returning. Existing path → early return.
+  if (session.isPersisted()) {
+    const file = session.getSessionFile();
+    if (file !== undefined && !existsSync(file)) {
+      const header = session.getHeader();
+      if (header !== null && header.type === "session") {
+        writeFileSync(file, `${JSON.stringify(header)}\n`, { flag: "wx" });
+        // Rebind so subsequent appendCustomEntry uses O_APPEND (flushed=true).
+        session.setSessionFile(file);
+      }
+    }
+  }
+  return session;
 }

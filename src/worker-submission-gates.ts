@@ -4,13 +4,10 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
-  statSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -172,31 +169,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Open gate ① record via sitian entry (header materialization lives in createRecordSession).
- * First arm: entry returns a new UUIDv7 principal already on disk.
- * Resume: entry always allocates a fresh UUIDv7 path — drop that empty discovery
- * principal and reopen the prior nest file so baseline/bounce survive (ADR 0066).
+ * Open gate ① record via sitian entry only — resume/lifecycle live in createRecordSession.
+ * Gate consumes the returned session; no nest scan, unlink, or peer reopen.
  */
 function openGateRecord(cwd: string, parent?: WorkerSubmissionGateParent): SessionManager {
-  const discovered = createRecordSession({
+  return createRecordSession({
     cwd,
     kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
     ...(parent === undefined ? {} : { parent }),
   });
-  // No durable parent principal → in-memory only (same-process bounce still works).
-  if (!discovered.isPersisted()) return discovered;
-  const nest = discovered.getSessionDir();
-  const discoveredFile = discovered.getSessionFile();
-  if (discoveredFile === undefined) return discovered;
-  const peers = readdirSync(nest)
-    .filter((name) => name.endsWith(".jsonl"))
-    .map((name) => join(nest, name))
-    .filter((path) => path !== discoveredFile);
-  if (peers.length === 0) return discovered;
-  // Resume: reopen the most recent prior principal; discard empty discovery file.
-  peers.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-  unlinkSync(discoveredFile);
-  return SessionManager.open(peers[0]!, nest, cwd);
 }
 
 function readGateState(session: SessionManager): {
