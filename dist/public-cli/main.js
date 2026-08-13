@@ -14582,6 +14582,9 @@ function resolveActivationLedgerHome(home = homedir2) {
 function activationBookDirectory(ledgerHome, bookKey) {
   return join3(ledgerHome, "books", bookKey);
 }
+function activationWaitingLedgerPath(ledgerHome, bookKey) {
+  return join3(activationBookDirectory(ledgerHome, bookKey), "waiting.jsonl");
+}
 function pathContainedIn(root, candidate) {
   const rel = relative(root, candidate);
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
@@ -14755,6 +14758,26 @@ function ensureRealDirectoryTree(root, targetDir) {
     );
   }
 }
+function assertLedgerFileInsideHome(ledgerPath, ledgerHome) {
+  if (!isAbsolute(ledgerHome)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${ledgerHome}`);
+  }
+  const resolvedLedger = resolve(ledgerPath);
+  try {
+    if (!lstatSync2(resolvedLedger).isSymbolicLink()) return;
+    throw new ActivationLedgerError(
+      `activation ledger file is a symbolic link: ${resolvedLedger}`
+    );
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      if (error instanceof ActivationLedgerError) throw error;
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat ledger file (${resolvedLedger}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+}
 var ActivationLedgerError;
 var init_activation_ledger_topology = __esm({
   "src/activation-ledger-topology.ts"() {
@@ -14870,6 +14893,391 @@ var init_sitian_role_run_coordinates = __esm({
     "use strict";
     init_activation_ledger_git();
     init_activation_ledger_topology();
+  }
+});
+
+// src/activation-ledger-session.ts
+var init_activation_ledger_session = __esm({
+  "src/activation-ledger-session.ts"() {
+    "use strict";
+    init_activation_ledger_topology();
+  }
+});
+
+// src/activation-ledger.ts
+import {
+  constants,
+  closeSync,
+  fstatSync,
+  openSync,
+  writeSync
+} from "node:fs";
+import { dirname as dirname5, isAbsolute as isAbsolute3, resolve as resolve3 } from "node:path";
+function appendActivationLedgerLine(ledgerPath, line2, options) {
+  if (!isAbsolute3(options.ledgerHome)) {
+    throw new ActivationLedgerError(
+      `activation ledger home must be absolute: ${options.ledgerHome}`
+    );
+  }
+  const resolvedLedger = resolve3(ledgerPath);
+  const resolvedHome = resolve3(options.ledgerHome);
+  const parent = dirname5(resolvedLedger);
+  ensureRealDirectoryTree(resolvedHome, parent);
+  assertLedgerFileInsideHome(resolvedLedger, resolvedHome);
+  const bytes = Buffer.isBuffer(line2) ? line2 : Buffer.from(line2);
+  let ledgerFd;
+  let primaryFailure;
+  try {
+    try {
+      ledgerFd = openSync(resolvedLedger, ACTIVATION_LEDGER_APPEND_OPEN_FLAGS, 420);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to open ledger file (${resolvedLedger}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+    let opened;
+    try {
+      opened = fstatSync(ledgerFd);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to fstat ledger file (${resolvedLedger}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+    if (!opened.isFile()) {
+      throw new ActivationLedgerError(
+        `activation ledger is not a regular file: ${resolvedLedger}`
+      );
+    }
+    const written = writeSync(ledgerFd, bytes, 0, bytes.length, null);
+    if (written !== bytes.length) {
+      throw new ActivationLedgerError(
+        `activation ledger short write: wrote ${written} of ${bytes.length} bytes to ${resolvedLedger}`
+      );
+    }
+  } catch (error) {
+    primaryFailure = error;
+  }
+  if (ledgerFd !== void 0) {
+    try {
+      closeSync(ledgerFd);
+    } catch (closeFailure) {
+      if (primaryFailure !== void 0) {
+        throw new AggregateError(
+          [primaryFailure, closeFailure],
+          "activation ledger operation and close failed",
+          { cause: primaryFailure }
+        );
+      }
+      throw closeFailure;
+    }
+  }
+  if (primaryFailure !== void 0) throw primaryFailure;
+}
+function appendActivationLedgerJsonlLine(ledgerPath, fact, options) {
+  appendActivationLedgerLine(
+    ledgerPath,
+    Buffer.from(`${JSON.stringify(fact)}
+`, "utf8"),
+    { ledgerHome: options.ledgerHome }
+  );
+}
+function appendDispatchStubFact(ledgerPath, fact, options) {
+  appendActivationLedgerJsonlLine(ledgerPath, fact, options);
+}
+var ACTIVATION_LEDGER_APPEND_OPEN_FLAGS, ACCEPTED_ACTIVATION_FACT_KEYS;
+var init_activation_ledger = __esm({
+  "src/activation-ledger.ts"() {
+    "use strict";
+    init_activation_ledger_topology();
+    init_activation_ledger_git();
+    init_activation_ledger_session();
+    init_activation_ledger_topology();
+    ACTIVATION_LEDGER_APPEND_OPEN_FLAGS = constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW;
+    ACCEPTED_ACTIVATION_FACT_KEYS = Object.freeze([
+      "event",
+      "role",
+      "observedAt",
+      "bookKey",
+      "session",
+      "correlation"
+    ]);
+  }
+});
+
+// src/activation-reconciliation.ts
+function buildDispatchStubFact(input) {
+  return {
+    event: DISPATCH_STUB_EVENT,
+    observedAt: input.observedAt,
+    bookKey: input.bookKey,
+    dispatch: input.dispatch.kind === "process" ? { kind: "process", pid: input.dispatch.pid } : { kind: "opaque", ref: input.dispatch.ref },
+    correlation: { kind: "caller", id: input.correlation.id }
+  };
+}
+var DISPATCH_STUB_EVENT;
+var init_activation_reconciliation = __esm({
+  "src/activation-reconciliation.ts"() {
+    "use strict";
+    DISPATCH_STUB_EVENT = "dispatch-stub";
+  }
+});
+
+// src/ticket-dispatch-lease.ts
+import {
+  closeSync as closeSync2,
+  openSync as openSync2,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeSync as writeSync2
+} from "node:fs";
+import { join as join5 } from "node:path";
+import { randomUUID } from "node:crypto";
+function requirePositiveTicketNumber(ticketNumber) {
+  if (!Number.isInteger(ticketNumber) || ticketNumber < 1) {
+    throw new TicketDispatchLeaseError(
+      `ticketNumber must be a positive integer, got ${String(ticketNumber)}`
+    );
+  }
+  return ticketNumber;
+}
+function requireNonemptyString(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TicketDispatchLeaseError(`${label} must be a nonempty string`);
+  }
+  return value;
+}
+function pendingLeasePath(ledgerHome, bookKey) {
+  return join5(activationBookDirectory(ledgerHome, bookKey), DISPATCH_LEASE_PENDING_FILE);
+}
+function claimedLeasePath(ledgerHome, bookKey) {
+  return join5(activationBookDirectory(ledgerHome, bookKey), DISPATCH_LEASE_CLAIMED_FILE);
+}
+function buildTicketBindingDispatchFact(input) {
+  return {
+    event: TICKET_BINDING_EVENT,
+    observedAt: input.observedAt,
+    bookKey: input.bookKey,
+    siteIdentity: input.siteIdentity,
+    ticketNumber: input.ticketNumber,
+    correlation: { kind: "caller", id: input.correlation.id }
+  };
+}
+function parsePendingLease(raw, sourcePath) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new TicketDispatchLeaseError(
+      `ticket dispatch lease is not valid JSON (${sourcePath}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new TicketDispatchLeaseError(
+      `ticket dispatch lease body is not an object (${sourcePath})`
+    );
+  }
+  const record4 = parsed;
+  if (typeof record4.ticketNumber !== "number") {
+    throw new TicketDispatchLeaseError(
+      `ticket dispatch lease ticketNumber is missing (${sourcePath})`
+    );
+  }
+  if (typeof record4.bookKey !== "string" || record4.bookKey.length === 0) {
+    throw new TicketDispatchLeaseError(
+      `ticket dispatch lease bookKey is missing (${sourcePath})`
+    );
+  }
+  if (typeof record4.siteIdentity !== "string" || record4.siteIdentity.length === 0) {
+    throw new TicketDispatchLeaseError(
+      `ticket dispatch lease siteIdentity is missing (${sourcePath})`
+    );
+  }
+  if (typeof record4.offeredAt !== "string" || record4.offeredAt.length === 0) {
+    throw new TicketDispatchLeaseError(
+      `ticket dispatch lease offeredAt is missing (${sourcePath})`
+    );
+  }
+  return {
+    ticketNumber: requirePositiveTicketNumber(record4.ticketNumber),
+    bookKey: record4.bookKey,
+    siteIdentity: record4.siteIdentity,
+    offeredAt: record4.offeredAt
+  };
+}
+function claimTicketDispatchLease(options) {
+  const bookKey = requireNonemptyString(options.bookKey, "bookKey");
+  const siteIdentity = requireNonemptyString(options.siteIdentity, "siteIdentity");
+  const pendingPath = pendingLeasePath(options.ledgerHome, bookKey);
+  const claimedPath = claimedLeasePath(options.ledgerHome, bookKey);
+  let raw;
+  try {
+    raw = readFileSync(pendingPath, "utf8");
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") {
+      throw new TicketDispatchLeaseMissingError(
+        `no ticket dispatch lease pending for book ${bookKey}`,
+        { cause: error }
+      );
+    }
+    throw new TicketDispatchLeaseError(
+      `failed to read ticket dispatch lease (${pendingPath}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  const pending = parsePendingLease(raw, pendingPath);
+  if (pending.bookKey !== bookKey) {
+    throw new TicketDispatchLeaseError(
+      `ticket dispatch lease bookKey mismatch for book ${bookKey}`
+    );
+  }
+  if (pending.siteIdentity !== siteIdentity) {
+    throw new TicketDispatchLeaseSiteMismatchError(
+      `ticket dispatch lease siteIdentity does not match claimer for book ${bookKey}`
+    );
+  }
+  consumePendingLeaseByRename(pendingPath, claimedPath, bookKey);
+  try {
+    const correlationId = (options.createCorrelationId ?? randomUUID)();
+    if (typeof correlationId !== "string" || correlationId.length === 0) {
+      throw new TicketDispatchLeaseError("claimed correlation id must be a nonempty string");
+    }
+    const observedAt = (options.now ?? /* @__PURE__ */ new Date()).toISOString();
+    const binding = buildTicketBindingDispatchFact({
+      observedAt,
+      bookKey,
+      siteIdentity: pending.siteIdentity,
+      ticketNumber: pending.ticketNumber,
+      correlation: { kind: "caller", id: correlationId }
+    });
+    const waitingPath = activationWaitingLedgerPath(options.ledgerHome, bookKey);
+    appendActivationLedgerJsonlLine(waitingPath, binding, {
+      ledgerHome: options.ledgerHome
+    });
+    appendDispatchStubFact(
+      waitingPath,
+      buildDispatchStubFact({
+        observedAt,
+        bookKey,
+        dispatch: { kind: "process", pid: options.pid ?? process.pid },
+        correlation: { kind: "caller", id: correlationId }
+      }),
+      { ledgerHome: options.ledgerHome }
+    );
+    return {
+      ticketNumber: pending.ticketNumber,
+      bookKey,
+      siteIdentity: pending.siteIdentity,
+      correlationId
+    };
+  } finally {
+    try {
+      unlinkSync(claimedPath);
+    } catch {
+    }
+  }
+}
+function consumePendingLeaseByRename(pendingPath, claimedPath, bookKey) {
+  try {
+    renameSync(pendingPath, claimedPath);
+    return;
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") {
+      throw new TicketDispatchLeaseHeldError(
+        `ticket dispatch lease is held or not unique for book ${bookKey}`,
+        { cause: error }
+      );
+    }
+    if (errnoCode(error) !== "EEXIST") {
+      throw new TicketDispatchLeaseError(
+        `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  try {
+    readFileSync(pendingPath);
+  } catch (pendingError) {
+    if (errnoCode(pendingError) === "ENOENT") {
+      throw new TicketDispatchLeaseHeldError(
+        `ticket dispatch lease is held or not unique for book ${bookKey}`,
+        { cause: pendingError }
+      );
+    }
+    throw new TicketDispatchLeaseError(
+      `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(pendingError)}`,
+      { cause: pendingError }
+    );
+  }
+  try {
+    unlinkSync(claimedPath);
+  } catch (unlinkError) {
+    if (errnoCode(unlinkError) !== "ENOENT") {
+      throw new TicketDispatchLeaseError(
+        `failed to clear leftover claimed ticket dispatch lease for book ${bookKey} (${claimedPath}): ${errorText(unlinkError)}`,
+        { cause: unlinkError }
+      );
+    }
+  }
+  try {
+    renameSync(pendingPath, claimedPath);
+  } catch (retryError) {
+    if (errnoCode(retryError) === "ENOENT" || errnoCode(retryError) === "EEXIST") {
+      throw new TicketDispatchLeaseHeldError(
+        `ticket dispatch lease is held or not unique for book ${bookKey}`,
+        { cause: retryError }
+      );
+    }
+    throw new TicketDispatchLeaseError(
+      `failed to claim ticket dispatch lease (${pendingPath}): ${errorText(retryError)}`,
+      { cause: retryError }
+    );
+  }
+}
+var TICKET_BINDING_EVENT, DISPATCH_LEASE_PENDING_FILE, DISPATCH_LEASE_CLAIMED_FILE, TicketDispatchLeaseError, TicketDispatchLeaseMissingError, TicketDispatchLeaseHeldError, TicketDispatchLeaseSiteMismatchError;
+var init_ticket_dispatch_lease = __esm({
+  "src/ticket-dispatch-lease.ts"() {
+    "use strict";
+    init_activation_ledger();
+    init_activation_reconciliation();
+    init_activation_ledger_topology();
+    TICKET_BINDING_EVENT = "ticket-binding";
+    DISPATCH_LEASE_PENDING_FILE = "dispatch-lease.json";
+    DISPATCH_LEASE_CLAIMED_FILE = "dispatch-lease.claimed.json";
+    TicketDispatchLeaseError = class extends Error {
+      code = "AK_TICKET_DISPATCH_LEASE";
+      constructor(message, options) {
+        super(
+          message,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "TicketDispatchLeaseError";
+      }
+    };
+    TicketDispatchLeaseMissingError = class extends TicketDispatchLeaseError {
+      code = "AK_TICKET_DISPATCH_LEASE_MISSING";
+      constructor(message = "no ticket dispatch lease pending for this book", options) {
+        super(message, options);
+        this.name = "TicketDispatchLeaseMissingError";
+      }
+    };
+    TicketDispatchLeaseHeldError = class extends TicketDispatchLeaseError {
+      code = "AK_TICKET_DISPATCH_LEASE_HELD";
+      constructor(message = "ticket dispatch lease is held or not unique", options) {
+        super(message, options);
+        this.name = "TicketDispatchLeaseHeldError";
+      }
+    };
+    TicketDispatchLeaseSiteMismatchError = class extends TicketDispatchLeaseError {
+      code = "AK_TICKET_DISPATCH_LEASE_SITE_MISMATCH";
+      constructor(message = "ticket dispatch lease siteIdentity does not match claimer", options) {
+        super(message, options);
+        this.name = "TicketDispatchLeaseSiteMismatchError";
+      }
+    };
   }
 });
 
@@ -14996,7 +15404,7 @@ var init_terminating_tools = __esm({
 
 // src/doctor-evidence.ts
 import { readdir, readFile as readFile2, realpath, stat } from "node:fs/promises";
-import { dirname as dirname5, relative as relative2, resolve as resolve3, sep as sep2 } from "node:path";
+import { dirname as dirname6, relative as relative2, resolve as resolve4, sep as sep2 } from "node:path";
 function record2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -15004,7 +15412,7 @@ async function discoverCaseFiles(root) {
   const found = [];
   async function walk(dir, depth) {
     for (const item of await readdir(dir, { withFileTypes: true })) {
-      const path = resolve3(dir, item.name);
+      const path = resolve4(dir, item.name);
       if (item.isDirectory()) await walk(path, depth + 1);
       else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log" && depth === 1)) found.push(path);
     }
@@ -15029,12 +15437,12 @@ async function stableRunsIdentity(root) {
   let cursor = root;
   while (true) {
     try {
-      const git2 = await stat(resolve3(cursor, ".git"));
+      const git2 = await stat(resolve4(cursor, ".git"));
       if (git2.isDirectory() || git2.isFile()) return relative2(cursor, root).split(sep2).join("/");
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
     }
-    const parent = dirname5(cursor);
+    const parent = dirname6(cursor);
     if (parent === cursor) return root;
     cursor = parent;
   }
@@ -15329,7 +15737,7 @@ import {
   realpath as realpath2,
   writeFile as writeFile2
 } from "node:fs/promises";
-import { basename as basename3, isAbsolute as isAbsolute3, join as join5, resolve as resolve4, sep as sep3 } from "node:path";
+import { basename as basename3, isAbsolute as isAbsolute4, join as join6, resolve as resolve5, sep as sep3 } from "node:path";
 async function writeRoleInvocationLedger(source, role) {
   const identity = {
     role,
@@ -15338,17 +15746,19 @@ async function writeRoleInvocationLedger(source, role) {
     projectRoot: source.projectRoot,
     runDirectory: source.runDirectory,
     sessionDirectory: source.sessionDirectory,
-    sessionFile: source.sessionFile
+    sessionFile: source.sessionFile,
+    ...source.correlationId === void 0 ? {} : { correlationId: source.correlationId },
+    ...source.ticketNumber === void 0 ? {} : { ticketNumber: source.ticketNumber }
   };
   await writeFile2(
-    join5(source.runDirectory, "invocation.json"),
+    join6(source.runDirectory, "invocation.json"),
     `${JSON.stringify(identity, null, 2)}
 `,
     "utf8"
   );
 }
 async function mergeInvocationIdentityPage(runDirectory, fields) {
-  const ledgerPath = join5(runDirectory, "invocation.json");
+  const ledgerPath = join6(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile4(ledgerPath, "utf8"));
   await writeFile2(
     ledgerPath,
@@ -15369,7 +15779,7 @@ async function recordLaunchedPiIdentity(runDirectory, identity) {
 async function observeLaunchedRolePackageIdentity(packageRoot2, selectedRoleEntry) {
   const rolePackageRoot = packageRoot2;
   const raw = JSON.parse(
-    await readFile4(join5(rolePackageRoot, "package.json"), "utf8")
+    await readFile4(join6(rolePackageRoot, "package.json"), "utf8")
   );
   if (typeof raw.version !== "string" || raw.version.trim() === "") {
     throw new Error(
@@ -15548,7 +15958,7 @@ function parseFixerArgv(args) {
   };
 }
 async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
-  const absolute = isAbsolute3(sourcePath) ? sourcePath : resolve4(sourcePath);
+  const absolute = isAbsolute4(sourcePath) ? sourcePath : resolve5(sourcePath);
   let st;
   try {
     st = await lstat(absolute);
@@ -15565,7 +15975,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
   }
   const bytes = await readFile4(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename3(absolute)}`;
-  const frozenPath = join5(destinationDir, name);
+  const frozenPath = join6(destinationDir, name);
   await writeFile2(frozenPath, bytes);
   return {
     provenancePath: absolute,
@@ -15575,14 +15985,33 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
     mediaKind: "regular-file"
   };
 }
+function claimTicketDispatchLeaseForAdmit(input) {
+  try {
+    return claimTicketDispatchLease({
+      ledgerHome: input.ledgerHome,
+      bookKey: input.bookKey,
+      siteIdentity: input.siteIdentity
+    });
+  } catch (error) {
+    if (error instanceof TicketDispatchLeaseError) {
+      throw new CliUsageError(error.message, { cause: error });
+    }
+    throw error;
+  }
+}
 async function admitJudgeInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  const projectRoot = resolve4(options.project ?? options.cwd);
+  const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -15605,6 +16034,8 @@ async function admitJudgeInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -15615,7 +16046,7 @@ async function admitJudgeInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role);
@@ -15630,7 +16061,9 @@ async function admitJudgeInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
-    admittedRequestPath
+    admittedRequestPath,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber
   };
 }
 function buildJudgeTransportPrompt(admitted) {
@@ -15645,7 +16078,7 @@ function buildJudgeTransportPrompt(admitted) {
   return lines.join("\n");
 }
 async function ensureRunArtifactsDir(runDirectory) {
-  const dir = join5(runDirectory, "artifacts");
+  const dir = join6(runDirectory, "artifacts");
   await mkdir2(dir, { recursive: true });
   return dir;
 }
@@ -15662,10 +16095,15 @@ async function admitCoderInvocation(options) {
   if (options.phase !== "plan" && options.phase !== "apply") {
     throw new CliUsageError("coder phase must be plan or apply");
   }
-  const projectRoot = resolve4(options.project ?? options.cwd);
+  const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -15678,7 +16116,7 @@ async function admitCoderInvocation(options) {
       )
     );
   }
-  const taskPath = join5(runDirectory, "task.md");
+  const taskPath = join6(runDirectory, "task.md");
   await writeFile2(taskPath, instruction, "utf8");
   const admitted = {
     role: "coder",
@@ -15689,6 +16127,8 @@ async function admitCoderInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -15700,7 +16140,7 @@ async function admitCoderInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role);
@@ -15717,7 +16157,9 @@ async function admitCoderInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
-    taskPath
+    taskPath,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber
   };
 }
 function buildCoderTransportPrompt(admitted) {
@@ -15744,10 +16186,15 @@ async function admitFixerInvocation(options) {
   if (options.phase !== "plan" && options.phase !== "apply") {
     throw new CliUsageError("fixer phase must be plan or apply");
   }
-  const projectRoot = resolve4(options.project ?? options.cwd);
+  const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -15763,7 +16210,7 @@ async function admitFixerInvocation(options) {
   let prerequisites = Object.freeze([]);
   let prerequisitesPath;
   if (options.prerequisitesPath !== void 0) {
-    const absolutePrereq = isAbsolute3(options.prerequisitesPath) ? options.prerequisitesPath : resolve4(options.prerequisitesPath);
+    const absolutePrereq = isAbsolute4(options.prerequisitesPath) ? options.prerequisitesPath : resolve5(options.prerequisitesPath);
     let source;
     try {
       source = await readFile4(absolutePrereq, "utf8");
@@ -15781,7 +16228,7 @@ async function admitFixerInvocation(options) {
       }
       throw error;
     }
-    prerequisitesPath = join5(runDirectory, "prerequisites.json");
+    prerequisitesPath = join6(runDirectory, "prerequisites.json");
     await writeFile2(
       prerequisitesPath,
       `${JSON.stringify(prerequisites, null, 2)}
@@ -15789,7 +16236,7 @@ async function admitFixerInvocation(options) {
       "utf8"
     );
   }
-  const packetPath = join5(runDirectory, "fix-packet.md");
+  const packetPath = join6(runDirectory, "fix-packet.md");
   await writeFile2(packetPath, instruction, "utf8");
   const admitted = {
     role: "fixer",
@@ -15800,6 +16247,8 @@ async function admitFixerInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty: false,
     packetPath,
@@ -15816,7 +16265,7 @@ async function admitFixerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role);
@@ -15835,7 +16284,9 @@ async function admitFixerInvocation(options) {
     admittedRequestPath,
     packetPath,
     ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
-    prerequisites
+    prerequisites,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber
   };
 }
 function buildFixerTransportPrompt(admitted) {
@@ -15991,7 +16442,7 @@ async function admitCollectorInvocation(options) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new CliUsageError(detail, { cause: error });
   }
-  const projectRoot = resolve4(options.project ?? options.cwd);
+  const projectRoot = resolve5(options.project ?? options.cwd);
   let repository;
   if (options.repo !== void 0) {
     try {
@@ -16005,7 +16456,12 @@ async function admitCollectorInvocation(options) {
   }
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -16027,7 +16483,7 @@ async function admitCollectorInvocation(options) {
     } catch (error) {
       throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
     }
-    requestManifestPath = join5(runDirectory, "request-manifest.json");
+    requestManifestPath = join6(runDirectory, "request-manifest.json");
     await writeFile2(requestManifestPath, manifest.canonicalJson, "utf8");
   }
   const manifestDigest = manifest.digest;
@@ -16041,6 +16497,8 @@ async function admitCollectorInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty,
     prNumber,
@@ -16056,7 +16514,7 @@ async function admitCollectorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -16079,7 +16537,9 @@ async function admitCollectorInvocation(options) {
     prNumber,
     repository,
     ...requestManifestPath === void 0 ? {} : { requestManifestPath },
-    manifestDigest
+    manifestDigest,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber
   };
 }
 function buildCollectorTransportPrompt(_admitted) {
@@ -16178,7 +16638,7 @@ function parseDoctorArgv(args) {
 }
 async function resolveDoctorCaseRunsPath(options) {
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
-  const defaultRuns = join5(
+  const defaultRuns = join6(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",
     String(options.issueNumber),
@@ -16191,12 +16651,12 @@ async function resolveDoctorCaseRunsPath(options) {
   if (raw === "") {
     throw new CliUsageError("doctor --runs requires a path");
   }
-  if (isAbsolute3(raw)) {
+  if (isAbsolute4(raw)) {
     throw new CliUsageError(
       "doctor --runs must be a project-relative path"
     );
   }
-  const resolved = resolve4(options.projectRoot, raw);
+  const resolved = resolve5(options.projectRoot, raw);
   if (resolved !== options.projectRoot && !pathContainedIn(options.projectRoot, resolved)) {
     throw new CliUsageError(
       "doctor --runs escapes the project root"
@@ -16235,7 +16695,7 @@ async function admitDoctorInvocation(options) {
       `doctor --issue must be a positive integer, got ${options.issueNumber}`
     );
   }
-  const projectRoot = resolve4(options.project ?? options.cwd);
+  const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "doctor", home: options.home });
   let caseRunsPath;
@@ -16273,7 +16733,7 @@ async function admitDoctorInvocation(options) {
       { cause: error }
     );
   }
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -16310,7 +16770,7 @@ async function admitDoctorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -16396,10 +16856,15 @@ async function admitReviewerInvocation(options) {
   if (options.baseRevision.trim() === "") {
     throw new CliUsageError("--base requires a nonempty revision");
   }
-  const projectRoot = resolve4(options.project ?? options.cwd);
+  const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -16422,6 +16887,8 @@ async function admitReviewerInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
@@ -16433,7 +16900,7 @@ async function admitReviewerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -16453,7 +16920,9 @@ async function admitReviewerInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
-    baseRevision: options.baseRevision
+    baseRevision: options.baseRevision,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber
   };
 }
 function buildReviewerTransportPrompt(admitted) {
@@ -16545,14 +17014,19 @@ async function admitMergerInvocation(options) {
   if (instruction.trim() === "") {
     throw new CliUsageError("merger requires a nonblank task instruction");
   }
-  const projectRoot = resolve4(options.project ?? options.cwd);
+  const projectRoot = resolve5(options.project ?? options.cwd);
   const derived = await deriveMergerEnvelopeFromActiveMerge(
     projectRoot,
     options.gitState ?? createProductionMergerGitState(projectRoot)
   );
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+    ledgerHome,
+    bookKey,
+    siteIdentity: projectRoot
+  });
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments = [];
@@ -16589,7 +17063,7 @@ async function admitMergerInvocation(options) {
     // Authorized checks remain available on the assignment; default none.
     authorizedChecks: []
   });
-  const mergerInputPath = join5(runDirectory, "merger-input.json");
+  const mergerInputPath = join6(runDirectory, "merger-input.json");
   await writeFile2(
     mergerInputPath,
     `${JSON.stringify(mergerInput, null, 2)}
@@ -16604,6 +17078,8 @@ async function admitMergerInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber,
     instruction,
     instructionEmpty: false,
     mergerInputPath,
@@ -16622,7 +17098,7 @@ async function admitMergerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -16643,7 +17119,9 @@ async function admitMergerInvocation(options) {
     sessionFile,
     admittedRequestPath,
     mergerInputPath,
-    derived: admitted.derived
+    derived: admitted.derived,
+    correlationId: dispatchLease.correlationId,
+    ticketNumber: dispatchLease.ticketNumber
   };
 }
 function buildMergerTransportPrompt(admitted) {
@@ -16666,6 +17144,7 @@ var init_invocation = __esm({
     init_activation_ledger_topology();
     init_activation_ledger_git();
     init_sitian_role_run_coordinates();
+    init_ticket_dispatch_lease();
     init_doctor_evidence();
     init_collector_config();
     init_fixer_packet();
@@ -16781,16 +17260,16 @@ var init_reviewer_dispatch = __esm({
 
 // src/public-cli/explicit-internal.ts
 import { execFile as execFile3, spawn } from "node:child_process";
-import { constants, writeFileSync } from "node:fs";
+import { constants as constants2, writeFileSync } from "node:fs";
 import { access, readFile as readFile5, realpath as realpath3, unlink } from "node:fs/promises";
-import { delimiter as delimiter2, isAbsolute as isAbsolute4, join as join6, resolve as resolve5 } from "node:path";
+import { delimiter as delimiter2, isAbsolute as isAbsolute5, join as join7, resolve as resolve6 } from "node:path";
 import { platform } from "node:process";
 import { promisify as promisify3 } from "node:util";
 function isReviewerPreflightViolation(value) {
   return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
 }
 function reviewerDispatchRejectionPath(runDirectory) {
-  return join6(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
+  return join7(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
 }
 async function clearReviewerDispatchRejection(runDirectory) {
   try {
@@ -16832,7 +17311,7 @@ async function readReviewerDispatchRejection(runDirectory) {
   };
 }
 function resolveInternalRoleEntrypoint(packageRoot2) {
-  return join6(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
+  return join7(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
 }
 function buildExplicitInternalActivationArgs(selectedRoleEntry, extraArgs = []) {
   return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
@@ -16856,10 +17335,10 @@ function knownFailureFromProviderStop(input) {
 }
 async function resolveSelectedPi(command, cwd, env) {
   const searchPath = env.PATH ?? (platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin");
-  const candidates = isAbsolute4(command) || command.includes("/") ? [resolve5(cwd, command)] : searchPath.split(delimiter2).map((dir) => resolve5(cwd, dir, command));
+  const candidates = isAbsolute5(command) || command.includes("/") ? [resolve6(cwd, command)] : searchPath.split(delimiter2).map((dir) => resolve6(cwd, dir, command));
   for (const candidate of candidates) {
     try {
-      await access(candidate, constants.X_OK);
+      await access(candidate, constants2.X_OK);
     } catch (error) {
       const code = error.code;
       if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") continue;
@@ -16972,7 +17451,7 @@ var init_explicit_internal = __esm({
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
 import { readFile as readFile6, realpath as realpath4 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
   const header = Buffer.from(`blob ${body.byteLength}\0`, "utf8");
@@ -16989,10 +17468,10 @@ function packagedMethodSkillRelativeDirectory(name) {
   return `${METHOD_SKILL_RELATIVE_ROOT}/${name}`;
 }
 function resolvePackagedMethodSkillRoot(packageRoot2, name) {
-  return join7(packageRoot2, packagedMethodSkillRelativeDirectory(name));
+  return join8(packageRoot2, packagedMethodSkillRelativeDirectory(name));
 }
 function resolvePackagedMethodSkillPath(packageRoot2, name) {
-  return join7(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
+  return join8(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
 }
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -17086,8 +17565,8 @@ function parseProvenance(raw, expectedName) {
 }
 async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const rootDirectory = resolvePackagedMethodSkillRoot(packageRoot2, name);
-  const skillPathConfigured = join7(rootDirectory, "SKILL.md");
-  const provenancePath = join7(rootDirectory, "provenance.json");
+  const skillPathConfigured = join8(rootDirectory, "SKILL.md");
+  const provenancePath = join8(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
     provenanceRaw = await readFile6(provenancePath, "utf8");
@@ -17104,7 +17583,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   }
   const provenance = parseProvenance(provenanceJson, name);
   for (const [rel, expected] of Object.entries(provenance.files)) {
-    const absolute = join7(rootDirectory, rel);
+    const absolute = join8(rootDirectory, rel);
     let bytes;
     try {
       bytes = await readFile6(absolute);
@@ -17239,12 +17718,12 @@ var init_public_run_credentials = __esm({
 
 // src/public-cli/run-lifecycle.ts
 import { lstat as lstat2, open, readdir as readdir2, readFile as readFile7, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
 }
 function typedProviderHttpPath(runDirectory) {
-  return join8(runDirectory, TYPED_HTTP_FILE);
+  return join9(runDirectory, TYPED_HTTP_FILE);
 }
 async function clearTypedProviderHttpObservation(runDirectory) {
   try {
@@ -17283,7 +17762,7 @@ function renderResumeCommand(runId) {
 async function writeRoleRunState(runDirectory, record4) {
   const payload = { ...record4, runDirectory };
   await writeFile3(
-    join8(runDirectory, RUN_STATE_FILE),
+    join9(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
 `,
     "utf8"
@@ -17292,7 +17771,7 @@ async function writeRoleRunState(runDirectory, record4) {
 async function readRoleRunState(runDirectory) {
   let raw;
   try {
-    raw = JSON.parse(await readFile7(join8(runDirectory, RUN_STATE_FILE), "utf8"));
+    raw = JSON.parse(await readFile7(join9(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
@@ -17314,7 +17793,7 @@ async function readRoleRunState(runDirectory) {
   if (typeof record4.sessionDirectory !== "string") return void 0;
   if (typeof record4.admittedRequestPath !== "string") return void 0;
   const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
-  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join8(record4.sessionDirectory, "session.jsonl");
+  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join9(record4.sessionDirectory, "session.jsonl");
   let resumable;
   if (record4.resumable !== void 0 && record4.resumable !== null) {
     if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
@@ -17407,7 +17886,7 @@ async function isSessionPrincipalAvailable(sessionFile) {
   }
 }
 async function acquireRunWriterLease(runDirectory) {
-  const lockPath = join8(runDirectory, WRITER_LOCK_FILE);
+  const lockPath = join9(runDirectory, WRITER_LOCK_FILE);
   try {
     const handle = await open(lockPath, "wx");
     try {
@@ -17438,7 +17917,7 @@ async function acquireRunWriterLease(runDirectory) {
 async function findRunDirectoryById(home, runId) {
   if (runId.trim() === "") return void 0;
   const ledgerHome = resolveActivationLedgerHome(() => home);
-  const booksRoot = join8(ledgerHome, "books");
+  const booksRoot = join9(ledgerHome, "books");
   let bookKeys;
   try {
     bookKeys = await readdir2(booksRoot);
@@ -17446,7 +17925,7 @@ async function findRunDirectoryById(home, runId) {
     return void 0;
   }
   for (const bookKey of bookKeys) {
-    const runsDir = join8(activationBookDirectory(ledgerHome, bookKey), "runs");
+    const runsDir = join9(activationBookDirectory(ledgerHome, bookKey), "runs");
     let entries;
     try {
       entries = await readdir2(runsDir);
@@ -17455,7 +17934,7 @@ async function findRunDirectoryById(home, runId) {
     }
     for (const entry of entries) {
       if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join8(runsDir, entry);
+        return join9(runsDir, entry);
       }
     }
   }
@@ -18060,7 +18539,7 @@ var init_collector_ledger = __esm({
 });
 
 // src/work-subject-identity.ts
-import { resolve as resolve6 } from "node:path";
+import { resolve as resolve7 } from "node:path";
 function issueRoot(value) {
   const normalized = value.replaceAll("\\", "/");
   const marker = ".ak/work/issues/";
@@ -18070,7 +18549,7 @@ function issueRoot(value) {
   return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
 }
 function workIdentityFromCwd(cwd) {
-  const resolvedCwd = resolve6(cwd, ".");
+  const resolvedCwd = resolve7(cwd, ".");
   const cwdIssue = issueRoot(resolvedCwd);
   if (cwdIssue !== void 0) return cwdIssue;
   if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
@@ -18081,11 +18560,11 @@ function isMachineLedgerSessionPath(sessionPath) {
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
   if (sessionDir === "") {
-    return workIdentityFromCwd(cwd) ?? resolve6(cwd, ".ak/work");
+    return workIdentityFromCwd(cwd) ?? resolve7(cwd, ".ak/work");
   }
-  const resolvedSession = resolve6(cwd, sessionDir || ".ak/work");
+  const resolvedSession = resolve7(cwd, sessionDir || ".ak/work");
   if (isMachineLedgerSessionPath(resolvedSession)) {
-    return workIdentityFromCwd(cwd) ?? resolve6(cwd, ".ak/work");
+    return workIdentityFromCwd(cwd) ?? resolve7(cwd, ".ak/work");
   }
   const issue = issueRoot(resolvedSession);
   if (issue !== void 0) return issue;
@@ -18430,9 +18909,9 @@ var init_terminal = __esm({
 });
 
 // src/public-cli/settlement.ts
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile8, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname6, join as join9 } from "node:path";
+import { dirname as dirname7, join as join10 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
   if (line2.startsWith("event:")) return true;
@@ -18685,7 +19164,7 @@ async function readSessionProviderStop(sessionFile) {
   }
 }
 async function readBoundEvidenceChildKnownFailure(sessionFile) {
-  const childDirectory = join9(dirname6(sessionFile), "evidence-children");
+  const childDirectory = join10(dirname7(sessionFile), "evidence-children");
   let names;
   try {
     names = await readdir3(childDirectory);
@@ -18696,7 +19175,7 @@ async function readBoundEvidenceChildKnownFailure(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join9(childDirectory, file));
+      entries = await readBoundSessionEntries(join10(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered evidence-child session");
     }
@@ -18733,7 +19212,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
       break;
     }
   }
-  const childDirectory = join9(dirname6(sessionFile), "auditor-roles");
+  const childDirectory = join10(dirname7(sessionFile), "auditor-roles");
   let names;
   try {
     names = await readdir3(childDirectory);
@@ -18744,7 +19223,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join9(childDirectory, file));
+      entries = await readBoundSessionEntries(join10(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
@@ -19358,7 +19837,7 @@ function auditArtifactPublicationError(message, code) {
   return error;
 }
 async function ensureAuditEvidenceDirectory(runDirectory) {
-  const artifactsDir = join9(runDirectory, "artifacts");
+  const artifactsDir = join10(runDirectory, "artifacts");
   const runStat = await lstat3(runDirectory);
   if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
     throw auditArtifactPublicationError(
@@ -19395,7 +19874,7 @@ async function ensureAuditEvidenceDirectory(runDirectory) {
 }
 async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
   const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
-  const evidencePath = join9(artifactsDir, "audit-incomplete.json");
+  const evidencePath = join10(artifactsDir, "audit-incomplete.json");
   try {
     const existing = await lstat3(evidencePath);
     throw auditArtifactPublicationError(
@@ -19417,7 +19896,7 @@ async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
 }
 function auditPublicationFailureTerminal(admitted, entries, outcome, error) {
   const attempt = publicationAttemptFromError(
-    join9(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
+    join10(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
     error
   );
   const diagnostic = `audit-incomplete evidence publication failed: ${attempt.diagnostic}`;
@@ -19711,8 +20190,8 @@ async function extractNavigatorFactFromAdmittedSession(admitted) {
 }
 async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -19755,8 +20234,8 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
 }
 async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -19930,8 +20409,8 @@ function extractFixerMethodInvocations(entries, options) {
 }
 async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -20044,8 +20523,8 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
 }
 async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -20166,8 +20645,8 @@ async function trySettleCollectorTerminalResult(admitted) {
 }
 async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -20335,8 +20814,8 @@ function extractReviewerMethodInvocations(entries, options) {
 }
 async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -20502,8 +20981,8 @@ function extractMergerMethodInvocations(entries, options) {
 }
 async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join9(artifactsDir, "report.json");
-  const evidencePath = join9(artifactsDir, "evidence.json");
+  const reportPath = join10(artifactsDir, "report.json");
+  const evidencePath = join10(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -20668,13 +21147,13 @@ function publicationAttemptFromError(path, error) {
 }
 function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   const dirs = [];
-  for (const dir of [baseDir, runDirectory, dirname6(runDirectory)]) {
+  for (const dir of [baseDir, runDirectory, dirname7(runDirectory)]) {
     if (!dirs.includes(dir)) dirs.push(dir);
   }
   return dirs;
 }
 async function resolveFailureArtifactsBase(runDirectory) {
-  const artifactsDir = join9(runDirectory, "artifacts");
+  const artifactsDir = join10(runDirectory, "artifacts");
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -20690,7 +21169,7 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   const candidates = [
     ...preferredCandidates,
     // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join9(dir, `${stem}.${randomUUID()}.json`))
+    ...uniqueFallbackDirs.map((dir) => join10(dir, `${stem}.${randomUUID2()}.json`))
   ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
@@ -20725,26 +21204,26 @@ async function publishFailureArtifacts(admitted, failure) {
     admitted.runDirectory
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
-  const underArtifacts = baseDir === join9(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === join10(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir
   );
   const errorCandidates = underArtifacts ? [
-    join9(baseDir, "error.json"),
-    join9(baseDir, "error.settlement.json"),
-    join9(admitted.runDirectory, "error.settlement.json")
+    join10(baseDir, "error.json"),
+    join10(baseDir, "error.settlement.json"),
+    join10(admitted.runDirectory, "error.settlement.json")
   ] : [
-    join9(baseDir, "error.settlement.json"),
-    join9(baseDir, "error.json")
+    join10(baseDir, "error.settlement.json"),
+    join10(baseDir, "error.json")
   ];
   const evidenceCandidates = underArtifacts ? [
-    join9(baseDir, "evidence.json"),
-    join9(baseDir, "evidence.settlement.json"),
-    join9(admitted.runDirectory, "evidence.settlement.json")
+    join10(baseDir, "evidence.json"),
+    join10(baseDir, "evidence.settlement.json"),
+    join10(admitted.runDirectory, "evidence.settlement.json")
   ] : [
-    join9(baseDir, "evidence.settlement.json"),
-    join9(baseDir, "evidence.json")
+    join10(baseDir, "evidence.settlement.json"),
+    join10(baseDir, "evidence.json")
   ];
   const errorPayloadBase = {
     kind: "error",
@@ -20958,7 +21437,7 @@ var init_settlement = __esm({
 
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile5 } from "node:fs/promises";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 function buildModelArgs(model) {
   if (model === void 0) return [];
   return [
@@ -21118,7 +21597,7 @@ async function dispatchAdmittedCoder(input) {
     }
     try {
       await writeFile5(
-        join10(admitted.runDirectory, "stderr.log"),
+        join11(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -21235,7 +21714,10 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
   });
   return await dispatchAdmittedCoder({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -21332,7 +21814,7 @@ var init_coder_run = __esm({
 
 // src/public-cli/collector-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 function buildModelArgs2(model) {
   if (model === void 0) return [];
   return [
@@ -21443,7 +21925,7 @@ async function dispatchAdmittedCollector(input) {
     }
     try {
       await writeFile6(
-        join11(admitted.runDirectory, "stderr.log"),
+        join12(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -21543,7 +22025,10 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
   });
   return await dispatchAdmittedCollector({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease
@@ -21564,7 +22049,7 @@ var init_collector_run = __esm({
 
 // src/public-cli/doctor-run.ts
 import { writeFile as writeFile7 } from "node:fs/promises";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 function buildModelArgs3(model) {
   if (model === void 0) return [];
   return [
@@ -21669,7 +22154,7 @@ async function dispatchAdmittedDoctor(input) {
     }
     try {
       await writeFile7(
-        join12(admitted.runDirectory, "stderr.log"),
+        join13(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -21796,7 +22281,7 @@ var init_doctor_run = __esm({
 
 // src/public-cli/fixer-run.ts
 import { writeFile as writeFile8 } from "node:fs/promises";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 function buildModelArgs4(model) {
   if (model === void 0) return [];
   return [
@@ -21965,7 +22450,7 @@ async function dispatchAdmittedFixer(input) {
     }
     try {
       await writeFile8(
-        join13(admitted.runDirectory, "stderr.log"),
+        join14(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -22098,7 +22583,10 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
   });
   return await dispatchAdmittedFixer({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -22188,7 +22676,7 @@ var init_fixer_run = __esm({
 
 // src/public-cli/judge-run.ts
 import { writeFile as writeFile9 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 function buildModelArgs5(model) {
   if (model === void 0) return [];
   return [
@@ -22330,7 +22818,7 @@ async function dispatchAdmittedJudge(input) {
     }
     try {
       await writeFile9(
-        join14(admitted.runDirectory, "stderr.log"),
+        join15(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -22434,7 +22922,10 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
   });
   return await dispatchAdmittedJudge({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease
@@ -22504,7 +22995,7 @@ var init_judge_run = __esm({
 
 // src/public-cli/merger-run.ts
 import { mkdir as mkdir4, writeFile as writeFile10 } from "node:fs/promises";
-import { join as join15, resolve as resolve7 } from "node:path";
+import { join as join16, resolve as resolve8 } from "node:path";
 function buildModelArgs6(model) {
   if (model === void 0) return [];
   return [
@@ -22662,7 +23153,7 @@ async function dispatchAdmittedMerger(input) {
     }
     try {
       await writeFile10(
-        join15(admitted.runDirectory, "stderr.log"),
+        join16(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -22730,7 +23221,7 @@ async function loadMergerMethodMaterial(packageRoot2) {
   );
 }
 async function admitMergerShellForActivationFailure(options) {
-  const projectRoot = resolve7(options.project ?? options.cwd);
+  const projectRoot = resolve8(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
@@ -22742,8 +23233,8 @@ async function admitMergerShellForActivationFailure(options) {
     expectedConflictPaths: [],
     resolutionScope: []
   };
-  const admittedRequestPath = join15(runDirectory, "admitted-request.json");
-  const mergerInputPath = join15(runDirectory, "merger-input.json");
+  const admittedRequestPath = join16(runDirectory, "admitted-request.json");
+  const mergerInputPath = join16(runDirectory, "merger-input.json");
   await writeFile10(
     admittedRequestPath,
     `${JSON.stringify(
@@ -22865,7 +23356,10 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
   });
   return await dispatchAdmittedMerger({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -22959,7 +23453,7 @@ var init_merger_run = __esm({
 
 // src/public-cli/reviewer-run.ts
 import { writeFile as writeFile11 } from "node:fs/promises";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 function buildModelArgs7(model) {
   if (model === void 0) return [];
   return [
@@ -23115,7 +23609,7 @@ async function dispatchAdmittedReviewer(input) {
     }
     try {
       await writeFile11(
-        join16(admitted.runDirectory, "stderr.log"),
+        join17(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -23248,7 +23742,10 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
   });
   return await dispatchAdmittedReviewer({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -23347,7 +23844,7 @@ __export(cli_exports, {
 });
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 function defaultIo() {
   return {
     stdout: (text) => {
@@ -23362,7 +23859,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join17(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join18(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -23735,7 +24232,6 @@ async function runAkRole(argv, env) {
           packageRoot: env.packageRoot,
           cwd,
           credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
@@ -23769,7 +24265,6 @@ async function runAkRole(argv, env) {
           packageRoot: env.packageRoot,
           cwd,
           credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
@@ -23803,7 +24298,6 @@ async function runAkRole(argv, env) {
           packageRoot: env.packageRoot,
           cwd,
           credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
@@ -23837,7 +24331,6 @@ async function runAkRole(argv, env) {
           packageRoot: env.packageRoot,
           cwd,
           credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...env.collectorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.collectorExtraPiArgs },
@@ -23871,7 +24364,6 @@ async function runAkRole(argv, env) {
           packageRoot: env.packageRoot,
           cwd,
           credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
@@ -23939,7 +24431,6 @@ async function runAkRole(argv, env) {
           packageRoot: env.packageRoot,
           cwd,
           credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
@@ -24002,7 +24493,7 @@ var init_cli = __esm({
 });
 
 // src/public-cli/main.ts
-import { dirname as dirname7, join as join18 } from "node:path";
+import { dirname as dirname8, join as join19 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -24089,8 +24580,8 @@ function linkPackage(packageRoot2, name, targetDir) {
 }
 
 // src/public-cli/main.ts
-var here = dirname7(fileURLToPath2(import.meta.url));
-var packageRoot = join18(here, "..", "..");
+var here = dirname8(fileURLToPath2(import.meta.url));
+var packageRoot = join19(here, "..", "..");
 ensureHostPiRuntimeResolvable(packageRoot);
 var { runAkRole: runAkRole2 } = await Promise.resolve().then(() => (init_cli(), cli_exports));
 var result = await runAkRole2(process.argv.slice(2), { packageRoot });
