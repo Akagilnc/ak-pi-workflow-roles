@@ -15111,6 +15111,33 @@ function parsePendingLease(raw, sourcePath) {
     offeredAt: record4.offeredAt
   };
 }
+function restoreExclusiveClaimToPendingSlot(options) {
+  const bytes = Buffer.from(options.raw, "utf8");
+  let fd;
+  try {
+    fd = openSync2(options.pendingPath, "wx", 420);
+  } catch (error) {
+    if (errnoCode(error) === "EEXIST") {
+      return "slot-occupied";
+    }
+    throw new TicketDispatchLeaseError(
+      `failed to restore ticket dispatch lease to pending (${options.pendingPath}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  try {
+    const written = writeSync2(fd, bytes, 0, bytes.length, null);
+    if (written !== bytes.length) {
+      throw new TicketDispatchLeaseError(
+        `ticket dispatch lease restore short write: wrote ${written} of ${bytes.length} bytes to ${options.pendingPath}`
+      );
+    }
+  } finally {
+    closeSync2(fd);
+  }
+  void options.claimedPath;
+  return "restored";
+}
 function claimTicketDispatchLease(options) {
   const bookKey = requireNonemptyString(options.bookKey, "bookKey");
   const siteIdentity = requireNonemptyString(options.siteIdentity, "siteIdentity");
@@ -15148,14 +15175,11 @@ function claimTicketDispatchLease(options) {
       );
     }
     if (pending.siteIdentity !== siteIdentity) {
-      try {
-        renameSync(claimedPath, pendingPath);
-      } catch (restoreError) {
-        throw new TicketDispatchLeaseSiteMismatchError(
-          `ticket dispatch lease siteIdentity does not match claimer for book ${bookKey}`,
-          { cause: restoreError }
-        );
-      }
+      restoreExclusiveClaimToPendingSlot({
+        pendingPath,
+        claimedPath,
+        raw
+      });
       throw new TicketDispatchLeaseSiteMismatchError(
         `ticket dispatch lease siteIdentity does not match claimer for book ${bookKey}`
       );
@@ -24569,7 +24593,14 @@ function ensureHostPiRuntimeResolvable(packageRoot2, env = process.env) {
   }
 }
 function missingPackages(packageRoot2) {
-  return HOST_PROVIDED_PACKAGES.filter((name) => findPackageDirFrom(packageRoot2, name) === void 0);
+  return HOST_PROVIDED_PACKAGES.filter((name) => findOwnPackageDir(packageRoot2, name) === void 0);
+}
+function findOwnPackageDir(packageRoot2, name) {
+  const candidate = join(packageRoot2, "node_modules", ...name.split("/"));
+  if (existsSync(join(candidate, "package.json"))) {
+    return realpathSync(candidate);
+  }
+  return void 0;
 }
 function findPackageDirFrom(startDir, name) {
   let dir = startDir;

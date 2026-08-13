@@ -14,6 +14,20 @@ function writePackage(dir: string, name: string, entryBody: string): string {
   return dir;
 }
 
+/**
+ * Isolated fixture root: packageRoot must not see ambient ancestor node_modules
+ * (macOS tmpdir often sits under a polluted /var/folders/.../node_modules).
+ * Nest the bare package under a private prefix so ancestor lookup cannot leak.
+ */
+function makeIsolatedRoot(): string {
+  const outer = mkdtempSync(join(tmpdir(), "host-pi-runtime-iso-"));
+  // Empty node_modules at the isolation boundary does not provide packages, but
+  // production only probes package-own node_modules for local presence. Nested
+  // packageRoot stays free of ambient host peers either way.
+  mkdirSync(join(outer, "node_modules"), { recursive: true });
+  return outer;
+}
+
 /** A fake host Pi global install: pi-coding-agent with nested pi-ai and typebox, plus a bin shim. */
 function makeFakeHost(root: string): { binDir: string; codingAgentDir: string } {
   const codingAgentDir = join(root, "lib", "node_modules", "@earendil-works", "pi-coding-agent");
@@ -46,7 +60,7 @@ function makeBarePackageRoot(root: string): string {
 }
 
 test("links every host-provided package from the host pi on PATH when local resolution fails", () => {
-  const root = mkdtempSync(join(tmpdir(), "host-pi-runtime-"));
+  const root = makeIsolatedRoot();
   try {
     const { binDir, codingAgentDir } = makeFakeHost(root);
     const packageRoot = makeBarePackageRoot(root);
@@ -69,7 +83,7 @@ test("links every host-provided package from the host pi on PATH when local reso
 });
 
 test("leaves an install with locally resolvable packages untouched", () => {
-  const root = mkdtempSync(join(tmpdir(), "host-pi-runtime-"));
+  const root = makeIsolatedRoot();
   try {
     const packageRoot = makeBarePackageRoot(root);
     for (const name of HOST_PROVIDED_PACKAGES) {
@@ -86,12 +100,36 @@ test("leaves an install with locally resolvable packages untouched", () => {
 });
 
 test("fails loud when neither local packages nor a host pi exist", () => {
-  const root = mkdtempSync(join(tmpdir(), "host-pi-runtime-"));
+  const root = makeIsolatedRoot();
   try {
     const packageRoot = makeBarePackageRoot(root);
     assert.throws(
       () => ensureHostPiRuntimeResolvable(packageRoot, { PATH: join(root, "empty-bin") }),
       /no host `pi` executable on PATH/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ambient ancestor node_modules do not count as local package presence", () => {
+  const root = makeIsolatedRoot();
+  try {
+    // Pollute an ancestor the way macOS tmpdir hosts sometimes do.
+    writePackage(
+      join(root, "node_modules", "@earendil-works", "pi-ai"),
+      "@earendil-works/pi-ai",
+      "module.exports = 'ambient-broken';\n",
+    );
+    const packageRoot = makeBarePackageRoot(root);
+    assert.throws(
+      () => ensureHostPiRuntimeResolvable(packageRoot, { PATH: join(root, "empty-bin") }),
+      /no host `pi` executable on PATH/,
+    );
+    assert.equal(
+      lstatSync(join(packageRoot, "node_modules", "@earendil-works", "pi-ai"), { throwIfNoEntry: false }),
+      undefined,
+      "must not treat ancestor ambient packages as package-own local installs",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

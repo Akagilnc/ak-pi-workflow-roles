@@ -30,11 +30,13 @@ import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
   buildTicketTrajectoryBookIndex,
   loadTicketTrajectoryRuns,
+  loadUnboundTrajectoryRuns,
   renderTicketTrajectoryStationHtml,
   type TicketTrajectoryBookIndex,
   type TicketTrajectoryRun,
   type TrajectoryClock,
   type TrajectoryScheduler,
+  type UnboundTrajectoryRun,
 } from "./ticket-trajectory.ts";
 import type { BoardSnapshot, SnapshotTicket, TicketIssueState } from "./ticket-snapshot.ts";
 import { TicketRunAttributionError } from "./ticket-dispatch-lease.ts";
@@ -404,6 +406,36 @@ function latestKnownStation(runs: readonly TicketTrajectoryRun[]): string | unde
   const latest = sortRunsByStart(runs).at(-1);
   if (!latest || latest.station === "unknown") return undefined;
   return latest.station;
+}
+
+/**
+ * Unbound activation card for the existing unknown-set presentation seam.
+ * Not a ticket: no issue number, never placed in a yamen column.
+ */
+function renderUnboundRunCard(input: {
+  bookKey: string;
+  unbound: UnboundTrajectoryRun;
+}): string {
+  const { run, correlationId, role, observedAt } = input.unbound;
+  const stationLabel =
+    run.station === "unknown" ? "未知站" : (YAMEN_LABELS[run.station] ?? run.station);
+  return [
+    `<article class="ticket unbound-run"`,
+    ` data-unbound-run="true"`,
+    ` data-book="${attr(input.bookKey)}"`,
+    ` data-run-id="${attr(run.runId)}"`,
+    ` data-correlation="${attr(correlationId)}"`,
+    ` data-placement="unknown"`,
+    `>`,
+    `<header class="ticket-header">`,
+    `<span class="ticket-title">未绑定 · ${escapeHtml(run.runId)}</span>`,
+    `<span class="yamen-tag yamen-unknown" data-yamen="unknown">${escapeHtml(stationLabel)}</span>`,
+    `</header>`,
+    `<p class="unbound-meta" data-unbound-meta="true">`,
+    `role ${escapeHtml(role)} · corr ${escapeHtml(correlationId)} · ${escapeHtml(observedAt)}`,
+    `</p>`,
+    `</article>`,
+  ].join("");
 }
 
 function renderTicketArticle(input: {
@@ -986,6 +1018,20 @@ async function renderLaneHtml(
     list.push(entry);
     byPlacement.set(entry.placement, list);
   }
+
+  // Unbound activations: isolated from every ticket, honest on the unknown seam.
+  const unboundRuns = await loadUnboundTrajectoryRuns(ledgerDir, bookIndex);
+  for (const unbound of unboundRuns) {
+    unknownEntries.push({
+      placement: "unknown",
+      band: 0,
+      activityMs: unbound.run.mtimeMs,
+      // Sort after real tickets; no issue identity (unbound is not a ticket).
+      issueNumber: Number.MAX_SAFE_INTEGER,
+      html: renderUnboundRunCard({ bookKey, unbound }),
+    });
+  }
+
   unknownEntries.sort(entryCompare);
   unknownTickets.sort((a, b) => a.issueNumber - b.issueNumber);
 

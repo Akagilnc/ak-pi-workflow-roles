@@ -5,9 +5,13 @@
  * resolve them, link the host Pi's own modules into this package's node_modules
  * instead of materializing a second runtime from the registry.
  *
- * Package presence is probed by directory (ancestor node_modules walk, the same
- * package lookup ESM uses) — entry-point resolution is unusable here because the
- * peers export "." with an `import` condition only, which CJS require cannot see.
+ * Local presence is package-own node_modules only (this install's direct deps /
+ * prior links). Ambient ancestor node_modules are not "local" for this package —
+ * they can be unrelated host pollution and must not suppress host-pi linking.
+ * Host-tree discovery still walks ancestors from the `pi` executable (the same
+ * package-directory half of bare-specifier lookup ESM uses). Entry-point
+ * resolution is unusable here because the peers export "." with an `import`
+ * condition only, which CJS require cannot see.
  */
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
@@ -22,8 +26,8 @@ type HostProvidedPackage = (typeof HOST_PROVIDED_PACKAGES)[number];
 
 /**
  * Make the host-provided runtime packages resolvable from `packageRoot`.
- * Local resolution wins untouched; otherwise the host `pi` executable on PATH
- * anchors the lookup and the packages are symlinked into the package-own
+ * Package-own node_modules wins untouched; otherwise the host `pi` executable on
+ * PATH anchors the lookup and the packages are symlinked into the package-own
  * node_modules (highest resolution precedence for the package and its child
  * processes). Throws when neither source can provide a package.
  */
@@ -58,10 +62,19 @@ export function ensureHostPiRuntimeResolvable(
 }
 
 function missingPackages(packageRoot: string): HostProvidedPackage[] {
-  return HOST_PROVIDED_PACKAGES.filter((name) => findPackageDirFrom(packageRoot, name) === undefined);
+  return HOST_PROVIDED_PACKAGES.filter((name) => findOwnPackageDir(packageRoot, name) === undefined);
 }
 
-/** Ancestor node_modules walk — the package-directory half of bare-specifier lookup. */
+/** Package-own node_modules only — never ambient ancestor pollution. */
+function findOwnPackageDir(packageRoot: string, name: string): string | undefined {
+  const candidate = join(packageRoot, "node_modules", ...name.split("/"));
+  if (existsSync(join(candidate, "package.json"))) {
+    return realpathSync(candidate);
+  }
+  return undefined;
+}
+
+/** Ancestor node_modules walk from a host-tree start (pi executable directory). */
 function findPackageDirFrom(startDir: string, name: string): string | undefined {
   let dir = startDir;
   while (true) {
