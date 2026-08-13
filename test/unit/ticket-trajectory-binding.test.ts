@@ -85,7 +85,7 @@ test("binding + activation + flat run is included for that ticket", async () => 
   });
 });
 
-test("same flat run without binding is not included for the ticket", async () => {
+test("same flat run without binding is loud unbound", async () => {
   await withBookDir(async (ledgerDir) => {
     const runFolder = "01jrun@judge";
     const sessionFile = await seedFlatRun(ledgerDir, runFolder);
@@ -99,8 +99,29 @@ test("same flat run without binding is not included for the ticket", async () =>
         correlation: { kind: "caller", id: "corr-unbound-1" },
       },
     ]);
+    await assert.rejects(
+      () => loadTicketTrajectoryRuns(ledgerDir, 176),
+      (error: unknown) =>
+        error instanceof TicketRunAttributionError && error.kind === "unbound",
+    );
+  });
+});
+
+test("doctor activation without ticket-binding is not unbound", async () => {
+  await withBookDir(async (ledgerDir) => {
+    const runFolder = "01jrun@doctor";
+    const sessionFile = await seedFlatRun(ledgerDir, runFolder);
+    await writeJsonl(join(ledgerDir, "waiting.jsonl"), [
+      {
+        event: ACCEPTED_ACTIVATION_EVENT,
+        role: "doctor",
+        observedAt: "2026-08-07T00:00:00.100Z",
+        bookKey: "demo-book",
+        session: { kind: "session-file", path: sessionFile },
+        correlation: { kind: "absent" },
+      },
+    ]);
     const runs = await loadTicketTrajectoryRuns(ledgerDir, 176);
-    assert.equal(runs.some((run) => run.runId === runFolder), false);
     assert.equal(runs.length, 0);
   });
 });

@@ -786,6 +786,20 @@ export async function loadTicketTrajectoryRuns(
     if (fact !== undefined) activations.push(fact);
   }
 
+  for (const activation of activations) {
+    // Doctor is not on the ticket-dispatch lease rope (ADR 0012 / admit boundary).
+    if (activation.role === "doctor") continue;
+    const id = callerCorrelationId(activation.correlation);
+    if (id === undefined || !correlationTickets.has(id)) {
+      throw new TicketRunAttributionError(
+        "unbound",
+        id === undefined
+          ? `activation ${activation.role} at ${activation.observedAt} has no caller correlation ticket-binding`
+          : `activation correlation ${id} has no ticket-binding`,
+      );
+    }
+  }
+
   const runs: ParsedRun[] = [];
   const seenRunDirs = new Set<string>();
 
