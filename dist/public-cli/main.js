@@ -17289,7 +17289,7 @@ async function writeRoleRunState(runDirectory, record4) {
     "utf8"
   );
 }
-async function readRoleRunState(runDirectory, _home, canonicalSessionFile) {
+async function readRoleRunState(runDirectory) {
   let raw;
   try {
     raw = JSON.parse(await readFile7(join8(runDirectory, RUN_STATE_FILE), "utf8"));
@@ -17314,7 +17314,7 @@ async function readRoleRunState(runDirectory, _home, canonicalSessionFile) {
   if (typeof record4.sessionDirectory !== "string") return void 0;
   if (typeof record4.admittedRequestPath !== "string") return void 0;
   const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
-  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : canonicalSessionFile ?? join8(record4.sessionDirectory, "session.jsonl");
+  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join8(record4.sessionDirectory, "session.jsonl");
   let resumable;
   if (record4.resumable !== void 0 && record4.resumable !== null) {
     if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
@@ -17352,12 +17352,8 @@ async function markRunAdmitted(admitted) {
     ...admitted.role === "coder" || admitted.role === "fixer" ? { phase: admitted.phase } : {}
   });
 }
-async function markRunRunning(runDirectory, canonicalSessionFile) {
-  const current = await readRoleRunState(
-    runDirectory,
-    void 0,
-    canonicalSessionFile
-  );
+async function markRunRunning(runDirectory) {
+  const current = await readRoleRunState(runDirectory);
   if (current === void 0) {
     throw new Error("cannot mark running: run state missing");
   }
@@ -17470,7 +17466,7 @@ async function loadResumableRunRecord(home, runId) {
   if (runDirectory === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  const run = await readRoleRunState(runDirectory, home);
+  const run = await readRoleRunState(runDirectory);
   if (run === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
@@ -17768,7 +17764,7 @@ async function loadResumableMergerRun(home, runId) {
 async function peekRoleRunRole(home, runId) {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === void 0) return void 0;
-  const run = await readRoleRunState(runDirectory, home);
+  const run = await readRoleRunState(runDirectory);
   return run?.role;
 }
 var V1_RESUMABLE_PROVIDERS, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, TYPED_HTTP_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
@@ -21083,7 +21079,7 @@ async function dispatchAdmittedCoder(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
+    await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -21408,7 +21404,7 @@ async function dispatchAdmittedCollector(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
+    await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -21634,7 +21630,7 @@ async function dispatchAdmittedDoctor(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
+    await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -21930,7 +21926,7 @@ async function dispatchAdmittedFixer(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
+    await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22293,7 +22289,7 @@ async function dispatchAdmittedJudge(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
+    await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22627,7 +22623,7 @@ async function dispatchAdmittedMerger(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
+    await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -23079,7 +23075,7 @@ async function dispatchAdmittedReviewer(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
+    await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     await clearReviewerDispatchRejection(admitted.runDirectory);
     const childEnv = {

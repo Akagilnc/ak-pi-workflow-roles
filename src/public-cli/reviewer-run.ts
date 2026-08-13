@@ -266,7 +266,7 @@ async function dispatchAdmittedReviewer(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
+    await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     await clearReviewerDispatchRejection(admitted.runDirectory);
 
