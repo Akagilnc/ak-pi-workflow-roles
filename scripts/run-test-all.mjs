@@ -13,7 +13,12 @@ import { isolatedTestProcessEnv } from "./test-process-env.mjs";
 const HEAVYWEIGHT_MANIFEST = Object.freeze([
   "test/integration/audit-failure-subprocess.test.ts",
   "test/integration/public-cli-judge-run.test.ts",
-  "test/package/package-entrypoint.integration.test.ts",
+  // #319 Batch 4 R1: package-entrypoint split — all thematic files stay heavy serial
+  // (庭定『先拆且全留 heavy』; re-partition is Batch 5 R9 diagnosis).
+  "test/package/package-entrypoint-cold-help.integration.test.ts",
+  "test/package/package-entrypoint-navigator.integration.test.ts",
+  "test/package/package-entrypoint-observation.integration.test.ts",
+  "test/package/package-entrypoint-packaged-workers.integration.test.ts",
 ]);
 
 const TIERS = Object.freeze([
