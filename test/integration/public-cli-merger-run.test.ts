@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { packageRoot, runPiSubprocess } from "../helpers/pi-test-harness.ts";
 
 const git = (cwd: string, args: string[], input?: string) => execFileSync("git", args, {
@@ -44,6 +45,7 @@ async function tracePublicMerger(residual?: "sole" | "sibling" | "wrong-attempt"
   try {
     const project = join(home, "work"); await mkdir(project);
     const commit = await conflictedRepository(project);
+    offerTestDispatchLease(home, project);
     return await runAkRole([
       "merger", "--model", "ak-merger-baseline/faux-1", "--thinking", "off",
       "--project", project, "Resolve the ordinary conflict.",
