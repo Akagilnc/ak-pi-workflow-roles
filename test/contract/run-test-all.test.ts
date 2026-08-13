@@ -23,11 +23,14 @@ import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
 const THIS_CONTRACT_REL = "test/contract/run-test-all.test.ts";
 
-/** Exact heavy set from Issue #160 ticket — independent expected literals, not runner import. */
+/** Exact heavy set — independent expected literals, not runner import (#160; #319 Batch 4 R1 split). */
 const TICKET_HEAVYWEIGHT = [
   "test/integration/audit-failure-subprocess.test.ts",
   "test/integration/public-cli-judge-run.test.ts",
-  "test/package/package-entrypoint.integration.test.ts",
+  "test/package/package-entrypoint-cold-help.integration.test.ts",
+  "test/package/package-entrypoint-navigator.integration.test.ts",
+  "test/package/package-entrypoint-observation.integration.test.ts",
+  "test/package/package-entrypoint-packaged-workers.integration.test.ts",
 ] as const;
 
 type ChildRecord = {
@@ -99,10 +102,10 @@ function filesFromArgv(argv: string[]): string[] {
   return files;
 }
 
-function hasConcurrencyOne(argv: string[]): boolean {
-  if (argv.some((arg) => arg === "--test-concurrency=1")) return true;
+function hasConcurrencyTwo(argv: string[]): boolean {
+  if (argv.some((arg) => arg === "--test-concurrency=2")) return true;
   const idx = argv.indexOf("--test-concurrency");
-  return idx >= 0 && argv[idx + 1] === "1";
+  return idx >= 0 && argv[idx + 1] === "2";
 }
 
 async function runRunner(options: {
@@ -155,7 +158,7 @@ test("package.json test:all is owned solely by scripts/run-test-all.mjs", async 
   );
 });
 
-test("runner partitions discovered universe into ordinary default-parallel then heavy serial children", async () => {
+test("runner partitions discovered universe into ordinary default-parallel then heavy concurrency-2 children", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-partition-"));
   await withPrimaryAwareCleanup(
     async () => {
@@ -188,14 +191,14 @@ test("runner partitions discovered universe into ordinary default-parallel then 
         "ordinary child is a node --test invocation",
       );
       assert.equal(
-        hasConcurrencyOne(ordinaryChild.argv),
+        hasConcurrencyTwo(ordinaryChild.argv),
         false,
-        "ordinary child must retain default parallelism (no --test-concurrency=1)",
+        "ordinary child must retain default parallelism (no --test-concurrency=2)",
       );
       assert.equal(
-        hasConcurrencyOne(heavyChild.argv),
+        hasConcurrencyTwo(heavyChild.argv),
         true,
-        "heavy child must pass --test-concurrency=1",
+        "heavy child must pass --test-concurrency=2",
       );
 
       const ordinaryFiles = filesFromArgv(ordinaryChild.argv).sort();
@@ -222,7 +225,7 @@ test("runner partitions discovered universe into ordinary default-parallel then 
   );
 });
 
-test("runner discovers the live package tree as ordinary ⊎ exact three heavy, including this contract once", async () => {
+test("runner discovers the live package tree as ordinary ⊎ exact heavy manifest, including this contract once", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-live-"));
   await withPrimaryAwareCleanup(
     async () => {
@@ -241,8 +244,8 @@ test("runner discovers the live package tree as ordinary ⊎ exact three heavy, 
       const ordinaryFiles = filesFromArgv(result.records[0]!.argv);
       const heavyFiles = filesFromArgv(result.records[1]!.argv);
 
-      assert.equal(hasConcurrencyOne(result.records[0]!.argv), false);
-      assert.equal(hasConcurrencyOne(result.records[1]!.argv), true);
+      assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
+      assert.equal(hasConcurrencyTwo(result.records[1]!.argv), true);
       assert.deepEqual([...heavyFiles].sort(), [...TICKET_HEAVYWEIGHT].sort());
 
       const all = [...ordinaryFiles, ...heavyFiles];
@@ -326,7 +329,7 @@ test("runner propagates ordinary and heavy child non-zero exits honestly", async
         });
         assert.equal(result.code, 7, `ordinary failure must surface; stderr=${result.stderr}`);
         assert.equal(result.records.length, 1, "fail-fast after ordinary non-zero");
-        assert.equal(hasConcurrencyOne(result.records[0]!.argv), false);
+        assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
       }
 
       // Ordinary ok, heavy fails: heavy exit preserved.
@@ -340,7 +343,7 @@ test("runner propagates ordinary and heavy child non-zero exits honestly", async
         });
         assert.equal(result.code, 5, `heavy failure must surface; stderr=${result.stderr}`);
         assert.equal(result.records.length, 2);
-        assert.equal(hasConcurrencyOne(result.records[1]!.argv), true);
+        assert.equal(hasConcurrencyTwo(result.records[1]!.argv), true);
       }
     },
     async () => {
@@ -373,7 +376,7 @@ test("runner preserves child SIGTERM as exit 143 via real PATH-shim seam", async
         `SIGTERM child must surface as 143, not generic 1; stderr=${result.stderr}`,
       );
       assert.equal(result.records.length, 1, "fail-fast after ordinary SIGTERM");
-      assert.equal(hasConcurrencyOne(result.records[0]!.argv), false);
+      assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
     },
     async () => {
       await rm(workspace, { recursive: true, force: true });

@@ -1,3 +1,8 @@
+/**
+ * #319 Batch 2 (M2): Reviewer-unique deep chain only
+ * (public ak-role Reviewer → auditor → Judge).
+ * All-role cold smoke lives in public-cli-cold-matrix.test.ts.
+ */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
