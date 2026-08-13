@@ -17,6 +17,8 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
+import { TicketDispatchLeaseHeldError } from "../../src/ticket-dispatch-lease.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -26,7 +28,7 @@ import {
   buildCoderResumeActivationExtraArgs,
 } from "../../src/public-cli/coder-run.ts";
 import {
-  admitCoderInvocation,
+  admitCoderInvocation as admitCoderInvocationRaw,
   parseCoderArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -71,6 +73,19 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["config", "user.name", "Coder Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
+
+
+async function admitCoderInvocation(
+  options: Parameters<typeof admitCoderInvocationRaw>[0],
+): ReturnType<typeof admitCoderInvocationRaw> {
+  try {
+    offerTestDispatchLease(options.home, options.project ?? options.cwd);
+  } catch (error) {
+    if (!(error instanceof TicketDispatchLeaseHeldError)) throw error;
+  }
+  return admitCoderInvocationRaw(options);
+}
+
 
 test("parseCoderArgv defaults to apply and preserves explicit plan|apply", () => {
   const isUsage = (error: unknown): boolean =>
@@ -327,6 +342,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
     // Blank task → structural reject, no run.
     {
       const { io, stderr } = captureIo();
+      offerTestDispatchLease(home, project);
       const result = await runAkRole(["coder", "plan", "   "], {
         packageRoot,
         home,
@@ -344,6 +360,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
+      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "coder",
@@ -423,6 +440,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
     {
       const { io } = captureIo();
       let captured: string[] | undefined;
+      offerTestDispatchLease(home, project);
       await runAkRole(
         ["coder", "--project", project, "Implement the approved slice."],
         {
@@ -462,6 +480,7 @@ test("ak-role resume continues coder with preserved plan phase and exact session
 
     {
       const { io } = captureIo();
+      offerTestDispatchLease(home, project);
       const first = await runAkRole(
         ["coder", "plan", "--project", project, instruction],
         {

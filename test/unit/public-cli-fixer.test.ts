@@ -17,6 +17,8 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
+import { TicketDispatchLeaseHeldError } from "../../src/ticket-dispatch-lease.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -31,7 +33,7 @@ import {
   buildFixerResumeActivationExtraArgs,
 } from "../../src/public-cli/fixer-run.ts";
 import {
-  admitFixerInvocation,
+  admitFixerInvocation as admitFixerInvocationRaw,
   parseFixerArgv,
 } from "../../src/public-cli/invocation.ts";
 import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
@@ -85,6 +87,19 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["config", "user.name", "Fixer Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
+
+
+async function admitFixerInvocation(
+  options: Parameters<typeof admitFixerInvocationRaw>[0],
+): ReturnType<typeof admitFixerInvocationRaw> {
+  try {
+    offerTestDispatchLease(options.home, options.project ?? options.cwd);
+  } catch (error) {
+    if (!(error instanceof TicketDispatchLeaseHeldError)) throw error;
+  }
+  return admitFixerInvocationRaw(options);
+}
+
 
 test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus prerequisites path", () => {
   const isUsage = (error: unknown): boolean =>
@@ -433,6 +448,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
 
     {
       const { io, stderr } = captureIo();
+      offerTestDispatchLease(home, project);
       const result = await runAkRole(["fixer", "plan", "   "], {
         packageRoot,
         home,
@@ -450,6 +466,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       const bad = join(home, "bad.json");
       await writeFile(bad, "{", "utf8");
       const { io } = captureIo();
+      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         ["fixer", "--project", project, "--prerequisites", bad, "Repair."],
         {
@@ -468,6 +485,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
+      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "fixer",
@@ -543,6 +561,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
     {
       const { io } = captureIo();
       let captured: string[] | undefined;
+      offerTestDispatchLease(home, project);
       await runAkRole(
         ["fixer", "--project", project, "Settle the approved repair."],
         {
@@ -579,6 +598,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
 
     {
       const { io } = captureIo();
+      offerTestDispatchLease(home, project);
       const first = await runAkRole(
         ["fixer", "plan", "--project", project, instruction],
         {
@@ -786,6 +806,7 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
 
     // Full public CLI path: same judgment exits 0 with retained blocker facts.
     const { io, stdout, stderr } = captureIo();
+    offerTestDispatchLease(home, project);
     const result = await runAkRole(
       [
         "fixer",
@@ -1050,6 +1071,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         row.phase === "plan"
           ? (["fixer", "plan", "--project", project, `CLI ${row.status}`] as string[])
           : (["fixer", "--project", project, `CLI ${row.status}`] as string[]);
+      offerTestDispatchLease(home, project);
       const result = await runAkRole(cliArgs, {
         packageRoot,
         home,

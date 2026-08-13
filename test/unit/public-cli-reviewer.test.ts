@@ -18,6 +18,8 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
+import { TicketDispatchLeaseHeldError } from "../../src/ticket-dispatch-lease.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -26,7 +28,7 @@ import {
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitReviewerInvocation,
+  admitReviewerInvocation as admitReviewerInvocationRaw,
   parseReviewerArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -124,6 +126,19 @@ function lawfulReviewerReceipt(
     },
   };
 }
+
+
+async function admitReviewerInvocation(
+  options: Parameters<typeof admitReviewerInvocationRaw>[0],
+): ReturnType<typeof admitReviewerInvocationRaw> {
+  try {
+    offerTestDispatchLease(options.home, options.project ?? options.cwd);
+  } catch (error) {
+    if (!(error instanceof TicketDispatchLeaseHeldError)) throw error;
+  }
+  return admitReviewerInvocationRaw(options);
+}
+
 
 test("parseReviewerArgv requires base and accepts optional provenance instruction", () => {
   const isUsage = (error: unknown): boolean =>
@@ -459,6 +474,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
+      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "reviewer",
@@ -562,6 +578,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
+      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "reviewer",
@@ -661,6 +678,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
 
     {
       const { io } = captureIo();
+      offerTestDispatchLease(home, project);
       const first = await runAkRole(
         ["reviewer", "--project", project, "--base", "main", instruction],
         {
@@ -790,6 +808,7 @@ test("reviewer activation rejection lands violation code and diagnostic in books
     seedGitProject(project);
 
     const { io, stdout, stderr } = captureIo();
+    offerTestDispatchLease(home, project);
     const result = await runAkRole(
       ["reviewer", "--project", project, "--base", "origin/main"],
       {

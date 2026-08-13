@@ -429,7 +429,10 @@ export async function runPublicJudge(
 
   return await dispatchAdmittedJudge({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+    },
     io,
     extraArgs,
     lease,

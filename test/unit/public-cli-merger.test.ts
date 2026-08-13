@@ -16,6 +16,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
+import { TicketDispatchLeaseHeldError } from "../../src/ticket-dispatch-lease.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { validateMergerInput } from "../../src/merger-contracts.ts";
 import {
@@ -25,7 +27,7 @@ import {
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitMergerInvocation,
+  admitMergerInvocation as admitMergerInvocationRaw,
   buildMergerTransportPrompt,
   deriveMergerEnvelopeFromActiveMerge,
   parseMergerArgv,
@@ -110,6 +112,19 @@ async function materializeConflictedRepo(root: string): Promise<{
   }
   return { target, source, conflictPath: "same.txt" };
 }
+
+
+async function admitMergerInvocation(
+  options: Parameters<typeof admitMergerInvocationRaw>[0],
+): ReturnType<typeof admitMergerInvocationRaw> {
+  try {
+    offerTestDispatchLease(options.home, options.project ?? options.cwd);
+  } catch (error) {
+    if (!(error instanceof TicketDispatchLeaseHeldError)) throw error;
+  }
+  return admitMergerInvocationRaw(options);
+}
+
 
 test("parseMergerArgv accepts common Invocation flags and rejects unknown options", () => {
   const isUsage = (error: unknown): boolean =>
@@ -502,6 +517,7 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
     {
       seedGitProject(project);
       const { io, stdout, stderr } = captureIo();
+      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         ["merger", "Resolve whatever is open."],
         {
@@ -533,6 +549,7 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
         packageRoot,
         "resolving-merge-conflicts",
       );
+      offerTestDispatchLease(home, conflicted);
       const result = await runAkRole(
         ["merger", "--project", conflicted, "Reconcile both intents."],
         {
@@ -643,6 +660,7 @@ test("ak-role resume continues merger with package method and exact session", as
 
     {
       const { io } = captureIo();
+      offerTestDispatchLease(home, project);
       const first = await runAkRole(
         ["merger", "--project", project, instruction],
         {
@@ -763,6 +781,7 @@ test("public Merger retains malformed output candidate as typed incomplete", asy
     await mkdir(project, { recursive: true });
     await materializeConflictedRepo(project);
     const candidate = { status: "unknown-shape", attemptId: "run-merger-residual-182", report: 7 };
+    offerTestDispatchLease(home, project);
     const result = await runAkRole(["merger", "--project", project, "merge"], {
       packageRoot, home, cwd: project,
       credentials: { "openai-codex": true, xai: true },

@@ -367,7 +367,10 @@ export async function runPublicCollector(
 
   return await dispatchAdmittedCollector({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+    },
     io,
     extraArgs,
     lease,

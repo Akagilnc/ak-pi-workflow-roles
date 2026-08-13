@@ -35,6 +35,7 @@ import {
   type TrajectoryScheduler,
 } from "./ticket-trajectory.ts";
 import type { BoardSnapshot, SnapshotTicket, TicketIssueState } from "./ticket-snapshot.ts";
+import { TicketRunAttributionError } from "./ticket-dispatch-lease.ts";
 
 /** Unaccepted latest-run mtime bands (page-visible thresholds). */
 export const UNACCEPTED_FLYING_MS = 2 * 60 * 1000;
@@ -1469,13 +1470,28 @@ export async function renderFactoryBoardHtml(
         generatedAt,
       );
     }
-    const lane = await renderLaneHtml(
-      book.bookKey,
-      resolve(book.ledgerDir),
-      bookSnap.tickets,
-      now,
-      { hidden: defaultBookKey !== undefined && bookSnap.bookKey !== defaultBookKey },
-    );
+    let lane: RenderedLane;
+    try {
+      lane = await renderLaneHtml(
+        book.bookKey,
+        resolve(book.ledgerDir),
+        bookSnap.tickets,
+        now,
+        { hidden: defaultBookKey !== undefined && bookSnap.bookKey !== defaultBookKey },
+      );
+    } catch (error) {
+      if (error instanceof TicketRunAttributionError) {
+        return renderErrorHtml(
+          {
+            kind: "binding",
+            bookKey: bookSnap.bookKey,
+            message: error.message,
+          },
+          generatedAt,
+        );
+      }
+      throw error;
+    }
     laneHtmlParts.push(lane.html);
     unknownByBook.set(bookSnap.bookKey, lane.unknownTickets);
   }

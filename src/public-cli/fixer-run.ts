@@ -489,7 +489,10 @@ export async function runPublicFixer(
 
   return await dispatchAdmittedFixer({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+    },
     io,
     extraArgs,
     lease,

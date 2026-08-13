@@ -467,7 +467,10 @@ export async function runPublicReviewer(
 
   return await dispatchAdmittedReviewer({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+    },
     io,
     extraArgs,
     lease,

@@ -8,6 +8,7 @@ import {
 import { dirname, isAbsolute, resolve } from "node:path";
 
 import type { ActivationSessionPointer } from "./activation-ledger-session.ts";
+import type { DispatchStubFact } from "./activation-reconciliation.ts";
 import {
   ActivationLedgerError,
   activationWaitingLedgerPath,
@@ -237,4 +238,25 @@ export function appendAcceptedActivationToBook(options: {
     options.fact,
     { ledgerHome: options.ledgerHome },
   );
+}
+
+/** Append one closed index fact as a single JSONL line (generic waiting.jsonl writer). */
+export function appendActivationLedgerJsonlLine(
+  ledgerPath: string,
+  fact: object,
+  options: { ledgerHome: string },
+): void {
+  appendActivationLedgerLine(
+    ledgerPath,
+    Buffer.from(`${JSON.stringify(fact)}\n`, "utf8"),
+    { ledgerHome: options.ledgerHome },
+  );
+}
+
+export function appendDispatchStubFact(
+  ledgerPath: string,
+  fact: DispatchStubFact,
+  options: { ledgerHome: string },
+): void {
+  appendActivationLedgerJsonlLine(ledgerPath, fact, options);
 }
