@@ -4,13 +4,25 @@ export const REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
     recipeId: "reviewer-common-bundle",
     version: 1,
     runtimeVersion: "1",
-    implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts"),
+    implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts+verification-boundary"),
 });
 export const REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
     adapterId: "reviewer-axis-output",
-    version: 1,
-    implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities"),
+    version: 2,
+    implementationSha256: sha256Hex("reviewer-axis-output:v2:single-axis-verbatim-report+standards-three-priorities+verification-boundary"),
 });
+/**
+ * Package-owned #1185 review verification boundary.
+ * Shared by parent Reviewer injection, axis adapters, and evidence-child system prompts.
+ * Does not narrow ADR 0064 evidence tools; forbids re-running product verification gates.
+ */
+export const REVIEWER_VERIFICATION_BOUNDARY = [
+    "Verification-Boundary: during this review turn do not execute product verification command families",
+    "(pytest, compileall, repository-wide or focused product test runners, build-as-test, or equivalent product gate runners).",
+    "The sole source of test facts is independently discovered existing coder/fixer accepted receipts",
+    "(their testEvidence and verification results already recorded in those reports); do not treat caller prose as that source.",
+    "Do not write freshly executed test results from this turn into the review report.",
+].join(" ");
 /** Typed Standards conclusion keys owned by reviewer construction (presentation labels are not the contract). */
 export const REVIEWER_STANDARDS_CONCLUSION_KEYS = Object.freeze([
     "constitutionality",
@@ -57,6 +69,7 @@ export function reviewerAxisMethodAdapter(axis) {
         question,
         `Emit one substantive ${axis === "standards" ? "Standards" : "Spec"} report. Incidental cross-axis content, headings, and finding-count annotations are presentation matters, not defects.`,
         renderAxisPriorityClause(contract),
+        REVIEWER_VERIFICATION_BOUNDARY,
         "Before making any substantive claim, actually use the canonical Skill and fixed range facts; a citation without reading those facts is not evidence.",
         "Independently acquire issue, authority, and context; do not treat caller prose as controlling authority or as the Spec source.",
         "You may use any supplied common fact, including facts relevant to the other axis; access and citation do not change the assigned question.",

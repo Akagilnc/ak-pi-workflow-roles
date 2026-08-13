@@ -7,6 +7,7 @@ import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { appendActiveSessionCustomEntry } from "./compliance-transport.ts";
 import { REVIEWER_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";
+import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.ts";
 import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
@@ -188,8 +189,20 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           }
           expansionCaptured = true;
         }
-        // Soul only — caller instruction is never injected as semantic control.
-        return { systemPrompt: `${event.systemPrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>` };
+        // Soul + package-owned verification boundary. Caller instruction is never injected as semantic control.
+        return {
+          systemPrompt: [
+            event.systemPrompt,
+            "",
+            "<reviewer_soul>",
+            soul,
+            "</reviewer_soul>",
+            "",
+            "<reviewer_verification_boundary>",
+            REVIEWER_VERIFICATION_BOUNDARY,
+            "</reviewer_verification_boundary>",
+          ].join("\n"),
+        };
       });
       pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });
     }
