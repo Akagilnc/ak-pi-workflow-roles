@@ -122,11 +122,13 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
     getModels() { return [model]; },
   };
   pi.registerProvider(provider);
+  // Reviewer no longer exposes Agent; poison after this fixture's own git reads and
+  // before session_start activate/createPinnedGitReader so preflight fail-closed is real.
+  if (stage === "preflight-git") {
+    console.error("INJECTED_REVIEWER_GIT_IO_FAILURE");
+    renameSync(".git", ".git-injected-failure");
+  }
   pi.on("tool_call", (event, ctx) => {
-    if (stage === "preflight-git" && event.toolName === AGENT_TOOL_NAME) {
-      console.error("INJECTED_REVIEWER_GIT_IO_FAILURE");
-      renameSync(".git", ".git-injected-failure");
-    }
     if (stage === "child-provider" && event.toolName === AGENT_TOOL_NAME) {
       (ctx.modelRegistry as any).getProvider = () => {
         console.error("Reviewer Agent provider not found");
