@@ -794,11 +794,6 @@ function runDirectoryFromSessionPath(sessionPath: string): string {
  * Lookups are pre-built: per-ticket queries must not re-walk whole-book rows.
  */
 export type TicketTrajectoryBookIndex = {
-  readonly bindings: readonly TicketBindingDispatchFact[];
-  readonly activations: readonly AcceptedActivationFact[];
-  readonly dispatchStubs: readonly DispatchStubFact[];
-  /** correlation id → ticket numbers (size>1 is ambiguous). */
-  readonly correlationTickets: ReadonlyMap<string, ReadonlySet<number>>;
   /** ticket number → bindings for that ticket (direct consume). */
   readonly bindingsByTicket: ReadonlyMap<number, readonly TicketBindingDispatchFact[]>;
   /** correlation id → accepted activations (direct consume). */
@@ -816,6 +811,7 @@ export type TicketTrajectoryBookIndex = {
 export function buildTicketTrajectoryBookIndex(ledgerDir: string): TicketTrajectoryBookIndex {
   const root = resolve(ledgerDir);
   const waitingRows = loadBookWaitingRecords(root);
+  // Temporary builder collections — not part of the returned shape.
   const bindings: TicketBindingDispatchFact[] = [];
   const activations: AcceptedActivationFact[] = [];
   const dispatchStubs: DispatchStubFact[] = [];
@@ -875,10 +871,6 @@ export function buildTicketTrajectoryBookIndex(ledgerDir: string): TicketTraject
   }
 
   return {
-    bindings,
-    activations,
-    dispatchStubs,
-    correlationTickets,
     bindingsByTicket,
     activationsByCorrelation,
     stubsByCorrelation,

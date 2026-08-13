@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { existsSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,7 +12,6 @@ import {
   DISPATCH_LEASE_PENDING_FILE,
   listTicketBindingFacts,
   offerTicketDispatchLease,
-  restoreExclusiveClaimToPendingSlot,
   TICKET_BINDING_EVENT,
   TicketDispatchLeaseHeldError,
   TicketDispatchLeaseMissingError,
@@ -40,7 +39,7 @@ test("offer then claim yields unique correlation, consumes pending, writes bindi
     const pendingPath = join(activationBookDirectory(ledgerHome, "demo-book"), DISPATCH_LEASE_PENDING_FILE);
     assert.equal(existsSync(pendingPath), true);
 
-    const claimed = claimTicketDispatchLease({
+    const claimed = await claimTicketDispatchLease({
       ledgerHome,
       bookKey: "demo-book",
       siteIdentity: "/site/demo",
@@ -78,7 +77,7 @@ test("offer then claim yields unique correlation, consumes pending, writes bindi
 
 test("claim with no lease fails loudly", async () => {
   await withLedgerHome(async (ledgerHome) => {
-    assert.throws(
+    await assert.rejects(
       () =>
         claimTicketDispatchLease({
           ledgerHome,
@@ -119,13 +118,13 @@ test("sequential double-claim: one success, one fail", async () => {
       siteIdentity: "/site/demo",
       ticketNumber: 176,
     });
-    const first = claimTicketDispatchLease({
+    const first = await claimTicketDispatchLease({
       ledgerHome,
       bookKey: "demo-book",
       siteIdentity: "/site/demo",
     });
     assert.ok(first.correlationId.length > 0);
-    assert.throws(
+    await assert.rejects(
       () =>
         claimTicketDispatchLease({
           ledgerHome,
@@ -147,7 +146,7 @@ test("site mismatch fails loudly and restores pending for the correct site", asy
       siteIdentity: "/site/demo",
       ticketNumber: 176,
     });
-    assert.throws(
+    await assert.rejects(
       () =>
         claimTicketDispatchLease({
           ledgerHome,
@@ -158,7 +157,7 @@ test("site mismatch fails loudly and restores pending for the correct site", asy
     );
     const pendingPath = join(activationBookDirectory(ledgerHome, "demo-book"), DISPATCH_LEASE_PENDING_FILE);
     assert.equal(existsSync(pendingPath), true);
-    const claimed = claimTicketDispatchLease({
+    const claimed = await claimTicketDispatchLease({
       ledgerHome,
       bookKey: "demo-book",
       siteIdentity: "/site/demo",
@@ -177,7 +176,7 @@ test("generated correlation is not the ticket number string", async () => {
       siteIdentity: "/site/demo",
       ticketNumber: 176,
     });
-    const claimed = claimTicketDispatchLease({
+    const claimed = await claimTicketDispatchLease({
       ledgerHome,
       bookKey: "demo-book",
       siteIdentity: "/site/demo",
@@ -200,7 +199,7 @@ test("claim reads the exclusive acquired object (no shared claimed sidecar)", as
     const pendingPath = join(bookDir, DISPATCH_LEASE_PENDING_FILE);
     assert.equal(existsSync(pendingPath), true);
 
-    const claimed = claimTicketDispatchLease({
+    const claimed = await claimTicketDispatchLease({
       ledgerHome,
       bookKey: "demo-book",
       siteIdentity: "/site/demo",
@@ -214,25 +213,27 @@ test("claim reads the exclusive acquired object (no shared claimed sidecar)", as
   });
 });
 
-test("site mismatch restore does not swallow a newer pending offer (demonstrated schedule)", async () => {
+test("site mismatch via real claim does not swallow a newer pending offer", async () => {
   await withLedgerHome(async (ledgerHome) => {
-    // Schedule from the race repro:
+    // Demonstrated schedule through the real claim seam (not a test-only restore API):
     // 1) offer A (ticket 111 / site-A)
-    // 2) claimer acquires A (pending → exclusive claimed path)
+    // 2) claimer A acquires (rename pending → exclusive path) then awaits read
     // 3) dispatcher offers B (ticket 222 / site-B) into the empty pending slot
-    // 4) claimer A discovers site mismatch and must restore without clobbering B
+    // 4) claimer A discovers site mismatch and restores without clobbering B
+    // 5) B remains claimable
     offerTicketDispatchLease({
       ledgerHome,
       bookKey: "demo-book",
       siteIdentity: "/site-A",
       ticketNumber: 111,
     });
-    const bookDir = activationBookDirectory(ledgerHome, "demo-book");
-    const pendingPath = join(bookDir, DISPATCH_LEASE_PENDING_FILE);
-    const claimedA = join(bookDir, "dispatch-lease.claimed.sim-a.json");
-    const rawA = readFileSync(pendingPath, "utf8");
-    renameSync(pendingPath, claimedA);
 
+    const claimA = claimTicketDispatchLease({
+      ledgerHome,
+      bookKey: "demo-book",
+      siteIdentity: "/site-WRONG",
+    });
+    // After exclusive acquire, claim awaits readFile — offer B into the free slot.
     offerTicketDispatchLease({
       ledgerHome,
       bookKey: "demo-book",
@@ -240,13 +241,16 @@ test("site mismatch restore does not swallow a newer pending offer (demonstrated
       ticketNumber: 222,
     });
 
-    const outcome = restoreExclusiveClaimToPendingSlot({
-      pendingPath,
-      claimedPath: claimedA,
-      raw: rawA,
-    });
-    assert.equal(outcome, "slot-occupied");
+    await assert.rejects(
+      () => claimA,
+      (error: unknown) => error instanceof TicketDispatchLeaseSiteMismatchError,
+    );
 
+    const pendingPath = join(
+      activationBookDirectory(ledgerHome, "demo-book"),
+      DISPATCH_LEASE_PENDING_FILE,
+    );
+    assert.equal(existsSync(pendingPath), true);
     const pendingBody = JSON.parse(readFileSync(pendingPath, "utf8")) as {
       ticketNumber: number;
       siteIdentity: string;
@@ -254,7 +258,7 @@ test("site mismatch restore does not swallow a newer pending offer (demonstrated
     assert.equal(pendingBody.ticketNumber, 222);
     assert.equal(pendingBody.siteIdentity, "/site-B");
 
-    const claimed = claimTicketDispatchLease({
+    const claimed = await claimTicketDispatchLease({
       ledgerHome,
       bookKey: "demo-book",
       siteIdentity: "/site-B",

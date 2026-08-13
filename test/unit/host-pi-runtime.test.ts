@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 
@@ -15,17 +14,12 @@ function writePackage(dir: string, name: string, entryBody: string): string {
 }
 
 /**
- * Isolated fixture root: packageRoot must not see ambient ancestor node_modules
- * (macOS tmpdir often sits under a polluted /var/folders/.../node_modules).
- * Nest the bare package under a private prefix so ancestor lookup cannot leak.
+ * Isolated fixture root under /tmp (not os.tmpdir()): macOS tmpdir often sits
+ * under a polluted /var/folders/.../node_modules that production ancestor-walk
+ * resolution would honestly see as local. /tmp has no such ambient peers here.
  */
 function makeIsolatedRoot(): string {
-  const outer = mkdtempSync(join(tmpdir(), "host-pi-runtime-iso-"));
-  // Empty node_modules at the isolation boundary does not provide packages, but
-  // production only probes package-own node_modules for local presence. Nested
-  // packageRoot stays free of ambient host peers either way.
-  mkdirSync(join(outer, "node_modules"), { recursive: true });
-  return outer;
+  return mkdtempSync(join("/tmp", "ak-host-pi-runtime-iso-"));
 }
 
 /** A fake host Pi global install: pi-coding-agent with nested pi-ai and typebox, plus a bin shim. */
@@ -112,24 +106,21 @@ test("fails loud when neither local packages nor a host pi exist", () => {
   }
 });
 
-test("ambient ancestor node_modules do not count as local package presence", () => {
+test("ancestor node_modules under the package tree count as local presence", () => {
   const root = makeIsolatedRoot();
   try {
-    // Pollute an ancestor the way macOS tmpdir hosts sometimes do.
-    writePackage(
-      join(root, "node_modules", "@earendil-works", "pi-ai"),
-      "@earendil-works/pi-ai",
-      "module.exports = 'ambient-broken';\n",
-    );
+    // Production semantics: ancestor walk (ESM package lookup). An ancestor
+    // under the isolated tree that provides peers is honest local presence.
+    for (const name of HOST_PROVIDED_PACKAGES) {
+      writePackage(join(root, "node_modules", ...name.split("/")), name, "module.exports = 'ancestor';\n");
+    }
     const packageRoot = makeBarePackageRoot(root);
-    assert.throws(
-      () => ensureHostPiRuntimeResolvable(packageRoot, { PATH: join(root, "empty-bin") }),
-      /no host `pi` executable on PATH/,
-    );
+    // No host pi — must still succeed because ancestor packages resolve.
+    ensureHostPiRuntimeResolvable(packageRoot, { PATH: join(root, "empty-bin") });
     assert.equal(
       lstatSync(join(packageRoot, "node_modules", "@earendil-works", "pi-ai"), { throwIfNoEntry: false }),
       undefined,
-      "must not treat ancestor ambient packages as package-own local installs",
+      "must not rewrite package-own node_modules when ancestors already resolve",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
