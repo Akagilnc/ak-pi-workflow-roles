@@ -2,12 +2,12 @@ import { resolve } from "node:path";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
-import { dispatchSelectedTicketRole } from "../../src/factory-board-ticket-dispatch.ts";
+import { offerTicketDispatchLease } from "../../src/ticket-dispatch-lease.ts";
 
 /**
- * Offer via the production board-select dispatcher seam (offer then ignite).
- * Tests that only need the lease use a no-op ignite; production supplies the
- * real role starter. Does not swallow HeldError.
+ * Test setup: place a pending dispatch lease for admit-path tests.
+ * Production machine path is dispatchSelectedTicketRole (offer then start ak-role);
+ * tests that only need the lease use this low-level offer. Does not swallow HeldError.
  */
 export function offerTestDispatchLease(
   home: string,
@@ -15,11 +15,10 @@ export function offerTestDispatchLease(
   ticketNumber = 176,
 ): void {
   const siteIdentity = resolve(projectRoot);
-  dispatchSelectedTicketRole({
+  offerTicketDispatchLease({
     ledgerHome: resolveActivationLedgerHome(() => home),
     bookKey: resolveBookKeyFromGit(siteIdentity),
     siteIdentity,
     ticketNumber,
-    ignite: () => undefined,
   });
 }

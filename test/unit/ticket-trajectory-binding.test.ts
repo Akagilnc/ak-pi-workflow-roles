@@ -289,14 +289,13 @@ test("book index is reusable across tickets without re-scanning semantics", asyn
       },
     ]);
     const index = buildTicketTrajectoryBookIndex(ledgerDir);
-    assert.equal(index.bindings.length, 2);
-    assert.equal(index.dispatchStubs.length, 2);
     // Book-level lookups are pre-built for direct per-ticket consume.
     assert.equal(index.bindingsByTicket.get(176)?.length, 1);
     assert.equal(index.bindingsByTicket.get(177)?.length, 1);
     assert.equal(index.stubsByCorrelation.get("corr-a")?.length, 1);
     assert.equal(index.stubsByCorrelation.get("corr-b")?.length, 1);
     assert.equal(index.unboundActivations.length, 0);
+    // Real per-ticket behavior, not unconsumed internal arrays.
     const a = await loadTicketTrajectoryRuns(ledgerDir, 176, index);
     const b = await loadTicketTrajectoryRuns(ledgerDir, 177, index);
     assert.equal(a.some((run) => run.runId === "dispatch:corr-a"), true);

@@ -15033,6 +15033,7 @@ import {
   unlinkSync,
   writeSync as writeSync2
 } from "node:fs";
+import { readFile as readFile2 } from "node:fs/promises";
 import { join as join5 } from "node:path";
 import { randomUUID } from "node:crypto";
 function requirePositiveTicketNumber(ticketNumber) {
@@ -15135,10 +15136,9 @@ function restoreExclusiveClaimToPendingSlot(options) {
   } finally {
     closeSync2(fd);
   }
-  void options.claimedPath;
   return "restored";
 }
-function claimTicketDispatchLease(options) {
+async function claimTicketDispatchLease(options) {
   const bookKey = requireNonemptyString(options.bookKey, "bookKey");
   const siteIdentity = requireNonemptyString(options.siteIdentity, "siteIdentity");
   const pendingPath = pendingLeasePath(options.ledgerHome, bookKey);
@@ -15161,7 +15161,7 @@ function claimTicketDispatchLease(options) {
   try {
     let raw;
     try {
-      raw = readFileSync(claimedPath, "utf8");
+      raw = await readFile2(claimedPath, "utf8");
     } catch (error) {
       throw new TicketDispatchLeaseError(
         `failed to read claimed ticket dispatch lease (${claimedPath}): ${errorText(error)}`,
@@ -15177,7 +15177,6 @@ function claimTicketDispatchLease(options) {
     if (pending.siteIdentity !== siteIdentity) {
       restoreExclusiveClaimToPendingSlot({
         pendingPath,
-        claimedPath,
         raw
       });
       throw new TicketDispatchLeaseSiteMismatchError(
@@ -15388,7 +15387,7 @@ var init_terminating_tools = __esm({
 });
 
 // src/doctor-evidence.ts
-import { readdir, readFile as readFile2, realpath, stat } from "node:fs/promises";
+import { readdir, readFile as readFile3, realpath, stat } from "node:fs/promises";
 import { dirname as dirname6, relative as relative2, resolve as resolve4, sep as sep2 } from "node:path";
 function record2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -15506,7 +15505,7 @@ async function loadDoctorCase(runsPath) {
   const turns = { count: 0, sources: [] }, calls = { count: 0, sources: [] }, tokens = { count: 0, sources: [] };
   for (const path of await discoverCaseFiles(root)) {
     const id = relative2(root, path).split(sep2).join("/");
-    const bytes = await readFile2(path);
+    const bytes = await readFile3(path);
     const content = bytes.toString("utf8");
     const kind = id.endsWith(".jsonl") ? "session" : "stderr";
     evidence.push({ id, kind, byteLength: bytes.byteLength, contentLength: content.length, sha256: sha256Hex(bytes), content });
@@ -15536,7 +15535,7 @@ var init_doctor_evidence = __esm({
 
 // src/collector-config.ts
 import { createHash as createHash2 } from "node:crypto";
-import { readFile as readFile3 } from "node:fs/promises";
+import { readFile as readFile4 } from "node:fs/promises";
 function fail3(message, cause) {
   throw new Error(message, cause === void 0 ? void 0 : { cause });
 }
@@ -15579,7 +15578,7 @@ function emptyCollectorManifest() {
 async function loadCollectorManifest(path) {
   let bytes;
   try {
-    bytes = await readFile3(path);
+    bytes = await readFile4(path);
   } catch (error) {
     fail3(`Collector request manifest is unreadable at ${path}`, error);
   }
@@ -15718,7 +15717,7 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat,
   mkdir as mkdir2,
-  readFile as readFile4,
+  readFile as readFile5,
   realpath as realpath2,
   writeFile as writeFile2
 } from "node:fs/promises";
@@ -15744,7 +15743,7 @@ async function writeRoleInvocationLedger(source, role) {
 }
 async function mergeInvocationIdentityPage(runDirectory, fields) {
   const ledgerPath = join6(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile4(ledgerPath, "utf8"));
+  const current = JSON.parse(await readFile5(ledgerPath, "utf8"));
   await writeFile2(
     ledgerPath,
     `${JSON.stringify({
@@ -15764,7 +15763,7 @@ async function recordLaunchedPiIdentity(runDirectory, identity) {
 async function observeLaunchedRolePackageIdentity(packageRoot2, selectedRoleEntry) {
   const rolePackageRoot = packageRoot2;
   const raw = JSON.parse(
-    await readFile4(join6(rolePackageRoot, "package.json"), "utf8")
+    await readFile5(join6(rolePackageRoot, "package.json"), "utf8")
   );
   if (typeof raw.version !== "string" || raw.version.trim() === "") {
     throw new Error(
@@ -15958,7 +15957,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
     );
   }
-  const bytes = await readFile4(absolute);
+  const bytes = await readFile5(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename3(absolute)}`;
   const frozenPath = join6(destinationDir, name);
   await writeFile2(frozenPath, bytes);
@@ -15970,9 +15969,9 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
     mediaKind: "regular-file"
   };
 }
-function claimTicketDispatchLeaseForAdmit(input) {
+async function claimTicketDispatchLeaseForAdmit(input) {
   try {
-    return claimTicketDispatchLease({
+    return await claimTicketDispatchLease({
       ledgerHome: input.ledgerHome,
       bookKey: input.bookKey,
       siteIdentity: input.siteIdentity
@@ -16014,7 +16013,7 @@ async function admitJudgeInvocation(options) {
       )
     );
   }
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot
@@ -16105,7 +16104,7 @@ async function admitCoderInvocation(options) {
       )
     );
   }
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot
@@ -16184,7 +16183,7 @@ async function admitFixerInvocation(options) {
   if (options.prerequisitesPath !== void 0) {
     const absolutePrereq = isAbsolute4(options.prerequisitesPath) ? options.prerequisitesPath : resolve5(options.prerequisitesPath);
     try {
-      prerequisitesSource = await readFile4(absolutePrereq, "utf8");
+      prerequisitesSource = await readFile5(absolutePrereq, "utf8");
     } catch (error) {
       throw new CliUsageError(
         `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
@@ -16216,7 +16215,7 @@ async function admitFixerInvocation(options) {
       )
     );
   }
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot
@@ -16475,7 +16474,7 @@ async function admitCollectorInvocation(options) {
       )
     );
   }
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot
@@ -16869,7 +16868,7 @@ async function admitReviewerInvocation(options) {
       )
     );
   }
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot
@@ -17054,7 +17053,7 @@ async function admitMergerInvocation(options) {
     // Authorized checks remain available on the assignment; default none.
     authorizedChecks: []
   });
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
+  const dispatchLease = await claimTicketDispatchLeaseForAdmit({
     ledgerHome,
     bookKey,
     siteIdentity: projectRoot
@@ -17256,7 +17255,7 @@ var init_reviewer_dispatch = __esm({
 // src/public-cli/explicit-internal.ts
 import { execFile as execFile3, spawn } from "node:child_process";
 import { constants as constants2, writeFileSync } from "node:fs";
-import { access, readFile as readFile5, realpath as realpath3, unlink } from "node:fs/promises";
+import { access, readFile as readFile6, realpath as realpath3, unlink } from "node:fs/promises";
 import { delimiter as delimiter2, isAbsolute as isAbsolute5, join as join7, resolve as resolve6 } from "node:path";
 import { platform } from "node:process";
 import { promisify as promisify3 } from "node:util";
@@ -17279,7 +17278,7 @@ async function clearReviewerDispatchRejection(runDirectory) {
 async function readReviewerDispatchRejection(runDirectory) {
   let raw;
   try {
-    raw = await readFile5(reviewerDispatchRejectionPath(runDirectory), "utf8");
+    raw = await readFile6(reviewerDispatchRejectionPath(runDirectory), "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
@@ -17445,7 +17444,7 @@ var init_explicit_internal = __esm({
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile6, realpath as realpath4 } from "node:fs/promises";
+import { readFile as readFile7, realpath as realpath4 } from "node:fs/promises";
 import { join as join8 } from "node:path";
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
@@ -17564,7 +17563,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const provenancePath = join8(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile6(provenancePath, "utf8");
+    provenanceRaw = await readFile7(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -17581,7 +17580,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
     const absolute = join8(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile6(absolute);
+      bytes = await readFile7(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -17597,7 +17596,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let raw;
   try {
     skillPath = await realpath4(skillPathConfigured);
-    raw = await readFile6(skillPath, "utf8");
+    raw = await readFile7(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -17712,7 +17711,7 @@ var init_public_run_credentials = __esm({
 });
 
 // src/public-cli/run-lifecycle.ts
-import { lstat as lstat2, open, readdir as readdir2, readFile as readFile7, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
+import { lstat as lstat2, open, readdir as readdir2, readFile as readFile8, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join9 } from "node:path";
 function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
@@ -17733,7 +17732,7 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readTypedHttp429Observation(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile7(typedProviderHttpPath(runDirectory), "utf8")
+      await readFile8(typedProviderHttpPath(runDirectory), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
@@ -17766,7 +17765,7 @@ async function writeRoleRunState(runDirectory, record4) {
 async function readRoleRunState(runDirectory) {
   let raw;
   try {
-    raw = JSON.parse(await readFile7(join9(runDirectory, RUN_STATE_FILE), "utf8"));
+    raw = JSON.parse(await readFile8(join9(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
@@ -17984,7 +17983,7 @@ async function loadResumableRunRecord(home, runId) {
   let ticketNumber;
   try {
     const raw = JSON.parse(
-      await readFile7(run.admittedRequestPath, "utf8")
+      await readFile8(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       const record4 = raw;
@@ -18042,7 +18041,7 @@ async function loadResumableRunRecord(home, runId) {
   if (correlationId === void 0 || ticketNumber === void 0) {
     try {
       const invocationRaw = JSON.parse(
-        await readFile7(join9(run.runDirectory, "invocation.json"), "utf8")
+        await readFile8(join9(run.runDirectory, "invocation.json"), "utf8")
       );
       if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
         const fromInvocation = parsePersistedLeaseIdentity(
@@ -18952,7 +18951,7 @@ var init_terminal = __esm({
 
 // src/public-cli/settlement.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile8, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
+import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname7, join as join10 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
@@ -19008,7 +19007,7 @@ function presentStructuralRejection(error, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile8(sessionFile, "utf8");
+    await readFile9(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError2(error)) return { state: "missing" };
@@ -19148,7 +19147,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile8(sessionFile, "utf8");
+  const text = await readFile9(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -24593,14 +24592,7 @@ function ensureHostPiRuntimeResolvable(packageRoot2, env = process.env) {
   }
 }
 function missingPackages(packageRoot2) {
-  return HOST_PROVIDED_PACKAGES.filter((name) => findOwnPackageDir(packageRoot2, name) === void 0);
-}
-function findOwnPackageDir(packageRoot2, name) {
-  const candidate = join(packageRoot2, "node_modules", ...name.split("/"));
-  if (existsSync(join(candidate, "package.json"))) {
-    return realpathSync(candidate);
-  }
-  return void 0;
+  return HOST_PROVIDED_PACKAGES.filter((name) => findPackageDirFrom(packageRoot2, name) === void 0);
 }
 function findPackageDirFrom(startDir, name) {
   let dir = startDir;
