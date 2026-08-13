@@ -26,7 +26,11 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "./package-contracts/fixer-packet.ts";
-import { createWorkerSubmissionGate } from "./worker-submission-gates.ts";
+import {
+  createWorkerSubmissionGate,
+  WorkerCommitReminderError,
+  WorkerUnfinishedReasonReminderError,
+} from "./worker-submission-gates.ts";
 
 export {
   CODER_OUTPUT_TOOL_NAME,
@@ -171,9 +175,32 @@ function requireSingletonSubmissionCall(
   }
 }
 
+/** Reminder bounces stay typed rejects; IO/infrastructure keep identity via host failInfrastructure. */
+function assertAcceptableThroughHost(
+  submissionGate: { assertAcceptable(status: string, details?: unknown): void },
+  status: string,
+  details: unknown,
+  hostActions: WorkerRoleHostActions,
+  ctx: ExtensionContext,
+  toolCallId: string,
+): void {
+  try {
+    submissionGate.assertAcceptable(status, details);
+  } catch (error) {
+    if (
+      error instanceof WorkerCommitReminderError ||
+      error instanceof WorkerUnfinishedReasonReminderError
+    ) {
+      throw error;
+    }
+    hostActions.failInfrastructure(error, ctx, toolCallId);
+  }
+}
+
 export function createFixerRoleRuntime(
   pi: ExtensionAPI,
   dependencies: FixerRoleDependencies,
+  hostActions: WorkerRoleHostActions,
 ): WorkerRoleRuntime {
   let soul: string | undefined;
   let packet: FixerInvocationInput | undefined;
@@ -251,7 +278,14 @@ export function createFixerRoleRuntime(
               ctx,
             );
             const output = deepFreeze(validateFixerOutputForPacket(parameters, phase, packet));
-            submissionGate.assertAcceptable(output.status, output);
+            assertAcceptableThroughHost(
+              submissionGate,
+              output.status,
+              output,
+              hostActions,
+              ctx,
+              toolCallId,
+            );
             return {
               content: [{ type: "text" as const, text: "Fixer report accepted" }],
               details: output,
@@ -383,7 +417,14 @@ export function createCoderRoleRuntime(
                 "Coder completed requires the Matt tdd skill to be expanded through Pi /skill:tdd",
               );
             }
-            submissionGate.assertAcceptable(output.status, output);
+            assertAcceptableThroughHost(
+              submissionGate,
+              output.status,
+              output,
+              hostActions,
+              ctx,
+              toolCallId,
+            );
             return {
               content: [{ type: "text" as const, text: "Coder report accepted" }],
               details: output,
