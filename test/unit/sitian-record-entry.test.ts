@@ -58,9 +58,7 @@ test("createRecordSession nests by parent file when SessionManager file and dir 
     const settlementRead = join(dirname(parent.getSessionFile()!), "auditor-roles");
     assert.equal(physicalPathIdentity(child.getSessionDir()), physicalPathIdentity(settlementRead));
   });
-});
 
-test("createRecordSession owns subject placement, continuation, switching, and parent correlation", async () => {
   await withHermeticHome({ prefix: "ak-sitian-subject-" }, async ({ home }) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
