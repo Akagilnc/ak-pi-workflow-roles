@@ -185,8 +185,6 @@ export async function writeRoleRunState(
 
 export async function readRoleRunState(
   runDirectory: string,
-  _home?: string,
-  canonicalSessionFile?: string,
 ): Promise<RoleRunRecord | undefined> {
   let raw: unknown;
   try {
@@ -233,7 +231,7 @@ export async function readRoleRunState(
     const sessionFile =
       typeof record.sessionFile === "string" && record.sessionFile.trim() !== ""
         ? record.sessionFile
-        : canonicalSessionFile ?? join(record.sessionDirectory, "session.jsonl");
+        : join(record.sessionDirectory, "session.jsonl");
     let resumable: TypedHttp429Observation | undefined;
     if (record.resumable !== undefined && record.resumable !== null) {
       if (
@@ -289,15 +287,8 @@ export async function markRunAdmitted(
   });
 }
 
-export async function markRunRunning(
-  runDirectory: string,
-  canonicalSessionFile?: string,
-): Promise<void> {
-  const current = await readRoleRunState(
-    runDirectory,
-    undefined,
-    canonicalSessionFile,
-  );
+export async function markRunRunning(runDirectory: string): Promise<void> {
+  const current = await readRoleRunState(runDirectory);
   if (current === undefined) {
     throw new Error("cannot mark running: run state missing");
   }
@@ -476,7 +467,7 @@ async function loadResumableRunRecord(
   if (runDirectory === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  const run = await readRoleRunState(runDirectory, home);
+  const run = await readRoleRunState(runDirectory);
   if (run === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
@@ -886,6 +877,6 @@ export async function peekRoleRunRole(
 > {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) return undefined;
-  const run = await readRoleRunState(runDirectory, home);
+  const run = await readRoleRunState(runDirectory);
   return run?.role;
 }

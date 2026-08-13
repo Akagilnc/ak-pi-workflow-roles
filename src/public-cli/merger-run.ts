@@ -282,7 +282,7 @@ async function dispatchAdmittedMerger(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory, admitted.sessionFile);
+    await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
