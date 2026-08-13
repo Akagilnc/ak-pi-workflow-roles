@@ -688,6 +688,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
         entries.push({ type: "custom", customType, data });
       },
       entries: () => entries,
+      recordPointer: () => "/fixture/navigator-record",
       dispose() {},
     };
     let navigator: ReturnType<typeof createNavigatorAttendance> | undefined;
@@ -699,7 +700,6 @@ test("packaged infrastructure failure silence correlates the exact output call i
       createNavigatorAttendance: async (options) => {
         navigator = createNavigatorAttendance({
           ...options,
-          sessionDir: "/repo/.ak/work/issues/28/runs/navigator",
           modelSettingPath: "/missing/navigator-model.json",
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
@@ -1478,7 +1478,6 @@ test(
         createNavigatorAttendance: async (options) => {
           attendance = createNavigatorAttendance({
             ...options,
-            sessionDir: join(modelRoot, "navigator-session"),
             modelSettingPath,
             loadSoul: async () => "route law",
             loadRoutePlaybook: async () => {
@@ -1492,6 +1491,7 @@ test(
               },
               appendEntry() {},
               entries: () => [],
+              recordPointer: () => "/fixture/navigator-record",
               dispose() {
                 disposeCalls += 1;
               },
