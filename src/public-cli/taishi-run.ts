@@ -3,8 +3,10 @@
  * Deterministic analysis seat — no Pi runner, no admission lease.
  * Reuses existing CLI failure envelope (CliUsageError + structural reject).
  * #338: three query faces (issue / cohort / model-groups) on one seam;
- * retrieval uses compute-if-missing (readOrComputeTaishiIssuePage) so missing
- * pages are written via the sole issue kernel + existing page writer.
+ * retrieval is synchronous compute-if-missing (readOrComputeTaishiIssuePage):
+ * wait for sole kernel + existing writer, then emit the full result. Whole-compute
+ * failure ends this pull as typed terminal (exit 1) — no pending/partial envelope.
+ * "Unobtrusive" binds #337 merge auto-trigger only, not this user-initiated query.
  */
 import {
   physicalPathIdentity,
@@ -131,8 +133,9 @@ export async function runPublicTaishi(
       return { exitCode: 2 };
     }
     if (error instanceof TaishiIssueComputeError) {
-      // Typed loud compute failure — names issue + real cause (not usage, not absent).
-      io.stderr(formatCliDiagnostic(error.message));
+      // Typed terminal failure for this retrieval — names issue + real cause.
+      // Exit 1 ends the pull now; no pending envelope, no absent/partial success.
+      io.stderr(formatCliDiagnostic(`${error.code}: ${error.message}`));
       return { exitCode: 1 };
     }
     throw error;

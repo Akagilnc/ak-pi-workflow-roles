@@ -3,9 +3,11 @@
  *
  * Public surface (reuse #336 PUBLIC_ROLE_ARGV taishi row) exposes three typed
  * reads: issue / cohort / model-groups. Unified semantics: in-scope issue with
- * a page → use it; missing page → call the sole compute kernel, write via the
- * existing page entry, then aggregate. Always complete results on success.
- * Compute failure is typed-loud (names issue + real cause); never washed to absent.
+ * a page → use it; missing page → sync-await sole compute kernel, write via the
+ * existing page entry, then return the full result. No pending/async envelope.
+ * Whole-compute failure is typed terminal for this pull (names issue + real cause);
+ * never washed to absent. Single-run unreadable/damaged keeps PRD #298 exclusion
+ * (page-local), and does not fail the whole retrieval.
  *
  * Fixture runId segment 6xxx (1-5xxx occupied by prior taishi family).
  */
@@ -50,6 +52,7 @@ const COHORT_A_ROOT = "/taishi-fixture/c338-cohort-a";
 const COHORT_B_ROOT = "/taishi-fixture/c338-cohort-b";
 const MODELS_A_ROOT = "/taishi-fixture/c338-models-a";
 const MODELS_B_ROOT = "/taishi-fixture/c338-models-b";
+/** Healthy root used only for whole-compute write-failure negative (not damage). */
 const NEG_ROOT = "/taishi-fixture/c338-neg-broken";
 
 const ISSUE_RUN = "019ff000-6001-7000-8000-0000000006a1";
@@ -57,6 +60,8 @@ const COHORT_A_RUN = "019ff000-6002-7000-8000-0000000006b2";
 const COHORT_B_RUN = "019ff000-6003-7000-8000-0000000006c3";
 const MODELS_A_RUN = "019ff000-6004-7000-8000-0000000006d4";
 const MODELS_B_RUN = "019ff000-6005-7000-8000-0000000006e5";
+const NEG_RUN = "019ff000-6006-7000-8000-0000000006f6";
+const NEG_RUN_DIR = `${NEG_RUN}@coder`;
 
 /** 6xxx issue numbers — exclusive from 1-5xxx family. */
 const COHORT_ISSUE_A = 6601;
@@ -70,6 +75,7 @@ const NEG_ISSUE = 6699;
  * cohort-b coder 6003 completed wall 20_000
  * models-a coder 6004 grok-4.5 completed wall 40_000
  * models-b coder 6005 sol-low completed wall 10_000
+ * neg healthy coder 6006 completed wall 15_000 (write-failure subject only)
  */
 const ISSUE_WALL_MS = 60_000;
 const COHORT_A_WALL_MS = 30_000;
@@ -385,11 +391,12 @@ test("taishi #338 model-groups compute-if-missing: uncomputed roots → pages wr
   });
 });
 
-test("taishi #338 compute failure: blocked write → typed loud issue+cause; no partial cohort", async () => {
+test("taishi #338 whole-compute failure: write-page blocked → typed terminal issue+cause; no partial cohort", async () => {
   await withBusinessRepo(async () => {
     await withTempHome(async (home) => {
       const ledgerHome = join(home, ".ak-roles");
-      // Join face present; page missing so ensure must compute.
+      // Join face present; page missing so ensure must compute a *healthy* issue.
+      // Whole-volume failure cause = write-page EISDIR (not single-run damage).
       await writeTaishiLibraryIndexPage(
         ledgerHome,
         buildTaishiLibraryIndexPage([
@@ -400,7 +407,7 @@ test("taishi #338 compute failure: blocked write → typed loud issue+cause; no 
       await rm(taishiIssuePagePath(ledgerHome, COHORT_A_ROOT), { force: true });
       await rm(taishiIssuePagePath(ledgerHome, NEG_ROOT), { force: true });
 
-      // Block the sole write entry for the damaged issue: page path is a directory.
+      // Block the sole write entry: page path is a directory → EISDIR on atomic write.
       const blockedPath = taishiIssuePagePath(ledgerHome, NEG_ROOT);
       await mkdir(blockedPath, { recursive: true });
       await writeFile(join(blockedPath, "trap"), "blocked\n", "utf8");
@@ -426,26 +433,19 @@ test("taishi #338 compute failure: blocked write → typed loud issue+cause; no 
         { packageRoot, home, io },
       );
 
-      // Compute failure is loud — not usage (2) washed, not silent success.
-      assert.notEqual(result.exitCode, 0);
+      // Whole-compute failure terminates this pull — not usage (2), not pending/success.
+      assert.equal(result.exitCode, 1);
       const err = stderr.join("");
       assert.match(err, /^ak-role: /);
-      // Names the failed issue (number and/or projectRoot) + real cause.
+      // Typed code + failed issue identity + real write cause.
+      assert.match(err, /taishi-issue-compute-failed/);
       assert.match(err, new RegExp(String(NEG_ISSUE)));
-      assert.match(err, /EISDIR|directory|compute|failed/i);
-      // Must not wash into absent-shaped success payload.
+      assert.match(err, /EISDIR|illegal operation on a directory/i);
+      // Must not wash into absent-shaped or pending success payload.
       const out = stdout.join("").trim();
-      if (out.length > 0) {
-        assert.doesNotMatch(out, /"status"\s*:\s*"absent"/);
-        // No successful cohort envelope.
-        assert.throws(() => {
-          const parsed = JSON.parse(out) as { mode?: string };
-          assert.notEqual(parsed.mode, "cohort");
-        });
-      }
+      assert.equal(out, "", "terminal failure must not emit a result envelope");
 
-      // Index unchanged by the failed ensure of NEG; no silent partial cohort page set
-      // that would pretend NEG was absent.
+      // Index unchanged by the failed ensure of NEG; no silent partial cohort page set.
       const afterIndex = await readFile(taishiLibraryIndexPath(ledgerHome), "utf8");
       assert.equal(afterIndex, beforeIndex);
 
@@ -455,11 +455,70 @@ test("taishi #338 compute failure: blocked write → typed loud issue+cause; no 
 
       // Page names that are real .json files must not include a forged NEG success page.
       const afterPages = await listIssuePageNames(ledgerHome);
-      // listIssuePageNames only returns *.json files; directory trap is excluded.
       assert.equal(
         afterPages.includes(`${taishiIssuePageKey(NEG_ROOT)}.json`),
         beforePages.includes(`${taishiIssuePageKey(NEG_ROOT)}.json`),
       );
+    });
+  });
+});
+
+test("taishi #338 single-run damage: unreadable exclusion on page; retrieval still succeeds", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async (home) => {
+      const ledgerHome = join(home, ".ak-roles");
+      // Corrupt only the NEG run session after fixture copy — PRD #298 unreadable path.
+      // This must NOT become a whole-compute / whole-pull failure under #338 retrieval.
+      const sessionPath = join(
+        ledgerHome,
+        "books",
+        "fixture-book-c338-neg",
+        "runs",
+        NEG_RUN_DIR,
+        "session",
+        "session.jsonl",
+      );
+      await writeFile(sessionPath, "THIS IS NOT VALID SESSION JSONL {{{\n", "utf8");
+      await rm(taishiIssuePagePath(ledgerHome, NEG_ROOT), { force: true });
+
+      const { io, stdout, stderr } = captureIo();
+      const result = await runAkRole(
+        ["taishi", "--project-root", NEG_ROOT],
+        { packageRoot, home, io },
+      );
+
+      assert.equal(result.exitCode, 0, stderr.join(""));
+      assert.equal(stderr.join(""), "");
+
+      const body = JSON.parse(stdout.join("")) as {
+        mode: string;
+        page: TaishiIssueMetricsPage;
+        pagePath: string;
+      };
+      assert.equal(body.mode, "issue");
+      assert.equal(body.page.kind, "taishi-issue-metrics");
+      assert.equal(body.page.projectRoot, physicalPathIdentity(NEG_ROOT));
+      // Damaged run excluded from legs; counted as unreadable (page-local).
+      assert.deepEqual(body.page.legs, []);
+      assert.equal(body.page.totalElapsedMs, 0);
+      assert.equal(body.page.unreadableCount, 1);
+      assert.equal(body.page.unreadable.length, 1);
+      const damaged = body.page.unreadable[0]!;
+      assert.equal(damaged.runId, NEG_RUN);
+      assert.equal(damaged.book, "fixture-book-c338-neg");
+      assert.match(damaged.reason, /malformed JSONL record/i);
+      // No wall/duration admitted on unreadable entries.
+      assert.equal(
+        "wallMs" in damaged || "durationMs" in damaged || "elapsedMs" in damaged,
+        false,
+      );
+
+      // Page still landed via sole writer — retrieval completed with full typed page.
+      const disk = JSON.parse(
+        await readFile(body.pagePath, "utf8"),
+      ) as TaishiIssueMetricsPage;
+      assert.equal(disk.unreadableCount, 1);
+      assert.equal(disk.unreadable[0]!.runId, NEG_RUN);
     });
   });
 });

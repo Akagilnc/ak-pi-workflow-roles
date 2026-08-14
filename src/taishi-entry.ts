@@ -6,7 +6,9 @@
  * C1: sweep = merged PR list + LOC → backfill issue pages + maintain library index.
  * C2: cohort = two issue-number groups → join library index → contrast query output.
  * C3: model-groups = caller issue set → scan union → per-leg model aggregate.
- * #338: retrieval compute-if-missing — read existing page or call issue kernel once.
+ * #338: retrieval compute-if-missing — sync wait for sole kernel, then full result.
+ * Whole-compute failure is typed terminal for this pull (no pending envelope).
+ * "Unobtrusive / non-blocking" binds #337 merge auto-trigger only, not user query.
  */
 import { readFile } from "node:fs/promises";
 
@@ -171,10 +173,13 @@ export type TaishiResult =
   | TaishiModelGroupsModeResult;
 
 /**
- * #338 retrieval primitive: use persisted page when present; otherwise call the
- * sole issue compute kernel (runTaishiIssueMode) which writes via the existing
- * page entry. Compute failures stay loud with issue identity — never absent.
- * Sweep / explicit issue recompute still go through runTaishiIssueMode directly.
+ * #338 retrieval primitive (sync): use persisted page when present; otherwise
+ * await the sole issue compute kernel (runTaishiIssueMode) which writes via the
+ * existing page entry, then return the full result. No pending/async envelope.
+ * Compute failures throw TaishiIssueComputeError (issue identity + real cause)
+ * and terminate this pull — never washed to absent/partial success.
+ * Single-run unreadable/damaged stays page-local exclusion (PRD #298), not a
+ * whole-compute failure. Sweep / explicit recompute still use runTaishiIssueMode.
  */
 export async function readOrComputeTaishiIssuePage(
   input: TaishiIssueModeInput,
