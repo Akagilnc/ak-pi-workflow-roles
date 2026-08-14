@@ -437,10 +437,11 @@ export function createGhApiRunner(
 export type GhIssueSoftFetchResult = Readonly<{ title: string; body: string }>;
 /**
  * Soft single-issue fetch over the shared gh api runner.
- * undefined = confirmed tracker unreachable / issue not found:
+ * undefined = confirmed tracker unreachable / issue not found / gh tool unavailable:
  *   - HTTP non-2xx, or
- *   - runner-tagged ambiguousGhFailure (gh ran but no parseable HTTP — auth/network/transport).
- * Unrecognized runner failures (e.g. spawn ENOENT) and parse/implementation errors propagate with true cause.
+ *   - runner-tagged ambiguousGhFailure (gh ran but no parseable HTTP — auth/network/transport), or
+ *   - gh process could not start (ENOENT / spawn syscall failure).
+ * After gh starts successfully: response JSON/shape/implementation errors propagate with true cause.
  */
 export type GhIssueSoftFetcher = (input: {
   owner: string;
@@ -456,10 +457,20 @@ function isAmbiguousGhFailure(error: unknown): boolean {
   );
 }
 
+/** gh binary missing or otherwise unable to launch — ticket-authorized soft unavailable. */
+function isGhProcessStartFailure(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "ENOENT") return true;
+  const syscall = (error as NodeJS.ErrnoException).syscall;
+  return typeof syscall === "string" && (syscall === "spawn" || syscall.startsWith("spawn "));
+}
+
 /**
  * Production issue-fetch capability owned by the shared gh execution seam.
  * Reuses createGhApiRunner lifecycle. Softens only ticket-authorized unavailable results
- * (tracker unreachable / issue not found); does not catch-all wash other failures into unavailable.
+ * (tracker unreachable / issue not found / gh cannot start); does not catch-all wash
+ * post-start parse or implementation failures into unavailable.
  */
 export function createGhIssueSoftFetcher(
   runner: GhApiRunner = createGhApiRunner(),
@@ -478,9 +489,8 @@ export function createGhIssueSoftFetcher(
         path,
       ]);
     } catch (error) {
-      // Ticket-authorized: tracker unreachable when the shared runner tags transport ambiguity.
-      // Unrecognized runner failures (spawn missing binary, etc.) keep true cause.
-      if (isAmbiguousGhFailure(error)) return undefined;
+      // Ticket-authorized soft unavailable: tagged transport ambiguity, or gh never started.
+      if (isAmbiguousGhFailure(error) || isGhProcessStartFailure(error)) return undefined;
       throw error;
     }
     // Ticket-authorized degrade: issue not found / tracker non-success via HTTP status.

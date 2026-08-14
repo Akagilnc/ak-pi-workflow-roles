@@ -143,10 +143,8 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
 
   let ticketNumber: number | undefined;
   const rawTicketNumber = getFlag("ak-review-ticket-number");
-  if (rawTicketNumber !== undefined) {
-    if (typeof rawTicketNumber !== "string" || !/^[1-9]\d*$/.test(rawTicketNumber)) {
-      throw new Error("Reviewer ticket number transport error: expected a positive integer string");
-    }
+  // Shape-invalid flag values do not abort: omit typed candidate; branch→commit→degrade continues.
+  if (typeof rawTicketNumber === "string" && /^[1-9]\d*$/.test(rawTicketNumber)) {
     ticketNumber = Number(rawTicketNumber);
   }
 
