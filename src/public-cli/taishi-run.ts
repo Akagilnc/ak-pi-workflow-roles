@@ -1,15 +1,13 @@
 /**
  * Public taishi adapter (#336 / #338): argv → typed query → runTaishi family.
  * Deterministic analysis seat — no Pi runner, no admission lease.
- * Reuses existing CLI failure envelope (CliUsageError + structural reject).
- * #338: three query faces (issue / cohort / model-groups) on one seam;
- * retrieval is synchronous compute-if-missing (readOrComputeTaishiIssuePage):
- * wait for sole kernel + existing writer, then emit the full result. Whole-compute
- * failure ends this pull as typed terminal (exit 1): schema owner projects
- * code/issue/cause fields on the same JSON stdout envelope — no pending/partial.
+ * Reuses existing CLI failure envelope (CliUsageError + structural reject +
+ * ControlledFailure). #338: three query faces; sync compute-if-missing; whole-compute
+ * failure → ControlledFailure terminal (code/projectRoot/issueNumber/real cause).
  * "Unobtrusive" binds #337 merge auto-trigger only, not this user-initiated query.
  */
 import {
+  errnoCode,
   physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
@@ -29,7 +27,7 @@ import type {
   ParseTaishiArgvResult,
   ParseTaishiIssueArgv,
 } from "./invocation.ts";
-import { presentStructuralRejection } from "./settlement.ts";
+import { presentControlledFailure, presentStructuralRejection } from "./settlement.ts";
 
 export type TaishiRunEnv = {
   readonly home: string;
@@ -134,9 +132,19 @@ export async function runPublicTaishi(
       return { exitCode: 2 };
     }
     if (error instanceof TaishiIssueComputeError) {
-      // Typed terminal failure via sole schema owner — code/issue/cause as fields.
-      // Same JSON stdout envelope as success; exit 1 ends the pull (not partial).
-      io.stdout(`${JSON.stringify(error.toTypedFailure(), null, 2)}\n`);
+      // Existing ControlledFailure: details carry code/projectRoot/issueNumber;
+      // identity.code carries distinguishable real cause (errno). No parallel schema.
+      const code = errnoCode(error.cause);
+      presentControlledFailure({
+        cause: "output",
+        diagnostic: error.message,
+        ...(code === undefined ? {} : { identity: { code } }),
+        details: {
+          code: error.code,
+          projectRoot: error.projectRoot,
+          ...(error.issueNumber === undefined ? {} : { issueNumber: error.issueNumber }),
+        },
+      }, io);
       return { exitCode: 1 };
     }
     throw error;
