@@ -28,8 +28,8 @@ export type TaishiIssueModeResult = {
 
 /**
  * Sole taishi entry. Issue mode: scope → scan (typed facts) → family compose → atomic replace.
- * Metric-family kernels (B/C waves) register via taishi-metric-families.ts and
- * consume scan facts without opening a second entry or second parse kernel.
+ * Metric-family kernels (B/C waves) drop a module under taishi-metric-families/
+ * and consume scan facts without opening a second entry or second parse kernel.
  * Machine home is package-owned (ADR 0048) — never an invocation field.
  */
 export async function runTaishi(input: TaishiInput): Promise<TaishiIssueModeResult> {

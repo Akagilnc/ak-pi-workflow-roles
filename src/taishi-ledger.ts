@@ -24,7 +24,6 @@ import {
   type RunTerminalArtifactFile,
 } from "./run-terminal-artifacts.ts";
 import type {
-  TaishiLegEntry,
   TaishiMissingSource,
   TaishiUnreadableRun,
 } from "./taishi-page.ts";
@@ -107,6 +106,8 @@ export type TaishiRunTerminalFace =
       readonly status: "present";
       readonly file: RunTerminalArtifactFile;
       readonly body: Record<string, unknown>;
+      /** Nonblank producer role — sole owner is readRunTerminalArtifact. */
+      readonly role: string;
     };
 
 /**
@@ -125,18 +126,8 @@ export type TaishiReadableRunFacts = {
 export type TaishiScopedRunScan = {
   /** Readable in-scope runs with retained typed facts (A2). */
   readonly runs: readonly TaishiReadableRunFacts[];
-  /** A1 leg projection — identity only, derived from runs (not a second source). */
-  readonly legs: readonly TaishiLegEntry[];
   readonly unreadable: readonly TaishiUnreadableRun[];
 };
-
-function toLegEntry(facts: TaishiReadableRunFacts): TaishiLegEntry {
-  return {
-    runId: facts.runId,
-    book: facts.book,
-    role: facts.role,
-  };
-}
 
 async function classifyScopedRun(input: {
   readonly book: string;
@@ -190,10 +181,12 @@ async function classifyScopedRun(input: {
     } else if (artifact.status === "absent") {
       terminal = { status: "absent" };
     } else {
+      // role already required nonblank by readRunTerminalArtifact (single owner).
       terminal = {
         status: "present",
         file: artifact.file,
         body: artifact.body,
+        role: artifact.body.role as string,
       };
     }
   } catch (error) {
@@ -252,7 +245,7 @@ export async function scanTaishiIssueRuns(input: {
     bookNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch (error) {
     if (isMissingPathError(error)) {
-      return { runs: [], legs: [], unreadable: [] };
+      return { runs: [], unreadable: [] };
     }
     throw error;
   }
@@ -300,7 +293,6 @@ export async function scanTaishiIssueRuns(input: {
 
   return {
     runs,
-    legs: runs.map(toLegEntry),
     unreadable,
   };
 }

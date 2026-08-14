@@ -18,6 +18,9 @@ import {
   physicalPathIdentity,
 } from "../../src/activation-ledger-topology.ts";
 import { runTaishi } from "../../src/taishi-entry.ts";
+import { medianNumber } from "../../src/taishi-median.ts";
+import { composeTaishiMetricFamilySections } from "../../src/taishi-metric-family.ts";
+import { loadTaishiIssueMetricFamilies } from "../../src/taishi-metric-families.ts";
 import {
   taishiIssuePagePath,
   type TaishiIssueMetricsPage,
@@ -55,11 +58,10 @@ const EXPECTED_UNREADABLE = [
 
 /**
  * A2 seam-probe hand values from fixture sessions (readable legs only).
- * wallMs: a1 = 60_000, b2 = 8_000 → even-sample median = (8000+60000)/2 = 34000.
+ * Raw frame span / tool intervals / terminal face only — no derived metrics.
  */
 const EXPECTED_A2_SEAM_PROBE = {
   kind: "taishi-a2-seam-probe",
-  frameSpanMedianMs: 34_000,
   runs: [
     {
       runId: LEG_A1_RUN,
@@ -69,7 +71,6 @@ const EXPECTED_A2_SEAM_PROBE = {
         startedAt: "2026-08-01T00:00:00.000Z",
         endedAt: "2026-08-01T00:01:00.000Z",
       },
-      frameSpanMs: 60_000,
       toolIntervals: [
         {
           toolCallId: "call_bash_a",
@@ -94,7 +95,6 @@ const EXPECTED_A2_SEAM_PROBE = {
         startedAt: "2026-08-01T00:01:00.000Z",
         endedAt: "2026-08-01T00:01:08.000Z",
       },
-      frameSpanMs: 8_000,
       toolIntervals: [
         {
           toolCallId: "call_judge_b",
@@ -195,8 +195,20 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
       // Hand-computed leg list (other-issue run excluded; damaged excluded from legs).
       assert.deepEqual(first.page.legs, [...EXPECTED_LEGS]);
 
-      // A2: example family consumes typed per-run facts (span/tools/terminal) + shared median.
+      // A2: example family consumes typed per-run facts (span/tools/terminal) only.
       assert.deepEqual(first.page.a2SeamProbe, EXPECTED_A2_SEAM_PROBE);
+      // 零新指标: no per-run derived duration or aggregate median on the page.
+      const probe = first.page.a2SeamProbe!;
+      assert.equal(
+        "frameSpanMedianMs" in (probe as unknown as Record<string, unknown>),
+        false,
+      );
+      for (const run of probe.runs) {
+        assert.equal(
+          "frameSpanMs" in (run as unknown as Record<string, unknown>),
+          false,
+        );
+      }
 
       // Damaged run: loud unreadable exclusion + single count; duration not on page.
       assert.equal(first.page.unreadableCount, 1);
@@ -269,6 +281,57 @@ test("taishi issue-mode entry: null terminal artifact is terminal-artifact unrea
       );
     });
   });
+});
+
+test("taishi shared median primitive: even-sample mean of two middles (fixture wall spans)", () => {
+  // Fixture readable walls: a1=60000, b2=8000 → (8000+60000)/2 = 34000.
+  // Proved on the shared primitive only — not persisted on the issue page.
+  assert.equal(medianNumber([60_000, 8_000]), 34_000);
+  assert.equal(medianNumber([8_000, 60_000]), 34_000);
+  assert.equal(medianNumber([3]), 3);
+  assert.equal(medianNumber([1, 2, 3]), 2);
+  assert.equal(medianNumber([]), undefined);
+});
+
+test("taishi metric-family directory discovery: four independent files register without shared-list edits", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taishi-families-"));
+  try {
+    for (const id of ["b1", "b2", "b3", "b4"] as const) {
+      const sectionKey = `${id}Section`;
+      await writeFile(
+        join(dir, `${id}-family.ts`),
+        `
+export default {
+  id: ${JSON.stringify(id)},
+  contribute() {
+    return { ${sectionKey}: { kind: ${JSON.stringify(id)} } };
+  },
+};
+`,
+        "utf8",
+      );
+    }
+
+    const families = await loadTaishiIssueMetricFamilies(dir);
+    assert.deepEqual(
+      families.map((family) => family.id),
+      ["b1", "b2", "b3", "b4"],
+    );
+
+    const sections = composeTaishiMetricFamilySections(families, {
+      projectRoot: ISSUE_PROJECT_ROOT,
+      runs: [],
+      unreadable: [],
+    });
+    assert.deepEqual(sections, {
+      b1Section: { kind: "b1" },
+      b2Section: { kind: "b2" },
+      b3Section: { kind: "b3" },
+      b4Section: { kind: "b4" },
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("taishi issue-mode entry: taishi path symlink into consumer repo is refused without porcelain change", async () => {

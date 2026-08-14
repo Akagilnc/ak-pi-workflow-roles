@@ -1,12 +1,79 @@
 /**
- * Issue-mode metric-family registry (page composition point).
+ * Issue-mode metric-family discovery (page composition point).
  *
- * B/C-wave slices add their own family module file and one registration line
- * here — they do not modify taishi-entry / taishi-ledger / page envelope skeleton.
+ * B/C-wave slices register by adding one module file under
+ * `src/taishi-metric-families/` — they do not edit this loader, entry,
+ * ledger, or page envelope skeleton.
+ *
+ * Each family module exports `default` or `family` as TaishiMetricFamilyModule.
  */
-import { a2SeamProbeFamily } from "./taishi-metric-family-a2-probe.ts";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
 import type { TaishiMetricFamilyModule } from "./taishi-metric-family.ts";
 
-export const TAISHI_ISSUE_METRIC_FAMILIES: readonly TaishiMetricFamilyModule[] = [
-  a2SeamProbeFamily,
-];
+/** Production family-module directory (sibling of this loader). */
+export const TAISHI_ISSUE_METRIC_FAMILIES_DIR = fileURLToPath(
+  new URL("./taishi-metric-families/", import.meta.url),
+);
+
+function isFamilyModuleFile(name: string): boolean {
+  if (name.endsWith(".d.ts")) return false;
+  if (name.includes(".test.")) return false;
+  return name.endsWith(".ts") || name.endsWith(".js") || name.endsWith(".mjs");
+}
+
+function readFamilyExport(
+  mod: Record<string, unknown>,
+  fileName: string,
+): TaishiMetricFamilyModule {
+  const candidate = mod.default ?? mod.family;
+  if (
+    candidate === null
+    || typeof candidate !== "object"
+    || typeof (candidate as TaishiMetricFamilyModule).contribute !== "function"
+    || typeof (candidate as TaishiMetricFamilyModule).id !== "string"
+  ) {
+    throw new Error(
+      `taishi metric family module must export default|family module: ${fileName}`,
+    );
+  }
+  return candidate as TaishiMetricFamilyModule;
+}
+
+/**
+ * Discover family modules from a directory of independent files.
+ * `directory` override exists so tests can prove B-slice drop-in registration
+ * without touching the production loader or shared lists.
+ */
+export async function loadTaishiIssueMetricFamilies(
+  directory: string = TAISHI_ISSUE_METRIC_FAMILIES_DIR,
+): Promise<readonly TaishiMetricFamilyModule[]> {
+  let names: string[];
+  try {
+    names = await readdir(directory);
+  } catch (error) {
+    if (
+      error instanceof Error
+      && "code" in error
+      && (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
+      return [];
+    }
+    throw error;
+  }
+
+  const families: TaishiMetricFamilyModule[] = [];
+  for (const name of names.sort((a, b) => a.localeCompare(b))) {
+    if (!isFamilyModuleFile(name)) continue;
+    const href = pathToFileURL(join(directory, name)).href;
+    const mod = (await import(href)) as Record<string, unknown>;
+    families.push(readFamilyExport(mod, name));
+  }
+  return families;
+}
+
+/** Production registry — loaded once from the family-module directory. */
+export const TAISHI_ISSUE_METRIC_FAMILIES: readonly TaishiMetricFamilyModule[] =
+  await loadTaishiIssueMetricFamilies();
