@@ -14273,7 +14273,13 @@ function listHelpCapabilities() {
       defaultPhase
     };
   });
-  return [...support, ...roles];
+  const deterministic = PUBLIC_DETERMINISTIC_COMMANDS.map(
+    (name) => ({
+      kind: "deterministic",
+      name
+    })
+  );
+  return [...support, ...roles, ...deterministic];
 }
 function isPublicConfigurableSeat(value) {
   return PUBLIC_CONFIGURABLE_SEATS.includes(value);
@@ -14281,7 +14287,7 @@ function isPublicConfigurableSeat(value) {
 function isPublicCliSupportCommand(value) {
   return PUBLIC_CLI_SUPPORT_COMMANDS.includes(value);
 }
-var INTERNAL_ROLE_ENTRYPOINT_RELATIVE, PUBLIC_CALLABLE_ROLES, AUTOMATIC_NAVIGATOR_SEAT, PUBLIC_CONFIGURABLE_SEATS, PUBLIC_CLI_SUPPORT_COMMANDS, STARTUP_CANDIDATES;
+var INTERNAL_ROLE_ENTRYPOINT_RELATIVE, PUBLIC_CALLABLE_ROLES, AUTOMATIC_NAVIGATOR_SEAT, PUBLIC_CONFIGURABLE_SEATS, PUBLIC_CLI_SUPPORT_COMMANDS, STARTUP_CANDIDATES, PUBLIC_DETERMINISTIC_COMMANDS;
 var init_registry2 = __esm({
   "src/public-cli/registry.ts"() {
     "use strict";
@@ -14335,6 +14341,7 @@ var init_registry2 = __esm({
         { provider: "xai", model: "grok-4.5", thinking: "high" }
       ]
     };
+    PUBLIC_DETERMINISTIC_COMMANDS = ["taishi"];
   }
 });
 
@@ -14765,6 +14772,26 @@ function ensureRealDirectoryTree(root, targetDir) {
       `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
       { cause: error }
     );
+  }
+}
+function assertLedgerFileInsideHome(ledgerPath, ledgerHome) {
+  if (!isAbsolute(ledgerHome)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${ledgerHome}`);
+  }
+  const resolvedLedger = resolve(ledgerPath);
+  try {
+    if (!lstatSync2(resolvedLedger).isSymbolicLink()) return;
+    throw new ActivationLedgerError(
+      `activation ledger file is a symbolic link: ${resolvedLedger}`
+    );
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      if (error instanceof ActivationLedgerError) throw error;
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat ledger file (${resolvedLedger}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
   }
 }
 var ActivationLedgerError;
@@ -16769,7 +16796,260 @@ function buildMergerTransportPrompt(admitted) {
   }
   return lines.join("\n");
 }
-var MergerEnvelopeDerivationError, DOCTOR_ISSUE_NUMBER_PATTERN, DOCTOR_CASE_RUNS_PATH_PATTERN;
+function parseTaishiTicketNumber(raw, flag = "--ticket") {
+  const trimmed = raw.trim();
+  if (!TAISHI_TICKET_NUMBER_PATTERN.test(trimmed)) {
+    throw new CliUsageError(
+      `taishi ${flag} must be a positive integer, got ${raw}`
+    );
+  }
+  const value = Number(trimmed);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new CliUsageError(
+      `taishi ${flag} must be a positive integer, got ${raw}`
+    );
+  }
+  return value;
+}
+function parseTaishiIssueNumberList(raw, flag) {
+  const trimmed = raw.trim();
+  if (trimmed === "") {
+    throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
+  }
+  const parts = trimmed.split(",").map((part) => part.trim());
+  if (parts.some((part) => part === "")) {
+    throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
+  }
+  return parts.map((part) => parseTaishiTicketNumber(part, flag));
+}
+function requireOptionValue(flag, value, what) {
+  if (value === void 0 || value.trim() === "") {
+    throw new CliUsageError(`${flag} requires ${what}`);
+  }
+  return value;
+}
+function parseTaishiArgv(args) {
+  let query = "issue";
+  let ticketRaw;
+  const projectRoots = [];
+  let groupALabel;
+  let groupAIssuesRaw;
+  let groupBLabel;
+  let groupBIssuesRaw;
+  let sweepToken = false;
+  const attachmentPaths = [];
+  const tokens = [...args];
+  while (tokens.length > 0) {
+    const token = tokens.shift();
+    if (token === "--") {
+      if (tokens.length > 0) {
+        throw new CliUsageError(`unexpected taishi argument: ${tokens[0]}`);
+      }
+      break;
+    }
+    if (token === "--cohort") {
+      if (query !== "issue") {
+        throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+      }
+      query = "cohort";
+      continue;
+    }
+    if (token === "--model-groups") {
+      if (query !== "issue") {
+        throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+      }
+      query = "model-groups";
+      continue;
+    }
+    if (token === "--ticket") {
+      const value = tokens.shift();
+      if (value === void 0 || value.trim() === "") {
+        throw new CliUsageError("taishi --ticket requires a positive integer");
+      }
+      ticketRaw = value;
+      continue;
+    }
+    if (token.startsWith("--ticket=")) {
+      ticketRaw = token.slice("--ticket=".length);
+      if (ticketRaw.trim() === "") {
+        throw new CliUsageError("taishi --ticket requires a positive integer");
+      }
+      continue;
+    }
+    if (token === "--project-root") {
+      projectRoots.push(requireOptionPath("--project-root", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--project-root=")) {
+      projectRoots.push(
+        requireOptionPath("--project-root", token.slice("--project-root=".length))
+      );
+      continue;
+    }
+    if (token === "--group-a-label") {
+      groupALabel = requireOptionValue("--group-a-label", tokens.shift(), "a label");
+      continue;
+    }
+    if (token.startsWith("--group-a-label=")) {
+      groupALabel = requireOptionValue(
+        "--group-a-label",
+        token.slice("--group-a-label=".length),
+        "a label"
+      );
+      continue;
+    }
+    if (token === "--group-a-issues") {
+      groupAIssuesRaw = requireOptionValue(
+        "--group-a-issues",
+        tokens.shift(),
+        "a comma-separated positive integer list"
+      );
+      continue;
+    }
+    if (token.startsWith("--group-a-issues=")) {
+      groupAIssuesRaw = requireOptionValue(
+        "--group-a-issues",
+        token.slice("--group-a-issues=".length),
+        "a comma-separated positive integer list"
+      );
+      continue;
+    }
+    if (token === "--group-b-label") {
+      groupBLabel = requireOptionValue("--group-b-label", tokens.shift(), "a label");
+      continue;
+    }
+    if (token.startsWith("--group-b-label=")) {
+      groupBLabel = requireOptionValue(
+        "--group-b-label",
+        token.slice("--group-b-label=".length),
+        "a label"
+      );
+      continue;
+    }
+    if (token === "--group-b-issues") {
+      groupBIssuesRaw = requireOptionValue(
+        "--group-b-issues",
+        tokens.shift(),
+        "a comma-separated positive integer list"
+      );
+      continue;
+    }
+    if (token.startsWith("--group-b-issues=")) {
+      groupBIssuesRaw = requireOptionValue(
+        "--group-b-issues",
+        token.slice("--group-b-issues=".length),
+        "a comma-separated positive integer list"
+      );
+      continue;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length))
+      );
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown taishi option: ${token}`);
+    }
+    if (token === "sweep") {
+      if (sweepToken) {
+        throw new CliUsageError("unexpected taishi argument: sweep");
+      }
+      sweepToken = true;
+      continue;
+    }
+    throw new CliUsageError(`unexpected taishi argument: ${token}`);
+  }
+  const hasSweepFace = sweepToken || attachmentPaths.length > 0;
+  const hasCohortFlags = groupALabel !== void 0 || groupAIssuesRaw !== void 0 || groupBLabel !== void 0 || groupBIssuesRaw !== void 0;
+  if (query === "cohort") {
+    if (groupALabel === void 0 || groupAIssuesRaw === void 0 || groupBLabel === void 0 || groupBIssuesRaw === void 0) {
+      throw new CliUsageError(
+        "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>"
+      );
+    }
+    if (ticketRaw !== void 0 || projectRoots.length > 0) {
+      throw new CliUsageError(
+        "taishi --cohort does not accept --ticket or --project-root"
+      );
+    }
+    if (hasSweepFace) {
+      throw new CliUsageError(
+        "taishi --cohort does not accept sweep --attach"
+      );
+    }
+    return {
+      query: "cohort",
+      groups: [
+        {
+          groupLabel: groupALabel,
+          issues: parseTaishiIssueNumberList(groupAIssuesRaw, "--group-a-issues")
+        },
+        {
+          groupLabel: groupBLabel,
+          issues: parseTaishiIssueNumberList(groupBIssuesRaw, "--group-b-issues")
+        }
+      ]
+    };
+  }
+  if (query === "model-groups") {
+    if (projectRoots.length === 0) {
+      throw new CliUsageError(
+        "usage: ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]"
+      );
+    }
+    if (ticketRaw !== void 0) {
+      throw new CliUsageError("taishi --model-groups does not accept --ticket");
+    }
+    if (hasCohortFlags) {
+      throw new CliUsageError("taishi --model-groups does not accept cohort group flags");
+    }
+    if (hasSweepFace) {
+      throw new CliUsageError(
+        "taishi --model-groups does not accept sweep --attach"
+      );
+    }
+    return {
+      query: "model-groups",
+      projectRoots
+    };
+  }
+  if (hasCohortFlags) {
+    throw new CliUsageError("taishi issue query does not accept cohort group flags");
+  }
+  if (hasSweepFace) {
+    if (ticketRaw !== void 0 || projectRoots.length > 0) {
+      throw new CliUsageError(
+        "taishi sweep --attach cannot combine with --ticket or --project-root"
+      );
+    }
+    return {
+      query: "sweep",
+      attachmentPaths
+    };
+  }
+  if (projectRoots.length > 1) {
+    throw new CliUsageError(
+      "taishi issue query accepts at most one --project-root (use --model-groups for many)"
+    );
+  }
+  const projectRoot = projectRoots[0];
+  if (ticketRaw === void 0 && projectRoot === void 0) {
+    throw new CliUsageError(
+      "usage: ak-role taishi ((--ticket <N> | --project-root <P>) | [sweep] --attach <sweep.json> | --cohort ... | --model-groups ...)"
+    );
+  }
+  return {
+    query: "issue",
+    ...ticketRaw === void 0 ? {} : { ticket: parseTaishiTicketNumber(ticketRaw) },
+    ...projectRoot === void 0 ? {} : { projectRoot }
+  };
+}
+var MergerEnvelopeDerivationError, DOCTOR_ISSUE_NUMBER_PATTERN, DOCTOR_CASE_RUNS_PATH_PATTERN, TAISHI_TICKET_NUMBER_PATTERN;
 var init_invocation = __esm({
   "src/public-cli/invocation.ts"() {
     "use strict";
@@ -16796,6 +17076,7 @@ var init_invocation = __esm({
     };
     DOCTOR_ISSUE_NUMBER_PATTERN = /^[1-9]\d*$/;
     DOCTOR_CASE_RUNS_PATH_PATTERN = /\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/;
+    TAISHI_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
   }
 });
 
@@ -18734,6 +19015,11 @@ function formatFailureStderrDiagnostic(failure) {
 }
 function presentStructuralRejection(error, io) {
   io.stderr(formatCliDiagnostic(error.message));
+}
+function presentControlledFailure(failure, io) {
+  io.stdout(`${JSON.stringify(failure, null, 2)}
+`);
+  io.stderr(formatFailureStderrDiagnostic(failure));
 }
 async function inspectJudgeSession(sessionFile) {
   try {
@@ -21385,7 +21671,7 @@ function buildCoderResumeActivationExtraArgs(admitted, options) {
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
-async function presentControlledFailure(admitted, failureInput, io) {
+async function presentControlledFailure2(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const resumeObservation = await resolveControlledFailureResumeObservation({
     runDirectory: admitted.runDirectory,
@@ -21441,7 +21727,7 @@ async function dispatchAdmittedCoder(input) {
       env.credentials
     );
     if (missingCredential !== void 0) {
-      return await presentControlledFailure(
+      return await presentControlledFailure2(
         admitted,
         missingCredential,
         io
@@ -21472,7 +21758,7 @@ async function dispatchAdmittedCoder(input) {
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
-      return await presentControlledFailure(
+      return await presentControlledFailure2(
         admitted,
         {
           timedOut: false,
@@ -21497,7 +21783,7 @@ async function dispatchAdmittedCoder(input) {
         ...methodProvenance === void 0 ? {} : { methodProvenance }
       });
     } catch (error) {
-      return await presentControlledFailure(
+      return await presentControlledFailure2(
         admitted,
         {
           timedOut: false,
@@ -21528,7 +21814,7 @@ async function dispatchAdmittedCoder(input) {
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
-    return await presentControlledFailure(
+    return await presentControlledFailure2(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -21583,7 +21869,7 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
       methodProvenance = material.provenance;
     } catch (error) {
       await lease.release();
-      return await presentControlledFailure(
+      return await presentControlledFailure2(
         admitted,
         {
           timedOut: false,
@@ -21660,7 +21946,7 @@ async function runPublicCoderResume(argv, env, io) {
       methodProvenance = material.provenance;
     } catch (error) {
       await lease.release();
-      return await presentControlledFailure(
+      return await presentControlledFailure2(
         admitted,
         {
           timedOut: false,
@@ -21743,7 +22029,7 @@ function buildCollectorActivationExtraArgs(admitted, options = {}) {
     prompt
   ];
 }
-async function presentControlledFailure2(admitted, failureInput, io) {
+async function presentControlledFailure3(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
@@ -21774,7 +22060,7 @@ async function dispatchAdmittedCollector(input) {
       env.credentials
     );
     if (missingCredential !== void 0) {
-      return await presentControlledFailure2(
+      return await presentControlledFailure3(
         admitted,
         missingCredential,
         io
@@ -21805,7 +22091,7 @@ async function dispatchAdmittedCollector(input) {
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
-      return await presentControlledFailure2(
+      return await presentControlledFailure3(
         admitted,
         {
           timedOut: false,
@@ -21828,7 +22114,7 @@ async function dispatchAdmittedCollector(input) {
     try {
       lawful = await trySettleCollectorTerminalResult(admitted);
     } catch (error) {
-      return await presentControlledFailure2(
+      return await presentControlledFailure3(
         admitted,
         {
           timedOut: false,
@@ -21866,7 +22152,7 @@ async function dispatchAdmittedCollector(input) {
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
-    return await presentControlledFailure2(
+    return await presentControlledFailure3(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -21977,7 +22263,7 @@ function buildDoctorActivationExtraArgs(admitted, options = {}) {
     prompt
   ];
 }
-async function presentControlledFailure3(admitted, failureInput, io) {
+async function presentControlledFailure4(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
@@ -22005,7 +22291,7 @@ async function dispatchAdmittedDoctor(input) {
       env.credentials
     );
     if (missingCredential !== void 0) {
-      return await presentControlledFailure3(
+      return await presentControlledFailure4(
         admitted,
         missingCredential,
         io
@@ -22035,7 +22321,7 @@ async function dispatchAdmittedDoctor(input) {
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
-      return await presentControlledFailure3(
+      return await presentControlledFailure4(
         admitted,
         {
           timedOut: false,
@@ -22058,7 +22344,7 @@ async function dispatchAdmittedDoctor(input) {
     try {
       lawful = await trySettleDoctorTerminalResult(admitted);
     } catch (error) {
-      return await presentControlledFailure3(
+      return await presentControlledFailure4(
         admitted,
         {
           timedOut: false,
@@ -22103,7 +22389,7 @@ async function dispatchAdmittedDoctor(input) {
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
-    return await presentControlledFailure3(
+    return await presentControlledFailure4(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -22257,7 +22543,7 @@ function buildFixerResumeActivationExtraArgs(admitted, options) {
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
-async function presentControlledFailure4(admitted, failureInput, io) {
+async function presentControlledFailure5(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const resumeObservation = await resolveControlledFailureResumeObservation({
     runDirectory: admitted.runDirectory,
@@ -22310,7 +22596,7 @@ async function dispatchAdmittedFixer(input) {
       env.credentials
     );
     if (missingCredential !== void 0) {
-      return await presentControlledFailure4(
+      return await presentControlledFailure5(
         admitted,
         missingCredential,
         io
@@ -22341,7 +22627,7 @@ async function dispatchAdmittedFixer(input) {
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
-      return await presentControlledFailure4(
+      return await presentControlledFailure5(
         admitted,
         {
           timedOut: false,
@@ -22371,7 +22657,7 @@ async function dispatchAdmittedFixer(input) {
         )
       });
     } catch (error) {
-      return await presentControlledFailure4(
+      return await presentControlledFailure5(
         admitted,
         {
           timedOut: false,
@@ -22416,7 +22702,7 @@ async function dispatchAdmittedFixer(input) {
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
-    return await presentControlledFailure4(
+    return await presentControlledFailure5(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -22470,7 +22756,7 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
     methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
   } catch (error) {
     await lease.release();
-    return await presentControlledFailure4(
+    return await presentControlledFailure5(
       admitted,
       {
         timedOut: false,
@@ -22540,7 +22826,7 @@ async function runPublicFixerResume(argv, env, io) {
     methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
   } catch (error) {
     await lease.release();
-    return await presentControlledFailure4(
+    return await presentControlledFailure5(
       admitted,
       {
         timedOut: false,
@@ -22636,7 +22922,7 @@ function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
-async function presentControlledFailure5(admitted, failureInput, io) {
+async function presentControlledFailure6(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const resumeObservation = await resolveControlledFailureResumeObservation({
     runDirectory: admitted.runDirectory,
@@ -22689,7 +22975,7 @@ async function dispatchAdmittedJudge(input) {
       env.credentials
     );
     if (missingCredential !== void 0) {
-      return await presentControlledFailure5(
+      return await presentControlledFailure6(
         admitted,
         missingCredential,
         io
@@ -22722,7 +23008,7 @@ async function dispatchAdmittedJudge(input) {
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
-      return await presentControlledFailure5(
+      return await presentControlledFailure6(
         admitted,
         {
           timedOut: false,
@@ -22745,7 +23031,7 @@ async function dispatchAdmittedJudge(input) {
     try {
       lawful = await trySettleJudgeTerminalResult(admitted);
     } catch (error) {
-      return await presentControlledFailure5(
+      return await presentControlledFailure6(
         admitted,
         {
           timedOut: false,
@@ -22790,7 +23076,7 @@ async function dispatchAdmittedJudge(input) {
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
-    return await presentControlledFailure5(
+    return await presentControlledFailure6(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -22983,7 +23269,7 @@ function buildMergerResumeActivationExtraArgs(admitted, options) {
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
-async function presentControlledFailure6(admitted, failureInput, io) {
+async function presentControlledFailure7(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const resumeObservation = await resolveControlledFailureResumeObservation({
     runDirectory: admitted.runDirectory,
@@ -23039,7 +23325,7 @@ async function dispatchAdmittedMerger(input) {
       env.credentials
     );
     if (missingCredential !== void 0) {
-      return await presentControlledFailure6(
+      return await presentControlledFailure7(
         admitted,
         missingCredential,
         io
@@ -23070,7 +23356,7 @@ async function dispatchAdmittedMerger(input) {
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
-      return await presentControlledFailure6(
+      return await presentControlledFailure7(
         admitted,
         {
           timedOut: false,
@@ -23100,7 +23386,7 @@ async function dispatchAdmittedMerger(input) {
         )
       });
     } catch (error) {
-      return await presentControlledFailure6(
+      return await presentControlledFailure7(
         admitted,
         {
           timedOut: false,
@@ -23131,7 +23417,7 @@ async function dispatchAdmittedMerger(input) {
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
-    return await presentControlledFailure6(
+    return await presentControlledFailure7(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -23237,7 +23523,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
         ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
       });
       await markRunAdmitted(shell);
-      return await presentControlledFailure6(
+      return await presentControlledFailure7(
         shell,
         {
           timedOut: false,
@@ -23268,7 +23554,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
   } catch (error) {
     await lease.release();
-    return await presentControlledFailure6(
+    return await presentControlledFailure7(
       admitted,
       {
         timedOut: false,
@@ -23339,7 +23625,7 @@ async function runPublicMergerResume(argv, env, io) {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
   } catch (error) {
     await lease.release();
-    return await presentControlledFailure6(
+    return await presentControlledFailure7(
       admitted,
       {
         timedOut: false,
@@ -23458,7 +23744,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
-async function presentControlledFailure7(admitted, failureInput, io) {
+async function presentControlledFailure8(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const resumeObservation = await resolveControlledFailureResumeObservation({
     runDirectory: admitted.runDirectory,
@@ -23511,7 +23797,7 @@ async function dispatchAdmittedReviewer(input) {
       env.credentials
     );
     if (missingCredential !== void 0) {
-      return await presentControlledFailure7(
+      return await presentControlledFailure8(
         admitted,
         missingCredential,
         io
@@ -23543,7 +23829,7 @@ async function dispatchAdmittedReviewer(input) {
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
-      return await presentControlledFailure7(
+      return await presentControlledFailure8(
         admitted,
         {
           timedOut: false,
@@ -23573,7 +23859,7 @@ async function dispatchAdmittedReviewer(input) {
         )
       });
     } catch (error) {
-      return await presentControlledFailure7(
+      return await presentControlledFailure8(
         admitted,
         {
           timedOut: false,
@@ -23618,7 +23904,7 @@ async function dispatchAdmittedReviewer(input) {
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
-    return await presentControlledFailure7(
+    return await presentControlledFailure8(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -23672,7 +23958,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
     await lease.release();
-    return await presentControlledFailure7(
+    return await presentControlledFailure8(
       admitted,
       {
         timedOut: false,
@@ -23742,7 +24028,7 @@ async function runPublicReviewerResume(argv, env, io) {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
     await lease.release();
-    return await presentControlledFailure7(
+    return await presentControlledFailure8(
       admitted,
       {
         timedOut: false,
@@ -23784,6 +24070,2064 @@ var init_reviewer_run = __esm({
   }
 });
 
+// src/atomic-write.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { rename, rm, writeFile as writeFile13 } from "node:fs/promises";
+import { dirname as dirname7, join as join18 } from "node:path";
+async function writeFileAtomically(destination, contents) {
+  const parent = dirname7(destination);
+  const temporary = join18(parent, `.atomic-write-${randomUUID2()}.tmp`);
+  try {
+    await writeFile13(temporary, contents);
+    await rename(temporary, destination);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => void 0);
+    throw error;
+  }
+}
+var init_atomic_write = __esm({
+  "src/atomic-write.ts"() {
+    "use strict";
+  }
+});
+
+// src/taishi-index.ts
+import { open as open3, readFile as readFile10, unlink as unlink4 } from "node:fs/promises";
+import { dirname as dirname8, join as join19 } from "node:path";
+function sleep(ms) {
+  return new Promise((resolve9) => {
+    setTimeout(resolve9, ms);
+  });
+}
+async function withTaishiLibraryIndexLock(ledgerHome, fn) {
+  const indexPath = taishiLibraryIndexPath(ledgerHome);
+  ensureRealDirectoryTree(ledgerHome, dirname8(indexPath));
+  const lockPath = join19(dirname8(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  assertLedgerFileInsideHome(lockPath, ledgerHome);
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      const handle = await open3(lockPath, "wx");
+      try {
+        await handle.writeFile(`${process.pid}
+`, "utf8");
+        return await fn();
+      } finally {
+        await handle.close().catch(() => void 0);
+        await unlink4(lockPath).catch(() => void 0);
+      }
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? error.code : void 0;
+      if (code !== "EEXIST") throw error;
+      if (Date.now() - startedAt > LIBRARY_INDEX_LOCK_TIMEOUT_MS) {
+        throw new Error(
+          `taishi library-index lock timeout after ${LIBRARY_INDEX_LOCK_TIMEOUT_MS}ms: ${lockPath}`
+        );
+      }
+      await sleep(LIBRARY_INDEX_LOCK_RETRY_MS);
+    }
+  }
+}
+function taishiLibraryIndexPath(ledgerHome) {
+  return join19(ledgerHome, "taishi", "library-index.json");
+}
+function rowFromIssueMetricsPage(page) {
+  return {
+    projectRoot: page.projectRoot,
+    // exactOptionalPropertyTypes: only materialize when page carries it.
+    ...page.issueNumber === void 0 ? {} : { issueNumber: page.issueNumber },
+    totalElapsedMs: page.totalElapsedMs,
+    changedLines: page.changedLines,
+    msPerKLines: page.msPerKLines,
+    lastActivityAt: page.lastActivityAt
+  };
+}
+function sortRows(rows) {
+  return [...rows].sort((a, b) => {
+    const byRoot = a.projectRoot.localeCompare(b.projectRoot);
+    if (byRoot !== 0) return byRoot;
+    const aNum = a.issueNumber;
+    const bNum = b.issueNumber;
+    if (aNum === void 0 && bNum === void 0) return 0;
+    if (aNum === void 0) return 1;
+    if (bNum === void 0) return -1;
+    return aNum - bNum;
+  });
+}
+function buildTaishiLibraryIndexPage(rows) {
+  return {
+    kind: "taishi-library-index",
+    rows: sortRows(rows)
+  };
+}
+function findTaishiLibraryIndexRow(index, issueNumber) {
+  if (index === void 0) return void 0;
+  return index.rows.find((row) => row.issueNumber === issueNumber);
+}
+function upsertTaishiLibraryIndexRows(existing, upserts) {
+  const byRoot = /* @__PURE__ */ new Map();
+  const rootByIssue = /* @__PURE__ */ new Map();
+  const ingest = (row) => {
+    if (row.issueNumber !== void 0) {
+      const priorRoot = rootByIssue.get(row.issueNumber);
+      if (priorRoot !== void 0 && priorRoot !== row.projectRoot) {
+        byRoot.delete(priorRoot);
+      }
+    }
+    const prior = byRoot.get(row.projectRoot);
+    if (prior !== void 0 && prior.issueNumber !== void 0 && prior.issueNumber !== row.issueNumber) {
+      rootByIssue.delete(prior.issueNumber);
+    }
+    byRoot.set(row.projectRoot, row);
+    if (row.issueNumber !== void 0) {
+      rootByIssue.set(row.issueNumber, row.projectRoot);
+    }
+  };
+  if (existing !== void 0) {
+    for (const row of existing.rows) {
+      ingest(row);
+    }
+  }
+  for (const row of upserts) {
+    ingest(row);
+  }
+  return buildTaishiLibraryIndexPage([...byRoot.values()]);
+}
+async function readTaishiLibraryIndexPage(ledgerHome) {
+  const path = taishiLibraryIndexPath(ledgerHome);
+  let raw;
+  try {
+    raw = await readFile10(path, "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
+      return void 0;
+    }
+    throw error;
+  }
+  return JSON.parse(raw);
+}
+async function writeTaishiLibraryIndexPage(ledgerHome, page) {
+  const path = taishiLibraryIndexPath(ledgerHome);
+  ensureRealDirectoryTree(ledgerHome, dirname8(path));
+  assertLedgerFileInsideHome(path, ledgerHome);
+  await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
+`);
+  return path;
+}
+async function mergeTaishiLibraryIndexRows(ledgerHome, upserts) {
+  return withTaishiLibraryIndexLock(ledgerHome, async () => {
+    const existing = await readTaishiLibraryIndexPage(ledgerHome);
+    const index = upsertTaishiLibraryIndexRows(existing, upserts);
+    const indexPath = await writeTaishiLibraryIndexPage(ledgerHome, index);
+    return { index, indexPath };
+  });
+}
+var LIBRARY_INDEX_LOCK_NAME, LIBRARY_INDEX_LOCK_TIMEOUT_MS, LIBRARY_INDEX_LOCK_RETRY_MS;
+var init_taishi_index = __esm({
+  "src/taishi-index.ts"() {
+    "use strict";
+    init_atomic_write();
+    init_activation_ledger_topology();
+    LIBRARY_INDEX_LOCK_NAME = ".library-index.lock";
+    LIBRARY_INDEX_LOCK_TIMEOUT_MS = 3e4;
+    LIBRARY_INDEX_LOCK_RETRY_MS = 15;
+  }
+});
+
+// src/taishi-median.ts
+function medianNumber(values) {
+  if (values.length === 0) return void 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) {
+    return sorted[mid];
+  }
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+var init_taishi_median = __esm({
+  "src/taishi-median.ts"() {
+    "use strict";
+  }
+});
+
+// src/taishi-cohort.ts
+function presentMetric(value) {
+  return { status: "present", value };
+}
+function rateMetric(numerator, denominator) {
+  if (denominator === 0) return ABSENT;
+  return presentMetric(numerator / denominator);
+}
+function optionalMedian(values) {
+  const median = medianNumber(values);
+  return median === void 0 ? ABSENT : presentMetric(median);
+}
+function emptyRoleAccum() {
+  return {
+    convergenceRounds: [],
+    firstPassLaneCount: 0,
+    appearanceLaneCount: 0,
+    successCount: 0,
+    successEligibleCount: 0
+  };
+}
+function absorbRole(accum, stats) {
+  accum.convergenceRounds.push(...stats.convergenceRounds);
+  accum.firstPassLaneCount += stats.firstPassLaneCount;
+  accum.appearanceLaneCount += stats.appearanceLaneCount;
+  accum.successCount += stats.successCount;
+  accum.successEligibleCount += stats.successEligibleCount;
+}
+function finishRole(role, accum) {
+  return {
+    role,
+    convergenceRounds: accum.convergenceRounds,
+    convergenceRoundsMedian: optionalMedian(accum.convergenceRounds),
+    firstPassRate: rateMetric(accum.firstPassLaneCount, accum.appearanceLaneCount),
+    successRate: rateMetric(accum.successCount, accum.successEligibleCount)
+  };
+}
+async function aggregateGroup(index, input, ensureIssuePage) {
+  const issueEntries = [];
+  const roleAccums = /* @__PURE__ */ new Map();
+  let reworkWallMs = 0;
+  let totalWallMs = 0;
+  let hasReworkSample = false;
+  const legWalls = [];
+  for (const issueNumber of input.issues) {
+    const row = findTaishiLibraryIndexRow(index, issueNumber);
+    if (row === void 0) {
+      issueEntries.push({ issueNumber, status: "absent" });
+      continue;
+    }
+    const page = await ensureIssuePage({
+      projectRoot: row.projectRoot,
+      issueNumber
+    });
+    issueEntries.push({
+      issueNumber,
+      status: "present",
+      projectRoot: row.projectRoot
+    });
+    const acceptance = page.acceptanceSuccessRework;
+    if (acceptance !== void 0) {
+      for (const roleStats of acceptance.byRole) {
+        const accum = roleAccums.get(roleStats.role) ?? emptyRoleAccum();
+        absorbRole(accum, roleStats);
+        roleAccums.set(roleStats.role, accum);
+      }
+      reworkWallMs += acceptance.rework.reworkWallMs;
+      totalWallMs += acceptance.rework.totalWallMs;
+      hasReworkSample = true;
+    }
+    const legWallClock = page.legWallClock;
+    if (legWallClock !== void 0) {
+      for (const leg of legWallClock.ranking) {
+        legWalls.push(leg.wallMs);
+      }
+    }
+  }
+  const byRole = [...roleAccums.keys()].sort((a, b) => a.localeCompare(b)).map((role) => finishRole(role, roleAccums.get(role)));
+  return {
+    groupLabel: input.groupLabel,
+    issues: issueEntries,
+    byRole,
+    reworkRatio: hasReworkSample ? rateMetric(reworkWallMs, totalWallMs) : ABSENT,
+    medianWallMs: optionalMedian(legWalls)
+  };
+}
+async function runTaishiCohortMode(ledgerHome, input, ensureIssuePage) {
+  const index = await readTaishiLibraryIndexPage(ledgerHome);
+  const group0 = await aggregateGroup(index, input.groups[0], ensureIssuePage);
+  const group1 = await aggregateGroup(index, input.groups[1], ensureIssuePage);
+  return {
+    mode: "cohort",
+    groups: [group0, group1]
+  };
+}
+var ABSENT;
+var init_taishi_cohort = __esm({
+  "src/taishi-cohort.ts"() {
+    "use strict";
+    init_taishi_index();
+    init_taishi_median();
+    ABSENT = { status: "absent" };
+  }
+});
+
+// src/ledger-session-read.ts
+import { readFile as readFile11 } from "node:fs/promises";
+function isRecord6(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+async function readLedgerSessionJsonl(path) {
+  const text = await readFile11(path, "utf8");
+  const lines = text.split("\n");
+  const rows = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line2 = lines[index];
+    if (!line2.trim()) continue;
+    let row;
+    try {
+      row = JSON.parse(line2);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      const completedByTerminator = index < lines.length - 1;
+      if (completedByTerminator) {
+        throw new LedgerSessionJsonlError(
+          `malformed JSONL record in ${path} at line ${index + 1}: ${error.message}`,
+          { path, line: index + 1, prefixRows: rows }
+        );
+      }
+      break;
+    }
+    if (!isRecord6(row)) {
+      const kind = row === null ? "null" : Array.isArray(row) ? "array" : typeof row;
+      throw new LedgerSessionJsonlError(
+        `complete non-object JSONL record in ${path} at line ${index + 1}: expected object, got ${kind}`,
+        { path, line: index + 1, prefixRows: rows }
+      );
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+function extractSessionTimestampSpan(rows) {
+  let startedAt;
+  let endedAt;
+  for (const row of rows) {
+    if (typeof row.timestamp !== "string" || !row.timestamp) continue;
+    if (startedAt === void 0) startedAt = row.timestamp;
+    endedAt = row.timestamp;
+  }
+  return {
+    ...startedAt !== void 0 ? { startedAt } : {},
+    ...endedAt !== void 0 ? { endedAt } : {}
+  };
+}
+function extractSessionModelSequence(rows) {
+  const seen = /* @__PURE__ */ new Set();
+  const ordered = [];
+  const push = (raw) => {
+    const model = raw.trim();
+    if (model === "" || seen.has(model)) return;
+    seen.add(model);
+    ordered.push(model);
+  };
+  for (const row of rows) {
+    if (row.type === "model_change" && typeof row.modelId === "string") {
+      push(row.modelId);
+    }
+    const message = isRecord6(row.message) ? row.message : void 0;
+    if (message?.role === "assistant" && typeof message.model === "string") {
+      push(message.model);
+    }
+  }
+  return ordered;
+}
+function bashCommandFirstLine(command) {
+  const match = /^[^\r\n]*/.exec(command);
+  return match?.[0] ?? "";
+}
+function extractSessionToolIntervals(rows) {
+  const order = [];
+  const openById = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    const rowTimestamp = typeof row.timestamp === "string" ? row.timestamp : void 0;
+    const message = isRecord6(row.message) ? row.message : void 0;
+    if (message?.role === "assistant" && Array.isArray(message.content)) {
+      const callTimestamp = typeof message.timestamp === "string" && message.timestamp ? message.timestamp : rowTimestamp;
+      for (const part of message.content) {
+        if (!isRecord6(part) || part.type !== "toolCall") continue;
+        if (typeof part.id !== "string" || part.id.length === 0) {
+          throw new Error("toolCall frame missing string id");
+        }
+        if (typeof part.name !== "string" || part.name.length === 0) {
+          throw new Error(`toolCall ${part.id} missing string name`);
+        }
+        if (callTimestamp === void 0 || callTimestamp.length === 0) {
+          throw new Error(`toolCall ${part.id} missing timestamp`);
+        }
+        if (openById.has(part.id)) {
+          throw new Error(`duplicate toolCall id ${part.id}`);
+        }
+        const args = isRecord6(part.arguments) ? part.arguments : void 0;
+        const command = part.name === "bash" && args !== void 0 && typeof args.command === "string" ? bashCommandFirstLine(args.command) : void 0;
+        const interval = {
+          toolCallId: part.id,
+          toolName: part.name,
+          startedAt: callTimestamp,
+          ...command !== void 0 ? { command } : {}
+        };
+        order.push(interval);
+        openById.set(part.id, interval);
+      }
+    }
+    if (message?.role === "toolResult") {
+      if (typeof message.toolCallId !== "string" || message.toolCallId.length === 0) {
+        throw new Error("toolResult frame missing string toolCallId");
+      }
+      const resultTimestamp = typeof message.timestamp === "string" && message.timestamp ? message.timestamp : rowTimestamp;
+      if (resultTimestamp === void 0 || resultTimestamp.length === 0) {
+        throw new Error(`toolResult ${message.toolCallId} missing timestamp`);
+      }
+      const open4 = openById.get(message.toolCallId);
+      if (open4 === void 0) {
+        const toolName = typeof message.toolName === "string" && message.toolName.length > 0 ? message.toolName : "unknown";
+        order.push({
+          toolCallId: message.toolCallId,
+          toolName,
+          startedAt: resultTimestamp,
+          endedAt: resultTimestamp
+        });
+        continue;
+      }
+      if (open4.endedAt !== void 0) {
+        throw new Error(`duplicate toolResult for toolCallId ${message.toolCallId}`);
+      }
+      open4.endedAt = resultTimestamp;
+    }
+  }
+  return order.map((interval) => {
+    const base = {
+      toolCallId: interval.toolCallId,
+      toolName: interval.toolName,
+      startedAt: interval.startedAt,
+      ...interval.command !== void 0 ? { command: interval.command } : {}
+    };
+    return interval.endedAt === void 0 ? base : { ...base, endedAt: interval.endedAt };
+  });
+}
+var LedgerSessionJsonlError;
+var init_ledger_session_read = __esm({
+  "src/ledger-session-read.ts"() {
+    "use strict";
+    LedgerSessionJsonlError = class extends Error {
+      path;
+      line;
+      prefixRows;
+      constructor(message, init) {
+        super(message);
+        this.name = "LedgerSessionJsonlError";
+        this.path = init.path;
+        this.line = init.line;
+        this.prefixRows = init.prefixRows;
+      }
+    };
+  }
+});
+
+// src/run-terminal-artifacts.ts
+import { readdir as readdir4, readFile as readFile12 } from "node:fs/promises";
+import { basename as basename4, dirname as dirname9, join as join20 } from "node:path";
+function isMissingPathError3(error) {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+function errorText2(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function isRecord7(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function readUsableTerminalArtifactBody(body) {
+  if (body === null) {
+    return { ok: false, reason: "terminal artifact JSON value is null" };
+  }
+  if (!isRecord7(body)) {
+    return {
+      ok: false,
+      reason: `terminal artifact JSON value is not a typed object (${Array.isArray(body) ? "array" : typeof body})`
+    };
+  }
+  if (typeof body.role !== "string" || body.role.trim() === "") {
+    return {
+      ok: false,
+      reason: "terminal artifact missing nonblank producer-owned role field"
+    };
+  }
+  return { ok: true, body };
+}
+async function readTerminalArtifactAtPath(path, file) {
+  let raw;
+  try {
+    raw = await readFile12(path, "utf8");
+  } catch (error) {
+    if (isMissingPathError3(error)) return void 0;
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: errorText2(error)
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: error instanceof Error ? error.message : `terminal artifact JSON parse failed: ${String(error)}`
+    };
+  }
+  const usable = readUsableTerminalArtifactBody(parsed);
+  if (!usable.ok) {
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: usable.reason
+    };
+  }
+  return { status: "present", file, path, body: usable.body };
+}
+async function listUniqueErrorFallbackPaths(directories) {
+  const found = [];
+  for (const dir of directories) {
+    let names;
+    try {
+      names = await readdir4(dir);
+    } catch (error) {
+      if (isMissingPathError3(error)) continue;
+      throw error;
+    }
+    for (const name of names.sort((a, b) => a.localeCompare(b))) {
+      if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
+      found.push(join20(dir, name));
+    }
+  }
+  return found;
+}
+function runIdFromRunDirectory(runDirectory) {
+  const name = basename4(runDirectory);
+  const at = name.lastIndexOf("@");
+  if (at <= 0 || at === name.length - 1) return void 0;
+  return name.slice(0, at);
+}
+function presentUniqueFallbackBoundToRun(body, expectedRunId) {
+  if (expectedRunId === void 0) return false;
+  return typeof body.runId === "string" && body.runId === expectedRunId;
+}
+async function readRunTerminalArtifact(runDirectory) {
+  const artifactsDir = join20(runDirectory, "artifacts");
+  for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
+    const path = join20(artifactsDir, file);
+    const read3 = await readTerminalArtifactAtPath(path, file);
+    if (read3 !== void 0) return read3;
+  }
+  for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
+    const path = join20(runDirectory, relative3);
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 !== void 0) return read3;
+  }
+  for (const path of await listUniqueErrorFallbackPaths([artifactsDir, runDirectory])) {
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 !== void 0) return read3;
+  }
+  const expectedRunId = runIdFromRunDirectory(runDirectory);
+  for (const path of await listUniqueErrorFallbackPaths([dirname9(runDirectory)])) {
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 === void 0) continue;
+    if (read3.status === "present") {
+      if (!presentUniqueFallbackBoundToRun(read3.body, expectedRunId)) continue;
+      return read3;
+    }
+  }
+  return { status: "absent" };
+}
+var RUN_TERMINAL_ARTIFACT_FILES, RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS, UNIQUE_ERROR_FALLBACK_NAME;
+var init_run_terminal_artifacts = __esm({
+  "src/run-terminal-artifacts.ts"() {
+    "use strict";
+    RUN_TERMINAL_ARTIFACT_FILES = [
+      "report.json",
+      "error.json",
+      "audit-incomplete.json"
+    ];
+    RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
+      "artifacts/error.settlement.json",
+      "error.settlement.json"
+    ];
+    UNIQUE_ERROR_FALLBACK_NAME = /^error\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i;
+  }
+});
+
+// src/taishi-ledger.ts
+import { readdir as readdir5, readFile as readFile13 } from "node:fs/promises";
+import { join as join21 } from "node:path";
+function isMissingPathError4(error) {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+function errorText3(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function isRecord8(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+async function readExistingRunLifecycleState(runDirectory) {
+  try {
+    const raw = JSON.parse(
+      await readFile13(join21(runDirectory, "run-state.json"), "utf8")
+    );
+    if (!isRecord8(raw) || typeof raw.state !== "string") return void 0;
+    return raw.state;
+  } catch {
+    return void 0;
+  }
+}
+function parseRunDirectoryName(name) {
+  const at = name.lastIndexOf("@");
+  if (at <= 0 || at === name.length - 1) return void 0;
+  return { runId: name.slice(0, at), role: name.slice(at + 1) };
+}
+async function readInvocationScopeFields(runDirectory) {
+  let raw;
+  try {
+    raw = await readFile13(join21(runDirectory, "invocation.json"), "utf8");
+  } catch (error) {
+    if (isMissingPathError4(error)) return void 0;
+    throw error;
+  }
+  const parsed = JSON.parse(raw);
+  if (!isRecord8(parsed)) return void 0;
+  if (typeof parsed.projectRoot !== "string" || parsed.projectRoot.trim() === "") {
+    return void 0;
+  }
+  const projectRoot = parsed.projectRoot;
+  if (typeof parsed.ticketNumber === "number" && Number.isInteger(parsed.ticketNumber) && parsed.ticketNumber >= 1) {
+    return { projectRoot, ticketNumber: parsed.ticketNumber };
+  }
+  return { projectRoot };
+}
+function decideIssueScope(input) {
+  const projectRootMatch = input.runProjectRootIdentity === input.scopeProjectRootIdentity;
+  if (input.scopeTicketNumber !== void 0 && input.runTicketNumber !== void 0) {
+    if (input.runTicketNumber === input.scopeTicketNumber) {
+      return { inScope: true, conflict: !projectRootMatch };
+    }
+    return { inScope: false, conflict: false };
+  }
+  return { inScope: projectRootMatch, conflict: false };
+}
+async function resolveSessionFile(runDirectory) {
+  try {
+    const raw = await readFile13(join21(runDirectory, "invocation.json"), "utf8");
+    const parsed = JSON.parse(raw);
+    if (isRecord8(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
+      return parsed.sessionFile;
+    }
+  } catch (error) {
+    if (!isMissingPathError4(error)) throw error;
+  }
+  return join21(runDirectory, "session", "session.jsonl");
+}
+async function classifyScopedRun(input) {
+  const missingSources = [];
+  const reasons = [];
+  let frameSpan;
+  let toolIntervals;
+  let terminal;
+  let models = [];
+  let partialFirstFrameAt = { status: "absent" };
+  let partialLastFrameAt = { status: "absent" };
+  const sessionFile = await resolveSessionFile(input.runDirectory);
+  let rows;
+  try {
+    rows = await readLedgerSessionJsonl(sessionFile);
+    models = extractSessionModelSequence(rows);
+    const span = extractSessionTimestampSpan(rows);
+    if (span.startedAt === void 0 || span.endedAt === void 0) {
+      missingSources.push("session-timeline");
+      reasons.push("session timeline has no usable timestamps");
+      if (span.startedAt !== void 0) {
+        partialFirstFrameAt = { status: "present", at: span.startedAt };
+      }
+      if (span.endedAt !== void 0) {
+        partialLastFrameAt = { status: "present", at: span.endedAt };
+      }
+    } else {
+      const startedMs = Date.parse(span.startedAt);
+      const endedMs = Date.parse(span.endedAt);
+      if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs)) {
+        missingSources.push("session-timeline");
+        reasons.push("session timeline timestamps are not parseable instants");
+        partialFirstFrameAt = { status: "present", at: span.startedAt };
+        partialLastFrameAt = { status: "present", at: span.endedAt };
+      } else if (endedMs < startedMs) {
+        missingSources.push("session-timeline");
+        reasons.push("session timeline end is earlier than start");
+        partialFirstFrameAt = { status: "present", at: span.startedAt };
+        partialLastFrameAt = { status: "present", at: span.endedAt };
+      } else {
+        frameSpan = { startedAt: span.startedAt, endedAt: span.endedAt };
+      }
+    }
+  } catch (error) {
+    missingSources.push("session-timeline");
+    reasons.push(errorText3(error));
+    if (error instanceof LedgerSessionJsonlError) {
+      const span = extractSessionTimestampSpan(error.prefixRows);
+      if (span.startedAt !== void 0) {
+        partialFirstFrameAt = { status: "present", at: span.startedAt };
+      }
+      if (span.endedAt !== void 0) {
+        partialLastFrameAt = { status: "present", at: span.endedAt };
+      }
+      models = extractSessionModelSequence(error.prefixRows);
+    }
+  }
+  if (rows !== void 0 && !missingSources.includes("session-timeline")) {
+    try {
+      toolIntervals = extractSessionToolIntervals(rows);
+    } catch (error) {
+      missingSources.push("tool-association");
+      reasons.push(errorText3(error));
+    }
+  }
+  try {
+    const artifact = await readRunTerminalArtifact(input.runDirectory);
+    if (artifact.status === "unreadable") {
+      missingSources.push("terminal-artifact");
+      reasons.push(`${artifact.file}: ${artifact.reason}`);
+    } else if (artifact.status === "absent") {
+      const lifecycle = await readExistingRunLifecycleState(input.runDirectory);
+      if (lifecycle !== void 0 && LIVE_RUN_STATES.has(lifecycle)) {
+        return { kind: "live" };
+      }
+      terminal = { status: "absent" };
+    } else {
+      terminal = {
+        status: "present",
+        file: artifact.file,
+        body: artifact.body,
+        role: artifact.body.role
+      };
+    }
+  } catch (error) {
+    missingSources.push("terminal-artifact");
+    reasons.push(errorText3(error));
+  }
+  if (missingSources.length > 0) {
+    const firstFrameAt = frameSpan !== void 0 ? { status: "present", at: frameSpan.startedAt } : partialFirstFrameAt;
+    const lastFrameAt = frameSpan !== void 0 ? { status: "present", at: frameSpan.endedAt } : partialLastFrameAt;
+    return {
+      kind: "unreadable",
+      entry: {
+        runId: input.runId,
+        book: input.book,
+        missingSources,
+        reason: reasons.join("; "),
+        firstFrameAt,
+        lastFrameAt
+      }
+    };
+  }
+  if (frameSpan === void 0 || toolIntervals === void 0 || terminal === void 0) {
+    throw new Error(
+      `classifyScopedRun internal invariant: missing retained facts for ${input.runId}`
+    );
+  }
+  return {
+    kind: "readable",
+    facts: {
+      runId: input.runId,
+      book: input.book,
+      role: input.role,
+      frameSpan,
+      toolIntervals,
+      terminal,
+      models
+    }
+  };
+}
+async function scanTaishiIssueRuns(input) {
+  const ledgerHome = resolveActivationLedgerHome();
+  const scopeIdentity = physicalPathIdentity(input.projectRoot);
+  const scopeTicketNumber = input.ticketNumber;
+  const booksRoot = join21(ledgerHome, "books");
+  let bookNames;
+  try {
+    const entries = await readdir5(booksRoot, { withFileTypes: true });
+    bookNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  } catch (error) {
+    if (isMissingPathError4(error)) {
+      return { runs: [], unreadable: [], scopeConflicts: [] };
+    }
+    throw error;
+  }
+  const runs = [];
+  const unreadable = [];
+  const scopeConflicts = [];
+  for (const book of bookNames) {
+    const runsDir = join21(booksRoot, book, "runs");
+    let runNames;
+    try {
+      const entries = await readdir5(runsDir, { withFileTypes: true });
+      runNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    } catch (error) {
+      if (isMissingPathError4(error)) continue;
+      throw error;
+    }
+    for (const runName of runNames) {
+      const parsed = parseRunDirectoryName(runName);
+      if (parsed === void 0) continue;
+      const runDirectory = join21(runsDir, runName);
+      let scopeFields;
+      try {
+        scopeFields = await readInvocationScopeFields(runDirectory);
+      } catch (error) {
+        if (error instanceof SyntaxError) continue;
+        throw error;
+      }
+      if (scopeFields === void 0) continue;
+      const runProjectRootIdentity = physicalPathIdentity(scopeFields.projectRoot);
+      const decision = decideIssueScope({
+        scopeProjectRootIdentity: scopeIdentity,
+        scopeTicketNumber,
+        runProjectRootIdentity,
+        runTicketNumber: scopeFields.ticketNumber
+      });
+      if (!decision.inScope) continue;
+      if (decision.conflict) {
+        scopeConflicts.push({
+          runId: parsed.runId,
+          ticketNumber: scopeFields.ticketNumber,
+          projectRoot: runProjectRootIdentity,
+          fact: "typed-ticketNumber-over-projectRoot"
+        });
+      }
+      const classified = await classifyScopedRun({
+        book,
+        runId: parsed.runId,
+        role: parsed.role,
+        runDirectory
+      });
+      if (classified.kind === "readable") runs.push(classified.facts);
+      else if (classified.kind === "unreadable") unreadable.push(classified.entry);
+    }
+  }
+  return {
+    runs,
+    unreadable,
+    scopeConflicts
+  };
+}
+var LIVE_RUN_STATES;
+var init_taishi_ledger = __esm({
+  "src/taishi-ledger.ts"() {
+    "use strict";
+    init_activation_ledger_topology();
+    init_ledger_session_read();
+    init_run_terminal_artifacts();
+    LIVE_RUN_STATES = /* @__PURE__ */ new Set(["admitted", "running", "resumable"]);
+  }
+});
+
+// src/taishi-metric-families/acceptance-success-rework.ts
+function isRecord9(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function wallMsFromSpan(span) {
+  return Date.parse(span.endedAt) - Date.parse(span.startedAt);
+}
+function findCollectorGroups(body) {
+  if (Array.isArray(body.groups)) return body.groups;
+  const receipt = body.receipt;
+  if (isRecord9(receipt) && Array.isArray(receipt.groups)) return receipt.groups;
+  const outcome = body.outcome;
+  if (isRecord9(outcome)) {
+    const facts = outcome.decisiveFacts;
+    if (isRecord9(facts) && Array.isArray(facts.groups)) return facts.groups;
+  }
+  return void 0;
+}
+function extractStatus(body) {
+  const outcome = body.outcome;
+  if (isRecord9(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
+    return outcome.status;
+  }
+  const receipt = body.receipt;
+  if (isRecord9(receipt) && typeof receipt.status === "string" && receipt.status.trim() !== "") {
+    return receipt.status;
+  }
+  if (typeof body.status === "string" && body.status.trim() !== "") {
+    return body.status;
+  }
+  return void 0;
+}
+function mapTerminal(role, terminal) {
+  if (terminal.status === "absent") {
+    return {
+      terminalLabel: "no-receipt",
+      accepted: false,
+      success: false,
+      successEligible: false,
+      noReceipt: true
+    };
+  }
+  const body = terminal.body;
+  if (role === "collector") {
+    const groups = findCollectorGroups(body);
+    if (Array.isArray(groups)) {
+      return {
+        terminalLabel: "groups",
+        accepted: true,
+        success: true,
+        successEligible: true,
+        noReceipt: false
+      };
+    }
+    return {
+      terminalLabel: "non-accepted",
+      accepted: false,
+      success: false,
+      successEligible: false,
+      noReceipt: false
+    };
+  }
+  const status = extractStatus(body);
+  if (status === void 0) {
+    return {
+      terminalLabel: "non-accepted",
+      accepted: false,
+      success: false,
+      successEligible: false,
+      noReceipt: false
+    };
+  }
+  const acceptedSet = ACCEPTED_STATUS[role];
+  if (acceptedSet === void 0 || !acceptedSet.has(status)) {
+    return {
+      terminalLabel: status,
+      accepted: false,
+      success: false,
+      successEligible: false,
+      noReceipt: false
+    };
+  }
+  const plannedDuty = WORKER_ROLES.has(role) && status === "planned";
+  const successSet = SUCCESS_STATUS[role] ?? /* @__PURE__ */ new Set();
+  const success = !plannedDuty && successSet.has(status);
+  const successEligible = !plannedDuty;
+  return {
+    terminalLabel: status,
+    accepted: true,
+    success,
+    successEligible,
+    noReceipt: false
+  };
+}
+function projectLegs(runs) {
+  const sorted = [...runs].sort((a, b) => {
+    if (a.book !== b.book) return a.book.localeCompare(b.book);
+    if (a.role !== b.role) return a.role.localeCompare(b.role);
+    if (a.frameSpan.startedAt !== b.frameSpan.startedAt) {
+      return a.frameSpan.startedAt.localeCompare(b.frameSpan.startedAt);
+    }
+    return a.runId.localeCompare(b.runId);
+  });
+  const ordinalByKey = /* @__PURE__ */ new Map();
+  const legs = [];
+  for (const run of sorted) {
+    const key = `${run.book}\0${run.role}`;
+    const ordinal = (ordinalByKey.get(key) ?? 0) + 1;
+    ordinalByKey.set(key, ordinal);
+    const mapped = mapTerminal(run.role, run.terminal);
+    legs.push({
+      runId: run.runId,
+      book: run.book,
+      role: run.role,
+      startedAt: run.frameSpan.startedAt,
+      wallMs: wallMsFromSpan(run.frameSpan),
+      terminalLabel: mapped.terminalLabel,
+      accepted: mapped.accepted,
+      success: mapped.success,
+      successEligible: mapped.successEligible,
+      noReceipt: mapped.noReceipt,
+      ordinalInLaneRole: ordinal,
+      rework: ordinal >= 2
+    });
+  }
+  return legs.sort((a, b) => {
+    if (a.book !== b.book) return a.book.localeCompare(b.book);
+    if (a.role !== b.role) return a.role.localeCompare(b.role);
+    return a.runId.localeCompare(b.runId);
+  });
+}
+function aggregateByRole(legs) {
+  const roles = [...new Set(legs.map((leg) => leg.role))].sort((a, b) => a.localeCompare(b));
+  return roles.map((role) => {
+    const roleLegs = legs.filter((leg) => leg.role === role);
+    const acceptedCount = roleLegs.filter((leg) => leg.accepted).length;
+    const successEligibleCount = roleLegs.filter((leg) => leg.successEligible).length;
+    const successCount = roleLegs.filter((leg) => leg.success).length;
+    const noReceiptCount = roleLegs.filter((leg) => leg.noReceipt).length;
+    const byBook = /* @__PURE__ */ new Map();
+    for (const leg of roleLegs) {
+      const list = byBook.get(leg.book) ?? [];
+      list.push(leg);
+      byBook.set(leg.book, list);
+    }
+    const books = [...byBook.keys()].sort((a, b) => a.localeCompare(b));
+    const convergenceRounds = [];
+    let firstPassLaneCount = 0;
+    for (const book of books) {
+      const laneLegs = [...byBook.get(book)].sort((a, b) => {
+        if (a.startedAt !== b.startedAt) return a.startedAt.localeCompare(b.startedAt);
+        return a.runId.localeCompare(b.runId);
+      });
+      convergenceRounds.push(laneLegs.length);
+      const first = laneLegs[0];
+      if (first.accepted) firstPassLaneCount += 1;
+    }
+    const appearanceLaneCount = books.length;
+    return {
+      role,
+      acceptedCount,
+      successEligibleCount,
+      successCount,
+      noReceiptCount,
+      successRate: successEligibleCount === 0 ? void 0 : successCount / successEligibleCount,
+      appearanceLaneCount,
+      firstPassLaneCount,
+      firstPassRate: appearanceLaneCount === 0 ? void 0 : firstPassLaneCount / appearanceLaneCount,
+      convergenceRounds,
+      convergenceRoundsMedian: medianNumber(convergenceRounds)
+    };
+  });
+}
+function reworkLens(legs) {
+  let reworkWallMs = 0;
+  let totalWallMs = 0;
+  let reworkLegCount = 0;
+  for (const leg of legs) {
+    totalWallMs += leg.wallMs;
+    if (leg.rework) {
+      reworkWallMs += leg.wallMs;
+      reworkLegCount += 1;
+    }
+  }
+  return {
+    reworkWallMs,
+    totalWallMs,
+    reworkRatio: totalWallMs === 0 ? void 0 : reworkWallMs / totalWallMs,
+    reworkLegCount,
+    totalLegCount: legs.length
+  };
+}
+function buildAcceptanceSuccessReworkSection(runs) {
+  if (runs.length === 0) return void 0;
+  const legs = projectLegs(runs);
+  return {
+    kind: "taishi-acceptance-success-rework",
+    legs,
+    byRole: aggregateByRole(legs),
+    rework: reworkLens(legs)
+  };
+}
+var WORKER_ROLES, ACCEPTED_STATUS, SUCCESS_STATUS, acceptanceSuccessReworkFamily, acceptance_success_rework_default;
+var init_acceptance_success_rework = __esm({
+  "src/taishi-metric-families/acceptance-success-rework.ts"() {
+    "use strict";
+    init_taishi_median();
+    WORKER_ROLES = /* @__PURE__ */ new Set(["coder", "fixer"]);
+    ACCEPTED_STATUS = {
+      coder: /* @__PURE__ */ new Set(["completed", "refused", "partially_completed", "unfinished", "planned"]),
+      fixer: /* @__PURE__ */ new Set(["completed", "refused", "partially_completed", "unfinished", "planned"]),
+      judge: /* @__PURE__ */ new Set(["converged", "continue", "escalate"]),
+      reviewer: /* @__PURE__ */ new Set(["completed", "refused"]),
+      doctor: /* @__PURE__ */ new Set(["completed", "refused"]),
+      merger: /* @__PURE__ */ new Set(["completed", "escalate"])
+    };
+    SUCCESS_STATUS = {
+      coder: /* @__PURE__ */ new Set(["completed"]),
+      fixer: /* @__PURE__ */ new Set(["completed"]),
+      // Judge: producing any of the three verdicts completes the duty.
+      judge: /* @__PURE__ */ new Set(["converged", "continue", "escalate"]),
+      reviewer: /* @__PURE__ */ new Set(["completed"]),
+      doctor: /* @__PURE__ */ new Set(["completed"]),
+      merger: /* @__PURE__ */ new Set(["completed"])
+    };
+    acceptanceSuccessReworkFamily = {
+      id: "acceptance-success-rework",
+      contribute(input) {
+        const section = buildAcceptanceSuccessReworkSection(input.runs);
+        if (section === void 0) return void 0;
+        return { acceptanceSuccessRework: section };
+      }
+    };
+    acceptance_success_rework_default = acceptanceSuccessReworkFamily;
+  }
+});
+
+// src/taishi-model-groups.ts
+function taishiModelGroupKey(models) {
+  if (models.length === 0) return void 0;
+  if (models.length === 1) return models[0];
+  return `mixed:${models.join("+")}`;
+}
+function rate(numerator, denominator) {
+  if (denominator === 0) return void 0;
+  return numerator / denominator;
+}
+function displayNameFor(rawGroupKey, combinationMapping) {
+  if (combinationMapping === void 0) return rawGroupKey;
+  const aliased = combinationMapping[rawGroupKey];
+  return aliased === void 0 ? rawGroupKey : aliased;
+}
+function sortUnreadable(unreadable) {
+  return [...unreadable].sort((a, b) => {
+    if (a.book !== b.book) return a.book.localeCompare(b.book);
+    return a.runId.localeCompare(b.runId);
+  });
+}
+function modelIdentityAbsentEntry(run) {
+  return {
+    runId: run.runId,
+    book: run.book,
+    missingSources: ["session-model"],
+    reason: "session has no usable model identity",
+    firstFrameAt: { status: "present", at: run.frameSpan.startedAt },
+    // Readable legs already admitted a full span — retain end edge for lastActivityAt.
+    lastFrameAt: { status: "present", at: run.frameSpan.endedAt }
+  };
+}
+function buildTaishiModelGroupsPage(input) {
+  const groupedRuns = [];
+  const modelAbsent = [];
+  for (const run of input.runs) {
+    const rawGroupKey = taishiModelGroupKey(run.models);
+    if (rawGroupKey === void 0) {
+      modelAbsent.push(modelIdentityAbsentEntry(run));
+    } else {
+      groupedRuns.push({ run, rawGroupKey });
+    }
+  }
+  const acceptance = buildAcceptanceSuccessReworkSection(
+    groupedRuns.map(({ run }) => run)
+  );
+  const legByRunId = new Map(
+    (acceptance?.legs ?? []).map((leg) => [leg.runId, leg])
+  );
+  const byRaw = /* @__PURE__ */ new Map();
+  for (const { run, rawGroupKey } of groupedRuns) {
+    const leg = legByRunId.get(run.runId);
+    if (leg === void 0) {
+      throw new Error(
+        `taishi model-groups: missing acceptance projection for run ${run.runId}`
+      );
+    }
+    let acc = byRaw.get(rawGroupKey);
+    if (acc === void 0) {
+      acc = {
+        acceptedCount: 0,
+        successCount: 0,
+        successEligibleCount: 0,
+        noReceiptCount: 0,
+        walls: []
+      };
+      byRaw.set(rawGroupKey, acc);
+    }
+    if (leg.accepted) acc.acceptedCount += 1;
+    if (leg.success) acc.successCount += 1;
+    if (leg.successEligible) acc.successEligibleCount += 1;
+    if (leg.noReceipt) acc.noReceiptCount += 1;
+    acc.walls.push(leg.wallMs);
+  }
+  const rawKeys = [...byRaw.keys()].sort((a, b) => a.localeCompare(b));
+  const groups = rawKeys.map((rawGroupKey) => {
+    const acc = byRaw.get(rawGroupKey);
+    const legCount = acc.walls.length;
+    return {
+      rawGroupKey,
+      displayName: displayNameFor(rawGroupKey, input.combinationMapping),
+      legCount,
+      acceptedCount: acc.acceptedCount,
+      acceptanceRate: rate(acc.acceptedCount, legCount),
+      successCount: acc.successCount,
+      successEligibleCount: acc.successEligibleCount,
+      successRate: rate(acc.successCount, acc.successEligibleCount),
+      noReceiptCount: acc.noReceiptCount,
+      noReceiptRate: rate(acc.noReceiptCount, legCount),
+      wallClockMedianMs: medianNumber(acc.walls)
+    };
+  });
+  const unreadable = sortUnreadable([...input.unreadable, ...modelAbsent]);
+  return {
+    kind: "taishi-model-groups",
+    mode: "model-groups",
+    projectRoots: [...input.projectRoots].sort((a, b) => a.localeCompare(b)),
+    groups,
+    legCount: groupedRuns.length,
+    unreadableCount: unreadable.length,
+    unreadable
+  };
+}
+var init_taishi_model_groups = __esm({
+  "src/taishi-model-groups.ts"() {
+    "use strict";
+    init_acceptance_success_rework();
+    init_taishi_median();
+  }
+});
+
+// src/taishi-metric-families/b2-frame-buckets-actions.ts
+function timestampMs(iso) {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) {
+    throw new Error(`unparseable timestamp: ${iso}`);
+  }
+  return ms;
+}
+function toIso(ms) {
+  return new Date(ms).toISOString();
+}
+function closedTools(intervals) {
+  const out = [];
+  for (const interval of intervals) {
+    if (interval.endedAt === void 0) continue;
+    const startMs = timestampMs(interval.startedAt);
+    const endMs = timestampMs(interval.endedAt);
+    if (endMs <= startMs) continue;
+    out.push({
+      toolCallId: interval.toolCallId,
+      toolName: interval.toolName,
+      startedAt: interval.startedAt,
+      endedAt: interval.endedAt,
+      startMs,
+      endMs,
+      ...interval.command !== void 0 ? { command: interval.command } : {}
+    });
+  }
+  return out;
+}
+function clipToolsToFrame(tools, frameStartMs, frameEndMs) {
+  if (frameEndMs <= frameStartMs) return [];
+  const out = [];
+  for (const tool2 of tools) {
+    const startMs = Math.max(tool2.startMs, frameStartMs);
+    const endMs = Math.min(tool2.endMs, frameEndMs);
+    if (endMs <= startMs) continue;
+    out.push({
+      toolCallId: tool2.toolCallId,
+      toolName: tool2.toolName,
+      startMs,
+      endMs,
+      startedAt: startMs === tool2.startMs ? tool2.startedAt : toIso(startMs),
+      endedAt: endMs === tool2.endMs ? tool2.endedAt : toIso(endMs),
+      ...tool2.command !== void 0 ? { command: tool2.command } : {}
+    });
+  }
+  return out;
+}
+function mergeUnion(intervals) {
+  if (intervals.length === 0) return [];
+  const sorted = [...intervals].sort(
+    (a, b) => a.startMs - b.startMs || a.endMs - b.endMs
+  );
+  const merged = [
+    { startMs: sorted[0].startMs, endMs: sorted[0].endMs }
+  ];
+  for (let i = 1; i < sorted.length; i += 1) {
+    const cur = sorted[i];
+    const last = merged[merged.length - 1];
+    if (cur.startMs <= last.endMs) {
+      last.endMs = Math.max(last.endMs, cur.endMs);
+    } else {
+      merged.push({ startMs: cur.startMs, endMs: cur.endMs });
+    }
+  }
+  return merged;
+}
+function modelMaximalIntervals(frameStartMs, frameEndMs, toolUnion) {
+  if (frameEndMs <= frameStartMs) return [];
+  const gaps = [];
+  let cursor = frameStartMs;
+  for (const interval of toolUnion) {
+    if (interval.startMs > cursor) {
+      gaps.push({ startMs: cursor, endMs: interval.startMs });
+    }
+    cursor = Math.max(cursor, interval.endMs);
+  }
+  if (cursor < frameEndMs) {
+    gaps.push({ startMs: cursor, endMs: frameEndMs });
+  }
+  return gaps;
+}
+function toolAction(tool2) {
+  const action = {
+    kind: "tool",
+    toolCallId: tool2.toolCallId,
+    toolName: tool2.toolName,
+    durationMs: tool2.endMs - tool2.startMs,
+    startedAt: tool2.startedAt,
+    endedAt: tool2.endedAt
+  };
+  if (tool2.toolName === "bash" && tool2.command !== void 0) {
+    return {
+      ...action,
+      commandSummary: tool2.command
+    };
+  }
+  return action;
+}
+function modelAction(gap) {
+  return {
+    kind: "model",
+    durationMs: gap.endMs - gap.startMs,
+    startedAt: toIso(gap.startMs),
+    endedAt: toIso(gap.endMs)
+  };
+}
+function sortActionsDescending(actions) {
+  return [...actions].sort((a, b) => {
+    if (b.durationMs !== a.durationMs) return b.durationMs - a.durationMs;
+    if (a.startedAt !== b.startedAt) return a.startedAt.localeCompare(b.startedAt);
+    if (a.kind !== b.kind) return a.kind.localeCompare(b.kind);
+    if (a.kind === "tool" && b.kind === "tool") {
+      return a.toolCallId.localeCompare(b.toolCallId);
+    }
+    return 0;
+  });
+}
+function computeTaishiB2RunMetrics(facts) {
+  const frameStartMs = timestampMs(facts.frameSpan.startedAt);
+  const frameEndMs = timestampMs(facts.frameSpan.endedAt);
+  const wallMs = Math.max(0, frameEndMs - frameStartMs);
+  const tools = clipToolsToFrame(closedTools(facts.toolIntervals), frameStartMs, frameEndMs);
+  const toolUnion = mergeUnion(tools);
+  const toolBucketMs = toolUnion.reduce(
+    (sum, interval) => sum + (interval.endMs - interval.startMs),
+    0
+  );
+  const modelBucketMs = wallMs - toolBucketMs;
+  const modelGaps = modelMaximalIntervals(frameStartMs, frameEndMs, toolUnion);
+  const actions = sortActionsDescending([
+    ...tools.map(toolAction),
+    ...modelGaps.map(modelAction)
+  ]);
+  const actionDurationMedianMs = medianNumber(actions.map((action) => action.durationMs));
+  return {
+    runId: facts.runId,
+    book: facts.book,
+    role: facts.role,
+    wallMs,
+    toolBucketMs,
+    modelBucketMs,
+    actions,
+    actionDurationMedianMs
+  };
+}
+var b2FrameBucketsActionsFamily, b2_frame_buckets_actions_default;
+var init_b2_frame_buckets_actions = __esm({
+  "src/taishi-metric-families/b2-frame-buckets-actions.ts"() {
+    "use strict";
+    init_taishi_median();
+    b2FrameBucketsActionsFamily = {
+      id: "b2-frame-buckets-actions",
+      contribute(input) {
+        if (input.runs.length === 0) return void 0;
+        const runs = [...input.runs].map(computeTaishiB2RunMetrics).sort((a, b) => {
+          if (a.book !== b.book) return a.book.localeCompare(b.book);
+          if (a.role !== b.role) return a.role.localeCompare(b.role);
+          return a.runId.localeCompare(b.runId);
+        });
+        const section = {
+          kind: "taishi-b2-frame-buckets-actions",
+          runs
+        };
+        return { b2FrameBucketsActions: section };
+      }
+    };
+    b2_frame_buckets_actions_default = b2FrameBucketsActionsFamily;
+  }
+});
+
+// src/taishi-metric-families/leg-wall-clock.ts
+function frameSpanWallMs(span) {
+  return Date.parse(span.endedAt) - Date.parse(span.startedAt);
+}
+function projectEntry(facts) {
+  return {
+    runId: facts.runId,
+    book: facts.book,
+    role: facts.role,
+    wallMs: frameSpanWallMs(facts.frameSpan)
+  };
+}
+function compareRankingDesc(a, b) {
+  if (b.wallMs !== a.wallMs) return b.wallMs - a.wallMs;
+  if (a.book !== b.book) return a.book.localeCompare(b.book);
+  if (a.role !== b.role) return a.role.localeCompare(b.role);
+  return a.runId.localeCompare(b.runId);
+}
+var legWallClockFamily, leg_wall_clock_default;
+var init_leg_wall_clock = __esm({
+  "src/taishi-metric-families/leg-wall-clock.ts"() {
+    "use strict";
+    init_taishi_median();
+    legWallClockFamily = {
+      id: "leg-wall-clock",
+      contribute(input) {
+        if (input.runs.length === 0) {
+          return void 0;
+        }
+        const ranking = input.runs.map(projectEntry).sort(compareRankingDesc);
+        const walls = ranking.map((leg) => leg.wallMs);
+        const medianWallMs = medianNumber(walls);
+        if (medianWallMs === void 0) {
+          return void 0;
+        }
+        let totalElapsedMs = 0;
+        for (const wallMs of walls) totalElapsedMs += wallMs;
+        const section = {
+          kind: "taishi-leg-wall-clock",
+          ranking,
+          medianWallMs,
+          totalElapsedMs
+        };
+        return { legWallClock: section };
+      }
+    };
+    leg_wall_clock_default = legWallClockFamily;
+  }
+});
+
+// src/taishi-metric-families/round-timeline.ts
+function isRecord10(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function wallMsFromSpan2(startedAt, endedAt) {
+  return Date.parse(endedAt) - Date.parse(startedAt);
+}
+function readOutcomeStatus(body) {
+  if (!isRecord10(body.outcome)) return void 0;
+  const status = body.outcome.status;
+  if (typeof status !== "string" || status.trim() === "") return void 0;
+  return status;
+}
+function readClassCount(body) {
+  if (!isRecord10(body.outcome)) return void 0;
+  if (!isRecord10(body.outcome.decisiveFacts)) return void 0;
+  const classCount = body.outcome.decisiveFacts.classCount;
+  if (typeof classCount !== "number" || !Number.isFinite(classCount)) {
+    return void 0;
+  }
+  return classCount;
+}
+function projectTerminal(facts) {
+  if (facts.terminal.status === "absent") {
+    return { kind: "death", channel: "no-receipt" };
+  }
+  if (facts.terminal.file === "error.json") {
+    return { kind: "death", channel: "error" };
+  }
+  if (facts.terminal.file === "audit-incomplete.json") {
+    return { kind: "death", channel: "audit-incomplete" };
+  }
+  const status = readOutcomeStatus(facts.terminal.body);
+  const classCount = readClassCount(facts.terminal.body);
+  const receiptStatus = status ?? "unparsed";
+  if (classCount === void 0) {
+    return { kind: "receipt", status: receiptStatus };
+  }
+  return { kind: "receipt", status: receiptStatus, classCount };
+}
+function projectRunRow(facts) {
+  const { startedAt, endedAt } = facts.frameSpan;
+  return {
+    kind: "run",
+    runId: facts.runId,
+    book: facts.book,
+    role: facts.role,
+    startedAt,
+    endedAt,
+    wallMs: wallMsFromSpan2(startedAt, endedAt),
+    terminal: projectTerminal(facts)
+  };
+}
+function projectUnreadableRow(entry) {
+  return {
+    kind: "unreadable",
+    runId: entry.runId,
+    book: entry.book,
+    missingSources: entry.missingSources,
+    reason: entry.reason,
+    firstFrameAt: entry.firstFrameAt
+  };
+}
+function rowSortStartedAt(row) {
+  if (row.kind === "run") return row.startedAt;
+  if (row.firstFrameAt.status === "present") return row.firstFrameAt.at;
+  return void 0;
+}
+function compareRows(a, b) {
+  const aStart = rowSortStartedAt(a);
+  const bStart = rowSortStartedAt(b);
+  if (aStart === void 0 && bStart === void 0) {
+    return a.runId.localeCompare(b.runId);
+  }
+  if (aStart === void 0) return 1;
+  if (bStart === void 0) return -1;
+  if (aStart !== bStart) return aStart.localeCompare(bStart);
+  return a.runId.localeCompare(b.runId);
+}
+function buildLanes(runs, unreadable) {
+  const byLane = /* @__PURE__ */ new Map();
+  const push = (lane, row) => {
+    const list = byLane.get(lane);
+    if (list === void 0) byLane.set(lane, [row]);
+    else list.push(row);
+  };
+  for (const facts of runs) {
+    push(facts.book, projectRunRow(facts));
+  }
+  for (const entry of unreadable) {
+    push(entry.book, projectUnreadableRow(entry));
+  }
+  return [...byLane.keys()].sort((a, b) => a.localeCompare(b)).map((lane) => ({
+    lane,
+    rows: [...byLane.get(lane) ?? []].sort(compareRows)
+  }));
+}
+var roundTimelineFamily, round_timeline_default;
+var init_round_timeline = __esm({
+  "src/taishi-metric-families/round-timeline.ts"() {
+    "use strict";
+    roundTimelineFamily = {
+      id: "round-timeline",
+      contribute(input) {
+        if (input.runs.length === 0 && input.unreadable.length === 0) {
+          return void 0;
+        }
+        const section = {
+          kind: "taishi-round-timeline",
+          lanes: buildLanes(input.runs, input.unreadable)
+        };
+        return { roundTimeline: section };
+      }
+    };
+    round_timeline_default = roundTimelineFamily;
+  }
+});
+
+// src/taishi-metric-families.ts
+async function loadTaishiIssueMetricFamilies() {
+  return ISSUE_METRIC_FAMILIES;
+}
+var ISSUE_METRIC_FAMILIES;
+var init_taishi_metric_families = __esm({
+  "src/taishi-metric-families.ts"() {
+    "use strict";
+    init_acceptance_success_rework();
+    init_b2_frame_buckets_actions();
+    init_leg_wall_clock();
+    init_round_timeline();
+    ISSUE_METRIC_FAMILIES = [
+      acceptance_success_rework_default,
+      b2_frame_buckets_actions_default,
+      leg_wall_clock_default,
+      round_timeline_default
+    ].sort((a, b) => a.id.localeCompare(b.id));
+  }
+});
+
+// src/taishi-metric-family.ts
+function composeTaishiMetricFamilySections(families, input) {
+  const sections = {};
+  for (const family of families) {
+    const piece = family.contribute(input);
+    if (piece === void 0) continue;
+    Object.assign(sections, piece);
+  }
+  return sections;
+}
+var init_taishi_metric_family = __esm({
+  "src/taishi-metric-family.ts"() {
+    "use strict";
+  }
+});
+
+// src/taishi-page.ts
+import { createHash as createHash4 } from "node:crypto";
+import { dirname as dirname10, join as join22 } from "node:path";
+function taishiIssuePageKey(projectRoot) {
+  const identity = physicalPathIdentity(projectRoot);
+  return createHash4("sha256").update(identity).digest("hex").slice(0, 32);
+}
+function taishiIssuePagePath(ledgerHome, projectRoot) {
+  return join22(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(projectRoot)}.json`);
+}
+function sortLegs(legs) {
+  return [...legs].sort((a, b) => {
+    if (a.book !== b.book) return a.book.localeCompare(b.book);
+    if (a.role !== b.role) return a.role.localeCompare(b.role);
+    return a.runId.localeCompare(b.runId);
+  });
+}
+function sortUnreadable2(unreadable) {
+  return [...unreadable].sort((a, b) => {
+    if (a.book !== b.book) return a.book.localeCompare(b.book);
+    return a.runId.localeCompare(b.runId);
+  });
+}
+function sortScopeConflicts(conflicts) {
+  return [...conflicts].sort((a, b) => {
+    const aRun = a.runId ?? "";
+    const bRun = b.runId ?? "";
+    if (aRun !== bRun) return aRun.localeCompare(bRun);
+    return a.projectRoot.localeCompare(b.projectRoot);
+  });
+}
+function assertTaishiChangedLinesInput(changedLines) {
+  if (changedLines === void 0) return;
+  if (typeof changedLines !== "number" || !Number.isFinite(changedLines) || changedLines < 0) {
+    throw new Error(
+      `taishi changedLines must be a finite non-negative number, got ${String(changedLines)}`
+    );
+  }
+}
+function normalizeTaishiChangedLines(changedLines) {
+  assertTaishiChangedLinesInput(changedLines);
+  if (changedLines === void 0 || changedLines === 0) {
+    return { status: "absent" };
+  }
+  return { status: "present", value: changedLines };
+}
+function computeTaishiMsPerKLines(totalElapsedMs, changedLines) {
+  if (changedLines.status === "absent") return { status: "absent" };
+  return {
+    status: "present",
+    value: totalElapsedMs / (changedLines.value / 1e3)
+  };
+}
+function frameSpanWallMs2(span) {
+  return Date.parse(span.endedAt) - Date.parse(span.startedAt);
+}
+function summarizeTaishiRunEfficiency(runs, unreadable = []) {
+  let totalElapsedMs = 0;
+  let latestEndedAt;
+  for (const run of runs) {
+    totalElapsedMs += frameSpanWallMs2(run.frameSpan);
+    const endedAt = run.frameSpan.endedAt;
+    if (latestEndedAt === void 0 || endedAt > latestEndedAt) {
+      latestEndedAt = endedAt;
+    }
+  }
+  for (const entry of unreadable) {
+    if (entry.lastFrameAt.status !== "present") continue;
+    const endedAt = entry.lastFrameAt.at;
+    if (latestEndedAt === void 0 || endedAt > latestEndedAt) {
+      latestEndedAt = endedAt;
+    }
+  }
+  const lastActivityAt = latestEndedAt === void 0 ? { status: "absent" } : { status: "present", at: latestEndedAt };
+  return { totalElapsedMs, lastActivityAt };
+}
+async function buildTaishiIssueMetricsPage(input) {
+  const families = await loadTaishiIssueMetricFamilies();
+  const legs = sortLegs(
+    input.runs.map((run) => ({
+      runId: run.runId,
+      book: run.book,
+      role: run.role
+    }))
+  );
+  const unreadable = sortUnreadable2(input.unreadable);
+  const scopeConflicts = sortScopeConflicts(input.scopeConflicts ?? []);
+  const projectRoot = physicalPathIdentity(input.projectRoot);
+  const { totalElapsedMs, lastActivityAt } = summarizeTaishiRunEfficiency(
+    input.runs,
+    unreadable
+  );
+  const changedLines = normalizeTaishiChangedLines(input.changedLines);
+  const msPerKLines = computeTaishiMsPerKLines(totalElapsedMs, changedLines);
+  const envelope = {
+    kind: "taishi-issue-metrics",
+    mode: "issue",
+    projectRoot,
+    // exactOptionalPropertyTypes: only materialize when caller supplied it.
+    ...input.issueNumber === void 0 ? {} : { issueNumber: input.issueNumber },
+    legs,
+    unreadable,
+    unreadableCount: unreadable.length,
+    scopeConflicts,
+    totalElapsedMs,
+    changedLines,
+    msPerKLines,
+    lastActivityAt
+  };
+  const sections = composeTaishiMetricFamilySections(families, {
+    projectRoot,
+    runs: input.runs,
+    unreadable
+  });
+  return { ...envelope, ...sections };
+}
+async function writeTaishiIssueMetricsPage(ledgerHome, page) {
+  const path = taishiIssuePagePath(ledgerHome, page.projectRoot);
+  ensureRealDirectoryTree(ledgerHome, dirname10(path));
+  assertLedgerFileInsideHome(path, ledgerHome);
+  await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
+`);
+  return path;
+}
+var init_taishi_page = __esm({
+  "src/taishi-page.ts"() {
+    "use strict";
+    init_atomic_write();
+    init_activation_ledger_topology();
+    init_taishi_metric_families();
+    init_taishi_metric_family();
+  }
+});
+
+// src/taishi-entry.ts
+import { readFile as readFile14 } from "node:fs/promises";
+function isMissingPathError5(error) {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+function cachedPageMatchesRequestedScope(page, input) {
+  const requestedTicket = input.ticketNumber ?? input.issueNumber;
+  if (requestedTicket === void 0) {
+    return page.issueNumber === void 0;
+  }
+  return page.issueNumber === requestedTicket;
+}
+async function readOrComputeTaishiIssuePage(input) {
+  const ledgerHome = resolveActivationLedgerHome();
+  const projectRoot = physicalPathIdentity(input.projectRoot);
+  const pagePath = taishiIssuePagePath(ledgerHome, projectRoot);
+  try {
+    const raw = await readFile14(pagePath, "utf8");
+    const page = JSON.parse(raw);
+    if (cachedPageMatchesRequestedScope(page, input)) {
+      return { mode: "issue", page, pagePath };
+    }
+  } catch (error) {
+    if (!isMissingPathError5(error)) {
+      throw new TaishiIssueComputeError({
+        projectRoot,
+        ...input.issueNumber === void 0 ? {} : { issueNumber: input.issueNumber },
+        cause: error
+      });
+    }
+  }
+  try {
+    return await runTaishiIssueMode(input);
+  } catch (error) {
+    if (error instanceof TaishiIssueComputeError) throw error;
+    throw new TaishiIssueComputeError({
+      projectRoot,
+      ...input.issueNumber === void 0 ? {} : { issueNumber: input.issueNumber },
+      cause: error
+    });
+  }
+}
+async function runTaishiIssueMode(input, precomputedScan) {
+  assertTaishiChangedLinesInput(input.changedLines);
+  const ledgerHome = resolveActivationLedgerHome();
+  const projectRoot = input.projectRoot;
+  const ticketNumber = "ticketNumber" in input ? input.ticketNumber : void 0;
+  const scan = precomputedScan ?? (ticketNumber === void 0 ? await scanTaishiIssueRuns({ projectRoot }) : await scanTaishiIssueRuns({ projectRoot, ticketNumber }));
+  const issueNumber = "issueNumber" in input ? input.issueNumber : void 0;
+  const conflictingProjectRoot = "conflictingProjectRoot" in input ? input.conflictingProjectRoot : void 0;
+  const scopeConflicts = [...scan.scopeConflicts];
+  if (conflictingProjectRoot !== void 0 && ticketNumber !== void 0) {
+    const losingRoot = physicalPathIdentity(conflictingProjectRoot);
+    const winningRoot = physicalPathIdentity(projectRoot);
+    if (losingRoot !== winningRoot) {
+      scopeConflicts.push({
+        ticketNumber,
+        projectRoot: losingRoot,
+        fact: "typed-ticketNumber-over-projectRoot"
+      });
+    }
+  }
+  const page = await buildTaishiIssueMetricsPage({
+    projectRoot,
+    runs: scan.runs,
+    unreadable: scan.unreadable,
+    scopeConflicts,
+    ...input.changedLines === void 0 ? {} : { changedLines: input.changedLines },
+    ...issueNumber === void 0 ? {} : { issueNumber }
+  });
+  const pagePath = await writeTaishiIssueMetricsPage(ledgerHome, page);
+  if (issueNumber !== void 0) {
+    await mergeTaishiLibraryIndexRows(ledgerHome, [
+      rowFromIssueMetricsPage(page)
+    ]);
+  }
+  return { mode: "issue", page, pagePath };
+}
+async function runTaishiSweepMode(input) {
+  const ledgerHome = resolveActivationLedgerHome();
+  const issuePages = [];
+  for (const entry of input.mergedPullRequests) {
+    issuePages.push(await runTaishiIssueMode(entry));
+  }
+  const upserts = issuePages.map((result2) => rowFromIssueMetricsPage(result2.page));
+  const { index, indexPath } = await mergeTaishiLibraryIndexRows(ledgerHome, upserts);
+  return { mode: "sweep", issuePages, index, indexPath };
+}
+async function runTaishiModelGroupsMode(input) {
+  const ledgerHome = resolveActivationLedgerHome();
+  const runs = [];
+  const unreadable = [];
+  const seen = /* @__PURE__ */ new Set();
+  const projectRoots = [];
+  for (const root of input.projectRoots) {
+    const identity = physicalPathIdentity(root);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    projectRoots.push(identity);
+  }
+  for (const projectRoot of projectRoots) {
+    const scan = await scanTaishiIssueRuns({ projectRoot });
+    runs.push(...scan.runs);
+    unreadable.push(...scan.unreadable);
+    const pagePath = taishiIssuePagePath(ledgerHome, projectRoot);
+    try {
+      const raw = await readFile14(pagePath, "utf8");
+      JSON.parse(raw);
+    } catch (error) {
+      if (!isMissingPathError5(error)) {
+        throw new TaishiIssueComputeError({ projectRoot, cause: error });
+      }
+      try {
+        await runTaishiIssueMode({ mode: "issue", projectRoot }, scan);
+      } catch (computeError) {
+        if (computeError instanceof TaishiIssueComputeError) throw computeError;
+        throw new TaishiIssueComputeError({ projectRoot, cause: computeError });
+      }
+    }
+  }
+  const page = input.combinationMapping === void 0 ? buildTaishiModelGroupsPage({ projectRoots, runs, unreadable }) : buildTaishiModelGroupsPage({
+    projectRoots,
+    runs,
+    unreadable,
+    combinationMapping: input.combinationMapping
+  });
+  return { mode: "model-groups", page };
+}
+async function runTaishi(input) {
+  if (input.mode === "sweep") {
+    return runTaishiSweepMode(input);
+  }
+  if (input.mode === "cohort") {
+    const ledgerHome = resolveActivationLedgerHome();
+    return runTaishiCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber }) => {
+      const ensured = await readOrComputeTaishiIssuePage({
+        mode: "issue",
+        projectRoot,
+        issueNumber
+      });
+      return ensured.page;
+    });
+  }
+  if (input.mode === "model-groups") {
+    return runTaishiModelGroupsMode(input);
+  }
+  return runTaishiIssueMode(input);
+}
+var TaishiIssueComputeError, taishiSweepModeInputSchema;
+var init_taishi_entry = __esm({
+  "src/taishi-entry.ts"() {
+    "use strict";
+    init_build();
+    init_activation_ledger_topology();
+    init_taishi_cohort();
+    init_taishi_ledger();
+    init_taishi_index();
+    init_taishi_model_groups();
+    init_taishi_page();
+    TaishiIssueComputeError = class extends Error {
+      code = "taishi-issue-compute-failed";
+      projectRoot;
+      issueNumber;
+      constructor(input) {
+        const root = physicalPathIdentity(input.projectRoot);
+        const causeText = input.cause instanceof Error ? input.cause.message || input.cause.name : String(input.cause);
+        const issueFace = input.issueNumber === void 0 ? `projectRoot ${root}` : `issue ${input.issueNumber} (projectRoot ${root})`;
+        super(`taishi compute failed for ${issueFace}: ${causeText}`, {
+          cause: input.cause
+        });
+        this.name = "TaishiIssueComputeError";
+        this.projectRoot = root;
+        if (input.issueNumber !== void 0) {
+          this.issueNumber = input.issueNumber;
+        }
+      }
+    };
+    taishiSweepModeInputSchema = typebox_exports.Object(
+      {
+        mode: typebox_exports.Literal("sweep"),
+        mergedPullRequests: typebox_exports.Array(
+          typebox_exports.Object(
+            {
+              projectRoot: typebox_exports.String(),
+              /** 排除后改动行数 — omit or 0 → typed 空缺; finite ≥ 0 only. */
+              changedLines: typebox_exports.Optional(
+                typebox_exports.Number({ minimum: 0, maximum: Number.MAX_VALUE })
+              )
+            },
+            { additionalProperties: false }
+          )
+        )
+      },
+      { additionalProperties: false }
+    );
+  }
+});
+
+// src/public-cli/taishi-run.ts
+import { readFile as readFile15 } from "node:fs/promises";
+import { isAbsolute as isAbsolute5, resolve as resolve8 } from "node:path";
+async function buildTaishiIssueModeInputFromPublicArgv(parsed, ledgerHome) {
+  const ticket = parsed.ticket;
+  const directRoot = parsed.projectRoot;
+  if (ticket === void 0) {
+    return {
+      mode: "issue",
+      projectRoot: directRoot
+    };
+  }
+  const index = await readTaishiLibraryIndexPage(ledgerHome);
+  const row = findTaishiLibraryIndexRow(index, ticket);
+  let projectRoot;
+  if (row !== void 0) {
+    projectRoot = row.projectRoot;
+  } else if (directRoot !== void 0) {
+    projectRoot = directRoot;
+  } else {
+    throw new CliUsageError(
+      `taishi library index has no row for ticket ${ticket}`
+    );
+  }
+  const dualParamConflict = row !== void 0 && directRoot !== void 0 && physicalPathIdentity(directRoot) !== physicalPathIdentity(projectRoot);
+  return {
+    mode: "issue",
+    projectRoot,
+    ticketNumber: ticket,
+    issueNumber: ticket,
+    ...dualParamConflict ? { conflictingProjectRoot: directRoot } : {}
+  };
+}
+function parseTaishiSweepModeInputFromJsonValue(value) {
+  if (!value_exports.Check(taishiSweepModeInputSchema, value)) {
+    throw new CliUsageError(
+      "taishi sweep attachment must match TaishiSweepModeInput"
+    );
+  }
+  return value;
+}
+async function buildTaishiSweepModeInputFromAttachmentPaths(attachmentPaths) {
+  if (attachmentPaths.length !== 1) {
+    throw new CliUsageError(
+      "taishi sweep requires exactly one --attach typed JSON attachment"
+    );
+  }
+  const sourcePath = attachmentPaths[0];
+  const absolute = isAbsolute5(sourcePath) ? sourcePath : resolve8(sourcePath);
+  let bytes;
+  try {
+    bytes = await readFile15(absolute);
+  } catch (error) {
+    throw new CliUsageError(
+      `taishi sweep attachment is not a readable regular file: ${sourcePath}`,
+      { cause: error }
+    );
+  }
+  let text;
+  try {
+    text = exactUtf8(bytes, "taishi sweep attachment");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(detail, { cause: error });
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new CliUsageError(
+      "taishi sweep attachment is not valid JSON",
+      { cause: error }
+    );
+  }
+  return parseTaishiSweepModeInputFromJsonValue(parsed);
+}
+async function runPublicTaishi(argv, _env, io, parseTaishiArgv2) {
+  try {
+    const parsed = parseTaishiArgv2(argv);
+    const ledgerHome = resolveActivationLedgerHome();
+    if (parsed.query === "sweep") {
+      const input2 = await buildTaishiSweepModeInputFromAttachmentPaths(
+        parsed.attachmentPaths
+      );
+      const result3 = await runTaishi(input2);
+      io.stdout(`${JSON.stringify(result3, null, 2)}
+`);
+      return { exitCode: 0 };
+    }
+    if (parsed.query === "cohort") {
+      const result3 = await runTaishi({
+        mode: "cohort",
+        groups: parsed.groups
+      });
+      io.stdout(`${JSON.stringify(result3, null, 2)}
+`);
+      return { exitCode: 0 };
+    }
+    if (parsed.query === "model-groups") {
+      const result3 = await runTaishi({
+        mode: "model-groups",
+        projectRoots: parsed.projectRoots
+      });
+      io.stdout(`${JSON.stringify(result3, null, 2)}
+`);
+      return { exitCode: 0 };
+    }
+    const input = await buildTaishiIssueModeInputFromPublicArgv(parsed, ledgerHome);
+    const result2 = await readOrComputeTaishiIssuePage(input);
+    io.stdout(`${JSON.stringify(result2, null, 2)}
+`);
+    return { exitCode: 0 };
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    if (error instanceof TaishiIssueComputeError) {
+      const code = errnoCode(error.cause);
+      presentControlledFailure({
+        cause: "output",
+        diagnostic: error.message,
+        ...code === void 0 ? {} : { identity: { code } },
+        details: {
+          code: error.code,
+          projectRoot: error.projectRoot,
+          ...error.issueNumber === void 0 ? {} : { issueNumber: error.issueNumber }
+        }
+      }, io);
+      return { exitCode: 1 };
+    }
+    throw error;
+  }
+}
+var init_taishi_run = __esm({
+  "src/public-cli/taishi-run.ts"() {
+    "use strict";
+    init_value2();
+    init_activation_ledger_topology();
+    init_exact_utf8();
+    init_taishi_index();
+    init_taishi_entry();
+    init_cli_errors();
+    init_settlement();
+  }
+});
+
 // src/public-cli/cli.ts
 var cli_exports = {};
 __export(cli_exports, {
@@ -23796,7 +26140,7 @@ __export(cli_exports, {
 });
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { join as join18 } from "node:path";
+import { join as join23 } from "node:path";
 function takePublicGlobalFlag(argv, index) {
   const token = argv[index];
   if (token === void 0) return void 0;
@@ -23847,7 +26191,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join18(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join23(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -23931,6 +26275,12 @@ function renderHelp() {
     if (cap.kind === "role") {
       const phaseText = cap.phases.length === 1 && cap.phases[0] === null ? "no phase" : `phases ${cap.phases.filter((p) => p !== null).join("|")}` + (cap.defaultPhase ? ` (default ${cap.defaultPhase})` : "");
       lines.push(`  ${cap.name} \u2014 ${phaseText}`);
+    }
+  }
+  lines.push("", "Deterministic commands:");
+  for (const cap of doc.capabilities) {
+    if (cap.kind === "deterministic") {
+      lines.push(`  ${cap.name}`);
     }
   }
   lines.push(
@@ -24030,6 +26380,9 @@ async function runAkRole(argv, env) {
         }
         if (match.kind === "support") {
           io.stdout(`command	${match.name}	kind	support
+`);
+        } else if (match.kind === "deterministic") {
+          io.stdout(`command	${match.name}	kind	deterministic
 `);
         } else {
           io.stdout(
@@ -24433,6 +26786,15 @@ async function runAkRole(argv, env) {
         ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
       };
     }
+    if (parsed.command === "taishi") {
+      const result2 = await runPublicTaishi(
+        parsed.args,
+        { home },
+        io,
+        PUBLIC_ROLE_ARGV.taishi.parse
+      );
+      return { exitCode: result2.exitCode };
+    }
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -24463,6 +26825,7 @@ var init_cli = __esm({
     init_judge_run();
     init_merger_run();
     init_reviewer_run();
+    init_taishi_run();
     init_run_lifecycle();
     init_registry2();
     init_settlement();
@@ -24475,7 +26838,9 @@ var init_cli = __esm({
       collector: { parse: parseCollectorArgv },
       doctor: { parse: parseDoctorArgv },
       merger: { parse: parseMergerArgv },
-      reviewer: { parse: parseReviewerArgv }
+      reviewer: { parse: parseReviewerArgv },
+      /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
+      taishi: { parse: parseTaishiArgv }
     };
     THINKING_LEVELS2 = /* @__PURE__ */ new Set([
       "off",
@@ -24490,7 +26855,8 @@ var init_cli = __esm({
 });
 
 // src/public-cli/main.ts
-import { dirname as dirname7, join as join19 } from "node:path";
+import { existsSync as existsSync2 } from "node:fs";
+import { dirname as dirname11, join as join24 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -24577,8 +26943,15 @@ function linkPackage(packageRoot2, name, targetDir) {
 }
 
 // src/public-cli/main.ts
-var here = dirname7(fileURLToPath2(import.meta.url));
-var packageRoot = join19(here, "..", "..");
+var here = dirname11(fileURLToPath2(import.meta.url));
+function resolvePackageRoot(binDir) {
+  const canonical = join24(binDir, "..", "..");
+  if (existsSync2(join24(canonical, "package.json"))) {
+    return canonical;
+  }
+  return binDir;
+}
+var packageRoot = resolvePackageRoot(here);
 ensureHostPiRuntimeResolvable(packageRoot);
 var { runAkRole: runAkRole2 } = await Promise.resolve().then(() => (init_cli(), cli_exports));
 var result = await runAkRole2(process.argv.slice(2), { packageRoot });

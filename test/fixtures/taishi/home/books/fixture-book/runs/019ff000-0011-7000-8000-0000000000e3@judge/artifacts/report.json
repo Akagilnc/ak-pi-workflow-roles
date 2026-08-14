@@ -1,0 +1,11 @@
+{
+  "role": "judge",
+  "runId": "019ff000-0011-7000-8000-0000000000e3",
+  "outcome": {
+    "kind": "accepted",
+    "role": "judge",
+    "status": "escalate",
+    "decisiveFacts": {}
+  },
+  "receipt": { "status": "escalate" }
+}
