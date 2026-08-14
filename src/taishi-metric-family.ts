@@ -1,10 +1,10 @@
 /**
  * Taishi issue-page metric-family registration seam (A2).
  *
- * Each B/C-wave family owns one module file that implements this contract and
- * is listed in taishi-metric-families.ts. Families only contribute optional
- * page sections from typed run facts — they do not open a second scan, entry,
- * or page writer.
+ * Each B/C-wave family owns one module file under taishi-metric-families/.
+ * Dropping the file is enough to register — no shared registry list edit.
+ * Families only contribute optional page sections from typed run facts; they
+ * do not open a second scan, entry, or page writer.
  */
 import type { TaishiReadableRunFacts } from "./taishi-ledger.ts";
 import type { TaishiUnreadableRun } from "./taishi-page.ts";
@@ -25,10 +25,7 @@ export type TaishiMetricFamilyModule = {
   contribute(input: TaishiMetricFamilyInput): TaishiMetricFamilyContribution | undefined;
 };
 
-/**
- * Fold registered family modules into one section bag.
- * Duplicate section keys fail loudly — two families must not own the same key.
- */
+/** Fold discovered family modules into one section bag (Object.assign order). */
 export function composeTaishiMetricFamilySections(
   families: readonly TaishiMetricFamilyModule[],
   input: TaishiMetricFamilyInput,
@@ -37,14 +34,7 @@ export function composeTaishiMetricFamilySections(
   for (const family of families) {
     const piece = family.contribute(input);
     if (piece === undefined) continue;
-    for (const [key, value] of Object.entries(piece)) {
-      if (Object.prototype.hasOwnProperty.call(sections, key)) {
-        throw new Error(
-          `taishi metric family section conflict: "${key}" (family ${family.id})`,
-        );
-      }
-      sections[key] = value;
-    }
+    Object.assign(sections, piece);
   }
   return sections;
 }

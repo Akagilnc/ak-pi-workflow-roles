@@ -2,8 +2,9 @@
  * Taishi issue metrics page envelope + atomic persistence (ADR 0068 / PRD #298).
  *
  * A1 minimum fields: issue scope (projectRoot) + leg list + unreadable exclusion.
- * A2: metric-family modules register optional top-level sections via the family
- * composition seam — B/C waves add family files without forking the page writer.
+ * A2: metric-family modules under taishi-metric-families/ contribute optional
+ * top-level sections via directory discovery — B/C waves add family files
+ * without forking the page writer or editing a shared registry list.
  */
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -16,11 +17,8 @@ import {
 } from "./activation-ledger-topology.ts";
 import type { TaishiReadableRunFacts } from "./taishi-ledger.ts";
 import { TAISHI_ISSUE_METRIC_FAMILIES } from "./taishi-metric-families.ts";
-import type { TaishiA2SeamProbeSection } from "./taishi-metric-family-a2-probe.ts";
-import {
-  composeTaishiMetricFamilySections,
-  type TaishiMetricFamilyModule,
-} from "./taishi-metric-family.ts";
+import type { TaishiA2SeamProbeSection } from "./taishi-metric-families/a2-seam-probe.ts";
+import { composeTaishiMetricFamilySections } from "./taishi-metric-family.ts";
 
 /** Required run sources that may render a loud unreadable exclusion. */
 export type TaishiMissingSource =
@@ -45,7 +43,7 @@ export type TaishiLegEntry = {
 /**
  * Per-issue typed metrics page.
  * Extension seam: metric-family modules add optional top-level sections
- * through TAISHI_ISSUE_METRIC_FAMILIES — keep this envelope stable.
+ * through directory discovery — keep this envelope stable.
  */
 export type TaishiIssueMetricsPage = {
   readonly kind: "taishi-issue-metrics";
@@ -88,9 +86,8 @@ export function buildTaishiIssueMetricsPage(input: {
   readonly projectRoot: string;
   readonly runs: readonly TaishiReadableRunFacts[];
   readonly unreadable: readonly TaishiUnreadableRun[];
-  /** Override registry in tests; production uses TAISHI_ISSUE_METRIC_FAMILIES. */
-  readonly families?: readonly TaishiMetricFamilyModule[];
 }): TaishiIssueMetricsPage {
+  // Sole run→leg projection owner: page envelope maps typed runs to A1 legs.
   const legs = sortLegs(
     input.runs.map((run) => ({
       runId: run.runId,
@@ -108,8 +105,7 @@ export function buildTaishiIssueMetricsPage(input: {
     unreadable,
     unreadableCount: unreadable.length,
   };
-  const families = input.families ?? TAISHI_ISSUE_METRIC_FAMILIES;
-  const sections = composeTaishiMetricFamilySections(families, {
+  const sections = composeTaishiMetricFamilySections(TAISHI_ISSUE_METRIC_FAMILIES, {
     projectRoot,
     runs: input.runs,
     unreadable,
