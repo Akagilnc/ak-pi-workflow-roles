@@ -12,8 +12,8 @@ import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
-/** Package-owned system prompt for Reviewer Standards/Spec evidence children. */
-export function buildEvidenceChildSystemPrompt() {
+/** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
+function buildEvidenceChildSystemPrompt() {
     return [
         "Work only in the supplied workspace.",
         "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",

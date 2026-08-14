@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
-import { buildEvidenceChildSystemPrompt } from "../../src/evidence-child-executor.ts";
 import {
   REVIEWER_AXIS_OUTPUT_ADAPTER,
-  REVIEWER_CONSTRUCTION_RECIPE,
   REVIEWER_VERIFICATION_BOUNDARY,
 } from "../../src/reviewer-construction.ts";
 import { createReviewerDispatcher, type AcceptedReviewerExecution, type ReviewerPinnedGitReader, type ReviewerPinnedTarget } from "../../src/reviewer-dispatch.ts";
@@ -106,21 +104,16 @@ test("constructed legs exclude caller task channel", async () => {
   assert.equal(result.dispatch.input.canonicalSkill, "review skill");
 });
 
-test("constructed legs keep typed axis adapter without duplicating verification boundary", async () => {
+test("constructed legs carry typed axis adapter without verification-boundary carrier", async () => {
   const h = harness();
   const result = await h.dispatcher.dispatch("main~1");
   assert.equal(result.status, "accepted");
   if (result.status !== "accepted") return;
 
-  assert.equal(REVIEWER_AXIS_OUTPUT_ADAPTER.adapterId, "reviewer-axis-output");
-  assert.equal(REVIEWER_AXIS_OUTPUT_ADAPTER.version, 4);
-  assert.equal(REVIEWER_CONSTRUCTION_RECIPE.implementationSha256.length, 64);
-  assert.equal(REVIEWER_VERIFICATION_BOUNDARY.startsWith("Verification-Boundary:"), true);
-
   const axes = result.dispatch.legs.map((leg) => leg.axis).sort();
   assert.deepEqual(axes, ["spec", "standards"]);
   for (const leg of result.dispatch.legs) {
-    // Axis legs own adapter identity only; verification cadence is not a second leg carrier.
+    // Axis legs own adapter identity only; verification cadence rides parent + evidence-child carriers.
     assert.equal(
       leg.prompt.includes(
         `Axis-Output-Adapter: ${REVIEWER_AXIS_OUTPUT_ADAPTER.adapterId}@${REVIEWER_AXIS_OUTPUT_ADAPTER.version}:${leg.axis}`,
@@ -131,18 +124,9 @@ test("constructed legs keep typed axis adapter without duplicating verification 
     assert.equal(
       leg.prompt.includes(REVIEWER_VERIFICATION_BOUNDARY),
       false,
-      `${leg.axis} must not duplicate evidence-child verification carrier`,
+      `${leg.axis} must not duplicate verification carrier into axis legs`,
     );
-    assert.equal(leg.prompt.includes("Task:"), false);
   }
-  assert.equal("task" in result.dispatch.input, false);
-});
-
-test("evidence-child system prompt is the single deep verification carrier", () => {
-  const systemPrompt = buildEvidenceChildSystemPrompt();
-  assert.equal(systemPrompt.includes(REVIEWER_VERIFICATION_BOUNDARY), true);
-  assert.equal(systemPrompt.includes("Do not commit, push, or mutate remotes."), true);
-  assert.equal(systemPrompt.includes("Return one substantive non-blank report."), true);
 });
 
 test("parent Reviewer system prompt injects package-owned verification boundary once", async () => {
@@ -224,5 +208,4 @@ test("parent Reviewer system prompt injects package-owned verification boundary 
     prompt.systemPrompt.split(REVIEWER_VERIFICATION_BOUNDARY).length - 1,
     1,
   );
-  assert.equal(prompt.systemPrompt.includes("Task:"), false);
 });

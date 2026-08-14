@@ -35,8 +35,8 @@ import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
 
-/** Package-owned system prompt for Reviewer Standards/Spec evidence children. */
-export function buildEvidenceChildSystemPrompt(): string {
+/** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
+function buildEvidenceChildSystemPrompt(): string {
   return [
     "Work only in the supplied workspace.",
     "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
