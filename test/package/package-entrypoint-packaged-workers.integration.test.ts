@@ -393,6 +393,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
               resolve: async () => "base",
               range: async () => ({ base: "base", target: "target", diffCommand: "git diff base...target", diffSha256: "a".repeat(64), commits: ["target"] }),
               featureTokens: async () => Object.freeze([]),
+              listSpecCandidatePaths: async () => Object.freeze([]),
             }),
             runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
             auditCompliance,

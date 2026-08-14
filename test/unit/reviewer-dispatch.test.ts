@@ -27,6 +27,10 @@ function harness(
     authorityRefs?: readonly string[];
     /** Branch/feature tokens returned by the pinned reader (production discovery input). */
     featureTokens?: readonly string[];
+    /** Pinned-target Spec candidate paths (production discovery input). */
+    specCandidatePaths?: readonly string[];
+    /** Optional I/O failure from pinned tree listing (must not collapse to missing). */
+    listSpecError?: Error;
   } = {},
 ) {
   let execution: AcceptedReviewerExecution | undefined;
@@ -43,6 +47,10 @@ function harness(
     },
     async featureTokens() {
       return Object.freeze([...(options.featureTokens ?? [])]);
+    },
+    async listSpecCandidatePaths() {
+      if (options.listSpecError !== undefined) throw options.listSpecError;
+      return Object.freeze([...(options.specCandidatePaths ?? [])]);
     },
   };
   const dispatcher = createReviewerDispatcher({
@@ -91,6 +99,32 @@ test("production discovery: supplied authorityRefs launch Spec with material", a
   assert.equal(result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes("Authority-Refs:"), false);
   assert.equal(result.dispatch.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
   assert.equal(h.execution?.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
+});
+
+test("production discovery: pinned-target paths match after stripping feat/feature shells", async () => {
+  const h = harness(pin, {
+    featureTokens: ["feat/login", "feature/checkout"],
+    specCandidatePaths: ["docs/login.md", "specs/checkout.md"],
+  });
+  const result = await h.dispatcher.dispatch("main~1");
+  assert.equal(result.status, "accepted");
+  if (result.status !== "accepted") return;
+  assert.equal(result.dispatch.specDisposition, "launched");
+  assert.deepEqual(result.dispatch.legs.map((leg) => leg.axis), ["standards", "spec"]);
+  assert.deepEqual(result.dispatch.authorityRefs, ["docs/login.md", "specs/checkout.md"]);
+});
+
+test("production discovery: non-absence Git/I-O failure does not become missing", async () => {
+  const ioFailure = new Error("git ls-tree permission denied");
+  const h = harness(pin, {
+    featureTokens: ["feature-login"],
+    listSpecError: ioFailure,
+  });
+  await assert.rejects(
+    () => h.dispatcher.dispatch("main~1"),
+    (error: unknown) => error === ioFailure,
+  );
+  assert.equal(h.execution, undefined);
 });
 
 test("construction builds solely from discovery product (no secondary launch decision)", () => {

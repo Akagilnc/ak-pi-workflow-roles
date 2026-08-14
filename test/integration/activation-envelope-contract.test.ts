@@ -128,9 +128,7 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
             targetHead: oid("9"),
             refs: { "refs/heads/main": { objectId: oid("9"), peeledCommitId: oid("9") } },
           };
-          // Durable local Spec path for unique production discovery (two-axis fixture).
-          mkdirSync(join(fixtureRoot, "docs"), { recursive: true });
-          writeFileSync(join(fixtureRoot, "docs", "feature-login.md"), "# feature login\n");
+          // Pinned-target Spec path for unique production discovery (two-axis fixture).
           return {
             pin,
             snapshot: async () => pin,
@@ -143,6 +141,7 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
               commits: [oid("9")],
             }),
             featureTokens: async () => Object.freeze(["feature-login"]),
+            listSpecCandidatePaths: async () => Object.freeze(["docs/feature-login.md"]),
           };
         },
         loadCanonicalSkillBinding: async (name) => {
