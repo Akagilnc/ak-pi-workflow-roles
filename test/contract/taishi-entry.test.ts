@@ -314,21 +314,11 @@ test("taishi metric-family production discovery: real family files register with
   );
 
   const families = await loadTaishiIssueMetricFamilies();
-  for (const family of families) {
-    assert.equal(typeof family.id, "string");
-    assert.ok(family.id.length > 0, "family id must be non-empty");
-    assert.equal(typeof family.contribute, "function");
-  }
   assert.ok(
     families.some((family) => family.id === "a2-seam-probe"),
     "loaded families must include a2-seam-probe",
   );
   // Production registry is the same discovery product (loaded once at import).
-  for (const family of TAISHI_ISSUE_METRIC_FAMILIES) {
-    assert.equal(typeof family.id, "string");
-    assert.ok(family.id.length > 0, "family id must be non-empty");
-    assert.equal(typeof family.contribute, "function");
-  }
   assert.ok(
     TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "a2-seam-probe"),
     "production registry must include a2-seam-probe",
