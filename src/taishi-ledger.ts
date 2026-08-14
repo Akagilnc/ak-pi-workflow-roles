@@ -14,6 +14,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import {
+  extractSessionModelSequence,
   extractSessionTimestampSpan,
   extractSessionToolIntervals,
   LedgerSessionJsonlError,
@@ -123,6 +124,11 @@ export type TaishiReadableRunFacts = {
   readonly frameSpan: TaishiRunFrameSpan;
   readonly toolIntervals: readonly SessionToolInterval[];
   readonly terminal: TaishiRunTerminalFace;
+  /**
+   * Ordered-unique session model ids for this leg (C3 model-group key material).
+   * Empty when no model face was present — not an unreadable condition.
+   */
+  readonly models: readonly string[];
 };
 
 export type TaishiScopedRunScan = {
@@ -146,6 +152,8 @@ async function classifyScopedRun(input: {
   let frameSpan: TaishiRunFrameSpan | undefined;
   let toolIntervals: readonly SessionToolInterval[] | undefined;
   let terminal: TaishiRunTerminalFace | undefined;
+  /** Ordered-unique models retained whenever session rows were readable. */
+  let models: readonly string[] = [];
   /** Partial first-frame retained when full session span cannot be admitted. */
   let partialFirstFrameAt: TaishiFirstFrameAt = { status: "absent" };
 
@@ -154,6 +162,7 @@ async function classifyScopedRun(input: {
   let rows: Awaited<ReturnType<typeof readLedgerSessionJsonl>> | undefined;
   try {
     rows = await readLedgerSessionJsonl(sessionFile);
+    models = extractSessionModelSequence(rows);
     const span = extractSessionTimestampSpan(rows);
     if (span.startedAt === undefined || span.endedAt === undefined) {
       missingSources.push("session-timeline");
@@ -174,6 +183,7 @@ async function classifyScopedRun(input: {
       if (span.startedAt !== undefined) {
         partialFirstFrameAt = { status: "present", at: span.startedAt };
       }
+      models = extractSessionModelSequence(error.prefixRows);
     }
   }
 
@@ -243,6 +253,7 @@ async function classifyScopedRun(input: {
       frameSpan,
       toolIntervals,
       terminal,
+      models,
     },
   };
 }
