@@ -81,8 +81,9 @@ import {
   type TerminalArtifactRef,
   type TerminalResult,
 } from "../../src/public-cli/terminal.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
+import { createRecordSession } from "../../src/sitian-record-entry.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fail-"));
@@ -3701,106 +3702,117 @@ async function settleDiskSessionStopToErrorJson(input: {
 }
 
 test("#307 navigator raw: onResponse status reaches durable session + run typed HTTP sink", async () => {
-  const root = await mkdtemp(join(tmpdir(), "nav-raw-307-"));
-  const previousPi = process.env.PI_CODING_AGENT_DIR;
-  const previousRun = process.env.AK_ROLE_RUN_DIR;
-  const runDir = join(root, "run");
-  const sessionDir = join(root, "session-nav-raw");
-  await mkdir(runDir, { recursive: true });
-  try {
-    process.env.PI_CODING_AGENT_DIR = root;
-    process.env.AK_ROLE_RUN_DIR = runDir;
-    const faux = fauxProvider({ provider: "openai-codex", api: "openai-codex" });
-    const model = faux.getModel();
-    await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: `${model.provider}/${model.id}` }));
-    const provider = {
-      ...faux.provider,
-      stream(
-        requestModel: typeof model,
-        streamContext: { tools?: Array<{ name: string }> },
-        options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> },
-      ) {
-        const names = streamContext.tools?.map((tool) => tool.name) ?? [];
-        if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-          return faux.provider.stream(requestModel, streamContext as never, options as never);
-        }
-        const stream = createAssistantMessageEventStream();
-        const human = {
-          ...fauxAssistantMessage("", { stopReason: "error", errorMessage: "upstream 503 body" }),
-          body: "{\"err\":\"navigator-raw\"}",
-          code: "remote_503",
-          errno: -54,
-        };
-        queueMicrotask(() => {
-          void (async () => {
-            await options?.onResponse?.({ status: 503, headers: {} }, requestModel);
-            stream.push({ type: "error", reason: "error", error: human });
-          })();
-        });
-        return stream;
-      },
-      streamSimple(
-        requestModel: typeof model,
-        streamContext: { tools?: Array<{ name: string }> },
-        options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> },
-      ) {
-        return this.stream(requestModel, streamContext, options);
-      },
-    };
-    const nativeContext = {
-      cwd: root,
-      modelRegistry: {
-        find: (providerName: string, id: string) =>
-          providerName === model.provider && id === model.id ? model : undefined,
-        getProvider: (providerName: string) => providerName === model.provider ? provider : undefined,
-        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-      },
-    } as never;
-    const session = await createNativeNavigatorSessionFactory()({
-      context: nativeContext,
-      sessionDir,
-      tool: createNavigatorPrepareTool(() => {}),
-    });
-    await session.setModel?.(`${model.provider}/${model.id}`, "off");
-    await session.prompt("navigator raw");
-    session.dispose();
-    // Assert only from durable disk artifacts (session JSONL + typed HTTP sidecar).
-    const diskFile = SessionManager.continueRecent(root, sessionDir).getSessionFile();
-    assert.ok(diskFile, "navigator session must persist a session file");
-    const diskEntries = (await readFile(diskFile, "utf8"))
-      .trim()
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((line) => JSON.parse(line) as {
-        type?: string;
-        message?: {
-          role?: string;
-          errorMessage?: string;
-          statusCode?: number;
-          body?: unknown;
-          code?: unknown;
-          errno?: unknown;
-        };
+  // S6/S7: navigator durable path is createRecordSession(kind/subject) under ledger home —
+  // not a caller-supplied sessionDir / continueRecent self-computed path.
+  await withHermeticHome({ prefix: "nav-raw-307-" }, async ({ home }) => {
+    const previousPi = process.env.PI_CODING_AGENT_DIR;
+    const previousRun = process.env.AK_ROLE_RUN_DIR;
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runDir = join(home, "run");
+    // Work identity for the sitian navigator nest (same relation production factory uses).
+    const subject = join(project, "session-nav-raw");
+    await mkdir(runDir, { recursive: true });
+    try {
+      process.env.PI_CODING_AGENT_DIR = home;
+      process.env.AK_ROLE_RUN_DIR = runDir;
+      const faux = fauxProvider({ provider: "openai-codex", api: "openai-codex" });
+      const model = faux.getModel();
+      await writeFile(join(home, "navigator-model.json"), JSON.stringify({ model: `${model.provider}/${model.id}` }));
+      const provider = {
+        ...faux.provider,
+        stream(
+          requestModel: typeof model,
+          streamContext: { tools?: Array<{ name: string }> },
+          options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> },
+        ) {
+          const names = streamContext.tools?.map((tool) => tool.name) ?? [];
+          if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+            return faux.provider.stream(requestModel, streamContext as never, options as never);
+          }
+          const stream = createAssistantMessageEventStream();
+          const human = {
+            ...fauxAssistantMessage("", { stopReason: "error", errorMessage: "upstream 503 body" }),
+            body: "{\"err\":\"navigator-raw\"}",
+            code: "remote_503",
+            errno: -54,
+          };
+          queueMicrotask(() => {
+            void (async () => {
+              await options?.onResponse?.({ status: 503, headers: {} }, requestModel);
+              stream.push({ type: "error", reason: "error", error: human });
+            })();
+          });
+          return stream;
+        },
+        streamSimple(
+          requestModel: typeof model,
+          streamContext: { tools?: Array<{ name: string }> },
+          options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> },
+        ) {
+          return this.stream(requestModel, streamContext, options);
+        },
+      };
+      const nativeContext = {
+        cwd: project,
+        modelRegistry: {
+          find: (providerName: string, id: string) =>
+            providerName === model.provider && id === model.id ? model : undefined,
+          getProvider: (providerName: string) => providerName === model.provider ? provider : undefined,
+          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+        },
+      } as never;
+      const session = await createNativeNavigatorSessionFactory()({
+        context: nativeContext,
+        subject,
+        tool: createNavigatorPrepareTool(() => {}),
       });
-    const assistant = [...diskEntries].reverse().find(
-      (entry) => entry?.type === "message" && entry?.message?.role === "assistant",
-    );
-    assert.equal(assistant?.message?.errorMessage, "upstream 503 body");
-    assert.equal(assistant?.message?.statusCode, 503);
-    assert.equal(assistant?.message?.body, "{\"err\":\"navigator-raw\"}");
-    assert.equal(assistant?.message?.code, "remote_503");
-    assert.equal(assistant?.message?.errno, -54);
-    assert.deepEqual(await readLatestTypedProviderHttpObservation(runDir), {
-      httpStatus: 503,
-      provider: "openai-codex",
-    });
-  } finally {
-    if (previousPi === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previousPi;
-    if (previousRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previousRun;
-    await rm(root, { recursive: true, force: true });
-  }
+      await session.setModel?.(`${model.provider}/${model.id}`, "off");
+      await session.prompt("navigator raw");
+      session.dispose();
+      // Real disk path via sitian entry only — same kind/subject/cwd identity production uses.
+      // Do not bypass createRecordSession with continueRecent/self-computed sessionDir.
+      const diskFile = createRecordSession({
+        cwd: project,
+        kind: "navigator",
+        subject,
+      }).getSessionFile();
+      assert.ok(diskFile, "navigator session must persist a session file via sitian entry");
+      const diskEntries = (await readFile(diskFile, "utf8"))
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as {
+          type?: string;
+          message?: {
+            role?: string;
+            errorMessage?: string;
+            statusCode?: number;
+            body?: unknown;
+            code?: unknown;
+            errno?: unknown;
+          };
+        });
+      const assistant = [...diskEntries].reverse().find(
+        (entry) => entry?.type === "message" && entry?.message?.role === "assistant",
+      );
+      assert.equal(assistant?.message?.errorMessage, "upstream 503 body");
+      assert.equal(assistant?.message?.statusCode, 503);
+      assert.equal(assistant?.message?.body, "{\"err\":\"navigator-raw\"}");
+      assert.equal(assistant?.message?.code, "remote_503");
+      assert.equal(assistant?.message?.errno, -54);
+      assert.deepEqual(await readLatestTypedProviderHttpObservation(runDir), {
+        httpStatus: 503,
+        provider: "openai-codex",
+      });
+    } finally {
+      if (previousPi === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousPi;
+      if (previousRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = previousRun;
+    }
+  });
 });
 
 test("#307 aborted raw: session aborted stop projects held payload into error.json", async () => {
