@@ -11,7 +11,7 @@
  * prior board cases and B4 timeline branches remain.
  */
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +23,6 @@ import {
   physicalPathIdentity,
 } from "../../src/activation-ledger-topology.ts";
 import { runTaishi } from "../../src/taishi-entry.ts";
-import { TAISHI_ISSUE_METRIC_FAMILIES_DIR } from "../../src/taishi-metric-families.ts";
 import type { TaishiAcceptanceSuccessReworkSection } from "../../src/taishi-metric-families/acceptance-success-rework.ts";
 import type { TaishiB2FrameBucketsActionsSection } from "../../src/taishi-metric-families/b2-frame-buckets-actions.ts";
 import type { TaishiLegWallClockSection } from "../../src/taishi-metric-families/leg-wall-clock.ts";
@@ -786,7 +785,7 @@ async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   }
 }
 
-test("taishi issue-mode entry: fixture page+discovered families hand-equal; missing family dir fails before write", async () => {
+test("taishi issue-mode entry: fixture page+static family registry hand-equal; atomic replace idempotent", async () => {
   await withBusinessRepo(async () => {
     await withTempHome(async (home) => {
       const ledgerHome = join(home, ".ak-roles");
@@ -1032,100 +1031,59 @@ test("taishi issue-mode entry: fixture page+discovered families hand-equal; miss
       assert.equal(await readFile(pagePath, "utf8"), firstBytes);
       const onDiskAgain = JSON.parse(await readFile(pagePath, "utf8")) as TaishiIssueMetricsPage;
       assert.deepEqual(onDiskAgain, first.page);
+    });
+  });
+});
 
-      // Missing family directory: fresh process imports while tree present, then
-      // removes it and calls runTaishi — must fail with native ENOENT/ENOTDIR
-      // and must not write a success page. Parent already cached discovery, so
-      // sibling tests keep using in-memory modules during the brief rename.
-      const markerPath = join(home, "missing-family-dir-marker.txt");
-      const entryHref = pathToFileURL(join(packageRoot, "src/taishi-entry.ts")).href;
-      const absentBackup = join(packageRoot, "src", "taishi-metric-families.#298-absent");
-      const child = spawnSync(
-        process.execPath,
-        [
-          "--import",
-          "tsx",
-          "--input-type=module",
-          "-e",
-          `
-import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-const famDir = ${JSON.stringify(TAISHI_ISSUE_METRIC_FAMILIES_DIR)};
-const bak = ${JSON.stringify(absentBackup)};
-const fixtureHome = ${JSON.stringify(fixtureHome)};
-const entryHref = ${JSON.stringify(entryHref)};
-const markerPath = ${JSON.stringify(markerPath)};
-const issueRoot = ${JSON.stringify(ISSUE_PROJECT_ROOT)};
-const childHome = join(tmpdir(), "taishi-absent-" + process.pid);
-
-function restore() {
-  if (existsSync(bak) && !existsSync(famDir)) renameSync(bak, famDir);
-}
-process.on("exit", restore);
-process.on("SIGINT", () => { restore(); process.exit(130); });
-process.on("SIGTERM", () => { restore(); process.exit(143); });
-
-function fail(code, msg) {
-  try { writeFileSync(markerPath, msg + "\\n"); } catch {}
-  restore();
-  process.exit(code);
-}
-
-rmSync(childHome, { recursive: true, force: true });
-mkdirSync(childHome, { recursive: true });
-process.env.HOME = childHome;
-cpSync(fixtureHome, join(childHome, ".ak-roles"), { recursive: true });
-const issuesDir = join(childHome, ".ak-roles", "taishi", "issues");
-rmSync(issuesDir, { recursive: true, force: true });
-mkdirSync(issuesDir, { recursive: true });
-
-// Import while family tree is present (static family module imports resolve).
-const { runTaishi } = await import(entryHref);
-
-let renamed = false;
-try {
-  renameSync(famDir, bak);
-  renamed = true;
-  let code;
-  try {
-    await runTaishi({ mode: "issue", projectRoot: issueRoot });
-    fail(2, "runTaishi-succeeded");
-  } catch (error) {
-    code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-  }
-  if (code !== "ENOENT" && code !== "ENOTDIR") {
-    fail(3, "wrong-code:" + String(code));
-  }
-  const written = existsSync(issuesDir) ? readdirSync(issuesDir) : [];
-  if (written.length > 0) {
-    fail(4, "page-written:" + written.join(","));
-  }
-  restore();
-  process.exit(0);
-} catch (error) {
-  fail(1, "child-throw:" + String(error && error.stack || error));
-} finally {
-  if (renamed) restore();
-  rmSync(childHome, { recursive: true, force: true });
-}
-`,
-        ],
-        { cwd: packageRoot, encoding: "utf8", env: process.env },
-      );
-      // Always re-check production tree is present after child (restore safety net).
-      const treeListing = await readFile(
-        join(TAISHI_ISSUE_METRIC_FAMILIES_DIR, "leg-wall-clock.ts"),
-        "utf8",
-      ).then(() => "ok", () => "missing");
-      assert.equal(treeListing, "ok", "family tree must be restored after child");
-      const marker = await readFile(markerPath, "utf8").catch(() => "");
-      assert.equal(
-        child.status,
-        0,
-        `missing family dir child failed: status=${child.status} stdout=${child.stdout} stderr=${child.stderr} marker=${marker}`,
-      );
+/**
+ * Public single-bundle regression: dist/public-cli/main.js must assemble B1–B4
+ * without a sibling taishi-metric-families/ directory next to the bin.
+ */
+test("public ak-role bundle assembles B1-B4 metric families without sibling family dir", async () => {
+  const buildUrl = pathToFileURL(join(packageRoot, "scripts/build-package.mjs")).href;
+  const { buildPublicAkRoleBin } = (await import(buildUrl)) as {
+    buildPublicAkRoleBin: (outfile?: string) => Promise<void>;
+  };
+  const binDir = await mkdtemp(join(tmpdir(), "taishi-bundle-bin-"));
+  const binPath = join(binDir, "main.js");
+  await withBusinessRepo(async () => {
+    await withTempHome(async (home) => {
+      try {
+        const previousCwd = process.cwd();
+        process.chdir(packageRoot);
+        try {
+          await buildPublicAkRoleBin(binPath);
+        } finally {
+          process.chdir(previousCwd);
+        }
+        // Prove the shipped layout has no sibling family tree next to the bin.
+        await rm(join(binDir, "taishi-metric-families"), {
+          recursive: true,
+          force: true,
+        });
+        const result = execFileSync(
+          process.execPath,
+          [binPath, "taishi", "--project-root", ISSUE_PROJECT_ROOT],
+          {
+            cwd: packageRoot,
+            encoding: "utf8",
+            env: { ...process.env, HOME: home },
+          },
+        );
+        assert.match(result, /taishi-issue-metrics|"mode"\s*:\s*"issue"/);
+        const pagePath = taishiIssuePagePath(join(home, ".ak-roles"), ISSUE_PROJECT_ROOT);
+        const page = JSON.parse(await readFile(pagePath, "utf8")) as PageWithMetricFamilies;
+        assert.ok(page.legWallClock, "B1 must be reachable from public bundle");
+        assert.ok(page.b2FrameBucketsActions, "B2 must be reachable from public bundle");
+        assert.ok(page.acceptanceSuccessRework, "B3 must be reachable from public bundle");
+        assert.ok(page.roundTimeline, "B4 must be reachable from public bundle");
+        assert.equal(page.legWallClock.kind, "taishi-leg-wall-clock");
+        assert.equal(page.b2FrameBucketsActions.kind, "taishi-b2-frame-buckets-actions");
+        assert.equal(page.acceptanceSuccessRework.kind, "taishi-acceptance-success-rework");
+        assert.equal(page.roundTimeline.kind, "taishi-round-timeline");
+      } finally {
+        await rm(binDir, { recursive: true, force: true });
+      }
     });
   });
 });
