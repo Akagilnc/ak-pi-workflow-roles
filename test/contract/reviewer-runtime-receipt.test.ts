@@ -102,6 +102,31 @@ test("accepted projection authenticates exact canonical terminal leg and report 
   validateRuntimeReviewerReceipt(withPresentation);
 });
 
+test("accepted projection binds specDisposition once to accepted-leg axes", () => {
+  const launched = receipt(["standards", "spec"]) as any;
+  launched.specDisposition = "launched";
+  validateRuntimeReviewerReceipt(launched);
+
+  const skipped = receipt(["standards"]) as any;
+  skipped.specDisposition = "skipped-missing";
+  validateRuntimeReviewerReceipt(skipped);
+
+  // Shortest contradiction negatives: disposition disagrees with accepted legs.
+  const launchedStandardsOnly = receipt(["standards"]) as any;
+  launchedStandardsOnly.specDisposition = "launched";
+  assert.throws(
+    () => validateRuntimeReviewerReceipt(launchedStandardsOnly),
+    /specDisposition launched requires Standards\+Spec/,
+  );
+
+  const skippedWithSpec = receipt(["standards", "spec"]) as any;
+  skippedWithSpec.specDisposition = "skipped-missing";
+  assert.throws(
+    () => validateRuntimeReviewerReceipt(skippedWithSpec),
+    /specDisposition skipped-missing requires Standards-only/,
+  );
+});
+
 test("Reviewer projections safely ignore unrecognizable shape", () => {
   for (const value of [undefined, null, 1, "receipt", new Proxy({}, { get() { throw new Error("getter"); } })]) {
     assert.doesNotThrow(() => validateRuntimeReviewerReceipt(value));
