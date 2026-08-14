@@ -57,6 +57,13 @@ test("help capabilities derive from typed public registry facts", () => {
   assert.ok(fixerCap && fixerCap.kind === "role");
   assert.deepEqual(fixerCap.phases, ["plan", "apply"]);
   assert.equal(fixerCap.defaultPhase, "apply");
+  const taishiCap = capabilities.find((cap) => cap.name === "taishi");
+  assert.equal(taishiCap?.kind, "deterministic");
+  assert.equal(
+    (PUBLIC_CALLABLE_ROLES as readonly string[]).includes("taishi"),
+    false,
+    "taishi is deterministic, not an LLM-configurable seat",
+  );
 });
 
 test("startup model candidates follow #11 package defaults per seat", () => {
@@ -77,5 +84,45 @@ test("startup model candidates follow #11 package defaults per seat", () => {
       { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
       { provider: "xai", model: "grok-4.5", thinking: "high" },
     ]);
+  }
+});
+
+test("general help and help taishi both discover the deterministic taishi command", async () => {
+  const { runAkRole } = await import("../../src/public-cli/cli.ts");
+  const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+  const capture = () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    return {
+      stdout,
+      stderr,
+      io: {
+        stdout: (t: string) => {
+          stdout.push(t);
+        },
+        stderr: (t: string) => {
+          stderr.push(t);
+        },
+      },
+    };
+  };
+  {
+    const { io, stdout, stderr } = capture();
+    const result = await runAkRole(["--help"], { packageRoot, home: process.env.HOME ?? "/tmp", io });
+    assert.equal(result.exitCode, 0, stderr.join(""));
+    const text = stdout.join("");
+    assert.match(text, /\btaishi\b/);
+  }
+  {
+    const { io, stdout, stderr } = capture();
+    const result = await runAkRole(["help", "taishi"], {
+      packageRoot,
+      home: process.env.HOME ?? "/tmp",
+      io,
+    });
+    assert.equal(result.exitCode, 0, stderr.join(""));
+    const text = stdout.join("");
+    assert.match(text, /\btaishi\b/);
+    assert.match(text, /deterministic/);
   }
 });

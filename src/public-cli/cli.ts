@@ -318,6 +318,12 @@ function renderHelp(): string {
       lines.push(`  ${cap.name} — ${phaseText}`);
     }
   }
+  lines.push("", "Deterministic commands:");
+  for (const cap of doc.capabilities) {
+    if (cap.kind === "deterministic") {
+      lines.push(`  ${cap.name}`);
+    }
+  }
   lines.push(
     "",
     "Global options: --model provider/model --thinking level",
@@ -434,6 +440,8 @@ export async function runAkRole(
         }
         if (match.kind === "support") {
           io.stdout(`command\t${match.name}\tkind\tsupport\n`);
+        } else if (match.kind === "deterministic") {
+          io.stdout(`command\t${match.name}\tkind\tdeterministic\n`);
         } else {
           io.stdout(
             `command\t${match.name}\tkind\trole\tphases\t${match.phases
