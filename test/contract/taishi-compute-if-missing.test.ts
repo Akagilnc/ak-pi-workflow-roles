@@ -573,3 +573,36 @@ test("taishi #338 cached page must match requested ticket scope or recompute", a
     });
   });
 });
+
+test("taishi #338 unscoped read must not reuse a ticket-scoped cached page", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async () => {
+      const ticket = 6613;
+      const scoped = await runTaishi({
+        mode: "issue",
+        projectRoot: ISSUE_ROOT,
+        ticketNumber: ticket,
+        issueNumber: ticket,
+      });
+      assert.equal(scoped.page.issueNumber, ticket);
+      const scopedDisk = JSON.parse(
+        await readFile(scoped.pagePath, "utf8"),
+      ) as TaishiIssueMetricsPage;
+      assert.equal(scopedDisk.issueNumber, ticket);
+
+      // projectRoot-only pull must recompute via the sole kernel — a narrower
+      // ticket page must not stand in for the full root metrics page.
+      const unscoped = await readOrComputeTaishiIssuePage({
+        mode: "issue",
+        projectRoot: ISSUE_ROOT,
+      });
+      assert.equal(unscoped.page.issueNumber, undefined);
+      assert.notDeepEqual(unscoped.page, scopedDisk);
+
+      const disk = JSON.parse(
+        await readFile(unscoped.pagePath, "utf8"),
+      ) as TaishiIssueMetricsPage;
+      assert.equal(disk.issueNumber, undefined);
+    });
+  });
+});

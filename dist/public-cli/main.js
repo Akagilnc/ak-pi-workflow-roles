@@ -24599,6 +24599,16 @@ async function listUniqueErrorFallbackPaths(directories) {
   }
   return found;
 }
+function runIdFromRunDirectory(runDirectory) {
+  const name = basename4(runDirectory);
+  const at = name.lastIndexOf("@");
+  if (at <= 0 || at === name.length - 1) return void 0;
+  return name.slice(0, at);
+}
+function presentUniqueFallbackBoundToRun(body, expectedRunId) {
+  if (expectedRunId === void 0) return false;
+  return typeof body.runId === "string" && body.runId === expectedRunId;
+}
 async function readRunTerminalArtifact(runDirectory) {
   const artifactsDir = join20(runDirectory, "artifacts");
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
@@ -24611,14 +24621,18 @@ async function readRunTerminalArtifact(runDirectory) {
     const read3 = await readTerminalArtifactAtPath(path, "error.json");
     if (read3 !== void 0) return read3;
   }
-  const uniqueDirs = [
-    artifactsDir,
-    runDirectory,
-    dirname9(runDirectory)
-  ];
-  for (const path of await listUniqueErrorFallbackPaths(uniqueDirs)) {
+  for (const path of await listUniqueErrorFallbackPaths([artifactsDir, runDirectory])) {
     const read3 = await readTerminalArtifactAtPath(path, "error.json");
     if (read3 !== void 0) return read3;
+  }
+  const expectedRunId = runIdFromRunDirectory(runDirectory);
+  for (const path of await listUniqueErrorFallbackPaths([dirname9(runDirectory)])) {
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 === void 0) continue;
+    if (read3.status === "present") {
+      if (!presentUniqueFallbackBoundToRun(read3.body, expectedRunId)) continue;
+      return read3;
+    }
   }
   return { status: "absent" };
 }
@@ -25776,7 +25790,9 @@ function isMissingPathError5(error) {
 }
 function cachedPageMatchesRequestedScope(page, input) {
   const requestedTicket = input.ticketNumber ?? input.issueNumber;
-  if (requestedTicket === void 0) return true;
+  if (requestedTicket === void 0) {
+    return page.issueNumber === void 0;
+  }
   return page.issueNumber === requestedTicket;
 }
 async function readOrComputeTaishiIssuePage(input) {

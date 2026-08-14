@@ -153,11 +153,36 @@ async function listUniqueErrorFallbackPaths(
 }
 
 /**
+ * Publisher run-directory face is `<runId>@<role>`. Parent-directory unique
+ * fallbacks are shared across sibling runs, so binding uses this runId only.
+ */
+function runIdFromRunDirectory(runDirectory: string): string | undefined {
+  const name = basename(runDirectory);
+  const at = name.lastIndexOf("@");
+  if (at <= 0 || at === name.length - 1) return undefined;
+  return name.slice(0, at);
+}
+
+/**
+ * Shared parent-directory unique fallback may be adopted only when the
+ * publisher-owned body.runId equals this run directory's runId. Same-run
+ * artifactsDir / runDirectory candidates keep path ownership and skip this.
+ */
+function presentUniqueFallbackBoundToRun(
+  body: Record<string, unknown>,
+  expectedRunId: string | undefined,
+): boolean {
+  if (expectedRunId === undefined) return false;
+  return typeof body.runId === "string" && body.runId === expectedRunId;
+}
+
+/**
  * Read the first present typed terminal artifact for a run directory.
  * Order:
  * 1) conventional artifacts/{report,error,audit-incomplete}.json
  * 2) publisher fixed failure fallbacks (error.settlement.json faces)
- * 3) publisher unique error.<uuid>.json fallbacks under the same dirs settlement uses
+ * 3) publisher unique error.<uuid>.json fallbacks under same-run dirs
+ * 4) shared parent-directory unique fallbacks bound by body.runId
  *
  * Absence of every known durable face is a valid no-receipt state (not unreadable).
  * A present file that cannot be parsed as a usable typed JSON object is unreadable.
@@ -179,14 +204,22 @@ export async function readRunTerminalArtifact(
     if (read !== undefined) return read;
   }
 
-  const uniqueDirs = [
-    artifactsDir,
-    runDirectory,
-    dirname(runDirectory),
-  ];
-  for (const path of await listUniqueErrorFallbackPaths(uniqueDirs)) {
+  // Same-run unique faces: path ownership is the run itself — no cross-run risk.
+  for (const path of await listUniqueErrorFallbackPaths([artifactsDir, runDirectory])) {
     const read = await readTerminalArtifactAtPath(path, "error.json");
     if (read !== undefined) return read;
+  }
+
+  // Shared parent (runs/) unique faces: require publisher runId binding.
+  const expectedRunId = runIdFromRunDirectory(runDirectory);
+  for (const path of await listUniqueErrorFallbackPaths([dirname(runDirectory)])) {
+    const read = await readTerminalArtifactAtPath(path, "error.json");
+    if (read === undefined) continue;
+    if (read.status === "present") {
+      if (!presentUniqueFallbackBoundToRun(read.body, expectedRunId)) continue;
+      return read;
+    }
+    // Unreadable parent unique file cannot prove run identity — do not adopt.
   }
 
   return { status: "absent" };
