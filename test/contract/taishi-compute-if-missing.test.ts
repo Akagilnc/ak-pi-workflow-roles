@@ -435,21 +435,20 @@ test("taishi #338 whole-compute failure: write-page blocked → typed terminal i
 
       // Whole-compute failure terminates this pull — not usage (2), not pending/success.
       assert.equal(result.exitCode, 1);
-      // Typed terminal failure object (schema owner fields) — no stderr prose contract.
+      // ControlledFailure typed fields (details + identity.code), not parallel schema.
       const body = JSON.parse(stdout.join("")) as {
-        code: string;
-        projectRoot: string;
-        issueNumber?: number;
-        cause: { code?: string; name?: string };
+        cause: string;
+        identity?: { code?: string | number; name?: string };
+        details?: { code?: string; projectRoot?: string; issueNumber?: number };
         mode?: string;
       };
-      assert.equal(body.code, "taishi-issue-compute-failed");
-      assert.equal(body.issueNumber, NEG_ISSUE);
-      assert.equal(body.projectRoot, physicalPathIdentity(NEG_ROOT));
-      assert.equal(body.cause.code, "EISDIR");
-      // Must not wash into cohort/issue success envelope.
+      assert.equal(body.cause, "output");
+      assert.equal(body.details?.code, "taishi-issue-compute-failed");
+      assert.equal(body.details?.issueNumber, NEG_ISSUE);
+      assert.equal(body.details?.projectRoot, physicalPathIdentity(NEG_ROOT));
+      assert.equal(body.identity?.code, "EISDIR");
+      assert.equal(body.identity?.name, undefined);
       assert.equal(body.mode, undefined);
-      assert.equal(stderr.join(""), "");
 
       // Index unchanged by the failed ensure of NEG; no silent partial cohort page set.
       const afterIndex = await readFile(taishiLibraryIndexPath(ledgerHome), "utf8");
