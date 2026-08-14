@@ -2,6 +2,9 @@
  * Taishi ledger scan: S-family book/runs topology, issue scope by invocation
  * projectRoot, and loud unreadable exclusion for required sources.
  * Reuses canonical session/artifact readers — does not parse session JSONL itself.
+ *
+ * A2: classifyScopedRun retains typed per-run facts (frame span, tool intervals,
+ * terminal face) for metric-family modules — no longer discarded after checks.
  */
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,8 +17,12 @@ import {
   extractSessionTimestampSpan,
   extractSessionToolIntervals,
   readLedgerSessionJsonl,
+  type SessionToolInterval,
 } from "./ledger-session-read.ts";
-import { readRunTerminalArtifact } from "./run-terminal-artifacts.ts";
+import {
+  readRunTerminalArtifact,
+  type RunTerminalArtifactFile,
+} from "./run-terminal-artifacts.ts";
 import type {
   TaishiLegEntry,
   TaishiMissingSource,
@@ -84,10 +91,52 @@ async function resolveSessionFile(
   return join(runDirectory, "session", "session.jsonl");
 }
 
+/** Session first/last usable timestamps retained for B-wave wall-clock kernels. */
+export type TaishiRunFrameSpan = {
+  readonly startedAt: string;
+  readonly endedAt: string;
+};
+
+/**
+ * Typed terminal face retained for B-wave outcome mapping.
+ * Absence is a valid no-receipt state; unreadable never appears here (excluded).
+ */
+export type TaishiRunTerminalFace =
+  | { readonly status: "absent" }
+  | {
+      readonly status: "present";
+      readonly file: RunTerminalArtifactFile;
+      readonly body: Record<string, unknown>;
+    };
+
+/**
+ * Per readable in-scope run: identity + facts classifyScopedRun already read.
+ * Metric families consume this structure read-only; they do not re-scan disk.
+ */
+export type TaishiReadableRunFacts = {
+  readonly runId: string;
+  readonly book: string;
+  readonly role: string;
+  readonly frameSpan: TaishiRunFrameSpan;
+  readonly toolIntervals: readonly SessionToolInterval[];
+  readonly terminal: TaishiRunTerminalFace;
+};
+
 export type TaishiScopedRunScan = {
+  /** Readable in-scope runs with retained typed facts (A2). */
+  readonly runs: readonly TaishiReadableRunFacts[];
+  /** A1 leg projection — identity only, derived from runs (not a second source). */
   readonly legs: readonly TaishiLegEntry[];
   readonly unreadable: readonly TaishiUnreadableRun[];
 };
+
+function toLegEntry(facts: TaishiReadableRunFacts): TaishiLegEntry {
+  return {
+    runId: facts.runId,
+    book: facts.book,
+    role: facts.role,
+  };
+}
 
 async function classifyScopedRun(input: {
   readonly book: string;
@@ -95,11 +144,15 @@ async function classifyScopedRun(input: {
   readonly role: string;
   readonly runDirectory: string;
 }): Promise<
-  | { readonly kind: "leg"; readonly leg: TaishiLegEntry }
+  | { readonly kind: "readable"; readonly facts: TaishiReadableRunFacts }
   | { readonly kind: "unreadable"; readonly entry: TaishiUnreadableRun }
 > {
   const missingSources: TaishiMissingSource[] = [];
   const reasons: string[] = [];
+
+  let frameSpan: TaishiRunFrameSpan | undefined;
+  let toolIntervals: readonly SessionToolInterval[] | undefined;
+  let terminal: TaishiRunTerminalFace | undefined;
 
   // 1) session timeline
   const sessionFile = await resolveSessionFile(input.runDirectory);
@@ -110,6 +163,8 @@ async function classifyScopedRun(input: {
     if (span.startedAt === undefined || span.endedAt === undefined) {
       missingSources.push("session-timeline");
       reasons.push("session timeline has no usable timestamps");
+    } else {
+      frameSpan = { startedAt: span.startedAt, endedAt: span.endedAt };
     }
   } catch (error) {
     missingSources.push("session-timeline");
@@ -119,7 +174,7 @@ async function classifyScopedRun(input: {
   // 2) tool association (only when session rows are available)
   if (rows !== undefined && !missingSources.includes("session-timeline")) {
     try {
-      extractSessionToolIntervals(rows);
+      toolIntervals = extractSessionToolIntervals(rows);
     } catch (error) {
       missingSources.push("tool-association");
       reasons.push(errorText(error));
@@ -132,6 +187,14 @@ async function classifyScopedRun(input: {
     if (artifact.status === "unreadable") {
       missingSources.push("terminal-artifact");
       reasons.push(`${artifact.file}: ${artifact.reason}`);
+    } else if (artifact.status === "absent") {
+      terminal = { status: "absent" };
+    } else {
+      terminal = {
+        status: "present",
+        file: artifact.file,
+        body: artifact.body,
+      };
     }
   } catch (error) {
     missingSources.push("terminal-artifact");
@@ -150,12 +213,22 @@ async function classifyScopedRun(input: {
     };
   }
 
+  // All three faces present after the gate above (TypeScript cannot see the link).
+  if (frameSpan === undefined || toolIntervals === undefined || terminal === undefined) {
+    throw new Error(
+      `classifyScopedRun internal invariant: missing retained facts for ${input.runId}`,
+    );
+  }
+
   return {
-    kind: "leg",
-    leg: {
+    kind: "readable",
+    facts: {
       runId: input.runId,
       book: input.book,
       role: input.role,
+      frameSpan,
+      toolIntervals,
+      terminal,
     },
   };
 }
@@ -163,6 +236,7 @@ async function classifyScopedRun(input: {
 /**
  * Scan ledger home books/<book>/runs for runs whose invocation projectRoot matches
  * the issue scope. Damaged required sources become unreadable exclusions.
+ * Readable runs retain typed facts for metric-family composition.
  */
 export async function scanTaishiIssueRuns(input: {
   readonly projectRoot: string;
@@ -178,12 +252,12 @@ export async function scanTaishiIssueRuns(input: {
     bookNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch (error) {
     if (isMissingPathError(error)) {
-      return { legs: [], unreadable: [] };
+      return { runs: [], legs: [], unreadable: [] };
     }
     throw error;
   }
 
-  const legs: TaishiLegEntry[] = [];
+  const runs: TaishiReadableRunFacts[] = [];
   const unreadable: TaishiUnreadableRun[] = [];
 
   for (const book of bookNames) {
@@ -219,10 +293,14 @@ export async function scanTaishiIssueRuns(input: {
         role: parsed.role,
         runDirectory,
       });
-      if (classified.kind === "leg") legs.push(classified.leg);
+      if (classified.kind === "readable") runs.push(classified.facts);
       else unreadable.push(classified.entry);
     }
   }
 
-  return { legs, unreadable };
+  return {
+    runs,
+    legs: runs.map(toLegEntry),
+    unreadable,
+  };
 }

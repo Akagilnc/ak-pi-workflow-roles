@@ -2,8 +2,8 @@
  * Taishi issue metrics page envelope + atomic persistence (ADR 0068 / PRD #298).
  *
  * A1 minimum fields: issue scope (projectRoot) + leg list + unreadable exclusion.
- * Metric families (B1–B4 / C1–C3) compose additional optional sections via their
- * own modules onto this envelope — never by forking a second page writer.
+ * A2: metric-family modules register optional top-level sections via the family
+ * composition seam — B/C waves add family files without forking the page writer.
  */
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -14,6 +14,13 @@ import {
   ensureRealDirectoryTree,
   physicalPathIdentity,
 } from "./activation-ledger-topology.ts";
+import type { TaishiReadableRunFacts } from "./taishi-ledger.ts";
+import { TAISHI_ISSUE_METRIC_FAMILIES } from "./taishi-metric-families.ts";
+import type { TaishiA2SeamProbeSection } from "./taishi-metric-family-a2-probe.ts";
+import {
+  composeTaishiMetricFamilySections,
+  type TaishiMetricFamilyModule,
+} from "./taishi-metric-family.ts";
 
 /** Required run sources that may render a loud unreadable exclusion. */
 export type TaishiMissingSource =
@@ -28,7 +35,7 @@ export type TaishiUnreadableRun = {
   readonly reason: string;
 };
 
-/** One readable in-scope leg (A1 identity only; metric families enrich later). */
+/** One readable in-scope leg (A1 identity only; metric families enrich via sections). */
 export type TaishiLegEntry = {
   readonly runId: string;
   readonly book: string;
@@ -37,8 +44,8 @@ export type TaishiLegEntry = {
 
 /**
  * Per-issue typed metrics page.
- * Extension seam: metric-family modules may add optional top-level sections
- * in dedicated files; keep this envelope stable and composable.
+ * Extension seam: metric-family modules add optional top-level sections
+ * through TAISHI_ISSUE_METRIC_FAMILIES — keep this envelope stable.
  */
 export type TaishiIssueMetricsPage = {
   readonly kind: "taishi-issue-metrics";
@@ -47,6 +54,8 @@ export type TaishiIssueMetricsPage = {
   readonly legs: readonly TaishiLegEntry[];
   readonly unreadable: readonly TaishiUnreadableRun[];
   readonly unreadableCount: number;
+  /** A2 example family; absorbed/replaced when B1 lands. */
+  readonly a2SeamProbe?: TaishiA2SeamProbeSection;
 };
 
 export function taishiIssuePageKey(projectRoot: string): string {
@@ -58,28 +67,54 @@ export function taishiIssuePagePath(ledgerHome: string, projectRoot: string): st
   return join(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(projectRoot)}.json`);
 }
 
-export function buildTaishiIssueMetricsPage(input: {
-  readonly projectRoot: string;
-  readonly legs: readonly TaishiLegEntry[];
-  readonly unreadable: readonly TaishiUnreadableRun[];
-}): TaishiIssueMetricsPage {
-  const legs = [...input.legs].sort((a, b) => {
+function sortLegs(legs: readonly TaishiLegEntry[]): TaishiLegEntry[] {
+  return [...legs].sort((a, b) => {
     if (a.book !== b.book) return a.book.localeCompare(b.book);
     if (a.role !== b.role) return a.role.localeCompare(b.role);
     return a.runId.localeCompare(b.runId);
   });
-  const unreadable = [...input.unreadable].sort((a, b) => {
+}
+
+function sortUnreadable(
+  unreadable: readonly TaishiUnreadableRun[],
+): TaishiUnreadableRun[] {
+  return [...unreadable].sort((a, b) => {
     if (a.book !== b.book) return a.book.localeCompare(b.book);
     return a.runId.localeCompare(b.runId);
   });
-  return {
-    kind: "taishi-issue-metrics",
-    mode: "issue",
-    projectRoot: physicalPathIdentity(input.projectRoot),
+}
+
+export function buildTaishiIssueMetricsPage(input: {
+  readonly projectRoot: string;
+  readonly runs: readonly TaishiReadableRunFacts[];
+  readonly unreadable: readonly TaishiUnreadableRun[];
+  /** Override registry in tests; production uses TAISHI_ISSUE_METRIC_FAMILIES. */
+  readonly families?: readonly TaishiMetricFamilyModule[];
+}): TaishiIssueMetricsPage {
+  const legs = sortLegs(
+    input.runs.map((run) => ({
+      runId: run.runId,
+      book: run.book,
+      role: run.role,
+    })),
+  );
+  const unreadable = sortUnreadable(input.unreadable);
+  const projectRoot = physicalPathIdentity(input.projectRoot);
+  const envelope = {
+    kind: "taishi-issue-metrics" as const,
+    mode: "issue" as const,
+    projectRoot,
     legs,
     unreadable,
     unreadableCount: unreadable.length,
   };
+  const families = input.families ?? TAISHI_ISSUE_METRIC_FAMILIES;
+  const sections = composeTaishiMetricFamilySections(families, {
+    projectRoot,
+    runs: input.runs,
+    unreadable,
+  });
+  return { ...envelope, ...sections };
 }
 
 /**

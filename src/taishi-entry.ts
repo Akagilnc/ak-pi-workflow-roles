@@ -2,6 +2,7 @@
  * 太史 sole entry (ADR 0068 / PRD #298).
  * Deterministic analysis seat: read ledger records, write sibling metrics pages.
  * A1 accepts issue-mode typed input only; other modes compose later on this seam.
+ * A2: scan retains typed per-run facts; page builder folds registered metric families.
  */
 import { resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
 import { scanTaishiIssueRuns } from "./taishi-ledger.ts";
@@ -26,9 +27,9 @@ export type TaishiIssueModeResult = {
 };
 
 /**
- * Sole taishi entry. Issue mode: scope → scan → page envelope → atomic replace.
- * Metric-family kernels (B/C waves) will enrich the page via dedicated modules
- * without opening a second entry or second parse kernel.
+ * Sole taishi entry. Issue mode: scope → scan (typed facts) → family compose → atomic replace.
+ * Metric-family kernels (B/C waves) register via taishi-metric-families.ts and
+ * consume scan facts without opening a second entry or second parse kernel.
  * Machine home is package-owned (ADR 0048) — never an invocation field.
  */
 export async function runTaishi(input: TaishiInput): Promise<TaishiIssueModeResult> {
@@ -41,7 +42,7 @@ export async function runTaishi(input: TaishiInput): Promise<TaishiIssueModeResu
 
   const page = buildTaishiIssueMetricsPage({
     projectRoot: input.projectRoot,
-    legs: scan.legs,
+    runs: scan.runs,
     unreadable: scan.unreadable,
   });
 
