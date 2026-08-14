@@ -260,7 +260,7 @@ printf 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{"login":"colle
   });
 });
 
-test("createGhIssueSoftFetcher softens tracker-unavailable only; other failures propagate", async () => {
+test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start failures propagate", async () => {
   const calls: string[][] = [];
   const runner: GhApiRunner = async (args) => {
     calls.push([...args]);
@@ -280,7 +280,16 @@ test("createGhIssueSoftFetcher softens tracker-unavailable only; other failures 
         ambiguousGhFailure: true,
       });
     }
-    throw new Error("spawn failed");
+    if (args.includes("repos/Acme/widgets/issues/503")) {
+      // gh binary missing / process never starts → authorized soft unavailable (#343).
+      throw Object.assign(new Error("spawn gh ENOENT"), {
+        code: "ENOENT",
+        syscall: "spawn",
+        path: "gh",
+      });
+    }
+    // Generic implementation failure (gh did not fail-to-start) keeps true cause.
+    throw new Error("implementation boom");
   };
   const fetchIssue = createGhIssueSoftFetcher(runner);
   const ok = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 343 });
@@ -298,10 +307,14 @@ test("createGhIssueSoftFetcher softens tracker-unavailable only; other failures 
   const unreachable = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 401 });
   assert.equal(unreachable, undefined);
 
-  // Unrecognized runner exception keeps true cause — must not wash into unavailable.
+  // gh process cannot start (ENOENT) → authorized soft unavailable into degrade chain.
+  const noGh = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 503 });
+  assert.equal(noGh, undefined);
+
+  // Unrecognized runner/implementation exception keeps true cause — must not wash into unavailable.
   await assert.rejects(
     () => fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 500 }),
-    (error: unknown) => error instanceof Error && error.message === "spawn failed",
+    (error: unknown) => error instanceof Error && error.message === "implementation boom",
   );
 
   // Parse / payload shape failures keep true cause.

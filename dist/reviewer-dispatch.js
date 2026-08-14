@@ -27,17 +27,19 @@ function expandFeatureTokens(raw) {
   if (stripped.length > 0 && stripped !== normalized) tokens.add(stripped);
   return Object.freeze([...tokens]);
 }
+function ticketCandidateFromRaw(source, raw) {
+  const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+  if (!Number.isInteger(n) || n < 1) return void 0;
+  return Object.freeze({ source, ticketNumber: n });
+}
 function resolveReviewerTicketNumber(input) {
-  const typed = typeof input.ticketNumber === "number" && Number.isInteger(input.ticketNumber) && input.ticketNumber >= 1 ? Object.freeze({ source: "typed-ticket-number", ticketNumber: input.ticketNumber }) : void 0;
+  const typed = ticketCandidateFromRaw("typed-ticket-number", input.ticketNumber);
   let branch;
   for (const name of input.branchNames) {
     const match = BRANCH_ISSUE_TOKEN.exec(name);
     if (match) {
-      const n = Number(match[2]);
-      if (Number.isInteger(n) && n >= 1) {
-        branch = Object.freeze({ source: "branch-token", ticketNumber: n });
-        break;
-      }
+      branch = ticketCandidateFromRaw("branch-token", match[2]);
+      if (branch !== void 0) break;
     }
   }
   let commit;
@@ -45,10 +47,7 @@ function resolveReviewerTicketNumber(input) {
   if (newest !== void 0) {
     const match = COMMIT_TICKET_TOKEN.exec(newest);
     if (match) {
-      const n = Number(match[1]);
-      if (Number.isInteger(n) && n >= 1) {
-        commit = Object.freeze({ source: "commit-message", ticketNumber: n });
-      }
+      commit = ticketCandidateFromRaw("commit-message", match[1]);
     }
   }
   if (typed !== void 0) {

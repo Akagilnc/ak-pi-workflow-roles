@@ -47,6 +47,19 @@ function expandFeatureTokens(raw: string): readonly string[] {
 }
 
 /**
+ * Shared capture/number → positive-integer → frozen candidate conversion.
+ * Single true source for branch/commit (and typed) ticket candidate materialization.
+ */
+function ticketCandidateFromRaw(
+  source: ReviewerTicketNumberSource,
+  raw: unknown,
+): ReviewerTicketNumberCandidate | undefined {
+  const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+  if (!Number.isInteger(n) || n < 1) return undefined;
+  return Object.freeze({ source, ticketNumber: n });
+}
+
+/**
  * Resolve ticket number with unique priority (#343):
  * typed ticketNumber → branch token → newest commit message first #N.
  * High-priority hit is adopted; lower sources that also yield a number are abandoned candidates.
@@ -56,22 +69,14 @@ export function resolveReviewerTicketNumber(input: {
   branchNames: readonly string[];
   commitMessagesNewestFirst: readonly string[];
 }): Readonly<{ adopted: ReviewerTicketNumberCandidate; abandoned: readonly ReviewerTicketNumberCandidate[] }> | undefined {
-  const typed =
-    typeof input.ticketNumber === "number" &&
-    Number.isInteger(input.ticketNumber) &&
-    input.ticketNumber >= 1
-      ? Object.freeze({ source: "typed-ticket-number" as const, ticketNumber: input.ticketNumber })
-      : undefined;
+  const typed = ticketCandidateFromRaw("typed-ticket-number", input.ticketNumber);
 
   let branch: ReviewerTicketNumberCandidate | undefined;
   for (const name of input.branchNames) {
     const match = BRANCH_ISSUE_TOKEN.exec(name);
     if (match) {
-      const n = Number(match[2]);
-      if (Number.isInteger(n) && n >= 1) {
-        branch = Object.freeze({ source: "branch-token" as const, ticketNumber: n });
-        break;
-      }
+      branch = ticketCandidateFromRaw("branch-token", match[2]);
+      if (branch !== undefined) break;
     }
   }
 
@@ -80,10 +85,7 @@ export function resolveReviewerTicketNumber(input: {
   if (newest !== undefined) {
     const match = COMMIT_TICKET_TOKEN.exec(newest);
     if (match) {
-      const n = Number(match[1]);
-      if (Number.isInteger(n) && n >= 1) {
-        commit = Object.freeze({ source: "commit-message" as const, ticketNumber: n });
-      }
+      commit = ticketCandidateFromRaw("commit-message", match[1]);
     }
   }
 
