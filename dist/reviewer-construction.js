@@ -78,63 +78,8 @@ export function reviewerAxisMethodAdapter(axis) {
         "The returned report is the complete output envelope and its UTF-8 bytes are preserved verbatim; no heading parser, sanitizer, section splitter, rewrite, aggregation, or replacement leg follows.",
     ].join("\n");
 }
-/** Issue / MR reference shapes from code-review Skill step 2 (commit-message scan). */
-export function messageHasIssueReference(text) {
-    return (/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+\b/i.test(text) ||
-        /(?:^|[\s(,[{])#\d+\b/.test(text) ||
-        /(?:^|[\s(,[{])!\d+\b/.test(text) ||
-        /https?:\/\/\S+\/(?:issues|pull|merge_requests)\/\d+/i.test(text));
-}
-const GENERIC_FEATURE_TOKENS = new Set(["", "head", "main", "master", "trunk", "develop", "development"]);
-/** Normalize branch/path tokens for local Spec path matching. */
-export function normalizeSpecFeatureToken(value) {
-    return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
-export function isMatchableSpecFeatureToken(token) {
-    const normalized = normalizeSpecFeatureToken(token);
-    return normalized.length >= 3 && !GENERIC_FEATURE_TOKENS.has(normalized);
-}
 /**
- * Unique pure owner of Skill step 2 Spec-authority discovery for child cardinality.
- * - Supplied authorityRefs ⇒ available.
- * - Issue/MR refs in range commit messages ⇒ available (independent discovery).
- * - Local docs/specs/.scratch paths matching feature tokens ⇒ available.
- * - Otherwise ⇒ confirmed missing (skip Spec child).
- * Absence of authorityRefs alone is never treated as missing Spec.
- */
-export function discoverReviewerSpecAuthority(input) {
-    if (input.authorityRefs.length > 0) {
-        return Object.freeze({ status: "available" });
-    }
-    if (input.commitMessages.some((message) => messageHasIssueReference(message))) {
-        return Object.freeze({ status: "available" });
-    }
-    const tokens = input.featureTokens
-        .map(normalizeSpecFeatureToken)
-        .filter(isMatchableSpecFeatureToken);
-    if (tokens.length > 0) {
-        for (const relativePath of input.localSpecCandidatePaths) {
-            const normalizedPath = normalizeSpecFeatureToken(relativePath);
-            if (tokens.some((token) => normalizedPath.includes(token))) {
-                return Object.freeze({ status: "available" });
-            }
-        }
-    }
-    return Object.freeze({ status: "missing" });
-}
-/**
- * Spec-child launch decision from the unique discovery owner result.
- * - available ⇒ launch Spec.
- * - missing AND no supplied refs ⇒ skip Spec (canonical missing-Spec).
- * Supplied refs are always treated as available by discoverReviewerSpecAuthority.
- */
-export function shouldLaunchSpecEvidenceChild(input) {
-    if (input.authorityRefs.length > 0)
-        return true;
-    return input.specAuthorityDiscovery.status !== "missing";
-}
-/**
- * Spec-only evidence-child material carrier for admitted durable authority references.
+ * Spec-only evidence-child material carrier for durable authority references.
  * Exact values preserved; no prose extraction and no Standards/parent injection.
  */
 export function reviewerAuthorityRefsMaterial(authorityRefs) {
@@ -144,13 +89,10 @@ export function reviewerAuthorityRefsMaterial(authorityRefs) {
         "These are durable authority references only. Read them as Spec grounding materials; do not invent Spec prose from caller instruction.",
     ].join("\n");
 }
-/** Deterministic compiler: fixed target/range plus packaged Skill in, dispatch text out. */
+/** Deterministic compiler: fixed target/range plus discovery product in, dispatch text out. */
 export function constructReviewerDispatch(input) {
-    const authorityRefs = Object.freeze([...(input.authorityRefs ?? [])]);
-    const launchSpec = shouldLaunchSpecEvidenceChild({
-        authorityRefs,
-        specAuthorityDiscovery: input.specAuthorityDiscovery,
-    });
+    const launchSpec = input.specAuthority.status === "available";
+    const authorityRefs = Object.freeze(input.specAuthority.status === "available" ? [...input.specAuthority.refs] : []);
     const specDisposition = launchSpec ? "launched" : "skipped-missing";
     const common = [
         `Target: ${input.range.target}`,

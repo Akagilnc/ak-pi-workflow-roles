@@ -8,12 +8,10 @@ import { isReviewerPromptText, sameReviewerPromptText, type ReviewerPromptText }
 import { sha256Hex } from "./sha256.ts";
 import {
   constructReviewerDispatch,
-  discoverReviewerSpecAuthority,
   type ConstructedReviewerDispatch,
   type ReviewerSpecAuthorityDiscovery,
 } from "./reviewer-construction.ts";
 export {
-  discoverReviewerSpecAuthority,
   type ReviewerSpecAuthorityDiscovery,
   type ReviewerSpecDisposition,
 } from "./reviewer-construction.ts";
@@ -22,6 +20,11 @@ export { sha256Hex } from "./sha256.ts";
 export { isReviewerPromptText as isReviewerPromptIdentity, sameReviewerPromptText as sameReviewerPromptIdentity, type ReviewerPromptText as ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
 const LOCAL_SPEC_ROOTS = ["docs", "specs", ".scratch"] as const;
+const GENERIC_FEATURE_TOKENS = new Set(["", "head", "main", "master", "trunk", "develop", "development"]);
+
+function normalizeFeatureToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
 
 async function listLocalSpecCandidatePaths(repositoryRoot: string): Promise<readonly string[]> {
   const found: string[] = [];
@@ -50,33 +53,41 @@ async function listLocalSpecCandidatePaths(repositoryRoot: string): Promise<read
 }
 
 /**
- * Production owner wiring for code-review Skill step 2 discovery.
- * Gathers fixed-range commit messages, feature tokens, and local Spec candidate paths,
- * then delegates the available/missing judgement to discoverReviewerSpecAuthority.
+ * Unique production owner of code-review Skill step 2 Spec discovery.
+ * Directly yields durable refs Spec child can read, or confirmed missing.
+ * - Supplied authorityRefs ⇒ available with those refs as material.
+ * - Matching local docs/specs/.scratch paths ⇒ available with those paths as material.
+ * - Commit message bare #N without durable source ⇒ missing (not available).
+ * Construction builds Standards/Spec solely from this product.
  */
-export async function resolveReviewerSpecAuthorityDiscovery(input: {
+export async function discoverReviewerSpecAuthority(input: {
   authorityRefs: readonly string[];
   reader: ReviewerPinnedGitReader;
-  range: ReviewerRange;
 }): Promise<ReviewerSpecAuthorityDiscovery> {
   if (input.authorityRefs.length > 0) {
-    return discoverReviewerSpecAuthority({
-      authorityRefs: input.authorityRefs,
-      commitMessages: [],
-      localSpecCandidatePaths: [],
-      featureTokens: [],
+    return Object.freeze({
+      status: "available" as const,
+      refs: Object.freeze([...input.authorityRefs]),
     });
   }
-  const [commitMessages, featureTokens, localSpecCandidatePaths] = await Promise.all([
-    input.reader.rangeCommitMessages(input.range),
-    input.reader.featureTokens(),
-    listLocalSpecCandidatePaths(input.reader.pin.repositoryRoot),
-  ]);
-  return discoverReviewerSpecAuthority({
-    authorityRefs: input.authorityRefs,
-    commitMessages,
-    localSpecCandidatePaths,
-    featureTokens,
+  const featureTokens = await input.reader.featureTokens();
+  const tokens = featureTokens
+    .map(normalizeFeatureToken)
+    .filter((token) => token.length >= 3 && !GENERIC_FEATURE_TOKENS.has(token));
+  if (tokens.length === 0) {
+    return Object.freeze({ status: "missing" as const });
+  }
+  const candidates = await listLocalSpecCandidatePaths(input.reader.pin.repositoryRoot);
+  const matched = candidates.filter((relativePath) => {
+    const normalizedPath = normalizeFeatureToken(relativePath);
+    return tokens.some((token) => normalizedPath.includes(token));
+  });
+  if (matched.length === 0) {
+    return Object.freeze({ status: "missing" as const });
+  }
+  return Object.freeze({
+    status: "available" as const,
+    refs: Object.freeze(matched),
   });
 }
 
@@ -141,10 +152,9 @@ export function createReviewerDispatcher(d: DispatcherDependencies) {
         const base = await d.reader.resolve(baseRevision);
         const range = await d.reader.range(base);
         const authorityRefs = Object.freeze([...(d.authorityRefs ?? [])]);
-        const specAuthorityDiscovery = await resolveReviewerSpecAuthorityDiscovery({
+        const specAuthority = await discoverReviewerSpecAuthority({
           authorityRefs,
           reader: d.reader,
-          range,
         });
         dispatch = constructReviewerDispatch({
           identity,
@@ -152,8 +162,7 @@ export function createReviewerDispatcher(d: DispatcherDependencies) {
           target,
           range,
           ...(d.reviewScopeKeys === undefined ? {} : { reviewScopeKeys: d.reviewScopeKeys }),
-          authorityRefs,
-          specAuthorityDiscovery,
+          specAuthority,
         });
         if (!sameReviewerPinnedTarget(await d.reader.snapshot(), target)) {
           throw new ReviewerPreflightError("target-drift", "pinned target snapshot changed before child execution");

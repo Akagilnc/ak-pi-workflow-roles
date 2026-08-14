@@ -142,19 +142,6 @@ export async function createReviewerPinnedGitReader(root = process.cwd()) {
                 invalid("range-invalid", "review range must contain a non-empty diff between base and pinned target");
             return Object.freeze({ base: mergeBase, target: targetHead, diffCommand, diffSha256: sha256Hex(Uint8Array.from(diff)), commits: Object.freeze(commitsText ? commitsText.split("\n") : []) });
         },
-        async rangeCommitMessages(range) {
-            if (range.commits.length === 0)
-                return Object.freeze([]);
-            const text = await gitText(repositoryRoot, [
-                "log",
-                "--format=%B%x1e",
-                `${range.base}..${range.target}`,
-            ]);
-            return Object.freeze(text
-                .split("\x1e")
-                .map((message) => message.trim())
-                .filter((message) => message.length > 0));
-        },
         async featureTokens() {
             const names = new Set();
             try {

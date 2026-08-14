@@ -18,6 +18,17 @@ async function git(cwd: string, ...args: string[]) {
   return (await exec("git", ["-C", cwd, ...args])).stdout.trim();
 }
 
+async function seedReviewerFixture(fixture: string): Promise<void> {
+  await git(fixture, "init");
+  await git(fixture, "config", "user.email", "consumer@example.com");
+  await git(fixture, "config", "user.name", "Consumer");
+  await writeFile(resolve(fixture, ".gitignore"), "node_modules\n.pi-agent*\n");
+  await writeFile(resolve(fixture, "consumer.txt"), "base\n");
+  await git(fixture, "add", ".gitignore", "consumer.txt");
+  await git(fixture, "commit", "-m", "base");
+  await git(fixture, "branch", "review-base");
+}
+
 test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain", async () => {
   process.env.CI = "true";
   await withHermeticHome({ prefix: "ak-reviewer-package-" }, async ({ home }) => {
@@ -27,17 +38,14 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
       assert.ok(pack.files.some((file) => file.path === "resources/methods/code-review/SKILL.md"));
       assert.equal(pack.files.some((file) => file.path === "src/reviewer-admission.ts"), false);
 
-      await git(fixture, "init");
-      await git(fixture, "config", "user.email", "consumer@example.com");
-      await git(fixture, "config", "user.name", "Consumer");
-      await writeFile(resolve(fixture, ".gitignore"), "node_modules\n.pi-agent*\n");
-      await writeFile(resolve(fixture, "consumer.txt"), "base\n");
-      await git(fixture, "add", ".gitignore", "consumer.txt");
-      await git(fixture, "commit", "-m", "base");
-      await git(fixture, "branch", "review-base");
+      await seedReviewerFixture(fixture);
+      // Honest two-axis smoke: local durable Spec path matched by feature branch token.
+      await git(fixture, "checkout", "-b", "feature-login");
+      await mkdir(resolve(fixture, "docs"), { recursive: true });
+      await writeFile(resolve(fixture, "docs/feature-login.md"), "# Feature login\nMust authenticate users.\n");
       await writeFile(resolve(fixture, "consumer.txt"), "reviewed\n");
-      // No public --authority-ref: independent discovery via commit issue ref must still launch Spec.
-      await git(fixture, "commit", "-am", "reviewed change for #42");
+      await git(fixture, "add", "consumer.txt", "docs/feature-login.md");
+      await git(fixture, "commit", "-m", "reviewed change with local spec material");
 
       const nestedCwd = resolve(fixture, "nested", "invocation");
       await mkdir(nestedCwd, { recursive: true });
@@ -46,9 +54,10 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
       const providerPath = resolve(packageRoot, "test/fixtures/reviewer-two-axis-provider.ts");
       const stdout: string[] = [];
       const stderr: string[] = [];
+      const discoveredRefs = ["docs/feature-login.md"];
 
-      // #236 no-caller-instruction path: fixed base alone must launch real two-axis dispatch
-      // when independent discovery finds Spec materials (commit issue ref), without public refs.
+      // #236 no-caller-instruction path: fixed base alone launches real two-axis when
+      // unique discovery finds durable local Spec material (not bare commit #N).
       const reviewer = await runAkRole(
         [
           "reviewer",
@@ -84,6 +93,7 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
               env: {
                 ...options.env,
                 PI_OFFLINE: "1",
+                AK_REVIEW_EXPECT_AUTHORITY_REFS_JSON: JSON.stringify(discoveredRefs),
               },
               timeoutMs: options.timeoutMs ?? 120_000,
             });
@@ -200,235 +210,180 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
   });
 });
 
-test("installed package transports exact authorityRefs into Spec child only", async () => {
+test("public CLI Spec discovery tracer: refs-only, local material, confirmed missing", async () => {
   process.env.CI = "true";
-  await withHermeticHome({ prefix: "ak-reviewer-authority-refs-" }, async ({ home }) => {
+  await withHermeticHome({ prefix: "ak-reviewer-spec-discovery-" }, async ({ home }) => {
     await withColdInstalledPackage(home, async ({ fixture, installedRoot }) => {
-      await git(fixture, "init");
-      await git(fixture, "config", "user.email", "consumer@example.com");
-      await git(fixture, "config", "user.name", "Consumer");
-      await writeFile(resolve(fixture, ".gitignore"), "node_modules\n.pi-agent*\n");
-      await writeFile(resolve(fixture, "consumer.txt"), "base\n");
-      await git(fixture, "add", ".gitignore", "consumer.txt");
-      await git(fixture, "commit", "-m", "base");
-      await git(fixture, "branch", "review-base");
-      await writeFile(resolve(fixture, "consumer.txt"), "reviewed\n");
-      await git(fixture, "commit", "-am", "reviewed change");
+      await seedReviewerFixture(fixture);
 
       const nestedCwd = resolve(fixture, "nested", "invocation");
       await mkdir(nestedCwd, { recursive: true });
       const agentDir = resolve(fixture, ".pi-agent");
       await mkdir(agentDir, { recursive: true });
       const providerPath = resolve(packageRoot, "test/fixtures/reviewer-two-axis-provider.ts");
-      const stdout: string[] = [];
-      const stderr: string[] = [];
+
+      const runReviewer = async (options: {
+        runId: string;
+        extraArgs?: readonly string[];
+        expectAxes: "standards" | "standards,spec";
+        expectDisposition: "launched" | "skipped-missing";
+        /** Spec-child material carrier asserted by the offline provider. */
+        expectSpecMaterialRefs?: readonly string[];
+        /** Public admitted refs recorded on the evidence artifact (refs-only path). */
+        expectEvidenceAuthorityRefs?: readonly string[];
+      }) => {
+        const stderr: string[] = [];
+        const reviewer = await runAkRole(
+          [
+            "reviewer",
+            "--model",
+            "ak-reviewer-two-axis/faux-1",
+            "--thinking",
+            "off",
+            "--project",
+            fixture,
+            "--base",
+            "review-base",
+            ...(options.extraArgs ?? []),
+          ],
+          {
+            packageRoot: installedRoot,
+            home,
+            agentDir,
+            cwd: nestedCwd,
+            credentials: { "openai-codex": true, xai: true },
+            createRunId: () => options.runId,
+            reviewerExtraPiArgs: ["-e", providerPath],
+            reviewerTimeoutMs: 120_000,
+            io: {
+              stdout: () => {},
+              stderr: (text) => {
+                stderr.push(text);
+              },
+            },
+            piRunner: async (args, runOptions) => {
+              const subprocess = await runPiSubprocess([...args], {
+                cwd: runOptions.cwd,
+                env: {
+                  ...runOptions.env,
+                  PI_OFFLINE: "1",
+                  AK_REVIEW_EXPECT_AXES: options.expectAxes,
+                  ...(options.expectSpecMaterialRefs === undefined
+                    ? {}
+                    : {
+                        AK_REVIEW_EXPECT_AUTHORITY_REFS_JSON: JSON.stringify([
+                          ...options.expectSpecMaterialRefs,
+                        ]),
+                      }),
+                },
+                timeoutMs: runOptions.timeoutMs ?? 120_000,
+              });
+              return {
+                code: subprocess.code,
+                stdout: subprocess.stdout,
+                stderr: subprocess.stderr,
+                timedOut: subprocess.localTimeout,
+                args: [...args],
+              };
+            },
+          },
+        );
+        assert.equal(
+          reviewer.exitCode,
+          0,
+          stderr.join("") || JSON.stringify(reviewer.terminal) || `${options.runId} failed`,
+        );
+        assert.equal(reviewer.terminal?.roleOutcome.kind, "accepted");
+        if (reviewer.terminal?.roleOutcome.kind !== "accepted") return;
+        const facts = reviewer.terminal.roleOutcome.decisiveFacts as {
+          axes?: unknown;
+          reportAxes?: unknown;
+          specDisposition?: unknown;
+        };
+        const expectedAxes =
+          options.expectAxes === "standards" ? ["standards"] : ["standards", "spec"];
+        assert.deepEqual(facts.axes, expectedAxes);
+        assert.deepEqual(facts.reportAxes, expectedAxes);
+        assert.equal(facts.specDisposition, options.expectDisposition);
+
+        const reportArtifact = reviewer.terminal.artifacts.find((item) => item.kind === "report");
+        assert.ok(reportArtifact, `${options.runId} must publish report artifact`);
+        const published = JSON.parse(await readFile(reportArtifact!.path, "utf8")) as {
+          receipt?: { specDisposition?: string; acceptedBatch?: { legs?: Array<{ axis: string }> } };
+          specDisposition?: string;
+          acceptedBatch?: { legs?: Array<{ axis: string }> };
+        };
+        const receipt = published.receipt ?? published;
+        assert.equal(receipt.specDisposition, options.expectDisposition);
+        assert.deepEqual(
+          receipt.acceptedBatch?.legs?.map((leg) => leg.axis),
+          expectedAxes,
+        );
+
+        if (options.expectEvidenceAuthorityRefs !== undefined) {
+          const evidenceArtifact = reviewer.terminal.artifacts.find((item) => item.kind === "evidence");
+          assert.ok(evidenceArtifact, `${options.runId} must publish evidence artifact`);
+          const evidence = JSON.parse(await readFile(evidenceArtifact!.path, "utf8")) as {
+            authorityRefs?: unknown;
+          };
+          assert.deepEqual(evidence.authorityRefs, [...options.expectEvidenceAuthorityRefs]);
+        }
+      };
+
+      // Path A: explicit public refs-only ⇒ Spec child receives exact durable refs.
+      await writeFile(resolve(fixture, "consumer.txt"), "refs-only\n");
+      await git(fixture, "add", "consumer.txt");
+      await git(fixture, "commit", "-m", "reviewed change for refs-only path");
       const authorityRefs = [
         "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
         "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
       ];
-
-      const reviewer = await runAkRole(
-        [
-          "reviewer",
-          "--model",
-          "ak-reviewer-two-axis/faux-1",
-          "--thinking",
-          "off",
-          "--project",
-          fixture,
-          "--base",
-          "review-base",
+      await runReviewer({
+        runId: "run-public-reviewer-authority-refs-001",
+        extraArgs: [
           "--authority-ref",
           authorityRefs[0]!,
           "--authority-ref",
           authorityRefs[1]!,
           "Scope and procedure only; do not promote this prose to Spec authority.",
         ],
-        {
-          packageRoot: installedRoot,
-          home,
-          agentDir,
-          cwd: nestedCwd,
-          credentials: { "openai-codex": true, xai: true },
-          createRunId: () => "run-public-reviewer-authority-refs-001",
-          reviewerExtraPiArgs: ["-e", providerPath],
-          reviewerTimeoutMs: 120_000,
-          io: {
-            stdout: (text) => {
-              stdout.push(text);
-            },
-            stderr: (text) => {
-              stderr.push(text);
-            },
-          },
-          piRunner: async (args, options) => {
-            const subprocess = await runPiSubprocess([...args], {
-              cwd: options.cwd,
-              env: {
-                ...options.env,
-                PI_OFFLINE: "1",
-                // Real package lifecycle tracer: Spec child must receive exact refs; Standards must not.
-                AK_REVIEW_EXPECT_AUTHORITY_REFS_JSON: JSON.stringify(authorityRefs),
-              },
-              timeoutMs: options.timeoutMs ?? 120_000,
-            });
-            return {
-              code: subprocess.code,
-              stdout: subprocess.stdout,
-              stderr: subprocess.stderr,
-              timedOut: subprocess.localTimeout,
-              args: [...args],
-            };
-          },
-        },
-      );
+        expectAxes: "standards,spec",
+        expectDisposition: "launched",
+        expectSpecMaterialRefs: authorityRefs,
+        expectEvidenceAuthorityRefs: authorityRefs,
+      });
 
-      assert.equal(
-        reviewer.exitCode,
-        0,
-        stderr.join("") || JSON.stringify(reviewer.terminal) || "authorityRefs package lifecycle failed",
-      );
-      assert.equal(reviewer.terminal?.roleOutcome.kind, "accepted");
+      // Reset range base; switch to feature branch for local path discovery.
+      await git(fixture, "branch", "-f", "review-base", "HEAD");
+      await git(fixture, "checkout", "-b", "feature-login");
+      await mkdir(resolve(fixture, "docs"), { recursive: true });
+      await writeFile(resolve(fixture, "docs/feature-login.md"), "# Feature login\nMust authenticate users.\n");
+      await writeFile(resolve(fixture, "consumer.txt"), "local-discovery\n");
+      await git(fixture, "add", "consumer.txt", "docs/feature-login.md");
+      await git(fixture, "commit", "-m", "add local durable spec material without public refs");
 
-      const evidenceArtifact = reviewer.terminal?.artifacts.find((item) => item.kind === "evidence");
-      assert.ok(evidenceArtifact, "reviewer must publish evidence artifact");
-      const evidence = JSON.parse(await readFile(evidenceArtifact!.path, "utf8")) as {
-        authorityRefs?: unknown;
-      };
-      assert.deepEqual(evidence.authorityRefs, authorityRefs);
+      // Path B: no public refs; unique owner discovers local path and ships material to Spec child.
+      await runReviewer({
+        runId: "run-public-reviewer-discovery-launch-001",
+        expectAxes: "standards,spec",
+        expectDisposition: "launched",
+        expectSpecMaterialRefs: ["docs/feature-login.md"],
+      });
+
+      // Reset range base; leave feature branch but remove matching Spec material.
+      await git(fixture, "branch", "-f", "review-base", "HEAD");
+      await git(fixture, "rm", "-r", "docs");
+      await writeFile(resolve(fixture, "consumer.txt"), "missing-spec\n");
+      await git(fixture, "add", "consumer.txt");
+      // Bare #N in the message is not durable Spec source and must not launch Spec.
+      await git(fixture, "commit", "-m", "chore: polish for #99 without durable spec source");
+
+      // Path C: confirmed missing ⇒ skip Spec and record skipped-missing honestly.
+      await runReviewer({
+        runId: "run-public-reviewer-missing-spec-001",
+        expectAxes: "standards",
+        expectDisposition: "skipped-missing",
+      });
     });
   });
 });
-
-test("public CLI no-refs: independent discovery launches Spec; confirmed missing skips Spec",
-  async () => {
-    process.env.CI = "true";
-    await withHermeticHome({ prefix: "ak-reviewer-missing-spec-" }, async ({ home }) => {
-      await withColdInstalledPackage(home, async ({ fixture, installedRoot }) => {
-        await git(fixture, "init");
-        await git(fixture, "config", "user.email", "consumer@example.com");
-        await git(fixture, "config", "user.name", "Consumer");
-        await writeFile(resolve(fixture, ".gitignore"), "node_modules\n.pi-agent*\n");
-        await writeFile(resolve(fixture, "consumer.txt"), "base\n");
-        await git(fixture, "add", ".gitignore", "consumer.txt");
-        await git(fixture, "commit", "-m", "base");
-        await git(fixture, "branch", "review-base");
-
-        const nestedCwd = resolve(fixture, "nested", "invocation");
-        await mkdir(nestedCwd, { recursive: true });
-        const agentDir = resolve(fixture, ".pi-agent");
-        await mkdir(agentDir, { recursive: true });
-        const providerPath = resolve(packageRoot, "test/fixtures/reviewer-two-axis-provider.ts");
-
-        const runReviewer = async (options: {
-          runId: string;
-          commitMessage: string;
-          expectAxes: "standards" | "standards,spec";
-          expectDisposition: "launched" | "skipped-missing";
-        }) => {
-          await writeFile(resolve(fixture, "consumer.txt"), `${options.runId}\n`);
-          await git(fixture, "add", "consumer.txt");
-          await git(fixture, "commit", "-m", options.commitMessage);
-          const stderr: string[] = [];
-          const reviewer = await runAkRole(
-            [
-              "reviewer",
-              "--model",
-              "ak-reviewer-two-axis/faux-1",
-              "--thinking",
-              "off",
-              "--project",
-              fixture,
-              "--base",
-              "review-base",
-            ],
-            {
-              packageRoot: installedRoot,
-              home,
-              agentDir,
-              cwd: nestedCwd,
-              credentials: { "openai-codex": true, xai: true },
-              createRunId: () => options.runId,
-              reviewerExtraPiArgs: ["-e", providerPath],
-              reviewerTimeoutMs: 120_000,
-              io: {
-                stdout: () => {},
-                stderr: (text) => {
-                  stderr.push(text);
-                },
-              },
-              piRunner: async (args, runOptions) => {
-                const subprocess = await runPiSubprocess([...args], {
-                  cwd: runOptions.cwd,
-                  env: {
-                    ...runOptions.env,
-                    PI_OFFLINE: "1",
-                    AK_REVIEW_EXPECT_AXES: options.expectAxes,
-                  },
-                  timeoutMs: runOptions.timeoutMs ?? 120_000,
-                });
-                return {
-                  code: subprocess.code,
-                  stdout: subprocess.stdout,
-                  stderr: subprocess.stderr,
-                  timedOut: subprocess.localTimeout,
-                  args: [...args],
-                };
-              },
-            },
-          );
-          assert.equal(
-            reviewer.exitCode,
-            0,
-            stderr.join("") || JSON.stringify(reviewer.terminal) || `${options.runId} failed`,
-          );
-          assert.equal(reviewer.terminal?.roleOutcome.kind, "accepted");
-          if (reviewer.terminal?.roleOutcome.kind !== "accepted") return;
-          const facts = reviewer.terminal.roleOutcome.decisiveFacts as {
-            axes?: unknown;
-            reportAxes?: unknown;
-            specDisposition?: unknown;
-          };
-          const expectedAxes =
-            options.expectAxes === "standards" ? ["standards"] : ["standards", "spec"];
-          assert.deepEqual(facts.axes, expectedAxes);
-          assert.deepEqual(facts.reportAxes, expectedAxes);
-          assert.equal(facts.specDisposition, options.expectDisposition);
-
-          const reportArtifact = reviewer.terminal.artifacts.find((item) => item.kind === "report");
-          assert.ok(reportArtifact, `${options.runId} must publish report artifact`);
-          const published = JSON.parse(await readFile(reportArtifact!.path, "utf8")) as {
-            receipt?: { specDisposition?: string; acceptedBatch?: { legs?: Array<{ axis: string }> } };
-            specDisposition?: string;
-            acceptedBatch?: { legs?: Array<{ axis: string }> };
-          };
-          const receipt = published.receipt ?? published;
-          assert.equal(receipt.specDisposition, options.expectDisposition);
-          assert.deepEqual(
-            receipt.acceptedBatch?.legs?.map((leg) => leg.axis),
-            expectedAxes,
-          );
-        };
-
-        // Path A: no public refs; commit issue ref ⇒ independent discovery launches Spec.
-        await runReviewer({
-          runId: "run-public-reviewer-discovery-launch-001",
-          commitMessage: "land feature for #77",
-          expectAxes: "standards,spec",
-          expectDisposition: "launched",
-        });
-
-        // Reset range base so the next commit is the sole reviewed change with no Spec materials.
-        await git(fixture, "branch", "-f", "review-base", "HEAD");
-
-        // Path B: no public refs; independent scan finds nothing ⇒ confirmed missing skips Spec.
-        await runReviewer({
-          runId: "run-public-reviewer-missing-spec-001",
-          commitMessage: "chore: local polish without tracker or spec file",
-          expectAxes: "standards",
-          expectDisposition: "skipped-missing",
-        });
-      });
-    });
-  },
-);
