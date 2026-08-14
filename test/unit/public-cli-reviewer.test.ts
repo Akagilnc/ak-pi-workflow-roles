@@ -33,7 +33,12 @@ import {
   buildReviewerActivationExtraArgs,
   buildReviewerResumeActivationExtraArgs,
 } from "../../src/public-cli/reviewer-run.ts";
-import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
+import {
+  loadResumableReviewerRun,
+  markRunAdmitted,
+  markRunResumable,
+  RESUME_TRANSPORT_ENVELOPE,
+} from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractReviewerMethodInvocations,
   extractReviewerRoleOutcome,
@@ -797,6 +802,50 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         "Review the latest commit on both axes.",
       );
     }
+  });
+});
+
+test("resume rejects blank/inline authorityRefs via unique --authority-ref grammar", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const admitted = await admitReviewerInvocationRaw({
+      home,
+      cwd: project,
+      instruction: "Scope only",
+      attachmentPaths: [],
+      baseRevision: "main",
+      authorityRefs: ["https://example.com/durable-ref"],
+      createRunId: () => "run-cli-reviewer-resume-bad-refs",
+    });
+    // Durable session principal required before resume load.
+    await mkdir(admitted.sessionDirectory, { recursive: true });
+    await writeFile(join(admitted.sessionDirectory, "session.jsonl"), "", "utf8");
+    await markRunAdmitted(admitted);
+    await markRunResumable(admitted.runDirectory, {
+      httpStatus: 429,
+      provider: "xai",
+    });
+
+    const persisted = JSON.parse(
+      await readFile(admitted.admittedRequestPath, "utf8"),
+    ) as Record<string, unknown>;
+    // Corrupt durable face with blank + inline Spec prose — must not restore as authority.
+    persisted.authorityRefs = ["", "The system SHALL launch two workers"];
+    await writeFile(
+      admitted.admittedRequestPath,
+      `${JSON.stringify(persisted, null, 2)}\n`,
+      "utf8",
+    );
+
+    await assert.rejects(
+      () => loadResumableReviewerRun(home, admitted.runId),
+      (error: unknown) =>
+        error instanceof CliUsageError &&
+        error.code === "AK_ROLE_USAGE" &&
+        (/nonempty durable reference|not inline Spec prose/i.test(error.message)),
+    );
   });
 });
 
