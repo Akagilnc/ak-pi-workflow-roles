@@ -225,9 +225,6 @@ test("public runs write one identity-bound invocation ledger for every role", as
     ] as const;
 
     for (const scenario of cases) {
-      // Doctor is not on the ticket-dispatch lease rope (ADR 0012).
-      if (scenario.role !== "doctor") {
-      }
       await runAkRole(scenario.args, {
         packageRoot,
         home,

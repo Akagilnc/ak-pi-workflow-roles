@@ -582,7 +582,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    // Binding path under test: machine dispatch lease must be claimed on admit.
     const runId = "run-cli-fixer-resume-plan";
     const instruction = "Propose the first repair plan for resume.";
 

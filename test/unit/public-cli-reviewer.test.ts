@@ -664,7 +664,6 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    // Binding path under test: machine dispatch lease must be claimed on admit.
     const runId = "run-cli-reviewer-resume";
     const instruction = "Review the branch after quota recovery.";
 
