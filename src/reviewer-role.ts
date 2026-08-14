@@ -7,10 +7,7 @@ import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { appendActiveSessionCustomEntry } from "./compliance-transport.ts";
 import { REVIEWER_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";
-import {
-  REVIEWER_VERIFICATION_BOUNDARY,
-  type ReviewerSpecDisposition,
-} from "./reviewer-construction.ts";
+import { type ReviewerSpecDisposition } from "./reviewer-construction.ts";
 import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
@@ -21,123 +18,12 @@ export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
 export const AGENT_TOOL_NAME = "Agent";
 
-/**
- * Private transport flag names/definitions for Reviewer admitted inputs.
- * Registration and decoding belong to the shared activation envelope (ADR 0018).
- */
-export const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
-  Object.freeze({
-    name: "ak-review-base",
-    definition: Object.freeze({
-      description: "Fixed base revision for the pinned review target",
-      type: "string" as const,
-    }),
-  }),
-  Object.freeze({
-    name: "ak-review-scope-keys",
-    definition: Object.freeze({
-      description: "Optional comma-separated exact class keys limiting Reviewer scope",
-      type: "string" as const,
-    }),
-  }),
-  Object.freeze({
-    name: "ak-review-authority-refs",
-    definition: Object.freeze({
-      description: "JSON array of durable authority references for Spec evidence-child material only",
-      type: "string" as const,
-    }),
-  }),
-] as const);
-
 /** Frozen admitted inputs the behavior layer may consume — no flag surface. */
 export type ReviewerAdmittedInputs = Readonly<{
   baseRevision: string;
   reviewScopeKeys?: readonly string[];
   authorityRefs?: readonly string[];
 }>;
-
-/**
- * Decode private transport flags into frozen admitted inputs.
- * Envelope-owned call site; necessary JSON decode only (public --authority-ref owns grammar).
- */
-export function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): ReviewerAdmittedInputs {
-  let reviewScopeKeys: readonly string[] | undefined;
-  const rawScopeKeys = getFlag("ak-review-scope-keys");
-  if (rawScopeKeys !== undefined) {
-    if (typeof rawScopeKeys !== "string" || rawScopeKeys.length === 0) {
-      throw new Error("Reviewer scope keys must be a nonempty comma-separated string");
-    }
-    const parsed = rawScopeKeys.split(",");
-    if (parsed.some((key) => key.trim().length === 0) || new Set(parsed).size !== parsed.length) {
-      throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
-    }
-    reviewScopeKeys = Object.freeze(parsed);
-  }
-
-  let authorityRefs: readonly string[] | undefined;
-  const rawAuthorityRefs = getFlag("ak-review-authority-refs");
-  if (rawAuthorityRefs !== undefined) {
-    if (typeof rawAuthorityRefs !== "string") {
-      throw new Error("Reviewer authority refs transport error: flag value must be a string");
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(rawAuthorityRefs);
-    } catch (error) {
-      throw new Error(
-        `Reviewer authority refs transport error: JSON decode failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string")) {
-      throw new Error("Reviewer authority refs transport error: expected a JSON array of strings");
-    }
-    authorityRefs = Object.freeze(parsed as string[]);
-  }
-
-  const baseRevision = getFlag("ak-review-base");
-  if (typeof baseRevision !== "string" || !baseRevision.trim()) {
-    throw new Error("Reviewer role requires --ak-review-base");
-  }
-  return Object.freeze({
-    baseRevision,
-    ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
-    ...(authorityRefs === undefined ? {} : { authorityRefs }),
-  });
-}
-
-/**
- * Parent system-prompt assembly for the shared activation envelope.
- * References REVIEWER_VERIFICATION_BOUNDARY as the single text true source (no copy).
- */
-export function assembleReviewerParentSystemPrompt(input: {
-  baseSystemPrompt: string;
-  soul: string;
-  specDisposition?: ReviewerSpecDisposition;
-}): string {
-  const specDispositionNote =
-    input.specDisposition === "skipped-missing"
-      ? [
-          "",
-          "<reviewer_spec_disposition>",
-          "Spec-Disposition: skipped-missing",
-          "Independent discovery confirmed authoritative Spec is absent.",
-          "No Spec evidence-child was launched. Note Spec skipped/missing honestly in the final report; do not invent requirements.",
-          "</reviewer_spec_disposition>",
-        ]
-      : [];
-  return [
-    input.baseSystemPrompt,
-    "",
-    "<reviewer_soul>",
-    input.soul,
-    "</reviewer_soul>",
-    "",
-    "<reviewer_verification_boundary>",
-    REVIEWER_VERIFICATION_BOUNDARY,
-    "</reviewer_verification_boundary>",
-    ...specDispositionNote,
-  ].join("\n");
-}
 
 const reviewerOutputVariants = Type.Union([
   Type.Object({ status: Type.Literal("completed", { description: "Reviewer dispatch completed." }) }, { additionalProperties: false }),
