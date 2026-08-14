@@ -28,7 +28,7 @@ import {
   injectPublicAttachArg,
   publicCliCommandIndex,
   publicRoleAcceptsAttach,
-} from "../src/public-cli/public-argv.ts";
+} from "../src/public-cli/cli.ts";
 
 function usage(): never {
   console.error(`Usage: npx tsx scripts/dispatch-selected-ticket-role.ts <ticketNumber> [--project <site>] [--home <processHome>] -- <ak-role-args...>
