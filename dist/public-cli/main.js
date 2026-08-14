@@ -147,6 +147,18 @@ function validateRuntimeReviewerReceipt(output) {
         throw new Error("Successful Reviewer outcome lacks report");
       if (status === "failed" && report !== void 0) throw new Error("Failed Reviewer outcome cannot bind a report");
     }
+    const specDisposition = read(output, "specDisposition");
+    if (specDisposition === "launched") {
+      if (expectedAxes.length !== 2 || expectedAxes[0] !== "standards" || expectedAxes[1] !== "spec") {
+        throw new Error("Reviewer specDisposition launched requires Standards+Spec accepted legs");
+      }
+    } else if (specDisposition === "skipped-missing") {
+      if (expectedAxes.length !== 1 || expectedAxes[0] !== "standards") {
+        throw new Error("Reviewer specDisposition skipped-missing requires Standards-only accepted legs");
+      }
+    } else if (specDisposition !== void 0) {
+      throw new Error("Invalid Reviewer specDisposition");
+    }
   }
   return output;
 }
@@ -17713,8 +17725,17 @@ async function loadResumableRunRecord(home, runId) {
       if (typeof record4.baseRevision === "string" && record4.baseRevision.trim() !== "") {
         baseRevision = record4.baseRevision;
       }
-      if (Array.isArray(record4.authorityRefs) && record4.authorityRefs.every((ref) => typeof ref === "string")) {
-        authorityRefs = Object.freeze(record4.authorityRefs);
+      if (Array.isArray(record4.authorityRefs)) {
+        authorityRefs = Object.freeze(
+          record4.authorityRefs.map((ref) => {
+            if (typeof ref !== "string") {
+              throw new CliUsageError(
+                "role run admitted authority refs must be durable reference strings"
+              );
+            }
+            return requireAuthorityRef(ref);
+          })
+        );
       }
       if (typeof record4.mergerInputPath === "string" && record4.mergerInputPath.trim() !== "") {
         mergerInputPath = record4.mergerInputPath;
@@ -17735,9 +17756,11 @@ async function loadResumableRunRecord(home, runId) {
       correlationId = fromAdmitted.correlationId;
       ticketNumber = fromAdmitted.ticketNumber;
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
     throw new CliUsageError(
-      `role run admitted request is unreadable: ${runId}`
+      `role run admitted request is unreadable: ${runId}`,
+      { cause: error }
     );
   }
   if (correlationId === void 0 || ticketNumber === void 0) {
