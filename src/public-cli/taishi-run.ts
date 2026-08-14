@@ -26,7 +26,9 @@ export type TaishiRunEnv = {
  * Build the sole library issue-mode input from public argv faces.
  * - ticket N → issueNumber = ticketNumber = N; projectRoot from index (or project-root fallback).
  * - project-root P → direct mechanical key.
- * - both → projectRoot prefers direct P; ticket faces still set so C4 typed wins on scan.
+ * - both + index hit → index projectRoot wins (C4 typed ticket face still set for scan conflicts).
+ * - both + index miss → project-root fallback.
+ * Bare both-missing is owned by parseTaishiArgv — no second reject here.
  */
 export async function buildTaishiIssueModeInputFromPublicArgv(
   parsed: ParseTaishiArgvResult,
@@ -34,13 +36,6 @@ export async function buildTaishiIssueModeInputFromPublicArgv(
 ): Promise<TaishiIssueModeInput> {
   const ticket = parsed.ticket;
   const directRoot = parsed.projectRoot;
-
-  if (ticket === undefined && directRoot === undefined) {
-    // parseTaishiArgv already rejects this; defend the seam.
-    throw new CliUsageError(
-      "usage: ak-role taishi (--ticket <N> | --project-root <P>)",
-    );
-  }
 
   if (ticket === undefined) {
     return {
@@ -54,11 +49,12 @@ export async function buildTaishiIssueModeInputFromPublicArgv(
   const row = findTaishiLibraryIndexRow(index, ticket);
 
   let projectRoot: string;
-  if (directRoot !== undefined) {
-    // Direct supply is the projectRoot field; ticket faces enable C4 on conflict.
-    projectRoot = directRoot;
-  } else if (row !== undefined) {
+  if (row !== undefined) {
+    // Ticket-resolved index projectRoot wins over any concurrent --project-root.
     projectRoot = row.projectRoot;
+  } else if (directRoot !== undefined) {
+    // Index miss with project-root fallback (ticket faces still set for C4).
+    projectRoot = directRoot;
   } else {
     throw new CliUsageError(
       `taishi library index has no row for ticket ${ticket}`,
