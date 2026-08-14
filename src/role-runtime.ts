@@ -59,9 +59,125 @@ import {
 import {
   createReviewerRoleRuntime,
   type ReviewerActivation,
+  type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
 import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
+import {
+  REVIEWER_VERIFICATION_BOUNDARY,
+  type ReviewerSpecDisposition,
+} from "./reviewer-construction.ts";
+
+/**
+ * Private transport flag names/definitions for Reviewer admitted inputs.
+ * Shared activation envelope owns registration and decoding (ADR 0018).
+ */
+const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: "ak-review-base",
+    definition: Object.freeze({
+      description: "Fixed base revision for the pinned review target",
+      type: "string" as const,
+    }),
+  }),
+  Object.freeze({
+    name: "ak-review-scope-keys",
+    definition: Object.freeze({
+      description: "Optional comma-separated exact class keys limiting Reviewer scope",
+      type: "string" as const,
+    }),
+  }),
+  Object.freeze({
+    name: "ak-review-authority-refs",
+    definition: Object.freeze({
+      description: "JSON array of durable authority references for Spec evidence-child material only",
+      type: "string" as const,
+    }),
+  }),
+] as const);
+
+/**
+ * Decode private transport flags into frozen admitted inputs.
+ * Envelope-owned; necessary JSON decode only (public --authority-ref owns grammar).
+ */
+function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): ReviewerAdmittedInputs {
+  let reviewScopeKeys: readonly string[] | undefined;
+  const rawScopeKeys = getFlag("ak-review-scope-keys");
+  if (rawScopeKeys !== undefined) {
+    if (typeof rawScopeKeys !== "string" || rawScopeKeys.length === 0) {
+      throw new Error("Reviewer scope keys must be a nonempty comma-separated string");
+    }
+    const parsed = rawScopeKeys.split(",");
+    if (parsed.some((key) => key.trim().length === 0) || new Set(parsed).size !== parsed.length) {
+      throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
+    }
+    reviewScopeKeys = Object.freeze(parsed);
+  }
+
+  let authorityRefs: readonly string[] | undefined;
+  const rawAuthorityRefs = getFlag("ak-review-authority-refs");
+  if (rawAuthorityRefs !== undefined) {
+    if (typeof rawAuthorityRefs !== "string") {
+      throw new Error("Reviewer authority refs transport error: flag value must be a string");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawAuthorityRefs);
+    } catch (error) {
+      throw new Error(
+        `Reviewer authority refs transport error: JSON decode failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string")) {
+      throw new Error("Reviewer authority refs transport error: expected a JSON array of strings");
+    }
+    authorityRefs = Object.freeze(parsed as string[]);
+  }
+
+  const baseRevision = getFlag("ak-review-base");
+  if (typeof baseRevision !== "string" || !baseRevision.trim()) {
+    throw new Error("Reviewer role requires --ak-review-base");
+  }
+  return Object.freeze({
+    baseRevision,
+    ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
+    ...(authorityRefs === undefined ? {} : { authorityRefs }),
+  });
+}
+
+/**
+ * Parent system-prompt assembly for the shared activation envelope.
+ * References REVIEWER_VERIFICATION_BOUNDARY as the single text true source (no copy).
+ */
+function assembleReviewerParentSystemPrompt(input: {
+  baseSystemPrompt: string;
+  soul: string;
+  specDisposition?: ReviewerSpecDisposition;
+}): string {
+  const specDispositionNote =
+    input.specDisposition === "skipped-missing"
+      ? [
+          "",
+          "<reviewer_spec_disposition>",
+          "Spec-Disposition: skipped-missing",
+          "Independent discovery confirmed authoritative Spec is absent.",
+          "No Spec evidence-child was launched. Note Spec skipped/missing honestly in the final report; do not invent requirements.",
+          "</reviewer_spec_disposition>",
+        ]
+      : [];
+  return [
+    input.baseSystemPrompt,
+    "",
+    "<reviewer_soul>",
+    input.soul,
+    "</reviewer_soul>",
+    "",
+    "<reviewer_verification_boundary>",
+    REVIEWER_VERIFICATION_BOUNDARY,
+    "</reviewer_verification_boundary>",
+    ...specDispositionNote,
+  ].join("\n");
+}
 import {
   CODER_OUTPUT_TOOL_NAME,
   createCoderRoleRuntime,
@@ -214,7 +330,16 @@ type ActivationRuntime = {
   judge: { activate(): Promise<void> };
   fixer: WorkerArmable;
   coder: WorkerArmable;
-  reviewer: { activate(context: ExtensionContext): Promise<ReviewerActivation> };
+  reviewer: {
+    activate(
+      context: ExtensionContext,
+      admitted: ReviewerAdmittedInputs,
+    ): Promise<ReviewerActivation>;
+  };
+  /** Envelope decodes Reviewer transport flags inside the activation stage. */
+  decodeReviewerAdmitted(): ReviewerAdmittedInputs;
+  /** Envelope stores live parent activation for agent_start prompt assembly. */
+  bindReviewerParent(activation: ReviewerActivation): void;
   collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
   merger(): Promise<void>;
@@ -226,7 +351,10 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "fixer": return { id: "load-and-install", run: async () => runtime.fixer.activate() };
     case "coder": return { id: "load-and-install", run: async () => runtime.coder.activate(runtime.context) };
     case "reviewer": return { id: "load-install-and-dispatch", run: async () => {
-      const activation = await runtime.reviewer.activate(runtime.context);
+      // Envelope owns flag decode inside the activation stage (trace + fail-closed path).
+      const admitted = runtime.decodeReviewerAdmitted();
+      const activation = await runtime.reviewer.activate(runtime.context, admitted);
+      runtime.bindReviewerParent(activation);
       const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, { context: runtime.context });
       if (result.status !== "accepted") {
         const rejection = new ExplicitInternalActivationError(
@@ -419,9 +547,18 @@ export function createRoleRuntimeExtension(
     // #102: one shared package-owned tool registration surface for all role runtimes.
     installPackageOwnedToolRegistration(pi);
     pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
+    // Reviewer transport flags: shared envelope owns registration (ADR 0018).
+    for (const flag of REVIEWER_TRANSPORT_FLAGS) {
+      pi.registerFlag(flag.name, flag.definition);
+    }
 
     let admitted = false;
     let selectedRole: string | undefined;
+    /** Live Reviewer parent activation for envelope agent_start prompt assembly. */
+    let activeReviewerParent: ReviewerActivation | undefined;
+    /** Envelope-owned Reviewer Skill expansion state (ADR 0018 — not a role-module facade). */
+    let reviewerOriginalRequest: string | undefined;
+    let reviewerExpansionCaptured = false;
     let navigatorAttendance: NavigatorAttendanceDependency | undefined;
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
@@ -431,9 +568,23 @@ export function createRoleRuntimeExtension(
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
-    pi.on("input", () => {
+    pi.on("input", (event) => {
       const role = pi.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
+      // Envelope exclusively owns Reviewer Skill invocation transform + original-request capture.
+      if (
+        role === "reviewer"
+        && admitted
+        && activeReviewerParent !== undefined
+        && reviewerOriginalRequest === undefined
+      ) {
+        reviewerOriginalRequest = event.text;
+        return {
+          action: "transform" as const,
+          text: activeReviewerParent.skillBinding.invocation(event.text),
+          ...(event.images === undefined ? {} : { images: event.images }),
+        };
+      }
       return { action: "continue" as const };
     });
     pi.on("before_agent_start", (event, ctx) => {
@@ -469,6 +620,29 @@ export function createRoleRuntimeExtension(
         }
       }
       navigatorAttendance?.prepare();
+      // Envelope-owned Reviewer expansion capture + parent prompt assembly (no role-module callback).
+      if (role === "reviewer" && activeReviewerParent !== undefined) {
+        if (!reviewerExpansionCaptured) {
+          if (
+            reviewerOriginalRequest === undefined
+            || activeReviewerParent.skillBinding.captureExpansion(event.prompt, reviewerOriginalRequest) === undefined
+          ) {
+            failInfrastructure(
+              new Error("Canonical code-review Skill expansion did not match the captured request"),
+              ctx,
+            );
+          }
+          reviewerExpansionCaptured = true;
+        }
+        const specDisposition = activeReviewerParent.getSpecDisposition();
+        return {
+          systemPrompt: assembleReviewerParentSystemPrompt({
+            baseSystemPrompt: event.systemPrompt,
+            soul: activeReviewerParent.soul,
+            ...(specDisposition === undefined ? {} : { specDisposition }),
+          }),
+        };
+      }
     });
     pi.on("tool_result", async (event) => {
       const role = selectedRole;
@@ -839,6 +1013,9 @@ export function createRoleRuntimeExtension(
     pi.on("session_start", async (event, ctx) => {
       admitted = false;
       selectedRole = undefined;
+      activeReviewerParent = undefined;
+      reviewerOriginalRequest = undefined;
+      reviewerExpansionCaptured = false;
       receiptDelivery = createReceiptDeliveryPolicy();
       noReceiptRecorded = false;
       observationFace.reset();
@@ -862,6 +1039,12 @@ export function createRoleRuntimeExtension(
         fixer,
         coder,
         reviewer,
+        decodeReviewerAdmitted() {
+          return decodeReviewerAdmittedInputs((name) => pi.getFlag(name));
+        },
+        bindReviewerParent(activation) {
+          activeReviewerParent = activation;
+        },
         collector,
         doctor,
         merger: async () => {

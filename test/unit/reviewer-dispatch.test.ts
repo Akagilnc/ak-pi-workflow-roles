@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  constructReviewerDispatch,
+  reviewerAuthorityRefsMaterial,
+} from "../../src/reviewer-construction.ts";
 import { createReviewerDispatcher, type AcceptedReviewerExecution, type ReviewerPinnedGitReader, type ReviewerPinnedTarget } from "../../src/reviewer-dispatch.ts";
 
 const pin: ReviewerPinnedTarget = {
@@ -17,7 +21,18 @@ const range = {
   diffSha256: "1".repeat(64),
   commits: ["target"],
 };
-function harness(snapshot = pin) {
+function harness(
+  snapshot = pin,
+  options: {
+    authorityRefs?: readonly string[];
+    /** Branch/feature tokens returned by the pinned reader (production discovery input). */
+    featureTokens?: readonly string[];
+    /** Pinned-target Spec candidate paths (production discovery input). */
+    specCandidatePaths?: readonly string[];
+    /** Optional I/O failure from pinned tree listing (must not collapse to missing). */
+    listSpecError?: Error;
+  } = {},
+) {
   let execution: AcceptedReviewerExecution | undefined;
   const reader: ReviewerPinnedGitReader = {
     pin,
@@ -30,10 +45,18 @@ function harness(snapshot = pin) {
     async range() {
       return range;
     },
+    async featureTokens() {
+      return Object.freeze([...(options.featureTokens ?? [])]);
+    },
+    async listSpecCandidatePaths() {
+      if (options.listSpecError !== undefined) throw options.listSpecError;
+      return Object.freeze([...(options.specCandidatePaths ?? [])]);
+    },
   };
   const dispatcher = createReviewerDispatcher({
     canonicalSkill: "review skill",
     reader,
+    ...(options.authorityRefs === undefined ? {} : { authorityRefs: options.authorityRefs }),
     async run(value) {
       execution = value;
       return "done";
@@ -47,11 +70,90 @@ function harness(snapshot = pin) {
   };
 }
 
-test("fixed dispatch always launches independent Standards and Spec legs", async () => {
-  const h = harness();
+test("production discovery: bare commit #N without durable source skips Spec", async () => {
+  // No supplied refs, no matchable feature tokens ⇒ unique owner yields missing.
+  // Bare tracker numbers in commit messages are not durable Spec material.
+  const h = harness(pin, { featureTokens: [] });
   const result = await h.dispatcher.dispatch("main~1");
   assert.equal(result.status, "accepted");
-  assert.deepEqual(h.execution?.legs.map((x) => x.axis), ["standards", "spec"]);
+  if (result.status !== "accepted") return;
+  assert.equal(result.dispatch.specDisposition, "skipped-missing");
+  assert.deepEqual(result.dispatch.legs.map((leg) => leg.axis), ["standards"]);
+  assert.deepEqual(result.dispatch.authorityRefs, []);
+  assert.deepEqual(h.execution?.legs.map((leg) => leg.axis), ["standards"]);
+});
+
+test("production discovery: supplied authorityRefs launch Spec with material", async () => {
+  const refs = Object.freeze(["https://example.com/spec"]);
+  const h = harness(pin, {
+    authorityRefs: refs,
+    featureTokens: [],
+  });
+  const result = await h.dispatcher.dispatch("main~1");
+  assert.equal(result.status, "accepted");
+  if (result.status !== "accepted") return;
+  assert.equal(result.dispatch.specDisposition, "launched");
+  assert.deepEqual(result.dispatch.legs.map((leg) => leg.axis), ["standards", "spec"]);
+  assert.deepEqual(result.dispatch.authorityRefs, [...refs]);
+  const material = reviewerAuthorityRefsMaterial(refs);
+  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes("Authority-Refs:"), false);
+  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
+  assert.equal(h.execution?.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
+});
+
+test("production discovery: pinned-target paths match after stripping feat/feature shells", async () => {
+  const h = harness(pin, {
+    featureTokens: ["feat/login", "feature/checkout"],
+    specCandidatePaths: ["docs/login.md", "specs/checkout.md"],
+  });
+  const result = await h.dispatcher.dispatch("main~1");
+  assert.equal(result.status, "accepted");
+  if (result.status !== "accepted") return;
+  assert.equal(result.dispatch.specDisposition, "launched");
+  assert.deepEqual(result.dispatch.legs.map((leg) => leg.axis), ["standards", "spec"]);
+  assert.deepEqual(result.dispatch.authorityRefs, ["docs/login.md", "specs/checkout.md"]);
+});
+
+test("production discovery: non-absence Git/I-O failure does not become missing", async () => {
+  const ioFailure = new Error("git ls-tree permission denied");
+  const h = harness(pin, {
+    featureTokens: ["feature-login"],
+    listSpecError: ioFailure,
+  });
+  await assert.rejects(
+    () => h.dispatcher.dispatch("main~1"),
+    (error: unknown) => error === ioFailure,
+  );
+  assert.equal(h.execution, undefined);
+});
+
+test("construction builds solely from discovery product (no secondary launch decision)", () => {
+  const missing = constructReviewerDispatch({
+    identity: "id-missing",
+    canonicalSkill: "review skill",
+    target: pin,
+    range,
+    specAuthority: { status: "missing" },
+  });
+  assert.equal(missing.specDisposition, "skipped-missing");
+  assert.deepEqual(missing.legs.map((leg) => leg.axis), ["standards"]);
+  assert.deepEqual(missing.authorityRefs, []);
+
+  const refs = Object.freeze(["docs/feature-login.md"]);
+  const available = constructReviewerDispatch({
+    identity: "id-available",
+    canonicalSkill: "review skill",
+    target: pin,
+    range,
+    specAuthority: { status: "available", refs },
+  });
+  assert.equal(available.specDisposition, "launched");
+  assert.deepEqual(available.legs.map((leg) => leg.axis), ["standards", "spec"]);
+  assert.deepEqual(available.authorityRefs, [...refs]);
+  assert.equal(
+    available.legs.find((leg) => leg.axis === "spec")?.prompt.includes(reviewerAuthorityRefsMaterial(refs)),
+    true,
+  );
 });
 
 test("targetHead drift prevents child execution", async () => {
@@ -82,7 +184,9 @@ test("sibling ref map drift does not reject dispatch", async () => {
 });
 
 test("constructed legs exclude caller task channel", async () => {
-  const h = harness();
+  const h = harness(pin, {
+    authorityRefs: ["https://example.com/spec"],
+  });
   const result = await h.dispatcher.dispatch("main~1");
   assert.equal(result.status, "accepted");
   if (result.status !== "accepted") return;
@@ -95,4 +199,62 @@ test("constructed legs exclude caller task channel", async () => {
   }
   assert.equal("task" in result.dispatch.input, false);
   assert.equal(result.dispatch.input.canonicalSkill, "review skill");
+});
+
+test("settlement records skipped-missing Spec disposition without Spec leg", async () => {
+  const { assembleRuntimeReviewerReceipt } = await import("../../src/reviewer-settlement.ts");
+  const constructed = constructReviewerDispatch({
+    identity: "dispatch-missing-spec",
+    canonicalSkill: "review skill",
+    target: pin,
+    range,
+    specAuthority: { status: "missing" },
+  });
+  assert.equal(constructed.specDisposition, "skipped-missing");
+  const standardsPrompt = constructed.legs[0]!.prompt;
+  const assembled = assembleRuntimeReviewerReceipt({
+    intent: { status: "completed" },
+    canonicalSkillText: "review skill",
+    record: {
+      rejections: [],
+      accepted: {
+        identity: constructed.identity,
+        recipe: constructed.recipe,
+        input: constructed.input,
+        target: constructed.targetSnapshot,
+        range: constructed.range,
+        authorityRefs: constructed.authorityRefs,
+        specDisposition: constructed.specDisposition,
+        legs: constructed.legs,
+      },
+      started: { dispatchIdentity: constructed.identity, cardinality: 1 },
+      results: {
+        standards: {
+          dispatchIdentity: constructed.identity,
+          axis: "standards",
+          status: "successful",
+          prompt: standardsPrompt,
+          target: pin,
+          workspaceDisposition: "deleted",
+          report: "Standards finding count: 0.",
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        },
+      },
+    },
+  });
+  assert.equal(assembled.specDisposition, "skipped-missing");
+  assert.deepEqual(
+    assembled.acceptedBatch?.legs.map((leg) => leg.axis),
+    ["standards"],
+  );
+  assert.equal(assembled.reports.spec, undefined);
+  assert.equal(assembled.outcomes.spec, undefined);
+  assert.equal(assembled.reports.standards?.text, "Standards finding count: 0.");
 });

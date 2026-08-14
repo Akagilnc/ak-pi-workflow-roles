@@ -24,6 +24,7 @@ export {
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import {
+  requireAuthorityRef,
   type AdmittedCoderInvocation,
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
@@ -389,6 +390,7 @@ type LoadedAdmittedRequestFields = {
   readonly prerequisitesPath?: string;
   readonly prerequisites?: readonly FixerPrerequisite[];
   readonly baseRevision?: string;
+  readonly authorityRefs?: readonly string[];
   readonly mergerInputPath?: string;
   readonly derived?: DerivedMergerEnvelope;
   readonly correlationId?: string;
@@ -463,6 +465,7 @@ async function loadResumableRunRecord(
   let prerequisitesPath: string | undefined;
   let prerequisites: readonly FixerPrerequisite[] | undefined;
   let baseRevision: string | undefined;
+  let authorityRefs: readonly string[] | undefined;
   let mergerInputPath: string | undefined;
   let derived: DerivedMergerEnvelope | undefined;
   let correlationId: string | undefined;
@@ -506,6 +509,19 @@ async function loadResumableRunRecord(
       ) {
         baseRevision = record.baseRevision;
       }
+      if (Array.isArray(record.authorityRefs)) {
+        // Reuse unique --authority-ref grammar; blank/inline prose must not resume as authority.
+        authorityRefs = Object.freeze(
+          record.authorityRefs.map((ref) => {
+            if (typeof ref !== "string") {
+              throw new CliUsageError(
+                "role run admitted authority refs must be durable reference strings",
+              );
+            }
+            return requireAuthorityRef(ref);
+          }),
+        );
+      }
       if (
         typeof record.mergerInputPath === "string" &&
         record.mergerInputPath.trim() !== ""
@@ -540,9 +556,12 @@ async function loadResumableRunRecord(
       correlationId = fromAdmitted.correlationId;
       ticketNumber = fromAdmitted.ticketNumber;
     }
-  } catch {
+  } catch (error) {
+    // Preserve unique --authority-ref grammar failures; do not collapse to unreadable.
+    if (error instanceof CliUsageError) throw error;
     throw new CliUsageError(
       `role run admitted request is unreadable: ${runId}`,
+      { cause: error },
     );
   }
   if (correlationId === undefined || ticketNumber === undefined) {
@@ -589,6 +608,7 @@ async function loadResumableRunRecord(
       ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
       ...(prerequisites === undefined ? {} : { prerequisites }),
       ...(baseRevision === undefined ? {} : { baseRevision }),
+      ...(authorityRefs === undefined ? {} : { authorityRefs }),
       ...(mergerInputPath === undefined ? {} : { mergerInputPath }),
       ...(derived === undefined ? {} : { derived }),
       ...(correlationId === undefined ? {} : { correlationId }),
@@ -806,6 +826,7 @@ export async function loadResumableReviewerRun(
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
+    authorityRefs: Object.freeze([...(loaded.admittedFields.authorityRefs ?? [])]),
     ...restoredTicketFields(loaded.admittedFields),
   };
   return {
