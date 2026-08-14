@@ -15,6 +15,8 @@ Status: accepted（陛下 2026-08-13 grill 逐项拍定；decision keys 与绑�
 | `cadence` | `auto-per-merge-pull-anytime` | 「不是每pr合并就自动开算吗，随时可以拉数据？能做主动报警更好不过感觉后面再说」 |
 | `first-metrics` | `time-buckets-and-role-success` | 「排名靠前的都是类似模型调用……真的没得减的地方。而类似测试时间，返工轮数」「每个角色的成功率。是不是也很重要。毕竟最理想的情况是大家都一次两次过」 |
 
+**cadence 修订（owner 2026-08-14 终裁豁免）：** 上表 `cadence` 原值 `auto-per-merge-pull-anytime` 的 **auto-per-merge 半边**经 owner 2026-08-14 终裁明示豁免；现形态＝**caller-invoked 巡扫 CLI**（公开面 typed 入口，调用者主动调用）；**自动触发整题挂起**，待门下省建立、merge 与后续清理流程归其角色时再议。pull-anytime（#338 查询时 compute-if-missing）仍在。冻结件 `decision-record-337-338-auto.md` 补充裁定三原话：「算了算了。别那么复杂了。」；补充裁定四原话：「就做成一个正常cli。调用者来调用吧。这个做好了。后面有机会再来说自动触发的事情。比如门下省做好了以后。merge和后续清理流程归门下省的某个角色的时候。」
+
 正文其余措辞属驱动方综合，不主张陛下 authority。指标清单与榜单口径归方向票，不载于本 ADR。
 
 ## Considered Options
