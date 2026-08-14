@@ -217,6 +217,20 @@ test("taishi public CLI sweep reject classes: typed envelope + zero writes", asy
           mergedPullRequests: [{ projectRoot: ISSUE_ALPHA, changedLines: "500" }],
         },
       },
+      {
+        name: "changedLines-negative.json",
+        body: {
+          mode: "sweep",
+          mergedPullRequests: [{ projectRoot: ISSUE_ALPHA, changedLines: -1 }],
+        },
+      },
+      {
+        name: "changedLines-infinity.json",
+        body: {
+          mode: "sweep",
+          mergedPullRequests: [{ projectRoot: ISSUE_ALPHA, changedLines: null }],
+        },
+      },
       // Type mismatch (not unauthorized nonempty): projectRoot must be string.
       {
         name: "projectRoot-type.json",

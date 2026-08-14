@@ -462,3 +462,44 @@ await mergeTaishiLibraryIndexRows(ledgerHome, [{
     }
   });
 });
+
+test("taishi changedLines rejects non-finite negatives at issue and sweep boundaries", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async () => {
+      await assert.rejects(
+        () =>
+          runTaishi({
+            mode: "issue",
+            projectRoot: ISSUE_ALPHA,
+            changedLines: -3,
+          }),
+        /changedLines must be a finite non-negative number/,
+      );
+      await assert.rejects(
+        () =>
+          runTaishi({
+            mode: "issue",
+            projectRoot: ISSUE_ALPHA,
+            changedLines: Number.POSITIVE_INFINITY,
+          }),
+        /changedLines must be a finite non-negative number/,
+      );
+      await assert.rejects(
+        () =>
+          runTaishi({
+            mode: "sweep",
+            mergedPullRequests: [{ projectRoot: ISSUE_ALPHA, changedLines: -1 }],
+          }),
+        /changedLines must be a finite non-negative number/,
+      );
+      // 0 remains lawful typed 空缺.
+      const zero = await runTaishi({
+        mode: "issue",
+        projectRoot: ISSUE_ALPHA,
+        changedLines: 0,
+      });
+      assert.deepEqual(zero.page.changedLines, { status: "absent" });
+      assert.deepEqual(zero.page.msPerKLines, { status: "absent" });
+    });
+  });
+});

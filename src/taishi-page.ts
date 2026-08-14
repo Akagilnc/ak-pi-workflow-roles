@@ -163,12 +163,29 @@ function sortScopeConflicts(
 }
 
 /**
+ * Admit caller LOC at the typed input boundary.
+ * Finite non-negative only; 0 remains a lawful typed 空缺 signal (not rejected).
+ * NaN / negative / ±Infinity are structural rejects (sweep attach + issue mode).
+ */
+export function assertTaishiChangedLinesInput(
+  changedLines: number | undefined,
+): void {
+  if (changedLines === undefined) return;
+  if (typeof changedLines !== "number" || !Number.isFinite(changedLines) || changedLines < 0) {
+    throw new Error(
+      `taishi changedLines must be a finite non-negative number, got ${String(changedLines)}`,
+    );
+  }
+}
+
+/**
  * Normalize caller LOC: only omit or 0 → typed 空缺 (PRD efficiency口径).
- * NaN / negative / ±Infinity are not washed — illegal input follows entry contract.
+ * Callers must pass {@link assertTaishiChangedLinesInput} first.
  */
 export function normalizeTaishiChangedLines(
   changedLines: number | undefined,
 ): TaishiOptionalMetricNumber {
+  assertTaishiChangedLinesInput(changedLines);
   if (changedLines === undefined || changedLines === 0) {
     return { status: "absent" };
   }
