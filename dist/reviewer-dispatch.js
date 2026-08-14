@@ -3,7 +3,7 @@ import { immutableReviewerPin } from "./reviewer-pinned-git.js";
 export { createReviewerPinnedGitReader, immutableReviewerPin } from "./reviewer-pinned-git.js";
 import { isReviewerPromptText, sameReviewerPromptText } from "./reviewer-prompt-identity.js";
 import { sha256Hex } from "./sha256.js";
-import { constructReviewerDispatch } from "./reviewer-construction.js";
+import { constructReviewerDispatch, } from "./reviewer-construction.js";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.js";
 export { sha256Hex } from "./sha256.js";
 export { isReviewerPromptText as isReviewerPromptIdentity, sameReviewerPromptText as sameReviewerPromptIdentity } from "./reviewer-prompt-identity.js";
@@ -56,6 +56,9 @@ export function createReviewerDispatcher(d) {
                     range,
                     ...(d.reviewScopeKeys === undefined ? {} : { reviewScopeKeys: d.reviewScopeKeys }),
                     ...(d.authorityRefs === undefined ? {} : { authorityRefs: d.authorityRefs }),
+                    ...(d.specAuthorityDiscovery === undefined
+                        ? {}
+                        : { specAuthorityDiscovery: d.specAuthorityDiscovery }),
                 });
                 if (!sameReviewerPinnedTarget(await d.reader.snapshot(), target)) {
                     throw new ReviewerPreflightError("target-drift", "pinned target snapshot changed before child execution");

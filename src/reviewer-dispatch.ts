@@ -3,7 +3,12 @@ import { immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinned
 export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 import { isReviewerPromptText, sameReviewerPromptText, type ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { sha256Hex } from "./sha256.ts";
-import { constructReviewerDispatch, type ConstructedReviewerDispatch } from "./reviewer-construction.ts";
+import {
+  constructReviewerDispatch,
+  type ConstructedReviewerDispatch,
+  type ReviewerSpecAuthorityDiscovery,
+} from "./reviewer-construction.ts";
+export type { ReviewerSpecAuthorityDiscovery, ReviewerSpecDisposition } from "./reviewer-construction.ts";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
 export { sha256Hex } from "./sha256.ts";
 export { isReviewerPromptText as isReviewerPromptIdentity, sameReviewerPromptText as sameReviewerPromptIdentity, type ReviewerPromptText as ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
@@ -30,6 +35,8 @@ type DispatcherDependencies = Readonly<{
   reviewScopeKeys?: readonly string[];
   /** Durable authority references preserved unchanged into Spec-leg construction only. */
   authorityRefs?: readonly string[];
+  /** Independent Spec-authority discovery; only confirmed missing omits the Spec child. */
+  specAuthorityDiscovery?: ReviewerSpecAuthorityDiscovery;
   run(execution: AcceptedReviewerExecution, invocation: unknown): Promise<unknown>;
   decisionEvidence?(decision: ReviewerDecisionEvidence): void;
 }>;
@@ -75,6 +82,9 @@ export function createReviewerDispatcher(d: DispatcherDependencies) {
           range,
           ...(d.reviewScopeKeys === undefined ? {} : { reviewScopeKeys: d.reviewScopeKeys }),
           ...(d.authorityRefs === undefined ? {} : { authorityRefs: d.authorityRefs }),
+          ...(d.specAuthorityDiscovery === undefined
+            ? {}
+            : { specAuthorityDiscovery: d.specAuthorityDiscovery }),
         });
         if (!sameReviewerPinnedTarget(await d.reader.snapshot(), target)) {
           throw new ReviewerPreflightError("target-drift", "pinned target snapshot changed before child execution");

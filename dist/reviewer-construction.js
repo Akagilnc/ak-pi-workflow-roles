@@ -79,6 +79,20 @@ export function reviewerAxisMethodAdapter(axis) {
     ].join("\n");
 }
 /**
+ * Spec-child launch decision.
+ * - Supplied authorityRefs ⇒ Spec materials present ⇒ launch Spec.
+ * - Confirmed missing discovery AND no refs ⇒ skip Spec (canonical missing-Spec).
+ * - Otherwise ⇒ launch Spec so independent discovery remains possible.
+ * Absence of refs alone is never treated as missing Spec.
+ */
+export function shouldLaunchSpecEvidenceChild(input) {
+    if (input.authorityRefs.length > 0)
+        return true;
+    if (input.specAuthorityDiscovery?.status === "missing")
+        return false;
+    return true;
+}
+/**
  * Spec-only evidence-child material carrier for admitted durable authority references.
  * Exact values preserved; no prose extraction and no Standards/parent injection.
  */
@@ -92,6 +106,13 @@ export function reviewerAuthorityRefsMaterial(authorityRefs) {
 /** Deterministic compiler: fixed target/range plus packaged Skill in, dispatch text out. */
 export function constructReviewerDispatch(input) {
     const authorityRefs = Object.freeze([...(input.authorityRefs ?? [])]);
+    const launchSpec = shouldLaunchSpecEvidenceChild({
+        authorityRefs,
+        ...(input.specAuthorityDiscovery === undefined
+            ? {}
+            : { specAuthorityDiscovery: input.specAuthorityDiscovery }),
+    });
+    const specDisposition = launchSpec ? "launched" : "skipped-missing";
     const common = [
         `Target: ${input.range.target}`,
         `Base: ${input.range.base}`,
@@ -103,7 +124,9 @@ export function constructReviewerDispatch(input) {
         "Fixed-Range:",
         JSON.stringify(input.range, null, 2),
     ].join("\n");
-    const axes = [{ axis: "standards" }, { axis: "spec" }];
+    const axes = launchSpec
+        ? [{ axis: "standards" }, { axis: "spec" }]
+        : [{ axis: "standards" }];
     const legs = axes.map((x) => {
         const parts = [common, reviewerAxisMethodAdapter(x.axis)];
         // Spec evidence-child only — never Standards or a parent replacement Spec leg.
@@ -125,6 +148,7 @@ export function constructReviewerDispatch(input) {
         targetSnapshot: input.target,
         range: input.range,
         authorityRefs,
+        specDisposition,
         legs: Object.freeze(legs),
     });
 }

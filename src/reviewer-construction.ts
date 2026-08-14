@@ -101,6 +101,10 @@ export function reviewerAxisMethodAdapter(axis: ReviewerAxis): string {
 }
 
 export type ConstructedReviewerLeg = Readonly<{ axis: "standards" | "spec"; prompt: ReviewerPromptText }>;
+/** Independent discovery result for authoritative Spec materials. */
+export type ReviewerSpecAuthorityDiscovery = Readonly<{ status: "available" | "missing" }>;
+/** Spec-child cardinality decision recorded on the accepted dispatch. */
+export type ReviewerSpecDisposition = "launched" | "skipped-missing";
 export type ConstructedReviewerDispatch = Readonly<{
   identity: string;
   recipe: "reviewer-common-bundle-v1";
@@ -112,8 +116,26 @@ export type ConstructedReviewerDispatch = Readonly<{
   range: ReviewerRange;
   /** Frozen durable authority references admitted for Spec evidence-child material only. */
   authorityRefs: readonly string[];
+  /** Honest Spec-child disposition: launched, or skipped after confirmed missing Spec. */
+  specDisposition: ReviewerSpecDisposition;
   legs: readonly ConstructedReviewerLeg[];
 }>;
+
+/**
+ * Spec-child launch decision.
+ * - Supplied authorityRefs ⇒ Spec materials present ⇒ launch Spec.
+ * - Confirmed missing discovery AND no refs ⇒ skip Spec (canonical missing-Spec).
+ * - Otherwise ⇒ launch Spec so independent discovery remains possible.
+ * Absence of refs alone is never treated as missing Spec.
+ */
+export function shouldLaunchSpecEvidenceChild(input: {
+  authorityRefs: readonly string[];
+  specAuthorityDiscovery?: ReviewerSpecAuthorityDiscovery;
+}): boolean {
+  if (input.authorityRefs.length > 0) return true;
+  if (input.specAuthorityDiscovery?.status === "missing") return false;
+  return true;
+}
 
 /**
  * Spec-only evidence-child material carrier for admitted durable authority references.
@@ -136,8 +158,17 @@ export function constructReviewerDispatch(input: {
   reviewScopeKeys?: readonly string[];
   /** Durable references/URLs only; injected exclusively into the Spec leg. */
   authorityRefs?: readonly string[];
+  /** Independent discovery result; only confirmed missing omits the Spec child. */
+  specAuthorityDiscovery?: ReviewerSpecAuthorityDiscovery;
 }): ConstructedReviewerDispatch {
   const authorityRefs = Object.freeze([...(input.authorityRefs ?? [])]);
+  const launchSpec = shouldLaunchSpecEvidenceChild({
+    authorityRefs,
+    ...(input.specAuthorityDiscovery === undefined
+      ? {}
+      : { specAuthorityDiscovery: input.specAuthorityDiscovery }),
+  });
+  const specDisposition: ReviewerSpecDisposition = launchSpec ? "launched" : "skipped-missing";
   const common = [
     `Target: ${input.range.target}`,
     `Base: ${input.range.base}`,
@@ -149,7 +180,9 @@ export function constructReviewerDispatch(input: {
     "Fixed-Range:",
     JSON.stringify(input.range, null, 2),
   ].join("\n");
-  const axes = [{ axis: "standards" as const }, { axis: "spec" as const }];
+  const axes: readonly { axis: "standards" | "spec" }[] = launchSpec
+    ? [{ axis: "standards" }, { axis: "spec" }]
+    : [{ axis: "standards" }];
   const legs = axes.map((x) => {
     const parts = [common, reviewerAxisMethodAdapter(x.axis)];
     // Spec evidence-child only — never Standards or a parent replacement Spec leg.
@@ -171,6 +204,7 @@ export function constructReviewerDispatch(input: {
     targetSnapshot: input.target,
     range: input.range,
     authorityRefs,
+    specDisposition,
     legs: Object.freeze(legs),
   });
 }

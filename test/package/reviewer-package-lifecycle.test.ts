@@ -129,6 +129,10 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
         frozenReviewerReceipt.acceptedBatch!.legs!.map((leg) => leg.axis),
         ["standards", "spec"],
       );
+      assert.equal(
+        (frozenReviewerReceipt as { specDisposition?: string }).specDisposition,
+        "launched",
+      );
       assert.equal(frozenReviewerReceipt.reports?.standards?.text, "Standards finding count: 0.");
       assert.equal(
         frozenReviewerReceipt.reports?.spec?.text,

@@ -181,6 +181,48 @@ test("parseReviewerArgv requires base and accepts optional provenance instructio
   assert.throws(() => parseReviewerArgv(["--attach=spec.md", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--base", "main", "--authority-ref", ""]), isUsage);
   assert.throws(() => parseReviewerArgv(["--base", "main", "--authority-ref="]), isUsage);
+  // refs-only: representative inline Spec prose is rejected at the public admission seam.
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main",
+        "--authority-ref",
+        "The system SHALL launch two workers",
+      ]),
+    (error: unknown) =>
+      isUsage(error) &&
+      error instanceof Error &&
+      /durable reference, not inline Spec prose/i.test(error.message),
+  );
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main",
+        "--authority-ref",
+        "Requirements:\n1. Launch two workers\n2. Report cardinality honestly",
+      ]),
+    isUsage,
+  );
+  // Durable public reference forms remain accepted with bytes unchanged.
+  assert.deepEqual(
+    parseReviewerArgv([
+      "--base",
+      "main",
+      "--authority-ref",
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      "--authority-ref",
+      "docs/adr/0063-received-prompt-is-audit-evidence-not-authority.md",
+      "--authority-ref",
+      "git@github.com:Akagilnc/ak-pi-workflow-roles.git",
+    ]).authorityRefs,
+    [
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      "docs/adr/0063-received-prompt-is-audit-evidence-not-authority.md",
+      "git@github.com:Akagilnc/ak-pi-workflow-roles.git",
+    ],
+  );
 });
 
 test("admitReviewerInvocation persists fixed base; caller text is provenance only", async () => {
@@ -241,6 +283,22 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
     ]);
+    await assert.rejects(
+      () =>
+        admitReviewerInvocation({
+          home,
+          cwd: project,
+          instruction: "",
+          attachmentPaths: [],
+          baseRevision: "origin/main",
+          authorityRefs: ["The system SHALL launch two workers"],
+          createRunId: () => "run-reviewer-admit-inline-rejected",
+        }),
+      (error: unknown) =>
+        error instanceof CliUsageError &&
+        error.code === "AK_ROLE_USAGE" &&
+        /durable reference, not inline Spec prose/i.test(error.message),
+    );
 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(

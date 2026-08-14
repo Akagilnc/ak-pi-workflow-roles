@@ -210,6 +210,18 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           expansionCaptured = true;
         }
         // Soul + package-owned verification boundary. Caller instruction is never injected as semantic control.
+        // When Spec child was skipped after confirmed missing Spec, record that honestly for the parent report.
+        const specDispositionNote =
+          acceptedDispatch?.specDisposition === "skipped-missing"
+            ? [
+                "",
+                "<reviewer_spec_disposition>",
+                "Spec-Disposition: skipped-missing",
+                "Independent discovery confirmed authoritative Spec is absent.",
+                "No Spec evidence-child was launched. Note Spec skipped/missing honestly in the final report; do not invent requirements.",
+                "</reviewer_spec_disposition>",
+              ]
+            : [];
         return {
           systemPrompt: [
             event.systemPrompt,
@@ -221,6 +233,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
             "<reviewer_verification_boundary>",
             REVIEWER_VERIFICATION_BOUNDARY,
             "</reviewer_verification_boundary>",
+            ...specDispositionNote,
           ].join("\n"),
         };
       });
