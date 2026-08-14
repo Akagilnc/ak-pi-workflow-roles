@@ -26,6 +26,8 @@ import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { PUBLIC_ROLE_ARGV, runAkRole } from "../../src/public-cli/cli.ts";
+import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
+import { parseTaishiArgv } from "../../src/public-cli/invocation.ts";
 import {
   buildTaishiLibraryIndexPage,
   taishiLibraryIndexPath,
@@ -424,4 +426,47 @@ test("taishi public CLI failure: ticket with no index row and no project-root â†
       });
     });
   });
+});
+
+test("taishi cohort list parse names the actual group flag, not --ticket", () => {
+  assert.throws(
+    () =>
+      parseTaishiArgv([
+        "--cohort",
+        "--group-a-label",
+        "before",
+        "--group-a-issues",
+        "12,not-a-number",
+        "--group-b-label",
+        "after",
+        "--group-b-issues",
+        "34",
+      ]),
+    (error: unknown) => {
+      assert.ok(error instanceof CliUsageError);
+      assert.match(error.message, /--group-a-issues/);
+      assert.doesNotMatch(error.message, /--ticket/);
+      return true;
+    },
+  );
+  assert.throws(
+    () =>
+      parseTaishiArgv([
+        "--cohort",
+        "--group-a-label",
+        "before",
+        "--group-a-issues",
+        "12",
+        "--group-b-label",
+        "after",
+        "--group-b-issues",
+        "0",
+      ]),
+    (error: unknown) => {
+      assert.ok(error instanceof CliUsageError);
+      assert.match(error.message, /--group-b-issues/);
+      assert.doesNotMatch(error.message, /--ticket/);
+      return true;
+    },
+  );
 });

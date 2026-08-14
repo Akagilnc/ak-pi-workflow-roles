@@ -2097,12 +2097,16 @@ const TAISHI_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
 /**
  * Parse a positive ticket / issue number for public taishi admission.
  * Leading zeros and non-integers are structural rejects (same face as #176).
+ * `flag` names the actual argv face in diagnostics (cohort group lists reuse this).
  */
-export function parseTaishiTicketNumber(raw: string): number {
+export function parseTaishiTicketNumber(
+  raw: string,
+  flag: string = "--ticket",
+): number {
   const trimmed = raw.trim();
   if (!TAISHI_TICKET_NUMBER_PATTERN.test(trimmed)) {
     throw new CliUsageError(
-      `taishi --ticket must be a positive integer, got ${raw}`,
+      `taishi ${flag} must be a positive integer, got ${raw}`,
     );
   }
   return Number(trimmed);
@@ -2117,7 +2121,8 @@ function parseTaishiIssueNumberList(raw: string, flag: string): number[] {
   if (parts.some((part) => part === "")) {
     throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
   }
-  return parts.map((part) => parseTaishiTicketNumber(part));
+  // Same numeric rule as --ticket; diagnostic names the actual group flag.
+  return parts.map((part) => parseTaishiTicketNumber(part, flag));
 }
 
 function requireOptionValue(
