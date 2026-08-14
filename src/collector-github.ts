@@ -434,7 +434,7 @@ export function createGhApiRunner(
   };
 }
 
-export type GhIssueSoftFetchResult = Readonly<{ title: string; body: string }>;
+export type GhIssueSoftFetchResult = Readonly<{ body: string }>;
 /**
  * Soft single-issue fetch over the shared gh api runner.
  * undefined = confirmed tracker unreachable / issue not found / gh tool unavailable:
@@ -504,17 +504,14 @@ export function createGhIssueSoftFetcher(
     if (typeof parsed !== "object" || parsed === null) {
       throw new Error("GitHub issue payload must be a JSON object");
     }
-    const title = (parsed as { title?: unknown }).title;
-    if (typeof title !== "string") {
-      throw new Error("GitHub issue payload missing string title");
-    }
     // Match former gh --jq `(.body // "")`: null/missing body projects to empty string.
+    // Title is not ticket-authorized audited material — do not parse or validate it.
     const bodyRaw = (parsed as { body?: unknown }).body;
     if (bodyRaw !== undefined && bodyRaw !== null && typeof bodyRaw !== "string") {
       throw new Error("GitHub issue payload body must be string or null");
     }
     const body = typeof bodyRaw === "string" ? bodyRaw : "";
-    return Object.freeze({ title, body });
+    return Object.freeze({ body });
   };
 }
 

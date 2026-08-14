@@ -116,7 +116,7 @@ export function extractReferencedAdrPaths(issueBody: string): readonly string[] 
   return Object.freeze(paths);
 }
 
-export type ReviewerIssueFetchResult = Readonly<{ title: string; body: string }>;
+export type ReviewerIssueFetchResult = Readonly<{ body: string }>;
 /**
  * Soft issue fetch capability: undefined means confirmed tracker unreachable / issue not found.
  * Unrecognized runner failures and parse/implementation errors propagate with true cause (not washed into degrade).

@@ -104,7 +104,7 @@ function harness(
 }
 
 function successfulFetcher(body = ISSUE_BODY_WITH_ADR): ReviewerIssueFetcher {
-  return async () => Object.freeze({ title: "issue", body });
+  return async () => Object.freeze({ body });
 }
 
 // --- production discovery: self-fetch real-entry tracers own ticket/ADR boundaries ---

@@ -268,7 +268,7 @@ test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start f
       return {
         status: 200,
         headers: {},
-        bodyText: JSON.stringify({ title: "Spec", body: "issue body bytes", body_null_ok: true }),
+        bodyText: JSON.stringify({ body: "issue body bytes", body_null_ok: true }),
       };
     }
     if (args.includes("repos/Acme/widgets/issues/404")) {
@@ -293,7 +293,7 @@ test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start f
   };
   const fetchIssue = createGhIssueSoftFetcher(runner);
   const ok = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 343 });
-  assert.deepEqual(ok, { title: "Spec", body: "issue body bytes" });
+  assert.deepEqual(ok, { body: "issue body bytes" });
   assert.equal(
     calls[0]?.join(" ").includes("api --hostname github.com --include -X GET repos/Acme/widgets/issues/343"),
     true,
@@ -335,7 +335,7 @@ test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start f
   const badShapeRunner: GhApiRunner = async () => ({
     status: 200,
     headers: {},
-    bodyText: JSON.stringify({ title: 1, body: "x" }),
+    bodyText: JSON.stringify({ body: 1 }),
   });
   await assert.rejects(
     () =>
@@ -344,21 +344,21 @@ test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start f
         repo: "widgets",
         ticketNumber: 1,
       }),
-    /missing string title/,
+    /body must be string or null/,
   );
 
   // null body projects to empty string (former gh --jq body // "").
   const nullBodyRunner: GhApiRunner = async () => ({
     status: 200,
     headers: {},
-    bodyText: JSON.stringify({ title: "empty", body: null }),
+    bodyText: JSON.stringify({ body: null }),
   });
   const empty = await createGhIssueSoftFetcher(nullBodyRunner)({
     owner: "Acme",
     repo: "widgets",
     ticketNumber: 1,
   });
-  assert.deepEqual(empty, { title: "empty", body: "" });
+  assert.deepEqual(empty, { body: "" });
 });
 
 
