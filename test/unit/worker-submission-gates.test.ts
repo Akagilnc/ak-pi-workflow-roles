@@ -7,8 +7,19 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
+import { runAkRole } from "../../src/public-cli/cli.ts";
+import {
+  buildNavigatorInfrastructureFailureFact,
+  FIXER_OUTPUT_TOOL_NAME,
+} from "../../src/role-runtime.ts";
+import { createRecordSession } from "../../src/sitian-record-entry.ts";
 import {
   createWorkerSubmissionGate,
   installWorkerGitHooks,
@@ -21,8 +32,11 @@ import {
 } from "../../src/worker-submission-gates.ts";
 import {
   machineLedgerHome,
+  packageRoot,
+  resolvePackageEntrypoint,
   seedGitRepository,
   withHermeticHome,
+  withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 
 function git(cwd: string, args: readonly string[]): string {
@@ -327,6 +341,7 @@ exec "${realGit}" "$@"
   }
 });
 
+
 test("① durability: baseline+bounce via real createRecordSession survive resume; no second false bounce", async () => {
   await withHermeticHome({ prefix: "ak-worker-gate-durable-" }, async ({ home }) => {
     const project = join(home, "proj");
@@ -369,7 +384,8 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     const nest = join(dirname(parentFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
     const files = readdirSync(nest).filter((name) => name.endsWith(".jsonl"));
     assert.equal(files.length, 1);
-    const body = readFileSync(join(nest, files[0]!), "utf8");
+    const gatePath = join(nest, files[0]!);
+    const body = readFileSync(gatePath, "utf8");
     assert.match(body, new RegExp(WORKER_COMMIT_BASELINE_ENTRY_TYPE));
     assert.match(body, new RegExp(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE));
     assert.match(body, new RegExp(baselineHead));
@@ -377,10 +393,50 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     // Advance HEAD after bounce — baseline must stay the first-arm tip across resume.
     git(project, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} after bounce`]);
 
-    // Fresh gate instance ≡ process resume: must not re-bounce; baseline still first tip.
+    // (a) same-nest second open on the live resume path: file identity + bytes unchanged.
+    const bytesBefore = readFileSync(gatePath);
     const resumed = createWorkerSubmissionGate();
     resumed.arm(project, parent);
+    const filesAfterResume = readdirSync(nest).filter((name) => name.endsWith(".jsonl"));
+    assert.equal(filesAfterResume.length, 1);
+    assert.equal(filesAfterResume[0], files[0]);
+    assert.equal(
+      Buffer.compare(bytesBefore, readFileSync(gatePath)),
+      0,
+      "same-nest second open must not rewrite existing gate file bytes",
+    );
+    // Fresh gate instance ≡ process resume: must not re-bounce; baseline still first tip.
     assert.doesNotThrow(() => resumed.assertAcceptable("completed"));
+
+    // Ordinary no-subject children under the same parent must mint fresh sessions — never
+    // reopen a sibling volume selected only by kind/cwd/mtime (S1 / ADR 0065 caller-identity).
+    const evidenceA = createRecordSession({
+      cwd: project,
+      kind: "evidence-children",
+      parent,
+    });
+    const evidenceAFile = evidenceA.getSessionFile();
+    assert.ok(evidenceAFile, "first ordinary child must materialize a session file");
+    evidenceA.appendCustomEntry("evidence-probe", { n: 1 });
+    const evidenceB = createRecordSession({
+      cwd: project,
+      kind: "evidence-children",
+      parent,
+    });
+    const evidenceBFile = evidenceB.getSessionFile();
+    assert.ok(evidenceBFile, "second ordinary child must materialize its own session file");
+    assert.notEqual(
+      evidenceBFile,
+      evidenceAFile,
+      "later ordinary child under same parent must not reopen the prior sibling volume",
+    );
+    const auditorA = createRecordSession({ cwd: project, kind: "auditor-roles", parent });
+    const auditorB = createRecordSession({ cwd: project, kind: "auditor-roles", parent });
+    assert.notEqual(
+      auditorA.getSessionFile(),
+      auditorB.getSessionFile(),
+      "later auditor-roles child under same parent must not reopen the prior sibling volume",
+    );
 
     // Baseline persistence (no bounce path): new arm after only baseline, HEAD unchanged → bounce;
     // then a third instance that only saw the bounce record must accept without re-firing.
@@ -419,5 +475,125 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     // Same HEAD, already reminded once on durable record — confirm path, no second bounce.
     assert.doesNotThrow(() => b.assertAcceptable("completed"));
     assert.doesNotThrow(() => b.assertAcceptable("partially_completed"));
+
+    // (b) first entry materializes → chmod 444 → same-nest second entry reopen →
+    // real worker output tool append fails with EACCES through production hostActions +
+    // tool_result overlay under shared Pi harness; public CLI settles terminal failure.
+    const projectF = join(home, "proj-f-eacces");
+    await mkdir(projectF, { recursive: true });
+    seedGitRepository(projectF);
+    git(projectF, ["config", "user.email", "gate@test.local"]);
+    git(projectF, ["config", "user.name", "Gate Test"]);
+    git(projectF, ["commit", "--allow-empty", "-m", "seed-f"]);
+
+    const callIdF = "fixer-eacces";
+    const completed = {
+      status: "completed" as const,
+      report: "done",
+      classResults: [{
+        name: "Contract",
+        disposition: "completed" as const,
+        searchScope: "all",
+        exceptions: [] as Array<{ where: string; reason: string }>,
+        commitSha: "a".repeat(40),
+      }],
+    };
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    // Real hostActions may stamp json-mode exitCode; scrub so the file runner stays clean.
+    // Public nonzero proof is runAkRole.exitCode below, not this process stamp.
+    const prevExitF = process.exitCode;
+    process.exitCode = undefined;
+    let result: Awaited<ReturnType<typeof runAkRole>>;
+    try {
+      const agentDirF = join(home, ".pi-agent-eacces");
+      await mkdir(agentDirF, { recursive: true });
+      result = await runAkRole(
+        ["fixer", "--project", projectF, "Exercise gate EACCES durability."],
+        {
+          packageRoot,
+          home,
+          agentDir: agentDirF,
+          cwd: projectF,
+          createRunId: () => "run-gate-eacces-001",
+          io: {
+            stdout: (text: string) => { stdout.push(text); },
+            stderr: (text: string) => { stderr.push(text); },
+          },
+          piRunner: async (args, options) => {
+            const sessionFile = args[args.indexOf("--session") + 1]!;
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            const packetPath = args[args.indexOf("--ak-fix-packet") + 1]!;
+            const agentDir = typeof options.env.PI_CODING_AGENT_DIR === "string"
+              ? options.env.PI_CODING_AGENT_DIR
+              : agentDirF;
+
+            // First production entry via real gate/sitian API (fixture constructs nest facts).
+            const parentF = SessionManager.open(sessionFile, sessionDir, projectF);
+            createWorkerSubmissionGate().arm(projectF, parentF);
+            const nestF = join(dirname(sessionFile), WORKER_SUBMISSION_GATE_RECORD_KIND);
+            const filesF = readdirSync(nestF).filter((name) => name.endsWith(".jsonl"));
+            assert.equal(filesF.length, 1, "first entry must materialize one gate record");
+            chmodSync(join(nestF, filesF[0]!), 0o444);
+
+            // Second production entry: session_start re-arms same nest, then worker tool append.
+            const faux = fauxProvider({
+              api: "ak-gate-eacces",
+              provider: "ak-gate-eacces",
+              tokenSize: { min: 1000, max: 1000 },
+            });
+            faux.setResponses([
+              fauxAssistantMessage(
+                fauxToolCall(FIXER_OUTPUT_TOOL_NAME, completed, { id: callIdF }),
+                { stopReason: "toolUse" },
+              ),
+            ]);
+            await withInProcessPi({
+              cwd: projectF,
+              agentDir,
+              faux,
+              sessionManager: SessionManager.open(sessionFile, sessionDir, projectF),
+              additionalExtensionPaths: [resolvePackageEntrypoint()],
+              systemPrompt: "GATE EACCES DURABILITY",
+              mode: "json",
+              flags: {
+                "ak-role": "fixer",
+                "ak-fixer-phase": "apply",
+                "ak-fix-packet": packetPath,
+              },
+              noTools: "builtin",
+              // Drain production session_shutdown so Navigator attendance timers do not pin the runner.
+              reviewerShutdown: true,
+            }, async ({ session }) => {
+              await session.prompt("Exercise gate EACCES durability.").catch(() => undefined);
+            });
+            return {
+              code: typeof process.exitCode === "number" ? process.exitCode : 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+    } finally {
+      process.exitCode = prevExitF;
+    }
+
+    assert.equal(result.exitCode, 1, stdout.join("") || stderr.join("") || "public CLI must exit nonzero");
+    assert.ok(result.terminal, "public CLI must settle a terminal result");
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    if (result.terminal!.roleOutcome.kind === "failure") {
+      assert.equal(result.terminal!.roleOutcome.cause, "output");
+      assert.match(result.terminal!.roleOutcome.diagnostic, /EACCES/);
+      // Public settlement retains the closed infra fact and stamps process exit as exitCode
+      // (#307: exitCode = process exit; code = remote/upstream only when testimony exists).
+      assert.deepEqual(result.terminal!.roleOutcome.decisiveFacts.secondaryEvidence, {
+        ...buildNavigatorInfrastructureFailureFact(),
+        exitCode: 1,
+      });
+      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorName, FIXER_OUTPUT_TOOL_NAME);
+      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, callIdF);
+    }
   });
 });

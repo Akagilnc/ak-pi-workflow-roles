@@ -1,3 +1,15 @@
+/**
+ * #319 Batch 2 (M3/R5): install-surface seam.
+ *
+ * - Shared tarball via installPackedArtifactIntoPiNpm → getSharedIsolatedPack (R5).
+ * - Discovery case owns the real `pi install` + settings write path (including
+ *   repeated install). Admits/negatives share one second install — no per-role
+ *   reinstall (R5).
+ * - Coder admits stay shallow: blank reject + bin/skill path argv only (M3).
+ *   Production deep chain lives in public-cli-coder-installed-run 🔒.
+ * - Full-role argv smoke is owned by public-cli-cold-matrix (M2); this file
+ *   keeps install-unique grammar and ledger negatives (M2.1–M2.4).
+ */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { access, chmod, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
@@ -11,6 +23,7 @@ import {
   piCli,
   runPiSubprocess,
   withHermeticHome,
+  type PiManagedInstall,
 } from "../helpers/pi-test-harness.ts";
 import {
   PUBLIC_CALLABLE_ROLES,
@@ -28,11 +41,37 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
+async function writeArgvExitShim(shimDir: string, argvLog: string): Promise<string> {
+  await mkdir(shimDir, { recursive: true });
+  const shimPath = resolve(shimDir, "pi");
+  await writeFile(
+    shimPath,
+    `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+${TEST_PI_VERSION_BRANCH}
+writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+process.exit(1);
+`,
+    "utf8",
+  );
+  await chmod(shimPath, 0o755);
+  return shimPath;
+}
+
+function shimEnv(shimDir: string): NodeJS.ProcessEnv {
+  return {
+    PATH: `${shimDir}:${process.env.PATH ?? ""}`,
+    PI_OFFLINE: "1",
+  };
+}
+
 test("isolated Pi home installs packed artifact and discovers ak-role via private npm bin", async () => {
   await withHermeticHome({ prefix: "ak-public-cli-bin-" }, async ({ home, agentDir }) => {
     // Use a Pi-shaped agent dir under the hermetic home (not the harness default .pi-agent label).
     const piAgentDir = resolve(home, ".pi", "agent");
     await mkdir(piAgentDir, { recursive: true });
+    // R5: shared HEAD-keyed tarball inside installPackedArtifactIntoPiNpm; this
+    // case alone owns the live pi install → settings.packages write path.
     const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
 
     const assertHostPeersAbsent = async (): Promise<void> => {
@@ -65,7 +104,8 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     const hostPiVersion = execFileSync(hostPiExecutable, ["--version"], { encoding: "utf8" }).trim();
     const traceInvocationIdentity = async (): Promise<void> => {
       // Coder with no credentials reaches its documented activation-failure
-      // terminal without consulting a model provider.
+      // terminal without consulting a model provider. Install-surface identity
+      // only — production coder deep chain is coder-installed-run 🔒 (M3).
       const run = await runAkRoleBin(
         installed.akRoleBin,
         ["coder", "plan", "--project", project, "Trace the selected Pi identity."],
@@ -197,16 +237,29 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
   });
 });
 
-test("ordinary Pi startup does not register Internal --ak-role; ak-role explicitly loads installed runtime", async () => {
-  await withHermeticHome({ prefix: "ak-public-cli-no-auto-" }, async ({ home }) => {
+/**
+ * One cold pi install covers install-unique admits and ledger negatives
+ * (M2.1–M2.4, M3). Full-role argv smoke stays on cold-matrix (M2).
+ */
+test("one installed copy admits coder/fixer/collector gates without ambient skills or auto Internal", async () => {
+  await withHermeticHome({ prefix: "ak-public-cli-admits-" }, async ({ home }) => {
     const piAgentDir = resolve(home, ".pi", "agent");
     await mkdir(piAgentDir, { recursive: true });
-    const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
+    // R5: single pi install for the whole admits matrix (shared tarball upstream).
+    const installed: PiManagedInstall = await installPackedArtifactIntoPiNpm(
+      piAgentDir,
+      home,
+    );
     const internal = resolve(installed.installedRoot, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
     await access(internal);
 
-    // pi install already wrote settings.packages; ordinary startup must still stay inert
-    // because package manifest leaves pi.extensions empty (ADR 0052).
+    // M2.3 — empty home: no ambient skills tree.
+    await assert.rejects(
+      () => access(resolve(home, ".agents", "skills")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+
+    // M2.4 — ordinary Pi startup must stay inert (package leaves pi.extensions empty).
     const ordinary = await runPiSubprocess(["--help"], {
       cwd: home,
       timeoutMs: 30_000,
@@ -225,7 +278,7 @@ test("ordinary Pi startup does not register Internal --ak-role; ak-role explicit
       `ordinary help must not register --ak-role\nstdout:\n${ordinary.stdout}\nstderr:\n${ordinary.stderr}`,
     );
 
-    // Record argv of the Pi process that ak-role owns, then forward to real pi.
+    // Explicit ak-role load still ships Internal entrypoint (no deferred-slice prose).
     const shimDir = resolve(home, "pi-shim");
     await mkdir(shimDir, { recursive: true });
     const argvLog = resolve(home, "ak-role-pi-argv.json");
@@ -256,11 +309,14 @@ child.on("close", (code, signal) => {
     );
     await chmod(shimPath, 0o755);
 
-    // Enter through installed ak-role on completed Merger (#114): no deferred slice.
-    // Non-merge worktree → honest activation failure; Internal entrypoint still ships.
     const project = resolve(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "https://github.com/Acme/Widgets.git"],
+      { cwd: project },
+    );
 
     const throughAkRole = await runAkRoleBin(
       installed.akRoleBin,
@@ -275,7 +331,6 @@ child.on("close", (code, signal) => {
       },
     );
     assert.equal(throughAkRole.localTimeout, false, throughAkRole.stderr);
-    // No active merge → honest activation failure (nonzero), not deferred-slice prose.
     assert.notEqual(throughAkRole.code, 0, throughAkRole.stderr);
     assert.equal(
       throughAkRole.stderr.includes("not available in this install slice"),
@@ -285,388 +340,245 @@ child.on("close", (code, signal) => {
       throughAkRole.stdout.includes("not available in this install slice"),
       false,
     );
-
-    // Installed package still owns the Internal entrypoint for explicit load.
     await access(internal);
     const entryText = await readFile(internal, "utf8");
     assert.equal(entryText.includes("createRoleRuntimeExtension"), true);
-  });
-});
 
-test("installed ak-role coder admits plan/apply and binds package-owned tdd without ambient home skills", async () => {
-  await withHermeticHome({ prefix: "ak-public-cli-coder-" }, async ({ home }) => {
-    const piAgentDir = resolve(home, ".pi", "agent");
-    await mkdir(piAgentDir, { recursive: true });
-    const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
+    // ── coder admits (M3 shallow: blank + bin/skill path only) ──────────────
+    {
+      // M2.1 blank admission
+      const blank = await runAkRoleBin(
+        installed.akRoleBin,
+        ["coder", "plan", "--project", project, "   "],
+        { home, agentDir: piAgentDir },
+      );
+      assert.equal(blank.localTimeout, false, blank.stderr);
+      assert.equal(blank.code, 2, blank.stderr);
+      assert.equal(blank.stderr.includes("not available in this install slice"), false);
 
-    // Packed install carries the complete TDD method tree + provenance.
-    for (const rel of [
-      "resources/methods/tdd/SKILL.md",
-      "resources/methods/tdd/tests.md",
-      "resources/methods/tdd/mocking.md",
-      "resources/methods/tdd/agents/openai.yaml",
-      "resources/methods/tdd/provenance.json",
-    ]) {
-      await access(resolve(installed.installedRoot, rel));
+      const coderShimDir = resolve(home, "pi-shim-coder");
+      const coderArgvLog = resolve(home, "ak-role-coder-pi-argv.json");
+      await writeArgvExitShim(coderShimDir, coderArgvLog);
+
+      const apply = await runAkRoleBin(
+        installed.akRoleBin,
+        [
+          "coder",
+          "--project",
+          project,
+          "Implement the approved vertical slice with package TDD.",
+        ],
+        {
+          home,
+          agentDir: piAgentDir,
+          env: shimEnv(coderShimDir),
+        },
+      );
+      assert.equal(apply.localTimeout, false, apply.stderr);
+      assert.equal(apply.stderr.includes("not available in this install slice"), false);
+      const recorded = JSON.parse(await readFile(coderArgvLog, "utf8")) as string[];
+      assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "coder");
+      assert.equal(recorded[recorded.indexOf("--ak-coder-phase") + 1], "apply");
+      assert.equal(recorded.includes("--skill"), true);
+      const skillPath = recorded[recorded.indexOf("--skill") + 1]!;
+      assert.equal(skillPath.includes("resources/methods/tdd/SKILL.md"), true);
+      assert.equal(
+        skillPath.includes(installed.installedRoot) ||
+          skillPath.includes("@akagilnc/pi-workflow-roles"),
+        true,
+      );
+      assert.equal(skillPath.includes(".agents/skills"), false);
+
+      // Explicit plan omits package skill binding but preserves phase on the installed path.
+      const planArgvLog = resolve(home, "ak-role-coder-plan-pi-argv.json");
+      await writeArgvExitShim(coderShimDir, planArgvLog);
+      const plan = await runAkRoleBin(
+        installed.akRoleBin,
+        [
+          "coder",
+          "plan",
+          "--project",
+          project,
+          "Propose the first implementation plan.",
+        ],
+        {
+          home,
+          agentDir: piAgentDir,
+          env: shimEnv(coderShimDir),
+        },
+      );
+      assert.equal(plan.localTimeout, false, plan.stderr);
+      assert.equal(plan.stderr.includes("not available in this install slice"), false);
+      const planArgs = JSON.parse(await readFile(planArgvLog, "utf8")) as string[];
+      assert.equal(planArgs[planArgs.indexOf("--ak-role") + 1], "coder");
+      assert.equal(planArgs[planArgs.indexOf("--ak-coder-phase") + 1], "plan");
+      assert.equal(planArgs.includes("--skill"), false);
     }
-    // Empty home: no ambient skills tree.
-    await assert.rejects(
-      () => access(resolve(home, ".agents", "skills")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
 
-    const project = resolve(home, "work");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
+    // ── fixer admits (M2.1 blank + M2.2 malformed + package skill path) ─────
+    {
+      const blank = await runAkRoleBin(
+        installed.akRoleBin,
+        ["fixer", "plan", "--project", project, "   "],
+        { home, agentDir: piAgentDir },
+      );
+      assert.equal(blank.localTimeout, false, blank.stderr);
+      assert.equal(blank.code, 2, blank.stderr);
+      assert.equal(blank.stderr.includes("not available in this install slice"), false);
 
-    // Structural reject stays on the installed bin (not "unavailable slice").
-    const blank = await runAkRoleBin(
-      installed.akRoleBin,
-      ["coder", "plan", "--project", project, "   "],
-      { home, agentDir: piAgentDir },
-    );
-    assert.equal(blank.localTimeout, false, blank.stderr);
-    assert.equal(blank.code, 2, blank.stderr);
-    assert.equal(blank.stderr.includes("not available in this install slice"), false);
-
-    // Record Pi argv owned by ak-role coder apply (package skill path must appear).
-    const shimDir = resolve(home, "pi-shim-coder");
-    await mkdir(shimDir, { recursive: true });
-    const argvLog = resolve(home, "ak-role-coder-pi-argv.json");
-    const shimPath = resolve(shimDir, "pi");
-    await writeFile(
-      shimPath,
-      `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
-${TEST_PI_VERSION_BRANCH}
-writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
-process.exit(1);
-`,
-      "utf8",
-    );
-    await chmod(shimPath, 0o755);
-
-    const apply = await runAkRoleBin(
-      installed.akRoleBin,
-      [
-        "coder",
-        "--project",
-        project,
-        "Implement the approved vertical slice with package TDD.",
-      ],
-      {
-        home,
-        agentDir: piAgentDir,
-        env: {
-          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
-          PI_OFFLINE: "1",
-        },
-      },
-    );
-    assert.equal(apply.localTimeout, false, apply.stderr);
-    assert.equal(apply.stderr.includes("not available in this install slice"), false);
-    const recorded = JSON.parse(await readFile(argvLog, "utf8")) as string[];
-    assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "coder");
-    assert.equal(recorded[recorded.indexOf("--ak-coder-phase") + 1], "apply");
-    assert.equal(recorded.includes("--skill"), true);
-    const skillPath = recorded[recorded.indexOf("--skill") + 1]!;
-    assert.equal(skillPath.includes("resources/methods/tdd/SKILL.md"), true);
-    assert.equal(skillPath.includes(installed.installedRoot) || skillPath.includes("@akagilnc/pi-workflow-roles"), true);
-    assert.equal(skillPath.includes(".agents/skills"), false);
-
-    // Explicit plan omits package skill binding but preserves phase on the installed path.
-    const planArgvLog = resolve(home, "ak-role-coder-plan-pi-argv.json");
-    await writeFile(
-      shimPath,
-      `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
-${TEST_PI_VERSION_BRANCH}
-writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
-process.exit(1);
-`,
-      "utf8",
-    );
-    await chmod(shimPath, 0o755);
-    const plan = await runAkRoleBin(
-      installed.akRoleBin,
-      [
-        "coder",
-        "plan",
-        "--project",
-        project,
-        "Propose the first implementation plan.",
-      ],
-      {
-        home,
-        agentDir: piAgentDir,
-        env: {
-          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
-          PI_OFFLINE: "1",
-        },
-      },
-    );
-    assert.equal(plan.localTimeout, false, plan.stderr);
-    assert.equal(plan.stderr.includes("not available in this install slice"), false);
-    const planArgs = JSON.parse(await readFile(planArgvLog, "utf8")) as string[];
-    assert.equal(planArgs[planArgs.indexOf("--ak-role") + 1], "coder");
-    assert.equal(planArgs[planArgs.indexOf("--ak-coder-phase") + 1], "plan");
-    assert.equal(planArgs.includes("--skill"), false);
-  });
-});
-
-test("installed ak-role collector admits a PR without observer declarations", async () => {
-  await withHermeticHome({ prefix: "ak-public-cli-collector-" }, async ({ home }) => {
-    const piAgentDir = resolve(home, ".pi", "agent");
-    await mkdir(piAgentDir, { recursive: true });
-    const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
-
-    const project = resolve(home, "work");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    execFileSync(
-      "git",
-      ["remote", "add", "origin", "https://github.com/Acme/Widgets.git"],
-      { cwd: project },
-    );
-
-    // Malformed grammar rejects on the installed bin (not "unavailable slice").
-    const badPr = await runAkRoleBin(
-      installed.akRoleBin,
-      ["collector", "--pr", "0", "--project", project],
-      { home, agentDir: piAgentDir },
-    );
-    assert.equal(badPr.localTimeout, false, badPr.stderr);
-    assert.equal(badPr.code, 2, badPr.stderr);
-    assert.equal(badPr.stderr.includes("not available in this install slice"), false);
-
-    // Record Pi argv owned by ak-role collector (isolation + structural flags).
-    const shimDir = resolve(home, "pi-shim-collector");
-    await mkdir(shimDir, { recursive: true });
-    const argvLog = resolve(home, "ak-role-collector-pi-argv.json");
-    const shimPath = resolve(shimDir, "pi");
-    await writeFile(
-      shimPath,
-      `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
-${TEST_PI_VERSION_BRANCH}
-writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
-process.exit(1);
-`,
-      "utf8",
-    );
-    await chmod(shimPath, 0o755);
-
-    const run = await runAkRoleBin(
-      installed.akRoleBin,
-      [
-        "collector",
-        "--project",
-        project,
-        "--pr",
-        "999999",
-      ],
-      {
-        home,
-        agentDir: piAgentDir,
-        env: {
-          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
-          PI_OFFLINE: "1",
-        },
-      },
-    );
-    assert.equal(run.localTimeout, false, run.stderr);
-    assert.equal(run.stderr.includes("not available in this install slice"), false);
-    const recorded = JSON.parse(await readFile(argvLog, "utf8")) as string[];
-    assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "collector");
-    assert.equal(recorded[recorded.indexOf("--ak-collector-pr") + 1], "999999");
-    assert.equal(
-      recorded[recorded.indexOf("--ak-collector-repo") + 1],
-      "Acme/Widgets",
-    );
-    assert.equal(recorded.includes("--no-skills"), true);
-    assert.equal(recorded.includes("--skill"), false);
-    assert.equal(recorded.includes("--no-session"), false);
-
-    // Explicit repo override reaches activation flags.
-    const overrideLog = resolve(home, "ak-role-collector-repo-override-pi-argv.json");
-    await writeFile(
-      shimPath,
-      `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
-${TEST_PI_VERSION_BRANCH}
-writeFileSync(${JSON.stringify(overrideLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
-process.exit(1);
-`,
-      "utf8",
-    );
-    await chmod(shimPath, 0o755);
-    const overridden = await runAkRoleBin(
-      installed.akRoleBin,
-      [
-        "collector",
-        "--project",
-        project,
-        "--repo",
-        "OtherOrg/OtherRepo",
-        "--pr",
-        "7",
-      ],
-      {
-        home,
-        agentDir: piAgentDir,
-        env: {
-          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
-          PI_OFFLINE: "1",
-        },
-      },
-    );
-    assert.equal(overridden.localTimeout, false, overridden.stderr);
-    const overrideArgs = JSON.parse(await readFile(overrideLog, "utf8")) as string[];
-    assert.equal(
-      overrideArgs[overrideArgs.indexOf("--ak-collector-repo") + 1],
-      "OtherOrg/OtherRepo",
-    );
-  });
-});
-
-test("installed ak-role fixer admits plan/apply and binds package diagnosing-bugs without ambient home skills", async () => {
-  await withHermeticHome({ prefix: "ak-public-cli-fixer-" }, async ({ home }) => {
-    const piAgentDir = resolve(home, ".pi", "agent");
-    await mkdir(piAgentDir, { recursive: true });
-    const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
-
-    for (const rel of [
-      "resources/methods/diagnosing-bugs/SKILL.md",
-      "resources/methods/diagnosing-bugs/agents/openai.yaml",
-      "resources/methods/diagnosing-bugs/scripts/hitl-loop.template.sh",
-      "resources/methods/diagnosing-bugs/provenance.json",
-    ]) {
-      await access(resolve(installed.installedRoot, rel));
-    }
-    await assert.rejects(
-      () => access(resolve(home, ".agents", "skills")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-
-    const project = resolve(home, "work");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    const blank = await runAkRoleBin(
-      installed.akRoleBin,
-      ["fixer", "plan", "--project", project, "   "],
-      { home, agentDir: piAgentDir },
-    );
-    assert.equal(blank.localTimeout, false, blank.stderr);
-    assert.equal(blank.code, 2, blank.stderr);
-    assert.equal(blank.stderr.includes("not available in this install slice"), false);
-
-    const badPrereq = resolve(home, "bad-prereq.json");
-    await writeFile(badPrereq, JSON.stringify([{ id: "bad/id", requirement: "x" }]), "utf8");
-    const malformed = await runAkRoleBin(
-      installed.akRoleBin,
-      [
-        "fixer",
-        "--project",
-        project,
-        "--prerequisites",
+      const badPrereq = resolve(home, "bad-prereq.json");
+      await writeFile(
         badPrereq,
-        "Repair the class.",
-      ],
-      { home, agentDir: piAgentDir },
-    );
-    assert.equal(malformed.code, 2, malformed.stderr);
-    assert.equal(malformed.stderr.includes("not available in this install slice"), false);
+        JSON.stringify([{ id: "bad/id", requirement: "x" }]),
+        "utf8",
+      );
+      const malformed = await runAkRoleBin(
+        installed.akRoleBin,
+        [
+          "fixer",
+          "--project",
+          project,
+          "--prerequisites",
+          badPrereq,
+          "Repair the class.",
+        ],
+        { home, agentDir: piAgentDir },
+      );
+      assert.equal(malformed.code, 2, malformed.stderr);
+      assert.equal(malformed.stderr.includes("not available in this install slice"), false);
 
-    const shimDir = resolve(home, "pi-shim-fixer");
-    await mkdir(shimDir, { recursive: true });
-    const argvLog = resolve(home, "ak-role-fixer-pi-argv.json");
-    const shimPath = resolve(shimDir, "pi");
-    await writeFile(
-      shimPath,
-      `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
-${TEST_PI_VERSION_BRANCH}
-writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
-process.exit(1);
-`,
-      "utf8",
-    );
-    await chmod(shimPath, 0o755);
+      const fixerShimDir = resolve(home, "pi-shim-fixer");
+      const fixerArgvLog = resolve(home, "ak-role-fixer-pi-argv.json");
+      await writeArgvExitShim(fixerShimDir, fixerArgvLog);
 
-    const apply = await runAkRoleBin(
-      installed.akRoleBin,
-      [
-        "fixer",
-        "--project",
-        project,
-        "Settle the approved repair with optional diagnosis available.",
-      ],
-      {
-        home,
-        agentDir: piAgentDir,
-        env: {
-          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
-          PI_OFFLINE: "1",
+      const apply = await runAkRoleBin(
+        installed.akRoleBin,
+        [
+          "fixer",
+          "--project",
+          project,
+          "Settle the approved repair with optional diagnosis available.",
+        ],
+        {
+          home,
+          agentDir: piAgentDir,
+          env: shimEnv(fixerShimDir),
         },
-      },
-    );
-    assert.equal(apply.localTimeout, false, apply.stderr);
-    assert.equal(apply.stderr.includes("not available in this install slice"), false);
-    const recorded = JSON.parse(await readFile(argvLog, "utf8")) as string[];
-    assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "fixer");
-    assert.equal(recorded[recorded.indexOf("--ak-fixer-phase") + 1], "apply");
-    assert.equal(recorded.includes("--skill"), true);
-    const skillPath = recorded[recorded.indexOf("--skill") + 1]!;
-    assert.equal(
-      skillPath.includes("resources/methods/diagnosing-bugs/SKILL.md"),
-      true,
-    );
-    assert.equal(
-      skillPath.includes(installed.installedRoot) ||
-        skillPath.includes("@akagilnc/pi-workflow-roles"),
-      true,
-    );
-    assert.equal(skillPath.includes(".agents/skills"), false);
-    // Diagnosis available but not forced into the first prompt.
-    assert.equal(recorded[recorded.length - 1]?.includes("/skill:diagnosing-bugs"), false);
+      );
+      assert.equal(apply.localTimeout, false, apply.stderr);
+      assert.equal(apply.stderr.includes("not available in this install slice"), false);
+      const recorded = JSON.parse(await readFile(fixerArgvLog, "utf8")) as string[];
+      assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "fixer");
+      assert.equal(recorded[recorded.indexOf("--ak-fixer-phase") + 1], "apply");
+      assert.equal(recorded.includes("--skill"), true);
+      const skillPath = recorded[recorded.indexOf("--skill") + 1]!;
+      assert.equal(
+        skillPath.includes("resources/methods/diagnosing-bugs/SKILL.md"),
+        true,
+      );
+      assert.equal(
+        skillPath.includes(installed.installedRoot) ||
+          skillPath.includes("@akagilnc/pi-workflow-roles"),
+        true,
+      );
+      assert.equal(skillPath.includes(".agents/skills"), false);
+      // Diagnosis available but not forced into the first prompt.
+      assert.equal(recorded[recorded.length - 1]?.includes("/skill:diagnosing-bugs"), false);
 
-    const planArgvLog = resolve(home, "ak-role-fixer-plan-pi-argv.json");
-    await writeFile(
-      shimPath,
-      `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
-${TEST_PI_VERSION_BRANCH}
-writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
-process.exit(1);
-`,
-      "utf8",
-    );
-    await chmod(shimPath, 0o755);
-    const plan = await runAkRoleBin(
-      installed.akRoleBin,
-      [
-        "fixer",
-        "plan",
-        "--project",
-        project,
-        "Propose the first repair plan.",
-      ],
-      {
-        home,
-        agentDir: piAgentDir,
-        env: {
-          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
-          PI_OFFLINE: "1",
+      const planArgvLog = resolve(home, "ak-role-fixer-plan-pi-argv.json");
+      await writeArgvExitShim(fixerShimDir, planArgvLog);
+      const plan = await runAkRoleBin(
+        installed.akRoleBin,
+        [
+          "fixer",
+          "plan",
+          "--project",
+          project,
+          "Propose the first repair plan.",
+        ],
+        {
+          home,
+          agentDir: piAgentDir,
+          env: shimEnv(fixerShimDir),
         },
-      },
-    );
-    assert.equal(plan.localTimeout, false, plan.stderr);
-    assert.equal(plan.stderr.includes("not available in this install slice"), false);
-    const planArgs = JSON.parse(await readFile(planArgvLog, "utf8")) as string[];
-    assert.equal(planArgs[planArgs.indexOf("--ak-role") + 1], "fixer");
-    assert.equal(planArgs[planArgs.indexOf("--ak-fixer-phase") + 1], "plan");
-    assert.equal(planArgs.includes("--skill"), true);
+      );
+      assert.equal(plan.localTimeout, false, plan.stderr);
+      assert.equal(plan.stderr.includes("not available in this install slice"), false);
+      const planArgs = JSON.parse(await readFile(planArgvLog, "utf8")) as string[];
+      assert.equal(planArgs[planArgs.indexOf("--ak-role") + 1], "fixer");
+      assert.equal(planArgs[planArgs.indexOf("--ak-fixer-phase") + 1], "plan");
+      assert.equal(planArgs.includes("--skill"), true);
+    }
+
+    // ── collector admits (install-unique grammar; argv smoke on cold-matrix) ─
+    {
+      const badPr = await runAkRoleBin(
+        installed.akRoleBin,
+        ["collector", "--pr", "0", "--project", project],
+        { home, agentDir: piAgentDir },
+      );
+      assert.equal(badPr.localTimeout, false, badPr.stderr);
+      assert.equal(badPr.code, 2, badPr.stderr);
+      assert.equal(badPr.stderr.includes("not available in this install slice"), false);
+
+      const collectorShimDir = resolve(home, "pi-shim-collector");
+      const collectorArgvLog = resolve(home, "ak-role-collector-pi-argv.json");
+      await writeArgvExitShim(collectorShimDir, collectorArgvLog);
+
+      const run = await runAkRoleBin(
+        installed.akRoleBin,
+        [
+          "collector",
+          "--project",
+          project,
+          "--pr",
+          "999999",
+        ],
+        {
+          home,
+          agentDir: piAgentDir,
+          env: shimEnv(collectorShimDir),
+        },
+      );
+      assert.equal(run.localTimeout, false, run.stderr);
+      assert.equal(run.stderr.includes("not available in this install slice"), false);
+      const recorded = JSON.parse(await readFile(collectorArgvLog, "utf8")) as string[];
+      assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "collector");
+      assert.equal(recorded[recorded.indexOf("--ak-collector-pr") + 1], "999999");
+      assert.equal(
+        recorded[recorded.indexOf("--ak-collector-repo") + 1],
+        "Acme/Widgets",
+      );
+      assert.equal(recorded.includes("--no-skills"), true);
+      assert.equal(recorded.includes("--skill"), false);
+      assert.equal(recorded.includes("--no-session"), false);
+
+      const overrideLog = resolve(home, "ak-role-collector-repo-override-pi-argv.json");
+      await writeArgvExitShim(collectorShimDir, overrideLog);
+      const overridden = await runAkRoleBin(
+        installed.akRoleBin,
+        [
+          "collector",
+          "--project",
+          project,
+          "--repo",
+          "OtherOrg/OtherRepo",
+          "--pr",
+          "7",
+        ],
+        {
+          home,
+          agentDir: piAgentDir,
+          env: shimEnv(collectorShimDir),
+        },
+      );
+      assert.equal(overridden.localTimeout, false, overridden.stderr);
+      const overrideArgs = JSON.parse(await readFile(overrideLog, "utf8")) as string[];
+      assert.equal(
+        overrideArgs[overrideArgs.indexOf("--ak-collector-repo") + 1],
+        "OtherOrg/OtherRepo",
+      );
+    }
   });
 });
 

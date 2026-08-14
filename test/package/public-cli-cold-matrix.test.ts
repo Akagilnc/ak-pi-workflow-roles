@@ -3,6 +3,10 @@
  * public role matrix through the real `ak-role` executable, proves Pi package
  * update keeps CLI + runtime on one copy, and reaffirms packed runtime resources
  * without presentation/prose freezes (ADR 0052 / 锚定宪法).
+ *
+ * #319 Batch 2 (M2): this file is the all-role cold-smoke source of truth.
+ * Role-unique deep chains stay in *-package-lifecycle / coder-installed-run;
+ * do not re-expand per-role install admits here into production chains.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
