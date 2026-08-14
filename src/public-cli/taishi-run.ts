@@ -7,6 +7,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import { Value } from "typebox/value";
 
 import {
   physicalPathIdentity,
@@ -19,8 +20,8 @@ import {
 } from "../taishi-index.ts";
 import {
   runTaishi,
+  taishiSweepModeInputSchema,
   type TaishiIssueModeInput,
-  type TaishiMergedPullRequest,
   type TaishiSweepModeInput,
 } from "../taishi-entry.ts";
 import { CliUsageError } from "./cli-errors.ts";
@@ -88,84 +89,19 @@ export async function buildTaishiIssueModeInputFromPublicArgv(
   };
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
- * Strict TaishiSweepModeInput contract from attachment JSON (#337).
- * Fields 1:1 with library type — no add/remove/rename; extra keys reject.
+ * Attachment JSON → library TaishiSweepModeInput via the sole schema (#337).
+ * No parallel hand shape; rejects missing/extra/wrong-type fields only.
  */
 export function parseTaishiSweepModeInputFromJsonValue(
   value: unknown,
 ): TaishiSweepModeInput {
-  if (!isPlainObject(value)) {
+  if (!Value.Check(taishiSweepModeInputSchema, value)) {
     throw new CliUsageError(
-      "taishi sweep attachment must be a JSON object matching TaishiSweepModeInput",
+      "taishi sweep attachment must match TaishiSweepModeInput",
     );
   }
-
-  const keys = Object.keys(value).sort();
-  if (keys.length !== 2 || keys[0] !== "mergedPullRequests" || keys[1] !== "mode") {
-    throw new CliUsageError(
-      "taishi sweep attachment fields must be exactly mode and mergedPullRequests",
-    );
-  }
-
-  if (value.mode !== "sweep") {
-    throw new CliUsageError(
-      `taishi sweep attachment mode must be \"sweep\", got ${String(value.mode)}`,
-    );
-  }
-
-  if (!Array.isArray(value.mergedPullRequests)) {
-    throw new CliUsageError(
-      "taishi sweep attachment mergedPullRequests must be an array",
-    );
-  }
-
-  const mergedPullRequests: TaishiMergedPullRequest[] = [];
-  for (let i = 0; i < value.mergedPullRequests.length; i += 1) {
-    const entry = value.mergedPullRequests[i];
-    if (!isPlainObject(entry)) {
-      throw new CliUsageError(
-        `taishi sweep mergedPullRequests[${i}] must be an object`,
-      );
-    }
-    const entryKeys = Object.keys(entry).sort();
-    const allowed =
-      (entryKeys.length === 1 && entryKeys[0] === "projectRoot")
-      || (
-        entryKeys.length === 2
-        && entryKeys[0] === "changedLines"
-        && entryKeys[1] === "projectRoot"
-      );
-    if (!allowed) {
-      throw new CliUsageError(
-        `taishi sweep mergedPullRequests[${i}] fields must be projectRoot and optional changedLines only`,
-      );
-    }
-    if (typeof entry.projectRoot !== "string" || entry.projectRoot.trim() === "") {
-      throw new CliUsageError(
-        `taishi sweep mergedPullRequests[${i}].projectRoot must be a nonempty string`,
-      );
-    }
-    if (entryKeys.includes("changedLines")) {
-      if (typeof entry.changedLines !== "number" || !Number.isFinite(entry.changedLines)) {
-        throw new CliUsageError(
-          `taishi sweep mergedPullRequests[${i}].changedLines must be a finite number`,
-        );
-      }
-      mergedPullRequests.push({
-        projectRoot: entry.projectRoot,
-        changedLines: entry.changedLines,
-      });
-    } else {
-      mergedPullRequests.push({ projectRoot: entry.projectRoot });
-    }
-  }
-
-  return { mode: "sweep", mergedPullRequests };
+  return value;
 }
 
 /**
