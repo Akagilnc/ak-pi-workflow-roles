@@ -36,6 +36,7 @@ const fixtureHome = join(packageRoot, "test/fixtures/taishi/home");
 const ISSUE_PROJECT_ROOT = "/taishi-fixture/issue-demo";
 const BOOK = "fixture-book";
 const BOOK_B = "fixture-book-b";
+const BOOK_C = "fixture-book-c";
 const LEG_A1_RUN = "019ff000-0001-7000-8000-0000000000a1";
 const LEG_A1_DIR = `${LEG_A1_RUN}@coder`;
 const LEG_B2_RUN = "019ff000-0002-7000-8000-0000000000b2";
@@ -48,7 +49,11 @@ const LEG_D0_RUN = "019ff000-000a-7000-8000-0000000000d0";
 const LEG_E1_RUN = "019ff000-000b-7000-8000-0000000000e1";
 const LEG_F2_RUN = "019ff000-000c-7000-8000-0000000000f2";
 const LEG_A3_RUN = "019ff000-000d-7000-8000-0000000000a3";
+const LEG_C5_RUN = "019ff000-000e-7000-8000-0000000000c5";
+const LEG_D2_RUN = "019ff000-000f-7000-8000-0000000000d2";
 const LEG_B1_RUN = "019ff000-0010-7000-8000-0000000000b1";
+const LEG_E3_RUN = "019ff000-0011-7000-8000-0000000000e3";
+const LEG_F1_RUN = "019ff000-0012-7000-8000-0000000000f1";
 
 /** Hand-computed from fixture (scope = ISSUE_PROJECT_ROOT); sort = book, role, runId. */
 const EXPECTED_LEGS = [
@@ -56,14 +61,18 @@ const EXPECTED_LEGS = [
   { runId: LEG_E5_RUN, book: BOOK, role: "coder" },
   { runId: LEG_F6_RUN, book: BOOK, role: "coder" },
   { runId: LEG_A7_RUN, book: BOOK, role: "coder" },
+  { runId: LEG_C5_RUN, book: BOOK, role: "coder" },
   { runId: LEG_C9_RUN, book: BOOK, role: "collector" },
   { runId: LEG_A3_RUN, book: BOOK, role: "collector" },
   { runId: LEG_D0_RUN, book: BOOK, role: "doctor" },
   { runId: LEG_F2_RUN, book: BOOK, role: "fixer" },
   { runId: LEG_B2_RUN, book: BOOK, role: "judge" },
+  { runId: LEG_D2_RUN, book: BOOK, role: "judge" },
+  { runId: LEG_E3_RUN, book: BOOK, role: "judge" },
   { runId: LEG_E1_RUN, book: BOOK, role: "merger" },
   { runId: LEG_B8_RUN, book: BOOK, role: "reviewer" },
   { runId: LEG_B1_RUN, book: BOOK_B, role: "coder" },
+  { runId: LEG_F1_RUN, book: BOOK_C, role: "coder" },
 ] as const;
 
 const EXPECTED_UNREADABLE = [
@@ -149,6 +158,14 @@ const EXPECTED_A2_SEAM_PROBE = {
       { status: "absent" },
     ),
     emptyToolsProbe(
+      LEG_C5_RUN,
+      BOOK,
+      "coder",
+      "2026-08-01T00:11:00.000Z",
+      "2026-08-01T00:11:12.000Z",
+      { status: "present", file: "report.json", role: "coder" },
+    ),
+    emptyToolsProbe(
       LEG_C9_RUN,
       BOOK,
       "collector",
@@ -199,6 +216,22 @@ const EXPECTED_A2_SEAM_PROBE = {
       terminal: { status: "present", file: "report.json", role: "judge" },
     },
     emptyToolsProbe(
+      LEG_D2_RUN,
+      BOOK,
+      "judge",
+      "2026-08-01T00:11:20.000Z",
+      "2026-08-01T00:11:26.000Z",
+      { status: "present", file: "report.json", role: "judge" },
+    ),
+    emptyToolsProbe(
+      LEG_E3_RUN,
+      BOOK,
+      "judge",
+      "2026-08-01T00:11:30.000Z",
+      "2026-08-01T00:11:34.000Z",
+      { status: "present", file: "report.json", role: "judge" },
+    ),
+    emptyToolsProbe(
       LEG_E1_RUN,
       BOOK,
       "merger",
@@ -222,23 +255,37 @@ const EXPECTED_A2_SEAM_PROBE = {
       "2026-08-01T00:10:15.000Z",
       { status: "present", file: "report.json", role: "coder" },
     ),
+    emptyToolsProbe(
+      LEG_F1_RUN,
+      BOOK_C,
+      "coder",
+      "2026-08-01T00:12:00.000Z",
+      "2026-08-01T00:12:25.000Z",
+      { status: "absent" },
+    ),
   ],
 } as const;
 
 /**
- * B3 hand oracle (ticket #327 + PRD #298 票面补正).
+ * B3 hand oracle (ticket #327 + PRD #298 r8 票面补正 + 施工审 r3).
  *
- * Walls (ms): a1=60000, e5=10000, f6=5000, a7=20000, b2=8000, b8=4000,
- * c9=6000, d0=3000, e1=7000, f2=9000, a3=3000, b1=15000.
- * totalWall=150000; rework={e5,f6,a7,a3}=10000+5000+20000+3000=38000; ratio=38000/150000.
+ * Walls (ms): a1=60000, e5=10000, f6=5000, a7=20000, c5=12000, b2=8000,
+ * d2=6000, e3=4000, b8=4000, c9=6000, d0=3000, e1=7000, f2=9000, a3=3000,
+ * b1=15000, f1=25000.
+ * totalWall=197000;
+ * rework={e5,f6,a7,c5,a3,d2,e3}=10000+5000+20000+12000+3000+6000+4000=60000;
+ * ratio=60000/197000.
  *
- * coder: accepted={a1,e5,f6,b1}=4; successEligible={a1,e5,b1}=3 (planned f6 out);
- *   success={a1,b1}=2; rate=2/3; noReceipt={a7}=1;
- *   lanes={fixture-book,fixture-book-b}=2; first both accepted → firstPass=2/2=1;
- *   rounds=[4,1] (book order fixture-book then fixture-book-b... wait books sorted:
- *   fixture-book first → rounds for fixture-book=4, fixture-book-b=1 → [4,1]; median=2.5.
+ * coder: accepted={a1,e5,f6,c5,b1}=5; successEligible={a1,e5,c5,b1}=4
+ *   (planned f6 out; no-receipt a7+f1 out); success={a1,b1}=2; rate=2/4;
+ *   noReceipt={a7,f1}=2;
+ *   lanes={fixture-book,fixture-book-b,fixture-book-c}=3;
+ *   first accepted on book+book-b only → firstPass=2/3;
+ *   rounds books-sorted=[5,1,1]; median=1.
+ * judge: b2 converged + d2 continue + e3 escalate — all accepted+success;
+ *   rounds=[3] median=3; firstPass=1/1.
  * collector: c9 groups accepted+success; a3 missing groups non-accepted;
- *   accepted=1 successElig=1 success=1; rounds=[2] median=2; firstPass=1/1 (c9 first).
+ *   accepted=1 successElig=1 success=1; rounds=[2] median=2; firstPass=1/1.
  */
 const EXPECTED_B3: TaishiAcceptanceSuccessReworkSection = {
   kind: "taishi-acceptance-success-rework",
@@ -297,6 +344,20 @@ const EXPECTED_B3: TaishiAcceptanceSuccessReworkSection = {
       successEligible: false,
       noReceipt: true,
       ordinalInLaneRole: 4,
+      rework: true,
+    },
+    {
+      runId: LEG_C5_RUN,
+      book: BOOK,
+      role: "coder",
+      startedAt: "2026-08-01T00:11:00.000Z",
+      wallMs: 12_000,
+      terminalLabel: "partially_completed",
+      accepted: true,
+      success: false,
+      successEligible: true,
+      noReceipt: false,
+      ordinalInLaneRole: 5,
       rework: true,
     },
     {
@@ -370,6 +431,34 @@ const EXPECTED_B3: TaishiAcceptanceSuccessReworkSection = {
       rework: false,
     },
     {
+      runId: LEG_D2_RUN,
+      book: BOOK,
+      role: "judge",
+      startedAt: "2026-08-01T00:11:20.000Z",
+      wallMs: 6_000,
+      terminalLabel: "continue",
+      accepted: true,
+      success: true,
+      successEligible: true,
+      noReceipt: false,
+      ordinalInLaneRole: 2,
+      rework: true,
+    },
+    {
+      runId: LEG_E3_RUN,
+      book: BOOK,
+      role: "judge",
+      startedAt: "2026-08-01T00:11:30.000Z",
+      wallMs: 4_000,
+      terminalLabel: "escalate",
+      accepted: true,
+      success: true,
+      successEligible: true,
+      noReceipt: false,
+      ordinalInLaneRole: 3,
+      rework: true,
+    },
+    {
       runId: LEG_E1_RUN,
       book: BOOK,
       role: "merger",
@@ -411,20 +500,34 @@ const EXPECTED_B3: TaishiAcceptanceSuccessReworkSection = {
       ordinalInLaneRole: 1,
       rework: false,
     },
+    {
+      runId: LEG_F1_RUN,
+      book: BOOK_C,
+      role: "coder",
+      startedAt: "2026-08-01T00:12:00.000Z",
+      wallMs: 25_000,
+      terminalLabel: "no-receipt",
+      accepted: false,
+      success: false,
+      successEligible: false,
+      noReceipt: true,
+      ordinalInLaneRole: 1,
+      rework: false,
+    },
   ],
   byRole: [
     {
       role: "coder",
-      acceptedCount: 4,
-      successEligibleCount: 3,
+      acceptedCount: 5,
+      successEligibleCount: 4,
       successCount: 2,
-      noReceiptCount: 1,
-      successRate: 2 / 3,
-      appearanceLaneCount: 2,
+      noReceiptCount: 2,
+      successRate: 2 / 4,
+      appearanceLaneCount: 3,
       firstPassLaneCount: 2,
-      firstPassRate: 1,
-      convergenceRounds: [4, 1],
-      convergenceRoundsMedian: 2.5,
+      firstPassRate: 2 / 3,
+      convergenceRounds: [5, 1, 1],
+      convergenceRoundsMedian: 1,
     },
     {
       role: "collector",
@@ -467,16 +570,16 @@ const EXPECTED_B3: TaishiAcceptanceSuccessReworkSection = {
     },
     {
       role: "judge",
-      acceptedCount: 1,
-      successEligibleCount: 1,
-      successCount: 1,
+      acceptedCount: 3,
+      successEligibleCount: 3,
+      successCount: 3,
       noReceiptCount: 0,
       successRate: 1,
       appearanceLaneCount: 1,
       firstPassLaneCount: 1,
       firstPassRate: 1,
-      convergenceRounds: [1],
-      convergenceRoundsMedian: 1,
+      convergenceRounds: [3],
+      convergenceRoundsMedian: 3,
     },
     {
       role: "merger",
@@ -506,11 +609,11 @@ const EXPECTED_B3: TaishiAcceptanceSuccessReworkSection = {
     },
   ],
   rework: {
-    reworkWallMs: 38_000,
-    totalWallMs: 150_000,
-    reworkRatio: 38_000 / 150_000,
-    reworkLegCount: 4,
-    totalLegCount: 12,
+    reworkWallMs: 60_000,
+    totalWallMs: 197_000,
+    reworkRatio: 60_000 / 197_000,
+    reworkLegCount: 7,
+    totalLegCount: 16,
   },
 };
 
@@ -630,19 +733,58 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
       assert.equal(planned.success, false);
       assert.equal(planned.successEligible, false);
       assert.equal(planned.terminalLabel, "planned");
-      // No-receipt: in first-pass appearance den via lane presence; not success den.
+      // coder partially_completed: accepted non-success (PRD worker apply vocabulary).
+      const partial = b3.legs.find((leg) => leg.runId === LEG_C5_RUN);
+      assert.ok(partial);
+      assert.equal(partial.terminalLabel, "partially_completed");
+      assert.equal(partial.accepted, true);
+      assert.equal(partial.success, false);
+      assert.equal(partial.successEligible, true);
+      // judge continue/escalate: verdict production = duty complete = success.
+      const judgeContinue = b3.legs.find((leg) => leg.runId === LEG_D2_RUN);
+      const judgeEscalate = b3.legs.find((leg) => leg.runId === LEG_E3_RUN);
+      const judgeConverged = b3.legs.find((leg) => leg.runId === LEG_B2_RUN);
+      assert.ok(judgeContinue && judgeEscalate && judgeConverged);
+      for (const leg of [judgeConverged, judgeContinue, judgeEscalate]) {
+        assert.equal(leg.accepted, true);
+        assert.equal(leg.success, true);
+        assert.equal(leg.successEligible, true);
+      }
+      assert.equal(judgeContinue.terminalLabel, "continue");
+      assert.equal(judgeEscalate.terminalLabel, "escalate");
+      // No-receipt 4th call (a7): not success den; wall fully booked as rework.
       const noReceipt = b3.legs.find((leg) => leg.runId === LEG_A7_RUN);
       assert.ok(noReceipt);
       assert.equal(noReceipt.noReceipt, true);
       assert.equal(noReceipt.accepted, false);
       assert.equal(noReceipt.successEligible, false);
+      // First-call no-receipt lane (f1/book-c): appearance den only, not first-pass num,
+      // not success den; wall fully booked (ordinal 1 → not rework).
+      const firstNoReceipt = b3.legs.find((leg) => leg.runId === LEG_F1_RUN);
+      assert.ok(firstNoReceipt);
+      assert.equal(firstNoReceipt.book, BOOK_C);
+      assert.equal(firstNoReceipt.noReceipt, true);
+      assert.equal(firstNoReceipt.accepted, false);
+      assert.equal(firstNoReceipt.successEligible, false);
+      assert.equal(firstNoReceipt.ordinalInLaneRole, 1);
+      assert.equal(firstNoReceipt.rework, false);
+      assert.equal(firstNoReceipt.wallMs, 25_000);
       const coderStats = b3.byRole.find((row) => row.role === "coder");
       assert.ok(coderStats);
-      assert.equal(coderStats.noReceiptCount, 1);
-      assert.equal(coderStats.appearanceLaneCount, 2);
-      assert.equal(coderStats.successEligibleCount, 3);
+      assert.equal(coderStats.noReceiptCount, 2);
+      assert.equal(coderStats.appearanceLaneCount, 3);
+      assert.equal(coderStats.firstPassLaneCount, 2);
+      assert.equal(coderStats.firstPassRate, 2 / 3);
+      assert.equal(coderStats.successEligibleCount, 4);
       assert.equal(coderStats.successCount, 2);
-      assert.equal(coderStats.successRate, 2 / 3);
+      assert.equal(coderStats.successRate, 2 / 4);
+      assert.deepEqual(coderStats.convergenceRounds, [5, 1, 1]);
+      const judgeStats = b3.byRole.find((row) => row.role === "judge");
+      assert.ok(judgeStats);
+      assert.equal(judgeStats.acceptedCount, 3);
+      assert.equal(judgeStats.successCount, 3);
+      assert.equal(judgeStats.successRate, 1);
+      assert.deepEqual(judgeStats.convergenceRounds, [3]);
       // Collector groups empty array accepted; missing groups non-accepted.
       const groupsLeg = b3.legs.find((leg) => leg.runId === LEG_C9_RUN);
       const missingGroups = b3.legs.find((leg) => leg.runId === LEG_A3_RUN);
@@ -652,12 +794,12 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
       assert.equal(missingGroups.terminalLabel, "non-accepted");
       assert.equal(missingGroups.accepted, false);
       // Rework: 2nd+ same lane+role; weighted wall ratio hand-equal.
-      assert.equal(b3.rework.reworkWallMs, 38_000);
-      assert.equal(b3.rework.totalWallMs, 150_000);
-      assert.equal(b3.rework.reworkRatio, 38_000 / 150_000);
-      assert.equal(b3.rework.reworkLegCount, 4);
-      // Convergence rounds median uses shared even-sample mean primitive.
-      assert.equal(coderStats.convergenceRoundsMedian, medianNumber([4, 1]));
+      assert.equal(b3.rework.reworkWallMs, 60_000);
+      assert.equal(b3.rework.totalWallMs, 197_000);
+      assert.equal(b3.rework.reworkRatio, 60_000 / 197_000);
+      assert.equal(b3.rework.reworkLegCount, 7);
+      // Convergence rounds median uses shared odd-sample middle primitive.
+      assert.equal(coderStats.convergenceRoundsMedian, medianNumber([5, 1, 1]));
 
       // Damaged run: loud unreadable exclusion + single count; duration not on page.
       assert.equal(first.page.unreadableCount, 1);
