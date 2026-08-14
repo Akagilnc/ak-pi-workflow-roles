@@ -1,76 +1,36 @@
 /**
- * Issue-mode metric-family discovery (page composition point).
+ * Issue-mode metric-family registry (page composition point).
  *
- * B/C-wave slices register by adding one module file under
- * `src/taishi-metric-families/` — they do not edit this loader, entry,
- * ledger, or page envelope skeleton.
+ * B1–B4 families are statically imported so the public single-file bundle
+ * (`dist/public-cli/main.js`) carries them. Dynamic directory discovery cannot
+ * see sibling modules inside that bundle and must not be a second compute kernel.
  *
- * Each family module exports `default` or `family` as TaishiMetricFamilyModule.
+ * New issue-page families register by adding a static import + list entry here
+ * (same loader seam; no parallel assembly path).
  */
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-
 import type { TaishiMetricFamilyModule } from "./taishi-metric-family.ts";
-
-/** Production family-module directory (sibling of this loader). */
-export const TAISHI_ISSUE_METRIC_FAMILIES_DIR = fileURLToPath(
-  new URL("./taishi-metric-families/", import.meta.url),
-);
-
-function isFamilyModuleFile(name: string): boolean {
-  if (name.endsWith(".d.ts")) return false;
-  if (name.includes(".test.")) return false;
-  return name.endsWith(".ts") || name.endsWith(".js") || name.endsWith(".mjs");
-}
-
-function readFamilyExport(
-  mod: Record<string, unknown>,
-  fileName: string,
-): TaishiMetricFamilyModule {
-  const candidate = mod.default ?? mod.family;
-  if (
-    candidate === null
-    || typeof candidate !== "object"
-    || typeof (candidate as TaishiMetricFamilyModule).contribute !== "function"
-    || typeof (candidate as TaishiMetricFamilyModule).id !== "string"
-  ) {
-    throw new Error(
-      `taishi metric family module must export default|family module: ${fileName}`,
-    );
-  }
-  return candidate as TaishiMetricFamilyModule;
-}
-
-/** Process-local success product — package family tree is static at runtime. */
-let loadedFamilies: readonly TaishiMetricFamilyModule[] | undefined;
+import acceptanceSuccessReworkFamily from "./taishi-metric-families/acceptance-success-rework.ts";
+import b2FrameBucketsActionsFamily from "./taishi-metric-families/b2-frame-buckets-actions.ts";
+import legWallClockFamily from "./taishi-metric-families/leg-wall-clock.ts";
+import roundTimelineFamily from "./taishi-metric-families/round-timeline.ts";
 
 /**
- * Discover family modules from the production family-module directory.
- * B-slice registration is drop-in: add a file under that directory only.
- *
- * ENOENT/ENOTDIR propagate — never wash a missing production family tree
- * into an empty registry (that would silently emit pages with no family
- * sections). Issue-page composition awaits this before any success write, so a
- * missing tree fails the entry without producing a page. Successful loads are
- * retained for the process; failures never cache.
+ * Production issue-page family modules in stable id order.
+ * Static graph — reachable from source and from the public CLI bundle alike.
+ */
+const ISSUE_METRIC_FAMILIES: readonly TaishiMetricFamilyModule[] = [
+  acceptanceSuccessReworkFamily,
+  b2FrameBucketsActionsFamily,
+  legWallClockFamily,
+  roundTimelineFamily,
+].sort((a, b) => a.id.localeCompare(b.id));
+
+/**
+ * Load the registered issue-page metric families.
+ * Always resolves the static package registry (never readdir of a sibling tree).
  */
 export async function loadTaishiIssueMetricFamilies(): Promise<
   readonly TaishiMetricFamilyModule[]
 > {
-  if (loadedFamilies !== undefined) return loadedFamilies;
-
-  const directory = TAISHI_ISSUE_METRIC_FAMILIES_DIR;
-  // Loud failure: missing/non-directory family tree keeps its native cause.
-  const names = await readdir(directory);
-
-  const families: TaishiMetricFamilyModule[] = [];
-  for (const name of names.sort((a, b) => a.localeCompare(b))) {
-    if (!isFamilyModuleFile(name)) continue;
-    const href = pathToFileURL(join(directory, name)).href;
-    const mod = (await import(href)) as Record<string, unknown>;
-    families.push(readFamilyExport(mod, name));
-  }
-  loadedFamilies = families;
-  return families;
+  return ISSUE_METRIC_FAMILIES;
 }

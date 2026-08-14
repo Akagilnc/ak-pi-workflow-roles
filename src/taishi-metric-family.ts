@@ -1,10 +1,11 @@
 /**
  * Taishi issue-page metric-family registration seam (A2).
  *
- * Each B/C-wave family owns one module file under taishi-metric-families/.
- * Dropping the file is enough to register — no shared registry list edit.
- * Families only contribute optional page sections from typed run facts; they
- * do not open a second scan, entry, or page writer.
+ * Each B/C-wave family owns one module file under taishi-metric-families/
+ * and is listed in the static loader (taishi-metric-families.ts) so the
+ * public single-file bundle carries every family. Families only contribute
+ * optional page sections from typed run facts; they do not open a second
+ * scan, entry, or page writer.
  */
 import type { TaishiReadableRunFacts } from "./taishi-ledger.ts";
 import type { TaishiUnreadableRun } from "./taishi-page.ts";
