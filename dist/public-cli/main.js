@@ -17012,50 +17012,6 @@ var init_explicit_internal = __esm({
   }
 });
 
-// src/public-cli/public-argv.ts
-function takePublicGlobalFlag(argv, index) {
-  const token = argv[index];
-  if (token === void 0) return void 0;
-  if (token === "--help" || token === "-h") {
-    return { flag: "help", consume: 1 };
-  }
-  if (token === "--model") {
-    const value = argv[index + 1];
-    if (value === void 0) {
-      return { flag: "model", consume: 1, value: void 0 };
-    }
-    return { flag: "model", consume: 2, value };
-  }
-  if (token.startsWith("--model=")) {
-    return {
-      flag: "model",
-      consume: 1,
-      value: token.slice("--model=".length)
-    };
-  }
-  if (token === "--thinking") {
-    const raw = argv[index + 1];
-    if (raw === void 0) {
-      return { flag: "thinking", consume: 1, raw: void 0 };
-    }
-    return { flag: "thinking", consume: 2, raw };
-  }
-  if (token.startsWith("--thinking=")) {
-    return {
-      flag: "thinking",
-      consume: 1,
-      raw: token.slice("--thinking=".length)
-    };
-  }
-  return void 0;
-}
-var init_public_argv = __esm({
-  "src/public-cli/public-argv.ts"() {
-    "use strict";
-    init_invocation();
-  }
-});
-
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
 import { readFile as readFile6, realpath as realpath4 } from "node:fs/promises";
@@ -23513,14 +23469,85 @@ var init_reviewer_run = __esm({
 var cli_exports = {};
 __export(cli_exports, {
   CliUsageError: () => CliUsageError,
+  PUBLIC_ROLE_ARGV: () => PUBLIC_ROLE_ARGV,
   buildExplicitInternalActivationArgs: () => buildExplicitInternalActivationArgs,
   helpDocument: () => helpDocument,
+  injectPublicAttachArg: () => injectPublicAttachArg,
+  publicCliCommandIndex: () => publicCliCommandIndex,
+  publicRoleAcceptsAttach: () => publicRoleAcceptsAttach,
   resolveInternalRoleEntrypoint: () => resolveInternalRoleEntrypoint,
   runAkRole: () => runAkRole
 });
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { join as join17 } from "node:path";
+function isPublicRoleArgvCommand(command) {
+  return Object.prototype.hasOwnProperty.call(PUBLIC_ROLE_ARGV, command);
+}
+function publicRoleAcceptsAttach(command) {
+  return isPublicRoleArgvCommand(command) && PUBLIC_ROLE_ARGV[command].acceptsAttach;
+}
+function takePublicGlobalFlag(argv, index) {
+  const token = argv[index];
+  if (token === void 0) return void 0;
+  if (token === "--help" || token === "-h") {
+    return { flag: "help", consume: 1 };
+  }
+  if (token === "--model") {
+    const value = argv[index + 1];
+    if (value === void 0) {
+      return { flag: "model", consume: 1, value: void 0 };
+    }
+    return { flag: "model", consume: 2, value };
+  }
+  if (token.startsWith("--model=")) {
+    return {
+      flag: "model",
+      consume: 1,
+      value: token.slice("--model=".length)
+    };
+  }
+  if (token === "--thinking") {
+    const raw = argv[index + 1];
+    if (raw === void 0) {
+      return { flag: "thinking", consume: 1, raw: void 0 };
+    }
+    return { flag: "thinking", consume: 2, raw };
+  }
+  if (token.startsWith("--thinking=")) {
+    return {
+      flag: "thinking",
+      consume: 1,
+      raw: token.slice("--thinking=".length)
+    };
+  }
+  return void 0;
+}
+function publicCliCommandIndex(argv) {
+  let i = 0;
+  while (i < argv.length) {
+    const token = argv[i];
+    if (token === "--") {
+      return i + 1 < argv.length ? i + 1 : void 0;
+    }
+    const taken = takePublicGlobalFlag(argv, i);
+    if (taken !== void 0) {
+      i += taken.consume;
+      continue;
+    }
+    return i;
+  }
+  return void 0;
+}
+function injectPublicAttachArg(argv, attachPath) {
+  const commandIndex = publicCliCommandIndex(argv);
+  if (commandIndex === void 0) return argv;
+  const command = argv[commandIndex];
+  if (command === void 0 || !publicRoleAcceptsAttach(command)) return argv;
+  const out = [...argv];
+  out.splice(commandIndex + 1, 0, "--attach", attachPath);
+  return out;
+}
 function defaultIo() {
   return {
     stdout: (text) => {
@@ -23910,7 +23937,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseJudgeArgv
+        PUBLIC_ROLE_ARGV.judge.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -23944,7 +23971,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseCoderArgv
+        PUBLIC_ROLE_ARGV.coder.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -23978,7 +24005,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseFixerArgv
+        PUBLIC_ROLE_ARGV.fixer.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24012,7 +24039,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseCollectorArgv
+        PUBLIC_ROLE_ARGV.collector.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24046,7 +24073,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseReviewerArgv
+        PUBLIC_ROLE_ARGV.reviewer.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24080,7 +24107,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseDoctorArgv
+        PUBLIC_ROLE_ARGV.doctor.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24114,7 +24141,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseMergerArgv
+        PUBLIC_ROLE_ARGV.merger.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24136,7 +24163,7 @@ async function runAkRole(argv, env) {
     return { exitCode: 1 };
   }
 }
-var THINKING_LEVELS2;
+var PUBLIC_ROLE_ARGV, THINKING_LEVELS2;
 var init_cli = __esm({
   "src/public-cli/cli.ts"() {
     "use strict";
@@ -24144,7 +24171,6 @@ var init_cli = __esm({
     init_cli_errors();
     init_explicit_internal();
     init_invocation();
-    init_public_argv();
     init_coder_run();
     init_collector_run();
     init_doctor_run();
@@ -24157,6 +24183,15 @@ var init_cli = __esm({
     init_settlement();
     init_explicit_internal();
     init_cli_errors();
+    PUBLIC_ROLE_ARGV = {
+      judge: { parse: parseJudgeArgv, acceptsAttach: true },
+      coder: { parse: parseCoderArgv, acceptsAttach: true },
+      fixer: { parse: parseFixerArgv, acceptsAttach: true },
+      collector: { parse: parseCollectorArgv, acceptsAttach: true },
+      doctor: { parse: parseDoctorArgv, acceptsAttach: true },
+      merger: { parse: parseMergerArgv, acceptsAttach: true },
+      reviewer: { parse: parseReviewerArgv, acceptsAttach: false }
+    };
     THINKING_LEVELS2 = /* @__PURE__ */ new Set([
       "off",
       "minimal",
