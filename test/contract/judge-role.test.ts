@@ -429,6 +429,7 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
       loadSoul: async () => "\n FIXER LAW \n",
       loadPacket: async () => emptyFixPacket,
     },
+    { failInfrastructure(error) { throw error; } },
   );
   assert.deepEqual(new Set(fixer.flags.keys()), new Set(["ak-fix-packet", "ak-fixer-prerequisites", "ak-fixer-phase"]));
   await fixerRuntime.activate();
@@ -515,6 +516,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
             loadSoul: async () => "fixer",
             loadPacket: async () => emptyFixPacket,
           },
+          { failInfrastructure(error) { throw error; } },
         );
         await runtime.activate();
         return harness;
@@ -688,6 +690,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
         entries.push({ type: "custom", customType, data });
       },
       entries: () => entries,
+      recordPointer: () => "/fixture/navigator-record",
       dispose() {},
     };
     let navigator: ReturnType<typeof createNavigatorAttendance> | undefined;
@@ -699,7 +702,6 @@ test("packaged infrastructure failure silence correlates the exact output call i
       createNavigatorAttendance: async (options) => {
         navigator = createNavigatorAttendance({
           ...options,
-          sessionDir: "/repo/.ak/work/issues/28/runs/navigator",
           modelSettingPath: "/missing/navigator-model.json",
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
@@ -933,52 +935,38 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
 });
 
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
+  // #319 Batch 3 (M1): lightweight expansion-binding API seam.
+  // Publish-surface packaged Pi coverage stays in package-entrypoint (M1.4/M1.5).
+  // Unarmed submission gate: completed does not need git baseline (gate ①).
   const request = "Apply the approved plan.";
   const completed = {
     status: "completed",
     report: "TDD evidence and self-check three are recorded here.",
   };
-  const { execFileSync } = await import("node:child_process");
-  const { seedGitRepository } = await import("../helpers/pi-test-harness.ts");
+  const agentCtx = { abort() {}, mode: "tui" };
 
   const start = async () => {
-    const harness = extensionHarness("coder", {
+    const harness = extensionHarness(undefined, {
       "ak-coder-task": "/materials/approved.md",
       "ak-coder-phase": "apply",
     });
-    createRoleRuntimeExtension({
-      loadJudgeSoul: async () => "JUDGE LAW",
-      loadCoderSoul: async () => "CODER LAW",
-      loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
-      loadCanonicalSkillBinding: async () => tddBinding(),
-      transcriptFromContext: () => '<skill name="tdd" location="/copied/transcript">',
-      auditSoulCompliance: async () => ({ status: "pass" }),
-    })(harness.pi as ExtensionAPI);
-    // Keep activation home alive: gate ① arms baseline against this worktree.
-    const home = await mkdtemp(join(tmpdir(), "ak-judge-role-"));
-    const previousHome = process.env.HOME;
-    process.env.HOME = home;
-    seedGitRepository(home);
-    execFileSync("git", ["config", "user.email", "coder@test.local"], { cwd: home });
-    execFileSync("git", ["config", "user.name", "Coder Test"], { cwd: home });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: home });
-    await harness.handlers.get("session_start")?.({}, activationCtx(home));
-    // One forward commit so completed does not hit forgetfulness bounce.
-    execFileSync("git", ["commit", "--allow-empty", "-m", "ak-roles: coder test work"], { cwd: home });
-    return {
-      harness,
-      async dispose() {
-        if (previousHome === undefined) delete process.env.HOME;
-        else process.env.HOME = previousHome;
-        await rm(home, { recursive: true, force: true });
+    const runtime = createCoderRoleRuntime(
+      harness.pi as ExtensionAPI,
+      {
+        loadSoul: async () => "CODER LAW",
+        loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
+        loadCanonicalSkillBinding: async () => tddBinding(),
       },
-    };
+      { failInfrastructure(error) { throw error; } },
+    );
+    await runtime.activate();
+    return harness;
   };
   const submitCompleted = async (
-    started: Awaited<ReturnType<typeof start>>,
+    harness: Awaited<ReturnType<typeof start>>,
     id: string,
   ) => {
-    const tool = started.harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+    const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
     assert.ok(tool);
     return tool.execute(
       id,
@@ -989,10 +977,11 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     );
   };
 
-  const accepted = await start();
-  try {
+  // M1.1 — completed binds to the immediately following canonical expansion.
+  {
+    const harness = await start();
     assert.deepEqual(
-      await accepted.harness.handlers.get("input")?.(
+      await harness.handlers.get("input")?.(
         { text: request, source: "interactive", images: [{ type: "image", data: "fixture" }] },
         {},
       ),
@@ -1003,164 +992,130 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       },
     );
     assert.deepEqual(
-      await accepted.harness.handlers.get("input")?.(
+      await harness.handlers.get("input")?.(
         { text: "A later message must not reinvoke TDD." },
         {},
       ),
       { action: "continue" },
     );
-    const promptResult = await accepted.harness.handlers.get("before_agent_start")?.(
+    const promptResult = await harness.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE", prompt: expandedTdd(request) },
-      { abort() {}, mode: "tui" },
+      agentCtx,
     );
     const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
     assert.match(prompt, /<coder_phase>\s*apply/);
     assert.doesNotMatch(prompt, /coder_quality_skill/);
-    assert.deepEqual((await submitCompleted(accepted, "accepted")).details, completed);
-  } finally {
-    await accepted.dispose();
+    assert.deepEqual((await submitCompleted(harness, "accepted")).details, completed);
   }
 
-  // One must-reject malformed expansion proves the completed-gate (law ③);
+  // M1.2 — one must-reject malformed expansion proves the completed-gate (law ③);
   // the full malformed spelling matrix lives in canonical-skill-binding tests.
   {
-    const started = await start();
-    try {
-      await started.harness.handlers.get("input")?.({ text: request }, {});
-      await started.harness.handlers.get("before_agent_start")?.(
-        { systemPrompt: "BASE", prompt: expandedTdd(request).replace(tddBody, "# Canonical TDD") },
-        { abort() {}, mode: "tui" },
-      );
-      await assert.rejects(
-        submitCompleted(started, "malformed-gate"),
-        /completed requires the Matt tdd skill to be expanded/i,
-      );
-    } finally {
-      await started.dispose();
-    }
-  }
-
-  const later = await start();
-  try {
-    await later.harness.handlers.get("input")?.({ text: request }, {});
-    await later.harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: "not the expansion" },
-      { abort() {}, mode: "tui" },
-    );
-    await later.harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd(request) },
-      { abort() {}, mode: "tui" },
+    const harness = await start();
+    await harness.handlers.get("input")?.({ text: request }, {});
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request).replace(tddBody, "# Canonical TDD") },
+      agentCtx,
     );
     await assert.rejects(
-      submitCompleted(later, "later"),
+      submitCompleted(harness, "malformed-gate"),
       /completed requires the Matt tdd skill to be expanded/i,
     );
-  } finally {
-    await later.dispose();
   }
 
-  const prefixed = await start();
-  try {
-    assert.deepEqual(
-      await prefixed.harness.handlers.get("input")?.(
-        { text: `/skill:tdd ${request}` },
-        {},
-      ),
-      { action: "continue" },
+  // M1.3 — later / non-immediate expansion must not authorize completed.
+  {
+    const harness = await start();
+    await harness.handlers.get("input")?.({ text: request }, {});
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: "not the expansion" },
+      agentCtx,
     );
-    await prefixed.harness.handlers.get("before_agent_start")?.(
+    await harness.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE", prompt: expandedTdd(request) },
-      { abort() {}, mode: "tui" },
+      agentCtx,
     );
-    assert.deepEqual((await submitCompleted(prefixed, "prefixed")).details, completed);
-  } finally {
-    await prefixed.dispose();
+    await assert.rejects(
+      submitCompleted(harness, "later"),
+      /completed requires the Matt tdd skill to be expanded/i,
+    );
   }
 
-  const bareNative = await start();
-  try {
+  {
+    const harness = await start();
     assert.deepEqual(
-      await bareNative.harness.handlers.get("input")?.(
-        { text: "/skill:tdd" },
-        {},
-      ),
+      await harness.handlers.get("input")?.({
+        text: `/skill:tdd ${request}`,
+      }, {}),
       { action: "continue" },
     );
-    await bareNative.harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd("") },
-      { abort() {}, mode: "tui" },
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request) },
+      agentCtx,
     );
-    assert.deepEqual((await submitCompleted(bareNative, "bare-native")).details, completed);
-  } finally {
-    await bareNative.dispose();
+    assert.deepEqual((await submitCompleted(harness, "prefixed")).details, completed);
   }
 
-  const collision = await start();
-  try {
+  {
+    const harness = await start();
     assert.deepEqual(
-      await collision.harness.handlers.get("input")?.(
-        { text: "/skill:tddfoo" },
-        {},
-      ),
+      await harness.handlers.get("input")?.({ text: "/skill:tdd" }, {}),
+      { action: "continue" },
+    );
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd("") },
+      agentCtx,
+    );
+    assert.deepEqual((await submitCompleted(harness, "bare-native")).details, completed);
+  }
+
+  // Prefix-collision transform binding (packaged seam owns real Pi expansion M1.5).
+  {
+    const harness = await start();
+    assert.deepEqual(
+      await harness.handlers.get("input")?.({ text: "/skill:tddfoo" }, {}),
       {
         action: "transform",
         text: "/skill:tdd /skill:tddfoo",
       },
     );
-    await collision.harness.handlers.get("before_agent_start")?.(
+    await harness.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE", prompt: expandedTdd("/skill:tddfoo") },
-      { abort() {}, mode: "tui" },
+      agentCtx,
     );
-    assert.deepEqual(
-      (await submitCompleted(collision, "collision")).details,
-      completed,
-    );
-  } finally {
-    await collision.dispose();
+    assert.deepEqual((await submitCompleted(harness, "collision")).details, completed);
   }
 
   // Refusal remains a sole-final-call terminal without the TDD expansion obligation.
-  const refusedHarness = extensionHarness("coder", {
-    "ak-coder-task": "/materials/approved.md",
-    "ak-coder-phase": "apply",
-  });
-  createRoleRuntimeExtension({
-    loadJudgeSoul: async () => "JUDGE LAW",
-    loadCoderSoul: async () => "CODER LAW",
-    loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
-    loadCanonicalSkillBinding: async () => tddBinding(),
-    transcriptFromContext: () => "",
-    auditSoulCompliance: async () => ({ status: "pass" }),
-  })(refusedHarness.pi as ExtensionAPI);
-  await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-    await refusedHarness.handlers.get("session_start")?.({}, activationCtx(home));
-  });
-  const refused = {
-    status: "refused",
-    report: "The assignment contradicts its authority.",
-  };
-  const refusalTool = refusedHarness.tools.get(CODER_OUTPUT_TOOL_NAME);
-  assert.ok(refusalTool);
-  assert.deepEqual((await refusalTool.execute(
-    "coder-refused",
-    refused,
-    undefined,
-    undefined,
-    toolCallContext([{ id: "coder-refused", name: CODER_OUTPUT_TOOL_NAME }]),
-  )).details, refused);
-  await assert.rejects(
-    refusalTool.execute(
-      "coder-mixed",
-      completed,
+  {
+    const harness = await start();
+    const refused = {
+      status: "refused",
+      report: "The assignment contradicts its authority.",
+    };
+    const refusalTool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+    assert.ok(refusalTool);
+    assert.deepEqual((await refusalTool.execute(
+      "coder-refused",
+      refused,
       undefined,
       undefined,
-      toolCallContext([
-        { id: "coder-mixed", name: CODER_OUTPUT_TOOL_NAME },
-        { id: "sibling", name: "read" },
-      ]),
-    ),
-    /Coder output must be the sole final tool call/,
-  );
+      toolCallContext([{ id: "coder-refused", name: CODER_OUTPUT_TOOL_NAME }]),
+    )).details, refused);
+    await assert.rejects(
+      refusalTool.execute(
+        "coder-mixed",
+        completed,
+        undefined,
+        undefined,
+        toolCallContext([
+          { id: "coder-mixed", name: CODER_OUTPUT_TOOL_NAME },
+          { id: "sibling", name: "read" },
+        ]),
+      ),
+      /Coder output must be the sole final tool call/,
+    );
+  }
 });
 
 test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {
@@ -1478,7 +1433,6 @@ test(
         createNavigatorAttendance: async (options) => {
           attendance = createNavigatorAttendance({
             ...options,
-            sessionDir: join(modelRoot, "navigator-session"),
             modelSettingPath,
             loadSoul: async () => "route law",
             loadRoutePlaybook: async () => {
@@ -1492,6 +1446,7 @@ test(
               },
               appendEntry() {},
               entries: () => [],
+              recordPointer: () => "/fixture/navigator-record",
               dispose() {
                 disposeCalls += 1;
               },
