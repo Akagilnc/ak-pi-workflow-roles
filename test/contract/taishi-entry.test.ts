@@ -1044,7 +1044,11 @@ test("public ak-role bundle assembles B1-B4 metric families without sibling fami
   const { buildPublicAkRoleBin } = (await import(buildUrl)) as {
     buildPublicAkRoleBin: (outfile?: string) => Promise<void>;
   };
-  const binDir = await mkdtemp(join(tmpdir(), "taishi-bundle-bin-"));
+  // Pin under /tmp (not os.tmpdir()): Linux CI tmpdir is /tmp, so a flat bin at
+  // /tmp/<id>/main.js makes naive join(bin,"..","..") === "/" and host-pi link
+  // attempts mkdir('/node_modules/...'). macOS os.tmpdir() is deeper and hides
+  // that footgun; keep the CI shape locally (same pattern as host-pi-runtime).
+  const binDir = await mkdtemp(join("/tmp", "taishi-bundle-bin-"));
   const binPath = join(binDir, "main.js");
   await withBusinessRepo(async () => {
     await withTempHome(async (home) => {

@@ -26839,6 +26839,7 @@ var init_cli = __esm({
 });
 
 // src/public-cli/main.ts
+import { existsSync as existsSync2 } from "node:fs";
 import { dirname as dirname11, join as join24 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
@@ -26927,7 +26928,14 @@ function linkPackage(packageRoot2, name, targetDir) {
 
 // src/public-cli/main.ts
 var here = dirname11(fileURLToPath2(import.meta.url));
-var packageRoot = join24(here, "..", "..");
+function resolvePackageRoot(binDir) {
+  const canonical = join24(binDir, "..", "..");
+  if (existsSync2(join24(canonical, "package.json"))) {
+    return canonical;
+  }
+  return binDir;
+}
+var packageRoot = resolvePackageRoot(here);
 ensureHostPiRuntimeResolvable(packageRoot);
 var { runAkRole: runAkRole2 } = await Promise.resolve().then(() => (init_cli(), cli_exports));
 var result = await runAkRole2(process.argv.slice(2), { packageRoot });
