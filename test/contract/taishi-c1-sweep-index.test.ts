@@ -7,7 +7,7 @@
  * C1 fixture runs use exclusive runId segment 019ff000-1xxx.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { cp, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +17,10 @@ import { fileURLToPath } from "node:url";
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runTaishi } from "../../src/taishi-entry.ts";
 import {
+  buildTaishiLibraryIndexPage,
+  mergeTaishiLibraryIndexRows,
   taishiLibraryIndexPath,
+  writeTaishiLibraryIndexPage,
   type TaishiLibraryIndexPage,
   type TaishiLibraryIndexRow,
 } from "../../src/taishi-index.ts";
@@ -361,5 +364,101 @@ test("taishi C1 sweep: unreadable later end-frame still wins lastActivityAt; ela
       assert.deepEqual(indexOnDisk.rows[0]?.lastActivityAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
       assert.equal(indexOnDisk.rows[0]?.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
     });
+  });
+});
+
+
+test("taishi library-index concurrent issue upserts retain both rows", async () => {
+  await withBusinessRepo(async () => {
+    const home = await mkdtemp(join(tmpdir(), "taishi-c1-lock-home-"));
+    try {
+      await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
+      const ledgerHome = join(home, ".ak-roles");
+      // Shared old page both children will read before inserting their own row.
+      await writeTaishiLibraryIndexPage(
+        ledgerHome,
+        buildTaishiLibraryIndexPage([
+          {
+            projectRoot: physicalPathIdentity("/taishi-fixture/c1-lock-seed"),
+            issueNumber: 9000,
+            totalElapsedMs: 1,
+            changedLines: { status: "absent" },
+            msPerKLines: { status: "absent" },
+            lastActivityAt: { status: "absent" },
+          },
+        ]),
+      );
+
+      const entryHref = JSON.stringify(
+        new URL("../../src/taishi-index.ts", import.meta.url).href,
+      );
+      const topologyHref = JSON.stringify(
+        new URL("../../src/activation-ledger-topology.ts", import.meta.url).href,
+      );
+      const childSource = `
+const { mergeTaishiLibraryIndexRows } = await import(${entryHref});
+const { physicalPathIdentity } = await import(${topologyHref});
+const ledgerHome = process.env.TAISHI_LEDGER_HOME;
+const issueNumber = Number(process.env.TAISHI_ISSUE_NUMBER);
+const projectRoot = process.env.TAISHI_PROJECT_ROOT;
+if (!ledgerHome || !Number.isFinite(issueNumber) || !projectRoot) {
+  throw new Error("missing child env");
+}
+await new Promise((r) => setTimeout(r, 25));
+await mergeTaishiLibraryIndexRows(ledgerHome, [{
+  projectRoot: physicalPathIdentity(projectRoot),
+  issueNumber,
+  totalElapsedMs: issueNumber,
+  changedLines: { status: "absent" },
+  msPerKLines: { status: "absent" },
+  lastActivityAt: { status: "absent" },
+}]);
+`;
+
+      const runChild = (issueNumber: number, projectRoot: string) =>
+        new Promise<{ status: number | null; stderr: string }>((resolve, reject) => {
+          const child = spawn(
+            process.execPath,
+            ["--import", "tsx", "--input-type=module", "-e", childSource],
+            {
+              cwd: packageRoot,
+              env: {
+                ...process.env,
+                HOME: home,
+                TAISHI_LEDGER_HOME: ledgerHome,
+                TAISHI_ISSUE_NUMBER: String(issueNumber),
+                TAISHI_PROJECT_ROOT: projectRoot,
+              },
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          );
+          let stderr = "";
+          child.stderr.setEncoding("utf8");
+          child.stderr.on("data", (chunk: string) => {
+            stderr += chunk;
+          });
+          child.on("error", reject);
+          child.on("close", (status) => resolve({ status, stderr }));
+        });
+
+      const [a, b] = await Promise.all([
+        runChild(9001, "/taishi-fixture/c1-lock-a"),
+        runChild(9002, "/taishi-fixture/c1-lock-b"),
+      ]);
+      assert.equal(a.status, 0, a.stderr);
+      assert.equal(b.status, 0, b.stderr);
+
+      const index = JSON.parse(
+        await readFile(taishiLibraryIndexPath(ledgerHome), "utf8"),
+      ) as TaishiLibraryIndexPage;
+      const nums = index.rows
+        .map((row) => row.issueNumber)
+        .sort((x, y) => (x ?? 0) - (y ?? 0));
+      assert.deepEqual(nums, [9000, 9001, 9002]);
+      // merge helper remains callable in-process (single coordination seam).
+      await mergeTaishiLibraryIndexRows(ledgerHome, []);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });

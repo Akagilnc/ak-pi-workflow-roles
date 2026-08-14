@@ -25,10 +25,8 @@ import {
   type TaishiScopedRunScan,
 } from "./taishi-ledger.ts";
 import {
-  readTaishiLibraryIndexPage,
+  mergeTaishiLibraryIndexRows,
   rowFromIssueMetricsPage,
-  upsertTaishiLibraryIndexRows,
-  writeTaishiLibraryIndexPage,
   type TaishiLibraryIndexPage,
 } from "./taishi-index.ts";
 import {
@@ -300,12 +298,11 @@ async function runTaishiIssueMode(
   // Issue number present → maintain the unique issueNumber→projectRoot index row
   // so cohort can join without a second addressing kernel (ADR 0068 page key unchanged).
   // Row carries C1 efficiency columns from the page (single index shape, no second kernel).
+  // Locked read→upsert→write so concurrent issue/sweep CLI writers do not drop rows.
   if (issueNumber !== undefined) {
-    const existing = await readTaishiLibraryIndexPage(ledgerHome);
-    const index = upsertTaishiLibraryIndexRows(existing, [
+    await mergeTaishiLibraryIndexRows(ledgerHome, [
       rowFromIssueMetricsPage(page),
     ]);
-    await writeTaishiLibraryIndexPage(ledgerHome, index);
   }
 
   return { mode: "issue", page, pagePath };
@@ -321,10 +318,8 @@ async function runTaishiSweepMode(
     issuePages.push(await runTaishiIssueMode(entry));
   }
 
-  const existing = await readTaishiLibraryIndexPage(ledgerHome);
   const upserts = issuePages.map((result) => rowFromIssueMetricsPage(result.page));
-  const index = upsertTaishiLibraryIndexRows(existing, upserts);
-  const indexPath = await writeTaishiLibraryIndexPage(ledgerHome, index);
+  const { index, indexPath } = await mergeTaishiLibraryIndexRows(ledgerHome, upserts);
 
   return { mode: "sweep", issuePages, index, indexPath };
 }

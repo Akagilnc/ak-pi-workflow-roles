@@ -8,9 +8,13 @@
  * Cross-book one row per issue. C2 joins cohort groups by issueNumber →
  * projectRoot page reference (ADR 0068 mechanical key). Missing row =
  * typed vacancy entry — never silent skip, never live recompute.
+ *
+ * Multi-process issue/sweep writers coordinate the whole read→upsert→write
+ * on one exclusive lock next to the index (atomic rename still prevents torn
+ * JSON; the lock prevents lost-update across concurrent CLI processes).
  */
+import { open, readFile, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { readFile } from "node:fs/promises";
 
 import { writeFileAtomically } from "./atomic-write.ts";
 import {
@@ -22,6 +26,55 @@ import type {
   TaishiOptionalMetricNumber,
   TaishiOptionalTimestamp,
 } from "./taishi-page.ts";
+
+const LIBRARY_INDEX_LOCK_NAME = ".library-index.lock";
+const LIBRARY_INDEX_LOCK_TIMEOUT_MS = 30_000;
+const LIBRARY_INDEX_LOCK_RETRY_MS = 15;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * Exclusive create lock for the library-index read→upsert→write critical section.
+ * Same-directory sibling of the index file; not a second index and not a daemon.
+ */
+async function withTaishiLibraryIndexLock<T>(
+  ledgerHome: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const indexPath = taishiLibraryIndexPath(ledgerHome);
+  ensureRealDirectoryTree(ledgerHome, dirname(indexPath));
+  const lockPath = join(dirname(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  assertLedgerFileInsideHome(lockPath, ledgerHome);
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        await handle.writeFile(`${process.pid}\n`, "utf8");
+        return await fn();
+      } finally {
+        await handle.close().catch(() => undefined);
+        await unlink(lockPath).catch(() => undefined);
+      }
+    } catch (error) {
+      const code =
+        error instanceof Error && "code" in error
+          ? (error as NodeJS.ErrnoException).code
+          : undefined;
+      if (code !== "EEXIST") throw error;
+      if (Date.now() - startedAt > LIBRARY_INDEX_LOCK_TIMEOUT_MS) {
+        throw new Error(
+          `taishi library-index lock timeout after ${LIBRARY_INDEX_LOCK_TIMEOUT_MS}ms: ${lockPath}`,
+        );
+      }
+      await sleep(LIBRARY_INDEX_LOCK_RETRY_MS);
+    }
+  }
+}
 
 /**
  * One issue row on the cross-book library index.
@@ -184,6 +237,8 @@ export async function readTaishiLibraryIndexPage(
 /**
  * Atomically replace the library index page.
  * Directory creation goes through ledger home physical containment.
+ * Prefer {@link mergeTaishiLibraryIndexRows} for multi-writer updates — bare
+ * write has no read→merge coordination.
  */
 export async function writeTaishiLibraryIndexPage(
   ledgerHome: string,
@@ -194,4 +249,21 @@ export async function writeTaishiLibraryIndexPage(
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}\n`);
   return path;
+}
+
+/**
+ * Sole multi-writer coordination seam for library-index updates.
+ * Holds one exclusive lock across read → upsert → atomic write so concurrent
+ * issue/sweep CLI processes cannot drop each other's new rows.
+ */
+export async function mergeTaishiLibraryIndexRows(
+  ledgerHome: string,
+  upserts: readonly TaishiLibraryIndexRow[],
+): Promise<{ readonly index: TaishiLibraryIndexPage; readonly indexPath: string }> {
+  return withTaishiLibraryIndexLock(ledgerHome, async () => {
+    const existing = await readTaishiLibraryIndexPage(ledgerHome);
+    const index = upsertTaishiLibraryIndexRows(existing, upserts);
+    const indexPath = await writeTaishiLibraryIndexPage(ledgerHome, index);
+    return { index, indexPath };
+  });
 }
