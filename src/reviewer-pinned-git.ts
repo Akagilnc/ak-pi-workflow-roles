@@ -25,6 +25,18 @@ export type ReviewerPinnedGitReader = {
   snapshot(): Promise<ReviewerPinnedTarget>;
   resolve(base: string): Promise<string>;
   range(base: string): Promise<ReviewerRange>;
+  /**
+   * Branch/feature name tokens at the pinned target for Spec path matching.
+   * Derived from the pinned ref snapshot (heads/tags/remotes pointing at targetHead);
+   * does not depend on current symbolic HEAD, so detached/remote-only tips stay honest.
+   */
+  featureTokens(): Promise<readonly string[]>;
+  /**
+   * Durable Spec-candidate paths present in the pinned target tree under docs/specs/.scratch.
+   * Spec child clones this target — live working tree is not a source of material facts.
+   * Empty list is confirmed absence; other Git/I-O failures propagate with true cause.
+   */
+  listSpecCandidatePaths(): Promise<readonly string[]>;
 };
 
 const execFileAsync = promisify(execFile);
@@ -138,6 +150,37 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
       ]);
       if (diff.length === 0) invalid("range-invalid", "review range must contain a non-empty diff between base and pinned target");
       return Object.freeze({ base: mergeBase, target: targetHead, diffCommand, diffSha256: sha256Hex(Uint8Array.from(diff)), commits: Object.freeze(commitsText ? commitsText.split("\n") : []) });
+    },
+    async featureTokens() {
+      // Pinned ref snapshot is the target-tree fact — no live branch/symbolic-ref walk,
+      // no catch-to-empty. Detached/remote-only tips surface via refs/remotes/* entries.
+      const names = new Set<string>();
+      for (const [refName, entry] of Object.entries(pin.refs)) {
+        if (entry.peeledCommitId !== targetHead) continue;
+        const short = refName.startsWith("refs/heads/")
+          ? refName.slice("refs/heads/".length)
+          : refName.startsWith("refs/tags/")
+            ? refName.slice("refs/tags/".length)
+            : refName.startsWith("refs/remotes/")
+              ? refName.slice("refs/remotes/".length).replace(/^[^/]+\//, "")
+              : refName;
+        if (short.trim() !== "") names.add(short.trim());
+      }
+      return Object.freeze([...names]);
+    },
+    async listSpecCandidatePaths() {
+      const roots = ["docs", "specs", ".scratch"] as const;
+      // git ls-tree exits 0 with empty stdout when none of the roots exist at targetHead.
+      // Other Git/I-O failures keep their true cause for the dispatch preflight path.
+      const text = await gitText(repositoryRoot, [
+        "ls-tree",
+        "-r",
+        "--name-only",
+        targetHead,
+        "--",
+        ...roots,
+      ]);
+      return Object.freeze(text === "" ? [] : text.split("\n").filter((line) => line.length > 0));
     },
 
   });

@@ -1264,6 +1264,7 @@ function reviewerDecisiveFacts(
   const axes = reviewerAxes(outcomes.readable ? outcomes.value : undefined);
   const reportAxes = reviewerAxes(reports.readable ? reports.value : undefined);
   const acceptedBatch = safelyRead(candidate, "acceptedBatch");
+  const specDisposition = safelyRead(candidate, "specDisposition");
   const facts: Record<string, unknown> = {
     axes,
     reportAxes,
@@ -1271,6 +1272,12 @@ function reviewerDecisiveFacts(
     ...auditNoReceiptDecisiveFact(candidate),
   };
   if (status.readable && typeof status.value === "string") facts.reviewerStatus = status.value;
+  if (
+    specDisposition.readable &&
+    (specDisposition.value === "launched" || specDisposition.value === "skipped-missing")
+  ) {
+    facts.specDisposition = specDisposition.value;
+  }
   const diagnostic = safelyRead(candidate, "diagnostic");
   if (status.readable && status.value === "refused" && diagnostic.readable) {
     facts.diagnosticPresent = typeof diagnostic.value === "string" && diagnostic.value.trim().length > 0;
@@ -3174,6 +3181,7 @@ export async function publishReviewerArtifacts(
         sessionFile: admitted.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         baseRevision: admitted.baseRevision,
+        authorityRefs: [...admitted.authorityRefs],
         ...(admitted.instructionEmpty
           ? {}
           : { callerProvenance: admitted.instruction }),
