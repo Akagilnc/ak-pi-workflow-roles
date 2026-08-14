@@ -71,11 +71,23 @@ export function extractSessionTimestampSpan(
   };
 }
 
+/** First line of a bash `command` argument (sole owner of this summary). */
+export function bashCommandFirstLine(command: string): string {
+  const match = /^[^\r\n]*/.exec(command);
+  return match?.[0] ?? "";
+}
+
 export type SessionToolInterval = {
   readonly toolCallId: string;
   readonly toolName: string;
   readonly startedAt: string;
   readonly endedAt?: string;
+  /**
+   * Bash-only first-line command summary from `arguments.command`.
+   * Omitted for non-bash tools and when the argument is absent/non-string.
+   * Full multi-line bodies are never retained on this typed fact face.
+   */
+  readonly command?: string;
 };
 
 /**
@@ -92,6 +104,7 @@ export function extractSessionToolIntervals(
     toolName: string;
     startedAt: string;
     endedAt?: string;
+    command?: string;
   };
   const order: Open[] = [];
   const openById = new Map<string, Open>();
@@ -119,10 +132,19 @@ export function extractSessionToolIntervals(
         if (openById.has(part.id)) {
           throw new Error(`duplicate toolCall id ${part.id}`);
         }
+        const args = isRecord(part.arguments) ? part.arguments : undefined;
+        // Ticket surface: only bash first-line summary is authorized here.
+        const command =
+          part.name === "bash" &&
+          args !== undefined &&
+          typeof args.command === "string"
+            ? bashCommandFirstLine(args.command)
+            : undefined;
         const interval: Open = {
           toolCallId: part.id,
           toolName: part.name,
           startedAt: callTimestamp,
+          ...(command !== undefined ? { command } : {}),
         };
         order.push(interval);
         openById.set(part.id, interval);
@@ -163,18 +185,15 @@ export function extractSessionToolIntervals(
     }
   }
 
-  return order.map((interval) =>
-    interval.endedAt === undefined
-      ? {
-          toolCallId: interval.toolCallId,
-          toolName: interval.toolName,
-          startedAt: interval.startedAt,
-        }
-      : {
-          toolCallId: interval.toolCallId,
-          toolName: interval.toolName,
-          startedAt: interval.startedAt,
-          endedAt: interval.endedAt,
-        },
-  );
+  return order.map((interval) => {
+    const base = {
+      toolCallId: interval.toolCallId,
+      toolName: interval.toolName,
+      startedAt: interval.startedAt,
+      ...(interval.command !== undefined ? { command: interval.command } : {}),
+    };
+    return interval.endedAt === undefined
+      ? base
+      : { ...base, endedAt: interval.endedAt };
+  });
 }
