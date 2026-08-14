@@ -166,11 +166,9 @@ async function classifyScopedRun(input: {
  */
 export async function scanTaishiIssueRuns(input: {
   readonly projectRoot: string;
-  readonly home?: string;
 }): Promise<TaishiScopedRunScan> {
-  const ledgerHome = resolveActivationLedgerHome(
-    input.home === undefined ? undefined : () => input.home!,
-  );
+  // Package-owned machine home only (ADR 0048) — no invocation-varying override.
+  const ledgerHome = resolveActivationLedgerHome();
   const scopeIdentity = physicalPathIdentity(input.projectRoot);
   const booksRoot = join(ledgerHome, "books");
 

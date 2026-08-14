@@ -6,10 +6,14 @@
  * own modules onto this envelope — never by forking a second page writer.
  */
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { writeFileAtomically } from "./atomic-write.ts";
-import { physicalPathIdentity } from "./activation-ledger-topology.ts";
+import {
+  assertLedgerFileInsideHome,
+  ensureRealDirectoryTree,
+  physicalPathIdentity,
+} from "./activation-ledger-topology.ts";
 
 /** Required run sources that may render a loud unreadable exclusion. */
 export type TaishiMissingSource =
@@ -38,7 +42,6 @@ export type TaishiLegEntry = {
  */
 export type TaishiIssueMetricsPage = {
   readonly kind: "taishi-issue-metrics";
-  readonly version: 1;
   readonly mode: "issue";
   readonly projectRoot: string;
   readonly legs: readonly TaishiLegEntry[];
@@ -71,7 +74,6 @@ export function buildTaishiIssueMetricsPage(input: {
   });
   return {
     kind: "taishi-issue-metrics",
-    version: 1,
     mode: "issue",
     projectRoot: physicalPathIdentity(input.projectRoot),
     legs,
@@ -80,12 +82,18 @@ export function buildTaishiIssueMetricsPage(input: {
   };
 }
 
-/** Atomically replace the issue metrics page (idempotent overwrite). */
+/**
+ * Atomically replace the issue metrics page (idempotent overwrite).
+ * Directory creation and file placement go through the ledger home physical
+ * containment owner (ADR 0038 / 0048) — never plain recursive mkdir alone.
+ */
 export async function writeTaishiIssueMetricsPage(
   ledgerHome: string,
   page: TaishiIssueMetricsPage,
 ): Promise<string> {
   const path = taishiIssuePagePath(ledgerHome, page.projectRoot);
+  ensureRealDirectoryTree(ledgerHome, dirname(path));
+  assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}\n`);
   return path;
 }
