@@ -642,7 +642,6 @@ test("ak-role resume continues merger with package method and exact session", as
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     await materializeConflictedRepo(project);
-    // Binding path under test: machine dispatch lease must be claimed on admit.
     const runId = "run-cli-merger-resume-001";
     const instruction = "Start merge resolution for resume.";
     const material = await loadPackagedMethodSkillMaterial(

@@ -2,10 +2,13 @@
 /**
  * Internal machine launcher entry (not a public bin; ADR 0052).
  *
- * The selecting machine already holds a board-selected ticket identity. This
- * entry materializes the typed ticket face (YAML frontmatter ticketNumber) as
- * an ordinary attachment and starts public `ak-role` with `--attach`. No
- * lease/claim/sidecar channel — admission reads the frozen typed field.
+ * The selecting machine already holds a board-selected ticket identity. For
+ * roles whose public argv accepts `--attach`, this entry materializes the typed
+ * ticket face (YAML frontmatter ticketNumber) as an ordinary attachment and
+ * starts public `ak-role` with `--attach`. Roles without an attachment channel
+ * (today: reviewer) are forwarded unbound — no forced attach, no new protocol.
+ * No lease/claim/sidecar channel — admission reads the frozen typed field when
+ * present.
  *
  * Usage:
  *   npx tsx scripts/dispatch-selected-ticket-role.ts <ticketNumber> \
@@ -16,7 +19,7 @@
  *     judge --project /site "Review the plan."
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +37,44 @@ function usage(): never {
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.stack ?? error.message;
   return String(error);
+}
+
+/**
+ * Public role tokens whose argv grammar accepts `--attach` (bind-if-present).
+ * Reviewer intentionally has no attachment channel and must stay unbound.
+ */
+const ATTACH_CAPABLE_ROLES = new Set([
+  "judge",
+  "coder",
+  "fixer",
+  "collector",
+  "doctor",
+  "merger",
+]);
+
+/** First positional token after optional global flags (the role / support command). */
+function findRoleToken(akRoleArgs: readonly string[]): string | undefined {
+  let i = 0;
+  while (i < akRoleArgs.length) {
+    const token = akRoleArgs[i]!;
+    if (token === "--") {
+      return akRoleArgs[i + 1];
+    }
+    if (token.startsWith("-")) {
+      if (
+        !token.includes("=") &&
+        i + 1 < akRoleArgs.length &&
+        !akRoleArgs[i + 1]!.startsWith("-")
+      ) {
+        i += 2;
+      } else {
+        i += 1;
+      }
+      continue;
+    }
+    return token;
+  }
+  return undefined;
 }
 
 /** Insert `--attach <path>` after the role token (first non-flag arg). */
@@ -104,22 +145,31 @@ const resolvedAkRole =
     ? pathResolved.stdout.trim()
     : akRolePath;
 
-// Typed ticket face — ordinary attachment bytes; admission reads frontmatter only.
-const ticketDir = mkdtempSync(join(tmpdir(), "ak-ticket-face-"));
-const ticketPath = join(ticketDir, `ticket-${ticketNumber}.md`);
-writeFileSync(
-  ticketPath,
-  `---\nticketNumber: ${ticketNumber}\n---\n# #${ticketNumber}\n`,
-  "utf8",
-);
+const roleToken = findRoleToken(akRoleArgs);
+const bindViaAttach =
+  roleToken !== undefined && ATTACH_CAPABLE_ROLES.has(roleToken);
 
-const childArgs = injectAttachArg(akRoleArgs, ticketPath);
-const childEnv = { ...process.env };
-if (homeRaw !== undefined) {
-  childEnv.HOME = homeRaw;
-}
-
+let ticketDir: string | undefined;
+let exitCode = 1;
 try {
+  let childArgs = [...akRoleArgs];
+  if (bindViaAttach) {
+    // Typed ticket face — ordinary attachment bytes; admission reads frontmatter only.
+    ticketDir = mkdtempSync(join(tmpdir(), "ak-ticket-face-"));
+    const ticketPath = join(ticketDir, `ticket-${ticketNumber}.md`);
+    writeFileSync(
+      ticketPath,
+      `---\nticketNumber: ${ticketNumber}\n---\n# #${ticketNumber}\n`,
+      "utf8",
+    );
+    childArgs = injectAttachArg(akRoleArgs, ticketPath);
+  }
+
+  const childEnv = { ...process.env };
+  if (homeRaw !== undefined) {
+    childEnv.HOME = homeRaw;
+  }
+
   const result = spawnSync(resolvedAkRole, childArgs, {
     cwd: siteIdentity,
     env: childEnv,
@@ -130,8 +180,17 @@ try {
   if (result.error) throw result.error;
   if ((result.stdout ?? "").length > 0) process.stdout.write(result.stdout);
   if ((result.stderr ?? "").length > 0) process.stderr.write(result.stderr);
-  process.exit(result.status ?? 1);
+  exitCode = result.status ?? 1;
 } catch (error) {
   console.error(formatError(error));
-  process.exit(1);
+  exitCode = 1;
+} finally {
+  if (ticketDir !== undefined) {
+    try {
+      rmSync(ticketDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup of the ephemeral ticket face directory.
+    }
+  }
 }
+process.exit(exitCode);

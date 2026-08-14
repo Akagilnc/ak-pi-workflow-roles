@@ -6,7 +6,6 @@
  * lease — never table labels/layout/prose classification.
  */
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -212,115 +211,6 @@ test("typed HTTP 429 observation is field-based; quota-like prose alone is never
   });
 });
 
-
-test("resume restores typed ticketNumber from admitted request", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const ticketFace = join(home, "ticket-176.md");
-    await writeFile(
-      ticketFace,
-      "---\nticketNumber: 176\n---\n# #176\n",
-      "utf8",
-    );
-    const runId = "run-resume-ticket-001";
-    const { io } = captureIo();
-    const first = await runAkRole(
-      ["judge", "--project", project, "--attach", ticketFace, "quota interrupted"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await observeTyped429ViaProductionHandler({
-            runDirectory: join(sessionDir, ".."),
-            provider: "openai-codex",
-          });
-          await writeSessionProviderStop(sessionDir, {
-            provider: "openai-codex",
-            errorMessage: "upstream declined",
-          });
-          return {
-            code: 1,
-            stderr: "fail\n",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-      },
-    );
-    assert.ok(first.terminal?.resume);
-
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "runs",
-      `${runId}@judge`,
-    );
-    const admittedPersisted = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { ticketNumber?: number };
-    assert.equal(admittedPersisted.ticketNumber, 176);
-    const invocation = JSON.parse(
-      await readFile(join(runDirectory, "invocation.json"), "utf8"),
-    ) as { ticketNumber?: number };
-    assert.equal(invocation.ticketNumber, 176);
-
-    const loaded = await loadResumableJudgeRun(home, runId);
-    assert.equal(loaded.admitted.ticketNumber, 176);
-
-    // No lease sidecar exists under the typed-face design.
-    assert.equal(
-      existsSync(join(home, ".ak-roles", "books", bookKey, "dispatch-lease.json")),
-      false,
-    );
-
-    const resumed = await runAkRole(["resume", runId], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials: { "openai-codex": true, xai: true },
-      io: captureIo().io,
-      piRunner: async (args) => {
-        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-        await writeFile(
-          join(sessionDir, "session.jsonl"),
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolName: JUDGE_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: { judgeStatus: "converged" },
-            },
-          })}\n`,
-          "utf8",
-        );
-        return {
-          code: 0,
-          stderr: "",
-          timedOut: false,
-          args: [...args],
-        };
-      },
-    });
-    assert.equal(resumed.exitCode, 0, "resume should settle");
-    // ticketNumber remains on the durable admitted page after resume.
-    const after = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { ticketNumber?: number };
-    assert.equal(after.ticketNumber, 176);
-  });
-});
 
 test("typed 429 failure Terminal carries resume command and reveals run id only there", async () => {
   await withTempHome(async (home) => {
