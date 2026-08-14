@@ -53,6 +53,61 @@ const EXPECTED_UNREADABLE = [
   },
 ] as const;
 
+/**
+ * A2 seam-probe hand values from fixture sessions (readable legs only).
+ * wallMs: a1 = 60_000, b2 = 8_000 → even-sample median = (8000+60000)/2 = 34000.
+ */
+const EXPECTED_A2_SEAM_PROBE = {
+  kind: "taishi-a2-seam-probe",
+  frameSpanMedianMs: 34_000,
+  runs: [
+    {
+      runId: LEG_A1_RUN,
+      book: BOOK,
+      role: "coder",
+      frameSpan: {
+        startedAt: "2026-08-01T00:00:00.000Z",
+        endedAt: "2026-08-01T00:01:00.000Z",
+      },
+      frameSpanMs: 60_000,
+      toolIntervals: [
+        {
+          toolCallId: "call_bash_a",
+          toolName: "bash",
+          startedAt: "2026-08-01T00:00:10.000Z",
+          endedAt: "2026-08-01T00:00:40.000Z",
+        },
+        {
+          toolCallId: "call_out_a",
+          toolName: "ak_coder_output",
+          startedAt: "2026-08-01T00:00:55.000Z",
+          endedAt: "2026-08-01T00:01:00.000Z",
+        },
+      ],
+      terminal: { status: "present", file: "report.json", role: "coder" },
+    },
+    {
+      runId: "019ff000-0002-7000-8000-0000000000b2",
+      book: BOOK,
+      role: "judge",
+      frameSpan: {
+        startedAt: "2026-08-01T00:01:00.000Z",
+        endedAt: "2026-08-01T00:01:08.000Z",
+      },
+      frameSpanMs: 8_000,
+      toolIntervals: [
+        {
+          toolCallId: "call_judge_b",
+          toolName: "ak_judge_output",
+          startedAt: "2026-08-01T00:01:05.000Z",
+          endedAt: "2026-08-01T00:01:08.000Z",
+        },
+      ],
+      terminal: { status: "present", file: "report.json", role: "judge" },
+    },
+  ],
+} as const;
+
 function gitPorcelain(cwd: string): string {
   return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
     cwd,
@@ -139,6 +194,9 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
 
       // Hand-computed leg list (other-issue run excluded; damaged excluded from legs).
       assert.deepEqual(first.page.legs, [...EXPECTED_LEGS]);
+
+      // A2: example family consumes typed per-run facts (span/tools/terminal) + shared median.
+      assert.deepEqual(first.page.a2SeamProbe, EXPECTED_A2_SEAM_PROBE);
 
       // Damaged run: loud unreadable exclusion + single count; duration not on page.
       assert.equal(first.page.unreadableCount, 1);
