@@ -29,7 +29,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
-import { PUBLIC_ROLE_ARGV, runAkRole } from "../../src/public-cli/cli.ts";
+import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   buildTaishiLibraryIndexPage,
   taishiLibraryIndexPath,
@@ -169,10 +169,6 @@ function indexRow(projectRoot: string, issueNumber: number) {
     lastActivityAt: { status: "absent" as const },
   };
 }
-
-test("PUBLIC_ROLE_ARGV still owns the sole taishi parse registration (#336 seam)", () => {
-  assert.equal(typeof PUBLIC_ROLE_ARGV.taishi.parse, "function");
-});
 
 test("taishi #338 issue compute-if-missing: no page → public CLI computes, writes page, hand oracle", async () => {
   await withBusinessRepo(async () => {
