@@ -14875,13 +14875,42 @@ var init_sitian_role_run_coordinates = __esm({
 
 // src/ticket-frontmatter.ts
 function parseTicketNumberFrontmatter(bytes) {
-  const text = typeof bytes === "string" ? bytes : bytes.toString("utf8");
-  if (!text.startsWith("---")) return void 0;
-  const end = text.indexOf("\n---", 3);
-  if (end === -1) return void 0;
-  const fm = text.slice(3, end).replace(/^\r?\n/, "");
+  let text;
+  if (typeof bytes === "string") {
+    text = bytes;
+  } else {
+    try {
+      text = exactUtf8(bytes, "ticket face");
+    } catch {
+      return void 0;
+    }
+  }
+  let cursor;
+  if (text.startsWith("---\n")) {
+    cursor = 4;
+  } else if (text.startsWith("---\r\n")) {
+    cursor = 5;
+  } else {
+    return void 0;
+  }
+  const fmLines = [];
+  let closed = false;
+  while (cursor < text.length) {
+    const nl = text.indexOf("\n", cursor);
+    const lineEnd = nl === -1 ? text.length : nl;
+    let line2 = text.slice(cursor, lineEnd);
+    if (line2.endsWith("\r")) line2 = line2.slice(0, -1);
+    if (line2 === "---") {
+      closed = true;
+      break;
+    }
+    fmLines.push(line2);
+    if (nl === -1) break;
+    cursor = nl + 1;
+  }
+  if (!closed) return void 0;
   let found;
-  for (const line2 of fm.split(/\r?\n/)) {
+  for (const line2 of fmLines) {
     const match = /^[ \t]*ticketNumber[ \t]*:[ \t]*(\d+)[ \t]*$/.exec(line2);
     if (match === null) continue;
     const value = Number(match[1]);
@@ -14903,6 +14932,7 @@ function resolveTicketNumberFromAttachmentBodies(bodies) {
 var init_ticket_frontmatter = __esm({
   "src/ticket-frontmatter.ts"() {
     "use strict";
+    init_exact_utf8();
   }
 });
 

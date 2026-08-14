@@ -99,9 +99,46 @@ test("parseTicketNumberFrontmatter reads only typed frontmatter field", () => {
     parseTicketNumberFrontmatter("---\nticketNumber: 176\n---\n# free text 999\n"),
     176,
   );
+  assert.equal(
+    parseTicketNumberFrontmatter("---\r\nticketNumber: 176\r\n---\r\nbody\r\n"),
+    176,
+  );
   assert.equal(parseTicketNumberFrontmatter("# free text ticketNumber: 176\n"), undefined);
   assert.equal(parseTicketNumberFrontmatter("---\ntitle: x\n---\n"), undefined);
   assert.equal(parseTicketNumberFrontmatter("---\nticketNumber: 0\n---\n"), undefined);
+  // Opening/closing fence must be an exclusive line of exactly `---`.
+  assert.equal(
+    parseTicketNumberFrontmatter("--- ticketNumber: 176\n---\n"),
+    undefined,
+  );
+  assert.equal(
+    parseTicketNumberFrontmatter("----\nticketNumber: 176\n---\n"),
+    undefined,
+  );
+  assert.equal(
+    parseTicketNumberFrontmatter("---\nticketNumber: 176\n--- trailing\n"),
+    undefined,
+  );
+  assert.equal(
+    parseTicketNumberFrontmatter("---\nticketNumber: 176\n----\n"),
+    undefined,
+  );
+  // Strict UTF-8 on Buffer: invalid bytes → unbound (bind-if-present).
+  assert.equal(
+    parseTicketNumberFrontmatter(
+      Buffer.concat([
+        Buffer.from("---\nticketNumber: 176\n---\n", "utf8"),
+        Buffer.from([0x80]),
+      ]),
+    ),
+    undefined,
+  );
+  assert.equal(
+    parseTicketNumberFrontmatter(
+      Buffer.from("---\nticketNumber: 176\n---\n", "utf8"),
+    ),
+    176,
+  );
   assert.equal(
     resolveTicketNumberFromAttachmentBodies([
       "---\nticketNumber: 176\n---\n",
@@ -118,17 +155,24 @@ test("parseTicketNumberFrontmatter reads only typed frontmatter field", () => {
   );
 });
 
-test("public runner without typed face admits unbound and stays off the board", async () => {
+test("public runner decoy face (illegal UTF-8 / malformed fence) admits unbound", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const plain = join(home, "note.txt");
-    await writeFile(plain, "no frontmatter", "utf8");
-    const runId = "run-no-ticket";
+    // Looks like a typed ticket face, but whole-body strict UTF-8 fails.
+    const decoy = join(home, "ticket-looking.md");
+    await writeFile(
+      decoy,
+      Buffer.concat([
+        Buffer.from("---\nticketNumber: 176\n---\n# decoy face\n", "utf8"),
+        Buffer.from([0x80]),
+      ]),
+    );
+    const runId = "run-decoy-ticket";
     const { io } = captureIo();
     await runAkRole(
-      ["judge", "--project", project, "--attach", plain, "review unbound"],
+      ["judge", "--project", project, "--attach", decoy, "review unbound"],
       {
         packageRoot,
         home,
@@ -155,6 +199,14 @@ test("public runner without typed face admits unbound and stays off the board", 
     const bookDir = activationBookDirectory(ledgerHome, bookKey);
     const runDirectory = join(bookDir, "runs", `${runId}@judge`);
     assert.equal(existsSync(runDirectory), true);
+
+    // Frozen decoy is retained (binary attachments are not rejected).
+    const attachmentsDir = join(runDirectory, "attachments");
+    assert.equal(existsSync(attachmentsDir), true);
+    const names = await readdir(attachmentsDir);
+    assert.ok(names.length >= 1, "decoy attachment must still freeze");
+    const frozen = await readFile(join(attachmentsDir, names[0]!));
+    assert.equal(parseTicketNumberFrontmatter(frozen), undefined);
 
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
