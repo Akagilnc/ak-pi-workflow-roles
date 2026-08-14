@@ -23,8 +23,11 @@ import type {
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/taishi/home");
 
-/** C3-owned scope — seven legs under runId 019ff000-3xxx. */
+/** C3-owned scope — model-bearing + model-absent legs under runId 019ff000-3xxx. */
 const C3_SCOPE = "/taishi-fixture/c3-models";
+
+/** Fixture leg with session timestamps but no model face (typed vacancy). */
+const C3_NO_MODEL_RUN_ID = "019ff000-3008-7000-8000-000000000308";
 
 /**
  * Hand values (whole-leg unit; walls in ms):
@@ -36,6 +39,7 @@ const C3_SCOPE = "/taishi-fixture/c3-models";
  * 3005 coder grok-4.5 no-receipt 10_000
  * 3006 coder luna-high completed 50_000
  * 3007 coder grok-4.5 planned    70_000
+ * 3008 coder (no model identity) completed 15_000 — not a group member
  *
  * grok-4.5 (3001,3002,3005,3007):
  *   n=4 accepted=3 (completed×2 + planned) rate=3/4
@@ -52,6 +56,9 @@ const C3_SCOPE = "/taishi-fixture/c3-models";
  *
  * luna-high (3006):
  *   n=1 accepted=1 rate=1; success=1 rate=1; noReceipt=0; median=50_000
+ *
+ * no-model (3008): typed unreadable session-model vacancy; excluded from every
+ *   group numerator/denominator; never rawGroupKey/displayName === "".
  */
 const EXPECTED_RAW: readonly TaishiModelGroupRow[] = [
   {
@@ -170,7 +177,7 @@ function assertGroupEqual(actual: TaishiModelGroupRow, expected: TaishiModelGrou
   assert.equal(actual.wallClockMedianMs, expected.wallClockMedianMs);
 }
 
-test("taishi C3 model-groups: fixture mixed+singles hand-equal; mapping alias-only no merge", async () => {
+test("taishi C3 model-groups: fixture mixed+singles hand-equal; mapping alias-only no merge; no-model excluded", async () => {
   await withBusinessRepo(async () => {
     await withTempHome(async () => {
       const raw = await runTaishi({
@@ -180,16 +187,39 @@ test("taishi C3 model-groups: fixture mixed+singles hand-equal; mapping alias-on
       assert.equal(raw.mode, "model-groups");
       const page: TaishiModelGroupsPage = raw.page;
       assert.equal(page.kind, "taishi-model-groups");
+      // Only model-bearing legs enter group dens (3001–3007).
       assert.equal(page.legCount, 7);
-      assert.equal(page.unreadableCount, 0);
       assert.equal(page.groups.length, EXPECTED_RAW.length);
       for (let i = 0; i < EXPECTED_RAW.length; i += 1) {
         assertGroupEqual(page.groups[i]!, EXPECTED_RAW[i]!);
       }
 
-      // Denominators must sum to total legs (no double-count / no drop).
+      // No invented empty-string group.
+      assert.equal(
+        page.groups.some((g) => g.rawGroupKey === "" || g.displayName === ""),
+        false,
+      );
+
+      // Denominators must sum to model-bearing legs (no double-count / no drop).
       const denSum = page.groups.reduce((n, g) => n + g.legCount, 0);
       assert.equal(denSum, page.legCount);
+
+      // 3008: usable session/terminal but no model identity → typed vacancy.
+      assert.equal(page.unreadableCount, 1);
+      assert.equal(page.unreadable.length, 1);
+      const absent = page.unreadable[0]!;
+      assert.equal(absent.runId, C3_NO_MODEL_RUN_ID);
+      assert.deepEqual(absent.missingSources, ["session-model"]);
+      assert.match(absent.reason, /model identity/i);
+      // Vacancy must not inflate any group numerator/denominator.
+      assert.equal(
+        page.groups.reduce(
+          (n, g) => n + g.acceptedCount + g.successCount + g.noReceiptCount,
+          0,
+        ),
+        // accepted: grok3 + sol1 + mixed1 + luna1 = 6; success: 2+0+1+1=4; noReceipt: 1
+        6 + 4 + 1,
+      );
 
       const aliased = await runTaishi({
         mode: "model-groups",
@@ -204,6 +234,8 @@ test("taishi C3 model-groups: fixture mixed+singles hand-equal; mapping alias-on
         aliasedPage.groups.reduce((n, g) => n + g.legCount, 0),
         7,
       );
+      assert.equal(aliasedPage.unreadableCount, 1);
+      assert.equal(aliasedPage.unreadable[0]!.runId, C3_NO_MODEL_RUN_ID);
 
       const byRaw = new Map(aliasedPage.groups.map((g) => [g.rawGroupKey, g]));
       const grok = byRaw.get("grok-4.5");
