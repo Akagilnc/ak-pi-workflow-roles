@@ -59,12 +59,16 @@ export type TaishiLegEntry = {
 };
 
 /**
- * C4 scope conflict: run admitted by typed ticketNumber while its invocation
- * projectRoot mechanical key differed from the issue scope projectRoot.
- * Four recorded facts: runId, typed ticketNumber, run projectRoot, conflict fact.
+ * C4 scope conflict fact (typed ticketNumber over projectRoot).
+ * - Ledger-run path: run admitted by typed ticket while its invocation
+ *   projectRoot differed — records runId + ticketNumber + run projectRoot + fact.
+ * - Caller dual-param path: ticket/index root won over a concurrent caller
+ *   projectRoot — records ticketNumber + losing projectRoot + fact (no runId;
+ *   the conflict is the call faces themselves, not a ledger alien run).
  */
 export type TaishiScopeConflict = {
-  readonly runId: string;
+  /** Present only for ledger-run conflicts; omitted for caller dual-param. */
+  readonly runId?: string;
   readonly ticketNumber: number;
   readonly projectRoot: string;
   readonly fact: "typed-ticketNumber-over-projectRoot";
@@ -105,8 +109,9 @@ export type TaishiIssueMetricsPage = {
   readonly unreadable: readonly TaishiUnreadableRun[];
   readonly unreadableCount: number;
   /**
-   * C4: runs scoped in by typed ticketNumber whose invocation projectRoot
-   * differed from the issue scope key. Empty when no such conflict.
+   * C4: typed-ticketNumber-over-projectRoot facts — ledger-run admits whose
+   * invocation projectRoot differed, and/or caller dual-param conflicts where
+   * ticket/index root won over a concurrent projectRoot face.
    */
   readonly scopeConflicts: readonly TaishiScopeConflict[];
   /** 完全耗时 — Σ readable leg wall clocks (0 when no readable runs). */
@@ -148,7 +153,13 @@ function sortUnreadable(
 function sortScopeConflicts(
   conflicts: readonly TaishiScopeConflict[],
 ): TaishiScopeConflict[] {
-  return [...conflicts].sort((a, b) => a.runId.localeCompare(b.runId));
+  return [...conflicts].sort((a, b) => {
+    // Caller dual-param (no runId) sorts before run conflicts; then by root.
+    const aRun = a.runId ?? "";
+    const bRun = b.runId ?? "";
+    if (aRun !== bRun) return aRun.localeCompare(bRun);
+    return a.projectRoot.localeCompare(b.projectRoot);
+  });
 }
 
 /**

@@ -42,6 +42,13 @@ export type TaishiIssueModeInput = {
    */
   readonly ticketNumber?: number;
   /**
+   * Losing caller projectRoot when typed ticket/index root already won
+   * (public CLI dual-param: --ticket index hit over concurrent --project-root).
+   * When set and identity-distinct from projectRoot, page records the C4
+   * typed-ticketNumber-over-projectRoot fact for this call — no ledger alien run required.
+   */
+  readonly conflictingProjectRoot?: string;
+  /**
    * 排除后改动行数 — optional caller typed input.
    * Omit or 0 → page retains typed 空缺 for LOC and 耗时/千行.
    */
@@ -133,12 +140,30 @@ async function runTaishiIssueMode(
   // exactOptionalPropertyTypes: only pass optional faces when caller supplied them.
   const issueNumber =
     "issueNumber" in input ? input.issueNumber : undefined;
+  const conflictingProjectRoot =
+    "conflictingProjectRoot" in input ? input.conflictingProjectRoot : undefined;
+
+  // Caller dual-param conflict (ticket/index root already won): record C4 fact
+  // from the call faces themselves — independent of ledger alien runs.
+  const scopeConflicts = [...scan.scopeConflicts];
+  if (conflictingProjectRoot !== undefined && ticketNumber !== undefined) {
+    const losingRoot = physicalPathIdentity(conflictingProjectRoot);
+    const winningRoot = physicalPathIdentity(projectRoot);
+    if (losingRoot !== winningRoot) {
+      scopeConflicts.push({
+        ticketNumber,
+        projectRoot: losingRoot,
+        fact: "typed-ticketNumber-over-projectRoot",
+      });
+    }
+  }
+
   // Page build discovers metric families first — missing tree fails before write.
   const page = await buildTaishiIssueMetricsPage({
     projectRoot,
     runs: scan.runs,
     unreadable: scan.unreadable,
-    scopeConflicts: scan.scopeConflicts,
+    scopeConflicts,
     ...(input.changedLines === undefined ? {} : { changedLines: input.changedLines }),
     ...(issueNumber === undefined ? {} : { issueNumber }),
   });
