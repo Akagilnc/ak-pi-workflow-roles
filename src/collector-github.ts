@@ -437,7 +437,10 @@ export function createGhApiRunner(
 export type GhIssueSoftFetchResult = Readonly<{ title: string; body: string }>;
 /**
  * Soft single-issue fetch over the shared gh api runner.
- * undefined = unreachable / not found / non-2xx / parse failure — never throws.
+ * undefined = confirmed tracker unreachable / issue not found:
+ *   - HTTP non-2xx, or
+ *   - runner-tagged ambiguousGhFailure (gh ran but no parseable HTTP — auth/network/transport).
+ * Unrecognized runner failures (e.g. spawn ENOENT) and parse/implementation errors propagate with true cause.
  */
 export type GhIssueSoftFetcher = (input: {
   owner: string;
@@ -445,17 +448,27 @@ export type GhIssueSoftFetcher = (input: {
   ticketNumber: number;
 }) => Promise<GhIssueSoftFetchResult | undefined>;
 
+function isAmbiguousGhFailure(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { ambiguousGhFailure?: unknown }).ambiguousGhFailure === true
+  );
+}
+
 /**
  * Production issue-fetch capability owned by the shared gh execution seam.
- * Reuses createGhApiRunner lifecycle; soft-fails so callers can degrade.
+ * Reuses createGhApiRunner lifecycle. Softens only ticket-authorized unavailable results
+ * (tracker unreachable / issue not found); does not catch-all wash other failures into unavailable.
  */
 export function createGhIssueSoftFetcher(
   runner: GhApiRunner = createGhApiRunner(),
 ): GhIssueSoftFetcher {
   return async (input) => {
+    const path = `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
+    let response: GhApiResponse;
     try {
-      const path = `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
-      const response = await runner([
+      response = await runner([
         "api",
         "--hostname",
         "github.com",
@@ -464,19 +477,34 @@ export function createGhIssueSoftFetcher(
         "GET",
         path,
       ]);
-      if (response.status < 200 || response.status >= 300) return undefined;
-      const parsed: unknown = JSON.parse(response.bodyText);
-      if (typeof parsed !== "object" || parsed === null) return undefined;
-      const title = (parsed as { title?: unknown }).title;
-      if (typeof title !== "string") return undefined;
-      // Match former gh --jq `(.body // "")`: null/missing body projects to empty string.
-      const bodyRaw = (parsed as { body?: unknown }).body;
-      const body = typeof bodyRaw === "string" ? bodyRaw : bodyRaw == null ? "" : undefined;
-      if (body === undefined) return undefined;
-      return Object.freeze({ title, body });
-    } catch {
-      return undefined;
+    } catch (error) {
+      // Ticket-authorized: tracker unreachable when the shared runner tags transport ambiguity.
+      // Unrecognized runner failures (spawn missing binary, etc.) keep true cause.
+      if (isAmbiguousGhFailure(error)) return undefined;
+      throw error;
     }
+    // Ticket-authorized degrade: issue not found / tracker non-success via HTTP status.
+    if (response.status < 200 || response.status >= 300) return undefined;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(response.bodyText);
+    } catch (error) {
+      throw new Error("GitHub issue payload is not JSON", { cause: error });
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new Error("GitHub issue payload must be a JSON object");
+    }
+    const title = (parsed as { title?: unknown }).title;
+    if (typeof title !== "string") {
+      throw new Error("GitHub issue payload missing string title");
+    }
+    // Match former gh --jq `(.body // "")`: null/missing body projects to empty string.
+    const bodyRaw = (parsed as { body?: unknown }).body;
+    if (bodyRaw !== undefined && bodyRaw !== null && typeof bodyRaw !== "string") {
+      throw new Error("GitHub issue payload body must be string or null");
+    }
+    const body = typeof bodyRaw === "string" ? bodyRaw : "";
+    return Object.freeze({ title, body });
   };
 }
 
