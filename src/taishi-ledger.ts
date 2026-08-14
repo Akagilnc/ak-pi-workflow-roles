@@ -49,6 +49,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Existing public-cli run-state live phases — not a new state machine. */
+const LIVE_RUN_STATES = new Set(["admitted", "running", "resumable"]);
+
+/**
+ * Read lifecycle state from the existing run-state.json face.
+ * Used only to distinguish live in-flight runs from terminal no-receipt.
+ */
+async function readExistingRunLifecycleState(
+  runDirectory: string,
+): Promise<string | undefined> {
+  try {
+    const raw: unknown = JSON.parse(
+      await readFile(join(runDirectory, "run-state.json"), "utf8"),
+    );
+    if (!isRecord(raw) || typeof raw.state !== "string") return undefined;
+    return raw.state;
+  } catch {
+    return undefined;
+  }
+}
+
 function parseRunDirectoryName(
   name: string,
 ): { runId: string; role: string } | undefined {
@@ -199,6 +220,7 @@ async function classifyScopedRun(input: {
 }): Promise<
   | { readonly kind: "readable"; readonly facts: TaishiReadableRunFacts }
   | { readonly kind: "unreadable"; readonly entry: TaishiUnreadableRun }
+  | { readonly kind: "live" }
 > {
   const missingSources: TaishiMissingSource[] = [];
   const reasons: string[] = [];
@@ -274,13 +296,18 @@ async function classifyScopedRun(input: {
     }
   }
 
-  // 3) typed terminal artifact — absence is no-receipt (valid); unreadable is not.
+  // 3) typed terminal artifact — absence is no-receipt only for terminal runs.
+  // Live admitted/running/resumable runs (existing run-state) are not dead legs.
   try {
     const artifact = await readRunTerminalArtifact(input.runDirectory);
     if (artifact.status === "unreadable") {
       missingSources.push("terminal-artifact");
       reasons.push(`${artifact.file}: ${artifact.reason}`);
     } else if (artifact.status === "absent") {
+      const lifecycle = await readExistingRunLifecycleState(input.runDirectory);
+      if (lifecycle !== undefined && LIVE_RUN_STATES.has(lifecycle)) {
+        return { kind: "live" };
+      }
       terminal = { status: "absent" };
     } else {
       // role already required nonblank by readRunTerminalArtifact (single owner).
@@ -426,7 +453,8 @@ export async function scanTaishiIssueRuns(input: {
         runDirectory,
       });
       if (classified.kind === "readable") runs.push(classified.facts);
-      else unreadable.push(classified.entry);
+      else if (classified.kind === "unreadable") unreadable.push(classified.entry);
+      // live in-flight runs are omitted from legs and unreadable (not failure/death).
     }
   }
 
