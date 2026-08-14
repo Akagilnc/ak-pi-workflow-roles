@@ -34,6 +34,7 @@ import {
   type TaishiModelGroupsPage,
 } from "./taishi-model-groups.ts";
 import {
+  assertTaishiChangedLinesInput,
   buildTaishiIssueMetricsPage,
   taishiIssuePagePath,
   writeTaishiIssueMetricsPage,
@@ -112,7 +113,8 @@ export type TaishiIssueModeInput = {
 /**
  * Sole sweep-mode input contract (#298/#329/#337).
  * Schema is the single definition; TS types are derived (no parallel hand shape).
- * projectRoot = string (not nonempty); changedLines optional number; no extra keys.
+ * projectRoot = string (not nonempty); changedLines optional finite non-negative;
+ * 0 remains typed 空缺; no extra keys.
  */
 export const taishiSweepModeInputSchema = Type.Object(
   {
@@ -121,8 +123,10 @@ export const taishiSweepModeInputSchema = Type.Object(
       Type.Object(
         {
           projectRoot: Type.String(),
-          /** 排除后改动行数 — omit or 0 → typed 空缺. */
-          changedLines: Type.Optional(Type.Number()),
+          /** 排除后改动行数 — omit or 0 → typed 空缺; finite ≥ 0 only. */
+          changedLines: Type.Optional(
+            Type.Number({ minimum: 0, maximum: Number.MAX_VALUE }),
+          ),
         },
         { additionalProperties: false },
       ),
@@ -251,6 +255,8 @@ async function runTaishiIssueMode(
   /** Caller-supplied scan facts — skip a second ledger walk when already scanned. */
   precomputedScan?: TaishiScopedRunScan,
 ): Promise<TaishiIssueModeResult> {
+  // Programmatic issue/sweep entry boundary — same finite non-negative rule as attach schema.
+  assertTaishiChangedLinesInput(input.changedLines);
   const ledgerHome = resolveActivationLedgerHome();
   const projectRoot = input.projectRoot;
   // Sweep entries carry projectRoot only; issue mode may add ticketNumber (C4).
