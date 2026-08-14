@@ -7,6 +7,8 @@
  * C2: cohort = two issue-number groups → join library index → contrast query output.
  * C3: model-groups = caller issue set → scan union → per-leg model aggregate.
  */
+import { Type, type Static } from "typebox";
+
 import { physicalPathIdentity, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
 import {
   runTaishiCohortMode,
@@ -61,21 +63,34 @@ export type TaishiIssueModeInput = {
   readonly issueNumber?: number;
 };
 
-/** One merged-PR / issue entry for sweep-mode typed input. */
-export type TaishiMergedPullRequest = {
-  readonly projectRoot: string;
-  /**
-   * 排除后改动行数 — caller typed; omit or 0 → typed 空缺.
-   * Sweep always carries the LOC face (present or absent) per issue.
-   */
-  readonly changedLines?: number;
-};
+/**
+ * Sole sweep-mode input contract (#298/#329/#337).
+ * Schema is the single definition; TS types are derived (no parallel hand shape).
+ * projectRoot = string (not nonempty); changedLines optional number; no extra keys.
+ */
+export const taishiSweepModeInputSchema = Type.Object(
+  {
+    mode: Type.Literal("sweep"),
+    mergedPullRequests: Type.Array(
+      Type.Object(
+        {
+          projectRoot: Type.String(),
+          /** 排除后改动行数 — omit or 0 → typed 空缺. */
+          changedLines: Type.Optional(Type.Number()),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
 
 /** Sweep-mode typed input — 已并 PR 清单 + LOC → 补算缺页 + 维护全库索引. */
-export type TaishiSweepModeInput = {
-  readonly mode: "sweep";
-  readonly mergedPullRequests: readonly TaishiMergedPullRequest[];
-};
+export type TaishiSweepModeInput = Static<typeof taishiSweepModeInputSchema>;
+
+/** One merged-PR / issue entry for sweep-mode typed input. */
+export type TaishiMergedPullRequest =
+  TaishiSweepModeInput["mergedPullRequests"][number];
 
 /**
  * Model-groups mode typed input — caller-supplied issue set (+ optional alias map).
