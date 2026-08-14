@@ -25,6 +25,11 @@ export type TaishiIssueModeInput = {
   readonly mode: "issue";
   readonly projectRoot: string;
   /**
+   * C4: caller typed ticket face (#176). When set, issue 圈定 prefers matching
+   * invocation.ticketNumber; runs without ticketNumber fall back to projectRoot.
+   */
+  readonly ticketNumber?: number;
+  /**
    * 排除后改动行数 — optional caller typed input.
    * Omit or 0 → page retains typed 空缺 for LOC and 耗时/千行.
    */
@@ -70,20 +75,25 @@ async function runTaishiIssueMode(
 ): Promise<TaishiIssueModeResult> {
   const ledgerHome = resolveActivationLedgerHome();
   const projectRoot = input.projectRoot;
+  // Sweep entries carry projectRoot only; issue mode may add ticketNumber (C4).
+  const ticketNumber =
+    "ticketNumber" in input ? input.ticketNumber : undefined;
 
-  const scan = await scanTaishiIssueRuns({ projectRoot });
+  const scan = ticketNumber === undefined
+    ? await scanTaishiIssueRuns({ projectRoot })
+    : await scanTaishiIssueRuns({ projectRoot, ticketNumber });
 
   // exactOptionalPropertyTypes: only pass changedLines when caller supplied it.
+  const pageBase = {
+    projectRoot,
+    runs: scan.runs,
+    unreadable: scan.unreadable,
+    scopeConflicts: scan.scopeConflicts,
+  };
   const page = input.changedLines === undefined
-    ? buildTaishiIssueMetricsPage({
-        projectRoot,
-        runs: scan.runs,
-        unreadable: scan.unreadable,
-      })
+    ? buildTaishiIssueMetricsPage(pageBase)
     : buildTaishiIssueMetricsPage({
-        projectRoot,
-        runs: scan.runs,
-        unreadable: scan.unreadable,
+        ...pageBase,
         changedLines: input.changedLines,
       });
 
