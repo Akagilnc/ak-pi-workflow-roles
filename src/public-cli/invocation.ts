@@ -20,6 +20,7 @@ import {
 } from "../activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
+import { resolveTicketNumberFromAttachmentBodies } from "../ticket-frontmatter.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -73,6 +74,16 @@ export type AdmittedRoleInvocationBase = {
   /** Exact Pi session file principal (bound at admission; reopened on resume). */
   readonly sessionFile: string;
   readonly admittedRequestPath: string;
+  /**
+   * Optional opaque invocation correlation restored from a prior admitted page
+   * (ADR 0049 host channel). Admission does not mint ticket-binding ids.
+   */
+  readonly correlationId?: string;
+  /**
+   * Typed ticket face from frozen attachment frontmatter (`ticketNumber`).
+   * Absent when no attachment carries a valid contract field (unbound).
+   */
+  readonly ticketNumber?: number;
 };
 
 export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
@@ -158,7 +169,7 @@ export type AdmittedRoleInvocation =
 
 type RoleInvocationLedgerSource = Pick<
   AdmittedRoleInvocationBase,
-  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "sessionDirectory" | "sessionFile"
+  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "sessionDirectory" | "sessionFile" | "correlationId" | "ticketNumber"
 >;
 
 /**
@@ -178,6 +189,8 @@ async function writeRoleInvocationLedger(
     runDirectory: source.runDirectory,
     sessionDirectory: source.sessionDirectory,
     sessionFile: source.sessionFile,
+    ...(source.correlationId === undefined ? {} : { correlationId: source.correlationId }),
+    ...(source.ticketNumber === undefined ? {} : { ticketNumber: source.ticketNumber }),
   };
   await writeFile(
     join(source.runDirectory, "invocation.json"),
@@ -550,7 +563,7 @@ async function freezeRegularFileAttachment(
   sourcePath: string,
   destinationDir: string,
   index: number,
-): Promise<FrozenAttachment> {
+): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
   const absolute = isAbsolute(sourcePath) ? sourcePath : resolve(sourcePath);
   let st;
   try {
@@ -571,12 +584,47 @@ async function freezeRegularFileAttachment(
   const frozenPath = join(destinationDir, name);
   await writeFile(frozenPath, bytes);
   return {
-    provenancePath: absolute,
-    frozenPath,
-    byteLength: bytes.byteLength,
-    sha256: sha256Hex(bytes),
-    mediaKind: "regular-file",
+    attachment: {
+      provenancePath: absolute,
+      frozenPath,
+      byteLength: bytes.byteLength,
+      sha256: sha256Hex(bytes),
+      mediaKind: "regular-file",
+    },
+    body: bytes,
   };
+}
+
+/** Freeze attachments and resolve typed ticketNumber from frozen bodies (bind-if-present). */
+async function freezeAttachmentsWithTicketNumber(
+  attachmentPaths: readonly string[],
+  attachmentsDirectory: string,
+): Promise<{
+  readonly attachments: FrozenAttachment[];
+  readonly ticketNumber?: number;
+}> {
+  const attachments: FrozenAttachment[] = [];
+  const bodies: Buffer[] = [];
+  for (let i = 0; i < attachmentPaths.length; i += 1) {
+    const frozen = await freezeRegularFileAttachment(
+      attachmentPaths[i]!,
+      attachmentsDirectory,
+      i,
+    );
+    attachments.push(frozen.attachment);
+    bodies.push(frozen.body);
+  }
+  const ticketNumber = resolveTicketNumberFromAttachmentBodies(bodies);
+  return {
+    attachments,
+    ...(ticketNumber === undefined ? {} : { ticketNumber }),
+  };
+}
+
+function ticketAdmissionFields(
+  ticketNumber: number | undefined,
+): { ticketNumber?: number } {
+  return ticketNumber === undefined ? {} : { ticketNumber };
 }
 
 export type AdmitJudgeInvocationOptions = {
@@ -608,16 +656,11 @@ export async function admitJudgeInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const attachments: FrozenAttachment[] = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
@@ -629,6 +672,7 @@ export async function admitJudgeInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -655,6 +699,7 @@ export async function admitJudgeInvocation(
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    ...ticketFields,
   };
 }
 
@@ -746,16 +791,11 @@ export async function admitCoderInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const attachments: FrozenAttachment[] = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   const taskPath = join(runDirectory, "task.md");
   await writeFile(taskPath, instruction, "utf8");
@@ -769,6 +809,7 @@ export async function admitCoderInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -798,6 +839,7 @@ export async function admitCoderInvocation(
     sessionFile,
     admittedRequestPath,
     taskPath,
+    ...ticketFields,
   };
 }
 
@@ -853,6 +895,31 @@ export async function admitFixerInvocation(
     throw new CliUsageError("fixer phase must be plan or apply");
   }
 
+  // Validate/read prerequisites before freezing request materials.
+  let prerequisites: readonly FixerPrerequisite[] = Object.freeze([]);
+  let prerequisitesSource: string | undefined;
+  if (options.prerequisitesPath !== undefined) {
+    const absolutePrereq = isAbsolute(options.prerequisitesPath)
+      ? options.prerequisitesPath
+      : resolve(options.prerequisitesPath);
+    try {
+      prerequisitesSource = await readFile(absolutePrereq, "utf8");
+    } catch (error) {
+      throw new CliUsageError(
+        `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
+        { cause: error },
+      );
+    }
+    try {
+      prerequisites = parseFixerPrerequisites(prerequisitesSource);
+    } catch (error) {
+      if (error instanceof FixerPacketValidationError) {
+        throw new CliUsageError(error.message, { cause: error });
+      }
+      throw error;
+    }
+  }
+
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
@@ -861,40 +928,14 @@ export async function admitFixerInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const attachments: FrozenAttachment[] = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
-  let prerequisites: readonly FixerPrerequisite[] = Object.freeze([]);
   let prerequisitesPath: string | undefined;
-  if (options.prerequisitesPath !== undefined) {
-    const absolutePrereq = isAbsolute(options.prerequisitesPath)
-      ? options.prerequisitesPath
-      : resolve(options.prerequisitesPath);
-    let source: string;
-    try {
-      source = await readFile(absolutePrereq, "utf8");
-    } catch (error) {
-      throw new CliUsageError(
-        `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
-        { cause: error },
-      );
-    }
-    try {
-      prerequisites = parseFixerPrerequisites(source);
-    } catch (error) {
-      if (error instanceof FixerPacketValidationError) {
-        throw new CliUsageError(error.message, { cause: error });
-      }
-      throw error;
-    }
+  if (prerequisitesSource !== undefined) {
     prerequisitesPath = join(runDirectory, "prerequisites.json");
     await writeFile(
       prerequisitesPath,
@@ -915,6 +956,7 @@ export async function admitFixerInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     packetPath,
@@ -951,6 +993,7 @@ export async function admitFixerInvocation(
     packetPath,
     ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
     prerequisites,
+    ...ticketFields,
   };
 }
 
@@ -1128,6 +1171,19 @@ export async function admitCollectorInvocation(
     repository = resolveGitHubRemoteRepository(projectRoot);
   }
 
+  // Validate optional request-manifest before freezing request materials.
+  let manifest = emptyCollectorManifest();
+  let manifestCanonicalJson: string | undefined;
+  if (options.requestManifestPath !== undefined) {
+    try {
+      manifest = await loadCollectorManifest(options.requestManifestPath);
+      manifestCanonicalJson = manifest.canonicalJson;
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+  }
+  const manifestDigest = manifest.digest;
+
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
     roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
@@ -1135,30 +1191,17 @@ export async function admitCollectorInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const attachments: FrozenAttachment[] = [];
-  const attachmentPaths = options.attachmentPaths ?? [];
-  for (let i = 0; i < attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths ?? [],
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
-  let manifest = emptyCollectorManifest();
   let requestManifestPath: string | undefined;
-  if (options.requestManifestPath !== undefined) {
-    try {
-      manifest = await loadCollectorManifest(options.requestManifestPath);
-    } catch (error) {
-      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
-    }
+  if (manifestCanonicalJson !== undefined) {
     requestManifestPath = join(runDirectory, "request-manifest.json");
-    await writeFile(requestManifestPath, manifest.canonicalJson, "utf8");
+    await writeFile(requestManifestPath, manifestCanonicalJson, "utf8");
   }
-  const manifestDigest = manifest.digest;
 
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
@@ -1170,6 +1213,7 @@ export async function admitCollectorInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     prNumber,
@@ -1209,6 +1253,7 @@ export async function admitCollectorInvocation(
     repository,
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     manifestDigest,
+    ...ticketFields,
   };
 }
 
@@ -1487,17 +1532,11 @@ export async function admitDoctorInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const attachments: FrozenAttachment[] = [];
-  const attachmentPaths = options.attachmentPaths ?? [];
-  for (let i = 0; i < attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths ?? [],
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
@@ -1509,6 +1548,7 @@ export async function admitDoctorInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     issueNumber: options.issueNumber,
@@ -1545,6 +1585,7 @@ export async function admitDoctorInvocation(
     issueNumber: options.issueNumber,
     caseRunsPath,
     caseIdentity,
+    ...ticketFields,
   };
 }
 
@@ -1667,16 +1708,11 @@ export async function admitReviewerInvocation(
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   // Public parse already rejects attachments; keep freeze loop for structural symmetry.
-  const attachments: FrozenAttachment[] = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
@@ -1688,6 +1724,7 @@ export async function admitReviewerInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
@@ -1722,6 +1759,7 @@ export async function admitReviewerInvocation(
     admittedRequestPath,
     baseRevision: options.baseRevision,
     authorityRefs,
+    ...ticketFields,
   };
 }
 
@@ -1889,16 +1927,11 @@ export async function admitMergerInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const attachments: FrozenAttachment[] = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   // Intent materials seed primary-source investigation; the method owns the work.
   const targetIntent = mergerMaterialFromUtf8(
@@ -1910,6 +1943,7 @@ export async function admitMergerInvocation(
   const taskMaterial = mergerMaterialFromUtf8(instruction);
   const authorityMaterial = mergerMaterialFromUtf8(instruction);
 
+  // Validate merger envelope before placing admitted identity.
   const mergerInput = validateMergerInput({
     version: 1,
     attemptId: runId,
@@ -1942,6 +1976,7 @@ export async function admitMergerInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     mergerInputPath,
@@ -1982,6 +2017,7 @@ export async function admitMergerInvocation(
     admittedRequestPath,
     mergerInputPath,
     derived: admitted.derived,
+    ...ticketFields,
   };
 }
 

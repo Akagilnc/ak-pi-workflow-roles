@@ -26,7 +26,7 @@ import {
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitReviewerInvocation,
+  admitReviewerInvocation as admitReviewerInvocationRaw,
   parseReviewerArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -124,6 +124,14 @@ function lawfulReviewerReceipt(
     },
   };
 }
+
+
+async function admitReviewerInvocation(
+  options: Parameters<typeof admitReviewerInvocationRaw>[0],
+): ReturnType<typeof admitReviewerInvocationRaw> {
+  return admitReviewerInvocationRaw(options);
+}
+
 
 test("parseReviewerArgv requires base and accepts optional provenance instruction", () => {
   const isUsage = (error: unknown): boolean =>
@@ -844,9 +852,10 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as Record<string, unknown> & { role: string; baseRevision?: string };
+    ) as Record<string, unknown> & { role: string; baseRevision?: string; ticketNumber?: number };
     assert.equal(admitted.role, "reviewer");
     assert.equal(admitted.baseRevision, "main");
+    assert.equal(admitted.ticketNumber, undefined);
     assert.equal("taskPath" in admitted, false);
     assert.equal("taskSha256" in admitted, false);
 

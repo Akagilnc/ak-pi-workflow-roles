@@ -14873,6 +14873,69 @@ var init_sitian_role_run_coordinates = __esm({
   }
 });
 
+// src/ticket-frontmatter.ts
+function parseTicketNumberFrontmatter(bytes) {
+  let text;
+  if (typeof bytes === "string") {
+    text = bytes;
+  } else {
+    try {
+      text = exactUtf8(bytes, "ticket face");
+    } catch {
+      return void 0;
+    }
+  }
+  let cursor;
+  if (text.startsWith("---\n")) {
+    cursor = 4;
+  } else if (text.startsWith("---\r\n")) {
+    cursor = 5;
+  } else {
+    return void 0;
+  }
+  const fmLines = [];
+  let closed = false;
+  while (cursor < text.length) {
+    const nl = text.indexOf("\n", cursor);
+    const lineEnd = nl === -1 ? text.length : nl;
+    let line2 = text.slice(cursor, lineEnd);
+    if (line2.endsWith("\r")) line2 = line2.slice(0, -1);
+    if (line2 === "---") {
+      closed = true;
+      break;
+    }
+    fmLines.push(line2);
+    if (nl === -1) break;
+    cursor = nl + 1;
+  }
+  if (!closed) return void 0;
+  let found;
+  for (const line2 of fmLines) {
+    const match = /^[ \t]*ticketNumber[ \t]*:[ \t]*(\d+)[ \t]*$/.exec(line2);
+    if (match === null) continue;
+    const value = Number(match[1]);
+    if (!Number.isInteger(value) || value < 1) return void 0;
+    if (found !== void 0 && found !== value) return void 0;
+    found = value;
+  }
+  return found;
+}
+function resolveTicketNumberFromAttachmentBodies(bodies) {
+  const found = /* @__PURE__ */ new Set();
+  for (const body of bodies) {
+    const value = parseTicketNumberFrontmatter(body);
+    if (value !== void 0) found.add(value);
+  }
+  if (found.size !== 1) return void 0;
+  return found.values().next().value;
+}
+var init_ticket_frontmatter = __esm({
+  "src/ticket-frontmatter.ts"() {
+    "use strict";
+    init_exact_utf8();
+  }
+});
+
 // src/audit-escalation.ts
 function isAuditEscalationResult(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -15338,7 +15401,9 @@ async function writeRoleInvocationLedger(source, role) {
     projectRoot: source.projectRoot,
     runDirectory: source.runDirectory,
     sessionDirectory: source.sessionDirectory,
-    sessionFile: source.sessionFile
+    sessionFile: source.sessionFile,
+    ...source.correlationId === void 0 ? {} : { correlationId: source.correlationId },
+    ...source.ticketNumber === void 0 ? {} : { ticketNumber: source.ticketNumber }
   };
   await writeFile2(
     join5(source.runDirectory, "invocation.json"),
@@ -15579,12 +15644,36 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
   const frozenPath = join5(destinationDir, name);
   await writeFile2(frozenPath, bytes);
   return {
-    provenancePath: absolute,
-    frozenPath,
-    byteLength: bytes.byteLength,
-    sha256: sha256Hex(bytes),
-    mediaKind: "regular-file"
+    attachment: {
+      provenancePath: absolute,
+      frozenPath,
+      byteLength: bytes.byteLength,
+      sha256: sha256Hex(bytes),
+      mediaKind: "regular-file"
+    },
+    body: bytes
   };
+}
+async function freezeAttachmentsWithTicketNumber(attachmentPaths, attachmentsDirectory) {
+  const attachments = [];
+  const bodies = [];
+  for (let i = 0; i < attachmentPaths.length; i += 1) {
+    const frozen = await freezeRegularFileAttachment(
+      attachmentPaths[i],
+      attachmentsDirectory,
+      i
+    );
+    attachments.push(frozen.attachment);
+    bodies.push(frozen.body);
+  }
+  const ticketNumber = resolveTicketNumberFromAttachmentBodies(bodies);
+  return {
+    attachments,
+    ...ticketNumber === void 0 ? {} : { ticketNumber }
+  };
+}
+function ticketAdmissionFields(ticketNumber) {
+  return ticketNumber === void 0 ? {} : { ticketNumber };
 }
 async function admitJudgeInvocation(options) {
   if (options.project !== void 0) {
@@ -15596,16 +15685,11 @@ async function admitJudgeInvocation(options) {
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  const attachments = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i],
-        attachmentsDirectory,
-        i
-      )
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
@@ -15616,6 +15700,7 @@ async function admitJudgeInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -15641,7 +15726,8 @@ async function admitJudgeInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
-    admittedRequestPath
+    admittedRequestPath,
+    ...ticketFields
   };
 }
 function buildJudgeTransportPrompt(admitted) {
@@ -15679,16 +15765,11 @@ async function admitCoderInvocation(options) {
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  const attachments = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i],
-        attachmentsDirectory,
-        i
-      )
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
   const taskPath = join5(runDirectory, "task.md");
   await writeFile2(taskPath, instruction, "utf8");
   const admitted = {
@@ -15700,6 +15781,7 @@ async function admitCoderInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -15728,7 +15810,8 @@ async function admitCoderInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
-    taskPath
+    taskPath,
+    ...ticketFields
   };
 }
 function buildCoderTransportPrompt(admitted) {
@@ -15755,29 +15838,12 @@ async function admitFixerInvocation(options) {
   if (options.phase !== "plan" && options.phase !== "apply") {
     throw new CliUsageError("fixer phase must be plan or apply");
   }
-  const projectRoot = resolve4(options.project ?? options.cwd);
-  const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  const attachments = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i],
-        attachmentsDirectory,
-        i
-      )
-    );
-  }
   let prerequisites = Object.freeze([]);
-  let prerequisitesPath;
+  let prerequisitesSource;
   if (options.prerequisitesPath !== void 0) {
     const absolutePrereq = isAbsolute3(options.prerequisitesPath) ? options.prerequisitesPath : resolve4(options.prerequisitesPath);
-    let source;
     try {
-      source = await readFile4(absolutePrereq, "utf8");
+      prerequisitesSource = await readFile4(absolutePrereq, "utf8");
     } catch (error) {
       throw new CliUsageError(
         `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
@@ -15785,13 +15851,27 @@ async function admitFixerInvocation(options) {
       );
     }
     try {
-      prerequisites = parseFixerPrerequisites(source);
+      prerequisites = parseFixerPrerequisites(prerequisitesSource);
     } catch (error) {
       if (error instanceof FixerPacketValidationError) {
         throw new CliUsageError(error.message, { cause: error });
       }
       throw error;
     }
+  }
+  const projectRoot = resolve4(options.project ?? options.cwd);
+  const runId = (options.createRunId ?? uuidv7)();
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
+  const attachmentsDirectory = join5(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
+  let prerequisitesPath;
+  if (prerequisitesSource !== void 0) {
     prerequisitesPath = join5(runDirectory, "prerequisites.json");
     await writeFile2(
       prerequisitesPath,
@@ -15811,6 +15891,7 @@ async function admitFixerInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     packetPath,
@@ -15846,7 +15927,8 @@ async function admitFixerInvocation(options) {
     admittedRequestPath,
     packetPath,
     ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
-    prerequisites
+    prerequisites,
+    ...ticketFields
   };
 }
 function buildFixerTransportPrompt(admitted) {
@@ -16014,34 +16096,32 @@ async function admitCollectorInvocation(options) {
   } else {
     repository = resolveGitHubRemoteRepository(projectRoot);
   }
+  let manifest = emptyCollectorManifest();
+  let manifestCanonicalJson;
+  if (options.requestManifestPath !== void 0) {
+    try {
+      manifest = await loadCollectorManifest(options.requestManifestPath);
+      manifestCanonicalJson = manifest.canonicalJson;
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+  }
+  const manifestDigest = manifest.digest;
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  const attachments = [];
-  const attachmentPaths = options.attachmentPaths ?? [];
-  for (let i = 0; i < attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        attachmentPaths[i],
-        attachmentsDirectory,
-        i
-      )
-    );
-  }
-  let manifest = emptyCollectorManifest();
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths ?? [],
+    attachmentsDirectory
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
   let requestManifestPath;
-  if (options.requestManifestPath !== void 0) {
-    try {
-      manifest = await loadCollectorManifest(options.requestManifestPath);
-    } catch (error) {
-      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
-    }
+  if (manifestCanonicalJson !== void 0) {
     requestManifestPath = join5(runDirectory, "request-manifest.json");
-    await writeFile2(requestManifestPath, manifest.canonicalJson, "utf8");
+    await writeFile2(requestManifestPath, manifestCanonicalJson, "utf8");
   }
-  const manifestDigest = manifest.digest;
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
@@ -16052,6 +16132,7 @@ async function admitCollectorInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     prNumber,
@@ -16090,7 +16171,8 @@ async function admitCollectorInvocation(options) {
     prNumber,
     repository,
     ...requestManifestPath === void 0 ? {} : { requestManifestPath },
-    manifestDigest
+    manifestDigest,
+    ...ticketFields
   };
 }
 function buildCollectorTransportPrompt(_admitted) {
@@ -16287,17 +16369,11 @@ async function admitDoctorInvocation(options) {
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  const attachments = [];
-  const attachmentPaths = options.attachmentPaths ?? [];
-  for (let i = 0; i < attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        attachmentPaths[i],
-        attachmentsDirectory,
-        i
-      )
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths ?? [],
+    attachmentsDirectory
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
@@ -16308,6 +16384,7 @@ async function admitDoctorInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     issueNumber: options.issueNumber,
@@ -16343,7 +16420,8 @@ async function admitDoctorInvocation(options) {
     admittedRequestPath,
     issueNumber: options.issueNumber,
     caseRunsPath,
-    caseIdentity: caseIdentity2
+    caseIdentity: caseIdentity2,
+    ...ticketFields
   };
 }
 function buildDoctorTransportPrompt(admitted) {
@@ -16426,16 +16504,11 @@ async function admitReviewerInvocation(options) {
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  const attachments = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i],
-        attachmentsDirectory,
-        i
-      )
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
@@ -16446,6 +16519,7 @@ async function admitReviewerInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
@@ -16479,7 +16553,8 @@ async function admitReviewerInvocation(options) {
     sessionFile,
     admittedRequestPath,
     baseRevision: options.baseRevision,
-    authorityRefs
+    authorityRefs,
+    ...ticketFields
   };
 }
 function buildReviewerTransportPrompt(admitted) {
@@ -16581,16 +16656,11 @@ async function admitMergerInvocation(options) {
   const attachmentsDirectory = join5(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  const attachments = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i],
-        attachmentsDirectory,
-        i
-      )
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
   const targetIntent = mergerMaterialFromUtf8(
     `Investigate primary sources for target parent ${derived.targetObjectId}. Do not invent intent.`
   );
@@ -16630,6 +16700,7 @@ async function admitMergerInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     mergerInputPath,
@@ -16669,7 +16740,8 @@ async function admitMergerInvocation(options) {
     sessionFile,
     admittedRequestPath,
     mergerInputPath,
-    derived: admitted.derived
+    derived: admitted.derived,
+    ...ticketFields
   };
 }
 function buildMergerTransportPrompt(admitted) {
@@ -16692,6 +16764,7 @@ var init_invocation = __esm({
     init_activation_ledger_topology();
     init_activation_ledger_git();
     init_sitian_role_run_coordinates();
+    init_ticket_frontmatter();
     init_doctor_evidence();
     init_collector_config();
     init_fixer_packet();
@@ -17559,6 +17632,20 @@ async function findRunDirectoryById(home, runId) {
   }
   return void 0;
 }
+function parsePersistedTicketIdentity(record4) {
+  const correlationId = typeof record4.correlationId === "string" && record4.correlationId.trim() !== "" ? record4.correlationId : void 0;
+  const ticketNumber = typeof record4.ticketNumber === "number" && Number.isInteger(record4.ticketNumber) && record4.ticketNumber >= 1 ? record4.ticketNumber : void 0;
+  return {
+    ...correlationId === void 0 ? {} : { correlationId },
+    ...ticketNumber === void 0 ? {} : { ticketNumber }
+  };
+}
+function restoredTicketFields(fields) {
+  return {
+    ...fields.correlationId === void 0 ? {} : { correlationId: fields.correlationId },
+    ...fields.ticketNumber === void 0 ? {} : { ticketNumber: fields.ticketNumber }
+  };
+}
 async function loadResumableRunRecord(home, runId) {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === void 0) {
@@ -17591,6 +17678,8 @@ async function loadResumableRunRecord(home, runId) {
   let authorityRefs;
   let mergerInputPath;
   let derived;
+  let correlationId;
+  let ticketNumber;
   try {
     const raw = JSON.parse(
       await readFile8(run.admittedRequestPath, "utf8")
@@ -17642,11 +17731,35 @@ async function loadResumableRunRecord(home, runId) {
           };
         }
       }
+      const fromAdmitted = parsePersistedTicketIdentity(record4);
+      correlationId = fromAdmitted.correlationId;
+      ticketNumber = fromAdmitted.ticketNumber;
     }
   } catch {
     throw new CliUsageError(
       `role run admitted request is unreadable: ${runId}`
     );
+  }
+  if (correlationId === void 0 || ticketNumber === void 0) {
+    try {
+      const invocationRaw = JSON.parse(
+        await readFile8(join9(run.runDirectory, "invocation.json"), "utf8")
+      );
+      if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
+        const fromInvocation = parsePersistedTicketIdentity(
+          invocationRaw
+        );
+        if (correlationId === void 0) correlationId = fromInvocation.correlationId;
+        if (ticketNumber === void 0) ticketNumber = fromInvocation.ticketNumber;
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw new CliUsageError(
+          `role run invocation identity is unreadable: ${runId}`,
+          { cause: error }
+        );
+      }
+    }
   }
   return {
     run,
@@ -17663,7 +17776,9 @@ async function loadResumableRunRecord(home, runId) {
       ...baseRevision === void 0 ? {} : { baseRevision },
       ...authorityRefs === void 0 ? {} : { authorityRefs },
       ...mergerInputPath === void 0 ? {} : { mergerInputPath },
-      ...derived === void 0 ? {} : { derived }
+      ...derived === void 0 ? {} : { derived },
+      ...correlationId === void 0 ? {} : { correlationId },
+      ...ticketNumber === void 0 ? {} : { ticketNumber }
     }
   };
 }
@@ -17685,7 +17800,8 @@ async function loadResumableJudgeRun(home, runId) {
     runDirectory: loaded.run.runDirectory,
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
-    admittedRequestPath: loaded.run.admittedRequestPath
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...restoredTicketFields(loaded.admittedFields)
   };
   return {
     admitted,
@@ -17730,7 +17846,8 @@ async function loadResumableCoderRun(home, runId) {
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
-    taskPath
+    taskPath,
+    ...restoredTicketFields(loaded.admittedFields)
   };
   return {
     admitted,
@@ -17778,7 +17895,8 @@ async function loadResumableFixerRun(home, runId) {
     admittedRequestPath: loaded.run.admittedRequestPath,
     packetPath,
     ...loaded.admittedFields.prerequisitesPath === void 0 ? {} : { prerequisitesPath: loaded.admittedFields.prerequisitesPath },
-    prerequisites
+    prerequisites,
+    ...restoredTicketFields(loaded.admittedFields)
   };
   return {
     admitted,
@@ -17812,7 +17930,8 @@ async function loadResumableReviewerRun(home, runId) {
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
-    authorityRefs: Object.freeze([...loaded.admittedFields.authorityRefs ?? []])
+    authorityRefs: Object.freeze([...loaded.admittedFields.authorityRefs ?? []]),
+    ...restoredTicketFields(loaded.admittedFields)
   };
   return {
     admitted,
@@ -17857,7 +17976,8 @@ async function loadResumableMergerRun(home, runId) {
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
-    derived
+    derived,
+    ...restoredTicketFields(loaded.admittedFields)
   };
   return {
     admitted,
@@ -21312,8 +21432,9 @@ async function dispatchAdmittedCoder(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -21459,7 +21580,10 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
   });
   return await dispatchAdmittedCoder({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -21533,7 +21657,10 @@ async function runPublicCoderResume(argv, env, io) {
   });
   return await dispatchAdmittedCoder({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -21638,8 +21765,9 @@ async function dispatchAdmittedCollector(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -21768,7 +21896,10 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
   });
   return await dispatchAdmittedCollector({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease
@@ -22170,8 +22301,9 @@ async function dispatchAdmittedFixer(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -22333,7 +22465,10 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
   });
   return await dispatchAdmittedFixer({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -22400,7 +22535,10 @@ async function runPublicFixerResume(argv, env, io) {
   });
   return await dispatchAdmittedFixer({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -22544,8 +22682,9 @@ async function dispatchAdmittedJudge(input) {
       // and role-runtime can record typed provider HTTP observations.
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -22678,7 +22817,10 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
   });
   return await dispatchAdmittedJudge({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease
@@ -22727,7 +22869,10 @@ async function runPublicResume(argv, env, io) {
   });
   return await dispatchAdmittedJudge({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease
@@ -22885,8 +23030,9 @@ async function dispatchAdmittedMerger(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -23118,7 +23264,10 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
   });
   return await dispatchAdmittedMerger({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -23186,7 +23335,10 @@ async function runPublicMergerResume(argv, env, io) {
   });
   return await dispatchAdmittedMerger({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -23351,8 +23503,9 @@ async function dispatchAdmittedReviewer(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
+    const correlationId = admitted.correlationId ?? env.correlationId;
+    if (correlationId !== void 0 && correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = correlationId;
     }
     let result2;
     try {
@@ -23514,7 +23667,10 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
   });
   return await dispatchAdmittedReviewer({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -23581,7 +23737,10 @@ async function runPublicReviewerResume(argv, env, io) {
   });
   return await dispatchAdmittedReviewer({
     admitted,
-    env,
+    env: {
+      ...env,
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
     io,
     extraArgs,
     lease,
@@ -23606,6 +23765,7 @@ var init_reviewer_run = __esm({
 var cli_exports = {};
 __export(cli_exports, {
   CliUsageError: () => CliUsageError,
+  PUBLIC_ROLE_ARGV: () => PUBLIC_ROLE_ARGV,
   buildExplicitInternalActivationArgs: () => buildExplicitInternalActivationArgs,
   helpDocument: () => helpDocument,
   resolveInternalRoleEntrypoint: () => resolveInternalRoleEntrypoint,
@@ -23614,6 +23774,42 @@ __export(cli_exports, {
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { join as join18 } from "node:path";
+function takePublicGlobalFlag(argv, index) {
+  const token = argv[index];
+  if (token === void 0) return void 0;
+  if (token === "--help" || token === "-h") {
+    return { flag: "help", consume: 1 };
+  }
+  if (token === "--model") {
+    const value = argv[index + 1];
+    if (value === void 0) {
+      return { flag: "model", consume: 1, value: void 0 };
+    }
+    return { flag: "model", consume: 2, value };
+  }
+  if (token.startsWith("--model=")) {
+    return {
+      flag: "model",
+      consume: 1,
+      value: token.slice("--model=".length)
+    };
+  }
+  if (token === "--thinking") {
+    const raw = argv[index + 1];
+    if (raw === void 0) {
+      return { flag: "thinking", consume: 1, raw: void 0 };
+    }
+    return { flag: "thinking", consume: 2, raw };
+  }
+  if (token.startsWith("--thinking=")) {
+    return {
+      flag: "thinking",
+      consume: 1,
+      raw: token.slice("--thinking=".length)
+    };
+  }
+  return void 0;
+}
 function defaultIo() {
   return {
     stdout: (text) => {
@@ -23643,40 +23839,34 @@ function parseArgv(argv) {
   let help = false;
   const positional = [];
   while (args.length > 0) {
-    const token = args.shift();
-    if (token === "--") {
+    if (args[0] === "--") {
+      args.shift();
       positional.push(...args);
       break;
     }
-    if (token === "--help" || token === "-h") {
-      help = true;
+    const taken = takePublicGlobalFlag(args, 0);
+    if (taken !== void 0) {
+      if (taken.flag === "help") {
+        help = true;
+        args.splice(0, taken.consume);
+        continue;
+      }
+      if (taken.flag === "model") {
+        if (taken.value === void 0) {
+          throw new CliUsageError("--model requires a value");
+        }
+        model = taken.value;
+        args.splice(0, taken.consume);
+        continue;
+      }
+      if (taken.raw === void 0) {
+        throw new CliUsageError("--thinking requires a value");
+      }
+      thinking = parseThinking(taken.raw);
+      args.splice(0, taken.consume);
       continue;
     }
-    if (token === "--model") {
-      const value = args.shift();
-      if (value === void 0) throw new CliUsageError("--model requires a value");
-      model = value;
-      continue;
-    }
-    if (token.startsWith("--model=")) {
-      model = token.slice("--model=".length);
-      continue;
-    }
-    if (token === "--thinking") {
-      const value = args.shift();
-      if (value === void 0) throw new CliUsageError("--thinking requires a value");
-      thinking = parseThinking(value);
-      continue;
-    }
-    if (token.startsWith("--thinking=")) {
-      thinking = parseThinking(token.slice("--thinking=".length));
-      continue;
-    }
-    if (token.startsWith("-") && token !== "-") {
-      positional.push(token);
-      continue;
-    }
-    positional.push(token);
+    positional.push(args.shift());
   }
   const [command, ...rest] = positional;
   return {
@@ -24009,7 +24199,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseJudgeArgv
+        PUBLIC_ROLE_ARGV.judge.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24043,7 +24233,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseCoderArgv
+        PUBLIC_ROLE_ARGV.coder.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24077,7 +24267,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseFixerArgv
+        PUBLIC_ROLE_ARGV.fixer.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24111,7 +24301,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseCollectorArgv
+        PUBLIC_ROLE_ARGV.collector.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24145,7 +24335,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseReviewerArgv
+        PUBLIC_ROLE_ARGV.reviewer.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24179,7 +24369,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseDoctorArgv
+        PUBLIC_ROLE_ARGV.doctor.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24213,7 +24403,7 @@ async function runAkRole(argv, env) {
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
-        parseMergerArgv
+        PUBLIC_ROLE_ARGV.merger.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -24235,7 +24425,7 @@ async function runAkRole(argv, env) {
     return { exitCode: 1 };
   }
 }
-var THINKING_LEVELS2;
+var PUBLIC_ROLE_ARGV, THINKING_LEVELS2;
 var init_cli = __esm({
   "src/public-cli/cli.ts"() {
     "use strict";
@@ -24255,6 +24445,15 @@ var init_cli = __esm({
     init_settlement();
     init_explicit_internal();
     init_cli_errors();
+    PUBLIC_ROLE_ARGV = {
+      judge: { parse: parseJudgeArgv },
+      coder: { parse: parseCoderArgv },
+      fixer: { parse: parseFixerArgv },
+      collector: { parse: parseCollectorArgv },
+      doctor: { parse: parseDoctorArgv },
+      merger: { parse: parseMergerArgv },
+      reviewer: { parse: parseReviewerArgv }
+    };
     THINKING_LEVELS2 = /* @__PURE__ */ new Set([
       "off",
       "minimal",
