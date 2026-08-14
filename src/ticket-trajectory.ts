@@ -44,6 +44,7 @@ import {
 } from "./package-contracts/terminating-tools.ts";
 import { PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
 
+
 /** Declared refresh bound for the same viewing surface (seconds). */
 export const DEFAULT_REFRESH_BOUNDARY_SECONDS = 30;
 
@@ -275,6 +276,8 @@ type InvocationInfo = {
   model?: string;
   provider?: string;
   thinking?: string;
+  ticketNumber?: number;
+  correlationId?: string;
 };
 
 async function readInvocation(runDir: string): Promise<InvocationInfo | undefined> {
@@ -294,6 +297,16 @@ async function readInvocation(runDir: string): Promise<InvocationInfo | undefine
       } else {
         info.model = rawModel;
       }
+    }
+    if (
+      typeof parsed.ticketNumber === "number" &&
+      Number.isInteger(parsed.ticketNumber) &&
+      parsed.ticketNumber >= 1
+    ) {
+      info.ticketNumber = parsed.ticketNumber;
+    }
+    if (typeof parsed.correlationId === "string" && parsed.correlationId.trim() !== "") {
+      info.correlationId = parsed.correlationId;
     }
     return info;
   } catch (error) {
@@ -355,9 +368,8 @@ async function maxMtimeMs(paths: readonly string[]): Promise<number> {
   return max;
 }
 
-async function parseRun(ledgerDir: string, issueNumber: number, runId: string): Promise<ParsedRun> {
-  const runDir = join(ledgerDir, "issues", String(issueNumber), "runs", runId);
-  const ledgerCoord = ["issues", String(issueNumber), "runs", runId].join("/");
+async function parseRunDirectory(runDir: string, ledgerCoord: string): Promise<ParsedRun> {
+  const runId = basename(runDir);
   const evidenceTarget = await realpathOrLexicalIfMissing(runDir);
   const evidenceHref = pathToFileURL(evidenceTarget).href;
   const sessionDir = join(runDir, "session");
@@ -441,6 +453,12 @@ async function parseRun(ledgerDir: string, issueNumber: number, runId: string): 
     provider,
     thinking,
   };
+}
+
+async function parseRun(ledgerDir: string, issueNumber: number, runId: string): Promise<ParsedRun> {
+  const runDir = join(ledgerDir, "issues", String(issueNumber), "runs", runId);
+  const ledgerCoord = ["issues", String(issueNumber), "runs", runId].join("/");
+  return parseRunDirectory(runDir, ledgerCoord);
 }
 
 async function listRunIds(ledgerDir: string, issueNumber: number): Promise<string[]> {
@@ -633,20 +651,142 @@ ${stationBlocks || "<p data-empty=\"true\">no runs</p>"}
 /**
  * Load one ticket's runs via the S1 tracer path (read-only ledger scan).
  * Factory board reuses this — no parallel receipt parser.
+ *
+ * Flat-run attribution (#176 option A): read typed `ticketNumber` from each
+ * `runs/<run>@<role>/invocation.json`. Legacy `issues/<N>/runs` remains a
+ * read-only compatibility entrance. Unbound flat runs never join a ticket.
  */
+
+/** One flat run's typed binding projection from invocation.json. */
+export type FlatRunTicketBinding = {
+  readonly runDir: string;
+  readonly runFolder: string;
+  readonly ticketNumber?: number;
+  readonly role?: string;
+  readonly correlationId?: string;
+};
+
+/**
+ * Book-level flat-run index built once per lane/render and reused per ticket.
+ * Pure derived view of flat runs' invocation.json files — not a parallel ledger.
+ */
+export type TicketTrajectoryBookIndex = {
+  /** ticket number → flat runs bound via invocation.json ticketNumber. */
+  readonly runsByTicket: ReadonlyMap<number, readonly FlatRunTicketBinding[]>;
+  /** Flat runs with no typed ticketNumber (unknown/unbound seam). */
+  readonly unboundRuns: readonly FlatRunTicketBinding[];
+};
+
+async function listFlatRunDirectories(ledgerDir: string): Promise<string[]> {
+  const runsDir = join(resolve(ledgerDir), "runs");
+  try {
+    const entries = await readdir(runsDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(runsDir, entry.name))
+      .sort();
+  } catch (error) {
+    if (isMissingPathError(error)) return [];
+    throw error;
+  }
+}
+
+export async function buildTicketTrajectoryBookIndex(
+  ledgerDir: string,
+): Promise<TicketTrajectoryBookIndex> {
+  const root = resolve(ledgerDir);
+  const runsByTicket = new Map<number, FlatRunTicketBinding[]>();
+  const unboundRuns: FlatRunTicketBinding[] = [];
+  for (const runDir of await listFlatRunDirectories(root)) {
+    const invocation = await readInvocation(runDir);
+    const binding: FlatRunTicketBinding = {
+      runDir,
+      runFolder: basename(runDir),
+      ...(invocation?.ticketNumber !== undefined
+        ? { ticketNumber: invocation.ticketNumber }
+        : {}),
+      ...(invocation?.role !== undefined ? { role: invocation.role } : {}),
+      ...(invocation?.correlationId !== undefined
+        ? { correlationId: invocation.correlationId }
+        : {}),
+    };
+    if (binding.ticketNumber !== undefined) {
+      const list = runsByTicket.get(binding.ticketNumber) ?? [];
+      list.push(binding);
+      runsByTicket.set(binding.ticketNumber, list);
+    } else {
+      unboundRuns.push(binding);
+    }
+  }
+  return { runsByTicket, unboundRuns };
+}
+
+export type UnboundTrajectoryRun = {
+  readonly run: TicketTrajectoryRun;
+  readonly role: string;
+  readonly observedAt: string;
+  readonly correlationId?: string;
+};
+
+/**
+ * Load unbound flat runs for the board unknown seam.
+ * Never joins any ticket. Built from the book index (once).
+ */
+export async function loadUnboundTrajectoryRuns(
+  ledgerDir: string,
+  bookIndex?: TicketTrajectoryBookIndex,
+): Promise<readonly UnboundTrajectoryRun[]> {
+  const root = resolve(ledgerDir);
+  const index = bookIndex ?? (await buildTicketTrajectoryBookIndex(root));
+  const out: UnboundTrajectoryRun[] = [];
+  for (const binding of index.unboundRuns) {
+    const ledgerCoord = ["runs", binding.runFolder].join("/");
+    const run = await parseRunDirectory(binding.runDir, ledgerCoord);
+    out.push({
+      run,
+      role: binding.role ?? run.station,
+      observedAt: run.startedAt ?? run.lastActivityAt ?? "",
+      ...(binding.correlationId === undefined
+        ? {}
+        : { correlationId: binding.correlationId }),
+    });
+  }
+  return out;
+}
+
 export async function loadTicketTrajectoryRuns(
   ledgerDir: string,
   issueNumber: number,
+  bookIndex?: TicketTrajectoryBookIndex,
 ): Promise<TicketTrajectoryRun[]> {
   if (!Number.isInteger(issueNumber) || issueNumber < 1) {
     throw new Error("issueNumber must be a positive integer");
   }
   const root = resolve(ledgerDir);
-  const runIds = await listRunIds(root, issueNumber);
+  const index = bookIndex ?? (await buildTicketTrajectoryBookIndex(root));
+
   const runs: ParsedRun[] = [];
+  const seenRunDirs = new Set<string>();
+
+  // Legacy hand-dispatch path: issues/<N>/runs (read-only compatibility).
+  const runIds = await listRunIds(root, issueNumber);
   for (const runId of runIds) {
-    runs.push(await parseRun(root, issueNumber, runId));
+    const parsed = await parseRun(root, issueNumber, runId);
+    const legacyDir = join(root, "issues", String(issueNumber), "runs", runId);
+    seenRunDirs.add(resolve(legacyDir));
+    runs.push(parsed);
   }
+
+  // Flat runs bound by typed invocation.json ticketNumber.
+  const flatBindings = index.runsByTicket.get(issueNumber) ?? [];
+  for (const binding of flatBindings) {
+    const resolvedRunDir = resolve(binding.runDir);
+    if (seenRunDirs.has(resolvedRunDir)) continue;
+    seenRunDirs.add(resolvedRunDir);
+    const ledgerCoord = ["runs", binding.runFolder].join("/");
+    runs.push(await parseRunDirectory(binding.runDir, ledgerCoord));
+  }
+
   return runs;
 }
 

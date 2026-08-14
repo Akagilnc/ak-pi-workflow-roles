@@ -28,13 +28,18 @@ import {
 } from "./human-format.ts";
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
+  buildTicketTrajectoryBookIndex,
   loadTicketTrajectoryRuns,
+  loadUnboundTrajectoryRuns,
   renderTicketTrajectoryStationHtml,
+  type TicketTrajectoryBookIndex,
   type TicketTrajectoryRun,
   type TrajectoryClock,
   type TrajectoryScheduler,
+  type UnboundTrajectoryRun,
 } from "./ticket-trajectory.ts";
 import type { BoardSnapshot, SnapshotTicket, TicketIssueState } from "./ticket-snapshot.ts";
+
 
 /** Unaccepted latest-run mtime bands (page-visible thresholds). */
 export const UNACCEPTED_FLYING_MS = 2 * 60 * 1000;
@@ -403,6 +408,40 @@ function latestKnownStation(runs: readonly TicketTrajectoryRun[]): string | unde
   return latest.station;
 }
 
+/**
+ * Unbound activation card for the existing unknown-set presentation seam.
+ * Not a ticket: no issue number, never placed in a yamen column.
+ */
+function renderUnboundRunCard(input: {
+  bookKey: string;
+  unbound: UnboundTrajectoryRun;
+}): string {
+  const { run, role, observedAt } = input.unbound;
+  const correlationId = input.unbound.correlationId;
+  const stationLabel =
+    run.station === "unknown" ? "未知站" : (YAMEN_LABELS[run.station] ?? run.station);
+  const corrAttr = correlationId === undefined ? "" : ` data-correlation="${attr(correlationId)}"`;
+  const corrMeta =
+    correlationId === undefined ? "" : ` · corr ${escapeHtml(correlationId)}`;
+  return [
+    `<article class="ticket unbound-run"`,
+    ` data-unbound-run="true"`,
+    ` data-book="${attr(input.bookKey)}"`,
+    ` data-run-id="${attr(run.runId)}"`,
+    corrAttr,
+    ` data-placement="unknown"`,
+    `>`,
+    `<header class="ticket-header">`,
+    `<span class="ticket-title">未绑定 · ${escapeHtml(run.runId)}</span>`,
+    `<span class="yamen-tag yamen-unknown" data-yamen="unknown">${escapeHtml(stationLabel)}</span>`,
+    `</header>`,
+    `<p class="unbound-meta" data-unbound-meta="true">`,
+    `role ${escapeHtml(role)}${corrMeta} · ${escapeHtml(observedAt)}`,
+    `</p>`,
+    `</article>`,
+  ].join("");
+}
+
 function renderTicketArticle(input: {
   bookKey: string;
   prepared: PreparedTicket;
@@ -681,8 +720,9 @@ async function prepareTicket(
   ledgerDir: string,
   ticket: SnapshotTicket,
   now: Date,
+  bookIndex?: TicketTrajectoryBookIndex,
 ): Promise<PreparedTicket> {
-  const runs = await loadTicketTrajectoryRuns(ledgerDir, ticket.issueNumber);
+  const runs = await loadTicketTrajectoryRuns(ledgerDir, ticket.issueNumber, bookIndex);
   const pending = ticket.state !== "closed" && runs.length === 0;
   const currentState = decideTicketCurrentState({
     ticketState: ticket.state,
@@ -862,9 +902,11 @@ async function renderLaneHtml(
   now: Date,
   options?: { hidden?: boolean },
 ): Promise<RenderedLane> {
+  // One book-level flat-run index shared by every ticket in this lane.
+  const bookIndex = await buildTicketTrajectoryBookIndex(ledgerDir);
   const prepared = new Map<number, PreparedTicket>();
   for (const ticket of tickets) {
-    prepared.set(ticket.issueNumber, await prepareTicket(ledgerDir, ticket, now));
+    prepared.set(ticket.issueNumber, await prepareTicket(ledgerDir, ticket, now, bookIndex));
   }
 
   const childrenByParent = buildDirectChildrenByParent(prepared);
@@ -980,6 +1022,20 @@ async function renderLaneHtml(
     list.push(entry);
     byPlacement.set(entry.placement, list);
   }
+
+  // Unbound flat runs: isolated from every ticket, honest on the unknown seam.
+  const unboundRuns = await loadUnboundTrajectoryRuns(ledgerDir, bookIndex);
+  for (const unbound of unboundRuns) {
+    unknownEntries.push({
+      placement: "unknown",
+      band: 0,
+      activityMs: unbound.run.mtimeMs,
+      // Sort after real tickets; no issue identity (unbound is not a ticket).
+      issueNumber: Number.MAX_SAFE_INTEGER,
+      html: renderUnboundRunCard({ bookKey, unbound }),
+    });
+  }
+
   unknownEntries.sort(entryCompare);
   unknownTickets.sort((a, b) => a.issueNumber - b.issueNumber);
 
@@ -1469,7 +1525,8 @@ export async function renderFactoryBoardHtml(
         generatedAt,
       );
     }
-    const lane = await renderLaneHtml(
+    let lane: RenderedLane;
+    lane = await renderLaneHtml(
       book.bookKey,
       resolve(book.ledgerDir),
       bookSnap.tickets,

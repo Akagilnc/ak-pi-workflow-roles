@@ -61,6 +61,69 @@ export {
 export { CliUsageError } from "./cli-errors.ts";
 export type { CliIo } from "./cli-io.ts";
 
+/**
+ * Sole production map: public role command → argv parser.
+ * cli handlers consume this table; no parallel set.
+ */
+export const PUBLIC_ROLE_ARGV = {
+  judge: { parse: parseJudgeArgv },
+  coder: { parse: parseCoderArgv },
+  fixer: { parse: parseFixerArgv },
+  collector: { parse: parseCollectorArgv },
+  doctor: { parse: parseDoctorArgv },
+  merger: { parse: parseMergerArgv },
+  reviewer: { parse: parseReviewerArgv },
+} as const;
+
+type TakenPublicGlobalFlag =
+  | { flag: "help"; consume: 1 }
+  | { flag: "model"; consume: 1 | 2; value: string | undefined }
+  | { flag: "thinking"; consume: 1 | 2; raw: string | undefined };
+
+/**
+ * If `argv[index]` is a public global flag, describe its span and payload.
+ * Sole global-flag grammar for parseArgv.
+ */
+function takePublicGlobalFlag(
+  argv: readonly string[],
+  index: number,
+): TakenPublicGlobalFlag | undefined {
+  const token = argv[index];
+  if (token === undefined) return undefined;
+  if (token === "--help" || token === "-h") {
+    return { flag: "help", consume: 1 };
+  }
+  if (token === "--model") {
+    const value = argv[index + 1];
+    if (value === undefined) {
+      return { flag: "model", consume: 1, value: undefined };
+    }
+    return { flag: "model", consume: 2, value };
+  }
+  if (token.startsWith("--model=")) {
+    return {
+      flag: "model",
+      consume: 1,
+      value: token.slice("--model=".length),
+    };
+  }
+  if (token === "--thinking") {
+    const raw = argv[index + 1];
+    if (raw === undefined) {
+      return { flag: "thinking", consume: 1, raw: undefined };
+    }
+    return { flag: "thinking", consume: 2, raw };
+  }
+  if (token.startsWith("--thinking=")) {
+    return {
+      flag: "thinking",
+      consume: 1,
+      raw: token.slice("--thinking=".length),
+    };
+  }
+  return undefined;
+}
+
 export type CliEnv = {
   home?: string;
   agentDir?: string;
@@ -167,44 +230,38 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
 
   // Global flags may appear before or after the subcommand
   // (`ak-role --model x roles` and `ak-role roles --model x`).
+  // Grammar authority: takePublicGlobalFlag above.
   while (args.length > 0) {
-    const token = args.shift()!;
-    if (token === "--") {
+    if (args[0] === "--") {
+      args.shift();
       positional.push(...args);
       break;
     }
-    if (token === "--help" || token === "-h") {
-      help = true;
+    const taken = takePublicGlobalFlag(args, 0);
+    if (taken !== undefined) {
+      if (taken.flag === "help") {
+        help = true;
+        args.splice(0, taken.consume);
+        continue;
+      }
+      if (taken.flag === "model") {
+        if (taken.value === undefined) {
+          throw new CliUsageError("--model requires a value");
+        }
+        model = taken.value;
+        args.splice(0, taken.consume);
+        continue;
+      }
+      if (taken.raw === undefined) {
+        throw new CliUsageError("--thinking requires a value");
+      }
+      thinking = parseThinking(taken.raw);
+      args.splice(0, taken.consume);
       continue;
     }
-    if (token === "--model") {
-      const value = args.shift();
-      if (value === undefined) throw new CliUsageError("--model requires a value");
-      model = value;
-      continue;
-    }
-    if (token.startsWith("--model=")) {
-      model = token.slice("--model=".length);
-      continue;
-    }
-    if (token === "--thinking") {
-      const value = args.shift();
-      if (value === undefined) throw new CliUsageError("--thinking requires a value");
-      thinking = parseThinking(value);
-      continue;
-    }
-    if (token.startsWith("--thinking=")) {
-      thinking = parseThinking(token.slice("--thinking=".length));
-      continue;
-    }
-    if (token.startsWith("-") && token !== "-") {
-      // Subcommands may own additional flags later; only reject unknowns at the
-      // top level when they appear before any positional command is collected
-      // and the command is one that does not accept free flags (enforced below).
-      positional.push(token);
-      continue;
-    }
-    positional.push(token);
+    // Subcommands may own additional flags later; unknown dashed tokens stay
+    // positional here (same as pre-unification parseArgv).
+    positional.push(args.shift()!);
   }
 
   const [command, ...rest] = positional;
@@ -626,7 +683,7 @@ export async function runAkRole(
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
         },
         io,
-        parseJudgeArgv,
+        PUBLIC_ROLE_ARGV.judge.parse,
       );
       return {
         exitCode: result.exitCode,
@@ -669,7 +726,7 @@ export async function runAkRole(
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
         },
         io,
-        parseCoderArgv,
+        PUBLIC_ROLE_ARGV.coder.parse,
       );
       return {
         exitCode: result.exitCode,
@@ -712,7 +769,7 @@ export async function runAkRole(
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
         },
         io,
-        parseFixerArgv,
+        PUBLIC_ROLE_ARGV.fixer.parse,
       );
       return {
         exitCode: result.exitCode,
@@ -755,7 +812,7 @@ export async function runAkRole(
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
         },
         io,
-        parseCollectorArgv,
+        PUBLIC_ROLE_ARGV.collector.parse,
       );
       return {
         exitCode: result.exitCode,
@@ -798,7 +855,7 @@ export async function runAkRole(
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
         },
         io,
-        parseReviewerArgv,
+        PUBLIC_ROLE_ARGV.reviewer.parse,
       );
       return {
         exitCode: result.exitCode,
@@ -841,7 +898,7 @@ export async function runAkRole(
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
         },
         io,
-        parseDoctorArgv,
+        PUBLIC_ROLE_ARGV.doctor.parse,
       );
       return {
         exitCode: result.exitCode,
@@ -884,7 +941,7 @@ export async function runAkRole(
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
         },
         io,
-        parseMergerArgv,
+        PUBLIC_ROLE_ARGV.merger.parse,
       );
       return {
         exitCode: result.exitCode,

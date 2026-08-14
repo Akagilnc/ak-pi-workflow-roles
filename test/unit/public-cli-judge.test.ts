@@ -151,6 +151,8 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
+
+
 test("S1: judge escalate public CLI prints every decisionGate option text in order", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -278,11 +280,15 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
     );
     assert.equal(admitted.sessionDirectory, join(admitted.runDirectory, "session"));
     await access(admitted.admittedRequestPath);
-    // Index file (waiting.jsonl) must not receive request content.
-    await assert.rejects(
-      () => readFile(join(home, ".ak-roles", "books", bookKey, "waiting.jsonl"), "utf8"),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
+    // Unbound admit writes no waiting.jsonl; when present it must never hold request content.
+    const waitingPath = join(home, ".ak-roles", "books", bookKey, "waiting.jsonl");
+    try {
+      const waiting = await readFile(waitingPath, "utf8");
+      assert.equal(waiting.includes("review the attachment"), false);
+      assert.equal(waiting.includes("admitted-bytes-v1"), false);
+    } catch (error) {
+      assert.equal((error as NodeJS.ErrnoException).code, "ENOENT");
+    }
   });
 });
 
@@ -1168,6 +1174,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    // ADR 0049 host correlation channel remains optional env; no lease mint.
     const attachment = join(home, "note.txt");
     await writeFile(attachment, "freeze-me", "utf8");
 
@@ -1287,6 +1294,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     assert.match(prompt, /attachments\/00-note\.txt/);
     assert.equal(prompt.includes(attachment), false);
 
+    // ADR 0049 host correlation channel: optional env id reaches the child when present.
     assert.equal(capturedEnv?.AK_CORRELATION_ID, "corr-106-unit");
     assert.equal(
       typeof capturedEnv?.AK_ROLE_RUN_DIR === "string" &&

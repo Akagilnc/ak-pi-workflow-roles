@@ -14,6 +14,7 @@ import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.t
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { settleJudgeTerminalResult } from "../../src/public-cli/settlement.ts";
+
 import {
   packageRoot,
   piCli,
@@ -337,6 +338,7 @@ test(
           home,
           agentDir,
           cwd: project,
+          // ADR 0049 host correlation channel (optional; not ticket attribution).
           correlationId: "corr-106-e2e",
           createRunId: () => "run-e2e-judge-001",
           judgeExtraPiArgs: ["-e", providerPath],
@@ -442,7 +444,19 @@ test(
         false,
       );
       assert.match(indexText, /"event":"accepted-activation"/);
-      assert.match(indexText, /"id":"corr-106-e2e"/);
+      // Activation correlation comes from the ADR 0049 host channel when supplied.
+      const rows = indexText
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line) as {
+          event?: string;
+          correlation?: { kind?: string; id?: string };
+        });
+      assert.equal(rows.some((row) => row.event === "ticket-binding"), false);
+      const activation = rows.find((row) => row.event === "accepted-activation");
+      assert.ok(activation, "accepted-activation fact required");
+      assert.equal(activation!.correlation?.kind, "caller");
+      assert.equal(activation!.correlation?.id, "corr-106-e2e");
 
       // pi binary used by harness exists (sanity for runner wiring).
       assert.equal(piCli.endsWith("/pi"), true);
