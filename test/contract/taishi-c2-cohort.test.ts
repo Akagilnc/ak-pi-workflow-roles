@@ -8,12 +8,13 @@
  * Ratio metrics merge numerators/denominators across the group's present issues;
  * missing index row → typed vacancy entry; zero denominator → typed vacancy.
  * Index rows come from the real issue-mode entry (no hand-written index assembly).
- * Index hit + page ENOENT stays a real failure — never washed into absent.
+ * Index hit + page missing → #338 compute-if-missing (sole kernel) restores page;
+ * index miss alone remains typed vacancy. Compute failure stays loud (not absent).
  * C2 fixture runs use exclusive runId segment 019ff000-2xxx.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -305,7 +306,7 @@ test("taishi C2 cohort: all-absent group yields typed vacancy aggregates (no 0/�
   });
 });
 
-test("taishi C2 cohort: index hit + page ENOENT keeps real failure (not washed to absent)", async () => {
+test("taishi C2 cohort: index hit + page missing recomputes via sole kernel (not washed to absent)", async () => {
   await withBusinessRepo(async () => {
     await withTempHome(async () => {
       // Real entry produces page + unique index row.
@@ -314,22 +315,39 @@ test("taishi C2 cohort: index hit + page ENOENT keeps real failure (not washed t
         projectRoot: ISSUE_201_ROOT,
         issueNumber: 201,
       });
-      // Dangle the index reference: remove page, keep index row.
+      const expectedWall = produced.page.totalElapsedMs;
+      const expectedRuns = produced.page.legs.map((leg) => leg.runId).sort();
+      // Remove page, keep index row — #338 compute-if-missing must restore it.
       await rm(produced.pagePath);
 
-      await assert.rejects(
-        () =>
-          runTaishi({
-            mode: "cohort",
-            groups: [
-              { groupLabel: "left", issues: [201] },
-              { groupLabel: "right", issues: [999] },
-            ],
-          }),
-        (err: unknown) =>
-          err instanceof Error
-          && "code" in err
-          && (err as NodeJS.ErrnoException).code === "ENOENT",
+      const result = await runTaishi({
+        mode: "cohort",
+        groups: [
+          { groupLabel: "left", issues: [201] },
+          { groupLabel: "right", issues: [999] },
+        ],
+      });
+
+      assert.equal(result.mode, "cohort");
+      assert.deepEqual(result.groups[0]!.issues, [
+        {
+          issueNumber: 201,
+          status: "present",
+          projectRoot: physicalPathIdentity(ISSUE_201_ROOT),
+        },
+      ]);
+      // Right group index-miss stays typed vacancy (not a compute target).
+      assert.deepEqual(result.groups[1]!.issues, [
+        { issueNumber: 999, status: "absent" },
+      ]);
+      // Page restored through sole writer entry.
+      const restored = JSON.parse(
+        await readFile(produced.pagePath, "utf8"),
+      ) as { totalElapsedMs: number; legs: readonly { runId: string }[] };
+      assert.equal(restored.totalElapsedMs, expectedWall);
+      assert.deepEqual(
+        restored.legs.map((leg) => leg.runId).sort(),
+        expectedRuns,
       );
     });
   });

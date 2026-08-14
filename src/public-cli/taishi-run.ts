@@ -1,15 +1,20 @@
 /**
- * Public taishi adapter (#336/#337): argv → issue or sweep input → runTaishi.
+ * Public taishi adapter (#336/#337/#338): argv → typed query → runTaishi family.
  * Deterministic analysis seat — no Pi runner, no admission lease.
- * Reuses existing CLI failure envelope (CliUsageError + structural reject).
+ * Reuses existing CLI failure envelope (CliUsageError + structural reject +
+ * ControlledFailure).
  * Index read reuses readTaishiLibraryIndexPage / findTaishiLibraryIndexRow.
  * #337 sweep: exactly one typed JSON attachment → TaishiSweepModeInput → #329 kernel.
+ * #338: three query faces; sync compute-if-missing; whole-compute failure →
+ * ControlledFailure terminal (code/projectRoot/issueNumber/real cause).
+ * "Unobtrusive" binds #337 merge auto-trigger only, not this user-initiated query.
  */
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { Value } from "typebox/value";
 
 import {
+  errnoCode,
   physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
@@ -19,15 +24,20 @@ import {
   readTaishiLibraryIndexPage,
 } from "../taishi-index.ts";
 import {
+  readOrComputeTaishiIssuePage,
   runTaishi,
   taishiSweepModeInputSchema,
+  TaishiIssueComputeError,
   type TaishiIssueModeInput,
   type TaishiSweepModeInput,
 } from "../taishi-entry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
-import type { ParseTaishiArgvResult } from "./invocation.ts";
-import { presentStructuralRejection } from "./settlement.ts";
+import type {
+  ParseTaishiArgvResult,
+  ParseTaishiIssueArgv,
+} from "./invocation.ts";
+import { presentControlledFailure, presentStructuralRejection } from "./settlement.ts";
 
 export type TaishiRunEnv = {
   readonly home: string;
@@ -43,7 +53,7 @@ export type TaishiRunEnv = {
  * Bare both-missing is owned by parseTaishiArgv — no second reject here.
  */
 export async function buildTaishiIssueModeInputFromPublicArgv(
-  parsed: ParseTaishiArgvResult,
+  parsed: ParseTaishiIssueArgv,
   ledgerHome: string,
 ): Promise<TaishiIssueModeInput> {
   const ticket = parsed.ticket;
@@ -153,8 +163,8 @@ export async function buildTaishiSweepModeInputFromAttachmentPaths(
 }
 
 /**
- * Public taishi run path — parse → resolve → runTaishi → typed receipt on stdout.
- * Issue mode (#336) and sweep mode (#337) share this adapter and envelope.
+ * Public taishi run path — parse → resolve → query → typed receipt on stdout.
+ * Issue (#336/#338 compute-if-missing), sweep (#337), cohort/model-groups (#338).
  */
 export async function runPublicTaishi(
   argv: readonly string[],
@@ -167,7 +177,7 @@ export async function runPublicTaishi(
     // Machine home is package-owned (ADR 0048) — same primitive runTaishi uses.
     const ledgerHome = resolveActivationLedgerHome();
 
-    if (parsed.sweepMode) {
+    if (parsed.query === "sweep") {
       const input = await buildTaishiSweepModeInputFromAttachmentPaths(
         parsed.attachmentPaths,
       );
@@ -176,14 +186,49 @@ export async function runPublicTaishi(
       return { exitCode: 0 };
     }
 
+    if (parsed.query === "cohort") {
+      const result = await runTaishi({
+        mode: "cohort",
+        groups: parsed.groups,
+      });
+      io.stdout(`${JSON.stringify(result, null, 2)}\n`);
+      return { exitCode: 0 };
+    }
+
+    if (parsed.query === "model-groups") {
+      const result = await runTaishi({
+        mode: "model-groups",
+        projectRoots: parsed.projectRoots,
+      });
+      io.stdout(`${JSON.stringify(result, null, 2)}\n`);
+      return { exitCode: 0 };
+    }
+
+    // issue query — compute-if-missing (#338); sole kernel on miss.
     const input = await buildTaishiIssueModeInputFromPublicArgv(parsed, ledgerHome);
-    const result = await runTaishi(input);
+    const result = await readOrComputeTaishiIssuePage(input);
     io.stdout(`${JSON.stringify(result, null, 2)}\n`);
     return { exitCode: 0 };
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
       return { exitCode: 2 };
+    }
+    if (error instanceof TaishiIssueComputeError) {
+      // Existing ControlledFailure: details carry code/projectRoot/issueNumber;
+      // identity.code carries distinguishable real cause (errno). No parallel schema.
+      const code = errnoCode(error.cause);
+      presentControlledFailure({
+        cause: "output",
+        diagnostic: error.message,
+        ...(code === undefined ? {} : { identity: { code } }),
+        details: {
+          code: error.code,
+          projectRoot: error.projectRoot,
+          ...(error.issueNumber === undefined ? {} : { issueNumber: error.issueNumber }),
+        },
+      }, io);
+      return { exitCode: 1 };
     }
     throw error;
   }
