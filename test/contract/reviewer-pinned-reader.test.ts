@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -232,5 +232,62 @@ test("pinned reader: origin/commit messages/readPinnedText for Spec self-fetch",
     await assert.rejects(() => withRemote.readPinnedText("docs/adr/0001-x.md"), /git process failed/);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("pinned reader: execGit pins LC_ALL=C so soft-degrade classifiers stay English", async () => {
+  const root = await materializeSeededRepo("reviewer-pin-locale-");
+  await mkdir(join(root, "docs", "adr"), { recursive: true });
+  await writeFile(join(root, "docs", "adr", "0001-x.md"), "# ADR\nbody\n");
+  await git(root, "add", ".");
+  await git(root, "commit", "-m", "adr");
+
+  const shimDir = await mkdtemp(join(tmpdir(), "reviewer-git-lc-shim-"));
+  const lcLog = join(shimDir, "lc_all.log");
+  const realGit = (await exec("which", ["git"])).stdout.trim();
+  assert.ok(realGit.length > 0);
+  const shimPath = join(shimDir, "git");
+  await writeFile(
+    shimPath,
+    [
+      "#!/bin/sh",
+      `printf '%s\n' "\${LC_ALL-}" >> ${JSON.stringify(lcLog)}`,
+      `exec ${JSON.stringify(realGit)} "$@"`,
+      "",
+    ].join("\n"),
+  );
+  await chmod(shimPath, 0o755);
+
+  const previousPath = process.env.PATH;
+  const previousLcAll = process.env.LC_ALL;
+  const previousLang = process.env.LANG;
+  const previousLcMessages = process.env.LC_MESSAGES;
+  try {
+    process.env.PATH = `${shimDir}:${previousPath ?? ""}`;
+    // Hostile process locale must not leak into the sole Git diagnostic seam.
+    process.env.LC_ALL = "zh_CN.UTF-8";
+    process.env.LANG = "zh_CN.UTF-8";
+    process.env.LC_MESSAGES = "zh_CN.UTF-8";
+
+    const reader = await createReviewerPinnedGitReader(root);
+    // Confirmed missing origin still soft-degrades under hostile locale.
+    assert.equal(await reader.originRepository(), undefined);
+    // Confirmed missing pinned path still soft-degrades under hostile locale.
+    assert.equal(await reader.readPinnedText("docs/adr/missing.md"), undefined);
+
+    const logged = (await readFile(lcLog, "utf8")).trim().split("\n").filter((line) => line.length > 0);
+    assert.ok(logged.length > 0);
+    assert.equal(logged.every((line) => line === "C"), true);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousLcAll === undefined) delete process.env.LC_ALL;
+    else process.env.LC_ALL = previousLcAll;
+    if (previousLang === undefined) delete process.env.LANG;
+    else process.env.LANG = previousLang;
+    if (previousLcMessages === undefined) delete process.env.LC_MESSAGES;
+    else process.env.LC_MESSAGES = previousLcMessages;
+    await rm(root, { recursive: true, force: true });
+    await rm(shimDir, { recursive: true, force: true });
   }
 });

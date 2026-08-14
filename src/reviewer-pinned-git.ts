@@ -59,8 +59,13 @@ export type ReviewerPinnedGitReader = {
 const execFileAsync = promisify(execFile);
 type GitProcessError = Error & Readonly<{ code: number | string | null; signal: NodeJS.Signals | null; timedOut: boolean; aborted: boolean; stderr: string; stdout: string }>;
 async function execGit<T extends "utf8" | "buffer">(args: readonly string[], options: { encoding: T; maxBuffer?: number }): Promise<{ stdout: T extends "buffer" ? Buffer : string; stderr: string }> {
-  try { return await execFileAsync("git", args, options) as unknown as { stdout: T extends "buffer" ? Buffer : string; stderr: string }; }
-  catch (error) {
+  // Pin C locale at the sole Git exec seam so English diagnostic classifiers stay honest under translated gettext installs.
+  try {
+    return await execFileAsync("git", args, {
+      ...options,
+      env: { ...process.env, LC_ALL: "C" },
+    }) as unknown as { stdout: T extends "buffer" ? Buffer : string; stderr: string };
+  } catch (error) {
     const source = error as Partial<GitProcessError>;
     const wrapped = new Error("git process failed", { cause: error }) as GitProcessError;
     Object.assign(wrapped, { code: source.code ?? null, signal: source.signal ?? null, timedOut: (source as { killed?: unknown }).killed === true && source.signal === "SIGTERM", aborted: source.name === "AbortError", stderr: String(source.stderr ?? ""), stdout: String(source.stdout ?? "") });
