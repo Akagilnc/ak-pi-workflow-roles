@@ -1,0 +1,12 @@
+{
+  "role": "fixer",
+  "runId": "019ff000-000c-7000-8000-0000000000f2",
+  "phase": "apply",
+  "outcome": {
+    "kind": "accepted",
+    "role": "fixer",
+    "status": "completed",
+    "decisiveFacts": {}
+  },
+  "receipt": { "status": "completed", "report": "fixture fixer completed" }
+}
