@@ -24,6 +24,8 @@ export type ReviewerAdmittedInputs = Readonly<{
   baseRevision: string;
   reviewScopeKeys?: readonly string[];
   authorityRefs?: readonly string[];
+  /** Typed #176 ticketNumber from admitted invocation (Spec self-fetch primary). */
+  ticketNumber?: number;
 }>;
 
 const reviewerOutputVariants = Type.Union([
@@ -86,6 +88,7 @@ export function createReviewerRoleRuntime(
       fixedBaseRevision = admitted.baseRevision;
       const reviewScopeKeys = admitted.reviewScopeKeys;
       const authorityRefs = admitted.authorityRefs;
+      const ticketNumber = admitted.ticketNumber;
       const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
       if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
       binding = loaded;
@@ -115,6 +118,7 @@ export function createReviewerRoleRuntime(
         reader,
         ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
         ...(authorityRefs === undefined ? {} : { authorityRefs }),
+        ...(ticketNumber === undefined ? {} : { ticketNumber }),
         decisionEvidence(decision) {
           try {
             if (decision.disposition === "accepted") {

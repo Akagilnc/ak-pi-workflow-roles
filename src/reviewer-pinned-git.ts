@@ -20,6 +20,8 @@ export type ReviewerRange = Readonly<{
   diffSha256: string;
   commits: readonly string[];
 }>;
+export type ReviewerOriginRepository = Readonly<{ owner: string; repo: string }>;
+
 export type ReviewerPinnedGitReader = {
   pin: ReviewerPinnedTarget;
   snapshot(): Promise<ReviewerPinnedTarget>;
@@ -37,6 +39,21 @@ export type ReviewerPinnedGitReader = {
    * Empty list is confirmed absence; other Git/I-O failures propagate with true cause.
    */
   listSpecCandidatePaths(): Promise<readonly string[]>;
+  /**
+   * github.com owner/repo from `origin` remote at the pinned repository root.
+   * undefined = no remote / non-github / unparseable — self-fetch unavailable (degrade).
+   */
+  originRepository(): Promise<ReviewerOriginRepository | undefined>;
+  /**
+   * Commit subjects for base..targetHead, newest first (for #N ticket extraction).
+   * Empty when the range has no commits; other Git failures propagate with true cause.
+   */
+  commitMessagesNewestFirst(base: string): Promise<readonly string[]>;
+  /**
+   * Read one path from the pinned target tree as UTF-8 text.
+   * undefined = path absent at targetHead; other Git failures propagate with true cause.
+   */
+  readPinnedText(path: string): Promise<string | undefined>;
 };
 
 const execFileAsync = promisify(execFile);
@@ -182,6 +199,82 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
       ]);
       return Object.freeze(text === "" ? [] : text.split("\n").filter((line) => line.length > 0));
     },
+    async originRepository() {
+      let remoteUrl: string;
+      try {
+        remoteUrl = await gitText(repositoryRoot, ["remote", "get-url", "origin"]);
+      } catch {
+        // No origin / git remote failure = self-fetch unavailable (soft degrade).
+        return undefined;
+      }
+      return parseGitHubOriginRemote(remoteUrl);
+    },
+    async commitMessagesNewestFirst(base: string) {
+      const text = await gitText(repositoryRoot, [
+        "log",
+        "--format=%s",
+        `${base}..${targetHead}`,
+      ]);
+      return Object.freeze(text === "" ? [] : text.split("\n"));
+    },
+    async readPinnedText(path: string) {
+      // Reject path traversal / absolute paths — Spec material is relative tree paths only.
+      if (
+        path.length === 0 ||
+        path.startsWith("/") ||
+        path.includes("\0") ||
+        path.split("/").some((part) => part === ".." || part === "")
+      ) {
+        return undefined;
+      }
+      try {
+        const { stdout } = await execGit(
+          ["-C", repositoryRoot, "show", `${targetHead}:${path}`],
+          { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+        );
+        return stdout;
+      } catch (error) {
+        if (exitCode(error) === 128) return undefined;
+        throw error;
+      }
+    },
 
   });
+}
+
+/**
+ * Parse github.com owner/repo from a git remote URL.
+ * Supports scp-like SSH, ssh://, https://, and git:// shapes. Soft: undefined when not github.
+ */
+export function parseGitHubOriginRemote(remoteUrl: string): ReviewerOriginRepository | undefined {
+  const trimmed = remoteUrl.trim();
+  if (trimmed.length === 0) return undefined;
+  const scp = /^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i.exec(trimmed);
+  if (scp) return normalizeOrigin(scp[1]!, scp[2]!);
+  const ssh = /^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(trimmed);
+  if (ssh) return normalizeOrigin(ssh[1]!, ssh[2]!);
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (!/^github\.com$/i.test(parsed.hostname)) return undefined;
+  if (parsed.search !== "" || parsed.hash !== "") return undefined;
+  const parts = parsed.pathname.split("/").filter((p) => p.length > 0);
+  if (parts.length !== 2) return undefined;
+  return normalizeOrigin(parts[0]!, parts[1]!);
+}
+
+function normalizeOrigin(ownerRaw: string, repoRaw: string): ReviewerOriginRepository | undefined {
+  const owner = ownerRaw.trim();
+  const repo = stripGitSuffix(repoRaw.trim());
+  if (owner.length === 0 || repo.length === 0) return undefined;
+  // Conservative identity: no path separators or URL material inside segments.
+  if (/[/?#@\\]/.test(owner) || /[/?#@\\]/.test(repo)) return undefined;
+  return Object.freeze({ owner, repo });
+}
+
+function stripGitSuffix(name: string): string {
+  return name.toLowerCase().endsWith(".git") ? name.slice(0, -4) : name;
 }

@@ -8,9 +8,18 @@ export {} from "./reviewer-construction.js";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.js";
 export { sha256Hex } from "./sha256.js";
 export { isReviewerPromptText as isReviewerPromptIdentity, sameReviewerPromptText as sameReviewerPromptIdentity } from "./reviewer-prompt-identity.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+const execFileAsync = promisify(execFile);
 const GENERIC_FEATURE_TOKENS = new Set(["", "head", "main", "master", "trunk", "develop", "development"]);
 /** Conventional branch shells that must not hide the feature token (feat/login → login). */
 const BRANCH_SHELL_PREFIX = /^(?:feat|feature|fix|bugfix|hotfix|chore|docs|refactor)-/;
+/** Branch token ticket capture: (fix|feat|docs|audit|test)/issue-(\d+)- (#343). */
+const BRANCH_ISSUE_TOKEN = /(?:^|\/)((?:fix|feat|docs|audit|test)\/issue-(\d+)-)/;
+/** First #N in a commit subject (positive integer). */
+const COMMIT_TICKET_TOKEN = /#([1-9]\d*)/;
+/** docs/adr paths referenced inside an issue body. */
+const ADR_PATH_IN_BODY = /docs\/adr\/[A-Za-z0-9][A-Za-z0-9._/-]*\.md/g;
 function normalizeFeatureToken(value) {
     return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -26,22 +35,161 @@ function expandFeatureTokens(raw) {
     return Object.freeze([...tokens]);
 }
 /**
- * Unique production owner of code-review Skill step 2 Spec discovery.
- * Directly yields durable refs Spec child can read, or confirmed missing.
- * - Supplied authorityRefs ⇒ available with those refs as material.
- * - Matching pinned-target docs/specs/.scratch paths ⇒ available with those paths as material.
- * - Commit message bare #N without durable source ⇒ missing (not available).
- * Only confirmed absence yields missing; other Git/I-O failures keep true cause for preflight.
+ * Resolve ticket number with unique priority (#343):
+ * typed ticketNumber → branch token → newest commit message first #N.
+ * High-priority hit is adopted; lower sources that also yield a number are abandoned candidates.
+ */
+export function resolveReviewerTicketNumber(input) {
+    const typed = typeof input.ticketNumber === "number" &&
+        Number.isInteger(input.ticketNumber) &&
+        input.ticketNumber >= 1
+        ? Object.freeze({ source: "typed-ticket-number", ticketNumber: input.ticketNumber })
+        : undefined;
+    let branch;
+    for (const name of input.branchNames) {
+        const match = BRANCH_ISSUE_TOKEN.exec(name);
+        if (match) {
+            const n = Number(match[2]);
+            if (Number.isInteger(n) && n >= 1) {
+                branch = Object.freeze({ source: "branch-token", ticketNumber: n });
+                break;
+            }
+        }
+    }
+    let commit;
+    const newest = input.commitMessagesNewestFirst[0];
+    if (newest !== undefined) {
+        const match = COMMIT_TICKET_TOKEN.exec(newest);
+        if (match) {
+            const n = Number(match[1]);
+            if (Number.isInteger(n) && n >= 1) {
+                commit = Object.freeze({ source: "commit-message", ticketNumber: n });
+            }
+        }
+    }
+    if (typed !== undefined) {
+        const abandoned = [branch, commit].filter((c) => c !== undefined);
+        return Object.freeze({ adopted: typed, abandoned: Object.freeze(abandoned) });
+    }
+    if (branch !== undefined) {
+        const abandoned = commit === undefined ? Object.freeze([]) : Object.freeze([commit]);
+        return Object.freeze({ adopted: branch, abandoned });
+    }
+    if (commit !== undefined) {
+        return Object.freeze({ adopted: commit, abandoned: Object.freeze([]) });
+    }
+    return undefined;
+}
+/** Extract unique docs/adr/*.md paths referenced by issue body text (order of first appearance). */
+export function extractReferencedAdrPaths(issueBody) {
+    const seen = new Set();
+    const paths = [];
+    for (const match of issueBody.matchAll(ADR_PATH_IN_BODY)) {
+        const path = match[0];
+        if (seen.has(path))
+            continue;
+        seen.add(path);
+        paths.push(path);
+    }
+    return Object.freeze(paths);
+}
+/** Default production fetcher: `gh api repos/{owner}/{repo}/issues/{N}`. Soft-fail on any error. */
+export function createGhReviewerIssueFetcher() {
+    return async (input) => {
+        try {
+            const { stdout } = await execFileAsync("gh", [
+                "api",
+                `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`,
+                "--jq",
+                "{title: .title, body: (.body // \"\")}",
+            ], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+            const parsed = JSON.parse(stdout);
+            if (typeof parsed !== "object" ||
+                parsed === null ||
+                typeof parsed.title !== "string" ||
+                typeof parsed.body !== "string") {
+                return undefined;
+            }
+            return Object.freeze({
+                title: parsed.title,
+                body: parsed.body,
+            });
+        }
+        catch {
+            return undefined;
+        }
+    };
+}
+/**
+ * Unique production owner of code-review Skill step 2 Spec discovery (#343).
+ * Primary: self-fetch latest issue by ticket number (typed → branch token → commit #N).
+ * Degradation (unique order): self-fetch fail → supplied authorityRefs → local path match → missing.
+ * Prompt/admitted-request prose is never Spec material.
+ * Only confirmed absence yields missing; non-absence Git/I-O failures keep true cause for preflight.
  * Construction builds Standards/Spec solely from this product.
  */
 export async function discoverReviewerSpecAuthority(input) {
+    const featureTokens = await input.reader.featureTokens();
+    const commitMessages = input.baseCommit === undefined
+        ? Object.freeze([])
+        : await input.reader.commitMessagesNewestFirst(input.baseCommit);
+    const ticketResolution = resolveReviewerTicketNumber({
+        ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+        branchNames: featureTokens,
+        commitMessagesNewestFirst: commitMessages,
+    });
+    // ① Primary: self-fetch latest issue + referenced docs/adr.
+    if (ticketResolution !== undefined) {
+        const origin = await input.reader.originRepository();
+        if (origin !== undefined) {
+            const fetchIssue = input.fetchIssue ?? createGhReviewerIssueFetcher();
+            const issue = await fetchIssue({
+                owner: origin.owner,
+                repo: origin.repo,
+                ticketNumber: ticketResolution.adopted.ticketNumber,
+            });
+            if (issue !== undefined) {
+                const adrPaths = extractReferencedAdrPaths(issue.body);
+                const adrs = [];
+                for (const path of adrPaths) {
+                    const body = await input.reader.readPinnedText(path);
+                    if (body === undefined) {
+                        adrs.push(Object.freeze({ path, status: "missing" }));
+                    }
+                    else {
+                        adrs.push(Object.freeze({ path, status: "present", body }));
+                    }
+                }
+                const issueRef = `https://github.com/${origin.owner}/${origin.repo}/issues/${ticketResolution.adopted.ticketNumber}`;
+                const presentAdrRefs = adrs
+                    .filter((a) => a.status === "present")
+                    .map((a) => a.path);
+                const fetched = Object.freeze({
+                    issueRef,
+                    owner: origin.owner,
+                    repo: origin.repo,
+                    ticketNumber: ticketResolution.adopted.ticketNumber,
+                    adopted: ticketResolution.adopted,
+                    abandoned: ticketResolution.abandoned,
+                    issueBody: issue.body,
+                    adrs: Object.freeze(adrs),
+                });
+                return Object.freeze({
+                    status: "available",
+                    refs: Object.freeze([issueRef, ...presentAdrRefs]),
+                    fetched,
+                });
+            }
+        }
+    }
+    // ② Degrade: explicit --authority-ref (human intent before local heuristics).
     if (input.authorityRefs.length > 0) {
         return Object.freeze({
             status: "available",
             refs: Object.freeze([...input.authorityRefs]),
         });
     }
-    const featureTokens = await input.reader.featureTokens();
+    // ③ Degrade: matching pinned-target docs/specs/.scratch paths via branch feature tokens.
     const tokens = [
         ...new Set(featureTokens
             .flatMap((raw) => expandFeatureTokens(raw))
@@ -110,6 +258,9 @@ export function createReviewerDispatcher(d) {
                 const specAuthority = await discoverReviewerSpecAuthority({
                     authorityRefs,
                     reader: d.reader,
+                    baseCommit: base,
+                    ...(d.ticketNumber === undefined ? {} : { ticketNumber: d.ticketNumber }),
+                    ...(d.fetchIssue === undefined ? {} : { fetchIssue: d.fetchIssue }),
                 });
                 dispatch = constructReviewerDispatch({
                     identity,

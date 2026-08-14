@@ -101,12 +101,49 @@ export function reviewerAxisMethodAdapter(axis: ReviewerAxis): string {
 }
 
 export type ConstructedReviewerLeg = Readonly<{ axis: "standards" | "spec"; prompt: ReviewerPromptText }>;
+
+/** Ticket-number provenance for Spec self-fetch (#343). High-priority source wins. */
+export type ReviewerTicketNumberSource =
+  | "typed-ticket-number"
+  | "branch-token"
+  | "commit-message";
+
+export type ReviewerTicketNumberCandidate = Readonly<{
+  source: ReviewerTicketNumberSource;
+  ticketNumber: number;
+}>;
+
+/** One docs/adr path referenced by the fetched issue body. */
+export type ReviewerFetchedAdr =
+  | Readonly<{ path: string; status: "present"; body: string }>
+  | Readonly<{ path: string; status: "missing" }>;
+
+/**
+ * Actual Spec bytes pulled on the self-fetch primary path (fetch-then-store).
+ * Carried into Spec-child material and retained on the accepted dispatch for audit.
+ */
+export type ReviewerSpecFetchedMaterial = Readonly<{
+  issueRef: string;
+  owner: string;
+  repo: string;
+  ticketNumber: number;
+  adopted: ReviewerTicketNumberCandidate;
+  abandoned: readonly ReviewerTicketNumberCandidate[];
+  issueBody: string;
+  adrs: readonly ReviewerFetchedAdr[];
+}>;
+
 /**
  * Unique discovery product for Skill step 2: durable refs Spec child can read, or confirmed missing.
+ * Optional `fetched` is present only when the self-fetch primary path produced issue bytes.
  * Construction builds Standards/Spec solely from this product — no secondary launch decision.
  */
 export type ReviewerSpecAuthorityDiscovery =
-  | Readonly<{ status: "available"; refs: readonly string[] }>
+  | Readonly<{
+      status: "available";
+      refs: readonly string[];
+      fetched?: ReviewerSpecFetchedMaterial;
+    }>
   | Readonly<{ status: "missing" }>;
 /** Spec-child cardinality decision recorded on the accepted dispatch. */
 export type ReviewerSpecDisposition = "launched" | "skipped-missing";
@@ -123,6 +160,8 @@ export type ConstructedReviewerDispatch = Readonly<{
   authorityRefs: readonly string[];
   /** Honest Spec-child disposition: launched, or skipped after confirmed missing Spec. */
   specDisposition: ReviewerSpecDisposition;
+  /** Self-fetch bytes + source annotation when primary path produced material. */
+  specFetchedMaterial?: ReviewerSpecFetchedMaterial;
   legs: readonly ConstructedReviewerLeg[];
 }>;
 
@@ -136,6 +175,30 @@ export function reviewerAuthorityRefsMaterial(authorityRefs: readonly string[]):
     JSON.stringify(Object.freeze([...authorityRefs])),
     "These are durable authority references only. Read them as Spec grounding materials; do not invent Spec prose from caller instruction.",
   ].join("\n");
+}
+
+/**
+ * Spec-only material carrier for self-fetched issue bytes + source annotation (#343).
+ * Actual issue body and referenced ADR bytes are embedded for audit (fetch-then-store).
+ */
+export function reviewerFetchedSpecMaterial(fetched: ReviewerSpecFetchedMaterial): string {
+  const lines = [
+    "Authority-Fetched-Spec:",
+    `source: ${fetched.adopted.source}`,
+    `ticketNumber: ${fetched.ticketNumber}`,
+    `issueRef: ${fetched.issueRef}`,
+    `abandoned: ${JSON.stringify(Object.freeze([...fetched.abandoned]))}`,
+    "--- issue body ---",
+    fetched.issueBody,
+  ];
+  for (const adr of fetched.adrs) {
+    lines.push(`--- ${adr.path} ---`);
+    lines.push(adr.status === "present" ? adr.body : "MISSING");
+  }
+  lines.push(
+    "These are self-fetched Spec grounding materials. Do not invent Spec prose from caller instruction.",
+  );
+  return lines.join("\n");
 }
 
 /** Deterministic compiler: fixed target/range plus discovery product in, dispatch text out. */
@@ -152,6 +215,10 @@ export function constructReviewerDispatch(input: {
   const authorityRefs = Object.freeze(
     input.specAuthority.status === "available" ? [...input.specAuthority.refs] : [],
   );
+  const specFetchedMaterial =
+    input.specAuthority.status === "available" && input.specAuthority.fetched !== undefined
+      ? input.specAuthority.fetched
+      : undefined;
   const specDisposition: ReviewerSpecDisposition = launchSpec ? "launched" : "skipped-missing";
   const common = [
     `Target: ${input.range.target}`,
@@ -170,8 +237,13 @@ export function constructReviewerDispatch(input: {
   const legs = axes.map((x) => {
     const parts = [common, reviewerAxisMethodAdapter(x.axis)];
     // Spec evidence-child only — never Standards or a parent replacement Spec leg.
-    if (x.axis === "spec" && authorityRefs.length > 0) {
-      parts.push(reviewerAuthorityRefsMaterial(authorityRefs));
+    if (x.axis === "spec") {
+      if (specFetchedMaterial !== undefined) {
+        parts.push(reviewerFetchedSpecMaterial(specFetchedMaterial));
+      }
+      if (authorityRefs.length > 0) {
+        parts.push(reviewerAuthorityRefsMaterial(authorityRefs));
+      }
     }
     return Object.freeze({
       axis: x.axis,
@@ -189,6 +261,7 @@ export function constructReviewerDispatch(input: {
     range: input.range,
     authorityRefs,
     specDisposition,
+    ...(specFetchedMaterial === undefined ? {} : { specFetchedMaterial }),
     legs: Object.freeze(legs),
   });
 }
