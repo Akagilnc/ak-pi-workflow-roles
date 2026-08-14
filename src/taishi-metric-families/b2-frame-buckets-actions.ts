@@ -4,14 +4,15 @@
  * Consumes A2 typed per-run facts only (frame span + tool intervals).
  * Registers by drop-in under taishi-metric-families/ (A2 assembly discovery).
  *
- * Kernel:
- * - tool bucket = union duration of closed toolCallId intervals (no double-count)
+ * Kernel (single frame-bounded interval core):
+ * - every closed tool interval is clipped to the leg frame [frameStart, frameEnd]
+ * - tool bucket = union duration of clipped intervals (no double-count)
  * - model bucket = wall − tool bucket (mutual exclusion; sum ≡ wall)
- * - actions = each closed tool interval + every maximal continuous model gap
+ * - actions = each clipped tool interval + every maximal continuous model gap
  *   (frame complement of tool union, including pre-first and post-last tails),
  *   sorted by duration descending
  * - action median via shared medianNumber (even → mean of two middles)
- * - tool observation: toolName + bash first-line command summary
+ * - tool observation: toolName + A2 bash first-line command summary (no re-parse)
  */
 import type { SessionToolInterval } from "../ledger-session-read.ts";
 import { medianNumber } from "../taishi-median.ts";
@@ -25,7 +26,7 @@ export type TaishiB2ToolAction = {
   readonly durationMs: number;
   readonly startedAt: string;
   readonly endedAt: string;
-  /** First line of bash `command` argument when present. */
+  /** A2 bash first-line command summary when present. */
   readonly commandSummary?: string;
 };
 
@@ -76,12 +77,6 @@ function toIso(ms: number): string {
   return new Date(ms).toISOString();
 }
 
-/** First line of a command body (bash observation field). */
-export function bashCommandFirstLine(command: string): string {
-  const match = /^[^\r\n]*/.exec(command);
-  return match?.[0] ?? "";
-}
-
 function closedTools(intervals: readonly SessionToolInterval[]): ClosedTool[] {
   const out: ClosedTool[] = [];
   for (const interval of intervals) {
@@ -97,6 +92,34 @@ function closedTools(intervals: readonly SessionToolInterval[]): ClosedTool[] {
       startMs,
       endMs,
       ...(interval.command !== undefined ? { command: interval.command } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * Clip closed tools to the leg frame. Empty after clip are dropped.
+ * Bucket, complement, and tool actions all consume this same bounded set.
+ */
+function clipToolsToFrame(
+  tools: readonly ClosedTool[],
+  frameStartMs: number,
+  frameEndMs: number,
+): ClosedTool[] {
+  if (frameEndMs <= frameStartMs) return [];
+  const out: ClosedTool[] = [];
+  for (const tool of tools) {
+    const startMs = Math.max(tool.startMs, frameStartMs);
+    const endMs = Math.min(tool.endMs, frameEndMs);
+    if (endMs <= startMs) continue;
+    out.push({
+      toolCallId: tool.toolCallId,
+      toolName: tool.toolName,
+      startMs,
+      endMs,
+      startedAt: startMs === tool.startMs ? tool.startedAt : toIso(startMs),
+      endedAt: endMs === tool.endMs ? tool.endedAt : toIso(endMs),
+      ...(tool.command !== undefined ? { command: tool.command } : {}),
     });
   }
   return out;
@@ -126,18 +149,9 @@ function mergeUnion(intervals: readonly { startMs: number; endMs: number }[]): {
   return merged;
 }
 
-function unionDurationMs(
-  intervals: readonly { startMs: number; endMs: number }[],
-): number {
-  return mergeUnion(intervals).reduce(
-    (sum, interval) => sum + (interval.endMs - interval.startMs),
-    0,
-  );
-}
-
 /**
- * Maximal continuous complement of tool union inside [frameStart, frameEnd].
- * Includes leading gap before first tool and trailing gap after last tool.
+ * Maximal continuous complement of (already frame-clipped) tool union
+ * inside [frameStart, frameEnd]. Includes leading and trailing gaps.
  */
 function modelMaximalIntervals(
   frameStartMs: number,
@@ -148,18 +162,16 @@ function modelMaximalIntervals(
   const gaps: { startMs: number; endMs: number }[] = [];
   let cursor = frameStartMs;
   for (const interval of toolUnion) {
-    const start = Math.max(interval.startMs, frameStartMs);
-    const end = Math.min(interval.endMs, frameEndMs);
-    if (end <= start) continue;
-    if (start > cursor) {
-      gaps.push({ startMs: cursor, endMs: start });
+    // Union is produced from frame-clipped tools, so bounds already lie in frame.
+    if (interval.startMs > cursor) {
+      gaps.push({ startMs: cursor, endMs: interval.startMs });
     }
-    cursor = Math.max(cursor, end);
+    cursor = Math.max(cursor, interval.endMs);
   }
   if (cursor < frameEndMs) {
     gaps.push({ startMs: cursor, endMs: frameEndMs });
   }
-  return gaps.filter((gap) => gap.endMs > gap.startMs);
+  return gaps;
 }
 
 function toolAction(tool: ClosedTool): TaishiB2ToolAction {
@@ -171,10 +183,11 @@ function toolAction(tool: ClosedTool): TaishiB2ToolAction {
     startedAt: tool.startedAt,
     endedAt: tool.endedAt,
   };
+  // A2 already owns bash first-line summary; B2 only projects it.
   if (tool.toolName === "bash" && tool.command !== undefined) {
     return {
       ...action,
-      commandSummary: bashCommandFirstLine(tool.command),
+      commandSummary: tool.command,
     };
   }
   return action;
@@ -210,11 +223,15 @@ export function computeTaishiB2RunMetrics(
   const frameEndMs = timestampMs(facts.frameSpan.endedAt);
   const wallMs = Math.max(0, frameEndMs - frameStartMs);
 
-  const tools = closedTools(facts.toolIntervals);
+  // Single frame-bounded core: clip → union once → bucket/complement/actions.
+  const tools = clipToolsToFrame(closedTools(facts.toolIntervals), frameStartMs, frameEndMs);
   const toolUnion = mergeUnion(tools);
-  const toolBucketMs = unionDurationMs(toolUnion);
+  const toolBucketMs = toolUnion.reduce(
+    (sum, interval) => sum + (interval.endMs - interval.startMs),
+    0,
+  );
   // Mutual exclusion: model is exact complement duration (no independent recount).
-  const modelBucketMs = Math.max(0, wallMs - toolBucketMs);
+  const modelBucketMs = wallMs - toolBucketMs;
 
   const modelGaps = modelMaximalIntervals(frameStartMs, frameEndMs, toolUnion);
   const actions = sortActionsDescending([

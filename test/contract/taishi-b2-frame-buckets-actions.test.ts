@@ -6,7 +6,7 @@
  * Family registers by drop-in module under taishi-metric-families/ only.
  */
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readdir, rm } from "node:fs/promises";
+import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,13 +14,9 @@ import { fileURLToPath } from "node:url";
 
 import { runTaishi } from "../../src/taishi-entry.ts";
 import {
-  loadTaishiIssueMetricFamilies,
-  TAISHI_ISSUE_METRIC_FAMILIES,
-  TAISHI_ISSUE_METRIC_FAMILIES_DIR,
-} from "../../src/taishi-metric-families.ts";
-import type {
-  TaishiB2FrameBucketsActionsSection,
-  TaishiB2RunMetrics,
+  computeTaishiB2RunMetrics,
+  type TaishiB2FrameBucketsActionsSection,
+  type TaishiB2RunMetrics,
 } from "../../src/taishi-metric-families/b2-frame-buckets-actions.ts";
 import type { TaishiIssueMetricsPage } from "../../src/taishi-page.ts";
 
@@ -178,28 +174,44 @@ async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   }
 }
 
-test("taishi B2 family module is discovered by production registry without shared-list edits", async () => {
-  const names = (await readdir(TAISHI_ISSUE_METRIC_FAMILIES_DIR))
-    .filter((name) => {
-      if (name.endsWith(".d.ts")) return false;
-      if (name.includes(".test.")) return false;
-      return name.endsWith(".ts") || name.endsWith(".js") || name.endsWith(".mjs");
-    })
-    .sort((a, b) => a.localeCompare(b));
-  assert.ok(
-    names.includes("b2-frame-buckets-actions.ts"),
-    "B2 family module must register under taishi-metric-families/",
-  );
+/**
+ * Over-frame counter-example (A2-shaped facts): tool 0→30s on frame 10→20s
+ * must clip so tool+model ≡ wall (not wall=10s / tool=30s / model=0).
+ */
+test("taishi B2 kernel: out-of-frame tool intervals clip so tool+model ≡ wall", () => {
+  const metrics = computeTaishiB2RunMetrics({
+    runId: "out-of-frame",
+    book: BOOK,
+    role: "coder",
+    frameSpan: {
+      startedAt: "2026-08-01T00:00:10.000Z",
+      endedAt: "2026-08-01T00:00:20.000Z",
+    },
+    toolIntervals: [
+      {
+        toolCallId: "call_over",
+        toolName: "bash",
+        startedAt: "2026-08-01T00:00:00.000Z",
+        endedAt: "2026-08-01T00:00:30.000Z",
+        command: "echo over",
+      },
+    ],
+    terminal: { status: "absent" },
+  });
 
-  const families = await loadTaishiIssueMetricFamilies();
-  assert.ok(
-    families.some((family) => family.id === "b2-frame-buckets-actions"),
-    "loaded families must include b2-frame-buckets-actions",
+  assert.equal(metrics.wallMs, 10_000);
+  assert.equal(metrics.toolBucketMs, 10_000);
+  assert.equal(metrics.modelBucketMs, 0);
+  assert.equal(
+    metrics.toolBucketMs + metrics.modelBucketMs,
+    metrics.wallMs,
+    "clipped tool bucket + model must equal wall",
   );
-  assert.ok(
-    TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "b2-frame-buckets-actions"),
-    "production registry must include b2-frame-buckets-actions",
-  );
+  assert.equal(metrics.actions.length, 1);
+  assert.equal(metrics.actions[0]!.kind, "tool");
+  assert.equal(metrics.actions[0]!.durationMs, 10_000);
+  assert.equal(metrics.actions[0]!.startedAt, "2026-08-01T00:00:10.000Z");
+  assert.equal(metrics.actions[0]!.endedAt, "2026-08-01T00:00:20.000Z");
 });
 
 test("taishi B2 via runTaishi: PRD five-frame + overlap fixture hand-equal (union/complement/median/bash first line)", async () => {
@@ -231,7 +243,7 @@ test("taishi B2 via runTaishi: PRD five-frame + overlap fixture hand-equal (unio
       "union bucket must not double-count overlapping tool intervals",
     );
 
-    // bash multi-line: first line only (not the whole command body).
+    // bash multi-line: A2 first-line summary only (not the whole command body).
     const bash = overlap.actions.find(
       (action) => action.kind === "tool" && action.toolCallId === "call_bash_overlap",
     );

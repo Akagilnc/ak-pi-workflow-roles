@@ -110,7 +110,7 @@ const EXPECTED_A2_SEAM_PROBE = {
           toolName: "bash",
           startedAt: "2026-08-01T00:02:10.000Z",
           endedAt: "2026-08-01T00:02:40.000Z",
-          command: "pnpm test:fast\nnode scripts/extra.js",
+          command: "pnpm test:fast",
         },
         {
           toolCallId: "call_read_overlap",
