@@ -118,6 +118,10 @@ export function buildReviewerActivationExtraArgs(
     options.packageRoot,
     "code-review",
   );
+  const authorityRefArgs =
+    admitted.authorityRefs.length === 0
+      ? []
+      : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
   return [
     "--no-skills",
     "--skill",
@@ -134,6 +138,7 @@ export function buildReviewerActivationExtraArgs(
     "reviewer",
     "--ak-review-base",
     admitted.baseRevision,
+    ...authorityRefArgs,
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -157,6 +162,10 @@ export function buildReviewerResumeActivationExtraArgs(
     options.packageRoot,
     "code-review",
   );
+  const authorityRefArgs =
+    admitted.authorityRefs.length === 0
+      ? []
+      : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
   return [
     "--no-skills",
     "--skill",
@@ -173,6 +182,7 @@ export function buildReviewerResumeActivationExtraArgs(
     "reviewer",
     "--ak-review-base",
     admitted.baseRevision,
+    ...authorityRefArgs,
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -419,6 +429,7 @@ export async function runPublicReviewer(
     instruction: string;
     attachmentPaths: string[];
     baseRevision: string;
+    authorityRefs: string[];
     project?: string;
   },
 ): Promise<{
@@ -435,6 +446,7 @@ export async function runPublicReviewer(
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       baseRevision: parsed.baseRevision,
+      authorityRefs: parsed.authorityRefs,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
     });

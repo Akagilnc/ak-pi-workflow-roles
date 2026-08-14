@@ -78,8 +78,20 @@ export function reviewerAxisMethodAdapter(axis) {
         "The returned report is the complete output envelope and its UTF-8 bytes are preserved verbatim; no heading parser, sanitizer, section splitter, rewrite, aggregation, or replacement leg follows.",
     ].join("\n");
 }
+/**
+ * Spec-only evidence-child material carrier for admitted durable authority references.
+ * Exact values preserved; no prose extraction and no Standards/parent injection.
+ */
+export function reviewerAuthorityRefsMaterial(authorityRefs) {
+    return [
+        "Authority-Refs:",
+        JSON.stringify(Object.freeze([...authorityRefs])),
+        "These are durable authority references only. Read them as Spec grounding materials; do not invent Spec prose from caller instruction.",
+    ].join("\n");
+}
 /** Deterministic compiler: fixed target/range plus packaged Skill in, dispatch text out. */
 export function constructReviewerDispatch(input) {
+    const authorityRefs = Object.freeze([...(input.authorityRefs ?? [])]);
     const common = [
         `Target: ${input.range.target}`,
         `Base: ${input.range.base}`,
@@ -92,10 +104,17 @@ export function constructReviewerDispatch(input) {
         JSON.stringify(input.range, null, 2),
     ].join("\n");
     const axes = [{ axis: "standards" }, { axis: "spec" }];
-    const legs = axes.map((x) => Object.freeze({
-        axis: x.axis,
-        prompt: `${common}\n${reviewerAxisMethodAdapter(x.axis)}\n`,
-    }));
+    const legs = axes.map((x) => {
+        const parts = [common, reviewerAxisMethodAdapter(x.axis)];
+        // Spec evidence-child only — never Standards or a parent replacement Spec leg.
+        if (x.axis === "spec" && authorityRefs.length > 0) {
+            parts.push(reviewerAuthorityRefsMaterial(authorityRefs));
+        }
+        return Object.freeze({
+            axis: x.axis,
+            prompt: `${parts.join("\n")}\n`,
+        });
+    });
     return Object.freeze({
         identity: input.identity,
         recipe: "reviewer-common-bundle-v1",
@@ -105,6 +124,7 @@ export function constructReviewerDispatch(input) {
         }),
         targetSnapshot: input.target,
         range: input.range,
+        authorityRefs,
         legs: Object.freeze(legs),
     });
 }

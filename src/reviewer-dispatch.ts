@@ -28,6 +28,8 @@ type DispatcherDependencies = Readonly<{
   canonicalSkill: string;
   reader: ReviewerPinnedGitReader;
   reviewScopeKeys?: readonly string[];
+  /** Durable authority references preserved unchanged into Spec-leg construction only. */
+  authorityRefs?: readonly string[];
   run(execution: AcceptedReviewerExecution, invocation: unknown): Promise<unknown>;
   decisionEvidence?(decision: ReviewerDecisionEvidence): void;
 }>;
@@ -72,6 +74,7 @@ export function createReviewerDispatcher(d: DispatcherDependencies) {
           target,
           range,
           ...(d.reviewScopeKeys === undefined ? {} : { reviewScopeKeys: d.reviewScopeKeys }),
+          ...(d.authorityRefs === undefined ? {} : { authorityRefs: d.authorityRefs }),
         });
         if (!sameReviewerPinnedTarget(await d.reader.snapshot(), target)) {
           throw new ReviewerPreflightError("target-drift", "pinned target snapshot changed before child execution");

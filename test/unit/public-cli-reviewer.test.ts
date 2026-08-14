@@ -145,6 +145,7 @@ test("parseReviewerArgv requires base and accepts optional provenance instructio
       instruction: "Review since the base.",
       attachmentPaths: [],
       baseRevision: "main",
+      authorityRefs: [],
       project: "/tmp/p",
     },
   );
@@ -152,12 +153,34 @@ test("parseReviewerArgv requires base and accepts optional provenance instructio
     instruction: "",
     attachmentPaths: [],
     baseRevision: "HEAD~1",
+    authorityRefs: [],
   });
+  assert.deepEqual(
+    parseReviewerArgv([
+      "--base",
+      "main",
+      "--authority-ref",
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+      "--authority-ref=https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      "Scope the review to the owner decision.",
+    ]),
+    {
+      instruction: "Scope the review to the owner decision.",
+      attachmentPaths: [],
+      baseRevision: "main",
+      authorityRefs: [
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      ],
+    },
+  );
   assert.throws(() => parseReviewerArgv(["--unknown-flag"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--base", "", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--project", "", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach", "spec.md", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach=spec.md", "task"]), isUsage);
+  assert.throws(() => parseReviewerArgv(["--base", "main", "--authority-ref", ""]), isUsage);
+  assert.throws(() => parseReviewerArgv(["--base", "main", "--authority-ref="]), isUsage);
 });
 
 test("admitReviewerInvocation persists fixed base; caller text is provenance only", async () => {
@@ -176,6 +199,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     });
     assert.equal(blank.instructionEmpty, true);
     assert.equal(blank.baseRevision, "origin/main");
+    assert.deepEqual(blank.authorityRefs, []);
     assert.equal("taskPath" in blank, false);
     await assert.rejects(
       () => access(join(blank.runDirectory, "task.md")),
@@ -194,11 +218,29 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     assert.equal(admitted.instruction, "Review the work since the base revision.");
     assert.equal(admitted.instructionEmpty, false);
     assert.equal(admitted.baseRevision, "origin/main");
+    assert.deepEqual(admitted.authorityRefs, []);
     assert.equal("taskPath" in admitted, false);
     await assert.rejects(
       () => access(join(admitted.runDirectory, "task.md")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
+
+    const withRefs = await admitReviewerInvocation({
+      home,
+      cwd: project,
+      instruction: "Scope only; refs carry authority.",
+      attachmentPaths: [],
+      baseRevision: "origin/main",
+      authorityRefs: [
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      ],
+      createRunId: () => "run-reviewer-admit-refs",
+    });
+    assert.deepEqual(withRefs.authorityRefs, [
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+    ]);
 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(
@@ -218,8 +260,16 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     assert.equal(persisted.role, "reviewer");
     assert.equal(persisted.baseRevision, "origin/main");
     assert.equal(persisted.instruction, "Review the work since the base revision.");
+    assert.deepEqual(persisted.authorityRefs, []);
     assert.equal("taskPath" in persisted, false);
     assert.equal("taskSha256" in persisted, false);
+    const persistedRefs = JSON.parse(
+      await readFile(withRefs.admittedRequestPath, "utf8"),
+    ) as Record<string, unknown>;
+    assert.deepEqual(persistedRefs.authorityRefs, [
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+    ]);
   });
 });
 
@@ -244,9 +294,41 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
     assert.equal(args.includes("--ak-review-task"), false);
     assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
+    assert.equal(args.includes("--ak-review-authority-refs"), false);
     assert.equal(
       args.some((a) => a.includes("Base revision for the fixed review target: HEAD~1")),
       true,
+    );
+
+    const admittedWithRefs = await admitReviewerInvocation({
+      home,
+      cwd: project,
+      instruction: "Scope the review.",
+      attachmentPaths: [],
+      baseRevision: "HEAD~1",
+      authorityRefs: [
+        "https://example.com/a",
+        "https://example.com/b,with-comma",
+      ],
+      createRunId: () => "run-reviewer-args-refs",
+    });
+    const argsWithRefs = buildReviewerActivationExtraArgs(admittedWithRefs, { packageRoot });
+    assert.equal(
+      argsWithRefs[argsWithRefs.indexOf("--ak-review-authority-refs") + 1],
+      JSON.stringify([
+        "https://example.com/a",
+        "https://example.com/b,with-comma",
+      ]),
+    );
+    const resumeWithRefs = buildReviewerResumeActivationExtraArgs(admittedWithRefs, {
+      packageRoot,
+    });
+    assert.equal(
+      resumeWithRefs[resumeWithRefs.indexOf("--ak-review-authority-refs") + 1],
+      JSON.stringify([
+        "https://example.com/a",
+        "https://example.com/b,with-comma",
+      ]),
     );
     assert.equal(args.some((a) => a.includes(admitted.instruction)), false);
     assert.equal(args.some((a) => a.includes(".agents/skills")), false);
@@ -418,6 +500,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal("taskPath" in evidence, false);
     assert.equal("taskSha256" in evidence, false);
     assert.equal(evidence.baseRevision, "main");
+    assert.deepEqual(evidence.authorityRefs, []);
     assert.equal(evidence.callerProvenance, "Review standards and spec axes.");
     assert.equal(evidence.methodProvenance.name, "code-review");
     assert.equal(

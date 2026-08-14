@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  constructReviewerDispatch,
+  reviewerAuthorityRefsMaterial,
+} from "../../src/reviewer-construction.ts";
 import { createReviewerDispatcher, type AcceptedReviewerExecution, type ReviewerPinnedGitReader, type ReviewerPinnedTarget } from "../../src/reviewer-dispatch.ts";
 
 const pin: ReviewerPinnedTarget = {
@@ -17,7 +21,10 @@ const range = {
   diffSha256: "1".repeat(64),
   commits: ["target"],
 };
-function harness(snapshot = pin) {
+function harness(
+  snapshot = pin,
+  options: { authorityRefs?: readonly string[] } = {},
+) {
   let execution: AcceptedReviewerExecution | undefined;
   const reader: ReviewerPinnedGitReader = {
     pin,
@@ -34,6 +41,7 @@ function harness(snapshot = pin) {
   const dispatcher = createReviewerDispatcher({
     canonicalSkill: "review skill",
     reader,
+    ...(options.authorityRefs === undefined ? {} : { authorityRefs: options.authorityRefs }),
     async run(value) {
       execution = value;
       return "done";
@@ -95,4 +103,43 @@ test("constructed legs exclude caller task channel", async () => {
   }
   assert.equal("task" in result.dispatch.input, false);
   assert.equal(result.dispatch.input.canonicalSkill, "review skill");
+});
+
+test("authorityRefs inject only into Spec evidence-child material unchanged", async () => {
+  const refs = Object.freeze([
+    "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+    "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+  ]);
+  const constructed = constructReviewerDispatch({
+    identity: "id",
+    canonicalSkill: "review skill",
+    target: pin,
+    range,
+    authorityRefs: refs,
+  });
+  assert.deepEqual(constructed.authorityRefs, [...refs]);
+  const standards = constructed.legs.find((leg) => leg.axis === "standards");
+  const spec = constructed.legs.find((leg) => leg.axis === "spec");
+  assert.ok(standards);
+  assert.ok(spec);
+  const material = reviewerAuthorityRefsMaterial(refs);
+  assert.equal(standards!.prompt.includes("Authority-Refs:"), false);
+  assert.equal(standards!.prompt.includes(material), false);
+  assert.equal(spec!.prompt.includes(material), true);
+  assert.equal(
+    spec!.prompt.includes(JSON.stringify([...refs])),
+    true,
+  );
+
+  const h = harness(pin, { authorityRefs: refs });
+  const result = await h.dispatcher.dispatch("main~1");
+  assert.equal(result.status, "accepted");
+  if (result.status !== "accepted") return;
+  assert.deepEqual(result.dispatch.authorityRefs, [...refs]);
+  const dispatchedStandards = result.dispatch.legs.find((leg) => leg.axis === "standards");
+  const dispatchedSpec = result.dispatch.legs.find((leg) => leg.axis === "spec");
+  assert.equal(dispatchedStandards?.prompt.includes("Authority-Refs:"), false);
+  assert.equal(dispatchedSpec?.prompt.includes(material), true);
+  assert.equal(h.execution?.legs.find((leg) => leg.axis === "standards")?.prompt.includes("Authority-Refs:"), false);
+  assert.equal(h.execution?.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
 });
