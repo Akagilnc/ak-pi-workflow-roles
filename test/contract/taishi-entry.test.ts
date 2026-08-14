@@ -40,6 +40,7 @@ const LEG_A1_DIR = `${LEG_A1_RUN}@coder`;
 const LEG_B2_RUN = "019ff000-0002-7000-8000-0000000000b2";
 const LEG_C3_RUN = "019ff000-0003-7000-8000-0000000000c3";
 const LEG_E5_RUN = "019ff000-0005-7000-8000-0000000000e5";
+const LEG_F6_RUN = "019ff000-0006-7000-8000-0000000000f6";
 
 /** Hand-computed from fixture (scope = ISSUE_PROJECT_ROOT). Legs sorted book/role/runId. */
 const EXPECTED_LEGS = [
@@ -70,6 +71,13 @@ const EXPECTED_UNREADABLE = [
       status: "present" as const,
       at: "2026-08-01T00:00:30.000Z",
     },
+  },
+  {
+    runId: LEG_F6_RUN,
+    book: BOOK,
+    missingSources: ["session-timeline"] as const,
+    // First line already completed-malformed — no usable first frame.
+    firstFrameAt: { status: "absent" as const },
   },
 ] as const;
 
@@ -145,7 +153,8 @@ const EXPECTED_A2_SEAM_PROBE = {
  * c3 unreadable placeholder firstFrameAt present @ 00:00:30 (between a1 and b2 —
  *   proves mid-lane insertion, not merely tail placement);
  * b2 wall=8_000 receipt converged classCount=2 @ 00:01:00;
- * e5 wall=5_000 death no-receipt @ 00:01:30.
+ * e5 wall=5_000 death no-receipt @ 00:01:30;
+ * f6 unreadable firstFrameAt absent → lane tail + absent annotation.
  */
 const EXPECTED_ROUND_TIMELINE_ROWS = [
   {
@@ -187,6 +196,13 @@ const EXPECTED_ROUND_TIMELINE_ROWS = [
     endedAt: "2026-08-01T00:01:35.000Z",
     wallMs: 5_000,
     terminal: { kind: "death" as const, channel: "no-receipt" as const },
+  },
+  {
+    kind: "unreadable" as const,
+    runId: LEG_F6_RUN,
+    book: BOOK,
+    missingSources: ["session-timeline"] as const,
+    firstFrameAt: { status: "absent" as const },
   },
 ] as const;
 
@@ -318,20 +334,24 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
         );
       }
 
-      // Damaged run: loud unreadable exclusion + single count; duration not on page.
-      assert.equal(first.page.unreadableCount, 1);
-      assert.equal(first.page.unreadable.length, 1);
-      const damaged = first.page.unreadable[0]!;
-      assert.equal(damaged.runId, EXPECTED_UNREADABLE[0]!.runId);
-      assert.equal(damaged.book, EXPECTED_UNREADABLE[0]!.book);
-      assert.deepEqual(damaged.missingSources, [...EXPECTED_UNREADABLE[0]!.missingSources]);
-      assert.deepEqual(damaged.firstFrameAt, EXPECTED_UNREADABLE[0]!.firstFrameAt);
-      assert.match(damaged.reason, /malformed JSONL record/i);
-      // No wall-clock / duration field admitted for unreadable runs on A1 page.
-      assert.equal(
-        "wallMs" in damaged || "durationMs" in damaged || "elapsedMs" in damaged,
-        false,
-      );
+      // Damaged runs: loud unreadable exclusion + count; duration not on page.
+      // Present-first-frame (c3) and absent-first-frame (f6) both retained.
+      assert.equal(first.page.unreadableCount, EXPECTED_UNREADABLE.length);
+      assert.equal(first.page.unreadable.length, EXPECTED_UNREADABLE.length);
+      for (let i = 0; i < EXPECTED_UNREADABLE.length; i += 1) {
+        const expected = EXPECTED_UNREADABLE[i]!;
+        const damaged = first.page.unreadable[i]!;
+        assert.equal(damaged.runId, expected.runId);
+        assert.equal(damaged.book, expected.book);
+        assert.deepEqual(damaged.missingSources, [...expected.missingSources]);
+        assert.deepEqual(damaged.firstFrameAt, expected.firstFrameAt);
+        assert.match(damaged.reason, /malformed JSONL record/i);
+        // No wall-clock / duration field admitted for unreadable runs on A1 page.
+        assert.equal(
+          "wallMs" in damaged || "durationMs" in damaged || "elapsedMs" in damaged,
+          false,
+        );
+      }
 
       const onDisk = JSON.parse(await readFile(pagePath, "utf8")) as TaishiIssueMetricsPage;
       assert.deepEqual(onDisk, first.page);
@@ -386,9 +406,9 @@ test("taishi issue-mode entry: null terminal artifact is terminal-artifact unrea
         status: "present",
         at: "2026-08-01T00:00:00.000Z",
       });
-      // Fixture session-damaged run remains; plus this terminal-artifact failure.
-      assert.equal(result.page.unreadableCount, 2);
-      assert.equal(result.page.unreadable.length, 2);
+      // Fixture session-damaged runs remain; plus this terminal-artifact failure.
+      assert.equal(result.page.unreadableCount, EXPECTED_UNREADABLE.length + 1);
+      assert.equal(result.page.unreadable.length, EXPECTED_UNREADABLE.length + 1);
       assert.deepEqual(
         result.page.legs.map((leg) => leg.runId),
         [LEG_E5_RUN, LEG_B2_RUN],
