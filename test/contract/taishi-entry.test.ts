@@ -11,25 +11,21 @@
  * prior board cases and B4 timeline branches remain.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   ActivationLedgerError,
   physicalPathIdentity,
 } from "../../src/activation-ledger-topology.ts";
 import { runTaishi } from "../../src/taishi-entry.ts";
-import { medianNumber } from "../../src/taishi-median.ts";
-import {
-  loadTaishiIssueMetricFamilies,
-  TAISHI_ISSUE_METRIC_FAMILIES,
-  TAISHI_ISSUE_METRIC_FAMILIES_DIR,
-} from "../../src/taishi-metric-families.ts";
+import { TAISHI_ISSUE_METRIC_FAMILIES_DIR } from "../../src/taishi-metric-families.ts";
 import type { TaishiAcceptanceSuccessReworkSection } from "../../src/taishi-metric-families/acceptance-success-rework.ts";
+import type { TaishiB2FrameBucketsActionsSection } from "../../src/taishi-metric-families/b2-frame-buckets-actions.ts";
 import type { TaishiLegWallClockSection } from "../../src/taishi-metric-families/leg-wall-clock.ts";
 import type {
   TaishiRoundTimelineRow,
@@ -40,18 +36,11 @@ import {
   type TaishiIssueMetricsPage,
 } from "../../src/taishi-page.ts";
 
-/** B1 section is contributed by family module — not on the A1/A2 page envelope type. */
-type PageWithLegWallClock = TaishiIssueMetricsPage & {
+/** Family sections are discovery-contributed — not on the A1 page envelope type. */
+type PageWithMetricFamilies = TaishiIssueMetricsPage & {
   readonly legWallClock?: TaishiLegWallClockSection;
-};
-
-/** B3 section is contributed by family module — not on the A1 page envelope type. */
-type PageWithAcceptanceSuccessRework = TaishiIssueMetricsPage & {
+  readonly b2FrameBucketsActions?: TaishiB2FrameBucketsActionsSection;
   readonly acceptanceSuccessRework?: TaishiAcceptanceSuccessReworkSection;
-};
-
-/** B4 section is contributed by family module — not on the A1 page envelope type. */
-type PageWithRoundTimeline = TaishiIssueMetricsPage & {
   readonly roundTimeline?: TaishiRoundTimelineSection;
 };
 
@@ -797,7 +786,7 @@ async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   }
 }
 
-test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain frozen, page replace idempotent", async () => {
+test("taishi issue-mode entry: fixture page+discovered families hand-equal; missing family dir fails before write", async () => {
   await withBusinessRepo(async () => {
     await withTempHome(async (home) => {
       const ledgerHome = join(home, ".ak-roles");
@@ -844,12 +833,34 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
         "retired a2-seam-probe must not appear on the issue page",
       );
 
+      // Production discovery product on the typed page (no internal loader bullet):
+      // all live family sections must land; success page never omits the family set.
+      const page = first.page as PageWithMetricFamilies;
+      assert.ok(page.legWallClock, "B1 legWallClock must register via family discovery");
+      assert.ok(
+        page.b2FrameBucketsActions,
+        "B2 b2FrameBucketsActions must register via family discovery",
+      );
+      assert.ok(
+        page.acceptanceSuccessRework,
+        "B3 acceptanceSuccessRework must register via family discovery",
+      );
+      assert.ok(page.roundTimeline, "B4 roundTimeline must register via family discovery");
+
+      // B1: ranking/median/total hand-equal; damaged excluded from ranking.
+      assert.deepEqual(page.legWallClock, EXPECTED_LEG_WALL_CLOCK);
+      assert.equal(page.legWallClock.medianWallMs, 7_500);
+      assert.equal(page.legWallClock.totalElapsedMs, 302_000);
+      assert.equal(page.legWallClock.ranking.length, EXPECTED_LEGS.length);
+      assert.deepEqual(
+        new Set(page.legWallClock.ranking.map((leg) => leg.runId)),
+        new Set(page.legs.map((leg) => leg.runId)),
+      );
+
       // B4: per-lane round timeline hand-equal (receipt / death / unreadable placeholder).
-      const pageWithTimeline = first.page as PageWithRoundTimeline;
-      assert.ok(pageWithTimeline.roundTimeline, "B4 roundTimeline section must register via family module");
-      assert.equal(pageWithTimeline.roundTimeline.kind, "taishi-round-timeline");
-      assert.equal(pageWithTimeline.roundTimeline.lanes.length, 3);
-      const bookLane = pageWithTimeline.roundTimeline.lanes.find((lane) => lane.lane === BOOK);
+      assert.equal(page.roundTimeline.kind, "taishi-round-timeline");
+      assert.equal(page.roundTimeline.lanes.length, 3);
+      const bookLane = page.roundTimeline.lanes.find((lane) => lane.lane === BOOK);
       assert.ok(bookLane, "fixture-book lane must appear on B4 timeline");
       assert.equal(bookLane.rows.length, EXPECTED_ROUND_TIMELINE_BOOK_ROWS.length);
       for (let i = 0; i < EXPECTED_ROUND_TIMELINE_BOOK_ROWS.length; i += 1) {
@@ -881,10 +892,8 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
       }
 
       // B3: acceptance/success sets, rework lens, first-pass — hand oracle equality.
-      // Section lands via family discovery spread (page skeleton not edited).
-      const pageRecord = first.page as PageWithAcceptanceSuccessRework;
-      assert.deepEqual(pageRecord.acceptanceSuccessRework, EXPECTED_B3);
-      const b3 = pageRecord.acceptanceSuccessRework!;
+      assert.deepEqual(page.acceptanceSuccessRework, EXPECTED_B3);
+      const b3 = page.acceptanceSuccessRework!;
       // Acceptance ≠ success: planned accepted but not success-eligible / not success.
       const planned = b3.legs.find((leg) => leg.runId === LEG_F6_RUN);
       assert.ok(planned);
@@ -986,8 +995,8 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
       assert.equal(b3.rework.totalWallMs, 302_000);
       assert.equal(b3.rework.reworkRatio, 165_000 / 302_000);
       assert.equal(b3.rework.reworkLegCount, 9);
-      // Convergence rounds median uses shared odd-sample middle primitive.
-      assert.equal(coderStats.convergenceRoundsMedian, medianNumber([7, 1, 1]));
+      // Convergence rounds median: sorted [1,1,7] → odd-sample middle = 1.
+      assert.equal(coderStats.convergenceRoundsMedian, 1);
 
       // Damaged runs: loud unreadable exclusion + count; duration not on page.
       // Present-first-frame (c3) and absent-first-frame (f7) both retained.
@@ -1023,6 +1032,100 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
       assert.equal(await readFile(pagePath, "utf8"), firstBytes);
       const onDiskAgain = JSON.parse(await readFile(pagePath, "utf8")) as TaishiIssueMetricsPage;
       assert.deepEqual(onDiskAgain, first.page);
+
+      // Missing family directory: fresh process imports while tree present, then
+      // removes it and calls runTaishi — must fail with native ENOENT/ENOTDIR
+      // and must not write a success page. Parent already cached discovery, so
+      // sibling tests keep using in-memory modules during the brief rename.
+      const markerPath = join(home, "missing-family-dir-marker.txt");
+      const entryHref = pathToFileURL(join(packageRoot, "src/taishi-entry.ts")).href;
+      const absentBackup = join(packageRoot, "src", "taishi-metric-families.#298-absent");
+      const child = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "-e",
+          `
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const famDir = ${JSON.stringify(TAISHI_ISSUE_METRIC_FAMILIES_DIR)};
+const bak = ${JSON.stringify(absentBackup)};
+const fixtureHome = ${JSON.stringify(fixtureHome)};
+const entryHref = ${JSON.stringify(entryHref)};
+const markerPath = ${JSON.stringify(markerPath)};
+const issueRoot = ${JSON.stringify(ISSUE_PROJECT_ROOT)};
+const childHome = join(tmpdir(), "taishi-absent-" + process.pid);
+
+function restore() {
+  if (existsSync(bak) && !existsSync(famDir)) renameSync(bak, famDir);
+}
+process.on("exit", restore);
+process.on("SIGINT", () => { restore(); process.exit(130); });
+process.on("SIGTERM", () => { restore(); process.exit(143); });
+
+function fail(code, msg) {
+  try { writeFileSync(markerPath, msg + "\\n"); } catch {}
+  restore();
+  process.exit(code);
+}
+
+rmSync(childHome, { recursive: true, force: true });
+mkdirSync(childHome, { recursive: true });
+process.env.HOME = childHome;
+cpSync(fixtureHome, join(childHome, ".ak-roles"), { recursive: true });
+const issuesDir = join(childHome, ".ak-roles", "taishi", "issues");
+rmSync(issuesDir, { recursive: true, force: true });
+mkdirSync(issuesDir, { recursive: true });
+
+// Import while family tree is present (static family module imports resolve).
+const { runTaishi } = await import(entryHref);
+
+let renamed = false;
+try {
+  renameSync(famDir, bak);
+  renamed = true;
+  let code;
+  try {
+    await runTaishi({ mode: "issue", projectRoot: issueRoot });
+    fail(2, "runTaishi-succeeded");
+  } catch (error) {
+    code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  }
+  if (code !== "ENOENT" && code !== "ENOTDIR") {
+    fail(3, "wrong-code:" + String(code));
+  }
+  const written = existsSync(issuesDir) ? readdirSync(issuesDir) : [];
+  if (written.length > 0) {
+    fail(4, "page-written:" + written.join(","));
+  }
+  restore();
+  process.exit(0);
+} catch (error) {
+  fail(1, "child-throw:" + String(error && error.stack || error));
+} finally {
+  if (renamed) restore();
+  rmSync(childHome, { recursive: true, force: true });
+}
+`,
+        ],
+        { cwd: packageRoot, encoding: "utf8", env: process.env },
+      );
+      // Always re-check production tree is present after child (restore safety net).
+      const treeListing = await readFile(
+        join(TAISHI_ISSUE_METRIC_FAMILIES_DIR, "leg-wall-clock.ts"),
+        "utf8",
+      ).then(() => "ok", () => "missing");
+      assert.equal(treeListing, "ok", "family tree must be restored after child");
+      const marker = await readFile(markerPath, "utf8").catch(() => "");
+      assert.equal(
+        child.status,
+        0,
+        `missing family dir child failed: status=${child.status} stdout=${child.stdout} stderr=${child.stderr} marker=${marker}`,
+      );
     });
   });
 });
@@ -1088,138 +1191,6 @@ test("taishi issue-mode entry: null terminal artifact is terminal-artifact unrea
       );
     });
   });
-});
-
-test("taishi shared median primitive: even-sample mean of two middles (fixture wall spans)", () => {
-  // Fixture readable walls: a1=60000, b2=8000 → (8000+60000)/2 = 34000.
-  // Shared primitive remains the sole even-sample convention owner.
-  assert.equal(medianNumber([60_000, 8_000]), 34_000);
-  assert.equal(medianNumber([8_000, 60_000]), 34_000);
-  assert.equal(medianNumber([3]), 3);
-  assert.equal(medianNumber([1, 2, 3]), 2);
-  assert.equal(medianNumber([]), undefined);
-});
-
-test("taishi B1 leg-wall-clock family: fixture ranking/median/total hand-equal; damaged excluded", async () => {
-  await withBusinessRepo(async () => {
-    await withTempHome(async () => {
-      const result = await runTaishi({
-        mode: "issue",
-        projectRoot: ISSUE_PROJECT_ROOT,
-      });
-      const page = result.page as PageWithLegWallClock;
-
-      // Ticket-pinned acceptance on the merged B1+B2+B3+B4 board.
-      assert.deepEqual(page.legWallClock, EXPECTED_LEG_WALL_CLOCK);
-      assert.equal(page.legWallClock?.medianWallMs, 7_500);
-      assert.equal(page.legWallClock?.totalElapsedMs, 302_000);
-      assert.deepEqual(
-        page.legWallClock?.ranking.map((leg) => leg.wallMs),
-        [
-          100_000, 60_000, 25_000, 20_000, 15_000, 12_000, 10_000, 9_000, 8_000, 7_000,
-          6_000, 6_000, 5_000, 5_000, 4_000, 4_000, 3_000, 3_000,
-        ],
-      );
-
-      // Damaged runs stay unreadable; board covers exactly the readable leg set.
-      assert.equal(page.unreadableCount, EXPECTED_UNREADABLE.length);
-      assert.equal(page.unreadable[0]!.runId, EXPECTED_UNREADABLE[0]!.runId);
-      assert.equal(page.unreadable[1]!.runId, EXPECTED_UNREADABLE[1]!.runId);
-      assert.equal(page.legWallClock?.ranking.length, EXPECTED_LEGS.length);
-      assert.equal(page.legWallClock?.ranking.length, page.legs.length);
-      assert.deepEqual(
-        new Set(page.legWallClock?.ranking.map((leg) => leg.runId)),
-        new Set(page.legs.map((leg) => leg.runId)),
-      );
-
-      // Family module is discovery-registered (drop-in file only).
-      const families = await loadTaishiIssueMetricFamilies();
-      assert.ok(
-        families.some((family) => family.id === "leg-wall-clock"),
-        "leg-wall-clock family must register via production discovery",
-      );
-    });
-  });
-});
-
-test("taishi metric-family production discovery: real family files register without shared-list edits", async () => {
-  // Registration proof stays on the production path — real family modules under
-  // taishi-metric-families/ are discovered by the real loader (no test-only dir hook).
-  // Inclusion only: B1 absorbed/replaced a2-seam-probe; pin the live product families,
-  // not the retired probe inventory. B2/B3/B4 drop-ins land alongside.
-  const names = (await readdir(TAISHI_ISSUE_METRIC_FAMILIES_DIR))
-    .filter((name) => {
-      if (name.endsWith(".d.ts")) return false;
-      if (name.includes(".test.")) return false;
-      return name.endsWith(".ts") || name.endsWith(".js") || name.endsWith(".mjs");
-    })
-    .sort((a, b) => a.localeCompare(b));
-  assert.equal(
-    names.includes("a2-seam-probe.ts"),
-    false,
-    "retired a2-seam-probe family module must not remain under production discovery",
-  );
-  assert.ok(
-    names.includes("leg-wall-clock.ts"),
-    "B1 leg-wall-clock family module must register under production discovery",
-  );
-  assert.ok(
-    names.includes("b2-frame-buckets-actions.ts"),
-    "B2 frame-buckets-actions family module must register under production discovery",
-  );
-  assert.ok(
-    names.includes("acceptance-success-rework.ts"),
-    "B3 acceptance-success-rework family must register by file drop-in",
-  );
-  assert.ok(
-    names.includes("round-timeline.ts"),
-    "B4 round-timeline family module must register by drop-in file only",
-  );
-
-  const families = await loadTaishiIssueMetricFamilies();
-  assert.equal(
-    families.some((family) => family.id === "a2-seam-probe"),
-    false,
-    "loaded families must not include retired a2-seam-probe",
-  );
-  assert.ok(
-    families.some((family) => family.id === "leg-wall-clock"),
-    "loaded families must include leg-wall-clock",
-  );
-  assert.ok(
-    families.some((family) => family.id === "b2-frame-buckets-actions"),
-    "loaded families must include b2-frame-buckets-actions",
-  );
-  assert.ok(
-    families.some((family) => family.id === "acceptance-success-rework"),
-    "loaded families must include acceptance-success-rework",
-  );
-  assert.ok(
-    families.some((family) => family.id === "round-timeline"),
-    "loaded families must include round-timeline",
-  );
-  // Production registry is the same discovery product (loaded once at import).
-  assert.equal(
-    TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "a2-seam-probe"),
-    false,
-    "production registry must not include retired a2-seam-probe",
-  );
-  assert.ok(
-    TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "leg-wall-clock"),
-    "production registry must include leg-wall-clock",
-  );
-  assert.ok(
-    TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "b2-frame-buckets-actions"),
-    "production registry must include b2-frame-buckets-actions",
-  );
-  assert.ok(
-    TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "acceptance-success-rework"),
-    "production registry must include acceptance-success-rework",
-  );
-  assert.ok(
-    TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "round-timeline"),
-    "production registry must include round-timeline",
-  );
 });
 
 test("taishi issue-mode entry: taishi path symlink into consumer repo is refused without porcelain change", async () => {

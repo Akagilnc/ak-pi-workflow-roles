@@ -42,27 +42,27 @@ function readFamilyExport(
   return candidate as TaishiMetricFamilyModule;
 }
 
+/** Process-local success product — package family tree is static at runtime. */
+let loadedFamilies: readonly TaishiMetricFamilyModule[] | undefined;
+
 /**
  * Discover family modules from the production family-module directory.
  * B-slice registration is drop-in: add a file under that directory only.
+ *
+ * ENOENT/ENOTDIR propagate — never wash a missing production family tree
+ * into an empty registry (that would silently emit pages with no family
+ * sections). Issue-page composition awaits this before any success write, so a
+ * missing tree fails the entry without producing a page. Successful loads are
+ * retained for the process; failures never cache.
  */
 export async function loadTaishiIssueMetricFamilies(): Promise<
   readonly TaishiMetricFamilyModule[]
 > {
+  if (loadedFamilies !== undefined) return loadedFamilies;
+
   const directory = TAISHI_ISSUE_METRIC_FAMILIES_DIR;
-  let names: string[];
-  try {
-    names = await readdir(directory);
-  } catch (error) {
-    if (
-      error instanceof Error
-      && "code" in error
-      && (error.code === "ENOENT" || error.code === "ENOTDIR")
-    ) {
-      return [];
-    }
-    throw error;
-  }
+  // Loud failure: missing/non-directory family tree keeps its native cause.
+  const names = await readdir(directory);
 
   const families: TaishiMetricFamilyModule[] = [];
   for (const name of names.sort((a, b) => a.localeCompare(b))) {
@@ -71,9 +71,6 @@ export async function loadTaishiIssueMetricFamilies(): Promise<
     const mod = (await import(href)) as Record<string, unknown>;
     families.push(readFamilyExport(mod, name));
   }
+  loadedFamilies = families;
   return families;
 }
-
-/** Production registry — loaded once from the family-module directory. */
-export const TAISHI_ISSUE_METRIC_FAMILIES: readonly TaishiMetricFamilyModule[] =
-  await loadTaishiIssueMetricFamilies();
