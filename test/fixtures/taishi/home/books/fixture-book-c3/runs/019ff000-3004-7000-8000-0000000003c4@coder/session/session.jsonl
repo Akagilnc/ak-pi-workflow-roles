@@ -1,0 +1,5 @@
+{"type":"session","version":3,"id":"s-c3-c4","timestamp":"2026-08-03T00:30:00.000Z","cwd":"/taishi-fixture/c3-models"}
+{"type":"message","id":"m1","parentId":null,"timestamp":"2026-08-03T00:30:00.000Z","message":{"role":"assistant","model":"grok-4.5","timestamp":"2026-08-03T00:30:00.000Z","content":[]}}
+{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-08-03T00:30:10.000Z","message":{"role":"assistant","model":"grok-4.5","timestamp":"2026-08-03T00:30:10.000Z","content":[]}}
+{"type":"message","id":"m3","parentId":"m2","timestamp":"2026-08-03T00:30:20.000Z","message":{"role":"assistant","model":"sol-low","timestamp":"2026-08-03T00:30:20.000Z","content":[]}}
+{"type":"message","id":"m4","parentId":"m3","timestamp":"2026-08-03T00:30:30.000Z","message":{"role":"assistant","model":"sol-low","timestamp":"2026-08-03T00:30:30.000Z","content":[]}}

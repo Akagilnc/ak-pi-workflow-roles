@@ -242,6 +242,15 @@ export function presentStructuralRejection(
   io.stderr(formatCliDiagnostic(error.message));
 }
 
+/** ControlledFailure face without admitted-run Terminal (stdout body + stderr line). */
+export function presentControlledFailure(
+  failure: ControlledFailure,
+  io: { stdout: (text: string) => void; stderr: (text: string) => void },
+): void {
+  io.stdout(`${JSON.stringify(failure, null, 2)}\n`);
+  io.stderr(formatFailureStderrDiagnostic(failure));
+}
+
 /** Session readiness after an admitted activation attempt. */
 export type SessionReadiness =
   | { readonly state: "missing" }

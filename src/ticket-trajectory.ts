@@ -30,6 +30,12 @@ import {
   formatUsdPrecise,
 } from "./human-format.ts";
 import {
+  extractSessionTimestampSpan,
+  readLedgerSessionJsonl,
+  type LedgerSessionRow,
+} from "./ledger-session-read.ts";
+export { readLedgerSessionJsonl } from "./ledger-session-read.ts";
+import {
   AcceptedDetailsContractError,
   acceptedFacts,
   isTerminatingToolName,
@@ -73,7 +79,7 @@ export type TicketTrajectoryPageHandle = {
   stop: () => Promise<void>;
 };
 
-type SessionRow = Record<string, unknown>;
+type SessionRow = LedgerSessionRow;
 
 /** One ledger run as loaded by the S1 tracer (shared with the S2/S3 board). */
 export type TicketTrajectoryRun = {
@@ -168,50 +174,6 @@ function attr(value: string): string {
   return escapeHtml(value);
 }
 
-/**
- * Read session JSONL with honest live-tail semantics:
- * a malformed line is tolerated only when it is an unfinished final
- * fragment at EOF (no record terminator after it). Any malformed line
- * completed by a line terminator must fail loudly with file and 1-based
- * line context — even when no non-empty record follows — never silently
- * under-count.
- */
-export async function readLedgerSessionJsonl(path: string): Promise<SessionRow[]> {
-  const text = await readFile(path, "utf8");
-  // split keeps a trailing empty segment iff text ends with "\n", so
-  // index < lines.length - 1 means this segment was terminated.
-  const lines = text.split("\n");
-  const rows: SessionRow[] = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    if (!line.trim()) continue;
-    let row: unknown;
-    try {
-      row = JSON.parse(line);
-    } catch (error) {
-      if (!(error instanceof SyntaxError)) throw error;
-      const completedByTerminator = index < lines.length - 1;
-      if (completedByTerminator) {
-        throw new Error(
-          `malformed JSONL record in ${path} at line ${index + 1}: ${error.message}`,
-        );
-      }
-      // unfinished fragment at EOF — keep prior complete rows
-      break;
-    }
-    // Syntactically complete line: must be a session object. Silent omission
-    // would under-count ledger evidence (failure honesty).
-    if (!isRecord(row)) {
-      const kind = row === null ? "null" : Array.isArray(row) ? "array" : typeof row;
-      throw new Error(
-        `complete non-object JSONL record in ${path} at line ${index + 1}: expected object, got ${kind}`,
-      );
-    }
-    rows.push(row);
-  }
-  return rows;
-}
-
 function extractModelFields(rows: SessionRow[]): { model: string; provider: string; thinking: string } {
   let model = "";
   let provider = "";
@@ -231,21 +193,6 @@ function extractModelFields(rows: SessionRow[]): { model: string; provider: stri
     }
   }
   return { model, provider, thinking };
-}
-
-/** First and last record timestamps in encounter order. */
-function extractTimestampSpan(rows: SessionRow[]): { startedAt?: string; endedAt?: string } {
-  let startedAt: string | undefined;
-  let endedAt: string | undefined;
-  for (const row of rows) {
-    if (typeof row.timestamp !== "string" || !row.timestamp) continue;
-    if (startedAt === undefined) startedAt = row.timestamp;
-    endedAt = row.timestamp;
-  }
-  return {
-    ...(startedAt !== undefined ? { startedAt } : {}),
-    ...(endedAt !== undefined ? { endedAt } : {}),
-  };
 }
 
 /** Sum budget dollars and tokens from message.usage on session rows. */
@@ -442,7 +389,7 @@ async function parseRunDirectory(runDir: string, ledgerCoord: string): Promise<P
     }
     if (!startedAt && typeof row.timestamp === "string") startedAt = row.timestamp;
   }
-  const parentSpan = extractTimestampSpan(rows);
+  const parentSpan = extractSessionTimestampSpan(rows);
   if (startedAt === undefined) startedAt = parentSpan.startedAt;
   const endedAt = parentSpan.endedAt;
 
@@ -457,7 +404,7 @@ async function parseRunDirectory(runDir: string, ledgerCoord: string): Promise<P
     const legUsage = extractUsageTotals(legRows);
     costUsd += legUsage.costUsd;
     totalTokens += legUsage.totalTokens;
-    const legSpan = extractTimestampSpan(legRows);
+    const legSpan = extractSessionTimestampSpan(legRows);
     axisWallMs += wallMsBetween(legSpan.startedAt, legSpan.endedAt);
     if (
       legSpan.endedAt !== undefined &&

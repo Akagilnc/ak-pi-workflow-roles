@@ -1,0 +1,11 @@
+{
+  "role": "coder",
+  "runId": "019ff000-6001-7000-8000-0000000006a1",
+  "phase": "apply",
+  "outcome": {
+    "kind": "accepted",
+    "role": "coder",
+    "status": "completed",
+    "decisiveFacts": {}
+  }
+}
