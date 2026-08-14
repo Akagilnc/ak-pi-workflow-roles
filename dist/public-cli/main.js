@@ -23472,21 +23472,12 @@ __export(cli_exports, {
   PUBLIC_ROLE_ARGV: () => PUBLIC_ROLE_ARGV,
   buildExplicitInternalActivationArgs: () => buildExplicitInternalActivationArgs,
   helpDocument: () => helpDocument,
-  injectPublicAttachArg: () => injectPublicAttachArg,
-  publicCliCommandIndex: () => publicCliCommandIndex,
-  publicRoleAcceptsAttach: () => publicRoleAcceptsAttach,
   resolveInternalRoleEntrypoint: () => resolveInternalRoleEntrypoint,
   runAkRole: () => runAkRole
 });
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { join as join17 } from "node:path";
-function isPublicRoleArgvCommand(command) {
-  return Object.prototype.hasOwnProperty.call(PUBLIC_ROLE_ARGV, command);
-}
-function publicRoleAcceptsAttach(command) {
-  return isPublicRoleArgvCommand(command) && PUBLIC_ROLE_ARGV[command].acceptsAttach;
-}
 function takePublicGlobalFlag(argv, index) {
   const token = argv[index];
   if (token === void 0) return void 0;
@@ -23522,31 +23513,6 @@ function takePublicGlobalFlag(argv, index) {
     };
   }
   return void 0;
-}
-function publicCliCommandIndex(argv) {
-  let i = 0;
-  while (i < argv.length) {
-    const token = argv[i];
-    if (token === "--") {
-      return i + 1 < argv.length ? i + 1 : void 0;
-    }
-    const taken = takePublicGlobalFlag(argv, i);
-    if (taken !== void 0) {
-      i += taken.consume;
-      continue;
-    }
-    return i;
-  }
-  return void 0;
-}
-function injectPublicAttachArg(argv, attachPath) {
-  const commandIndex = publicCliCommandIndex(argv);
-  if (commandIndex === void 0) return argv;
-  const command = argv[commandIndex];
-  if (command === void 0 || !publicRoleAcceptsAttach(command)) return argv;
-  const out = [...argv];
-  out.splice(commandIndex + 1, 0, "--attach", attachPath);
-  return out;
 }
 function defaultIo() {
   return {
@@ -24184,13 +24150,13 @@ var init_cli = __esm({
     init_explicit_internal();
     init_cli_errors();
     PUBLIC_ROLE_ARGV = {
-      judge: { parse: parseJudgeArgv, acceptsAttach: true },
-      coder: { parse: parseCoderArgv, acceptsAttach: true },
-      fixer: { parse: parseFixerArgv, acceptsAttach: true },
-      collector: { parse: parseCollectorArgv, acceptsAttach: true },
-      doctor: { parse: parseDoctorArgv, acceptsAttach: true },
-      merger: { parse: parseMergerArgv, acceptsAttach: true },
-      reviewer: { parse: parseReviewerArgv, acceptsAttach: false }
+      judge: { parse: parseJudgeArgv },
+      coder: { parse: parseCoderArgv },
+      fixer: { parse: parseFixerArgv },
+      collector: { parse: parseCollectorArgv },
+      doctor: { parse: parseDoctorArgv },
+      merger: { parse: parseMergerArgv },
+      reviewer: { parse: parseReviewerArgv }
     };
     THINKING_LEVELS2 = /* @__PURE__ */ new Set([
       "off",

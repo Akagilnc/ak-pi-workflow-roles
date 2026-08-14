@@ -62,33 +62,18 @@ export { CliUsageError } from "./cli-errors.ts";
 export type { CliIo } from "./cli-io.ts";
 
 /**
- * Sole production map: public role command → argv parser + attach capability.
- * cli handlers and the machine launcher both consume this table; no parallel set.
+ * Sole production map: public role command → argv parser.
+ * cli handlers consume this table; no parallel set.
  */
 export const PUBLIC_ROLE_ARGV = {
-  judge: { parse: parseJudgeArgv, acceptsAttach: true },
-  coder: { parse: parseCoderArgv, acceptsAttach: true },
-  fixer: { parse: parseFixerArgv, acceptsAttach: true },
-  collector: { parse: parseCollectorArgv, acceptsAttach: true },
-  doctor: { parse: parseDoctorArgv, acceptsAttach: true },
-  merger: { parse: parseMergerArgv, acceptsAttach: true },
-  reviewer: { parse: parseReviewerArgv, acceptsAttach: false },
+  judge: { parse: parseJudgeArgv },
+  coder: { parse: parseCoderArgv },
+  fixer: { parse: parseFixerArgv },
+  collector: { parse: parseCollectorArgv },
+  doctor: { parse: parseDoctorArgv },
+  merger: { parse: parseMergerArgv },
+  reviewer: { parse: parseReviewerArgv },
 } as const;
-
-export type PublicRoleArgvCommand = keyof typeof PUBLIC_ROLE_ARGV;
-
-function isPublicRoleArgvCommand(
-  command: string,
-): command is PublicRoleArgvCommand {
-  return Object.prototype.hasOwnProperty.call(PUBLIC_ROLE_ARGV, command);
-}
-
-/** Table-driven attach capability from PUBLIC_ROLE_ARGV (no message matching). */
-export function publicRoleAcceptsAttach(command: string): boolean {
-  return (
-    isPublicRoleArgvCommand(command) && PUBLIC_ROLE_ARGV[command].acceptsAttach
-  );
-}
 
 type TakenPublicGlobalFlag =
   | { flag: "help"; consume: 1 }
@@ -97,7 +82,7 @@ type TakenPublicGlobalFlag =
 
 /**
  * If `argv[index]` is a public global flag, describe its span and payload.
- * Sole global-flag grammar for parseArgv and launcher command-index.
+ * Sole global-flag grammar for parseArgv.
  */
 function takePublicGlobalFlag(
   argv: readonly string[],
@@ -137,47 +122,6 @@ function takePublicGlobalFlag(
     };
   }
   return undefined;
-}
-
-/**
- * Index of the public command token under the real global-flag grammar
- * (`--model` / `--thinking` / `--help`; unknown dashed tokens are positional).
- */
-export function publicCliCommandIndex(
-  argv: readonly string[],
-): number | undefined {
-  let i = 0;
-  while (i < argv.length) {
-    const token = argv[i]!;
-    if (token === "--") {
-      return i + 1 < argv.length ? i + 1 : undefined;
-    }
-    const taken = takePublicGlobalFlag(argv, i);
-    if (taken !== undefined) {
-      i += taken.consume;
-      continue;
-    }
-    return i;
-  }
-  return undefined;
-}
-
-/**
- * Insert `--attach <path>` immediately after the command token when that
- * command's PUBLIC_ROLE_ARGV entry accepts attachments. Table-driven; no
- * independent capability scanner.
- */
-export function injectPublicAttachArg(
-  argv: readonly string[],
-  attachPath: string,
-): readonly string[] {
-  const commandIndex = publicCliCommandIndex(argv);
-  if (commandIndex === undefined) return argv;
-  const command = argv[commandIndex];
-  if (command === undefined || !publicRoleAcceptsAttach(command)) return argv;
-  const out = [...argv];
-  out.splice(commandIndex + 1, 0, "--attach", attachPath);
-  return out;
 }
 
 export type CliEnv = {
@@ -286,7 +230,7 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
 
   // Global flags may appear before or after the subcommand
   // (`ak-role --model x roles` and `ak-role roles --model x`).
-  // Grammar authority: takePublicGlobalFlag above (same source as launcher).
+  // Grammar authority: takePublicGlobalFlag above.
   while (args.length > 0) {
     if (args[0] === "--") {
       args.shift();
