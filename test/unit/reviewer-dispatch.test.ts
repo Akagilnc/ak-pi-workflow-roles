@@ -2,10 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   constructReviewerDispatch,
-  discoverReviewerSpecAuthority,
   reviewerAuthorityRefsMaterial,
-  shouldLaunchSpecEvidenceChild,
-  type ReviewerSpecAuthorityDiscovery,
 } from "../../src/reviewer-construction.ts";
 import { createReviewerDispatcher, type AcceptedReviewerExecution, type ReviewerPinnedGitReader, type ReviewerPinnedTarget } from "../../src/reviewer-dispatch.ts";
 
@@ -28,8 +25,7 @@ function harness(
   snapshot = pin,
   options: {
     authorityRefs?: readonly string[];
-    /** Skill step-2 commit messages returned by the pinned reader (production discovery input). */
-    commitMessages?: readonly string[];
+    /** Branch/feature tokens returned by the pinned reader (production discovery input). */
     featureTokens?: readonly string[];
   } = {},
 ) {
@@ -44,9 +40,6 @@ function harness(
     },
     async range() {
       return range;
-    },
-    async rangeCommitMessages() {
-      return Object.freeze([...(options.commitMessages ?? ["Implement feature #42"])]);
     },
     async featureTokens() {
       return Object.freeze([...(options.featureTokens ?? [])]);
@@ -69,115 +62,23 @@ function harness(
   };
 }
 
-test("fixed dispatch launches independent Standards and Spec legs by default", async () => {
-  const h = harness();
-  const result = await h.dispatcher.dispatch("main~1");
-  assert.equal(result.status, "accepted");
-  assert.deepEqual(h.execution?.legs.map((x) => x.axis), ["standards", "spec"]);
-  if (result.status === "accepted") {
-    assert.equal(result.dispatch.specDisposition, "launched");
-  }
-});
-
-test("absence of authorityRefs is not treated as missing Spec", () => {
-  assert.equal(
-    shouldLaunchSpecEvidenceChild({
-      authorityRefs: [],
-      specAuthorityDiscovery: { status: "available" },
-    }),
-    true,
-  );
-  assert.equal(
-    discoverReviewerSpecAuthority({
-      authorityRefs: [],
-      commitMessages: ["Closes #99"],
-      localSpecCandidatePaths: [],
-      featureTokens: [],
-    }).status,
-    "available",
-  );
-  const constructed = constructReviewerDispatch({
-    identity: "id",
-    canonicalSkill: "review skill",
-    target: pin,
-    range,
-    specAuthorityDiscovery: { status: "available" },
-  });
-  assert.equal(constructed.specDisposition, "launched");
-  assert.deepEqual(constructed.legs.map((leg) => leg.axis), ["standards", "spec"]);
-});
-
-test("unique discovery owner confirms missing only after independent scan fails", () => {
-  assert.equal(
-    discoverReviewerSpecAuthority({
-      authorityRefs: [],
-      commitMessages: ["reviewed change"],
-      localSpecCandidatePaths: [],
-      featureTokens: [],
-    }).status,
-    "missing",
-  );
-  assert.equal(
-    discoverReviewerSpecAuthority({
-      authorityRefs: ["https://example.com/spec"],
-      commitMessages: [],
-      localSpecCandidatePaths: [],
-      featureTokens: [],
-    }).status,
-    "available",
-  );
-  assert.equal(
-    discoverReviewerSpecAuthority({
-      authorityRefs: [],
-      commitMessages: ["no issue here"],
-      localSpecCandidatePaths: ["docs/feature-login.md"],
-      featureTokens: ["feature/login"],
-    }).status,
-    "available",
-  );
-});
-
-test("confirmed missing Spec skips Spec child with honest skipped-missing disposition", async () => {
-  const discovery: ReviewerSpecAuthorityDiscovery = { status: "missing" };
-  const constructed = constructReviewerDispatch({
-    identity: "id",
-    canonicalSkill: "review skill",
-    target: pin,
-    range,
-    specAuthorityDiscovery: discovery,
-  });
-  assert.equal(constructed.specDisposition, "skipped-missing");
-  assert.deepEqual(constructed.legs.map((leg) => leg.axis), ["standards"]);
-  assert.equal(constructed.legs.some((leg) => leg.axis === "spec"), false);
-
-  // Production path: reader reports no issue refs / feature tokens ⇒ unique owner yields missing.
-  const h = harness(pin, { commitMessages: ["reviewed change with no tracker ref"], featureTokens: [] });
+test("production discovery: bare commit #N without durable source skips Spec", async () => {
+  // No supplied refs, no matchable feature tokens ⇒ unique owner yields missing.
+  // Bare tracker numbers in commit messages are not durable Spec material.
+  const h = harness(pin, { featureTokens: [] });
   const result = await h.dispatcher.dispatch("main~1");
   assert.equal(result.status, "accepted");
   if (result.status !== "accepted") return;
   assert.equal(result.dispatch.specDisposition, "skipped-missing");
   assert.deepEqual(result.dispatch.legs.map((leg) => leg.axis), ["standards"]);
+  assert.deepEqual(result.dispatch.authorityRefs, []);
   assert.deepEqual(h.execution?.legs.map((leg) => leg.axis), ["standards"]);
 });
 
-test("supplied authorityRefs keep Spec child even when discovery scan is empty", async () => {
+test("production discovery: supplied authorityRefs launch Spec with material", async () => {
   const refs = Object.freeze(["https://example.com/spec"]);
-  const constructed = constructReviewerDispatch({
-    identity: "id",
-    canonicalSkill: "review skill",
-    target: pin,
-    range,
-    authorityRefs: refs,
-    specAuthorityDiscovery: { status: "missing" },
-  });
-  assert.equal(constructed.specDisposition, "launched");
-  assert.deepEqual(constructed.legs.map((leg) => leg.axis), ["standards", "spec"]);
-  const spec = constructed.legs.find((leg) => leg.axis === "spec");
-  assert.equal(spec?.prompt.includes(reviewerAuthorityRefsMaterial(refs)), true);
-
   const h = harness(pin, {
     authorityRefs: refs,
-    commitMessages: ["no tracker ref"],
     featureTokens: [],
   });
   const result = await h.dispatcher.dispatch("main~1");
@@ -185,6 +86,40 @@ test("supplied authorityRefs keep Spec child even when discovery scan is empty",
   if (result.status !== "accepted") return;
   assert.equal(result.dispatch.specDisposition, "launched");
   assert.deepEqual(result.dispatch.legs.map((leg) => leg.axis), ["standards", "spec"]);
+  assert.deepEqual(result.dispatch.authorityRefs, [...refs]);
+  const material = reviewerAuthorityRefsMaterial(refs);
+  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes("Authority-Refs:"), false);
+  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
+  assert.equal(h.execution?.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
+});
+
+test("construction builds solely from discovery product (no secondary launch decision)", () => {
+  const missing = constructReviewerDispatch({
+    identity: "id-missing",
+    canonicalSkill: "review skill",
+    target: pin,
+    range,
+    specAuthority: { status: "missing" },
+  });
+  assert.equal(missing.specDisposition, "skipped-missing");
+  assert.deepEqual(missing.legs.map((leg) => leg.axis), ["standards"]);
+  assert.deepEqual(missing.authorityRefs, []);
+
+  const refs = Object.freeze(["docs/feature-login.md"]);
+  const available = constructReviewerDispatch({
+    identity: "id-available",
+    canonicalSkill: "review skill",
+    target: pin,
+    range,
+    specAuthority: { status: "available", refs },
+  });
+  assert.equal(available.specDisposition, "launched");
+  assert.deepEqual(available.legs.map((leg) => leg.axis), ["standards", "spec"]);
+  assert.deepEqual(available.authorityRefs, [...refs]);
+  assert.equal(
+    available.legs.find((leg) => leg.axis === "spec")?.prompt.includes(reviewerAuthorityRefsMaterial(refs)),
+    true,
+  );
 });
 
 test("targetHead drift prevents child execution", async () => {
@@ -215,7 +150,9 @@ test("sibling ref map drift does not reject dispatch", async () => {
 });
 
 test("constructed legs exclude caller task channel", async () => {
-  const h = harness();
+  const h = harness(pin, {
+    authorityRefs: ["https://example.com/spec"],
+  });
   const result = await h.dispatcher.dispatch("main~1");
   assert.equal(result.status, "accepted");
   if (result.status !== "accepted") return;
@@ -237,7 +174,7 @@ test("settlement records skipped-missing Spec disposition without Spec leg", asy
     canonicalSkill: "review skill",
     target: pin,
     range,
-    specAuthorityDiscovery: { status: "missing" },
+    specAuthority: { status: "missing" },
   });
   assert.equal(constructed.specDisposition, "skipped-missing");
   const standardsPrompt = constructed.legs[0]!.prompt;
@@ -286,44 +223,4 @@ test("settlement records skipped-missing Spec disposition without Spec leg", asy
   assert.equal(assembled.reports.spec, undefined);
   assert.equal(assembled.outcomes.spec, undefined);
   assert.equal(assembled.reports.standards?.text, "Standards finding count: 0.");
-});
-
-test("authorityRefs inject only into Spec evidence-child material unchanged", async () => {
-  const refs = Object.freeze([
-    "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
-    "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
-  ]);
-  const constructed = constructReviewerDispatch({
-    identity: "id",
-    canonicalSkill: "review skill",
-    target: pin,
-    range,
-    authorityRefs: refs,
-    specAuthorityDiscovery: { status: "available" },
-  });
-  assert.deepEqual(constructed.authorityRefs, [...refs]);
-  const standards = constructed.legs.find((leg) => leg.axis === "standards");
-  const spec = constructed.legs.find((leg) => leg.axis === "spec");
-  assert.ok(standards);
-  assert.ok(spec);
-  const material = reviewerAuthorityRefsMaterial(refs);
-  assert.equal(standards!.prompt.includes("Authority-Refs:"), false);
-  assert.equal(standards!.prompt.includes(material), false);
-  assert.equal(spec!.prompt.includes(material), true);
-  assert.equal(
-    spec!.prompt.includes(JSON.stringify([...refs])),
-    true,
-  );
-
-  const h = harness(pin, { authorityRefs: refs });
-  const result = await h.dispatcher.dispatch("main~1");
-  assert.equal(result.status, "accepted");
-  if (result.status !== "accepted") return;
-  assert.deepEqual(result.dispatch.authorityRefs, [...refs]);
-  const dispatchedStandards = result.dispatch.legs.find((leg) => leg.axis === "standards");
-  const dispatchedSpec = result.dispatch.legs.find((leg) => leg.axis === "spec");
-  assert.equal(dispatchedStandards?.prompt.includes("Authority-Refs:"), false);
-  assert.equal(dispatchedSpec?.prompt.includes(material), true);
-  assert.equal(h.execution?.legs.find((leg) => leg.axis === "standards")?.prompt.includes("Authority-Refs:"), false);
-  assert.equal(h.execution?.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
 });
