@@ -299,6 +299,8 @@ test("taishi shared median primitive: even-sample mean of two middles (fixture w
 test("taishi metric-family production discovery: real family files register without shared-list edits", async () => {
   // Registration proof stays on the production path — real family modules under
   // taishi-metric-families/ are discovered by the real loader (no test-only dir hook).
+  // Inclusion only: B-wave family files may land alongside the A2 probe without
+  // forcing this shared tracer to re-pin the full registry inventory.
   const names = (await readdir(TAISHI_ISSUE_METRIC_FAMILIES_DIR))
     .filter((name) => {
       if (name.endsWith(".d.ts")) return false;
@@ -306,17 +308,30 @@ test("taishi metric-family production discovery: real family files register with
       return name.endsWith(".ts") || name.endsWith(".js") || name.endsWith(".mjs");
     })
     .sort((a, b) => a.localeCompare(b));
-  assert.deepEqual(names, ["a2-seam-probe.ts"]);
+  assert.ok(
+    names.includes("a2-seam-probe.ts"),
+    "A2 seam-probe family module must remain registered under production discovery",
+  );
 
   const families = await loadTaishiIssueMetricFamilies();
-  assert.deepEqual(
-    families.map((family) => family.id),
-    ["a2-seam-probe"],
+  for (const family of families) {
+    assert.equal(typeof family.id, "string");
+    assert.ok(family.id.length > 0, "family id must be non-empty");
+    assert.equal(typeof family.contribute, "function");
+  }
+  assert.ok(
+    families.some((family) => family.id === "a2-seam-probe"),
+    "loaded families must include a2-seam-probe",
   );
   // Production registry is the same discovery product (loaded once at import).
-  assert.deepEqual(
-    TAISHI_ISSUE_METRIC_FAMILIES.map((family) => family.id),
-    ["a2-seam-probe"],
+  for (const family of TAISHI_ISSUE_METRIC_FAMILIES) {
+    assert.equal(typeof family.id, "string");
+    assert.ok(family.id.length > 0, "family id must be non-empty");
+    assert.equal(typeof family.contribute, "function");
+  }
+  assert.ok(
+    TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "a2-seam-probe"),
+    "production registry must include a2-seam-probe",
   );
 });
 
