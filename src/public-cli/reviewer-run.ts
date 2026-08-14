@@ -100,6 +100,15 @@ function buildModelArgs(model: SeatModelConfig | undefined): string[] {
   ];
 }
 
+/** Encode admitted ticketNumber as CLI argv for activation/resume (no defaults). */
+function buildReviewerTicketNumberArgs(
+  ticketNumber: number | undefined,
+): string[] {
+  return ticketNumber === undefined
+    ? []
+    : ["--ak-review-ticket-number", String(ticketNumber)];
+}
+
 /**
  * Build Internal activation extra-args for an admitted Reviewer run.
  * Package code-review Skill is forced via --skill; ambient home skills stay off.
@@ -122,6 +131,7 @@ export function buildReviewerActivationExtraArgs(
     admitted.authorityRefs.length === 0
       ? []
       : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
+  const ticketNumberArgs = buildReviewerTicketNumberArgs(admitted.ticketNumber);
   return [
     "--no-skills",
     "--skill",
@@ -139,6 +149,7 @@ export function buildReviewerActivationExtraArgs(
     "--ak-review-base",
     admitted.baseRevision,
     ...authorityRefArgs,
+    ...ticketNumberArgs,
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -166,6 +177,7 @@ export function buildReviewerResumeActivationExtraArgs(
     admitted.authorityRefs.length === 0
       ? []
       : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
+  const ticketNumberArgs = buildReviewerTicketNumberArgs(admitted.ticketNumber);
   return [
     "--no-skills",
     "--skill",
@@ -183,6 +195,7 @@ export function buildReviewerResumeActivationExtraArgs(
     "--ak-review-base",
     admitted.baseRevision,
     ...authorityRefArgs,
+    ...ticketNumberArgs,
     "--mode",
     "json",
     ...buildModelArgs(options.model),

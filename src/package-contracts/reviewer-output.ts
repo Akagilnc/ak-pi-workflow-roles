@@ -35,6 +35,8 @@ export type RuntimeReviewerReceiptV2 = Readonly<{
   acceptedBatch?: RuntimeReviewerAcceptedBatch;
   /** Present on accepted batches: launched Spec child, or skipped after confirmed missing Spec. */
   specDisposition?: RuntimeReviewerSpecDisposition;
+  /** Self-fetch bytes + source annotation when Spec primary path produced material (#343). */
+  specFetchedMaterial?: ReviewerAcceptedEvidence["specFetchedMaterial"];
   reports: Readonly<Partial<Record<"standards" | "spec", VerbatimChildReport>>>;
   outcomes: Readonly<Partial<Record<"standards" | "spec", RuntimeReviewerOutcome>>>;
   identities: Readonly<{

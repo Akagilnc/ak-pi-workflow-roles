@@ -375,10 +375,11 @@ test("public CLI Spec discovery tracer: refs-only, local material, confirmed mis
       await git(fixture, "rm", "-r", "docs");
       await writeFile(resolve(fixture, "consumer.txt"), "missing-spec\n");
       await git(fixture, "add", "consumer.txt");
-      // Bare #N in the message is not durable Spec source and must not launch Spec.
+      // #N is a ticket source for self-fetch, but without origin/gh the primary path fails
+      // and degrades through refs/local to confirmed missing (no new rejection gate).
       await git(fixture, "commit", "-m", "chore: polish for #99 without durable spec source");
 
-      // Path C: confirmed missing ⇒ skip Spec and record skipped-missing honestly.
+      // Path C: self-fetch unavailable + no refs/local ⇒ skipped-missing honestly.
       await runReviewer({
         runId: "run-public-reviewer-missing-spec-001",
         expectAxes: "standards",

@@ -9,10 +9,12 @@ import {
   buildCollectorRequestMarker,
   createGhApiRunner,
   createGhCollectorGitHubTransport,
+  createGhIssueSoftFetcher,
   normalizeIssueComment,
   normalizePullRequest,
   normalizeReview,
   normalizeReviewComment,
+  type GhApiRunner,
 } from "../../src/collector-github.ts";
 import { createCollectorLedger } from "../../src/collector-ledger.ts";
 import {
@@ -256,6 +258,168 @@ printf 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{"login":"colle
     assert.match(log, /api --hostname github.com --include/);
     assert.doesNotMatch(log, / \| |&&/);
   });
+});
+
+test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start failures propagate", async () => {
+  const calls: string[][] = [];
+  const seenSignals: Array<AbortSignal | undefined> = [];
+  const runner: GhApiRunner = async (args, options) => {
+    calls.push([...args]);
+    seenSignals.push(options?.signal);
+    if (args.includes("repos/Acme/widgets/issues/343")) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({ body: "issue body bytes", body_null_ok: true }),
+      };
+    }
+    if (args.includes("repos/Acme/widgets/issues/777")) {
+      // Issues endpoint 200 PR payload — pull_request marker must soft-unavailable, not Spec body.
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          body: "PR description must not become issue Spec",
+          pull_request: {
+            url: "https://api.github.com/repos/Acme/widgets/pulls/777",
+          },
+        }),
+      };
+    }
+    if (args.includes("repos/Acme/widgets/issues/778")) {
+      // Own-key presence alone discriminates — null marker value is still a PR payload.
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          body: "null pull_request marker must not become issue Spec",
+          pull_request: null,
+        }),
+      };
+    }
+    if (args.includes("repos/Acme/widgets/issues/404")) {
+      return { status: 404, headers: {}, bodyText: "{\"message\":\"Not Found\"}" };
+    }
+    if (args.includes("repos/Acme/widgets/issues/401")) {
+      // Shared runner tags auth/network/no-HTTP as ambiguousGhFailure = tracker unreachable.
+      throw Object.assign(new Error("gh api failed without a parseable HTTP response"), {
+        ambiguousGhFailure: true,
+      });
+    }
+    if (args.includes("repos/Acme/widgets/issues/503")) {
+      // gh binary missing / process never starts → authorized soft unavailable (#343).
+      throw Object.assign(new Error("spawn gh ENOENT"), {
+        code: "ENOENT",
+        syscall: "spawn",
+        path: "gh",
+      });
+    }
+    if (args.includes("repos/Acme/widgets/issues/408")) {
+      // Hung gh cancelled via invocation AbortSignal — keep abort cause (not soft unavailable).
+      return hangUntilAbortedRunner(options?.signal);
+    }
+    // Generic implementation failure (gh did not fail-to-start) keeps true cause.
+    throw new Error("implementation boom");
+  };
+  const fetchIssue = createGhIssueSoftFetcher(runner);
+  const controller = new AbortController();
+  const ok = await fetchIssue({
+    owner: "Acme",
+    repo: "widgets",
+    ticketNumber: 343,
+    signal: controller.signal,
+  });
+  assert.deepEqual(ok, { body: "issue body bytes" });
+  assert.equal(
+    calls[0]?.join(" ").includes("api --hostname github.com --include -X GET repos/Acme/widgets/issues/343"),
+    true,
+  );
+  // Invocation AbortSignal is forwarded into GhApiRunner options (existing wheel only).
+  assert.equal(seenSignals[0], controller.signal);
+
+  // PR payload on issues endpoint → authorized soft unavailable (not adopted as issue Spec).
+  const prPayload = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 777 });
+  assert.equal(prPayload, undefined);
+
+  // pull_request key present with null value → same soft unavailable (presence, not content).
+  const prNullMarker = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 778 });
+  assert.equal(prNullMarker, undefined);
+
+  // Issue not found / tracker non-success → authorized soft unavailable.
+  const missing = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 404 });
+  assert.equal(missing, undefined);
+
+  // Tagged tracker-unreachable transport → authorized soft unavailable (not a catch-all).
+  const unreachable = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 401 });
+  assert.equal(unreachable, undefined);
+
+  // gh process cannot start (ENOENT) → authorized soft unavailable into degrade chain.
+  const noGh = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 503 });
+  assert.equal(noGh, undefined);
+
+  // Unrecognized runner/implementation exception keeps true cause — must not wash into unavailable.
+  await assert.rejects(
+    () => fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 500 }),
+    (error: unknown) => error instanceof Error && error.message === "implementation boom",
+  );
+
+  // Cancellation via forwarded signal keeps true abort cause — not washed into unavailable.
+  const hangController = new AbortController();
+  const abortReason = new Error("issue-fetch canceled");
+  const pending = fetchIssue({
+    owner: "Acme",
+    repo: "widgets",
+    ticketNumber: 408,
+    signal: hangController.signal,
+  });
+  queueMicrotask(() => hangController.abort(abortReason));
+  await assert.rejects(
+    () => pending,
+    (error: unknown) => Object.is(error, abortReason),
+  );
+
+  // Parse / payload shape failures keep true cause.
+  const badJsonRunner: GhApiRunner = async () => ({
+    status: 200,
+    headers: {},
+    bodyText: "not-json",
+  });
+  await assert.rejects(
+    () =>
+      createGhIssueSoftFetcher(badJsonRunner)({
+        owner: "Acme",
+        repo: "widgets",
+        ticketNumber: 1,
+      }),
+    /GitHub issue payload is not JSON/,
+  );
+  const badShapeRunner: GhApiRunner = async () => ({
+    status: 200,
+    headers: {},
+    bodyText: JSON.stringify({ body: 1 }),
+  });
+  await assert.rejects(
+    () =>
+      createGhIssueSoftFetcher(badShapeRunner)({
+        owner: "Acme",
+        repo: "widgets",
+        ticketNumber: 1,
+      }),
+    /body must be string or null/,
+  );
+
+  // null body projects to empty string (former gh --jq body // "").
+  const nullBodyRunner: GhApiRunner = async () => ({
+    status: 200,
+    headers: {},
+    bodyText: JSON.stringify({ body: null }),
+  });
+  const empty = await createGhIssueSoftFetcher(nullBodyRunner)({
+    owner: "Acme",
+    repo: "widgets",
+    ticketNumber: 1,
+  });
+  assert.deepEqual(empty, { body: "" });
 });
 
 

@@ -6,8 +6,12 @@ import { sha256Hex } from "./sha256.js";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.js";
 const execFileAsync = promisify(execFile);
 async function execGit(args, options) {
+    // Pin C locale at the sole Git exec seam so English diagnostic classifiers stay honest under translated gettext installs.
     try {
-        return await execFileAsync("git", args, options);
+        return await execFileAsync("git", args, {
+            ...options,
+            env: { ...process.env, LC_ALL: "C" },
+        });
     }
     catch (error) {
         const source = error;
@@ -17,6 +21,23 @@ async function execGit(args, options) {
     }
 }
 function exitCode(error) { const code = typeof error === "object" && error !== null ? error.code : undefined; return typeof code === "number" ? code : undefined; }
+function gitStderr(error) {
+    if (typeof error !== "object" || error === null)
+        return "";
+    const stderr = error.stderr;
+    return typeof stderr === "string" ? stderr : "";
+}
+/** Confirmed `origin` remote absence only (`git remote get-url origin`). */
+function isConfirmedMissingOriginRemote(error) {
+    return /No such remote ['"]origin['"]/.test(gitStderr(error));
+}
+/** Confirmed path-at-pinned-tree absence only — exit 128 alone is not enough. */
+function isConfirmedPinnedPathAbsent(error, path) {
+    const stderr = gitStderr(error);
+    const quoted = `'${path}'`;
+    return (stderr.includes(`path ${quoted} does not exist in `) ||
+        stderr.includes(`path ${quoted} exists on disk, but not in `));
+}
 async function repositoryIsAvailable(root) { try {
     await access(`${root}/.git`);
     return { available: true };
@@ -27,6 +48,35 @@ catch (cause) {
 export const immutableReviewerPin = (pin) => Object.freeze({
     repositoryRoot: pin.repositoryRoot, objectFormat: pin.objectFormat, targetHead: pin.targetHead, refs: immutableReviewerRefs(pin.refs),
 });
+/** Short name from a full ref, stripping heads/tags/remotes namespaces (and remote remote-name). */
+function shortNameFromPinnedRef(refName) {
+    const short = refName.startsWith("refs/heads/")
+        ? refName.slice("refs/heads/".length)
+        : refName.startsWith("refs/tags/")
+            ? refName.slice("refs/tags/".length)
+            : refName.startsWith("refs/remotes/")
+                ? refName.slice("refs/remotes/".length).replace(/^[^/]+\//, "")
+                : refName;
+    const trimmed = short.trim();
+    return trimmed === "" ? undefined : trimmed;
+}
+/**
+ * Branch-only short names at pinned targetHead for ticket-number provenance (#343).
+ * Heads and remotes only — tags never supply branch-token ticket candidates.
+ */
+export function branchNamesAtPinnedHead(pin) {
+    const names = new Set();
+    for (const [refName, entry] of Object.entries(pin.refs)) {
+        if (entry.peeledCommitId !== pin.targetHead)
+            continue;
+        if (!refName.startsWith("refs/heads/") && !refName.startsWith("refs/remotes/"))
+            continue;
+        const short = shortNameFromPinnedRef(refName);
+        if (short !== undefined)
+            names.add(short);
+    }
+    return Object.freeze([...names]);
+}
 async function gitText(root, args) {
     const { stdout } = await execGit(["-C", root, ...args], { encoding: "utf8" });
     return stdout.trim();
@@ -145,19 +195,14 @@ export async function createReviewerPinnedGitReader(root = process.cwd()) {
         async featureTokens() {
             // Pinned ref snapshot is the target-tree fact — no live branch/symbolic-ref walk,
             // no catch-to-empty. Detached/remote-only tips surface via refs/remotes/* entries.
+            // Includes tags for local Spec-path matching only; ticket branch source is separate.
             const names = new Set();
             for (const [refName, entry] of Object.entries(pin.refs)) {
                 if (entry.peeledCommitId !== targetHead)
                     continue;
-                const short = refName.startsWith("refs/heads/")
-                    ? refName.slice("refs/heads/".length)
-                    : refName.startsWith("refs/tags/")
-                        ? refName.slice("refs/tags/".length)
-                        : refName.startsWith("refs/remotes/")
-                            ? refName.slice("refs/remotes/".length).replace(/^[^/]+\//, "")
-                            : refName;
-                if (short.trim() !== "")
-                    names.add(short.trim());
+                const short = shortNameFromPinnedRef(refName);
+                if (short !== undefined)
+                    names.add(short);
             }
             return Object.freeze([...names]);
         },
@@ -175,5 +220,89 @@ export async function createReviewerPinnedGitReader(root = process.cwd()) {
             ]);
             return Object.freeze(text === "" ? [] : text.split("\n").filter((line) => line.length > 0));
         },
+        async originRepository() {
+            let remoteUrl;
+            try {
+                remoteUrl = await gitText(repositoryRoot, ["remote", "get-url", "origin"]);
+            }
+            catch (error) {
+                // Only confirmed origin absence softens to unavailable; other Git failures keep true cause.
+                if (isConfirmedMissingOriginRemote(error))
+                    return undefined;
+                throw error;
+            }
+            // Non-github / unparseable remote URL = self-fetch unavailable (soft degrade).
+            return parseGitHubOriginRemote(remoteUrl);
+        },
+        async commitMessagesNewestFirst(base) {
+            const text = await gitText(repositoryRoot, [
+                "log",
+                "--format=%s",
+                `${base}..${targetHead}`,
+            ]);
+            return Object.freeze(text === "" ? [] : text.split("\n"));
+        },
+        async readPinnedText(path) {
+            // Reject path traversal / absolute paths — Spec material is relative tree paths only.
+            if (path.length === 0 ||
+                path.startsWith("/") ||
+                path.includes("\0") ||
+                path.split("/").some((part) => part === ".." || part === "")) {
+                return undefined;
+            }
+            try {
+                const { stdout } = await execGit(["-C", repositoryRoot, "show", `${targetHead}:${path}`], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+                return stdout;
+            }
+            catch (error) {
+                // Only confirmed path-at-pinned-tree absence softens to missing; exit 128 is not a blanket.
+                if (isConfirmedPinnedPathAbsent(error, path))
+                    return undefined;
+                throw error;
+            }
+        },
     });
+}
+/**
+ * Parse github.com owner/repo from a git remote URL.
+ * Supports scp-like SSH, ssh://, https://, and git:// shapes. Soft: undefined when not github.
+ */
+export function parseGitHubOriginRemote(remoteUrl) {
+    const trimmed = remoteUrl.trim();
+    if (trimmed.length === 0)
+        return undefined;
+    const scp = /^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i.exec(trimmed);
+    if (scp)
+        return normalizeOrigin(scp[1], scp[2]);
+    const ssh = /^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(trimmed);
+    if (ssh)
+        return normalizeOrigin(ssh[1], ssh[2]);
+    let parsed;
+    try {
+        parsed = new URL(trimmed);
+    }
+    catch {
+        return undefined;
+    }
+    if (!/^github\.com$/i.test(parsed.hostname))
+        return undefined;
+    if (parsed.search !== "" || parsed.hash !== "")
+        return undefined;
+    const parts = parsed.pathname.split("/").filter((p) => p.length > 0);
+    if (parts.length !== 2)
+        return undefined;
+    return normalizeOrigin(parts[0], parts[1]);
+}
+function normalizeOrigin(ownerRaw, repoRaw) {
+    const owner = ownerRaw.trim();
+    const repo = stripGitSuffix(repoRaw.trim());
+    if (owner.length === 0 || repo.length === 0)
+        return undefined;
+    // Conservative identity: no path separators or URL material inside segments.
+    if (/[/?#@\\]/.test(owner) || /[/?#@\\]/.test(repo))
+        return undefined;
+    return Object.freeze({ owner, repo });
+}
+function stripGitSuffix(name) {
+    return name.toLowerCase().endsWith(".git") ? name.slice(0, -4) : name;
 }

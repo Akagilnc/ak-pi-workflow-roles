@@ -366,6 +366,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     assert.equal(args.includes("--ak-review-task"), false);
     assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
     assert.equal(args.includes("--ak-review-authority-refs"), false);
+    assert.equal(args.includes("--ak-review-ticket-number"), false);
     assert.equal(
       args.some((a) => a.includes("Base revision for the fixed review target: HEAD~1")),
       true,
@@ -412,6 +413,37 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     assert.equal(resume.includes("--ak-review-task"), false);
     assert.equal(resume.includes(admitted.instruction), false);
     assert.equal(resume[resume.indexOf("--ak-review-base") + 1], "HEAD~1");
+
+    // Typed ticketNumber (attachment frontmatter / admitted page) transports for Spec self-fetch.
+    const ticketFile = join(home, "ticket-343.md");
+    await writeFile(
+      ticketFile,
+      ["---", "ticketNumber: 343", "---", "# ticket body", ""].join("\n"),
+      "utf8",
+    );
+    const admittedWithTicket = await admitReviewerInvocation({
+      home,
+      cwd: project,
+      instruction: "Scope only.",
+      attachmentPaths: [ticketFile],
+      baseRevision: "HEAD~1",
+      createRunId: () => "run-reviewer-args-ticket",
+    });
+    assert.equal(admittedWithTicket.ticketNumber, 343);
+    const argsWithTicket = buildReviewerActivationExtraArgs(admittedWithTicket, {
+      packageRoot,
+    });
+    assert.equal(
+      argsWithTicket[argsWithTicket.indexOf("--ak-review-ticket-number") + 1],
+      "343",
+    );
+    const resumeWithTicket = buildReviewerResumeActivationExtraArgs(admittedWithTicket, {
+      packageRoot,
+    });
+    assert.equal(
+      resumeWithTicket[resumeWithTicket.indexOf("--ak-review-ticket-number") + 1],
+      "343",
+    );
   });
 });
 

@@ -434,6 +434,100 @@ export function createGhApiRunner(
   };
 }
 
+export type GhIssueSoftFetchResult = Readonly<{ body: string }>;
+/**
+ * Soft single-issue fetch over the shared gh api runner.
+ * undefined = confirmed tracker unreachable / issue not found / gh tool unavailable:
+ *   - HTTP non-2xx, or
+ *   - runner-tagged ambiguousGhFailure (gh ran but no parseable HTTP — auth/network/transport), or
+ *   - gh process could not start (ENOENT / spawn syscall failure).
+ * After gh starts successfully: response JSON/shape/implementation errors propagate with true cause.
+ */
+export type GhIssueSoftFetcher = (input: {
+  owner: string;
+  repo: string;
+  ticketNumber: number;
+  /** Optional cancellation signal forwarded to the shared GhApiRunner. */
+  signal?: AbortSignal;
+}) => Promise<GhIssueSoftFetchResult | undefined>;
+
+function isAmbiguousGhFailure(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { ambiguousGhFailure?: unknown }).ambiguousGhFailure === true
+  );
+}
+
+/** gh binary missing or otherwise unable to launch — ticket-authorized soft unavailable. */
+function isGhProcessStartFailure(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "ENOENT") return true;
+  const syscall = (error as NodeJS.ErrnoException).syscall;
+  return typeof syscall === "string" && (syscall === "spawn" || syscall.startsWith("spawn "));
+}
+
+/**
+ * Production issue-fetch capability owned by the shared gh execution seam.
+ * Reuses createGhApiRunner lifecycle. Softens only ticket-authorized unavailable results
+ * (tracker unreachable / issue not found / gh cannot start); does not catch-all wash
+ * post-start parse or implementation failures into unavailable.
+ */
+export function createGhIssueSoftFetcher(
+  runner: GhApiRunner = createGhApiRunner(),
+): GhIssueSoftFetcher {
+  return async (input) => {
+    const path = `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
+    let response: GhApiResponse;
+    try {
+      // Forward invocation AbortSignal into the shared GhApiRunner lifecycle (no local timeout).
+      response = await runner(
+        [
+          "api",
+          "--hostname",
+          "github.com",
+          "--include",
+          "-X",
+          "GET",
+          path,
+        ],
+        input.signal === undefined ? {} : { signal: input.signal },
+      );
+    } catch (error) {
+      // Ticket-authorized soft unavailable: tagged transport ambiguity, or gh never started.
+      // Cancellation / other post-start failures keep true cause (not washed into degrade).
+      if (isAmbiguousGhFailure(error) || isGhProcessStartFailure(error)) return undefined;
+      throw error;
+    }
+    // Ticket-authorized degrade: issue not found / tracker non-success via HTTP status.
+    if (response.status < 200 || response.status >= 300) return undefined;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(response.bodyText);
+    } catch (error) {
+      throw new Error("GitHub issue payload is not JSON", { cause: error });
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new Error("GitHub issue payload must be a JSON object");
+    }
+    // Issues endpoint also returns PRs. Own-key presence of the standard pull_request marker
+    // means this is a PR payload — soft-unavailable so Spec does not adopt PR description as issue body.
+    // Key presence only; no marker-content parse, PR schema, or linked-issue chase.
+    if (Object.hasOwn(parsed, "pull_request")) {
+      return undefined;
+    }
+    // Match former gh --jq `(.body // "")`: null/missing body projects to empty string.
+    // Title is not ticket-authorized audited material — do not parse or validate it.
+    const bodyRaw = (parsed as { body?: unknown }).body;
+    if (bodyRaw !== undefined && bodyRaw !== null && typeof bodyRaw !== "string") {
+      throw new Error("GitHub issue payload body must be string or null");
+    }
+    const body = typeof bodyRaw === "string" ? bodyRaw : "";
+    return Object.freeze({ body });
+  };
+}
+
 export function createGhCollectorGitHubTransport(
   runner: GhApiRunner = createGhApiRunner(),
 ): CollectorGitHubTransport {
