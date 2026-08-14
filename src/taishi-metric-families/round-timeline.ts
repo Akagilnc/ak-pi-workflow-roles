@@ -3,15 +3,18 @@
  *
  * per-lane (book) run sequence sorted by start time: role, wall clock,
  * receipt status or death channel, judge classCount when present.
- * Unreadable runs appear as placeholder rows; without a first-frame fact
- * from the A2 seam they sort last and are annotated absent.
+ * Unreadable runs appear as placeholder rows sorted by A2 firstFrameAt when
+ * present; only when that fact is absent do they annotate absent and sort last.
  *
- * Consumes only A2 typed run facts + unreadable entries — no second scan,
- * no edits to entry/ledger/page skeleton.
+ * Consumes only A2 typed run facts + unreadable entries — no second scan.
  */
 import type { TaishiReadableRunFacts } from "../taishi-ledger.ts";
 import type { TaishiMetricFamilyModule } from "../taishi-metric-family.ts";
-import type { TaishiMissingSource, TaishiUnreadableRun } from "../taishi-page.ts";
+import type {
+  TaishiFirstFrameAt,
+  TaishiMissingSource,
+  TaishiUnreadableRun,
+} from "../taishi-page.ts";
 
 export type TaishiRoundTimelineTerminal =
   | {
@@ -42,10 +45,10 @@ export type TaishiRoundTimelineUnreadableRow = {
   readonly missingSources: readonly TaishiMissingSource[];
   readonly reason: string;
   /**
-   * A2 unreadable entries do not retain a first-frame timestamp, so the
-   * sort oracle places them at the end of their lane and records absence.
+   * Projected from A2 unreadable.firstFrameAt. Present → sort by `at`;
+   * absent → lane tail.
    */
-  readonly firstFrameAt: { readonly status: "absent" };
+  readonly firstFrameAt: TaishiFirstFrameAt;
 };
 
 export type TaishiRoundTimelineRow =
@@ -130,13 +133,14 @@ function projectUnreadableRow(
     book: entry.book,
     missingSources: entry.missingSources,
     reason: entry.reason,
-    firstFrameAt: { status: "absent" },
+    firstFrameAt: entry.firstFrameAt,
   };
 }
 
-/** Sort key: startedAt ascending; absent first-frame → +∞ (lane tail). */
+/** Sort key: startedAt / present firstFrameAt ascending; absent → +∞ (lane tail). */
 function rowSortStartedAt(row: TaishiRoundTimelineRow): string | undefined {
   if (row.kind === "run") return row.startedAt;
+  if (row.firstFrameAt.status === "present") return row.firstFrameAt.at;
   return undefined;
 }
 
