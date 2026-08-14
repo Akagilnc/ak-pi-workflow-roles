@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
@@ -11,8 +11,6 @@ import {
   mintNavigatorInvocationId
 } from "./navigator-invocation-identity.js";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
-import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
-import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.js";
 import { openInProcessAgentSession } from "./in-process-session.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
@@ -224,14 +222,6 @@ function navigatorSubjectKeyForInput(subjectRoot, reference, cwd = process.cwd()
   }
   return navigatorSubjectKey(subjectRoot, resolvedReference);
 }
-function subjectDirectory(cwd, subjectKey) {
-  const book = activationBookDirectory(
-    resolveActivationLedgerHome(),
-    resolveBookKeyFromGit(cwd)
-  );
-  const digest = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
-  return join(book, "navigator", digest);
-}
 function navigatorModelSettingPath() {
   return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "navigator-model.json");
 }
@@ -347,7 +337,6 @@ function createNavigatorAttendance(options) {
   let subject = options.subject;
   let authority = options.authority;
   let contextError = options.contextError;
-  let sessionDir = options.sessionDir;
   let candidates;
   const invocationPrincipal = options.invocationId ?? mintNavigatorInvocationId();
   let activeInvocationId = invocationPrincipal;
@@ -460,7 +449,7 @@ ${text}
       sessionReady = (async () => {
         let created;
         try {
-          created = await options.createSession({ context: options.context, sessionDir, ...options.modelSettingPath === void 0 ? {} : { modelSettingPath: options.modelSettingPath }, tool });
+          created = await options.createSession({ context: options.context, subject: subjectKey, ...options.modelSettingPath === void 0 ? {} : { modelSettingPath: options.modelSettingPath }, tool });
         } catch (error) {
           throw navigatorUnavailableError("session", error);
         }
@@ -590,7 +579,7 @@ ${helpContext}
           await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
         }
         if (output === void 0 && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === void 0) {
-          const facts = delivery.facts({ runPointer: sessionDir, attemptPointer: invocationId });
+          const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
           activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
           preparationNoReceipt = true;
           candidates = [];
@@ -628,7 +617,6 @@ ${helpContext}
       subject = next.subject;
       authority = next.authority;
       contextError = next.contextError;
-      sessionDir = options.sessionDirectory?.(next.subjectKey) ?? options.sessionDir;
     },
     /**
      * Start live-help subprocesses during activation without beginning full
@@ -783,7 +771,7 @@ ${helpContext}
 }
 function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()) {
   const sharedModelRuntime = ModelRuntime.create({ allowModelNetwork: false });
-  return async ({ context, sessionDir, modelSettingPath, tool }) => {
+  return async ({ context, subject, modelSettingPath, tool }) => {
     let configured;
     try {
       configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
@@ -806,15 +794,6 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
       throw navigatorUnavailableError("auth", error);
     }
     if (!auth.ok) throw new NavigatorUnavailableError("auth", auth.error);
-    try {
-      const sessionInfo = await stat(sessionDir);
-      if (!sessionInfo.isDirectory()) throw new NavigatorUnavailableError("session", `Navigator session path is not a directory: ${sessionDir}`);
-    } catch (error) {
-      if (error instanceof NavigatorUnavailableError) throw error;
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-        throw navigatorUnavailableError("session", error);
-      }
-    }
     let providerFailure;
     const assignProviderFailure = (fact) => {
       if (fact !== void 0) providerFailure = fact;
@@ -994,10 +973,12 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
     try {
       opened = await openInProcessAgentSession({
         cwd: context.cwd,
+        kind: "navigator",
+        subject,
+        parent: context.sessionManager,
         model,
         modelRuntime,
         thinkingLevel: parsed.thinkingLevel,
-        sessionManager: SessionManager.continueRecent(context.cwd, sessionDir),
         noTools: "all",
         tools: [NAVIGATOR_PREPARE_TOOL_NAME],
         customTools: [tool]
@@ -1051,6 +1032,7 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
         }
       },
       getThinkingLevel: () => opened.session.thinkingLevel,
+      recordPointer: () => opened.session.sessionManager.getSessionDir(),
       dispose: () => opened.dispose()
     };
   };
@@ -1062,11 +1044,6 @@ function registerNavigatorModelCommand(pi, path = navigatorModelSettingPath()) {
       await writeNavigatorModelSetting(args.trim(), path);
     }
   });
-}
-function navigatorSessionDirectory(context, subjectKey) {
-  const current = context.sessionManager.getSessionDir();
-  const key = subjectKey ?? subjectPath(current, context.cwd);
-  return subjectDirectory(context.cwd, key);
 }
 export {
   NAVIGATOR_DEFAULT_MODEL,
@@ -1083,7 +1060,6 @@ export {
   navigatorModelSettingPath,
   navigatorProviderFailure,
   navigatorProviderFailureFromError,
-  navigatorSessionDirectory,
   navigatorSubjectKey,
   navigatorSubjectKeyForInput,
   navigatorUnavailableError,

@@ -85,11 +85,7 @@ test("packaged tdd method loads from package root in empty home with upstream id
       assert.equal(gitBlobOid(bytes), expected.gitBlob);
     }
 
-    // Companion bodies are the pinned package bytes (readable without network).
-    const tests = await readFile(join(material.rootDirectory, "tests.md"), "utf8");
-    const mocking = await readFile(join(material.rootDirectory, "mocking.md"), "utf8");
-    assert.equal(tests.includes("Good and Bad Tests"), true);
-    assert.equal(mocking.includes("When to Mock"), true);
+    // Companion body prose titles are not an integrity seam — sha256/gitBlob pins above own bytes.
 
     // Skill path is under the package tree, not HOME.
     assert.equal(material.skillPath.includes(packageRoot), true);

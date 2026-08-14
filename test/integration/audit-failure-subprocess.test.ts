@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync, renameSync, rmSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
@@ -19,8 +20,8 @@ import {
   withActivationHome,
   withHermeticHome,
   withInProcessPi,
-  writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
+import { resolvePackagedMethodSkillPath } from "../../src/package-resources/method-skill.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 
 async function runCli(mode: "print" | "json") {
@@ -142,6 +143,40 @@ type ReviewerFailureStage =
   | "audit-provider"
   | "audit-malformed-decision";
 
+/** Per-stage stderr identity — proves fail-closed came from this row's injection. */
+const REVIEWER_FATAL_STAGE_MARKERS: Record<ReviewerFailureStage, RegExp> = {
+  "preflight-git": /INJECTED_REVIEWER_GIT_IO_FAILURE/,
+  "audit-auth": /INJECTED_REVIEWER_AUDIT_AUTH_FAILURE/,
+  "audit-provider": /Reviewer compliance audit provider not found/,
+  "audit-malformed-decision":
+    /invalid reviewer audit decision|MALFORMED_REVIEWER_AUDIT_DECISION_STAGE/,
+};
+
+function assertHealthyReviewerGitTree(cwd: string, label: string): void {
+  assert.equal(
+    existsSync(resolve(cwd, ".git")),
+    true,
+    `${label}: shared review-target must keep .git`,
+  );
+  assert.equal(
+    existsSync(resolve(cwd, ".git-injected-failure")),
+    false,
+    `${label}: must not carry residual .git-injected-failure poison`,
+  );
+}
+
+/** preflight-git renames .git in the shared cwd; always undo before the next row. */
+function restoreReviewerGitTreeAfterInjection(cwd: string): void {
+  const gitDir = resolve(cwd, ".git");
+  const poisoned = resolve(cwd, ".git-injected-failure");
+  if (existsSync(poisoned) && !existsSync(gitDir)) {
+    renameSync(poisoned, gitDir);
+  } else if (existsSync(poisoned)) {
+    // Both present is unexpected; drop the residual marker so later rows stay clean.
+    rmSync(poisoned, { recursive: true, force: true });
+  }
+}
+
 /** One shared review-target clone for the whole file — rows cp -R it. */
 let reviewerTargetTemplateMemo: Promise<string> | undefined;
 async function reviewerTargetTemplate(): Promise<string> {
@@ -161,59 +196,191 @@ async function materializeReviewerTarget(dest: string): Promise<void> {
   await cp(template, dest, { recursive: true });
 }
 
-async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStage) {
+type ReviewerFatalCold = {
+  home: string;
+  agentDir: string;
+  cwd: string;
+  skillPath: string;
+  base: string;
+};
+
+/** One cold fixture for both installed + in-process Reviewer fatal seams. */
+async function withReviewerFatalCold<T>(
+  run: (cold: ReviewerFatalCold) => Promise<T>,
+): Promise<T> {
   return withHermeticHome(
-    { prefix: "ak-reviewer-fatal-cli-" },
+    { prefix: "ak-reviewer-fatal-cold-" },
     async ({ home, agentDir }) => {
-      const { path: canonicalSkillPath } = await writeTestSkill(home, "code-review");
-      await writeFile(
-        canonicalSkillPath,
-        await readFile(resolve(packageRoot, "test/fixtures/canonical-code-review-SKILL.md")),
-      );
+      // Package-owned path only — captureExpansion rejects home copies (#binding contract).
+      const skillPath = resolvePackagedMethodSkillPath(packageRoot, "code-review");
       const cwd = resolve(home, "review-target");
       await materializeReviewerTarget(cwd);
       const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
         cwd,
         encoding: "utf8",
       }).trim();
-      const sessionDirectory = resolve(home, ".ak-roles/books/review-target/runs/reviewer-fatal/session");
-      await mkdir(sessionDirectory, { recursive: true });
-      const args = [
-        "--no-extensions",
-        "--no-skills",
-        "--skill",
-        canonicalSkillPath,
-        "--no-prompt-templates",
-        "--no-themes",
-        "--no-context-files",
-        "--session-dir",
-        sessionDirectory,
-        "-e",
-        resolve(packageRoot, "extensions/role-runtime.ts"),
-        "-e",
-        resolve(packageRoot, "test/fixtures/reviewer-failure-provider.ts"),
-        "--ak-role",
-        "reviewer",
-        "--ak-review-base",
-        base,
-        "--provider",
-        "ak-reviewer-failure",
-        "--model",
-        "faux-1",
-        ...(mode === "print" ? ["-p", "Review."] : ["--mode", "json", "Review."]),
-      ];
-      return runPiSubprocess(args, {
-        cwd,
-        env: {
-          ...process.env,
-          HOME: home,
-          AK_REVIEWER_FAILURE_STAGE: stage,
-          PI_CODING_AGENT_DIR: agentDir,
-          PI_OFFLINE: "1",
-        },
-      });
+      return run({ home, agentDir, cwd, skillPath, base });
     },
   );
+}
+
+async function runReviewerCliOnCold(
+  cold: ReviewerFatalCold,
+  mode: "print" | "json",
+  stage: ReviewerFailureStage,
+  label: string,
+) {
+  const sessionDirectory = resolve(
+    cold.home,
+    `.ak-roles/books/review-target/runs/reviewer-fatal-${label}/session`,
+  );
+  await mkdir(sessionDirectory, { recursive: true });
+  const rowAgentDir = resolve(cold.agentDir, `cli-${label}`);
+  await mkdir(rowAgentDir, { recursive: true });
+  const args = [
+    "--no-extensions",
+    "--no-skills",
+    "--skill",
+    cold.skillPath,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session-dir",
+    sessionDirectory,
+    "-e",
+    resolve(packageRoot, "extensions/role-runtime.ts"),
+    "-e",
+    resolve(packageRoot, "test/fixtures/reviewer-failure-provider.ts"),
+    "--ak-role",
+    "reviewer",
+    "--ak-review-base",
+    cold.base,
+    "--provider",
+    "ak-reviewer-failure",
+    "--model",
+    "faux-1",
+    ...(mode === "print" ? ["-p", "Review."] : ["--mode", "json", "Review."]),
+  ];
+  return runPiSubprocess(args, {
+    cwd: cold.cwd,
+    env: {
+      ...process.env,
+      HOME: cold.home,
+      AK_REVIEWER_FAILURE_STAGE: stage,
+      PI_CODING_AGENT_DIR: rowAgentDir,
+      PI_OFFLINE: "1",
+    },
+  });
+}
+
+async function assertInProcessReviewerFatalNoReceipt(
+  cold: ReviewerFatalCold,
+  stage: "audit-auth" | "audit-malformed-decision",
+): Promise<void> {
+  const previous = process.env.AK_REVIEWER_FAILURE_STAGE;
+  const previousExitCode = process.exitCode;
+  process.env.AK_REVIEWER_FAILURE_STAGE = stage;
+  try {
+    const faux = fauxProvider({
+      api: "ak-reviewer-failure-inproc",
+      provider: "ak-reviewer-failure-inproc",
+      tokenSize: { min: 1000, max: 1000 },
+    });
+    // Drive the same fatal output call the CLI fixture uses; audit injection
+    // still comes from the staged failure extension below.
+    faux.setResponses([
+      fauxAssistantMessage("Independent standards review found no findings."),
+      fauxAssistantMessage("Independent spec review found no findings."),
+      fauxAssistantMessage(
+        fauxToolCall(
+          REVIEWER_OUTPUT_TOOL_NAME,
+          {
+            status: "refused",
+            diagnostic:
+              "The requested review cannot proceed because its runtime stage failed.",
+          },
+          { id: "fatal-reviewer-output" },
+        ),
+        { stopReason: "toolUse" },
+      ),
+      stage === "audit-malformed-decision"
+        ? fauxAssistantMessage("MALFORMED_REVIEWER_AUDIT_DECISION_STAGE")
+        : async () => {
+            throw new Error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
+          },
+      fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE"),
+    ]);
+
+    let sawError = false;
+    await withInProcessPi(
+      {
+        activationLedgerSession: true,
+        cwd: cold.cwd,
+        agentDir: resolve(cold.agentDir, `inproc-${stage}`),
+        faux,
+        modelsPath: null,
+        additionalExtensionPaths: [
+          resolve(packageRoot, "extensions/role-runtime.ts"),
+        ],
+        additionalSkillPaths: [cold.skillPath],
+        noExtensions: true,
+        systemPrompt: "REVIEWER FATAL INPROC",
+        mode: "print",
+        flags: {
+          "ak-role": "reviewer",
+          "ak-review-base": cold.base,
+        },
+        reviewerShutdown: true,
+        extensionFactories: [
+          (pi) => {
+            pi.on("tool_call", (event, ctx) => {
+              if (
+                stage === "audit-auth" &&
+                event.toolName === REVIEWER_OUTPUT_TOOL_NAME
+              ) {
+                (ctx.modelRegistry as any).getProviderAuth = async () => {
+                  throw new Error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
+                };
+              }
+            });
+          },
+        ],
+      },
+      async ({ session, sessionManager }) => {
+        try {
+          await session.prompt("Review.");
+        } catch {
+          sawError = true;
+        }
+        const results = sessionManager
+          .getEntries()
+          .filter(
+            (entry) =>
+              entry.type === "message" && entry.message.role === "toolResult",
+          ) as Array<{ message: { toolName?: string; isError?: boolean; details?: any } }>;
+        const output = results.find(
+          (entry) => entry.message.toolName === REVIEWER_OUTPUT_TOOL_NAME,
+        );
+        // Gate negative: no accepted Reviewer receipt.
+        if (output !== undefined) {
+          assert.notEqual(output.message.isError, false);
+          assert.equal(output.message.details?.status === "completed", false);
+        }
+        assert.ok(
+          sawError ||
+            output?.message.isError === true ||
+            results.some((entry) => entry.message.isError === true),
+          `${stage} must fail closed without an accepted receipt`,
+        );
+      },
+    );
+  } finally {
+    // Production print/json audit failure sets process.exitCode = 1; restore so
+    // the in-process host test file does not inherit a failing exit status.
+    process.exitCode = previousExitCode;
+    if (previous === undefined) delete process.env.AK_REVIEWER_FAILURE_STAGE;
+    else process.env.AK_REVIEWER_FAILURE_STAGE = previous;
+  }
 }
 
 async function runCoderSkillFailureCli(
@@ -520,160 +687,84 @@ test("coder apply without skill expansion rejects completed as non-receipt", asy
   }
 });
 
-test("installed Reviewer fatal stages abort without a receipt", async () => {
-  // Process-level negative: one stage × print+json proves abort-without-receipt
-  // crosses the real CLI boundary for both modes (法条③).
-  const processRow = {
-    stage: "audit-auth" as const,
-    tool: "ak_reviewer_output" as const,
-  };
-  for (const mode of ["json", "print"] as const) {
-    const result = await runReviewerCli(mode, processRow.stage);
-    assert.equal(result.localTimeout, false, `${processRow.stage}/${mode} subprocess did not time out`);
-    assert.equal(result.code, 1, `${processRow.stage}/${mode} exits nonzero`);
-    if (mode === "json") {
-      assertJsonFailureFacts(result, processRow.tool, `${processRow.stage}/${mode}`);
-    }
-  }
+test("Reviewer fatal stages abort without a receipt on installed and in-process seams", async () => {
+  // #319 Batch 3 (M4): both no-receipt gates retained; table-driven on one cold fixture.
+  // M4.1 installed process boundary + M4.2 in-process fail-closed share skill/target/base.
+  await withReviewerFatalCold(async (cold) => {
+    type InstalledRow = {
+      seam: "installed";
+      mode: "json" | "print";
+      stage: ReviewerFailureStage;
+      tool: "Agent" | "ak_reviewer_output";
+      requireError?: boolean;
+    };
+    type InProcessRow = {
+      seam: "in-process";
+      stage: "audit-auth" | "audit-malformed-decision";
+    };
+    const rows: Array<InstalledRow | InProcessRow> = [
+      // Process-level negative: one stage × print+json proves abort-without-receipt
+      // crosses the real CLI boundary for both modes (法条③).
+      { seam: "installed", mode: "json", stage: "audit-auth", tool: "ak_reviewer_output" },
+      { seam: "installed", mode: "print", stage: "audit-auth", tool: "ak_reviewer_output" },
+      // Remaining installed stages: one JSON process each.
+      { seam: "installed", mode: "json", stage: "preflight-git", tool: "ak_reviewer_output", requireError: false },
+      { seam: "installed", mode: "json", stage: "audit-provider", tool: "ak_reviewer_output" },
+      { seam: "installed", mode: "json", stage: "audit-malformed-decision", tool: "ak_reviewer_output" },
+      // In-process seam for the audit-stage family (no CLI boot per row).
+      { seam: "in-process", stage: "audit-auth" },
+      { seam: "in-process", stage: "audit-malformed-decision" },
+    ];
 
-  // Remaining stages: shared template + one JSON process each (template cp
-  // replaces per-row git clone). Assert exit code + typed isError/stopReason.
-  const matrix: Array<{
-    stage: ReviewerFailureStage;
-    tool: "Agent" | "ak_reviewer_output";
-  }> = [
-    { stage: "preflight-git", tool: "ak_reviewer_output" },
-    { stage: "audit-provider", tool: "ak_reviewer_output" },
-    { stage: "audit-malformed-decision", tool: "ak_reviewer_output" },
-  ];
-  for (const row of matrix) {
-    const result = await runReviewerCli("json", row.stage);
-    assert.equal(result.code, 1, `${row.stage} exits nonzero`);
-    assertJsonFailureFacts(result, row.tool, row.stage, row.stage !== "preflight-git");
-  }
-});
-
-test("Reviewer fatal audit stages fail closed in-process without a receipt", async () => {
-  // Cheaper in-process seam for the audit-stage family: same role-runtime path,
-  // no CLI boot / no fresh git clone per row.
-  await withHermeticHome({ prefix: "ak-reviewer-fatal-inproc-" }, async ({ home, agentDir }) => {
-    const { path: canonicalSkillPath } = await writeTestSkill(home, "code-review");
-    await writeFile(
-      canonicalSkillPath,
-      await readFile(resolve(packageRoot, "test/fixtures/canonical-code-review-SKILL.md")),
-    );
-    const cwd = resolve(home, "review-target");
-    await materializeReviewerTarget(cwd);
-    const base = execFileSync("git", ["rev-parse", "HEAD~1"], {
-      cwd,
-      encoding: "utf8",
-    }).trim();
-
-    for (const stage of ["audit-auth", "audit-malformed-decision"] as const) {
-      const previous = process.env.AK_REVIEWER_FAILURE_STAGE;
-      const previousExitCode = process.exitCode;
-      process.env.AK_REVIEWER_FAILURE_STAGE = stage;
-      try {
-        const faux = fauxProvider({
-          api: "ak-reviewer-failure-inproc",
-          provider: "ak-reviewer-failure-inproc",
-          tokenSize: { min: 1000, max: 1000 },
-        });
-        // Drive the same fatal output call the CLI fixture uses; audit injection
-        // still comes from the staged failure extension below.
-        faux.setResponses([
-          fauxAssistantMessage("Independent standards review found no findings."),
-          fauxAssistantMessage("Independent spec review found no findings."),
-          fauxAssistantMessage(
-            fauxToolCall(
-              REVIEWER_OUTPUT_TOOL_NAME,
-              {
-                status: "refused",
-                diagnostic:
-                  "The requested review cannot proceed because its runtime stage failed.",
-              },
-              { id: "fatal-reviewer-output" },
-            ),
-            { stopReason: "toolUse" },
-          ),
-          stage === "audit-malformed-decision"
-            ? fauxAssistantMessage("MALFORMED_REVIEWER_AUDIT_DECISION_STAGE")
-            : async () => {
-                throw new Error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
-              },
-          fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE"),
-        ]);
-
-        let sawError = false;
-        await withInProcessPi(
-          {
-            activationLedgerSession: true,
-            cwd,
-            agentDir: resolve(agentDir, stage),
-            faux,
-            modelsPath: null,
-            additionalExtensionPaths: [
-              resolve(packageRoot, "extensions/role-runtime.ts"),
-            ],
-            additionalSkillPaths: [canonicalSkillPath],
-            noExtensions: true,
-            systemPrompt: "REVIEWER FATAL INPROC",
-            mode: "print",
-            flags: {
-              "ak-role": "reviewer",
-              "ak-review-base": base,
-            },
-            reviewerShutdown: true,
-            extensionFactories: [
-              (pi) => {
-                pi.on("tool_call", (event, ctx) => {
-                  if (
-                    stage === "audit-auth" &&
-                    event.toolName === REVIEWER_OUTPUT_TOOL_NAME
-                  ) {
-                    (ctx.modelRegistry as any).getProviderAuth = async () => {
-                      throw new Error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
-                    };
-                  }
-                });
-              },
-            ],
-          },
-          async ({ session, sessionManager }) => {
-            try {
-              await session.prompt("Review.");
-            } catch {
-              sawError = true;
+    for (const row of rows) {
+      if (row.seam === "installed") {
+        const label = `${row.stage}-${row.mode}`;
+        // Shared cwd: later rows must not inherit a poisoned tree from preflight-git.
+        assertHealthyReviewerGitTree(cold.cwd, `before ${label}`);
+        try {
+          const result = await runReviewerCliOnCold(cold, row.mode, row.stage, label);
+          assert.equal(result.localTimeout, false, `${label} subprocess did not time out`);
+          assert.equal(result.code, 1, `${label} exits nonzero`);
+          assert.match(
+            `${result.stderr}\n${result.stdout}`,
+            REVIEWER_FATAL_STAGE_MARKERS[row.stage],
+            `${label} must fail closed from its own ${row.stage} injection, not residual poison`,
+          );
+          if (row.mode === "json") {
+            if (row.stage === "preflight-git") {
+              // Preflight aborts at activate/git pin — before any output tool — so
+              // the no-receipt proof is exit 1 + own injection marker + zero accepted receipt.
+              const events = jsonEvents(result.stdout);
+              assert.equal(
+                events.some(
+                  (event) =>
+                    event.type === "message_end" &&
+                    event.message?.role === "toolResult" &&
+                    event.message.toolName === row.tool &&
+                    event.message.isError === false,
+                ),
+                false,
+                `${label} must not accept a ${row.tool} receipt`,
+              );
+            } else {
+              assertJsonFailureFacts(
+                result,
+                row.tool,
+                label,
+                row.requireError ?? true,
+              );
             }
-            const results = sessionManager
-              .getEntries()
-              .filter(
-                (entry) =>
-                  entry.type === "message" && entry.message.role === "toolResult",
-              ) as Array<{ message: { toolName?: string; isError?: boolean; details?: any } }>;
-            const output = results.find(
-              (entry) => entry.message.toolName === REVIEWER_OUTPUT_TOOL_NAME,
-            );
-            // Gate negative: no accepted Reviewer receipt.
-            if (output !== undefined) {
-              assert.notEqual(output.message.isError, false);
-              assert.equal(output.message.details?.status === "completed", false);
-            }
-            assert.ok(
-              sawError ||
-                output?.message.isError === true ||
-                results.some((entry) => entry.message.isError === true),
-              `${stage} must fail closed without an accepted receipt`,
-            );
-          },
-        );
-      } finally {
-        // Production print/json audit failure sets process.exitCode = 1; restore so
-        // the in-process host test file does not inherit a failing exit status.
-        process.exitCode = previousExitCode;
-        if (previous === undefined) delete process.env.AK_REVIEWER_FAILURE_STAGE;
-        else process.env.AK_REVIEWER_FAILURE_STAGE = previous;
+          }
+        } finally {
+          if (row.stage === "preflight-git") {
+            restoreReviewerGitTreeAfterInjection(cold.cwd);
+            assertHealthyReviewerGitTree(cold.cwd, `after ${label} restore`);
+          }
+        }
+        continue;
       }
+      assertHealthyReviewerGitTree(cold.cwd, `before in-process ${row.stage}`);
+      await assertInProcessReviewerFatalNoReceipt(cold, row.stage);
     }
   });
 });

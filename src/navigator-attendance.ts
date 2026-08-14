@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { ModelRuntime, SessionManager, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
@@ -13,8 +13,6 @@ import {
   mintNavigatorInvocationId,
 } from "./navigator-invocation-identity.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
-import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
 import { openInProcessAgentSession } from "./in-process-session.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
@@ -239,12 +237,14 @@ export type NavigatorPreparationSession = {
   providerFailure?(): NavigatorProviderFailureFact | undefined;
   setModel?(model: string, thinkingLevel: "off" | "max"): Promise<void>;
   getThinkingLevel?(): string;
+  /** Durable record pointer for unchanged no-receipt lifecycle facts. Required — missing pointer fails honestly. */
+  recordPointer(): string;
   dispose(): void;
 };
 
 export type NavigatorSessionFactory = (options: {
   context: ExtensionContext;
-  sessionDir: string;
+  subject: string;
   modelSettingPath?: string;
   tool: ToolDefinition;
 }) => Promise<NavigatorPreparationSession>;
@@ -254,7 +254,6 @@ export type NavigatorAttendanceOptions = {
   role: string;
   phase: NavigatorPhase;
   subjectKey: string;
-  sessionDir: string;
   loadSoul: () => Promise<string>;
   loadRoutePlaybook?: () => Promise<string>;
   loadRoleHelp: (role: NavigatorTargetRole) => Promise<string>;
@@ -263,7 +262,6 @@ export type NavigatorAttendanceOptions = {
   subject: string;
   authority: string;
   contextError?: unknown;
-  sessionDirectory?: (subjectKey: string) => string;
   /** Exact principal owned by shared role lifecycle; attendance never overrides it. */
   invocationId?: string;
   onEvent: (event: NavigatorEvent, report: NavigatorReport) => void | Promise<void>;
@@ -432,15 +430,6 @@ export function navigatorSubjectKeyForInput(subjectRoot: string, reference: stri
   return navigatorSubjectKey(subjectRoot, resolvedReference);
 }
 
-function subjectDirectory(cwd: string, subjectKey: string): string {
-  const book = activationBookDirectory(
-    resolveActivationLedgerHome(),
-    resolveBookKeyFromGit(cwd),
-  );
-  const digest = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
-  return join(book, "navigator", digest);
-}
-
 export function navigatorModelSettingPath(): string {
   return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "navigator-model.json");
 }
@@ -594,7 +583,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let subject = options.subject;
   let authority = options.authority;
   let contextError = options.contextError;
-  let sessionDir = options.sessionDir;
   let candidates: NavigatorCandidate[] | undefined;
   // Shared lifecycle owns the principal when supplied; otherwise mint once per attendance.
   const invocationPrincipal = options.invocationId ?? mintNavigatorInvocationId();
@@ -727,7 +715,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         sessionReady = (async () => {
           let created: NavigatorPreparationSession;
           try {
-            created = await options.createSession({ context: options.context, sessionDir, ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }), tool });
+            created = await options.createSession({ context: options.context, subject: subjectKey, ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }), tool });
           } catch (error) {
             throw navigatorUnavailableError("session", error);
           }
@@ -847,7 +835,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
           }
           if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
-            const facts = delivery.facts({ runPointer: sessionDir, attemptPointer: invocationId });
+            const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
             activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
             preparationNoReceipt = true;
             candidates = [];
@@ -890,7 +878,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       subject = next.subject;
       authority = next.authority;
       contextError = next.contextError;
-      sessionDir = options.sessionDirectory?.(next.subjectKey) ?? options.sessionDir;
     },
     /**
      * Start live-help subprocesses during activation without beginning full
@@ -1062,7 +1049,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
   // Pre-warm once per factory (per process). Concurrent prepares share the same
   // runtime construction rather than each paying ModelRuntime.create under load.
   const sharedModelRuntime = ModelRuntime.create({ allowModelNetwork: false });
-  return async ({ context, sessionDir, modelSettingPath, tool }) => {
+  return async ({ context, subject, modelSettingPath, tool }) => {
     let configured: string;
     try {
       configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
@@ -1085,16 +1072,6 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       throw navigatorUnavailableError("auth", error);
     }
     if (!auth.ok) throw new NavigatorUnavailableError("auth", auth.error);
-    try {
-      const sessionInfo = await stat(sessionDir);
-      if (!sessionInfo.isDirectory()) throw new NavigatorUnavailableError("session", `Navigator session path is not a directory: ${sessionDir}`);
-    } catch (error) {
-      if (error instanceof NavigatorUnavailableError) throw error;
-      // Contract: README.md#Navigator-attendance — the resumable session directory may be created by session setup; retain and classify every other filesystem cause.
-      if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) {
-        throw navigatorUnavailableError("session", error);
-      }
-    }
     let providerFailure: NavigatorProviderFailureFact | undefined;
     const assignProviderFailure = (fact: NavigatorProviderFailureFact | undefined): void => {
       if (fact !== undefined) providerFailure = fact;
@@ -1306,13 +1283,15 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
     }
     let opened: Awaited<ReturnType<typeof openInProcessAgentSession>>;
     try {
-      // Shared in-process session open (#233) — same ModelRuntime module instance.
+      // Shared in-process session open (#233) — Sitian SessionManager from identity relations.
       opened = await openInProcessAgentSession({
         cwd: context.cwd,
+        kind: "navigator",
+        subject,
+        parent: context.sessionManager,
         model,
         modelRuntime,
         thinkingLevel: parsed.thinkingLevel,
-        sessionManager: SessionManager.continueRecent(context.cwd, sessionDir),
         noTools: "all",
         tools: [NAVIGATOR_PREPARE_TOOL_NAME],
         customTools: [tool],
@@ -1365,6 +1344,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         }
       },
       getThinkingLevel: () => opened.session.thinkingLevel,
+      recordPointer: () => opened.session.sessionManager.getSessionDir(),
       dispose: () => opened.dispose(),
     };
   };
@@ -1377,12 +1357,6 @@ export function registerNavigatorModelCommand(pi: ExtensionAPI, path = navigator
       await writeNavigatorModelSetting(args.trim(), path);
     },
   });
-}
-
-export function navigatorSessionDirectory(context: ExtensionContext, subjectKey?: string): string {
-  const current = context.sessionManager.getSessionDir();
-  const key = subjectKey ?? subjectPath(current, context.cwd);
-  return subjectDirectory(context.cwd, key);
 }
 
 export { subjectPath };

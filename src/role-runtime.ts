@@ -337,7 +337,7 @@ export type RoleRuntimeDependencies = {
   auditDoctorCompliance?(options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
-  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
+  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
@@ -673,6 +673,7 @@ export function createRoleRuntimeExtension(
           return dependencies.loadFixPacket(path);
         },
       },
+      hostActions,
     );
     const coder = createCoderRoleRuntime(
       pi,
@@ -878,7 +879,7 @@ export function createRoleRuntimeExtension(
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
         const ledgerHome = resolveActivationLedgerHome();
-        const session = durableSessionPointer(ctx.sessionManager, { ledgerHome, bookKey });
+        const session = durableSessionPointer(ctx.sessionManager);
 
         if (dependencies.createNavigatorAttendance !== undefined) {
           let work: NavigatorWorkContext;
