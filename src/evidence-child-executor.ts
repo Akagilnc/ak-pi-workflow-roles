@@ -34,6 +34,11 @@ import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_D
 import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
+import {
+  hasUpstreamErrorTestimony,
+  isNonSuccessHttpStatus,
+  projectConfirmedRemotePayload,
+} from "./upstream-error-testimony.ts";
 
 /** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
 function buildEvidenceChildSystemPrompt(): string {
@@ -197,15 +202,25 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
         const idle = createStreamIdleGuard(
           options.signal === undefined ? {} : { parentSignal: options.signal },
         );
+        // Typed HTTP status observed via onResponse — never inferred from prose.
+        let observedHttpStatus: number | undefined;
         try {
           const requestSignal = request?.signal;
           const streamSignal = requestSignal === undefined
             ? idle.signal
             : AbortSignal.any([idle.signal, requestSignal]);
+          const priorOnResponse = request?.onResponse;
           const inheritedRequest = {
             ...(request ?? {}),
             ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }),
             signal: streamSignal,
+            onResponse: async (
+              response: { status: number; headers: Record<string, string> },
+              model: Model<Api>,
+            ) => {
+              if (typeof response?.status === "number") observedHttpStatus = response.status;
+              await priorOnResponse?.(response, model);
+            },
           } as ProviderStreamOptions;
           if (options.runCompletion !== undefined) {
             await new Promise<void>((resolve) => setImmediate(resolve));
@@ -220,12 +235,12 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
               ),
               streamSignal,
             );
-            const response: AssistantMessage = {
+            const response: AssistantMessage = attachObservedHttpStatus({
               ...completed,
               api: model.api,
               provider: model.provider,
               model: model.id,
-            };
+            }, observedHttpStatus);
             if (response.stopReason === "error" || response.stopReason === "aborted") {
               wrapped.push({ type: "error", reason: response.stopReason, error: response });
             } else {
@@ -243,9 +258,12 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
             if (next.done) break;
             sawEvent = true;
             idle.poke();
-            wrapped.push(next.value as any);
+            wrapped.push(enrichStreamEvent(next.value, observedHttpStatus) as any);
           }
-          const response = await waitForStream(source.result(), idle.signal);
+          const response = attachObservedHttpStatus(
+            await waitForStream(source.result(), idle.signal),
+            observedHttpStatus,
+          );
           if (!sawEvent) wrapped.end(response);
           return;
         } catch (error) {
@@ -275,17 +293,26 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
             continue;
           }
           state.streamFailure = failure;
-          const response: AssistantMessage = {
-            role: "assistant",
-            content: [],
+          const projected = projectStructuredRemote(failure);
+          // Prefer structured fields on the thrown failure; fall back to onResponse observation.
+          const httpStatus = projected.httpStatus ?? numericHttpStatus(observedHttpStatus);
+          const response = {
+            role: "assistant" as const,
+            content: [] as [],
             api: model.api,
             provider: model.provider,
             model: model.id,
             usage: emptyUsage(),
-            stopReason: "error",
+            stopReason: "error" as const,
+            // Preserve the held failure message bytes — do not rewrite.
             errorMessage: failure instanceof Error ? failure.message : String(failure),
             timestamp: Date.now(),
-          };
+            ...(projected.diagnostics === undefined ? {} : { diagnostics: projected.diagnostics }),
+            ...(httpStatus === undefined ? {} : { status: httpStatus, statusCode: httpStatus }),
+            ...(projected.body === undefined ? {} : { body: projected.body }),
+            ...(projected.code === undefined ? {} : { code: projected.code }),
+            ...(projected.errno === undefined ? {} : { errno: projected.errno }),
+          } as unknown as AssistantMessage;
           wrapped.push({ type: "error", reason: "error", error: response });
           wrapped.end(response);
           return;
@@ -357,11 +384,114 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
   return state;
 }
 
+type EvidenceChildFailureClassification = "provider" | "child" | "unknown";
 type ClassifiedReviewerError = Error & Readonly<{
-  evidenceChildFailure: "provider" | "child";
+  evidenceChildFailure: EvidenceChildFailureClassification;
   evidenceChildOriginal?: unknown;
 }>;
-function classifiedError(error: unknown, evidenceChildFailure: "provider" | "child"): ClassifiedReviewerError {
+function numericHttpStatus(value: unknown): number | undefined {
+  return isNonSuccessHttpStatus(value) ? value : undefined;
+}
+
+type StructuredRemoteProjection = {
+  readonly hasTestimony: boolean;
+  readonly httpStatus?: number;
+  readonly diagnostics?: unknown;
+  readonly body?: unknown;
+  readonly code?: unknown;
+  readonly errno?: unknown;
+};
+
+/**
+ * Cause-chain reader over the shared upstream-testimony authority.
+ * Shape walking stays here; testimony + confirmed-remote payload rules are shared.
+ */
+function projectStructuredRemote(error: unknown): StructuredRemoteProjection {
+  let httpStatus: number | undefined;
+  let diagnostics: unknown;
+  let body: unknown;
+  let code: unknown;
+  let errno: unknown;
+  let cursor: unknown = error;
+  const seen = new Set<unknown>();
+  while (typeof cursor === "object" && cursor !== null && !seen.has(cursor)) {
+    seen.add(cursor);
+    const record = cursor as Record<string, unknown>;
+    const nodeStatus = numericHttpStatus(record.statusCode)
+      ?? numericHttpStatus(record.status)
+      ?? numericHttpStatus(record.httpStatus);
+    const nodeDiagnostics = Array.isArray(record.diagnostics) && record.diagnostics.length > 0
+      ? record.diagnostics
+      : undefined;
+    const nodeHasTestimony = hasUpstreamErrorTestimony({
+      ...(nodeStatus === undefined ? {} : { httpStatus: nodeStatus }),
+      ...(nodeDiagnostics === undefined ? {} : { diagnostics: nodeDiagnostics }),
+    });
+    if (httpStatus === undefined && nodeStatus !== undefined) httpStatus = nodeStatus;
+    if (diagnostics === undefined && nodeDiagnostics !== undefined) diagnostics = nodeDiagnostics;
+    // Payload only from confirmed-remote nodes — never arbitrary local Error.code.
+    if (nodeHasTestimony) {
+      const payload = projectConfirmedRemotePayload(record);
+      if (body === undefined && payload.body !== undefined) body = payload.body;
+      if (code === undefined && payload.code !== undefined) code = payload.code;
+      if (errno === undefined && payload.errno !== undefined) errno = payload.errno;
+    }
+    cursor = record.cause;
+  }
+  return {
+    hasTestimony: hasUpstreamErrorTestimony({
+      ...(httpStatus === undefined ? {} : { httpStatus }),
+      ...(diagnostics === undefined ? {} : { diagnostics }),
+    }),
+    ...(httpStatus === undefined ? {} : { httpStatus }),
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+    ...(body === undefined ? {} : { body }),
+    ...(code === undefined ? {} : { code }),
+    ...(errno === undefined ? {} : { errno }),
+  };
+}
+
+/**
+ * Attach a directly observed HTTP status onto an error/aborted assistant message.
+ * Does not invent status from errorMessage prose; skips when already held.
+ */
+function attachObservedHttpStatus<T extends AssistantMessage>(
+  message: T,
+  observedHttpStatus: number | undefined,
+): T {
+  if (observedHttpStatus === undefined) return message;
+  if (message.stopReason !== "error" && message.stopReason !== "aborted") return message;
+  if (numericHttpStatus(observedHttpStatus) === undefined) return message;
+  if (projectStructuredRemote(message).httpStatus !== undefined) return message;
+  return Object.assign(message, {
+    status: observedHttpStatus,
+    statusCode: observedHttpStatus,
+  });
+}
+function enrichStreamEvent(event: unknown, observedHttpStatus: number | undefined): unknown {
+  if (observedHttpStatus === undefined || event === null || typeof event !== "object") return event;
+  const record = event as Record<string, unknown>;
+  if (record.type === "error" && record.error !== null && typeof record.error === "object") {
+    return {
+      ...record,
+      error: attachObservedHttpStatus(record.error as AssistantMessage, observedHttpStatus),
+    };
+  }
+  if (record.type === "done" && record.message !== null && typeof record.message === "object") {
+    return {
+      ...record,
+      message: attachObservedHttpStatus(record.message as AssistantMessage, observedHttpStatus),
+    };
+  }
+  if (record.partial !== null && typeof record.partial === "object") {
+    return {
+      ...record,
+      partial: attachObservedHttpStatus(record.partial as AssistantMessage, observedHttpStatus),
+    };
+  }
+  return event;
+}
+function classifiedError(error: unknown, evidenceChildFailure: EvidenceChildFailureClassification): ClassifiedReviewerError {
   const diagnostic = typeof error === "object" && error !== null && typeof (error as { errorMessage?: unknown }).errorMessage === "string"
     ? (error as { errorMessage: string }).errorMessage
     : error === undefined ? "" : String(error);
@@ -370,7 +500,9 @@ function classifiedError(error: unknown, evidenceChildFailure: "provider" | "chi
     : Object.assign(new Error(diagnostic, { cause: error }), { evidenceChildOriginal: error });
   const classification = "evidenceChildFailure" in wrapped
     ? (wrapped as ClassifiedReviewerError).evidenceChildFailure
-    : evidenceChildFailure;
+    : evidenceChildFailure === "provider" && !projectStructuredRemote(error).hasTestimony
+      ? "unknown"
+      : evidenceChildFailure;
   return Object.assign(wrapped, { evidenceChildFailure: classification });
 }
 
@@ -468,13 +600,19 @@ export async function executeEvidenceChild(
         const lastAssistant = [...session.messages]
           .reverse()
           .find((message) => message.role === "assistant");
-        if (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "error") {
+        // error|aborted assistant stops share the upstream-testimony rule: provider only
+        // with direct HTTP/SDK testimony, otherwise existing unknown. child is reserved
+        // for real local child/report failures (no assistant / blank report / cleanup).
+        if (
+          lastAssistant?.role === "assistant"
+          && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted")
+        ) {
           throw classifiedError(
             new Error(lastAssistant.errorMessage ?? "", { cause: lastAssistant }),
-            "provider",
+            projectStructuredRemote(lastAssistant).hasTestimony ? "provider" : "unknown",
           );
         }
-        if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
+        if (lastAssistant?.role !== "assistant") {
           throw classifiedError(
             new Error("Evidence child child terminated without a report", {
               cause: lastAssistant ?? session.messages,
@@ -827,22 +965,37 @@ export async function executeAuditorChild(
           else if (retentionFailure !== undefined) throw retentionFailure;
         } catch (retentionFailure) {
           if (response.stopReason !== "error") throw retentionFailure;
+          // Do not trim/rewrite the held errorMessage bytes.
+          const diagnostic = typeof response.errorMessage === "string" && response.errorMessage.trim() !== ""
+            ? response.errorMessage
+            : undefined;
+          const projected = projectStructuredRemote(response);
           const failure = new Error(
-            response.errorMessage?.trim() || "provider failure",
+            diagnostic ?? "",
             { cause: retentionFailure },
           ) as Error & {
-            knownCause: "provider";
+            knownCause: "provider" | "unrecognized";
             failureCode?: string;
             details: Record<string, unknown>;
           };
-          failure.name = response.model || response.provider || "Error";
-          failure.knownCause = "provider";
-          failure.failureCode = response.provider || response.model;
+          if (projected.hasTestimony && (response.model || response.provider)) {
+            failure.name = response.model || response.provider || "Error";
+            failure.failureCode = response.provider || response.model;
+          }
+          failure.knownCause = projected.hasTestimony ? "provider" : "unrecognized";
           const retentionError = retentionFailure instanceof Error ? retentionFailure : undefined;
           const retentionCause = retentionError?.cause;
           failure.details = {
-            ...(response.provider ? { provider: response.provider } : {}),
-            ...(response.model ? { model: response.model } : {}),
+            ...(diagnostic === undefined ? {} : { errorMessage: diagnostic }),
+            ...(projected.hasTestimony && response.provider ? { provider: response.provider } : {}),
+            ...(projected.hasTestimony && response.model ? { model: response.model } : {}),
+            ...(response.api ? { api: response.api } : {}),
+            ...(response.rawStopReason ? { rawStopReason: response.rawStopReason } : {}),
+            ...(projected.httpStatus === undefined ? {} : { httpStatus: projected.httpStatus }),
+            ...(projected.diagnostics === undefined ? {} : { diagnostics: projected.diagnostics }),
+            ...(projected.body === undefined ? {} : { body: projected.body }),
+            ...(projected.code === undefined ? {} : { code: projected.code }),
+            ...(projected.errno === undefined ? {} : { errno: projected.errno }),
             retentionFailure: {
               name: retentionError?.name ?? typeof retentionFailure,
               message: retentionError?.message ?? String(retentionFailure),
@@ -869,8 +1022,8 @@ export async function executeAuditorChild(
             parent: binding.parent,
             failure: {
               cause: failure.knownCause,
-              identity: { name: failure.name, code: failure.failureCode },
-              diagnostic: failure.message,
+              ...(failure.failureCode === undefined ? {} : { identity: { name: failure.name, code: failure.failureCode } }),
+              ...(failure.message === "" ? {} : { diagnostic: failure.message }),
               details: failure.details,
             },
           });

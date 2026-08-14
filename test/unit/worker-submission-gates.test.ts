@@ -586,10 +586,11 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     if (result.terminal!.roleOutcome.kind === "failure") {
       assert.equal(result.terminal!.roleOutcome.cause, "output");
       assert.match(result.terminal!.roleOutcome.diagnostic, /EACCES/);
-      // Public settlement retains the closed infra fact and stamps exit code onto details.
+      // Public settlement retains the closed infra fact and stamps process exit as exitCode
+      // (#307: exitCode = process exit; code = remote/upstream only when testimony exists).
       assert.deepEqual(result.terminal!.roleOutcome.decisiveFacts.secondaryEvidence, {
         ...buildNavigatorInfrastructureFailureFact(),
-        code: 1,
+        exitCode: 1,
       });
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorName, FIXER_OUTPUT_TOOL_NAME);
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, callIdF);

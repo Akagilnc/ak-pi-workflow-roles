@@ -1,17 +1,21 @@
 /**
- * #216 sitian record entry — divergent-parent nest + subject-keyed navigator tracer.
+ * #216/#221 sitian record entry — divergent-parent nest + subject-keyed navigator tracer.
  * Production-reachable shape: SessionManager.open(file, otherDir) ≡ pi --session-dir A --resume B.
  * Settlement reads join(dirname(sessionFile), "auditor-roles"); writer must land on the same path.
  * Subject tracer: subject→dir, same-subject continue, switch isolation, parentSession header.
+ * #221 book-circle: books/A final .jsonl symlink → books/B legal session is refused before open.
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
-import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
+import {
+  ActivationLedgerError,
+  physicalPathIdentity,
+} from "../../src/activation-ledger-topology.ts";
 import { createRecordSession } from "../../src/sitian-record-entry.ts";
 import {
   machineLedgerHome,
@@ -83,6 +87,44 @@ test("createRecordSession nests by parent file and continues subject-keyed navig
     const continued = createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent });
     assert.equal(continued.getSessionFile(), firstFile);
     continued.appendCustomEntry("principal", { run: 2 });
+
+    // Cross-book final-file symlink: books/A nest points at a legal books/B session → refuse before open.
+    const foreignDir = join(machineLedgerHome(home), "books", "foreign", "navigator", "peer");
+    await mkdir(foreignDir, { recursive: true });
+    const foreignFile = join(foreignDir, "foreign-session.jsonl");
+    await writeFile(
+      foreignFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "foreign-peer",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: project,
+      })}\n`,
+    );
+    const linkName = join(dirA, basename(firstFile));
+    await rm(firstFile);
+    await symlink(foreignFile, linkName);
+    assert.throws(
+      () => createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent }),
+      (error: unknown) => {
+        assert.ok(error instanceof ActivationLedgerError);
+        assert.equal(error.code, "AK_ACTIVATION_LEDGER");
+        return true;
+      },
+    );
+    // Restore a regular principal so later subject-a reads stay honest about in-book bytes.
+    await rm(linkName);
+    await writeFile(
+      firstFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "restored-subject-a",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: project,
+      })}\n{"type":"custom","customType":"principal","data":{"run":1}}\n{"type":"custom","customType":"principal","data":{"run":2}}\n`,
+    );
 
     // switched subject isolates to a different directory/session
     const switched = createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-b", parent });

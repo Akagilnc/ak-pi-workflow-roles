@@ -2523,14 +2523,16 @@ async function independentAcceptedTrajectory(
   return accepted;
 }
 
-test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost reconciliation", async () => {
+test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost reconciliation", async (t) => {
   const homeLedger =
     process.env.AK_FACTORY_BOARD_HOME_LEDGER?.trim() ||
     join(homedir(), ".ak-roles", "books", "ak-pi-workflow-roles");
   const home127 = join(homeLedger, "issues", "127");
   const home130 = join(homeLedger, "issues", "130");
   if (!(await pathExists(home130))) {
-    // CI/agents without the owner true-home ledger skip; owner machine must run green.
+    // Explicit skip (not silent return): CI/agents without owner true-home ledger.
+    // Default owner coverage remains when ~/.ak-roles/.../issues/130 exists — not opt-in-only.
+    t.skip(`true-home ledger missing at ${home130}; owner machine keeps default coverage`);
     return;
   }
 

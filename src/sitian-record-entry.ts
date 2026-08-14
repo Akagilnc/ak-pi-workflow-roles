@@ -4,8 +4,8 @@
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
 import { createHash } from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
-import { dirname, resolve, join } from "node:path";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve, join, relative, sep } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -14,8 +14,11 @@ export {
   type RoleRunSessionCoordinates,
 } from "./sitian-role-run-coordinates.ts";
 import {
+  ActivationLedgerError,
   activationBookDirectory,
   ensureRealDirectoryTree,
+  errorText,
+  pathContainedIn,
   physicallyContainedIn,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
@@ -47,8 +50,73 @@ export type CreateRecordSessionOptions = {
 export const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
 
 /**
+ * Sole file-level placement lock for a resumed same-nest principal (ADR 0065 / #221).
+ * ensureRealDirectoryTree already owns the sessionDir chain; a final .jsonl symlink is
+ * invisible to that directory walk, so this runs once before SessionManager.open.
+ * Circle is the book physical root that owns sessionDir — not merely ledger home — so a
+ * books/A nest cannot resume a final file whose realpath lands in books/B.
+ * realpath/stat failures stay typed ActivationLedgerError with original cause — never
+ * wash through physicalPathIdentity's non-ENOENT lexical fallback.
+ */
+function assertRecentFinalFileUnderLedgerHome(
+  ledgerHome: string,
+  sessionDir: string,
+  recentFile: string,
+): void {
+  const absoluteHome = resolve(ledgerHome);
+  const absoluteSessionDir = resolve(sessionDir);
+  const absoluteFile = resolve(recentFile);
+  // sessionDir just passed ensureRealDirectoryTree: derive the owning book lexically.
+  const relToHome = relative(absoluteHome, absoluteSessionDir);
+  const segments = relToHome.split(sep);
+  if (
+    relToHome === ""
+    || isAbsolute(relToHome)
+    || relToHome === ".."
+    || relToHome.startsWith(`..${sep}`)
+    || segments[0] !== "books"
+    || segments[1] === undefined
+    || segments[1] === ""
+    || segments[1] === "."
+    || segments[1] === ".."
+  ) {
+    throw new ActivationLedgerError(
+      `sitian record sessionDir must be under a ledger book (${ledgerHome}): ${sessionDir}`,
+    );
+  }
+  const bookRoot = join(absoluteHome, "books", segments[1]);
+  let realBookRoot: string;
+  try {
+    realBookRoot = realpathSync(bookRoot);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger book is not resolvable (${bookRoot}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+  let realFile: string;
+  try {
+    realFile = realpathSync(absoluteFile);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `sitian record session file is not resolvable (${absoluteFile}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+  if (realFile !== realBookRoot && !pathContainedIn(realBookRoot, realFile)) {
+    throw new ActivationLedgerError(
+      `sitian record session must be under the ledger book (${bookRoot}): ${recentFile}`,
+    );
+  }
+}
+
+/**
  * Sole package entry that constructs a durable Pi session record (ADR 0065).
  * No destination/path parameters — location is computed from ledger topology only.
+ * SessionDir placement is owned by ensureRealDirectoryTree; resumed recent final-file
+ * identity is checked once before SessionManager.open (directory walk cannot see a
+ * trailing .jsonl symlink). New principals mint under the already-validated sessionDir
+ * via destination-free SessionManager.create — no derived postcondition.
  * Resume via Pi findMostRecentSession is limited to subject-keyed identity and the
  * authorized worker-submission-gate durable path. Ordinary no-subject children
  * (evidence-children, auditor-roles, …) always mint a fresh session — never reopen
@@ -88,6 +156,7 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
     parentSession = parentFile;
   }
 
+  // Directory-chain ownership: containment + physical components (no parallel assert).
   ensureRealDirectoryTree(ledgerHome, sessionDir);
   // Subject-keyed nests continue by subject digest; gate durable resume is the only
   // authorized no-subject same-nest continuation. All other kinds mint fresh.
@@ -95,7 +164,10 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
     options.subject !== undefined || options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest) {
     const recentFile = findMostRecentSession(sessionDir, cwd);
-    if (recentFile !== null) return SessionManager.open(recentFile, sessionDir, cwd);
+    if (recentFile !== null) {
+      assertRecentFinalFileUnderLedgerHome(ledgerHome, sessionDir, recentFile);
+      return SessionManager.open(recentFile, sessionDir, cwd);
+    }
   }
 
   const session = SessionManager.create(

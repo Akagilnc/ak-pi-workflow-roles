@@ -44,7 +44,7 @@ import {
   NAVIGATOR_INVOCATION_ENTRY,
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
-import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.ts";
+import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import {
   ExplicitInternalActivationError,
   recordReviewerDispatchRejectionSync,
@@ -807,22 +807,32 @@ export function createRoleRuntimeExtension(
       await observe(() => observationFace.onEnd(event), ctx);
     });
 
-    // Public Role run: record typed provider HTTP status for v1 resume (#108).
-    // Latest typed response is authoritative; only a current Codex/xAI 429 is
-    // retained — never prose classification or an earlier within-attempt 429.
+    // Public Role run: record typed non-success HTTP for error evidence + v1 resume.
+    // 2xx clears prior observation (see recordTypedProviderHttpStatus). Non-success
+    // write failure must surface — never silently drop authorized error evidence.
     pi.on("after_provider_response", async (event, ctx) => {
       const runDir = process.env.AK_ROLE_RUN_DIR;
       if (typeof runDir !== "string" || runDir.trim() === "") return;
       const provider = ctx.model?.provider;
       if (typeof provider !== "string" || provider.trim() === "") return;
+      const status = event.status;
+      if (typeof status !== "number") return;
       try {
         await recordTypedProviderHttpStatus(runDir, {
-          httpStatus: event.status,
+          httpStatus: status,
           provider,
         });
-      } catch {
-        // Observation is best-effort relative to the live provider stream;
-        // settlement still owns failure presentation.
+      } catch (error) {
+        if (
+          status >= 200 &&
+          status < 300 &&
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code?: unknown }).code === "ENOENT"
+        ) {
+          return;
+        }
+        failInfrastructure(error, ctx);
       }
     });
 
@@ -869,7 +879,7 @@ export function createRoleRuntimeExtension(
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
         const ledgerHome = resolveActivationLedgerHome();
-        const session = durableSessionPointer(ctx.sessionManager, { ledgerHome, bookKey });
+        const session = durableSessionPointer(ctx.sessionManager);
 
         if (dependencies.createNavigatorAttendance !== undefined) {
           let work: NavigatorWorkContext;

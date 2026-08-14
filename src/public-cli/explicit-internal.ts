@@ -21,6 +21,12 @@ import {
   type ReviewerPreflightViolation,
 } from "../reviewer-dispatch.ts";
 import type { ControlledFailureCause } from "./terminal.ts";
+import {
+  hasUpstreamErrorTestimony,
+  projectConfirmedRemotePayload,
+} from "../upstream-error-testimony.ts";
+
+export { hasUpstreamErrorTestimony } from "../upstream-error-testimony.ts";
 
 /** Durable Reviewer-rejection child→parent page under AK_ROLE_RUN_DIR. */
 const REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
@@ -147,34 +153,70 @@ export type ExplicitInternalKnownFailure = {
   readonly details?: Readonly<Record<string, unknown>>;
 };
 
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function sessionStopDetails(input: {
+  readonly errorMessage?: string | null;
+  readonly provider?: string;
+  readonly model?: string;
+  readonly api?: string;
+  readonly rawStopReason?: string;
+  readonly httpStatus?: number;
+  readonly diagnostics?: unknown;
+  readonly body?: unknown;
+  readonly code?: unknown;
+  readonly errno?: unknown;
+}): Record<string, unknown> {
+  const details: Record<string, unknown> = {};
+  const errorMessage = nonEmptyString(input.errorMessage);
+  if (errorMessage !== undefined) details.errorMessage = errorMessage;
+  const api = nonEmptyString(input.api);
+  if (api !== undefined) details.api = api;
+  const rawStopReason = nonEmptyString(input.rawStopReason);
+  if (rawStopReason !== undefined) details.rawStopReason = rawStopReason;
+  const testimony = hasUpstreamErrorTestimony(input);
+  if (testimony) {
+    const provider = nonEmptyString(input.provider);
+    if (provider !== undefined) details.provider = provider;
+    const model = nonEmptyString(input.model);
+    if (model !== undefined) details.model = model;
+  }
+  if (typeof input.httpStatus === "number") details.httpStatus = input.httpStatus;
+  if (input.diagnostics !== undefined) details.diagnostics = input.diagnostics;
+  // SDK structured payload fields: project only when held on a confirmed-remote node.
+  if (testimony) Object.assign(details, projectConfirmedRemotePayload(input));
+  return details;
+}
+
 /**
- * Produce a typed provider knownFailure from a native session assistant stop.
- * Source fields are session-typed (stopReason / errorMessage / provider) — never
- * child stderr prose. Used by the public classifier after a real Pi child exits.
+ * Project a native session assistant stop onto the existing knownFailure chain.
+ * Classification follows two-way testimony: typed HTTP status or SDK structure
+ * keeps provider; stopReason, configured provider/model, or errorMessage prose
+ * alone is the existing unrecognized value. Present upstream payload is preserved
+ * in details without rewriting; missing fields are omitted.
  */
 export function knownFailureFromProviderStop(input: {
   readonly stopReason?: string;
   readonly errorMessage?: string | null;
   readonly provider?: string;
   readonly model?: string;
+  readonly api?: string;
+  readonly rawStopReason?: string;
+  readonly httpStatus?: number;
+  readonly diagnostics?: unknown;
+  readonly body?: unknown;
+  readonly code?: unknown;
+  readonly errno?: unknown;
 }): ExplicitInternalKnownFailure | undefined {
-  if (input.stopReason !== "error") return undefined;
-  const diagnostic =
-    typeof input.errorMessage === "string" && input.errorMessage.trim() !== ""
-      ? input.errorMessage.trim()
-      : "provider failure";
-  const identity: { name: string; code?: string } = {
-    name: "ProviderStopError",
-  };
-  if (typeof input.provider === "string" && input.provider.trim() !== "") {
-    identity.code = input.provider;
-  } else if (typeof input.model === "string" && input.model.trim() !== "") {
-    identity.code = input.model;
-  }
+  if (input.stopReason !== "error" && input.stopReason !== "aborted") return undefined;
+  const diagnostic = nonEmptyString(input.errorMessage);
+  const details = sessionStopDetails(input);
   return {
-    cause: "provider",
-    identity,
-    diagnostic,
+    cause: hasUpstreamErrorTestimony(input) ? "provider" : "unrecognized",
+    ...(diagnostic === undefined ? {} : { diagnostic }),
+    ...(Object.keys(details).length === 0 ? {} : { details }),
   };
 }
 

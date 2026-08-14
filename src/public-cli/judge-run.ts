@@ -36,8 +36,8 @@ import {
   markRunResumable,
   markRunRunning,
   markRunTerminal,
-  readTypedHttp429Observation,
   renderResumeCommand,
+  type TypedProviderHttpObservation,
   RESUME_TRANSPORT_ENVELOPE,
   RunWriterLeaseHeldError,
   type RunWriterLease,
@@ -52,7 +52,9 @@ import {
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   presentStructuralRejection,
-  resolveAuditedRunnerKnownFailure,
+  resolveAuditedRunnerFailureResolution,
+  resolveControlledFailureResumeObservation,
+  controlledFailureInputFromResolution,
   explicitInternalKnownFailureClassificationInput,
   settleJudgeFailureTerminalResult,
   trySettleJudgeTerminalResult,
@@ -171,6 +173,9 @@ async function presentControlledFailure(
     stderr: string;
     thrown?: unknown;
     knownFailure?: ExplicitInternalKnownFailure;
+    /** Pre-resolved typed-HTTP outcome — no second sidecar read when settled. */
+    typedHttpObservationSettled?: true;
+    typedHttpObservation?: TypedProviderHttpObservation;
   },
   io: CliIo,
 ): Promise<{
@@ -180,10 +185,25 @@ async function presentControlledFailure(
 }> {
   // Own-key presence, not value: `throw undefined` must not look like "no throw".
   const hasThrown = Object.hasOwn(failureInput, "thrown");
+  // v1 resume observation: reuse audited resolution when present; otherwise one
+  // controlled read. Non-absence failures fold into knownFailure — never escape.
+  const resumeObservation = await resolveControlledFailureResumeObservation({
+    runDirectory: admitted.runDirectory,
+    ...(failureInput.typedHttpObservationSettled === true
+      ? {
+        typedHttpObservationSettled: true as const,
+        ...(failureInput.typedHttpObservation === undefined
+          ? {}
+          : { typedHttpObservation: failureInput.typedHttpObservation }),
+      }
+      : {}),
+  });
+  const knownFailure =
+    failureInput.knownFailure ?? resumeObservation.observationReadFailure;
   const session =
     !hasThrown &&
     !failureInput.timedOut &&
-    failureInput.knownFailure === undefined
+    knownFailure === undefined
       ? await inspectJudgeSession(admitted.sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
@@ -191,7 +211,7 @@ async function presentControlledFailure(
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
+    ...explicitInternalKnownFailureClassificationInput(knownFailure),
     ...(session === undefined ? {} : { session }),
   });
 
@@ -199,7 +219,7 @@ async function presentControlledFailure(
   // absence of a lawful Judge result, and a durable exact Pi session principal.
   // Lawful presence is session-owned and must not depend on artifact publication.
   const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
-  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
     admitted.sessionFile,
   );
@@ -355,10 +375,11 @@ async function dispatchAdmittedJudge(input: {
       env.model,
       env.credentials,
     );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
+    const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result.knownFailure,
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
+      runDirectory: admitted.runDirectory,
     });
     return await presentControlledFailure(
       admitted,
@@ -366,7 +387,7 @@ async function dispatchAdmittedJudge(input: {
         timedOut: result.timedOut,
         code: result.code,
         stderr: result.stderr,
-        ...(knownFailure === undefined ? {} : { knownFailure }),
+        ...controlledFailureInputFromResolution(resolution),
       },
       io,
     );
