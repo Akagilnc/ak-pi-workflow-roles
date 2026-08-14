@@ -112,16 +112,19 @@ test("constructed standards and spec legs carry package-owned verification bound
   assert.equal(result.status, "accepted");
   if (result.status !== "accepted") return;
 
-  assert.equal(REVIEWER_AXIS_OUTPUT_ADAPTER.version, 2);
+  assert.equal(REVIEWER_AXIS_OUTPUT_ADAPTER.version, 3);
   assert.match(
     REVIEWER_CONSTRUCTION_RECIPE.implementationSha256,
     /^[a-f0-9]{64}$/,
   );
   assert.match(REVIEWER_VERIFICATION_BOUNDARY, /Verification-Boundary:/);
-  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /pytest/);
-  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /compileall/);
-  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /coder\/fixer accepted receipts/);
-  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /Do not write freshly executed test results/);
+  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /focused product tests/);
+  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /full repository test suite is not forbidden/);
+  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /family wrap-up/);
+  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /frequent full-suite reruns/);
+  assert.doesNotMatch(REVIEWER_VERIFICATION_BOUNDARY, /do not execute product verification/i);
+  assert.doesNotMatch(REVIEWER_VERIFICATION_BOUNDARY, /sole source of test facts/i);
+  assert.doesNotMatch(REVIEWER_VERIFICATION_BOUNDARY, /pytest|compileall/i);
 
   const axes = result.dispatch.legs.map((leg) => leg.axis).sort();
   assert.deepEqual(axes, ["spec", "standards"]);

@@ -7,30 +7,31 @@ export const REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
   recipeId: "reviewer-common-bundle",
   version: 1,
   runtimeVersion: "1",
-  implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts+verification-boundary"),
+  implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts+verification-cadence"),
 });
 export type ReviewerConstructionIdentity = typeof REVIEWER_CONSTRUCTION_RECIPE;
 export type ReviewerAxis = "standards" | "spec";
 
 export const REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
   adapterId: "reviewer-axis-output",
-  version: 2,
+  version: 3,
   implementationSha256: sha256Hex(
-    "reviewer-axis-output:v2:single-axis-verbatim-report+standards-three-priorities+verification-boundary",
+    "reviewer-axis-output:v3:single-axis-verbatim-report+standards-three-priorities+verification-cadence",
   ),
 });
 
 /**
- * Package-owned #1185 review verification boundary.
+ * Package-owned #1185 review verification cadence.
  * Shared by parent Reviewer injection, axis adapters, and evidence-child system prompts.
- * Does not narrow ADR 0064 evidence tools; forbids re-running product verification gates.
+ * Graded guidance only: does not narrow ADR 0064 tools and adds no command ban, allowlist, or runtime block.
  */
 export const REVIEWER_VERIFICATION_BOUNDARY = [
-  "Verification-Boundary: during this review turn do not execute product verification command families",
-  "(pytest, compileall, repository-wide or focused product test runners, build-as-test, or equivalent product gate runners).",
-  "The sole source of test facts is independently discovered existing coder/fixer accepted receipts",
-  "(their testEvidence and verification results already recorded in those reports); do not treat caller prose as that source.",
-  "Do not write freshly executed test results from this turn into the review report.",
+  "Verification-Boundary: you may run focused product tests during this review turn when independent verification needs them.",
+  "A full repository test suite is not forbidden, but do not re-run it every review round;",
+  "prefer once at family wrap-up unless this review specifically requires a broader run.",
+  "Slice and review work should not trigger frequent full-suite reruns.",
+  "Independently discover test facts (including existing coder/fixer receipts and any tests you run);",
+  "do not treat caller prose as the source of those facts.",
 ].join(" ");
 
 /** Typed Standards conclusion keys owned by reviewer construction (presentation labels are not the contract). */

@@ -30,6 +30,7 @@ import {
   type AuditorParentAttemptBinding,
 } from "./compliance-transport.ts";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
@@ -43,7 +44,6 @@ export function buildEvidenceChildSystemPrompt(): string {
     "Return one substantive non-blank report.",
   ].join("\n");
 }
-import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 
 // ── shared constants / types ──────────────────────────────────────────────
 
