@@ -4,7 +4,10 @@
  * Reuses existing CLI failure envelope (CliUsageError + structural reject).
  * Index read reuses readTaishiLibraryIndexPage / findTaishiLibraryIndexRow.
  */
-import { resolveActivationLedgerHome } from "../activation-ledger-topology.ts";
+import {
+  physicalPathIdentity,
+  resolveActivationLedgerHome,
+} from "../activation-ledger-topology.ts";
 import {
   findTaishiLibraryIndexRow,
   readTaishiLibraryIndexPage,
@@ -26,7 +29,8 @@ export type TaishiRunEnv = {
  * Build the sole library issue-mode input from public argv faces.
  * - ticket N → issueNumber = ticketNumber = N; projectRoot from index (or project-root fallback).
  * - project-root P → direct mechanical key.
- * - both + index hit → index projectRoot wins (C4 typed ticket face still set for scan conflicts).
+ * - both + index hit → index projectRoot wins; when direct root differs, retain it as
+ *   conflictingProjectRoot so runTaishi records the C4 dual-param conflict fact on the page.
  * - both + index miss → project-root fallback.
  * Bare both-missing is owned by parseTaishiArgv — no second reject here.
  */
@@ -61,11 +65,19 @@ export async function buildTaishiIssueModeInputFromPublicArgv(
     );
   }
 
+  // Dual-param conflict: index root won, but caller also supplied a distinct --project-root.
+  // Carry the losing root so the metrics page records the call-face conflict fact.
+  const dualParamConflict =
+    row !== undefined
+    && directRoot !== undefined
+    && physicalPathIdentity(directRoot) !== physicalPathIdentity(projectRoot);
+
   return {
     mode: "issue",
     projectRoot,
     ticketNumber: ticket,
     issueNumber: ticket,
+    ...(dualParamConflict ? { conflictingProjectRoot: directRoot } : {}),
   };
 }
 

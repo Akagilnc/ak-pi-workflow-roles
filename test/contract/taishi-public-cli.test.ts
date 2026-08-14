@@ -44,16 +44,15 @@ const fixtureHome = join(packageRoot, "test/fixtures/taishi/home");
 const ISSUE_DEMO = "/taishi-fixture/issue-demo";
 /** C1 alpha root — independent project-root path oracle target. */
 const ISSUE_ALPHA = "/taishi-fixture/c1-issue-alpha";
-/** C4 primary / alien roots — dual-param conflict path reuses C4 fixture runs. */
-const ISSUE_C4_PRIMARY = "/taishi-fixture/c4-issue-primary";
-const ISSUE_C4_ALIEN = "/taishi-fixture/c4-issue-alien";
+/**
+ * Dual-param losing root — no fixture ledger runs bind this key, so any
+ * scopeConflicts entry for it can only come from the CLI call faces themselves.
+ */
+const ISSUE_DUAL_PARAM_LOSER = "/taishi-fixture/cli-dual-param-conflict";
 
 /** 5xxx segment — exclusive from C1-C4 (1-4xxx) issue/ticket numbers. */
 const TICKET_HIT = 5501;
 const TICKET_MISS = 5599;
-/** C4 fixture typed ticket — dual-param conflict assertion only. */
-const TICKET_C4_SCOPE = 4401;
-const RUN_C4_TICKET_ALIEN = "019ff000-4002-7000-8000-0000000004a2";
 
 function captureIo() {
   const stdout: string[] = [];
@@ -270,17 +269,17 @@ test("taishi public CLI project-root path: direct supply matches runTaishi oracl
   });
 });
 
-test("taishi public CLI dual-param conflict: ticket index projectRoot wins; page records C4 scopeConflicts", async () => {
+test("taishi public CLI dual-param conflict: ticket index wins; page records call-face conflict (not ledger alien run)", async () => {
   await withBusinessRepo(async () => {
     await withTempHome(async (home) => {
       const ledgerHome = join(home, ".ak-roles");
-      // Index maps C4 ticket → primary; CLI also supplies alien --project-root.
+      // Index maps 5xxx ticket → demo root; CLI also supplies a root with ZERO ledger runs.
       await writeTaishiLibraryIndexPage(
         ledgerHome,
         buildTaishiLibraryIndexPage([
           {
-            projectRoot: physicalPathIdentity(ISSUE_C4_PRIMARY),
-            issueNumber: TICKET_C4_SCOPE,
+            projectRoot: physicalPathIdentity(ISSUE_DEMO),
+            issueNumber: TICKET_HIT,
             totalElapsedMs: 0,
             changedLines: { status: "absent" },
             msPerKLines: { status: "absent" },
@@ -289,20 +288,29 @@ test("taishi public CLI dual-param conflict: ticket index projectRoot wins; page
         ]),
       );
 
-      // Library oracle with the winning faces (index projectRoot + typed ticket).
+      // Library oracle = winning faces only (no conflictingProjectRoot).
+      // Proves the dual-param fact is absent when the losing root is not a call face.
       const oracle = await runTaishi({
         mode: "issue",
-        projectRoot: physicalPathIdentity(ISSUE_C4_PRIMARY),
-        ticketNumber: TICKET_C4_SCOPE,
-        issueNumber: TICKET_C4_SCOPE,
+        projectRoot: physicalPathIdentity(ISSUE_DEMO),
+        ticketNumber: TICKET_HIT,
+        issueNumber: TICKET_HIT,
       });
+      assert.equal(
+        oracle.page.scopeConflicts.some(
+          (c) => c.projectRoot === physicalPathIdentity(ISSUE_DUAL_PARAM_LOSER),
+        ),
+        false,
+        "oracle without dual-param face must not invent the losing-root conflict",
+      );
+
       await rm(join(ledgerHome, "taishi"), { recursive: true, force: true });
       await writeTaishiLibraryIndexPage(
         ledgerHome,
         buildTaishiLibraryIndexPage([
           {
-            projectRoot: physicalPathIdentity(ISSUE_C4_PRIMARY),
-            issueNumber: TICKET_C4_SCOPE,
+            projectRoot: physicalPathIdentity(ISSUE_DEMO),
+            issueNumber: TICKET_HIT,
             totalElapsedMs: 0,
             changedLines: { status: "absent" },
             msPerKLines: { status: "absent" },
@@ -316,9 +324,9 @@ test("taishi public CLI dual-param conflict: ticket index projectRoot wins; page
         [
           "taishi",
           "--ticket",
-          String(TICKET_C4_SCOPE),
+          String(TICKET_HIT),
           "--project-root",
-          ISSUE_C4_ALIEN,
+          ISSUE_DUAL_PARAM_LOSER,
         ],
         { packageRoot, home, io },
       );
@@ -327,25 +335,30 @@ test("taishi public CLI dual-param conflict: ticket index projectRoot wins; page
       assert.equal(stderr.join(""), "");
 
       // Page key follows ticket-resolved index root, not the conflicting direct root.
-      const pagePath = taishiIssuePagePath(ledgerHome, ISSUE_C4_PRIMARY);
+      const pagePath = taishiIssuePagePath(ledgerHome, ISSUE_DEMO);
       const page = JSON.parse(await readFile(pagePath, "utf8")) as TaishiIssueMetricsPage;
-      assert.equal(page.projectRoot, physicalPathIdentity(ISSUE_C4_PRIMARY));
-      assert.equal(page.issueNumber, TICKET_C4_SCOPE);
+      assert.equal(page.projectRoot, physicalPathIdentity(ISSUE_DEMO));
+      assert.equal(page.issueNumber, TICKET_HIT);
       assert.deepEqual(page.legs, oracle.page.legs);
-      assert.deepEqual(page.scopeConflicts, oracle.page.scopeConflicts);
-      // C4 records the alien-root run admitted by typed ticket over mechanical key.
+
+      // Call-face conflict is on the page; no runId (not a ledger-run admit).
+      // Losing root has no fixture runs, so this entry cannot come from C4 scan.
       assert.deepEqual(page.scopeConflicts, [
         {
-          runId: RUN_C4_TICKET_ALIEN,
-          ticketNumber: TICKET_C4_SCOPE,
-          projectRoot: physicalPathIdentity(ISSUE_C4_ALIEN),
+          ticketNumber: TICKET_HIT,
+          projectRoot: physicalPathIdentity(ISSUE_DUAL_PARAM_LOSER),
           fact: "typed-ticketNumber-over-projectRoot",
         },
       ]);
+      assert.equal(
+        "runId" in page.scopeConflicts[0]!,
+        false,
+        "dual-param conflict must not carry a ledger runId",
+      );
 
       // Conflicting direct root must not materialize its own page.
-      const alienPagePath = taishiIssuePagePath(ledgerHome, ISSUE_C4_ALIEN);
-      await assert.rejects(() => stat(alienPagePath), (error: NodeJS.ErrnoException) => {
+      const loserPagePath = taishiIssuePagePath(ledgerHome, ISSUE_DUAL_PARAM_LOSER);
+      await assert.rejects(() => stat(loserPagePath), (error: NodeJS.ErrnoException) => {
         assert.equal(error.code, "ENOENT");
         return true;
       });
