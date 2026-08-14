@@ -6,7 +6,7 @@ import { executeEvidenceChild } from "./evidence-child-executor.js";
 export function projectSharedChildFailure(error) {
     if (typeof error === "object" && error !== null && "evidenceChildFailure" in error) {
         const classification = error.evidenceChildFailure;
-        if (classification === "provider" || classification === "child") {
+        if (classification === "provider" || classification === "child" || classification === "unknown") {
             Object.assign(error, { reviewerFailure: classification });
         }
     }

@@ -1,19 +1,58 @@
 import { createHash } from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
-import { dirname, resolve, join } from "node:path";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve, join, relative, sep } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
 import {
   roleRunSessionCoordinates
 } from "./sitian-role-run-coordinates.js";
 import {
+  ActivationLedgerError,
   activationBookDirectory,
   ensureRealDirectoryTree,
+  errorText,
+  pathContainedIn,
   physicallyContainedIn,
   resolveActivationLedgerHome
 } from "./activation-ledger-topology.js";
 const { findMostRecentSession } = await import(new URL("./core/session-manager.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href);
 const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
+function assertRecentFinalFileUnderLedgerHome(ledgerHome, sessionDir, recentFile) {
+  const absoluteHome = resolve(ledgerHome);
+  const absoluteSessionDir = resolve(sessionDir);
+  const absoluteFile = resolve(recentFile);
+  const relToHome = relative(absoluteHome, absoluteSessionDir);
+  const segments = relToHome.split(sep);
+  if (relToHome === "" || isAbsolute(relToHome) || relToHome === ".." || relToHome.startsWith(`..${sep}`) || segments[0] !== "books" || segments[1] === void 0 || segments[1] === "" || segments[1] === "." || segments[1] === "..") {
+    throw new ActivationLedgerError(
+      `sitian record sessionDir must be under a ledger book (${ledgerHome}): ${sessionDir}`
+    );
+  }
+  const bookRoot = join(absoluteHome, "books", segments[1]);
+  let realBookRoot;
+  try {
+    realBookRoot = realpathSync(bookRoot);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger book is not resolvable (${bookRoot}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  let realFile;
+  try {
+    realFile = realpathSync(absoluteFile);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `sitian record session file is not resolvable (${absoluteFile}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  if (realFile !== realBookRoot && !pathContainedIn(realBookRoot, realFile)) {
+    throw new ActivationLedgerError(
+      `sitian record session must be under the ledger book (${bookRoot}): ${recentFile}`
+    );
+  }
+}
 function createRecordSession(options) {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
@@ -39,7 +78,10 @@ function createRecordSession(options) {
   const mayResumeSameNest = options.subject !== void 0 || options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest) {
     const recentFile = findMostRecentSession(sessionDir, cwd);
-    if (recentFile !== null) return SessionManager.open(recentFile, sessionDir, cwd);
+    if (recentFile !== null) {
+      assertRecentFinalFileUnderLedgerHome(ledgerHome, sessionDir, recentFile);
+      return SessionManager.open(recentFile, sessionDir, cwd);
+    }
   }
   const session = SessionManager.create(
     cwd,

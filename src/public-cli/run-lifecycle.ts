@@ -12,6 +12,15 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { CliUsageError } from "./cli-errors.ts";
+import {
+  readLatestTypedProviderHttpObservation,
+} from "../typed-provider-http.ts";
+export {
+  clearTypedProviderHttpObservation,
+  recordTypedProviderHttpStatus,
+  readLatestTypedProviderHttpObservation,
+  type TypedProviderHttpObservation,
+} from "../typed-provider-http.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import {
@@ -65,7 +74,6 @@ export type RoleRunRecord = {
 export const RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]" as const;
 
 const RUN_STATE_FILE = "run-state.json";
-const TYPED_HTTP_FILE = "typed-provider-http.json";
 const WRITER_LOCK_FILE = "writer.lock";
 
 export function isV1ResumableProvider(
@@ -74,84 +82,14 @@ export function isV1ResumableProvider(
   return (V1_RESUMABLE_PROVIDERS as readonly string[]).includes(provider);
 }
 
-function typedProviderHttpPath(runDirectory: string): string {
-  return join(runDirectory, TYPED_HTTP_FILE);
-}
-
-/**
- * Clear any prior attempt's typed provider HTTP observation.
- * Each initial/resume dispatch must start without inherited 429 evidence so
- * only the current attempt can qualify v1 resume.
- */
-export async function clearTypedProviderHttpObservation(
-  runDirectory: string,
-): Promise<void> {
-  try {
-    await unlink(typedProviderHttpPath(runDirectory));
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "ENOENT"
-    ) {
-      return;
-    }
-    throw error;
-  }
-}
-
-/**
- * Record a typed provider HTTP status observation for the admitted run.
- * The latest observation is authoritative: only a current HTTP 429 from
- * Codex/xAI is retained for v1 resume; any other status or provider clears
- * prior within-attempt 429 evidence. Never inspects diagnostic prose.
- */
-export async function recordTypedProviderHttpStatus(
-  runDirectory: string,
-  observation: { readonly httpStatus: number; readonly provider: string },
-): Promise<void> {
-  if (
-    observation.httpStatus === 429 &&
-    isV1ResumableProvider(observation.provider)
-  ) {
-    const body: TypedHttp429Observation = {
-      httpStatus: 429,
-      provider: observation.provider,
-    };
-    await writeFile(
-      typedProviderHttpPath(runDirectory),
-      `${JSON.stringify(body)}\n`,
-      "utf8",
-    );
-    return;
-  }
-  // Non-qualifying latest response supersedes any earlier 429 in this attempt.
-  await clearTypedProviderHttpObservation(runDirectory);
-}
-
-/**
- * Read a durable typed HTTP 429 observation. Returns undefined unless both
- * httpStatus === 429 and provider is a v1-resumable provider are present as
- * typed fields (never inferred from prose).
- */
 export async function readTypedHttp429Observation(
   runDirectory: string,
 ): Promise<TypedHttp429Observation | undefined> {
-  try {
-    const raw: unknown = JSON.parse(
-      await readFile(typedProviderHttpPath(runDirectory), "utf8"),
-    );
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      return undefined;
-    }
-    const record = raw as Record<string, unknown>;
-    if (record.httpStatus !== 429) return undefined;
-    if (typeof record.provider !== "string") return undefined;
-    if (!isV1ResumableProvider(record.provider)) return undefined;
-    return { httpStatus: 429, provider: record.provider };
-  } catch {
-    return undefined;
-  }
+  const observation = await readLatestTypedProviderHttpObservation(runDirectory);
+  if (observation === undefined) return undefined;
+  if (observation.httpStatus !== 429) return undefined;
+  if (!isV1ResumableProvider(observation.provider)) return undefined;
+  return { httpStatus: 429, provider: observation.provider };
 }
 
 /**
