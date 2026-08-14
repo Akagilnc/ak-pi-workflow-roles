@@ -328,24 +328,48 @@ export type ParseMergerArgvResult = {
 };
 
 /**
- * #336/#337 taishi public argv.
- * Issue mode (#336): --ticket / --project-root (at least one).
- * Sweep mode (#337): optional positional `sweep` and/or --attach paths;
- * sweep payload rides exactly one typed JSON attachment (not argv/stdin).
+ * #336/#337/#338 taishi public argv — four faces on one registration seam.
+ * - issue (default): ticket N and/or project-root P
+ * - sweep (#337): optional positional `sweep` and/or --attach paths;
+ *   sweep payload rides exactly one typed JSON attachment (not argv/stdin)
+ * - cohort: two labeled issue-number groups
+ * - model-groups: one or more project-root scope keys
  */
-export type ParseTaishiArgvResult = {
+export type ParseTaishiIssueArgv = {
+  readonly query: "issue";
   /** Caller ticket / issue number face (#176 numbering space). */
   readonly ticket?: number;
   /** Direct projectRoot mechanical key (ADR 0068). */
   readonly projectRoot?: string;
+};
+
+export type ParseTaishiSweepArgv = {
+  readonly query: "sweep";
   /**
    * Public CLI attachment paths (--attach). Sweep mode only (#337).
-   * Empty when issue mode; cardinality validated on the sweep run path.
+   * Cardinality validated on the sweep run path (exactly one).
    */
   readonly attachmentPaths: readonly string[];
-  /** True when caller selected sweep via positional `sweep` token. */
-  readonly sweepMode: boolean;
 };
+
+export type ParseTaishiCohortArgv = {
+  readonly query: "cohort";
+  readonly groups: readonly [
+    { readonly groupLabel: string; readonly issues: readonly number[] },
+    { readonly groupLabel: string; readonly issues: readonly number[] },
+  ];
+};
+
+export type ParseTaishiModelGroupsArgv = {
+  readonly query: "model-groups";
+  readonly projectRoots: readonly string[];
+};
+
+export type ParseTaishiArgvResult =
+  | ParseTaishiIssueArgv
+  | ParseTaishiSweepArgv
+  | ParseTaishiCohortArgv
+  | ParseTaishiModelGroupsArgv;
 
 /** Honest activation-class failure while deriving the active-merge envelope. */
 export class MergerEnvelopeDerivationError extends Error {
@@ -2039,16 +2063,45 @@ export function parseTaishiTicketNumber(raw: string): number {
   return Number(trimmed);
 }
 
+function parseTaishiIssueNumberList(raw: string, flag: string): number[] {
+  const trimmed = raw.trim();
+  if (trimmed === "") {
+    throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
+  }
+  const parts = trimmed.split(",").map((part) => part.trim());
+  if (parts.some((part) => part === "")) {
+    throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
+  }
+  return parts.map((part) => parseTaishiTicketNumber(part));
+}
+
+function requireOptionValue(
+  flag: string,
+  value: string | undefined,
+  what: string,
+): string {
+  if (value === undefined || value.trim() === "") {
+    throw new CliUsageError(`${flag} requires ${what}`);
+  }
+  return value;
+}
+
 /**
- * Parse taishi-specific argv after the `taishi` token (#336/#337).
+ * Parse taishi-specific argv after the `taishi` token (#336/#337/#338).
  * Issue: at least one of --ticket / --project-root.
  * Sweep: positional `sweep` and/or --attach; payload is the attachment body only.
- * Issue faces and sweep faces are mutually exclusive.
+ * Cohort / model-groups: explicit query flags with their own required faces.
+ * Faces are mutually exclusive.
  */
 export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult {
+  let query: "issue" | "cohort" | "model-groups" = "issue";
   let ticketRaw: string | undefined;
-  let projectRoot: string | undefined;
-  let sweepMode = false;
+  const projectRoots: string[] = [];
+  let groupALabel: string | undefined;
+  let groupAIssuesRaw: string | undefined;
+  let groupBLabel: string | undefined;
+  let groupBIssuesRaw: string | undefined;
+  let sweepToken = false;
   const attachmentPaths: string[] = [];
   const tokens = [...args];
 
@@ -2059,6 +2112,20 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
         throw new CliUsageError(`unexpected taishi argument: ${tokens[0]}`);
       }
       break;
+    }
+    if (token === "--cohort") {
+      if (query !== "issue") {
+        throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+      }
+      query = "cohort";
+      continue;
+    }
+    if (token === "--model-groups") {
+      if (query !== "issue") {
+        throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+      }
+      query = "model-groups";
+      continue;
     }
     if (token === "--ticket") {
       const value = tokens.shift();
@@ -2076,13 +2143,68 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
       continue;
     }
     if (token === "--project-root") {
-      projectRoot = requireOptionPath("--project-root", tokens.shift());
+      projectRoots.push(requireOptionPath("--project-root", tokens.shift()));
       continue;
     }
     if (token.startsWith("--project-root=")) {
-      projectRoot = requireOptionPath(
-        "--project-root",
-        token.slice("--project-root=".length),
+      projectRoots.push(
+        requireOptionPath("--project-root", token.slice("--project-root=".length)),
+      );
+      continue;
+    }
+    if (token === "--group-a-label") {
+      groupALabel = requireOptionValue("--group-a-label", tokens.shift(), "a label");
+      continue;
+    }
+    if (token.startsWith("--group-a-label=")) {
+      groupALabel = requireOptionValue(
+        "--group-a-label",
+        token.slice("--group-a-label=".length),
+        "a label",
+      );
+      continue;
+    }
+    if (token === "--group-a-issues") {
+      groupAIssuesRaw = requireOptionValue(
+        "--group-a-issues",
+        tokens.shift(),
+        "a comma-separated positive integer list",
+      );
+      continue;
+    }
+    if (token.startsWith("--group-a-issues=")) {
+      groupAIssuesRaw = requireOptionValue(
+        "--group-a-issues",
+        token.slice("--group-a-issues=".length),
+        "a comma-separated positive integer list",
+      );
+      continue;
+    }
+    if (token === "--group-b-label") {
+      groupBLabel = requireOptionValue("--group-b-label", tokens.shift(), "a label");
+      continue;
+    }
+    if (token.startsWith("--group-b-label=")) {
+      groupBLabel = requireOptionValue(
+        "--group-b-label",
+        token.slice("--group-b-label=".length),
+        "a label",
+      );
+      continue;
+    }
+    if (token === "--group-b-issues") {
+      groupBIssuesRaw = requireOptionValue(
+        "--group-b-issues",
+        tokens.shift(),
+        "a comma-separated positive integer list",
+      );
+      continue;
+    }
+    if (token.startsWith("--group-b-issues=")) {
+      groupBIssuesRaw = requireOptionValue(
+        "--group-b-issues",
+        token.slice("--group-b-issues=".length),
+        "a comma-separated positive integer list",
       );
       continue;
     }
@@ -2101,33 +2223,112 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
     }
     // Optional sweep mode token (like coder plan/apply); only once, no other positionals.
     if (token === "sweep") {
-      if (sweepMode) {
+      if (sweepToken) {
         throw new CliUsageError("unexpected taishi argument: sweep");
       }
-      sweepMode = true;
+      sweepToken = true;
       continue;
     }
     throw new CliUsageError(`unexpected taishi argument: ${token}`);
   }
 
-  const hasIssueFace = ticketRaw !== undefined || projectRoot !== undefined;
-  const hasSweepFace = sweepMode || attachmentPaths.length > 0;
+  const hasSweepFace = sweepToken || attachmentPaths.length > 0;
+  const hasCohortFlags =
+    groupALabel !== undefined
+    || groupAIssuesRaw !== undefined
+    || groupBLabel !== undefined
+    || groupBIssuesRaw !== undefined;
 
-  if (!hasIssueFace && !hasSweepFace) {
-    throw new CliUsageError(
-      "usage: ak-role taishi ((--ticket <N> | --project-root <P>) | [sweep] --attach <sweep.json>)",
-    );
+  if (query === "cohort") {
+    if (
+      groupALabel === undefined
+      || groupAIssuesRaw === undefined
+      || groupBLabel === undefined
+      || groupBIssuesRaw === undefined
+    ) {
+      throw new CliUsageError(
+        "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>",
+      );
+    }
+    if (ticketRaw !== undefined || projectRoots.length > 0) {
+      throw new CliUsageError(
+        "taishi --cohort does not accept --ticket or --project-root",
+      );
+    }
+    if (hasSweepFace) {
+      throw new CliUsageError(
+        "taishi --cohort does not accept sweep --attach",
+      );
+    }
+    return {
+      query: "cohort",
+      groups: [
+        {
+          groupLabel: groupALabel,
+          issues: parseTaishiIssueNumberList(groupAIssuesRaw, "--group-a-issues"),
+        },
+        {
+          groupLabel: groupBLabel,
+          issues: parseTaishiIssueNumberList(groupBIssuesRaw, "--group-b-issues"),
+        },
+      ],
+    };
   }
 
-  if (hasIssueFace && hasSweepFace) {
+  if (query === "model-groups") {
+    if (projectRoots.length === 0) {
+      throw new CliUsageError(
+        "usage: ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]",
+      );
+    }
+    if (ticketRaw !== undefined) {
+      throw new CliUsageError("taishi --model-groups does not accept --ticket");
+    }
+    if (hasCohortFlags) {
+      throw new CliUsageError("taishi --model-groups does not accept cohort group flags");
+    }
+    if (hasSweepFace) {
+      throw new CliUsageError(
+        "taishi --model-groups does not accept sweep --attach",
+      );
+    }
+    return {
+      query: "model-groups",
+      projectRoots,
+    };
+  }
+
+  // default issue or sweep (#336/#337 faces)
+  if (hasCohortFlags) {
+    throw new CliUsageError("taishi issue query does not accept cohort group flags");
+  }
+
+  if (hasSweepFace) {
+    if (ticketRaw !== undefined || projectRoots.length > 0) {
+      throw new CliUsageError(
+        "taishi sweep --attach cannot combine with --ticket or --project-root",
+      );
+    }
+    return {
+      query: "sweep",
+      attachmentPaths,
+    };
+  }
+
+  if (projectRoots.length > 1) {
     throw new CliUsageError(
-      "taishi sweep --attach cannot combine with --ticket or --project-root",
+      "taishi issue query accepts at most one --project-root (use --model-groups for many)",
+    );
+  }
+  const projectRoot = projectRoots[0];
+  if (ticketRaw === undefined && projectRoot === undefined) {
+    throw new CliUsageError(
+      "usage: ak-role taishi ((--ticket <N> | --project-root <P>) | [sweep] --attach <sweep.json> | --cohort ... | --model-groups ...)",
     );
   }
 
   return {
-    attachmentPaths,
-    sweepMode: hasSweepFace,
+    query: "issue",
     ...(ticketRaw === undefined
       ? {}
       : { ticket: parseTaishiTicketNumber(ticketRaw) }),

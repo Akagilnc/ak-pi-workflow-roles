@@ -6,7 +6,11 @@
  * C1: sweep = merged PR list + LOC → backfill issue pages + maintain library index.
  * C2: cohort = two issue-number groups → join library index → contrast query output.
  * C3: model-groups = caller issue set → scan union → per-leg model aggregate.
+ * #338: retrieval compute-if-missing — sync wait for sole kernel, then full result.
+ * Whole-compute failure is typed terminal for this pull (no pending envelope).
+ * "Unobtrusive / non-blocking" binds #337 merge auto-trigger only, not user query.
  */
+import { readFile } from "node:fs/promises";
 import { Type, type Static } from "typebox";
 
 import { physicalPathIdentity, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
@@ -29,10 +33,50 @@ import {
 } from "./taishi-model-groups.ts";
 import {
   buildTaishiIssueMetricsPage,
+  taishiIssuePagePath,
   writeTaishiIssueMetricsPage,
   type TaishiIssueMetricsPage,
   type TaishiUnreadableRun,
 } from "./taishi-page.ts";
+
+/** #338 compute-if-missing failure — issue identity + real cause (CLI → ControlledFailure). */
+export class TaishiIssueComputeError extends Error {
+  readonly code = "taishi-issue-compute-failed" as const;
+  readonly projectRoot: string;
+  readonly issueNumber?: number;
+
+  constructor(input: {
+    readonly projectRoot: string;
+    readonly issueNumber?: number;
+    readonly cause: unknown;
+  }) {
+    const root = physicalPathIdentity(input.projectRoot);
+    const causeText =
+      input.cause instanceof Error
+        ? input.cause.message || input.cause.name
+        : String(input.cause);
+    const issueFace =
+      input.issueNumber === undefined
+        ? `projectRoot ${root}`
+        : `issue ${input.issueNumber} (projectRoot ${root})`;
+    super(`taishi compute failed for ${issueFace}: ${causeText}`, {
+      cause: input.cause,
+    });
+    this.name = "TaishiIssueComputeError";
+    this.projectRoot = root;
+    if (input.issueNumber !== undefined) {
+      this.issueNumber = input.issueNumber;
+    }
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof Error
+    && "code" in error
+    && (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
+}
 
 /** Issue-mode typed input — single-issue scope via projectRoot mechanical key. */
 export type TaishiIssueModeInput = {
@@ -139,6 +183,49 @@ export type TaishiResult =
   | TaishiCohortModeResult
   | TaishiModelGroupsModeResult;
 
+/**
+ * #338 retrieval primitive (sync): use persisted page when present; otherwise
+ * await the sole issue compute kernel (runTaishiIssueMode) which writes via the
+ * existing page entry, then return the full result. No pending/async envelope.
+ * Compute failures throw TaishiIssueComputeError (issue identity + real cause)
+ * and terminate this pull — never washed to absent/partial success.
+ * Single-run unreadable/damaged stays page-local exclusion (PRD #298), not a
+ * whole-compute failure. Sweep / explicit recompute still use runTaishiIssueMode.
+ */
+export async function readOrComputeTaishiIssuePage(
+  input: TaishiIssueModeInput,
+): Promise<TaishiIssueModeResult> {
+  const ledgerHome = resolveActivationLedgerHome();
+  const projectRoot = physicalPathIdentity(input.projectRoot);
+  const pagePath = taishiIssuePagePath(ledgerHome, projectRoot);
+
+  try {
+    const raw = await readFile(pagePath, "utf8");
+    const page = JSON.parse(raw) as TaishiIssueMetricsPage;
+    return { mode: "issue", page, pagePath };
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      // Corrupt / blocked page path — loud with issue identity, not absent.
+      throw new TaishiIssueComputeError({
+        projectRoot,
+        ...(input.issueNumber === undefined ? {} : { issueNumber: input.issueNumber }),
+        cause: error,
+      });
+    }
+  }
+
+  try {
+    return await runTaishiIssueMode(input);
+  } catch (error) {
+    if (error instanceof TaishiIssueComputeError) throw error;
+    throw new TaishiIssueComputeError({
+      projectRoot,
+      ...(input.issueNumber === undefined ? {} : { issueNumber: input.issueNumber }),
+      cause: error,
+    });
+  }
+}
+
 async function runTaishiIssueMode(
   input: TaishiIssueModeInput | TaishiMergedPullRequest,
 ): Promise<TaishiIssueModeResult> {
@@ -235,6 +322,12 @@ async function runTaishiModelGroupsMode(
     projectRoots.push(identity);
   }
 
+  // #338: ensure each scope root has a persisted issue page (compute-if-missing)
+  // via the sole issue kernel + existing writer, then aggregate from live scan.
+  for (const projectRoot of projectRoots) {
+    await readOrComputeTaishiIssuePage({ mode: "issue", projectRoot });
+  }
+
   for (const projectRoot of projectRoots) {
     const scan = await scanTaishiIssueRuns({ projectRoot });
     runs.push(...scan.runs);
@@ -259,11 +352,12 @@ async function runTaishiModelGroupsMode(
  * - Issue mode: scope → scan (typed facts) → family compose → atomic replace.
  *   When issueNumber present, also upsert library index (C2 cohort join face).
  * - Sweep mode: for each merged PR entry run issue kernel, upsert library index.
- * - Cohort mode: join library index by issueNumber → fold present pages → contrast.
- * - Model-groups mode: issue-set scope → scan union → per-leg model aggregate.
+ * - Cohort mode: join library index by issueNumber → ensure pages (#338) → contrast.
+ * - Model-groups mode: issue-set scope → ensure pages (#338) → scan union → aggregate.
  * Metric-family kernels (B/C waves) drop a module under taishi-metric-families/
  * and consume scan facts without opening a second entry or second parse kernel.
  * Machine home is package-owned (ADR 0048) — never an invocation field.
+ * Retrieval compute-if-missing is readOrComputeTaishiIssuePage (not a second kernel).
  */
 export async function runTaishi(input: TaishiIssueModeInput): Promise<TaishiIssueModeResult>;
 export async function runTaishi(input: TaishiSweepModeInput): Promise<TaishiSweepModeResult>;
@@ -278,7 +372,14 @@ export async function runTaishi(input: TaishiInput): Promise<TaishiResult> {
   }
   if (input.mode === "cohort") {
     const ledgerHome = resolveActivationLedgerHome();
-    return runTaishiCohortMode(ledgerHome, input);
+    return runTaishiCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber }) => {
+      const ensured = await readOrComputeTaishiIssuePage({
+        mode: "issue",
+        projectRoot,
+        issueNumber,
+      });
+      return ensured.page;
+    });
   }
   if (input.mode === "model-groups") {
     return runTaishiModelGroupsMode(input);
