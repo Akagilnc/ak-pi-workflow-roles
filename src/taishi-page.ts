@@ -41,6 +41,12 @@ export type TaishiUnreadableRun = {
   readonly reason: string;
   /** Partial typed fact from A2 seam — B-wave projections sort/annotate from this. */
   readonly firstFrameAt: TaishiFirstFrameAt;
+  /**
+   * Available session end-frame when classify obtained one before loud failure.
+   * Feeds lastActivityAt (PRD ②: max end-frame across ALL runs); still excluded
+   * from totalElapsedMs / ranking stats.
+   */
+  readonly lastFrameAt: TaishiOptionalTimestamp;
 };
 
 /** One readable in-scope leg (A1 identity only; metric families enrich via sections). */
@@ -60,7 +66,7 @@ export type TaishiOptionalMetricNumber =
 
 /**
  * Optional timestamp face (same shape as firstFrameAt).
- * Used for 末次活动时间戳 when no readable end-frame exists.
+ * Used for 末次活动时间戳 when no available end-frame exists.
  */
 export type TaishiOptionalTimestamp =
   | { readonly status: "present"; readonly at: string }
@@ -82,11 +88,11 @@ export type TaishiIssueMetricsPage = {
   readonly unreadableCount: number;
   /** 完全耗时 — Σ readable leg wall clocks (0 when no readable runs). */
   readonly totalElapsedMs: number;
-  /** 排除后改动行数 — caller typed input retained; absent when omitted or ≤0. */
+  /** 排除后改动行数 — caller typed input retained; absent when omitted or 0. */
   readonly changedLines: TaishiOptionalMetricNumber;
   /** 耗时/千行 — typed 空缺 when LOC absent/0 (no division, never 0/∞). */
   readonly msPerKLines: TaishiOptionalMetricNumber;
-  /** 末次活动时间戳 — max readable run end-frame timestamp. */
+  /** 末次活动时间戳 — max end-frame across ALL runs (incl. unreadable available). */
   readonly lastActivityAt: TaishiOptionalTimestamp;
 };
 
@@ -116,15 +122,14 @@ function sortUnreadable(
   });
 }
 
-/** Normalize caller LOC: omit / non-finite / ≤0 → typed 空缺. */
+/**
+ * Normalize caller LOC: only omit or 0 → typed 空缺 (PRD efficiency口径).
+ * NaN / negative / ±Infinity are not washed — illegal input follows entry contract.
+ */
 export function normalizeTaishiChangedLines(
   changedLines: number | undefined,
 ): TaishiOptionalMetricNumber {
-  if (
-    changedLines === undefined
-    || !Number.isFinite(changedLines)
-    || changedLines <= 0
-  ) {
+  if (changedLines === undefined || changedLines === 0) {
     return { status: "absent" };
   }
   return { status: "present", value: changedLines };
@@ -152,9 +157,14 @@ function frameSpanWallMs(span: {
   return Date.parse(span.endedAt) - Date.parse(span.startedAt);
 }
 
-/** Σ readable wall clocks + max end-frame (C1 efficiency / index projection). */
+/**
+ * Σ readable wall clocks + max end-frame across ALL runs (C1 efficiency / index).
+ * Unreadable runs never enter totalElapsedMs; their available lastFrameAt still
+ * competes for lastActivityAt (PRD ②: 全部 run 末帧之最大者).
+ */
 export function summarizeTaishiRunEfficiency(
   runs: readonly TaishiReadableRunFacts[],
+  unreadable: readonly TaishiUnreadableRun[] = [],
 ): {
   readonly totalElapsedMs: number;
   readonly lastActivityAt: TaishiOptionalTimestamp;
@@ -164,6 +174,13 @@ export function summarizeTaishiRunEfficiency(
   for (const run of runs) {
     totalElapsedMs += frameSpanWallMs(run.frameSpan);
     const endedAt = run.frameSpan.endedAt;
+    if (latestEndedAt === undefined || endedAt > latestEndedAt) {
+      latestEndedAt = endedAt;
+    }
+  }
+  for (const entry of unreadable) {
+    if (entry.lastFrameAt.status !== "present") continue;
+    const endedAt = entry.lastFrameAt.at;
     if (latestEndedAt === undefined || endedAt > latestEndedAt) {
       latestEndedAt = endedAt;
     }
@@ -192,7 +209,10 @@ export function buildTaishiIssueMetricsPage(input: {
   );
   const unreadable = sortUnreadable(input.unreadable);
   const projectRoot = physicalPathIdentity(input.projectRoot);
-  const { totalElapsedMs, lastActivityAt } = summarizeTaishiRunEfficiency(input.runs);
+  const { totalElapsedMs, lastActivityAt } = summarizeTaishiRunEfficiency(
+    input.runs,
+    unreadable,
+  );
   const changedLines = normalizeTaishiChangedLines(input.changedLines);
   const msPerKLines = computeTaishiMsPerKLines(totalElapsedMs, changedLines);
   const envelope = {

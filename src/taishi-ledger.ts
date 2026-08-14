@@ -27,6 +27,7 @@ import {
 import type {
   TaishiFirstFrameAt,
   TaishiMissingSource,
+  TaishiOptionalTimestamp,
   TaishiUnreadableRun,
 } from "./taishi-page.ts";
 
@@ -146,8 +147,9 @@ async function classifyScopedRun(input: {
   let frameSpan: TaishiRunFrameSpan | undefined;
   let toolIntervals: readonly SessionToolInterval[] | undefined;
   let terminal: TaishiRunTerminalFace | undefined;
-  /** Partial first-frame retained when full session span cannot be admitted. */
+  /** Partial first/last frame retained when full session span cannot be admitted. */
   let partialFirstFrameAt: TaishiFirstFrameAt = { status: "absent" };
+  let partialLastFrameAt: TaishiOptionalTimestamp = { status: "absent" };
 
   // 1) session timeline
   const sessionFile = await resolveSessionFile(input.runDirectory);
@@ -158,9 +160,12 @@ async function classifyScopedRun(input: {
     if (span.startedAt === undefined || span.endedAt === undefined) {
       missingSources.push("session-timeline");
       reasons.push("session timeline has no usable timestamps");
-      // Span incomplete, but a lone usable timestamp is still a typed first frame.
+      // Span incomplete, but any usable timestamp remains a typed partial fact.
       if (span.startedAt !== undefined) {
         partialFirstFrameAt = { status: "present", at: span.startedAt };
+      }
+      if (span.endedAt !== undefined) {
+        partialLastFrameAt = { status: "present", at: span.endedAt };
       }
     } else {
       frameSpan = { startedAt: span.startedAt, endedAt: span.endedAt };
@@ -168,11 +173,14 @@ async function classifyScopedRun(input: {
   } catch (error) {
     missingSources.push("session-timeline");
     reasons.push(errorText(error));
-    // Single parse kernel: recover first-frame from rows read before the loud line.
+    // Single parse kernel: recover first/last frame from rows read before the loud line.
     if (error instanceof LedgerSessionJsonlError) {
       const span = extractSessionTimestampSpan(error.prefixRows);
       if (span.startedAt !== undefined) {
         partialFirstFrameAt = { status: "present", at: span.startedAt };
+      }
+      if (span.endedAt !== undefined) {
+        partialLastFrameAt = { status: "present", at: span.endedAt };
       }
     }
   }
@@ -210,11 +218,15 @@ async function classifyScopedRun(input: {
   }
 
   if (missingSources.length > 0) {
-    // Prefer full-span start when session was admitted; else partial prefix fact.
+    // Prefer full-span edges when session was admitted; else partial prefix facts.
     const firstFrameAt: TaishiFirstFrameAt =
       frameSpan !== undefined
         ? { status: "present", at: frameSpan.startedAt }
         : partialFirstFrameAt;
+    const lastFrameAt: TaishiOptionalTimestamp =
+      frameSpan !== undefined
+        ? { status: "present", at: frameSpan.endedAt }
+        : partialLastFrameAt;
     return {
       kind: "unreadable",
       entry: {
@@ -223,6 +235,7 @@ async function classifyScopedRun(input: {
         missingSources,
         reason: reasons.join("; "),
         firstFrameAt,
+        lastFrameAt,
       },
     };
   }
