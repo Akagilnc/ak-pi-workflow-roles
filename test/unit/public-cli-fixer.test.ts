@@ -17,7 +17,6 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -584,7 +583,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     // Binding path under test: machine dispatch lease must be claimed on admit.
-    offerTestDispatchLease(home, project);
     const runId = "run-cli-fixer-resume-plan";
     const instruction = "Propose the first repair plan for resume.";
 
@@ -632,25 +630,21 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { phase: string; role: string; packetPath: string; correlationId: string; ticketNumber: number };
+    ) as { phase: string; role: string; packetPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "fixer");
     assert.equal(admitted.phase, "plan");
-    assert.equal(typeof admitted.correlationId, "string");
-    assert.notEqual(admitted.correlationId, "");
-    assert.equal(admitted.ticketNumber, 176);
+    assert.equal(admitted.ticketNumber, undefined);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
-    let resumeEnv: NodeJS.ProcessEnv | undefined;
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
       home,
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args, options) => {
+      piRunner: async (args) => {
         resumeArgs = [...args];
-        resumeEnv = options.env;
         assert.equal(args[args.indexOf("--ak-role") + 1], "fixer");
         assert.equal(args[args.indexOf("--ak-fixer-phase") + 1], "plan");
         assert.equal(args[args.indexOf("--ak-fix-packet") + 1], admitted.packetPath);
@@ -692,7 +686,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         : undefined,
       "planned",
     );
-    assert.equal(resumeEnv?.AK_CORRELATION_ID, admitted.correlationId);
   });
 });
 

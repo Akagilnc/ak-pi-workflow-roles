@@ -24,7 +24,6 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -1175,8 +1174,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    // Machine lease claim owns correlation; deprecated env id must not win.
-    offerTestDispatchLease(home, project);
+    // ADR 0049 host correlation channel remains optional env; no lease mint.
     const attachment = join(home, "note.txt");
     await writeFile(attachment, "freeze-me", "utf8");
 
@@ -1296,10 +1294,8 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     assert.match(prompt, /attachments\/00-note\.txt/);
     assert.equal(prompt.includes(attachment), false);
 
-    assert.equal(typeof capturedEnv?.AK_CORRELATION_ID, "string");
-    assert.notEqual(capturedEnv?.AK_CORRELATION_ID, "");
-    assert.notEqual(capturedEnv?.AK_CORRELATION_ID, "corr-106-unit");
-    assert.notEqual(capturedEnv?.AK_CORRELATION_ID, "176");
+    // ADR 0049 host correlation channel: optional env id reaches the child when present.
+    assert.equal(capturedEnv?.AK_CORRELATION_ID, "corr-106-unit");
     assert.equal(
       typeof capturedEnv?.AK_ROLE_RUN_DIR === "string" &&
         capturedEnv.AK_ROLE_RUN_DIR.includes("run-cli-judge-001@judge"),

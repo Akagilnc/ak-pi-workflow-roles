@@ -18,7 +18,6 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -466,8 +465,6 @@ test("ak-role resume continues coder with preserved plan phase and exact session
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    // Binding path under test: machine dispatch lease must be claimed on admit.
-    offerTestDispatchLease(home, project);
     const runId = "run-cli-coder-resume-plan";
     const instruction = "Propose the first implementation plan for resume.";
 
@@ -515,25 +512,21 @@ test("ak-role resume continues coder with preserved plan phase and exact session
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { phase: string; role: string; taskPath: string; correlationId: string; ticketNumber: number };
+    ) as { phase: string; role: string; taskPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "coder");
     assert.equal(admitted.phase, "plan");
-    assert.equal(typeof admitted.correlationId, "string");
-    assert.notEqual(admitted.correlationId, "");
-    assert.equal(admitted.ticketNumber, 176);
+    assert.equal(admitted.ticketNumber, undefined);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
-    let resumeEnv: NodeJS.ProcessEnv | undefined;
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
       home,
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args, options) => {
+      piRunner: async (args) => {
         resumeArgs = [...args];
-        resumeEnv = options.env;
         assert.equal(args[args.indexOf("--ak-role") + 1], "coder");
         assert.equal(args[args.indexOf("--ak-coder-phase") + 1], "plan");
         assert.equal(args[args.indexOf("--ak-coder-task") + 1], admitted.taskPath);
@@ -575,6 +568,5 @@ test("ak-role resume continues coder with preserved plan phase and exact session
         : undefined,
       "planned",
     );
-    assert.equal(resumeEnv?.AK_CORRELATION_ID, admitted.correlationId);
   });
 });

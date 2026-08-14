@@ -16,7 +16,6 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { validateMergerInput } from "../../src/merger-contracts.ts";
 import {
@@ -644,7 +643,6 @@ test("ak-role resume continues merger with package method and exact session", as
     await mkdir(project, { recursive: true });
     await materializeConflictedRepo(project);
     // Binding path under test: machine dispatch lease must be claimed on admit.
-    offerTestDispatchLease(home, project);
     const runId = "run-cli-merger-resume-001";
     const instruction = "Start merge resolution for resume.";
     const material = await loadPackagedMethodSkillMaterial(
@@ -696,24 +694,20 @@ test("ak-role resume continues merger with package method and exact session", as
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { role: string; mergerInputPath: string; correlationId: string; ticketNumber: number };
+    ) as { role: string; mergerInputPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "merger");
-    assert.equal(typeof admitted.correlationId, "string");
-    assert.notEqual(admitted.correlationId, "");
-    assert.equal(admitted.ticketNumber, 176);
+    assert.equal(admitted.ticketNumber, undefined);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
-    let resumeEnv: NodeJS.ProcessEnv | undefined;
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
       home,
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args, options) => {
+      piRunner: async (args) => {
         resumeArgs = [...args];
-        resumeEnv = options.env;
         assert.equal(args[args.indexOf("--ak-role") + 1], "merger");
         assert.equal(
           args[args.indexOf("--ak-merger-input") + 1],
@@ -770,7 +764,6 @@ test("ak-role resume continues merger with package method and exact session", as
         : undefined,
       "escalate",
     );
-    assert.equal(resumeEnv?.AK_CORRELATION_ID, admitted.correlationId);
   });
 });
 

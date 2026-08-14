@@ -612,6 +612,9 @@ export async function runAkRole(
           packageRoot: env.packageRoot,
           cwd,
           credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...(env.judgeExtraPiArgs === undefined
@@ -652,6 +655,9 @@ export async function runAkRole(
           packageRoot: env.packageRoot,
           cwd,
           credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...(env.coderExtraPiArgs === undefined
@@ -692,6 +698,9 @@ export async function runAkRole(
           packageRoot: env.packageRoot,
           cwd,
           credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...(env.fixerExtraPiArgs === undefined
@@ -732,6 +741,9 @@ export async function runAkRole(
           packageRoot: env.packageRoot,
           cwd,
           credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...(env.collectorExtraPiArgs === undefined
@@ -772,6 +784,9 @@ export async function runAkRole(
           packageRoot: env.packageRoot,
           cwd,
           credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...(env.reviewerExtraPiArgs === undefined
@@ -855,6 +870,9 @@ export async function runAkRole(
           packageRoot: env.packageRoot,
           cwd,
           credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...(env.mergerExtraPiArgs === undefined
