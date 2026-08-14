@@ -36,6 +36,10 @@ import {
   writeTaishiLibraryIndexPage,
 } from "../../src/taishi-index.ts";
 import {
+  readOrComputeTaishiIssuePage,
+  runTaishi,
+} from "../../src/taishi-entry.ts";
+import {
   taishiIssuePageKey,
   taishiIssuePagePath,
   type TaishiIssueMetricsPage,
@@ -520,6 +524,52 @@ test("taishi #338 single-run damage: unreadable exclusion on page; retrieval sti
       ) as TaishiIssueMetricsPage;
       assert.equal(disk.unreadableCount, 1);
       assert.equal(disk.unreadable[0]!.runId, NEG_RUN);
+    });
+  });
+});
+
+test("taishi #338 cached page must match requested ticket scope or recompute", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async () => {
+      // Root-only compute leaves a page without issueNumber binding.
+      const rootOnly = await runTaishi({
+        mode: "issue",
+        projectRoot: ISSUE_ROOT,
+      });
+      assert.equal(rootOnly.page.issueNumber, undefined);
+
+      const ticket = 6611;
+      const scoped = await readOrComputeTaishiIssuePage({
+        mode: "issue",
+        projectRoot: ISSUE_ROOT,
+        ticketNumber: ticket,
+        issueNumber: ticket,
+      });
+      assert.equal(scoped.page.issueNumber, ticket);
+      const disk = JSON.parse(
+        await readFile(scoped.pagePath, "utf8"),
+      ) as TaishiIssueMetricsPage;
+      assert.equal(disk.issueNumber, ticket);
+
+      // Same ticket scope may reuse the bound page.
+      const again = await readOrComputeTaishiIssuePage({
+        mode: "issue",
+        projectRoot: ISSUE_ROOT,
+        ticketNumber: ticket,
+        issueNumber: ticket,
+      });
+      assert.equal(again.page.issueNumber, ticket);
+      assert.deepEqual(again.page, disk);
+
+      // Different ticket on the same root path must recompute, not accept the cache.
+      const other = 6612;
+      const switched = await readOrComputeTaishiIssuePage({
+        mode: "issue",
+        projectRoot: ISSUE_ROOT,
+        ticketNumber: other,
+        issueNumber: other,
+      });
+      assert.equal(switched.page.issueNumber, other);
     });
   });
 });
