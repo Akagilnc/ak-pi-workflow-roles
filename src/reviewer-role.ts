@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
+export type { CanonicalSkillBinding };
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { appendActiveSessionCustomEntry } from "./compliance-transport.ts";
@@ -51,13 +52,10 @@ export type ReviewerActivation = Readonly<{
   dispatcher: ReturnType<typeof createReviewerDispatcher>;
   fixedBaseRevision: string;
   soul: string;
+  /** Frozen code-review binding — envelope owns expansion capture against this data. */
+  skillBinding: CanonicalSkillBinding<"code-review">;
   /** Honest Spec disposition after accepted dispatch, for envelope parent prompt assembly. */
   getSpecDisposition(): ReviewerSpecDisposition | undefined;
-  /**
-   * Behavior-layer Skill expansion capture. Envelope owns agent_start lifecycle and calls this
-   * before assembling the parent system prompt.
-   */
-  captureCanonicalExpansion(prompt: string, toolCtx: ExtensionContext): void;
 }>;
 
 /**
@@ -75,8 +73,6 @@ export function createReviewerRoleRuntime(
   let binding: CanonicalSkillBinding<"code-review"> | undefined;
   let reader: ReviewerPinnedGitReader | undefined;
   let dispatcher: ReturnType<typeof createReviewerDispatcher> | undefined;
-  let originalRequest: string | undefined;
-  let expansionCaptured = false;
   let registered = false;
   let fixedBaseRevision: string | undefined;
   let acceptedDispatch: AcceptedReviewerDispatch | undefined;
@@ -140,7 +136,6 @@ export function createReviewerRoleRuntime(
             if (!soul || !binding) throw new Error("Reviewer inputs were not loaded");
             requireSoleReviewerOutputCall(id, toolCtx);
             const output = validateReviewerIntent(parameters);
-            if (output.status === "completed" && !expansionCaptured) throw new Error("Reviewer completed requires canonical Skill expansion capture");
             let record: ReviewerExecutionRecord;
             try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx, id); throw error; }
             const candidate = assembleRuntimeReviewerReceipt({
@@ -194,26 +189,19 @@ export function createReviewerRoleRuntime(
               candidate,
             );
           } });
-        pi.on("input", (event) => { if (originalRequest !== undefined) return { action: "continue" as const }; originalRequest = event.text; return { action: "transform" as const, text: binding!.invocation(event.text), ...(event.images === undefined ? {} : { images: event.images }) }; });
-        // agent_start prompt lifecycle is owned by the shared activation envelope.
+        // Skill invocation transform + agent_start expansion/prompt lifecycle: shared envelope (ADR 0018).
         pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });
       }
       const activatedSoul = soul;
       const activatedBase = fixedBaseRevision;
+      const activatedBinding = binding;
       return Object.freeze({
         dispatcher,
         fixedBaseRevision: activatedBase,
         soul: activatedSoul,
+        skillBinding: activatedBinding,
         getSpecDisposition() {
           return acceptedDispatch?.specDisposition;
-        },
-        captureCanonicalExpansion(prompt: string, toolCtx: ExtensionContext) {
-          if (expansionCaptured) return;
-          if (originalRequest === undefined || binding!.captureExpansion(prompt, originalRequest) === undefined) {
-            const error = ledger.recordInfrastructureFailure(new Error("Canonical code-review Skill expansion did not match the captured request"));
-            hostActions.failInfrastructure(error, toolCtx);
-          }
-          expansionCaptured = true;
         },
       });
     },

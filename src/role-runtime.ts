@@ -556,6 +556,9 @@ export function createRoleRuntimeExtension(
     let selectedRole: string | undefined;
     /** Live Reviewer parent activation for envelope agent_start prompt assembly. */
     let activeReviewerParent: ReviewerActivation | undefined;
+    /** Envelope-owned Reviewer Skill expansion state (ADR 0018 — not a role-module facade). */
+    let reviewerOriginalRequest: string | undefined;
+    let reviewerExpansionCaptured = false;
     let navigatorAttendance: NavigatorAttendanceDependency | undefined;
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
@@ -565,9 +568,23 @@ export function createRoleRuntimeExtension(
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
-    pi.on("input", () => {
+    pi.on("input", (event) => {
       const role = pi.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
+      // Envelope exclusively owns Reviewer Skill invocation transform + original-request capture.
+      if (
+        role === "reviewer"
+        && admitted
+        && activeReviewerParent !== undefined
+        && reviewerOriginalRequest === undefined
+      ) {
+        reviewerOriginalRequest = event.text;
+        return {
+          action: "transform" as const,
+          text: activeReviewerParent.skillBinding.invocation(event.text),
+          ...(event.images === undefined ? {} : { images: event.images }),
+        };
+      }
       return { action: "continue" as const };
     });
     pi.on("before_agent_start", (event, ctx) => {
@@ -603,9 +620,20 @@ export function createRoleRuntimeExtension(
         }
       }
       navigatorAttendance?.prepare();
-      // Envelope-owned Reviewer parent prompt assembly (soul + single verification-boundary true source).
+      // Envelope-owned Reviewer expansion capture + parent prompt assembly (no role-module callback).
       if (role === "reviewer" && activeReviewerParent !== undefined) {
-        activeReviewerParent.captureCanonicalExpansion(event.prompt, ctx);
+        if (!reviewerExpansionCaptured) {
+          if (
+            reviewerOriginalRequest === undefined
+            || activeReviewerParent.skillBinding.captureExpansion(event.prompt, reviewerOriginalRequest) === undefined
+          ) {
+            failInfrastructure(
+              new Error("Canonical code-review Skill expansion did not match the captured request"),
+              ctx,
+            );
+          }
+          reviewerExpansionCaptured = true;
+        }
         const specDisposition = activeReviewerParent.getSpecDisposition();
         return {
           systemPrompt: assembleReviewerParentSystemPrompt({
@@ -986,6 +1014,8 @@ export function createRoleRuntimeExtension(
       admitted = false;
       selectedRole = undefined;
       activeReviewerParent = undefined;
+      reviewerOriginalRequest = undefined;
+      reviewerExpansionCaptured = false;
       receiptDelivery = createReceiptDeliveryPolicy();
       noReceiptRecorded = false;
       observationFace.reset();
