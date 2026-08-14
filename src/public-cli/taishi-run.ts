@@ -1,8 +1,10 @@
 /**
- * Public taishi adapter (#336): argv → TaishiIssueModeInput → runTaishi.
+ * Public taishi adapter (#336 / #338): argv → typed query → runTaishi family.
  * Deterministic analysis seat — no Pi runner, no admission lease.
  * Reuses existing CLI failure envelope (CliUsageError + structural reject).
- * Index read reuses readTaishiLibraryIndexPage / findTaishiLibraryIndexRow.
+ * #338: three query faces (issue / cohort / model-groups) on one seam;
+ * retrieval uses compute-if-missing (readOrComputeTaishiIssuePage) so missing
+ * pages are written via the sole issue kernel + existing page writer.
  */
 import {
   physicalPathIdentity,
@@ -13,13 +15,18 @@ import {
   readTaishiLibraryIndexPage,
 } from "../taishi-index.ts";
 import {
+  readOrComputeTaishiIssuePage,
   runTaishi,
+  TaishiIssueComputeError,
   type TaishiIssueModeInput,
 } from "../taishi-entry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
-import type { ParseTaishiArgvResult } from "./invocation.ts";
-import { presentStructuralRejection } from "./settlement.ts";
+import type {
+  ParseTaishiArgvResult,
+  ParseTaishiIssueArgv,
+} from "./invocation.ts";
+import { formatCliDiagnostic, presentStructuralRejection } from "./settlement.ts";
 
 export type TaishiRunEnv = {
   readonly home: string;
@@ -35,7 +42,7 @@ export type TaishiRunEnv = {
  * Bare both-missing is owned by parseTaishiArgv — no second reject here.
  */
 export async function buildTaishiIssueModeInputFromPublicArgv(
-  parsed: ParseTaishiArgvResult,
+  parsed: ParseTaishiIssueArgv,
   ledgerHome: string,
 ): Promise<TaishiIssueModeInput> {
   const ticket = parsed.ticket;
@@ -82,7 +89,7 @@ export async function buildTaishiIssueModeInputFromPublicArgv(
 }
 
 /**
- * Public taishi run path — parse → resolve → runTaishi → typed receipt on stdout.
+ * Public taishi run path — parse → resolve → query (compute-if-missing) → stdout.
  */
 export async function runPublicTaishi(
   argv: readonly string[],
@@ -94,14 +101,39 @@ export async function runPublicTaishi(
     const parsed = parseTaishiArgv(argv);
     // Machine home is package-owned (ADR 0048) — same primitive runTaishi uses.
     const ledgerHome = resolveActivationLedgerHome();
+
+    if (parsed.query === "cohort") {
+      const result = await runTaishi({
+        mode: "cohort",
+        groups: parsed.groups,
+      });
+      io.stdout(`${JSON.stringify(result, null, 2)}\n`);
+      return { exitCode: 0 };
+    }
+
+    if (parsed.query === "model-groups") {
+      const result = await runTaishi({
+        mode: "model-groups",
+        projectRoots: parsed.projectRoots,
+      });
+      io.stdout(`${JSON.stringify(result, null, 2)}\n`);
+      return { exitCode: 0 };
+    }
+
+    // issue query — compute-if-missing (#338); sole kernel on miss.
     const input = await buildTaishiIssueModeInputFromPublicArgv(parsed, ledgerHome);
-    const result = await runTaishi(input);
+    const result = await readOrComputeTaishiIssuePage(input);
     io.stdout(`${JSON.stringify(result, null, 2)}\n`);
     return { exitCode: 0 };
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
       return { exitCode: 2 };
+    }
+    if (error instanceof TaishiIssueComputeError) {
+      // Typed loud compute failure — names issue + real cause (not usage, not absent).
+      io.stderr(formatCliDiagnostic(error.message));
+      return { exitCode: 1 };
     }
     throw error;
   }

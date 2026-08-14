@@ -328,15 +328,36 @@ export type ParseMergerArgvResult = {
 };
 
 /**
- * #336 taishi public argv — two scope faces, at least one required.
- * ticket N = issueNumber (no conversion); project-root = ADR 0068 page key.
+ * #336/#338 taishi public argv — three query faces on one registration seam.
+ * - issue (default): ticket N and/or project-root P
+ * - cohort: two labeled issue-number groups
+ * - model-groups: one or more project-root scope keys
  */
-export type ParseTaishiArgvResult = {
+export type ParseTaishiIssueArgv = {
+  readonly query: "issue";
   /** Caller ticket / issue number face (#176 numbering space). */
   readonly ticket?: number;
   /** Direct projectRoot mechanical key (ADR 0068). */
   readonly projectRoot?: string;
 };
+
+export type ParseTaishiCohortArgv = {
+  readonly query: "cohort";
+  readonly groups: readonly [
+    { readonly groupLabel: string; readonly issues: readonly number[] },
+    { readonly groupLabel: string; readonly issues: readonly number[] },
+  ];
+};
+
+export type ParseTaishiModelGroupsArgv = {
+  readonly query: "model-groups";
+  readonly projectRoots: readonly string[];
+};
+
+export type ParseTaishiArgvResult =
+  | ParseTaishiIssueArgv
+  | ParseTaishiCohortArgv
+  | ParseTaishiModelGroupsArgv;
 
 /** Honest activation-class failure while deriving the active-merge envelope. */
 export class MergerEnvelopeDerivationError extends Error {
@@ -2030,13 +2051,41 @@ export function parseTaishiTicketNumber(raw: string): number {
   return Number(trimmed);
 }
 
+function parseTaishiIssueNumberList(raw: string, flag: string): number[] {
+  const trimmed = raw.trim();
+  if (trimmed === "") {
+    throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
+  }
+  const parts = trimmed.split(",").map((part) => part.trim());
+  if (parts.some((part) => part === "")) {
+    throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
+  }
+  return parts.map((part) => parseTaishiTicketNumber(part));
+}
+
+function requireOptionValue(
+  flag: string,
+  value: string | undefined,
+  what: string,
+): string {
+  if (value === undefined || value.trim() === "") {
+    throw new CliUsageError(`${flag} requires ${what}`);
+  }
+  return value;
+}
+
 /**
- * Parse taishi-specific argv after the `taishi` token (#336).
- * Requires at least one of --ticket / --project-root; no second input type.
+ * Parse taishi-specific argv after the `taishi` token (#336 / #338).
+ * Three query faces on one seam: issue (default) | --cohort | --model-groups.
  */
 export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult {
+  let query: "issue" | "cohort" | "model-groups" = "issue";
   let ticketRaw: string | undefined;
-  let projectRoot: string | undefined;
+  const projectRoots: string[] = [];
+  let groupALabel: string | undefined;
+  let groupAIssuesRaw: string | undefined;
+  let groupBLabel: string | undefined;
+  let groupBIssuesRaw: string | undefined;
   const tokens = [...args];
 
   while (tokens.length > 0) {
@@ -2046,6 +2095,20 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
         throw new CliUsageError(`unexpected taishi argument: ${tokens[0]}`);
       }
       break;
+    }
+    if (token === "--cohort") {
+      if (query !== "issue") {
+        throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+      }
+      query = "cohort";
+      continue;
+    }
+    if (token === "--model-groups") {
+      if (query !== "issue") {
+        throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+      }
+      query = "model-groups";
+      continue;
     }
     if (token === "--ticket") {
       const value = tokens.shift();
@@ -2063,13 +2126,68 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
       continue;
     }
     if (token === "--project-root") {
-      projectRoot = requireOptionPath("--project-root", tokens.shift());
+      projectRoots.push(requireOptionPath("--project-root", tokens.shift()));
       continue;
     }
     if (token.startsWith("--project-root=")) {
-      projectRoot = requireOptionPath(
-        "--project-root",
-        token.slice("--project-root=".length),
+      projectRoots.push(
+        requireOptionPath("--project-root", token.slice("--project-root=".length)),
+      );
+      continue;
+    }
+    if (token === "--group-a-label") {
+      groupALabel = requireOptionValue("--group-a-label", tokens.shift(), "a label");
+      continue;
+    }
+    if (token.startsWith("--group-a-label=")) {
+      groupALabel = requireOptionValue(
+        "--group-a-label",
+        token.slice("--group-a-label=".length),
+        "a label",
+      );
+      continue;
+    }
+    if (token === "--group-a-issues") {
+      groupAIssuesRaw = requireOptionValue(
+        "--group-a-issues",
+        tokens.shift(),
+        "a comma-separated positive integer list",
+      );
+      continue;
+    }
+    if (token.startsWith("--group-a-issues=")) {
+      groupAIssuesRaw = requireOptionValue(
+        "--group-a-issues",
+        token.slice("--group-a-issues=".length),
+        "a comma-separated positive integer list",
+      );
+      continue;
+    }
+    if (token === "--group-b-label") {
+      groupBLabel = requireOptionValue("--group-b-label", tokens.shift(), "a label");
+      continue;
+    }
+    if (token.startsWith("--group-b-label=")) {
+      groupBLabel = requireOptionValue(
+        "--group-b-label",
+        token.slice("--group-b-label=".length),
+        "a label",
+      );
+      continue;
+    }
+    if (token === "--group-b-issues") {
+      groupBIssuesRaw = requireOptionValue(
+        "--group-b-issues",
+        tokens.shift(),
+        "a comma-separated positive integer list",
+      );
+      continue;
+    }
+    if (token.startsWith("--group-b-issues=")) {
+      groupBIssuesRaw = requireOptionValue(
+        "--group-b-issues",
+        token.slice("--group-b-issues=".length),
+        "a comma-separated positive integer list",
       );
       continue;
     }
@@ -2079,13 +2197,83 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
     throw new CliUsageError(`unexpected taishi argument: ${token}`);
   }
 
+  if (query === "cohort") {
+    if (
+      groupALabel === undefined
+      || groupAIssuesRaw === undefined
+      || groupBLabel === undefined
+      || groupBIssuesRaw === undefined
+    ) {
+      throw new CliUsageError(
+        "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>",
+      );
+    }
+    if (ticketRaw !== undefined || projectRoots.length > 0) {
+      throw new CliUsageError(
+        "taishi --cohort does not accept --ticket or --project-root",
+      );
+    }
+    return {
+      query: "cohort",
+      groups: [
+        {
+          groupLabel: groupALabel,
+          issues: parseTaishiIssueNumberList(groupAIssuesRaw, "--group-a-issues"),
+        },
+        {
+          groupLabel: groupBLabel,
+          issues: parseTaishiIssueNumberList(groupBIssuesRaw, "--group-b-issues"),
+        },
+      ],
+    };
+  }
+
+  if (query === "model-groups") {
+    if (projectRoots.length === 0) {
+      throw new CliUsageError(
+        "usage: ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]",
+      );
+    }
+    if (ticketRaw !== undefined) {
+      throw new CliUsageError("taishi --model-groups does not accept --ticket");
+    }
+    if (
+      groupALabel !== undefined
+      || groupAIssuesRaw !== undefined
+      || groupBLabel !== undefined
+      || groupBIssuesRaw !== undefined
+    ) {
+      throw new CliUsageError("taishi --model-groups does not accept cohort group flags");
+    }
+    return {
+      query: "model-groups",
+      projectRoots,
+    };
+  }
+
+  // issue query (default #336 faces)
+  if (
+    groupALabel !== undefined
+    || groupAIssuesRaw !== undefined
+    || groupBLabel !== undefined
+    || groupBIssuesRaw !== undefined
+  ) {
+    throw new CliUsageError("taishi issue query does not accept cohort group flags");
+  }
+  if (projectRoots.length > 1) {
+    throw new CliUsageError(
+      "taishi issue query accepts at most one --project-root (use --model-groups for many)",
+    );
+  }
+  const projectRoot = projectRoots[0];
   if (ticketRaw === undefined && projectRoot === undefined) {
     throw new CliUsageError(
-      "usage: ak-role taishi (--ticket <N> | --project-root <P>)",
+      "usage: ak-role taishi (--ticket <N> | --project-root <P>) | --cohort ... | --model-groups ...",
     );
   }
 
   return {
+    query: "issue",
     ...(ticketRaw === undefined
       ? {}
       : { ticket: parseTaishiTicketNumber(ticketRaw) }),
