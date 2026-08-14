@@ -422,7 +422,11 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           continue;
         }
         const retriable = createRole(role, revise);
-        await retriable.runtime.activate();
+        if (role === "reviewer") {
+          await retriable.runtime.activate(undefined, { baseRevision: "review-base" });
+        } else {
+          await retriable.runtime.activate();
+        }
         if (role === "reviewer") {
           assert.deepEqual(
             retriable.harness.activeTools(),
@@ -442,7 +446,11 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         assert.equal(retriable.auditCalls, 2, `${role} must audit the rejected submission and its resubmission`);
 
         const escalated = createRole(role, escalation);
-        await escalated.runtime.activate();
+        if (role === "reviewer") {
+          await escalated.runtime.activate(undefined, { baseRevision: "review-base" });
+        } else {
+          await escalated.runtime.activate();
+        }
         const escalationTool = escalated.harness.tools.get(tool.name);
         const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-escalate`, outputs[role] as Record<string, unknown>));
         assert.equal(result.terminate, true);
