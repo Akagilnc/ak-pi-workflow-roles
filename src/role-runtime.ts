@@ -57,14 +57,127 @@ import {
   type SoulAuditResult,
 } from "./judge-role.ts";
 import {
-  assembleReviewerParentSystemPrompt,
   createReviewerRoleRuntime,
-  decodeReviewerAdmittedInputs,
-  REVIEWER_TRANSPORT_FLAGS,
   type ReviewerActivation,
+  type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
 import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
+import {
+  REVIEWER_VERIFICATION_BOUNDARY,
+  type ReviewerSpecDisposition,
+} from "./reviewer-construction.ts";
+
+/**
+ * Private transport flag names/definitions for Reviewer admitted inputs.
+ * Shared activation envelope owns registration and decoding (ADR 0018).
+ */
+const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: "ak-review-base",
+    definition: Object.freeze({
+      description: "Fixed base revision for the pinned review target",
+      type: "string" as const,
+    }),
+  }),
+  Object.freeze({
+    name: "ak-review-scope-keys",
+    definition: Object.freeze({
+      description: "Optional comma-separated exact class keys limiting Reviewer scope",
+      type: "string" as const,
+    }),
+  }),
+  Object.freeze({
+    name: "ak-review-authority-refs",
+    definition: Object.freeze({
+      description: "JSON array of durable authority references for Spec evidence-child material only",
+      type: "string" as const,
+    }),
+  }),
+] as const);
+
+/**
+ * Decode private transport flags into frozen admitted inputs.
+ * Envelope-owned; necessary JSON decode only (public --authority-ref owns grammar).
+ */
+function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): ReviewerAdmittedInputs {
+  let reviewScopeKeys: readonly string[] | undefined;
+  const rawScopeKeys = getFlag("ak-review-scope-keys");
+  if (rawScopeKeys !== undefined) {
+    if (typeof rawScopeKeys !== "string" || rawScopeKeys.length === 0) {
+      throw new Error("Reviewer scope keys must be a nonempty comma-separated string");
+    }
+    const parsed = rawScopeKeys.split(",");
+    if (parsed.some((key) => key.trim().length === 0) || new Set(parsed).size !== parsed.length) {
+      throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
+    }
+    reviewScopeKeys = Object.freeze(parsed);
+  }
+
+  let authorityRefs: readonly string[] | undefined;
+  const rawAuthorityRefs = getFlag("ak-review-authority-refs");
+  if (rawAuthorityRefs !== undefined) {
+    if (typeof rawAuthorityRefs !== "string") {
+      throw new Error("Reviewer authority refs transport error: flag value must be a string");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawAuthorityRefs);
+    } catch (error) {
+      throw new Error(
+        `Reviewer authority refs transport error: JSON decode failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string")) {
+      throw new Error("Reviewer authority refs transport error: expected a JSON array of strings");
+    }
+    authorityRefs = Object.freeze(parsed as string[]);
+  }
+
+  const baseRevision = getFlag("ak-review-base");
+  if (typeof baseRevision !== "string" || !baseRevision.trim()) {
+    throw new Error("Reviewer role requires --ak-review-base");
+  }
+  return Object.freeze({
+    baseRevision,
+    ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
+    ...(authorityRefs === undefined ? {} : { authorityRefs }),
+  });
+}
+
+/**
+ * Parent system-prompt assembly for the shared activation envelope.
+ * References REVIEWER_VERIFICATION_BOUNDARY as the single text true source (no copy).
+ */
+function assembleReviewerParentSystemPrompt(input: {
+  baseSystemPrompt: string;
+  soul: string;
+  specDisposition?: ReviewerSpecDisposition;
+}): string {
+  const specDispositionNote =
+    input.specDisposition === "skipped-missing"
+      ? [
+          "",
+          "<reviewer_spec_disposition>",
+          "Spec-Disposition: skipped-missing",
+          "Independent discovery confirmed authoritative Spec is absent.",
+          "No Spec evidence-child was launched. Note Spec skipped/missing honestly in the final report; do not invent requirements.",
+          "</reviewer_spec_disposition>",
+        ]
+      : [];
+  return [
+    input.baseSystemPrompt,
+    "",
+    "<reviewer_soul>",
+    input.soul,
+    "</reviewer_soul>",
+    "",
+    "<reviewer_verification_boundary>",
+    REVIEWER_VERIFICATION_BOUNDARY,
+    "</reviewer_verification_boundary>",
+    ...specDispositionNote,
+  ].join("\n");
+}
 import {
   CODER_OUTPUT_TOOL_NAME,
   createCoderRoleRuntime,
@@ -220,11 +333,11 @@ type ActivationRuntime = {
   reviewer: {
     activate(
       context: ExtensionContext,
-      admitted: import("./reviewer-role.ts").ReviewerAdmittedInputs,
+      admitted: ReviewerAdmittedInputs,
     ): Promise<ReviewerActivation>;
   };
   /** Envelope decodes Reviewer transport flags inside the activation stage. */
-  decodeReviewerAdmitted(): import("./reviewer-role.ts").ReviewerAdmittedInputs;
+  decodeReviewerAdmitted(): ReviewerAdmittedInputs;
   /** Envelope stores live parent activation for agent_start prompt assembly. */
   bindReviewerParent(activation: ReviewerActivation): void;
   collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
