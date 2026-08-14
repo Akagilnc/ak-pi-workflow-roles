@@ -14273,7 +14273,13 @@ function listHelpCapabilities() {
       defaultPhase
     };
   });
-  return [...support, ...roles];
+  const deterministic = PUBLIC_DETERMINISTIC_COMMANDS.map(
+    (name) => ({
+      kind: "deterministic",
+      name
+    })
+  );
+  return [...support, ...roles, ...deterministic];
 }
 function isPublicConfigurableSeat(value) {
   return PUBLIC_CONFIGURABLE_SEATS.includes(value);
@@ -14281,7 +14287,7 @@ function isPublicConfigurableSeat(value) {
 function isPublicCliSupportCommand(value) {
   return PUBLIC_CLI_SUPPORT_COMMANDS.includes(value);
 }
-var INTERNAL_ROLE_ENTRYPOINT_RELATIVE, PUBLIC_CALLABLE_ROLES, AUTOMATIC_NAVIGATOR_SEAT, PUBLIC_CONFIGURABLE_SEATS, PUBLIC_CLI_SUPPORT_COMMANDS, STARTUP_CANDIDATES;
+var INTERNAL_ROLE_ENTRYPOINT_RELATIVE, PUBLIC_CALLABLE_ROLES, AUTOMATIC_NAVIGATOR_SEAT, PUBLIC_CONFIGURABLE_SEATS, PUBLIC_CLI_SUPPORT_COMMANDS, STARTUP_CANDIDATES, PUBLIC_DETERMINISTIC_COMMANDS;
 var init_registry2 = __esm({
   "src/public-cli/registry.ts"() {
     "use strict";
@@ -14335,6 +14341,7 @@ var init_registry2 = __esm({
         { provider: "xai", model: "grok-4.5", thinking: "high" }
       ]
     };
+    PUBLIC_DETERMINISTIC_COMMANDS = ["taishi"];
   }
 });
 
@@ -16789,14 +16796,20 @@ function buildMergerTransportPrompt(admitted) {
   }
   return lines.join("\n");
 }
-function parseTaishiTicketNumber(raw) {
+function parseTaishiTicketNumber(raw, flag = "--ticket") {
   const trimmed = raw.trim();
   if (!TAISHI_TICKET_NUMBER_PATTERN.test(trimmed)) {
     throw new CliUsageError(
-      `taishi --ticket must be a positive integer, got ${raw}`
+      `taishi ${flag} must be a positive integer, got ${raw}`
     );
   }
-  return Number(trimmed);
+  const value = Number(trimmed);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new CliUsageError(
+      `taishi ${flag} must be a positive integer, got ${raw}`
+    );
+  }
+  return value;
 }
 function parseTaishiIssueNumberList(raw, flag) {
   const trimmed = raw.trim();
@@ -16807,7 +16820,7 @@ function parseTaishiIssueNumberList(raw, flag) {
   if (parts.some((part) => part === "")) {
     throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
   }
-  return parts.map((part) => parseTaishiTicketNumber(part));
+  return parts.map((part) => parseTaishiTicketNumber(part, flag));
 }
 function requireOptionValue(flag, value, what) {
   if (value === void 0 || value.trim() === "") {
@@ -24079,8 +24092,42 @@ var init_atomic_write = __esm({
 });
 
 // src/taishi-index.ts
+import { open as open3, readFile as readFile10, unlink as unlink4 } from "node:fs/promises";
 import { dirname as dirname8, join as join19 } from "node:path";
-import { readFile as readFile10 } from "node:fs/promises";
+function sleep(ms) {
+  return new Promise((resolve9) => {
+    setTimeout(resolve9, ms);
+  });
+}
+async function withTaishiLibraryIndexLock(ledgerHome, fn) {
+  const indexPath = taishiLibraryIndexPath(ledgerHome);
+  ensureRealDirectoryTree(ledgerHome, dirname8(indexPath));
+  const lockPath = join19(dirname8(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  assertLedgerFileInsideHome(lockPath, ledgerHome);
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      const handle = await open3(lockPath, "wx");
+      try {
+        await handle.writeFile(`${process.pid}
+`, "utf8");
+        return await fn();
+      } finally {
+        await handle.close().catch(() => void 0);
+        await unlink4(lockPath).catch(() => void 0);
+      }
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? error.code : void 0;
+      if (code !== "EEXIST") throw error;
+      if (Date.now() - startedAt > LIBRARY_INDEX_LOCK_TIMEOUT_MS) {
+        throw new Error(
+          `taishi library-index lock timeout after ${LIBRARY_INDEX_LOCK_TIMEOUT_MS}ms: ${lockPath}`
+        );
+      }
+      await sleep(LIBRARY_INDEX_LOCK_RETRY_MS);
+    }
+  }
+}
 function taishiLibraryIndexPath(ledgerHome) {
   return join19(ledgerHome, "taishi", "library-index.json");
 }
@@ -24167,11 +24214,23 @@ async function writeTaishiLibraryIndexPage(ledgerHome, page) {
 `);
   return path;
 }
+async function mergeTaishiLibraryIndexRows(ledgerHome, upserts) {
+  return withTaishiLibraryIndexLock(ledgerHome, async () => {
+    const existing = await readTaishiLibraryIndexPage(ledgerHome);
+    const index = upsertTaishiLibraryIndexRows(existing, upserts);
+    const indexPath = await writeTaishiLibraryIndexPage(ledgerHome, index);
+    return { index, indexPath };
+  });
+}
+var LIBRARY_INDEX_LOCK_NAME, LIBRARY_INDEX_LOCK_TIMEOUT_MS, LIBRARY_INDEX_LOCK_RETRY_MS;
 var init_taishi_index = __esm({
   "src/taishi-index.ts"() {
     "use strict";
     init_atomic_write();
     init_activation_ledger_topology();
+    LIBRARY_INDEX_LOCK_NAME = ".library-index.lock";
+    LIBRARY_INDEX_LOCK_TIMEOUT_MS = 3e4;
+    LIBRARY_INDEX_LOCK_RETRY_MS = 15;
   }
 });
 
@@ -24412,8 +24471,8 @@ function extractSessionToolIntervals(rows) {
       if (resultTimestamp === void 0 || resultTimestamp.length === 0) {
         throw new Error(`toolResult ${message.toolCallId} missing timestamp`);
       }
-      const open3 = openById.get(message.toolCallId);
-      if (open3 === void 0) {
+      const open4 = openById.get(message.toolCallId);
+      if (open4 === void 0) {
         const toolName = typeof message.toolName === "string" && message.toolName.length > 0 ? message.toolName : "unknown";
         order.push({
           toolCallId: message.toolCallId,
@@ -24423,10 +24482,10 @@ function extractSessionToolIntervals(rows) {
         });
         continue;
       }
-      if (open3.endedAt !== void 0) {
+      if (open4.endedAt !== void 0) {
         throw new Error(`duplicate toolResult for toolCallId ${message.toolCallId}`);
       }
-      open3.endedAt = resultTimestamp;
+      open4.endedAt = resultTimestamp;
     }
   }
   return order.map((interval) => {
@@ -24459,8 +24518,8 @@ var init_ledger_session_read = __esm({
 });
 
 // src/run-terminal-artifacts.ts
-import { readFile as readFile12 } from "node:fs/promises";
-import { join as join20 } from "node:path";
+import { readdir as readdir4, readFile as readFile12 } from "node:fs/promises";
+import { basename as basename4, dirname as dirname9, join as join20 } from "node:path";
 function isMissingPathError3(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -24488,47 +24547,82 @@ function readUsableTerminalArtifactBody(body) {
   }
   return { ok: true, body };
 }
+async function readTerminalArtifactAtPath(path, file) {
+  let raw;
+  try {
+    raw = await readFile12(path, "utf8");
+  } catch (error) {
+    if (isMissingPathError3(error)) return void 0;
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: errorText2(error)
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: error instanceof Error ? error.message : `terminal artifact JSON parse failed: ${String(error)}`
+    };
+  }
+  const usable = readUsableTerminalArtifactBody(parsed);
+  if (!usable.ok) {
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: usable.reason
+    };
+  }
+  return { status: "present", file, path, body: usable.body };
+}
+async function listUniqueErrorFallbackPaths(directories) {
+  const found = [];
+  for (const dir of directories) {
+    let names;
+    try {
+      names = await readdir4(dir);
+    } catch (error) {
+      if (isMissingPathError3(error)) continue;
+      throw error;
+    }
+    for (const name of names.sort((a, b) => a.localeCompare(b))) {
+      if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
+      found.push(join20(dir, name));
+    }
+  }
+  return found;
+}
 async function readRunTerminalArtifact(runDirectory) {
   const artifactsDir = join20(runDirectory, "artifacts");
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
     const path = join20(artifactsDir, file);
-    let raw;
-    try {
-      raw = await readFile12(path, "utf8");
-    } catch (error) {
-      if (isMissingPathError3(error)) continue;
-      return {
-        status: "unreadable",
-        file,
-        path,
-        reason: errorText2(error)
-      };
-    }
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (error) {
-      return {
-        status: "unreadable",
-        file,
-        path,
-        reason: error instanceof Error ? error.message : `terminal artifact JSON parse failed: ${String(error)}`
-      };
-    }
-    const usable = readUsableTerminalArtifactBody(parsed);
-    if (!usable.ok) {
-      return {
-        status: "unreadable",
-        file,
-        path,
-        reason: usable.reason
-      };
-    }
-    return { status: "present", file, path, body: usable.body };
+    const read3 = await readTerminalArtifactAtPath(path, file);
+    if (read3 !== void 0) return read3;
+  }
+  for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
+    const path = join20(runDirectory, relative3);
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 !== void 0) return read3;
+  }
+  const uniqueDirs = [
+    artifactsDir,
+    runDirectory,
+    dirname9(runDirectory)
+  ];
+  for (const path of await listUniqueErrorFallbackPaths(uniqueDirs)) {
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 !== void 0) return read3;
   }
   return { status: "absent" };
 }
-var RUN_TERMINAL_ARTIFACT_FILES;
+var RUN_TERMINAL_ARTIFACT_FILES, RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS, UNIQUE_ERROR_FALLBACK_NAME;
 var init_run_terminal_artifacts = __esm({
   "src/run-terminal-artifacts.ts"() {
     "use strict";
@@ -24537,11 +24631,16 @@ var init_run_terminal_artifacts = __esm({
       "error.json",
       "audit-incomplete.json"
     ];
+    RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
+      "artifacts/error.settlement.json",
+      "error.settlement.json"
+    ];
+    UNIQUE_ERROR_FALLBACK_NAME = /^error\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i;
   }
 });
 
 // src/taishi-ledger.ts
-import { readdir as readdir4, readFile as readFile13 } from "node:fs/promises";
+import { readdir as readdir5, readFile as readFile13 } from "node:fs/promises";
 import { join as join21 } from "node:path";
 function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
@@ -24551,6 +24650,17 @@ function errorText3(error) {
 }
 function isRecord8(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+async function readExistingRunLifecycleState(runDirectory) {
+  try {
+    const raw = JSON.parse(
+      await readFile13(join21(runDirectory, "run-state.json"), "utf8")
+    );
+    if (!isRecord8(raw) || typeof raw.state !== "string") return void 0;
+    return raw.state;
+  } catch {
+    return void 0;
+  }
 }
 function parseRunDirectoryName(name) {
   const at = name.lastIndexOf("@");
@@ -24623,7 +24733,21 @@ async function classifyScopedRun(input) {
         partialLastFrameAt = { status: "present", at: span.endedAt };
       }
     } else {
-      frameSpan = { startedAt: span.startedAt, endedAt: span.endedAt };
+      const startedMs = Date.parse(span.startedAt);
+      const endedMs = Date.parse(span.endedAt);
+      if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs)) {
+        missingSources.push("session-timeline");
+        reasons.push("session timeline timestamps are not parseable instants");
+        partialFirstFrameAt = { status: "present", at: span.startedAt };
+        partialLastFrameAt = { status: "present", at: span.endedAt };
+      } else if (endedMs < startedMs) {
+        missingSources.push("session-timeline");
+        reasons.push("session timeline end is earlier than start");
+        partialFirstFrameAt = { status: "present", at: span.startedAt };
+        partialLastFrameAt = { status: "present", at: span.endedAt };
+      } else {
+        frameSpan = { startedAt: span.startedAt, endedAt: span.endedAt };
+      }
     }
   } catch (error) {
     missingSources.push("session-timeline");
@@ -24653,6 +24777,10 @@ async function classifyScopedRun(input) {
       missingSources.push("terminal-artifact");
       reasons.push(`${artifact.file}: ${artifact.reason}`);
     } else if (artifact.status === "absent") {
+      const lifecycle = await readExistingRunLifecycleState(input.runDirectory);
+      if (lifecycle !== void 0 && LIVE_RUN_STATES.has(lifecycle)) {
+        return { kind: "live" };
+      }
       terminal = { status: "absent" };
     } else {
       terminal = {
@@ -24706,7 +24834,7 @@ async function scanTaishiIssueRuns(input) {
   const booksRoot = join21(ledgerHome, "books");
   let bookNames;
   try {
-    const entries = await readdir4(booksRoot, { withFileTypes: true });
+    const entries = await readdir5(booksRoot, { withFileTypes: true });
     bookNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch (error) {
     if (isMissingPathError4(error)) {
@@ -24721,7 +24849,7 @@ async function scanTaishiIssueRuns(input) {
     const runsDir = join21(booksRoot, book, "runs");
     let runNames;
     try {
-      const entries = await readdir4(runsDir, { withFileTypes: true });
+      const entries = await readdir5(runsDir, { withFileTypes: true });
       runNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
     } catch (error) {
       if (isMissingPathError4(error)) continue;
@@ -24762,7 +24890,7 @@ async function scanTaishiIssueRuns(input) {
         runDirectory
       });
       if (classified.kind === "readable") runs.push(classified.facts);
-      else unreadable.push(classified.entry);
+      else if (classified.kind === "unreadable") unreadable.push(classified.entry);
     }
   }
   return {
@@ -24771,12 +24899,14 @@ async function scanTaishiIssueRuns(input) {
     scopeConflicts
   };
 }
+var LIVE_RUN_STATES;
 var init_taishi_ledger = __esm({
   "src/taishi-ledger.ts"() {
     "use strict";
     init_activation_ledger_topology();
     init_ledger_session_read();
     init_run_terminal_artifacts();
+    LIVE_RUN_STATES = /* @__PURE__ */ new Set(["admitted", "running", "resumable"]);
   }
 });
 
@@ -24982,7 +25112,7 @@ function buildAcceptanceSuccessReworkSection(runs) {
     rework: reworkLens(legs)
   };
 }
-var WORKER_ROLES, ACCEPTED_STATUS, SUCCESS_STATUS;
+var WORKER_ROLES, ACCEPTED_STATUS, SUCCESS_STATUS, acceptanceSuccessReworkFamily, acceptance_success_rework_default;
 var init_acceptance_success_rework = __esm({
   "src/taishi-metric-families/acceptance-success-rework.ts"() {
     "use strict";
@@ -25005,6 +25135,15 @@ var init_acceptance_success_rework = __esm({
       doctor: /* @__PURE__ */ new Set(["completed"]),
       merger: /* @__PURE__ */ new Set(["completed"])
     };
+    acceptanceSuccessReworkFamily = {
+      id: "acceptance-success-rework",
+      contribute(input) {
+        const section = buildAcceptanceSuccessReworkSection(input.runs);
+        if (section === void 0) return void 0;
+        return { acceptanceSuccessRework: section };
+      }
+    };
+    acceptance_success_rework_default = acceptanceSuccessReworkFamily;
   }
 });
 
@@ -25119,45 +25258,364 @@ var init_taishi_model_groups = __esm({
   }
 });
 
+// src/taishi-metric-families/b2-frame-buckets-actions.ts
+function timestampMs(iso) {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) {
+    throw new Error(`unparseable timestamp: ${iso}`);
+  }
+  return ms;
+}
+function toIso(ms) {
+  return new Date(ms).toISOString();
+}
+function closedTools(intervals) {
+  const out = [];
+  for (const interval of intervals) {
+    if (interval.endedAt === void 0) continue;
+    const startMs = timestampMs(interval.startedAt);
+    const endMs = timestampMs(interval.endedAt);
+    if (endMs <= startMs) continue;
+    out.push({
+      toolCallId: interval.toolCallId,
+      toolName: interval.toolName,
+      startedAt: interval.startedAt,
+      endedAt: interval.endedAt,
+      startMs,
+      endMs,
+      ...interval.command !== void 0 ? { command: interval.command } : {}
+    });
+  }
+  return out;
+}
+function clipToolsToFrame(tools, frameStartMs, frameEndMs) {
+  if (frameEndMs <= frameStartMs) return [];
+  const out = [];
+  for (const tool2 of tools) {
+    const startMs = Math.max(tool2.startMs, frameStartMs);
+    const endMs = Math.min(tool2.endMs, frameEndMs);
+    if (endMs <= startMs) continue;
+    out.push({
+      toolCallId: tool2.toolCallId,
+      toolName: tool2.toolName,
+      startMs,
+      endMs,
+      startedAt: startMs === tool2.startMs ? tool2.startedAt : toIso(startMs),
+      endedAt: endMs === tool2.endMs ? tool2.endedAt : toIso(endMs),
+      ...tool2.command !== void 0 ? { command: tool2.command } : {}
+    });
+  }
+  return out;
+}
+function mergeUnion(intervals) {
+  if (intervals.length === 0) return [];
+  const sorted = [...intervals].sort(
+    (a, b) => a.startMs - b.startMs || a.endMs - b.endMs
+  );
+  const merged = [
+    { startMs: sorted[0].startMs, endMs: sorted[0].endMs }
+  ];
+  for (let i = 1; i < sorted.length; i += 1) {
+    const cur = sorted[i];
+    const last = merged[merged.length - 1];
+    if (cur.startMs <= last.endMs) {
+      last.endMs = Math.max(last.endMs, cur.endMs);
+    } else {
+      merged.push({ startMs: cur.startMs, endMs: cur.endMs });
+    }
+  }
+  return merged;
+}
+function modelMaximalIntervals(frameStartMs, frameEndMs, toolUnion) {
+  if (frameEndMs <= frameStartMs) return [];
+  const gaps = [];
+  let cursor = frameStartMs;
+  for (const interval of toolUnion) {
+    if (interval.startMs > cursor) {
+      gaps.push({ startMs: cursor, endMs: interval.startMs });
+    }
+    cursor = Math.max(cursor, interval.endMs);
+  }
+  if (cursor < frameEndMs) {
+    gaps.push({ startMs: cursor, endMs: frameEndMs });
+  }
+  return gaps;
+}
+function toolAction(tool2) {
+  const action = {
+    kind: "tool",
+    toolCallId: tool2.toolCallId,
+    toolName: tool2.toolName,
+    durationMs: tool2.endMs - tool2.startMs,
+    startedAt: tool2.startedAt,
+    endedAt: tool2.endedAt
+  };
+  if (tool2.toolName === "bash" && tool2.command !== void 0) {
+    return {
+      ...action,
+      commandSummary: tool2.command
+    };
+  }
+  return action;
+}
+function modelAction(gap) {
+  return {
+    kind: "model",
+    durationMs: gap.endMs - gap.startMs,
+    startedAt: toIso(gap.startMs),
+    endedAt: toIso(gap.endMs)
+  };
+}
+function sortActionsDescending(actions) {
+  return [...actions].sort((a, b) => {
+    if (b.durationMs !== a.durationMs) return b.durationMs - a.durationMs;
+    if (a.startedAt !== b.startedAt) return a.startedAt.localeCompare(b.startedAt);
+    if (a.kind !== b.kind) return a.kind.localeCompare(b.kind);
+    if (a.kind === "tool" && b.kind === "tool") {
+      return a.toolCallId.localeCompare(b.toolCallId);
+    }
+    return 0;
+  });
+}
+function computeTaishiB2RunMetrics(facts) {
+  const frameStartMs = timestampMs(facts.frameSpan.startedAt);
+  const frameEndMs = timestampMs(facts.frameSpan.endedAt);
+  const wallMs = Math.max(0, frameEndMs - frameStartMs);
+  const tools = clipToolsToFrame(closedTools(facts.toolIntervals), frameStartMs, frameEndMs);
+  const toolUnion = mergeUnion(tools);
+  const toolBucketMs = toolUnion.reduce(
+    (sum, interval) => sum + (interval.endMs - interval.startMs),
+    0
+  );
+  const modelBucketMs = wallMs - toolBucketMs;
+  const modelGaps = modelMaximalIntervals(frameStartMs, frameEndMs, toolUnion);
+  const actions = sortActionsDescending([
+    ...tools.map(toolAction),
+    ...modelGaps.map(modelAction)
+  ]);
+  const actionDurationMedianMs = medianNumber(actions.map((action) => action.durationMs));
+  return {
+    runId: facts.runId,
+    book: facts.book,
+    role: facts.role,
+    wallMs,
+    toolBucketMs,
+    modelBucketMs,
+    actions,
+    actionDurationMedianMs
+  };
+}
+var b2FrameBucketsActionsFamily, b2_frame_buckets_actions_default;
+var init_b2_frame_buckets_actions = __esm({
+  "src/taishi-metric-families/b2-frame-buckets-actions.ts"() {
+    "use strict";
+    init_taishi_median();
+    b2FrameBucketsActionsFamily = {
+      id: "b2-frame-buckets-actions",
+      contribute(input) {
+        if (input.runs.length === 0) return void 0;
+        const runs = [...input.runs].map(computeTaishiB2RunMetrics).sort((a, b) => {
+          if (a.book !== b.book) return a.book.localeCompare(b.book);
+          if (a.role !== b.role) return a.role.localeCompare(b.role);
+          return a.runId.localeCompare(b.runId);
+        });
+        const section = {
+          kind: "taishi-b2-frame-buckets-actions",
+          runs
+        };
+        return { b2FrameBucketsActions: section };
+      }
+    };
+    b2_frame_buckets_actions_default = b2FrameBucketsActionsFamily;
+  }
+});
+
+// src/taishi-metric-families/leg-wall-clock.ts
+function frameSpanWallMs(span) {
+  return Date.parse(span.endedAt) - Date.parse(span.startedAt);
+}
+function projectEntry(facts) {
+  return {
+    runId: facts.runId,
+    book: facts.book,
+    role: facts.role,
+    wallMs: frameSpanWallMs(facts.frameSpan)
+  };
+}
+function compareRankingDesc(a, b) {
+  if (b.wallMs !== a.wallMs) return b.wallMs - a.wallMs;
+  if (a.book !== b.book) return a.book.localeCompare(b.book);
+  if (a.role !== b.role) return a.role.localeCompare(b.role);
+  return a.runId.localeCompare(b.runId);
+}
+var legWallClockFamily, leg_wall_clock_default;
+var init_leg_wall_clock = __esm({
+  "src/taishi-metric-families/leg-wall-clock.ts"() {
+    "use strict";
+    init_taishi_median();
+    legWallClockFamily = {
+      id: "leg-wall-clock",
+      contribute(input) {
+        if (input.runs.length === 0) {
+          return void 0;
+        }
+        const ranking = input.runs.map(projectEntry).sort(compareRankingDesc);
+        const walls = ranking.map((leg) => leg.wallMs);
+        const medianWallMs = medianNumber(walls);
+        if (medianWallMs === void 0) {
+          return void 0;
+        }
+        let totalElapsedMs = 0;
+        for (const wallMs of walls) totalElapsedMs += wallMs;
+        const section = {
+          kind: "taishi-leg-wall-clock",
+          ranking,
+          medianWallMs,
+          totalElapsedMs
+        };
+        return { legWallClock: section };
+      }
+    };
+    leg_wall_clock_default = legWallClockFamily;
+  }
+});
+
+// src/taishi-metric-families/round-timeline.ts
+function isRecord10(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function wallMsFromSpan2(startedAt, endedAt) {
+  return Date.parse(endedAt) - Date.parse(startedAt);
+}
+function readOutcomeStatus(body) {
+  if (!isRecord10(body.outcome)) return void 0;
+  const status = body.outcome.status;
+  if (typeof status !== "string" || status.trim() === "") return void 0;
+  return status;
+}
+function readClassCount(body) {
+  if (!isRecord10(body.outcome)) return void 0;
+  if (!isRecord10(body.outcome.decisiveFacts)) return void 0;
+  const classCount = body.outcome.decisiveFacts.classCount;
+  if (typeof classCount !== "number" || !Number.isFinite(classCount)) {
+    return void 0;
+  }
+  return classCount;
+}
+function projectTerminal(facts) {
+  if (facts.terminal.status === "absent") {
+    return { kind: "death", channel: "no-receipt" };
+  }
+  if (facts.terminal.file === "error.json") {
+    return { kind: "death", channel: "error" };
+  }
+  if (facts.terminal.file === "audit-incomplete.json") {
+    return { kind: "death", channel: "audit-incomplete" };
+  }
+  const status = readOutcomeStatus(facts.terminal.body);
+  const classCount = readClassCount(facts.terminal.body);
+  const receiptStatus = status ?? "unparsed";
+  if (classCount === void 0) {
+    return { kind: "receipt", status: receiptStatus };
+  }
+  return { kind: "receipt", status: receiptStatus, classCount };
+}
+function projectRunRow(facts) {
+  const { startedAt, endedAt } = facts.frameSpan;
+  return {
+    kind: "run",
+    runId: facts.runId,
+    book: facts.book,
+    role: facts.role,
+    startedAt,
+    endedAt,
+    wallMs: wallMsFromSpan2(startedAt, endedAt),
+    terminal: projectTerminal(facts)
+  };
+}
+function projectUnreadableRow(entry) {
+  return {
+    kind: "unreadable",
+    runId: entry.runId,
+    book: entry.book,
+    missingSources: entry.missingSources,
+    reason: entry.reason,
+    firstFrameAt: entry.firstFrameAt
+  };
+}
+function rowSortStartedAt(row) {
+  if (row.kind === "run") return row.startedAt;
+  if (row.firstFrameAt.status === "present") return row.firstFrameAt.at;
+  return void 0;
+}
+function compareRows(a, b) {
+  const aStart = rowSortStartedAt(a);
+  const bStart = rowSortStartedAt(b);
+  if (aStart === void 0 && bStart === void 0) {
+    return a.runId.localeCompare(b.runId);
+  }
+  if (aStart === void 0) return 1;
+  if (bStart === void 0) return -1;
+  if (aStart !== bStart) return aStart.localeCompare(bStart);
+  return a.runId.localeCompare(b.runId);
+}
+function buildLanes(runs, unreadable) {
+  const byLane = /* @__PURE__ */ new Map();
+  const push = (lane, row) => {
+    const list = byLane.get(lane);
+    if (list === void 0) byLane.set(lane, [row]);
+    else list.push(row);
+  };
+  for (const facts of runs) {
+    push(facts.book, projectRunRow(facts));
+  }
+  for (const entry of unreadable) {
+    push(entry.book, projectUnreadableRow(entry));
+  }
+  return [...byLane.keys()].sort((a, b) => a.localeCompare(b)).map((lane) => ({
+    lane,
+    rows: [...byLane.get(lane) ?? []].sort(compareRows)
+  }));
+}
+var roundTimelineFamily, round_timeline_default;
+var init_round_timeline = __esm({
+  "src/taishi-metric-families/round-timeline.ts"() {
+    "use strict";
+    roundTimelineFamily = {
+      id: "round-timeline",
+      contribute(input) {
+        if (input.runs.length === 0 && input.unreadable.length === 0) {
+          return void 0;
+        }
+        const section = {
+          kind: "taishi-round-timeline",
+          lanes: buildLanes(input.runs, input.unreadable)
+        };
+        return { roundTimeline: section };
+      }
+    };
+    round_timeline_default = roundTimelineFamily;
+  }
+});
+
 // src/taishi-metric-families.ts
-import { readdir as readdir5 } from "node:fs/promises";
-import { join as join22 } from "node:path";
-import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
-function isFamilyModuleFile(name) {
-  if (name.endsWith(".d.ts")) return false;
-  if (name.includes(".test.")) return false;
-  return name.endsWith(".ts") || name.endsWith(".js") || name.endsWith(".mjs");
-}
-function readFamilyExport(mod, fileName) {
-  const candidate = mod.default ?? mod.family;
-  if (candidate === null || typeof candidate !== "object" || typeof candidate.contribute !== "function" || typeof candidate.id !== "string") {
-    throw new Error(
-      `taishi metric family module must export default|family module: ${fileName}`
-    );
-  }
-  return candidate;
-}
 async function loadTaishiIssueMetricFamilies() {
-  if (loadedFamilies !== void 0) return loadedFamilies;
-  const directory = TAISHI_ISSUE_METRIC_FAMILIES_DIR;
-  const names = await readdir5(directory);
-  const families = [];
-  for (const name of names.sort((a, b) => a.localeCompare(b))) {
-    if (!isFamilyModuleFile(name)) continue;
-    const href = pathToFileURL(join22(directory, name)).href;
-    const mod = await import(href);
-    families.push(readFamilyExport(mod, name));
-  }
-  loadedFamilies = families;
-  return families;
+  return ISSUE_METRIC_FAMILIES;
 }
-var TAISHI_ISSUE_METRIC_FAMILIES_DIR, loadedFamilies;
+var ISSUE_METRIC_FAMILIES;
 var init_taishi_metric_families = __esm({
   "src/taishi-metric-families.ts"() {
     "use strict";
-    TAISHI_ISSUE_METRIC_FAMILIES_DIR = fileURLToPath2(
-      new URL("./taishi-metric-families/", import.meta.url)
-    );
+    init_acceptance_success_rework();
+    init_b2_frame_buckets_actions();
+    init_leg_wall_clock();
+    init_round_timeline();
+    ISSUE_METRIC_FAMILIES = [
+      acceptance_success_rework_default,
+      b2_frame_buckets_actions_default,
+      leg_wall_clock_default,
+      round_timeline_default
+    ].sort((a, b) => a.id.localeCompare(b.id));
   }
 });
 
@@ -25179,13 +25637,13 @@ var init_taishi_metric_family = __esm({
 
 // src/taishi-page.ts
 import { createHash as createHash4 } from "node:crypto";
-import { dirname as dirname9, join as join23 } from "node:path";
+import { dirname as dirname10, join as join22 } from "node:path";
 function taishiIssuePageKey(projectRoot) {
   const identity = physicalPathIdentity(projectRoot);
   return createHash4("sha256").update(identity).digest("hex").slice(0, 32);
 }
 function taishiIssuePagePath(ledgerHome, projectRoot) {
-  return join23(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(projectRoot)}.json`);
+  return join22(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(projectRoot)}.json`);
 }
 function sortLegs(legs) {
   return [...legs].sort((a, b) => {
@@ -25208,7 +25666,16 @@ function sortScopeConflicts(conflicts) {
     return a.projectRoot.localeCompare(b.projectRoot);
   });
 }
+function assertTaishiChangedLinesInput(changedLines) {
+  if (changedLines === void 0) return;
+  if (typeof changedLines !== "number" || !Number.isFinite(changedLines) || changedLines < 0) {
+    throw new Error(
+      `taishi changedLines must be a finite non-negative number, got ${String(changedLines)}`
+    );
+  }
+}
 function normalizeTaishiChangedLines(changedLines) {
+  assertTaishiChangedLinesInput(changedLines);
   if (changedLines === void 0 || changedLines === 0) {
     return { status: "absent" };
   }
@@ -25221,14 +25688,14 @@ function computeTaishiMsPerKLines(totalElapsedMs, changedLines) {
     value: totalElapsedMs / (changedLines.value / 1e3)
   };
 }
-function frameSpanWallMs(span) {
+function frameSpanWallMs2(span) {
   return Date.parse(span.endedAt) - Date.parse(span.startedAt);
 }
 function summarizeTaishiRunEfficiency(runs, unreadable = []) {
   let totalElapsedMs = 0;
   let latestEndedAt;
   for (const run of runs) {
-    totalElapsedMs += frameSpanWallMs(run.frameSpan);
+    totalElapsedMs += frameSpanWallMs2(run.frameSpan);
     const endedAt = run.frameSpan.endedAt;
     if (latestEndedAt === void 0 || endedAt > latestEndedAt) {
       latestEndedAt = endedAt;
@@ -25286,7 +25753,7 @@ async function buildTaishiIssueMetricsPage(input) {
 }
 async function writeTaishiIssueMetricsPage(ledgerHome, page) {
   const path = taishiIssuePagePath(ledgerHome, page.projectRoot);
-  ensureRealDirectoryTree(ledgerHome, dirname9(path));
+  ensureRealDirectoryTree(ledgerHome, dirname10(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
@@ -25307,6 +25774,11 @@ import { readFile as readFile14 } from "node:fs/promises";
 function isMissingPathError5(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
+function cachedPageMatchesRequestedScope(page, input) {
+  const requestedTicket = input.ticketNumber ?? input.issueNumber;
+  if (requestedTicket === void 0) return true;
+  return page.issueNumber === requestedTicket;
+}
 async function readOrComputeTaishiIssuePage(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const projectRoot = physicalPathIdentity(input.projectRoot);
@@ -25314,7 +25786,9 @@ async function readOrComputeTaishiIssuePage(input) {
   try {
     const raw = await readFile14(pagePath, "utf8");
     const page = JSON.parse(raw);
-    return { mode: "issue", page, pagePath };
+    if (cachedPageMatchesRequestedScope(page, input)) {
+      return { mode: "issue", page, pagePath };
+    }
   } catch (error) {
     if (!isMissingPathError5(error)) {
       throw new TaishiIssueComputeError({
@@ -25336,6 +25810,7 @@ async function readOrComputeTaishiIssuePage(input) {
   }
 }
 async function runTaishiIssueMode(input, precomputedScan) {
+  assertTaishiChangedLinesInput(input.changedLines);
   const ledgerHome = resolveActivationLedgerHome();
   const projectRoot = input.projectRoot;
   const ticketNumber = "ticketNumber" in input ? input.ticketNumber : void 0;
@@ -25364,11 +25839,9 @@ async function runTaishiIssueMode(input, precomputedScan) {
   });
   const pagePath = await writeTaishiIssueMetricsPage(ledgerHome, page);
   if (issueNumber !== void 0) {
-    const existing = await readTaishiLibraryIndexPage(ledgerHome);
-    const index = upsertTaishiLibraryIndexRows(existing, [
+    await mergeTaishiLibraryIndexRows(ledgerHome, [
       rowFromIssueMetricsPage(page)
     ]);
-    await writeTaishiLibraryIndexPage(ledgerHome, index);
   }
   return { mode: "issue", page, pagePath };
 }
@@ -25378,10 +25851,8 @@ async function runTaishiSweepMode(input) {
   for (const entry of input.mergedPullRequests) {
     issuePages.push(await runTaishiIssueMode(entry));
   }
-  const existing = await readTaishiLibraryIndexPage(ledgerHome);
   const upserts = issuePages.map((result2) => rowFromIssueMetricsPage(result2.page));
-  const index = upsertTaishiLibraryIndexRows(existing, upserts);
-  const indexPath = await writeTaishiLibraryIndexPage(ledgerHome, index);
+  const { index, indexPath } = await mergeTaishiLibraryIndexRows(ledgerHome, upserts);
   return { mode: "sweep", issuePages, index, indexPath };
 }
 async function runTaishiModelGroupsMode(input) {
@@ -25480,8 +25951,10 @@ var init_taishi_entry = __esm({
           typebox_exports.Object(
             {
               projectRoot: typebox_exports.String(),
-              /** 排除后改动行数 — omit or 0 → typed 空缺. */
-              changedLines: typebox_exports.Optional(typebox_exports.Number())
+              /** 排除后改动行数 — omit or 0 → typed 空缺; finite ≥ 0 only. */
+              changedLines: typebox_exports.Optional(
+                typebox_exports.Number({ minimum: 0, maximum: Number.MAX_VALUE })
+              )
             },
             { additionalProperties: false }
           )
@@ -25651,7 +26124,7 @@ __export(cli_exports, {
 });
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { join as join24 } from "node:path";
+import { join as join23 } from "node:path";
 function takePublicGlobalFlag(argv, index) {
   const token = argv[index];
   if (token === void 0) return void 0;
@@ -25702,7 +26175,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join24(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join23(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -25786,6 +26259,12 @@ function renderHelp() {
     if (cap.kind === "role") {
       const phaseText = cap.phases.length === 1 && cap.phases[0] === null ? "no phase" : `phases ${cap.phases.filter((p) => p !== null).join("|")}` + (cap.defaultPhase ? ` (default ${cap.defaultPhase})` : "");
       lines.push(`  ${cap.name} \u2014 ${phaseText}`);
+    }
+  }
+  lines.push("", "Deterministic commands:");
+  for (const cap of doc.capabilities) {
+    if (cap.kind === "deterministic") {
+      lines.push(`  ${cap.name}`);
     }
   }
   lines.push(
@@ -25885,6 +26364,9 @@ async function runAkRole(argv, env) {
         }
         if (match.kind === "support") {
           io.stdout(`command	${match.name}	kind	support
+`);
+        } else if (match.kind === "deterministic") {
+          io.stdout(`command	${match.name}	kind	deterministic
 `);
         } else {
           io.stdout(
@@ -26357,8 +26839,8 @@ var init_cli = __esm({
 });
 
 // src/public-cli/main.ts
-import { dirname as dirname10, join as join25 } from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { dirname as dirname11, join as join24 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
@@ -26444,8 +26926,8 @@ function linkPackage(packageRoot2, name, targetDir) {
 }
 
 // src/public-cli/main.ts
-var here = dirname10(fileURLToPath3(import.meta.url));
-var packageRoot = join25(here, "..", "..");
+var here = dirname11(fileURLToPath2(import.meta.url));
+var packageRoot = join24(here, "..", "..");
 ensureHostPiRuntimeResolvable(packageRoot);
 var { runAkRole: runAkRole2 } = await Promise.resolve().then(() => (init_cli(), cli_exports));
 var result = await runAkRole2(process.argv.slice(2), { packageRoot });
