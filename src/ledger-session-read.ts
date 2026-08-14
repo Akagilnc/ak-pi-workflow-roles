@@ -102,6 +102,36 @@ export function extractSessionTimestampSpan(
   };
 }
 
+/**
+ * Ordered-unique model ids from session frames (first-seen order).
+ * Sources (same faces ticket-trajectory already reads — single parse kernel):
+ * - `model_change.modelId`
+ * - assistant `message.model`
+ * Blank / non-string values are skipped. Does not invent a default model.
+ */
+export function extractSessionModelSequence(
+  rows: readonly LedgerSessionRow[],
+): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  const push = (raw: string): void => {
+    const model = raw.trim();
+    if (model === "" || seen.has(model)) return;
+    seen.add(model);
+    ordered.push(model);
+  };
+  for (const row of rows) {
+    if (row.type === "model_change" && typeof row.modelId === "string") {
+      push(row.modelId);
+    }
+    const message = isRecord(row.message) ? row.message : undefined;
+    if (message?.role === "assistant" && typeof message.model === "string") {
+      push(message.model);
+    }
+  }
+  return ordered;
+}
+
 /** First line of a bash `command` argument (sole owner of this summary). */
 export function bashCommandFirstLine(command: string): string {
   const match = /^[^\r\n]*/.exec(command);

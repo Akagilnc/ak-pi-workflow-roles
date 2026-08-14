@@ -14,6 +14,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import {
+  extractSessionModelSequence,
   extractSessionTimestampSpan,
   extractSessionToolIntervals,
   LedgerSessionJsonlError,
@@ -124,6 +125,13 @@ export type TaishiReadableRunFacts = {
   readonly frameSpan: TaishiRunFrameSpan;
   readonly toolIntervals: readonly SessionToolInterval[];
   readonly terminal: TaishiRunTerminalFace;
+  /**
+   * Ordered-unique session model ids for this leg (C3 model-group key material).
+   * Empty when no model face was present — not a scan-level unreadable condition
+   * (timeline/tools/terminal still admit the run for issue-mode families).
+   * Model-groups mode lists empty as typed session-model vacancy, never as "".
+   */
+  readonly models: readonly string[];
 };
 
 export type TaishiScopedRunScan = {
@@ -147,6 +155,8 @@ async function classifyScopedRun(input: {
   let frameSpan: TaishiRunFrameSpan | undefined;
   let toolIntervals: readonly SessionToolInterval[] | undefined;
   let terminal: TaishiRunTerminalFace | undefined;
+  /** Ordered-unique models retained whenever session rows were readable. */
+  let models: readonly string[] = [];
   /** Partial first/last frame retained when full session span cannot be admitted. */
   let partialFirstFrameAt: TaishiFirstFrameAt = { status: "absent" };
   let partialLastFrameAt: TaishiOptionalTimestamp = { status: "absent" };
@@ -156,6 +166,7 @@ async function classifyScopedRun(input: {
   let rows: Awaited<ReturnType<typeof readLedgerSessionJsonl>> | undefined;
   try {
     rows = await readLedgerSessionJsonl(sessionFile);
+    models = extractSessionModelSequence(rows);
     const span = extractSessionTimestampSpan(rows);
     if (span.startedAt === undefined || span.endedAt === undefined) {
       missingSources.push("session-timeline");
@@ -173,7 +184,7 @@ async function classifyScopedRun(input: {
   } catch (error) {
     missingSources.push("session-timeline");
     reasons.push(errorText(error));
-    // Single parse kernel: recover first/last frame from rows read before the loud line.
+    // Single parse kernel: recover first/last frame and models from rows read before the loud line.
     if (error instanceof LedgerSessionJsonlError) {
       const span = extractSessionTimestampSpan(error.prefixRows);
       if (span.startedAt !== undefined) {
@@ -182,6 +193,7 @@ async function classifyScopedRun(input: {
       if (span.endedAt !== undefined) {
         partialLastFrameAt = { status: "present", at: span.endedAt };
       }
+      models = extractSessionModelSequence(error.prefixRows);
     }
   }
 
@@ -256,6 +268,7 @@ async function classifyScopedRun(input: {
       frameSpan,
       toolIntervals,
       terminal,
+      models,
     },
   };
 }
