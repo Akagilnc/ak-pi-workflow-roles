@@ -10,8 +10,9 @@
  * - convergence rounds sample = one per lane×role (page byRole.convergenceRounds)
  * - leg wall-clock median sample = one per leg (page legWallClock.ranking)
  * - missing index row / zero denominator → typed 空缺 (LOC vacancy shape)
- * - index hit + missing page → ensure (compute-if-missing); ensure failure stays loud
- *   (never washed into absent) — owner 2026-08-14 #338.
+ * - index hit + missing page → sync ensure (compute-if-missing); ensure failure is
+ *   typed terminal for this pull (never washed into absent/pending) — #338.
+ * - single-run unreadable on a page stays page-local exclusion, not whole failure.
  */
 import {
   findTaishiLibraryIndexRow,
