@@ -79,19 +79,23 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     authorityRefs = undefined;
     const rawAuthorityRefs = pi.getFlag("ak-review-authority-refs");
     if (rawAuthorityRefs !== undefined) {
-      if (typeof rawAuthorityRefs !== "string" || rawAuthorityRefs.trim() === "") {
-        throw new Error("Reviewer authority refs must be a nonempty JSON array string");
+      // Private transport only: necessary JSON decode of already-admitted trusted payload.
+      // No grammar/content re-validation (public --authority-ref owns admission).
+      if (typeof rawAuthorityRefs !== "string") {
+        throw new Error("Reviewer authority refs transport error: flag value must be a string");
       }
       let parsed: unknown;
       try {
         parsed = JSON.parse(rawAuthorityRefs);
-      } catch {
-        throw new Error("Reviewer authority refs must be a JSON array of durable references");
+      } catch (error) {
+        throw new Error(
+          `Reviewer authority refs transport error: JSON decode failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
-      if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string" || ref.trim() === "")) {
-        throw new Error("Reviewer authority refs must be a JSON array of nonempty durable references");
+      if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string")) {
+        throw new Error("Reviewer authority refs transport error: expected a JSON array of strings");
       }
-      authorityRefs = Object.freeze(parsed.map((ref) => ref as string));
+      authorityRefs = Object.freeze(parsed as string[]);
     }
     const baseRevision = pi.getFlag("ak-review-base");
     if (typeof baseRevision !== "string" || !baseRevision.trim()) throw new Error("Reviewer role requires --ak-review-base");

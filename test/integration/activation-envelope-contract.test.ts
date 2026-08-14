@@ -139,6 +139,9 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
               diffSha256: "2".repeat(64),
               commits: [oid("9")],
             }),
+            // Independent discovery finds an issue ref ⇒ Spec child launches (two-axis fixture).
+            rangeCommitMessages: async () => Object.freeze(["Implement envelope #1"]),
+            featureTokens: async () => Object.freeze([]),
           };
         },
         loadCanonicalSkillBinding: async (name) => {

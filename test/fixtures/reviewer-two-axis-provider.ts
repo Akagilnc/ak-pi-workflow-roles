@@ -80,6 +80,18 @@ function assertAuthorityRefsCarrier(axis: "standards" | "spec", prompt: string):
   }
 }
 
+function expectedAxesFromEnv(): ReadonlySet<"standards" | "spec"> {
+  const raw = process.env.AK_REVIEW_EXPECT_AXES;
+  if (raw === undefined || raw.trim() === "") {
+    return new Set(["standards", "spec"]);
+  }
+  const axes = raw.split(",").map((part) => part.trim()).filter((part) => part.length > 0);
+  if (axes.some((axis) => axis !== "standards" && axis !== "spec")) {
+    throw new Error("AK_REVIEW_EXPECT_AXES must be comma-separated standards/spec");
+  }
+  return new Set(axes as Array<"standards" | "spec">);
+}
+
 /** Offline provider for public ak-role Reviewer fixed two-axis + auditor chain. */
 export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
   const faux = fauxProvider({
@@ -87,51 +99,53 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
     provider: "ak-reviewer-two-axis",
     tokenSize: { min: 1000, max: 1000 },
   });
+  const expectedAxes = expectedAxesFromEnv();
   const axisSeen = new Set<string>();
-  faux.setResponses([
-    (context) => {
-      const prompt = userText(context);
-      const axis = axisFromPrompt(prompt);
-      if (axis === undefined) throw new Error("child prompt has no recognized typed axis adapter");
-      assertAuthorityRefsCarrier(axis, prompt);
-      axisSeen.add(axis);
-      return fauxAssistantMessage(
-        axis === "standards"
-          ? "Standards finding count: 0."
-          : "Spec: fixed target satisfies the stated behavior.",
-      );
-    },
-    (context) => {
-      const prompt = userText(context);
-      const axis = axisFromPrompt(prompt);
-      if (axis === undefined) throw new Error("second child prompt has no recognized typed axis adapter");
-      assertAuthorityRefsCarrier(axis, prompt);
-      axisSeen.add(axis);
-      return fauxAssistantMessage(
-        axis === "standards"
-          ? "Standards finding count: 0."
-          : "Spec: fixed target satisfies the stated behavior.",
-      );
-    },
-    () => {
-      if (axisSeen.size !== 2 || !axisSeen.has("standards") || !axisSeen.has("spec")) {
-        throw new Error(`expected both axes before output; saw ${[...axisSeen].join(",")}`);
+  const childResponse = (context: Context, label: string) => {
+    const prompt = userText(context);
+    const axis = axisFromPrompt(prompt);
+    if (axis === undefined) throw new Error(`${label} has no recognized typed axis adapter`);
+    if (!expectedAxes.has(axis)) {
+      throw new Error(`${label} launched unexpected axis ${axis}; expected ${[...expectedAxes].join(",")}`);
+    }
+    assertAuthorityRefsCarrier(axis, prompt);
+    axisSeen.add(axis);
+    return fauxAssistantMessage(
+      axis === "standards"
+        ? "Standards finding count: 0."
+        : "Spec: fixed target satisfies the stated behavior.",
+    );
+  };
+  const responses: Array<(context: Context) => ReturnType<typeof fauxAssistantMessage>> = [];
+  for (let i = 0; i < expectedAxes.size; i += 1) {
+    const label = i === 0 ? "child prompt" : `child prompt #${i + 1}`;
+    responses.push((context) => childResponse(context, label));
+  }
+  responses.push(() => {
+    for (const axis of expectedAxes) {
+      if (!axisSeen.has(axis)) {
+        throw new Error(`expected axes [${[...expectedAxes].join(",")}] before output; saw ${[...axisSeen].join(",")}`);
       }
-      return fauxAssistantMessage(
-        fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, { status: "completed" }, { id: "output" }),
-        { stopReason: "toolUse" },
-      );
-    },
-    () =>
-      fauxAssistantMessage(
-        fauxToolCall(
-          REVIEWER_AUDIT_TOOL_NAME,
-          { status: "pass", violations: [], conflicts: [], decisionGate: null },
-          { id: "audit" },
-        ),
-        { stopReason: "toolUse" },
+    }
+    if (axisSeen.size !== expectedAxes.size) {
+      throw new Error(`expected axes [${[...expectedAxes].join(",")}] before output; saw ${[...axisSeen].join(",")}`);
+    }
+    return fauxAssistantMessage(
+      fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, { status: "completed" }, { id: "output" }),
+      { stopReason: "toolUse" },
+    );
+  });
+  responses.push(() =>
+    fauxAssistantMessage(
+      fauxToolCall(
+        REVIEWER_AUDIT_TOOL_NAME,
+        { status: "pass", violations: [], conflicts: [], decisionGate: null },
+        { id: "audit" },
       ),
-  ]);
+      { stopReason: "toolUse" },
+    ),
+  );
+  faux.setResponses(responses);
   const model = faux.getModel();
   const provider: Provider = {
     ...faux.provider,
