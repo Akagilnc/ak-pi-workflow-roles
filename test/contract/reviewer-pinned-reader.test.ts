@@ -191,7 +191,7 @@ test("shared ref snapshot helper canonicalizes refs immutably", () => {
 });
 
 test("pinned reader: origin/commit messages/readPinnedText for Spec self-fetch", async () => {
-  const { parseGitHubOriginRemote } = await import("../../src/reviewer-pinned-git.ts");
+  const { branchNamesAtPinnedHead, parseGitHubOriginRemote } = await import("../../src/reviewer-pinned-git.ts");
   assert.deepEqual(parseGitHubOriginRemote("git@github.com:Acme/widgets.git"), {
     owner: "Acme",
     repo: "widgets",
@@ -209,27 +209,42 @@ test("pinned reader: origin/commit messages/readPinnedText for Spec self-fetch",
     await writeFile(join(root, "docs", "adr", "0001-x.md"), "# ADR\nbody\n");
     await git(root, "add", ".");
     await git(root, "commit", "-m", "feat: land #88 with adr");
+    const beforeRemote = await createReviewerPinnedGitReader(root);
+    // Confirmed no origin ⇒ self-fetch unavailable.
+    assert.equal(await beforeRemote.originRepository(), undefined);
+
+    // Issue-shaped tag + branch at HEAD: featureTokens may include both; branch ticket source is heads/remotes only.
+    await git(root, "branch", "fix/issue-99-release");
+    await git(root, "tag", "fix/issue-12-tag");
+    await git(root, "remote", "add", "origin", "git@github.com:Acme/widgets.git");
+    await git(root, "update-ref", "refs/remotes/origin/fix/issue-55-remote", "HEAD");
+    // Reader is pinned at construction; re-create after ref/remote mutations.
     const reader = await createReviewerPinnedGitReader(root);
 
-    // Confirmed no origin ⇒ self-fetch unavailable.
-    assert.equal(await reader.originRepository(), undefined);
-    await git(root, "remote", "add", "origin", "git@github.com:Acme/widgets.git");
-    // Reader is pinned at construction; re-create after remote add.
-    const withRemote = await createReviewerPinnedGitReader(root);
-    assert.deepEqual(await withRemote.originRepository(), { owner: "Acme", repo: "widgets" });
+    const tokens = await reader.featureTokens();
+    assert.equal(tokens.includes("fix/issue-99-release"), true);
+    assert.equal(tokens.includes("fix/issue-12-tag"), true);
+    assert.equal(tokens.includes("fix/issue-55-remote"), true);
+    const branchNames = branchNamesAtPinnedHead(reader.pin);
+    assert.equal(branchNames.includes("fix/issue-99-release"), true);
+    assert.equal(branchNames.includes("fix/issue-55-remote"), true);
+    // Tag must never enter branch-ticket provenance even when it points at targetHead.
+    assert.equal(branchNames.includes("fix/issue-12-tag"), false);
 
-    const messages = await withRemote.commitMessagesNewestFirst(base);
+    assert.deepEqual(await reader.originRepository(), { owner: "Acme", repo: "widgets" });
+
+    const messages = await reader.commitMessagesNewestFirst(base);
     assert.equal(messages[0], "feat: land #88 with adr");
 
-    assert.equal(await withRemote.readPinnedText("docs/adr/0001-x.md"), "# ADR\nbody\n");
+    assert.equal(await reader.readPinnedText("docs/adr/0001-x.md"), "# ADR\nbody\n");
     // Confirmed path-at-pinned-tree absence ⇒ missing (not a blanket exit-128 wash).
-    assert.equal(await withRemote.readPinnedText("docs/adr/missing.md"), undefined);
-    assert.equal(await withRemote.readPinnedText("../escape"), undefined);
+    assert.equal(await reader.readPinnedText("docs/adr/missing.md"), undefined);
+    assert.equal(await reader.readPinnedText("../escape"), undefined);
 
     // Non-absence Git failure (repo dir gone) must keep true cause — not pretend unavailable/missing.
     await rename(join(root, ".git"), join(root, ".git-hidden"));
-    await assert.rejects(() => withRemote.originRepository(), /git process failed/);
-    await assert.rejects(() => withRemote.readPinnedText("docs/adr/0001-x.md"), /git process failed/);
+    await assert.rejects(() => reader.originRepository(), /git process failed/);
+    await assert.rejects(() => reader.readPinnedText("docs/adr/0001-x.md"), /git process failed/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

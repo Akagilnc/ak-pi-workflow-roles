@@ -21,6 +21,36 @@ const pin: ReviewerPinnedTarget = {
     "refs/heads/main": { objectId: "1".repeat(40), peeledCommitId: "1".repeat(40) },
   },
 };
+
+/** Pin with named heads/remotes/tags at targetHead for ticket-provenance fixtures. */
+function pinWithRefs(options: {
+  heads?: readonly string[];
+  remotes?: readonly string[];
+  tags?: readonly string[];
+}): ReviewerPinnedTarget {
+  const refs: Record<string, { objectId: string; peeledCommitId: string | null }> = {
+    ...pin.refs,
+  };
+  for (const name of options.heads ?? []) {
+    refs[`refs/heads/${name}`] = {
+      objectId: pin.targetHead,
+      peeledCommitId: pin.targetHead,
+    };
+  }
+  for (const name of options.remotes ?? []) {
+    refs[`refs/remotes/origin/${name}`] = {
+      objectId: pin.targetHead,
+      peeledCommitId: pin.targetHead,
+    };
+  }
+  for (const name of options.tags ?? []) {
+    refs[`refs/tags/${name}`] = {
+      objectId: pin.targetHead,
+      peeledCommitId: pin.targetHead,
+    };
+  }
+  return { ...pin, refs };
+}
 const range = {
   base: "base",
   target: "target",
@@ -45,7 +75,12 @@ function harness(
   options: {
     authorityRefs?: readonly string[];
     ticketNumber?: number;
-    /** Branch/feature tokens returned by the pinned reader (production discovery input). */
+    /**
+     * Construction-time pin (reader.pin). Defaults to snapshot.
+     * Drift fixtures pass the pre-drift pin here while snapshot is the live view.
+     */
+    constructionPin?: ReviewerPinnedTarget;
+    /** Branch/feature tokens returned by the pinned reader (path matching only). */
     featureTokens?: readonly string[];
     /** Pinned-target Spec candidate paths (production discovery input). */
     specCandidatePaths?: readonly string[];
@@ -58,8 +93,10 @@ function harness(
   } = {},
 ) {
   let execution: AcceptedReviewerExecution | undefined;
+  // reader.pin is the pinned activation target — branch ticket provenance reads pin.refs here.
+  const constructionPin = options.constructionPin ?? snapshot;
   const reader: ReviewerPinnedGitReader = {
-    pin,
+    pin: constructionPin,
     async snapshot() {
       return snapshot;
     },
@@ -118,8 +155,9 @@ function successfulFetcher(body = ISSUE_BODY_WITH_ADR): ReviewerIssueFetcher {
 // (real dispatch entry → Spec material/prompt → receipt face).
 // Absorbs typed-over-branch/commit priority + ADR first-appearance/dedupe boundaries.
 test("production discovery: self-fetch bytes propagate from dispatch entry to receipt", async () => {
-  const h = harness(pin, {
+  const h = harness(pinWithRefs({ heads: ["fix/issue-99-other"] }), {
     ticketNumber: 176,
+    // featureTokens remain path-match tokens only; branch ticket comes from pin.refs heads.
     featureTokens: ["fix/issue-99-other"],
     commitMessages: ["feat: land #12"],
     origin: { owner: "Acme", repo: "widgets" },
@@ -258,7 +296,8 @@ test("production discovery: self-fetch bytes propagate from dispatch entry to re
 });
 
 test("production discovery: branch token self-fetch launches Spec", async () => {
-  const h = harness(pin, {
+  // Branch ticket provenance is pin.refs heads/remotes only — featureTokens are path match.
+  const h = harness(pinWithRefs({ heads: ["fix/issue-343-spec-fetch"] }), {
     featureTokens: ["fix/issue-343-spec-fetch"],
     // Commit candidate present but lower priority — abandoned, not adopted.
     commitMessages: ["chore: polish #99"],
@@ -279,6 +318,59 @@ test("production discovery: branch token self-fetch launches Spec", async () => 
     result.dispatch.authorityRefs[0],
     "https://github.com/Acme/widgets/issues/343",
   );
+});
+
+test("production discovery: issue-shaped tag is not branch ticket source", async () => {
+  // Same HEAD carries issue-shaped tag fix/issue-99-release while newest commit cites #343.
+  // Tag stays in featureTokens (path match) but must not outrank commit as branch-token ticket.
+  const h = harness(pinWithRefs({ tags: ["fix/issue-99-release"] }), {
+    featureTokens: ["fix/issue-99-release"],
+    commitMessages: ["feat: land #343"],
+    origin: { owner: "Acme", repo: "widgets" },
+    fetchIssue: successfulFetcher("commit-not-tag body"),
+  });
+  const result = await h.dispatcher.dispatch("main~1");
+  assert.equal(result.status, "accepted");
+  if (result.status !== "accepted") return;
+  assert.equal(result.dispatch.specDisposition, "launched");
+  assert.equal(result.dispatch.specFetchedMaterial?.adopted.source, "commit-message");
+  assert.equal(result.dispatch.specFetchedMaterial?.ticketNumber, 343);
+  assert.deepEqual(result.dispatch.specFetchedMaterial?.abandoned, []);
+  assert.equal(result.dispatch.specFetchedMaterial?.issueBody, "commit-not-tag body");
+});
+
+test("production discovery: remote branch token is branch ticket source", async () => {
+  const h = harness(pinWithRefs({ remotes: ["fix/issue-55-remote"] }), {
+    featureTokens: ["fix/issue-55-remote"],
+    commitMessages: ["chore: mention #9"],
+    origin: { owner: "Acme", repo: "widgets" },
+    fetchIssue: successfulFetcher("remote-branch body"),
+  });
+  const result = await h.dispatcher.dispatch("main~1");
+  assert.equal(result.status, "accepted");
+  if (result.status !== "accepted") return;
+  assert.equal(result.dispatch.specFetchedMaterial?.adopted.source, "branch-token");
+  assert.equal(result.dispatch.specFetchedMaterial?.ticketNumber, 55);
+  assert.deepEqual(result.dispatch.specFetchedMaterial?.abandoned, [
+    { source: "commit-message", ticketNumber: 9 },
+  ]);
+});
+
+test("production discovery: invocation AbortSignal reaches issue fetch", async () => {
+  const controller = new AbortController();
+  let seen: AbortSignal | undefined;
+  const h = harness(pinWithRefs({ heads: ["fix/issue-12-signal"] }), {
+    origin: { owner: "Acme", repo: "widgets" },
+    fetchIssue: async (input) => {
+      seen = input.signal;
+      return Object.freeze({ body: "signaled body" });
+    },
+  });
+  const result = await h.dispatcher.dispatch("main~1", { signal: controller.signal });
+  assert.equal(result.status, "accepted");
+  if (result.status !== "accepted") return;
+  assert.equal(seen, controller.signal);
+  assert.equal(result.dispatch.specFetchedMaterial?.issueBody, "signaled body");
 });
 
 test("production discovery: commit message #N self-fetch launches Spec", async () => {
@@ -456,7 +548,8 @@ test("construction builds solely from discovery product (no secondary launch dec
 });
 
 test("targetHead drift prevents child execution", async () => {
-  const h = harness({ ...pin, targetHead: "other" });
+  // Live snapshot drifted; construction pin stays at the admitted target.
+  const h = harness({ ...pin, targetHead: "other" }, { constructionPin: pin });
   const result = await h.dispatcher.dispatch("main~1");
   assert.equal(result.status, "rejected");
   if (result.status === "rejected") {
@@ -476,7 +569,7 @@ test("sibling ref map drift does not reject dispatch", async () => {
         peeledCommitId: "2".repeat(40),
       },
     },
-  });
+  }, { constructionPin: pin });
   const result = await h.dispatcher.dispatch("main~1");
   assert.equal(result.status, "accepted");
   assert.ok(h.execution);

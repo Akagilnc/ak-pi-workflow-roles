@@ -1,6 +1,6 @@
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
-import { immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
-export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
+import { branchNamesAtPinnedHead, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
+export { branchNamesAtPinnedHead, createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 import { isReviewerPromptText, sameReviewerPromptText, type ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { sha256Hex } from "./sha256.ts";
 import {
@@ -120,13 +120,21 @@ export type ReviewerIssueFetchResult = Readonly<{ body: string }>;
 /**
  * Soft issue fetch capability: undefined means confirmed tracker unreachable / issue not found.
  * Unrecognized runner failures and parse/implementation errors propagate with true cause (not washed into degrade).
- * Subprocess lifecycle is owned by the shared activation/execution seam; role modules only inject and consume this capability.
+ * Optional signal rides the shared GhApiRunner cancellation chain; role modules never own gh lifecycle.
  */
 export type ReviewerIssueFetcher = (input: {
   owner: string;
   repo: string;
   ticketNumber: number;
+  signal?: AbortSignal;
 }) => Promise<ReviewerIssueFetchResult | undefined>;
+
+/** Optional AbortSignal carried on the dispatch invocation bag (same shape runDispatch already reads). */
+function optionalInvocationSignal(invocation: unknown): AbortSignal | undefined {
+  if (typeof invocation !== "object" || invocation === null) return undefined;
+  const signal = (invocation as { signal?: unknown }).signal;
+  return signal instanceof AbortSignal ? signal : undefined;
+}
 
 /**
  * Unique production owner of code-review Skill step 2 Spec discovery (#343).
@@ -148,7 +156,10 @@ export async function discoverReviewerSpecAuthority(input: {
    * Absent capability = self-fetch unavailable (degrade); role module never owns gh lifecycle.
    */
   fetchIssue?: ReviewerIssueFetcher;
+  /** Optional cancellation signal for the soft-fetch gh subprocess (invocation AbortSignal). */
+  signal?: AbortSignal;
 }): Promise<ReviewerSpecAuthorityDiscovery> {
+  // Path-matching tokens (heads/tags/remotes) stay separate from branch-ticket provenance.
   const featureTokens = await input.reader.featureTokens();
   const commitMessages =
     input.baseCommit === undefined
@@ -156,7 +167,8 @@ export async function discoverReviewerSpecAuthority(input: {
       : await input.reader.commitMessagesNewestFirst(input.baseCommit);
   const ticketResolution = resolveReviewerTicketNumber({
     ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
-    branchNames: featureTokens,
+    // Branch ticket source: real heads/remotes at targetHead only — never tags via featureTokens.
+    branchNames: branchNamesAtPinnedHead(input.reader.pin),
     commitMessagesNewestFirst: commitMessages,
   });
 
@@ -168,6 +180,7 @@ export async function discoverReviewerSpecAuthority(input: {
         owner: origin.owner,
         repo: origin.repo,
         ticketNumber: ticketResolution.adopted.ticketNumber,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
       if (issue !== undefined) {
         const adrPaths = extractReferencedAdrPaths(issue.body);
@@ -302,12 +315,14 @@ export function createReviewerDispatcher(d: DispatcherDependencies) {
         const base = await d.reader.resolve(baseRevision);
         const range = await d.reader.range(base);
         const authorityRefs = Object.freeze([...(d.authorityRefs ?? [])]);
+        const signal = optionalInvocationSignal(invocation);
         const specAuthority = await discoverReviewerSpecAuthority({
           authorityRefs,
           reader: d.reader,
           baseCommit: base,
           ...(d.ticketNumber === undefined ? {} : { ticketNumber: d.ticketNumber }),
           ...(d.fetchIssue === undefined ? {} : { fetchIssue: d.fetchIssue }),
+          ...(signal === undefined ? {} : { signal }),
         });
         dispatch = constructReviewerDispatch({
           identity,

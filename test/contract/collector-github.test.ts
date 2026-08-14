@@ -262,13 +262,28 @@ printf 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{"login":"colle
 
 test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start failures propagate", async () => {
   const calls: string[][] = [];
-  const runner: GhApiRunner = async (args) => {
+  const seenSignals: Array<AbortSignal | undefined> = [];
+  const runner: GhApiRunner = async (args, options) => {
     calls.push([...args]);
+    seenSignals.push(options?.signal);
     if (args.includes("repos/Acme/widgets/issues/343")) {
       return {
         status: 200,
         headers: {},
         bodyText: JSON.stringify({ body: "issue body bytes", body_null_ok: true }),
+      };
+    }
+    if (args.includes("repos/Acme/widgets/issues/777")) {
+      // Issues endpoint 200 PR payload — pull_request marker must soft-unavailable, not Spec body.
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          body: "PR description must not become issue Spec",
+          pull_request: {
+            url: "https://api.github.com/repos/Acme/widgets/pulls/777",
+          },
+        }),
       };
     }
     if (args.includes("repos/Acme/widgets/issues/404")) {
@@ -288,16 +303,32 @@ test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start f
         path: "gh",
       });
     }
+    if (args.includes("repos/Acme/widgets/issues/408")) {
+      // Hung gh cancelled via invocation AbortSignal — keep abort cause (not soft unavailable).
+      return hangUntilAbortedRunner(options?.signal);
+    }
     // Generic implementation failure (gh did not fail-to-start) keeps true cause.
     throw new Error("implementation boom");
   };
   const fetchIssue = createGhIssueSoftFetcher(runner);
-  const ok = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 343 });
+  const controller = new AbortController();
+  const ok = await fetchIssue({
+    owner: "Acme",
+    repo: "widgets",
+    ticketNumber: 343,
+    signal: controller.signal,
+  });
   assert.deepEqual(ok, { body: "issue body bytes" });
   assert.equal(
     calls[0]?.join(" ").includes("api --hostname github.com --include -X GET repos/Acme/widgets/issues/343"),
     true,
   );
+  // Invocation AbortSignal is forwarded into GhApiRunner options (existing wheel only).
+  assert.equal(seenSignals[0], controller.signal);
+
+  // PR payload on issues endpoint → authorized soft unavailable (not adopted as issue Spec).
+  const prPayload = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 777 });
+  assert.equal(prPayload, undefined);
 
   // Issue not found / tracker non-success → authorized soft unavailable.
   const missing = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 404 });
@@ -315,6 +346,21 @@ test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start f
   await assert.rejects(
     () => fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 500 }),
     (error: unknown) => error instanceof Error && error.message === "implementation boom",
+  );
+
+  // Cancellation via forwarded signal keeps true abort cause — not washed into unavailable.
+  const hangController = new AbortController();
+  const abortReason = new Error("issue-fetch canceled");
+  const pending = fetchIssue({
+    owner: "Acme",
+    repo: "widgets",
+    ticketNumber: 408,
+    signal: hangController.signal,
+  });
+  queueMicrotask(() => hangController.abort(abortReason));
+  await assert.rejects(
+    () => pending,
+    (error: unknown) => Object.is(error, abortReason),
   );
 
   // Parse / payload shape failures keep true cause.

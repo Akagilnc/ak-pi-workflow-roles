@@ -28,9 +28,10 @@ export type ReviewerPinnedGitReader = {
   resolve(base: string): Promise<string>;
   range(base: string): Promise<ReviewerRange>;
   /**
-   * Branch/feature name tokens at the pinned target for Spec path matching.
+   * Branch/feature name tokens at the pinned target for Spec *path* matching only.
    * Derived from the pinned ref snapshot (heads/tags/remotes pointing at targetHead);
    * does not depend on current symbolic HEAD, so detached/remote-only tips stay honest.
+   * Ticket-number branch provenance must not use this set — see branchNamesAtPinnedHead.
    */
   featureTokens(): Promise<readonly string[]>;
   /**
@@ -95,6 +96,34 @@ async function repositoryIsAvailable(root: string): Promise<{ available: boolean
 export const immutableReviewerPin = (pin: ReviewerPinnedTarget): ReviewerPinnedTarget => Object.freeze({
   repositoryRoot: pin.repositoryRoot, objectFormat: pin.objectFormat, targetHead: pin.targetHead, refs: immutableReviewerRefs(pin.refs),
 });
+
+/** Short name from a full ref, stripping heads/tags/remotes namespaces (and remote remote-name). */
+function shortNameFromPinnedRef(refName: string): string | undefined {
+  const short = refName.startsWith("refs/heads/")
+    ? refName.slice("refs/heads/".length)
+    : refName.startsWith("refs/tags/")
+      ? refName.slice("refs/tags/".length)
+      : refName.startsWith("refs/remotes/")
+        ? refName.slice("refs/remotes/".length).replace(/^[^/]+\//, "")
+        : refName;
+  const trimmed = short.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+/**
+ * Branch-only short names at pinned targetHead for ticket-number provenance (#343).
+ * Heads and remotes only — tags never supply branch-token ticket candidates.
+ */
+export function branchNamesAtPinnedHead(pin: ReviewerPinnedTarget): readonly string[] {
+  const names = new Set<string>();
+  for (const [refName, entry] of Object.entries(pin.refs)) {
+    if (entry.peeledCommitId !== pin.targetHead) continue;
+    if (!refName.startsWith("refs/heads/") && !refName.startsWith("refs/remotes/")) continue;
+    const short = shortNameFromPinnedRef(refName);
+    if (short !== undefined) names.add(short);
+  }
+  return Object.freeze([...names]);
+}
 async function gitText(root: string, args: readonly string[]): Promise<string> {
   const { stdout } = await execGit(["-C", root, ...args], { encoding: "utf8" });
   return stdout.trim();
@@ -194,17 +223,12 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
     async featureTokens() {
       // Pinned ref snapshot is the target-tree fact — no live branch/symbolic-ref walk,
       // no catch-to-empty. Detached/remote-only tips surface via refs/remotes/* entries.
+      // Includes tags for local Spec-path matching only; ticket branch source is separate.
       const names = new Set<string>();
       for (const [refName, entry] of Object.entries(pin.refs)) {
         if (entry.peeledCommitId !== targetHead) continue;
-        const short = refName.startsWith("refs/heads/")
-          ? refName.slice("refs/heads/".length)
-          : refName.startsWith("refs/tags/")
-            ? refName.slice("refs/tags/".length)
-            : refName.startsWith("refs/remotes/")
-              ? refName.slice("refs/remotes/".length).replace(/^[^/]+\//, "")
-              : refName;
-        if (short.trim() !== "") names.add(short.trim());
+        const short = shortNameFromPinnedRef(refName);
+        if (short !== undefined) names.add(short);
       }
       return Object.freeze([...names]);
     },

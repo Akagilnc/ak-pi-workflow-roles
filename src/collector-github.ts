@@ -447,6 +447,8 @@ export type GhIssueSoftFetcher = (input: {
   owner: string;
   repo: string;
   ticketNumber: number;
+  /** Optional cancellation signal forwarded to the shared GhApiRunner. */
+  signal?: AbortSignal;
 }) => Promise<GhIssueSoftFetchResult | undefined>;
 
 function isAmbiguousGhFailure(error: unknown): boolean {
@@ -479,17 +481,22 @@ export function createGhIssueSoftFetcher(
     const path = `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
     let response: GhApiResponse;
     try {
-      response = await runner([
-        "api",
-        "--hostname",
-        "github.com",
-        "--include",
-        "-X",
-        "GET",
-        path,
-      ]);
+      // Forward invocation AbortSignal into the shared GhApiRunner lifecycle (no local timeout).
+      response = await runner(
+        [
+          "api",
+          "--hostname",
+          "github.com",
+          "--include",
+          "-X",
+          "GET",
+          path,
+        ],
+        input.signal === undefined ? {} : { signal: input.signal },
+      );
     } catch (error) {
       // Ticket-authorized soft unavailable: tagged transport ambiguity, or gh never started.
+      // Cancellation / other post-start failures keep true cause (not washed into degrade).
       if (isAmbiguousGhFailure(error) || isGhProcessStartFailure(error)) return undefined;
       throw error;
     }
@@ -503,6 +510,13 @@ export function createGhIssueSoftFetcher(
     }
     if (typeof parsed !== "object" || parsed === null) {
       throw new Error("GitHub issue payload must be a JSON object");
+    }
+    // Issues endpoint also returns PRs. Presence of the standard pull_request marker means
+    // this is a PR payload — soft-unavailable so Spec does not adopt PR description as issue body.
+    // Minimal discriminator only; no PR schema, linked-issue chase, or marker-content parse.
+    const pullRequestMarker = (parsed as { pull_request?: unknown }).pull_request;
+    if (pullRequestMarker !== undefined && pullRequestMarker !== null) {
+      return undefined;
     }
     // Match former gh --jq `(.body // "")`: null/missing body projects to empty string.
     // Title is not ticket-authorized audited material — do not parse or validate it.
