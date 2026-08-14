@@ -24,17 +24,18 @@ function authorityRefsFromPrompt(text: string): string[] | undefined {
   if (index < 0) return undefined;
   const rest = text.slice(index + marker.length);
   const line = rest.split("\n", 1)[0] ?? "";
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(line);
-    if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string")) {
-      throw new Error("Authority-Refs payload is not a string array");
-    }
-    return parsed as string[];
+    parsed = JSON.parse(line);
   } catch (error) {
     throw new Error(
       `Authority-Refs payload is not recognized JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string")) {
+    throw new Error("Authority-Refs payload is not a string array");
+  }
+  return parsed as string[];
 }
 
 function userText(context: Context): string {
