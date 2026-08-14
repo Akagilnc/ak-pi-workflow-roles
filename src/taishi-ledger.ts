@@ -28,6 +28,7 @@ import type {
   TaishiFirstFrameAt,
   TaishiMissingSource,
   TaishiOptionalTimestamp,
+  TaishiScopeConflict,
   TaishiUnreadableRun,
 } from "./taishi-page.ts";
 
@@ -55,9 +56,20 @@ function parseRunDirectoryName(
   return { runId: name.slice(0, at), role: name.slice(at + 1) };
 }
 
-async function readInvocationProjectRoot(
+/**
+ * Invocation scope faces used for issue 圈定 (C4).
+ * projectRoot remains required to place a run on any scope path;
+ * ticketNumber is the #176 typed face when present (integer ≥ 1).
+ * Single read of invocation.json — no second parse kernel.
+ */
+type InvocationScopeFields = {
+  readonly projectRoot: string;
+  readonly ticketNumber?: number;
+};
+
+async function readInvocationScopeFields(
   runDirectory: string,
-): Promise<string | undefined> {
+): Promise<InvocationScopeFields | undefined> {
   let raw: string;
   try {
     raw = await readFile(join(runDirectory, "invocation.json"), "utf8");
@@ -70,7 +82,44 @@ async function readInvocationProjectRoot(
   if (typeof parsed.projectRoot !== "string" || parsed.projectRoot.trim() === "") {
     return undefined;
   }
-  return parsed.projectRoot;
+  const projectRoot = parsed.projectRoot;
+  // Same #176 contract: positive integer ticketNumber only.
+  if (
+    typeof parsed.ticketNumber === "number"
+    && Number.isInteger(parsed.ticketNumber)
+    && parsed.ticketNumber >= 1
+  ) {
+    return { projectRoot, ticketNumber: parsed.ticketNumber };
+  }
+  return { projectRoot };
+}
+
+/**
+ * C4 issue scope decision for one run.
+ * - Both sides carry ticketNumber → typed ticket decides; mismatch projectRoot = conflict.
+ * - Otherwise → projectRoot mechanical-key fallback.
+ */
+function decideIssueScope(input: {
+  readonly scopeProjectRootIdentity: string;
+  readonly scopeTicketNumber: number | undefined;
+  readonly runProjectRootIdentity: string;
+  readonly runTicketNumber: number | undefined;
+}): { readonly inScope: boolean; readonly conflict: boolean } {
+  const projectRootMatch =
+    input.runProjectRootIdentity === input.scopeProjectRootIdentity;
+
+  if (
+    input.scopeTicketNumber !== undefined
+    && input.runTicketNumber !== undefined
+  ) {
+    if (input.runTicketNumber === input.scopeTicketNumber) {
+      return { inScope: true, conflict: !projectRootMatch };
+    }
+    // Run bound to a different ticket — typed face wins over projectRoot match.
+    return { inScope: false, conflict: false };
+  }
+
+  return { inScope: projectRootMatch, conflict: false };
 }
 
 async function resolveSessionFile(
@@ -130,6 +179,8 @@ export type TaishiScopedRunScan = {
   /** Readable in-scope runs with retained typed facts (A2). */
   readonly runs: readonly TaishiReadableRunFacts[];
   readonly unreadable: readonly TaishiUnreadableRun[];
+  /** C4: typed-ticket admits whose projectRoot mechanical key conflicted. */
+  readonly scopeConflicts: readonly TaishiScopeConflict[];
 };
 
 async function classifyScopedRun(input: {
@@ -261,16 +312,22 @@ async function classifyScopedRun(input: {
 }
 
 /**
- * Scan ledger home books/<book>/runs for runs whose invocation projectRoot matches
- * the issue scope. Damaged required sources become unreadable exclusions.
+ * Scan ledger home books/<book>/runs for runs in the issue scope.
+ * C4: typed ticketNumber (when present on both scope and run) decides membership;
+ * otherwise projectRoot mechanical key is the fallback. Ticket-vs-projectRoot
+ * conflicts still admit the run and surface on scopeConflicts.
+ * Damaged required sources become unreadable exclusions.
  * Readable runs retain typed facts for metric-family composition.
  */
 export async function scanTaishiIssueRuns(input: {
   readonly projectRoot: string;
+  /** Caller typed ticket face — when set, prefer #176 invocation ticketNumber. */
+  readonly ticketNumber?: number;
 }): Promise<TaishiScopedRunScan> {
   // Package-owned machine home only (ADR 0048) — no invocation-varying override.
   const ledgerHome = resolveActivationLedgerHome();
   const scopeIdentity = physicalPathIdentity(input.projectRoot);
+  const scopeTicketNumber = input.ticketNumber;
   const booksRoot = join(ledgerHome, "books");
 
   let bookNames: string[];
@@ -279,13 +336,14 @@ export async function scanTaishiIssueRuns(input: {
     bookNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch (error) {
     if (isMissingPathError(error)) {
-      return { runs: [], unreadable: [] };
+      return { runs: [], unreadable: [], scopeConflicts: [] };
     }
     throw error;
   }
 
   const runs: TaishiReadableRunFacts[] = [];
   const unreadable: TaishiUnreadableRun[] = [];
+  const scopeConflicts: TaishiScopeConflict[] = [];
 
   for (const book of bookNames) {
     const runsDir = join(booksRoot, book, "runs");
@@ -303,16 +361,34 @@ export async function scanTaishiIssueRuns(input: {
       if (parsed === undefined) continue;
       const runDirectory = join(runsDir, runName);
 
-      let projectRoot: string | undefined;
+      let scopeFields: InvocationScopeFields | undefined;
       try {
-        projectRoot = await readInvocationProjectRoot(runDirectory);
+        scopeFields = await readInvocationScopeFields(runDirectory);
       } catch (error) {
         // Corrupt invocation cannot be scoped to this issue — skip.
         if (error instanceof SyntaxError) continue;
         throw error;
       }
-      if (projectRoot === undefined) continue;
-      if (physicalPathIdentity(projectRoot) !== scopeIdentity) continue;
+      if (scopeFields === undefined) continue;
+
+      const runProjectRootIdentity = physicalPathIdentity(scopeFields.projectRoot);
+      const decision = decideIssueScope({
+        scopeProjectRootIdentity: scopeIdentity,
+        scopeTicketNumber,
+        runProjectRootIdentity,
+        runTicketNumber: scopeFields.ticketNumber,
+      });
+      if (!decision.inScope) continue;
+
+      if (decision.conflict) {
+        // ticketNumber is defined on both sides whenever conflict is true.
+        scopeConflicts.push({
+          runId: parsed.runId,
+          ticketNumber: scopeFields.ticketNumber as number,
+          projectRoot: runProjectRootIdentity,
+          fact: "typed-ticketNumber-over-projectRoot",
+        });
+      }
 
       const classified = await classifyScopedRun({
         book,
@@ -328,5 +404,6 @@ export async function scanTaishiIssueRuns(input: {
   return {
     runs,
     unreadable,
+    scopeConflicts,
   };
 }

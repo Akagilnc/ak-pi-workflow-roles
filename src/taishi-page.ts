@@ -57,6 +57,18 @@ export type TaishiLegEntry = {
 };
 
 /**
+ * C4 scope conflict: run admitted by typed ticketNumber while its invocation
+ * projectRoot mechanical key differed from the issue scope projectRoot.
+ * Four recorded facts: runId, typed ticketNumber, run projectRoot, conflict fact.
+ */
+export type TaishiScopeConflict = {
+  readonly runId: string;
+  readonly ticketNumber: number;
+  readonly projectRoot: string;
+  readonly fact: "typed-ticketNumber-over-projectRoot";
+};
+
+/**
  * Typed 空缺 for optional numeric metrics (LOC / 耗时每千行).
  * Discriminated — never encode absence as 0 or Infinity.
  */
@@ -86,6 +98,11 @@ export type TaishiIssueMetricsPage = {
   readonly legs: readonly TaishiLegEntry[];
   readonly unreadable: readonly TaishiUnreadableRun[];
   readonly unreadableCount: number;
+  /**
+   * C4: runs scoped in by typed ticketNumber whose invocation projectRoot
+   * differed from the issue scope key. Empty when no such conflict.
+   */
+  readonly scopeConflicts: readonly TaishiScopeConflict[];
   /** 完全耗时 — Σ readable leg wall clocks (0 when no readable runs). */
   readonly totalElapsedMs: number;
   /** 排除后改动行数 — caller typed input retained; absent when omitted or 0. */
@@ -120,6 +137,12 @@ function sortUnreadable(
     if (a.book !== b.book) return a.book.localeCompare(b.book);
     return a.runId.localeCompare(b.runId);
   });
+}
+
+function sortScopeConflicts(
+  conflicts: readonly TaishiScopeConflict[],
+): TaishiScopeConflict[] {
+  return [...conflicts].sort((a, b) => a.runId.localeCompare(b.runId));
 }
 
 /**
@@ -196,6 +219,8 @@ export function buildTaishiIssueMetricsPage(input: {
   readonly projectRoot: string;
   readonly runs: readonly TaishiReadableRunFacts[];
   readonly unreadable: readonly TaishiUnreadableRun[];
+  /** C4: scope conflicts observed while admitting runs (default none). */
+  readonly scopeConflicts?: readonly TaishiScopeConflict[];
   /** 排除后改动行数 — optional caller typed input (issue/sweep). */
   readonly changedLines?: number;
 }): TaishiIssueMetricsPage {
@@ -208,6 +233,7 @@ export function buildTaishiIssueMetricsPage(input: {
     })),
   );
   const unreadable = sortUnreadable(input.unreadable);
+  const scopeConflicts = sortScopeConflicts(input.scopeConflicts ?? []);
   const projectRoot = physicalPathIdentity(input.projectRoot);
   const { totalElapsedMs, lastActivityAt } = summarizeTaishiRunEfficiency(
     input.runs,
@@ -222,6 +248,7 @@ export function buildTaishiIssueMetricsPage(input: {
     legs,
     unreadable,
     unreadableCount: unreadable.length,
+    scopeConflicts,
     totalElapsedMs,
     changedLines,
     msPerKLines,
