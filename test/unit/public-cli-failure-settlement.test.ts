@@ -24,7 +24,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 import { AUDIT_ESCALATION_KIND, buildAuditEscalationResult } from "../../src/audit-escalation.ts";
@@ -61,17 +61,29 @@ import {
   isLawfulTypedTerminalOutcome,
   readBoundAuditorKnownFailure,
   readBoundEvidenceChildKnownFailure,
+  readSessionProviderStop,
   resolveAuditedRunnerKnownFailure,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
+import {
+  readLatestTypedProviderHttpObservation,
+} from "../../src/public-cli/run-lifecycle.ts";
+import {
+  createNativeNavigatorSessionFactory,
+  createNavigatorPrepareTool,
+  NAVIGATOR_PREPARE_TOOL_NAME,
+} from "../../src/navigator-attendance.ts";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
   buildAuditIncompleteTerminalOutcome,
   type ControlledFailureCause,
   type TerminalArtifactRef,
   type TerminalResult,
 } from "../../src/public-cli/terminal.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
+import { createRecordSession } from "../../src/sitian-record-entry.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fail-"));
@@ -342,7 +354,7 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     stderr: floodStderr(),
   });
   assert.equal(timeout.cause, "timeout");
-  assert.deepEqual(timeout.details, { timedOut: true, code: null });
+  assert.deepEqual(timeout.details, { timedOut: true, exitCode: null });
 
   const activation = classifyPostAdmissionFailure({
     timedOut: false,
@@ -445,7 +457,7 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(timedOutWithProvider.identity?.name, "ProviderStopError");
   assert.equal(timedOutWithProvider.identity?.code, "openai-codex");
   assert.deepEqual(timedOutWithProvider.details, {
-    code: null,
+    exitCode: null,
     timedOut: true,
   });
 
@@ -459,7 +471,8 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   });
   assert.deepEqual(reservedKnownDetails.details, {
     provider: "xai",
-    code: 1,
+    code: 99,
+    exitCode: 1,
   });
 
   // AC5: `throw undefined` is a present exception — not missing thrown / activation / output.
@@ -2610,7 +2623,7 @@ test("fast four-role public wiring matrix settles an injected auditor provider s
         return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
       },
     });
-    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "provider", diagnosticEquals: "WebSocket error", identityName: "ProviderStopError", identityCode: "openai-codex" });
+    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "unrecognized", diagnosticEquals: "WebSocket error" });
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
@@ -2638,9 +2651,19 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
       await tracer.close();
     }
     assert.notEqual(retentionResult.exitCode === 1 && retentionResult.terminal?.roleOutcome.kind === "failure" ? retentionResult.terminal.roleOutcome.cause : undefined, "timeout");
-    const retentionSettlement = await assertPublicFailureSettlement({ result: retentionResult, stdout: retentionIo.stdout, stderr: retentionIo.stderr, expectedCause: "provider", diagnosticIncludes: "WebSocket error", identityName: "faux-1", identityCode: "openai-codex" });
-    assert.equal((retentionSettlement.terminal.roleOutcome as any).decisiveFacts.secondaryEvidence.model, "faux-1");
+    // openai-completions throws APIError before onResponse, so non-2xx never becomes
+    // typed HTTP testimony at this seam (r3-A: onResponse only, no fetch wrap).
+    // Held errorMessage still reaches error.json; cause stays the honest unknown.
+    const retentionSettlement = await assertPublicFailureSettlement({
+      result: retentionResult,
+      stdout: retentionIo.stdout,
+      stderr: retentionIo.stderr,
+      expectedCause: "unrecognized",
+      diagnosticIncludes: "WebSocket error",
+    });
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
+    assert.equal(retentionArtifact.details?.errorMessage?.includes("WebSocket error") || retentionArtifact.diagnostic?.includes("WebSocket error"), true);
+    assert.equal(retentionArtifact.details?.provider, undefined);
     assert.equal(retentionArtifact.details.retentionFailure.name, "ComplianceResponseRetentionError");
     assert.equal(retentionArtifact.details.retentionFailure.cause.code, "EISDIR");
   });
@@ -2673,12 +2696,10 @@ test("bound evidence-child provider stop outranks generic activation wash", asyn
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
 
     assert.deepEqual(await readBoundEvidenceChildKnownFailure(sessionFile), {
-      cause: "provider",
-      identity: { name: "ProviderStopError", code: "openai-codex" },
+      cause: "unrecognized",
       diagnostic: "Codex error: The usage limit has been reached",
       details: {
-        provider: "openai-codex",
-        model: "gpt-5.6-sol",
+        errorMessage: "Codex error: The usage limit has been reached",
         secondaryEvidence: "evidence-child",
       },
     });
@@ -2692,12 +2713,10 @@ test("bound evidence-child provider stop outranks generic activation wash", asyn
         },
       }),
       {
-        cause: "provider",
-        identity: { name: "ProviderStopError", code: "openai-codex" },
+        cause: "unrecognized",
         diagnostic: "Codex error: The usage limit has been reached",
         details: {
-          provider: "openai-codex",
-          model: "gpt-5.6-sol",
+          errorMessage: "Codex error: The usage limit has been reached",
           secondaryEvidence: "evidence-child",
         },
       },
@@ -2781,14 +2800,12 @@ test("public Reviewer no-task dispatch retains evidence-child provider identity"
       result,
       stdout,
       stderr,
-      expectedCause: "provider",
+      expectedCause: "unrecognized",
       diagnosticEquals: "Codex error: The usage limit has been reached",
-      identityName: "ProviderStopError",
-      identityCode: "openai-codex",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(terminal.roleOutcome.cause, "unrecognized");
       assert.equal(
         terminal.roleOutcome.diagnostic,
         "Codex error: The usage limit has been reached",
@@ -2797,9 +2814,11 @@ test("public Reviewer no-task dispatch retains evidence-child provider identity"
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
       diagnostic: string;
+      details?: { errorMessage?: string };
     };
-    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.cause, "unrecognized");
     assert.equal(errorBody.diagnostic, "Codex error: The usage limit has been reached");
+    assert.equal(errorBody.details?.errorMessage, "Codex error: The usage limit has been reached");
   });
 });
 
@@ -2944,10 +2963,12 @@ test("bound auditor assistant supplies primary when secondary enrichment is abse
       { type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "WebSocket error", provider: "xai", model: "audit-model" } },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
     assert.deepEqual(await readBoundAuditorKnownFailure(sessionFile), {
-      cause: "provider",
-      identity: { name: "ProviderStopError", code: "xai" },
+      cause: "unrecognized",
       diagnostic: "WebSocket error",
-      details: { provider: "xai", model: "audit-model", secondaryEvidence: "unavailable" },
+      details: {
+        errorMessage: "WebSocket error",
+        secondaryEvidence: "unavailable",
+      },
     });
   });
 });
@@ -3032,7 +3053,7 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
       kind: "role_infrastructure_failure",
       source: "shared-role-lifecycle",
       reasonCode: "host_failure",
-      code: 1,
+      exitCode: 1,
     });
     assert.equal(JSON.stringify(durable).includes("VARIABLE DECOY"), false);
     assert.equal(stdout.length, 1);
@@ -3164,36 +3185,48 @@ test("session provider-stop produces provider cause without injected knownFailur
       result,
       stdout,
       stderr,
-      expectedCause: "provider",
+      expectedCause: "unrecognized",
       diagnosticEquals: "WebSocket error",
-      identityName: "ProviderStopError",
-      identityCode: "xai",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.equal(terminal.roleOutcome.cause, "unrecognized");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined);
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined);
       assert.equal(terminal.roleOutcome.diagnostic, "WebSocket error");
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
       diagnostic: string;
       identity?: { name?: string; code?: string | number };
+      details?: { errorMessage?: string };
     };
-    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.cause, "unrecognized");
     assert.equal(errorBody.diagnostic, "WebSocket error");
-    assert.equal(errorBody.identity?.name, "ProviderStopError");
-    assert.equal(errorBody.identity?.code, "xai");
-    // Typed seam unit: stopReason error → knownFailure provider; other stops ignored.
+    assert.equal(errorBody.identity, undefined);
+    assert.equal(errorBody.details?.errorMessage, "WebSocket error");
+    // Typed seam unit: stopReason error without upstream testimony is unknown; other stops ignored.
     const fromStop = knownFailureFromProviderStop({
       stopReason: "error",
       errorMessage: "WebSocket error",
       provider: "xai",
     });
-    assert.equal(fromStop?.cause, "provider");
-    assert.equal(fromStop?.identity?.name, "ProviderStopError");
+    assert.equal(fromStop?.cause, "unrecognized");
+    assert.equal(fromStop?.identity, undefined);
     assert.equal(fromStop?.diagnostic, "WebSocket error");
+    assert.deepEqual(
+      fromStop?.details,
+      { errorMessage: "WebSocket error" },
+    );
+    // Prose "500:" alone is not testimony (kept once here; no duplicate helper block).
+    assert.equal(
+      knownFailureFromProviderStop({
+        stopReason: "error",
+        errorMessage: "500: Internal error during token generation",
+        provider: "openai-codex",
+      })?.cause,
+      "unrecognized",
+    );
     assert.equal(
       knownFailureFromProviderStop({ stopReason: "end_turn", errorMessage: "ok" }),
       undefined,
@@ -3344,27 +3377,26 @@ test("zero-exit session provider-stop retains provider cause (not washed to outp
       result,
       stdout,
       stderr,
-      expectedCause: "provider",
+      expectedCause: "unrecognized",
       diagnosticEquals: "upstream websocket failed",
-      identityName: "ProviderStopError",
-      identityCode: "xai",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.equal(terminal.roleOutcome.cause, "unrecognized");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined);
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined);
       assert.equal(terminal.roleOutcome.diagnostic, "upstream websocket failed");
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
       diagnostic: string;
       identity?: { name?: string; code?: string | number };
+      details?: { errorMessage?: string };
     };
-    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.cause, "unrecognized");
     assert.equal(errorBody.diagnostic, "upstream websocket failed");
-    assert.equal(errorBody.identity?.name, "ProviderStopError");
-    assert.equal(errorBody.identity?.code, "xai");
+    assert.equal(errorBody.identity, undefined);
+    assert.equal(errorBody.details?.errorMessage, "upstream websocket failed");
     assert.equal(stdout.length, 1);
     assert.equal(
       stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
@@ -3427,29 +3459,27 @@ test("timedOut with session provider-stop retains provider identity (AC2)", asyn
       result,
       stdout,
       stderr,
-      expectedCause: "provider",
+      expectedCause: "unrecognized",
       diagnosticEquals: "provider hung then killed",
-      identityName: "ProviderStopError",
-      identityCode: "xai",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(terminal.roleOutcome.cause, "unrecognized");
       assert.equal(terminal.roleOutcome.diagnostic, "provider hung then killed");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined);
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined);
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
       diagnostic: string;
       identity?: { name?: string; code?: string | number };
-      details?: { timedOut?: boolean };
+      details?: { timedOut?: boolean; errorMessage?: string };
     };
-    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.cause, "unrecognized");
     assert.equal(errorBody.diagnostic, "provider hung then killed");
-    assert.equal(errorBody.identity?.name, "ProviderStopError");
-    assert.equal(errorBody.identity?.code, "xai");
+    assert.equal(errorBody.identity, undefined);
     assert.equal(errorBody.details?.timedOut, true);
+    assert.equal(errorBody.details?.errorMessage, "provider hung then killed");
   });
 });
 
@@ -3585,5 +3615,492 @@ test("unbound output failure remains nonzero even after an older provider error 
     assert.match(stderr[0]!, /without a lawful typed terminal result/);
     assert.equal(result.terminal?.roleOutcome.kind, "failure");
     if (result.terminal?.roleOutcome.kind === "failure") assert.equal(result.terminal.roleOutcome.cause, "output");
+  });
+});
+
+/**
+ * SessionManager defers first durable write until an assistant message exists.
+ * After production ak_compliance_response retain (custom entry only), append the
+ * realistic parent-aborted framing so the already-held retain bytes flush to disk.
+ * Does not invent the evidence stop — extractSessionProviderStop prefers the
+ * retained compliance response over this framing message.
+ */
+function flushRetainedParentSession(sessionManager: SessionManager): void {
+  sessionManager.appendMessage({
+    role: "assistant",
+    content: [],
+    api: "unknown",
+    provider: "unknown",
+    model: "unknown",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "aborted",
+    timestamp: Date.now(),
+  });
+}
+
+/** Settle a disk session stop through the production knownFailure→error.json chain. */
+async function settleDiskSessionStopToErrorJson(input: {
+  home: string;
+  project: string;
+  runId: string;
+  sessionFile: string;
+  sessionDirectory: string;
+  exitCode?: number;
+}): Promise<{ errorPath: string; errorBody: Record<string, unknown> }> {
+  const bookKey = resolveBookKeyFromGit(input.project);
+  const runDirectory = join(
+    input.home,
+    ".ak-roles",
+    "books",
+    bookKey,
+    "runs",
+    `${input.runId}@judge`,
+  );
+  await mkdir(join(runDirectory, "artifacts"), { recursive: true });
+  const known = await resolveAuditedRunnerKnownFailure({
+    runner: undefined,
+    sessionFile: input.sessionFile,
+    credential: undefined,
+    runDirectory,
+  });
+  assert.ok(known, "disk session must yield a knownFailure");
+  const failure = classifyPostAdmissionFailure({
+    timedOut: false,
+    code: input.exitCode ?? 1,
+    stderr: "",
+    knownCause: known.cause,
+    ...(known.diagnostic === undefined ? {} : { knownDiagnostic: known.diagnostic }),
+    ...(known.identity === undefined ? {} : { knownIdentity: known.identity }),
+    ...(known.details === undefined ? {} : { knownDetails: known.details }),
+  });
+  const admitted = {
+    role: "judge" as const,
+    runId: input.runId,
+    bookKey,
+    projectRoot: input.project,
+    instruction: "x",
+    instructionEmpty: false,
+    attachments: [],
+    runDirectory,
+    sessionDirectory: input.sessionDirectory,
+    sessionFile: input.sessionFile,
+    admittedRequestPath: join(runDirectory, "admitted-request.json"),
+  };
+  await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
+  const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
+  const errorRef = terminal.artifacts.find((a) => a.kind === "error");
+  assert.ok(errorRef, "settlement must publish error artifact");
+  const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as Record<string, unknown>;
+  return { errorPath: errorRef.path, errorBody };
+}
+
+test("#307 navigator raw: onResponse status reaches durable session + run typed HTTP sink", async () => {
+  // S6/S7: navigator durable path is createRecordSession(kind/subject) under ledger home —
+  // not a caller-supplied sessionDir / continueRecent self-computed path.
+  await withHermeticHome({ prefix: "nav-raw-307-" }, async ({ home }) => {
+    const previousPi = process.env.PI_CODING_AGENT_DIR;
+    const previousRun = process.env.AK_ROLE_RUN_DIR;
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runDir = join(home, "run");
+    // Work identity for the sitian navigator nest (same relation production factory uses).
+    const subject = join(project, "session-nav-raw");
+    await mkdir(runDir, { recursive: true });
+    try {
+      process.env.PI_CODING_AGENT_DIR = home;
+      process.env.AK_ROLE_RUN_DIR = runDir;
+      const faux = fauxProvider({ provider: "openai-codex", api: "openai-codex" });
+      const model = faux.getModel();
+      await writeFile(join(home, "navigator-model.json"), JSON.stringify({ model: `${model.provider}/${model.id}` }));
+      const provider = {
+        ...faux.provider,
+        stream(
+          requestModel: typeof model,
+          streamContext: { tools?: Array<{ name: string }> },
+          options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> },
+        ) {
+          const names = streamContext.tools?.map((tool) => tool.name) ?? [];
+          if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+            return faux.provider.stream(requestModel, streamContext as never, options as never);
+          }
+          const stream = createAssistantMessageEventStream();
+          const human = {
+            ...fauxAssistantMessage("", { stopReason: "error", errorMessage: "upstream 503 body" }),
+            body: "{\"err\":\"navigator-raw\"}",
+            code: "remote_503",
+            errno: -54,
+          };
+          queueMicrotask(() => {
+            void (async () => {
+              await options?.onResponse?.({ status: 503, headers: {} }, requestModel);
+              stream.push({ type: "error", reason: "error", error: human });
+            })();
+          });
+          return stream;
+        },
+        streamSimple(
+          requestModel: typeof model,
+          streamContext: { tools?: Array<{ name: string }> },
+          options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> },
+        ) {
+          return this.stream(requestModel, streamContext, options);
+        },
+      };
+      const nativeContext = {
+        cwd: project,
+        modelRegistry: {
+          find: (providerName: string, id: string) =>
+            providerName === model.provider && id === model.id ? model : undefined,
+          getProvider: (providerName: string) => providerName === model.provider ? provider : undefined,
+          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+        },
+      } as never;
+      const session = await createNativeNavigatorSessionFactory()({
+        context: nativeContext,
+        subject,
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      await session.setModel?.(`${model.provider}/${model.id}`, "off");
+      await session.prompt("navigator raw");
+      session.dispose();
+      // Real disk path via sitian entry only — same kind/subject/cwd identity production uses.
+      // Do not bypass createRecordSession with continueRecent/self-computed sessionDir.
+      const diskFile = createRecordSession({
+        cwd: project,
+        kind: "navigator",
+        subject,
+      }).getSessionFile();
+      assert.ok(diskFile, "navigator session must persist a session file via sitian entry");
+      const diskEntries = (await readFile(diskFile, "utf8"))
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as {
+          type?: string;
+          message?: {
+            role?: string;
+            errorMessage?: string;
+            statusCode?: number;
+            body?: unknown;
+            code?: unknown;
+            errno?: unknown;
+          };
+        });
+      const assistant = [...diskEntries].reverse().find(
+        (entry) => entry?.type === "message" && entry?.message?.role === "assistant",
+      );
+      assert.equal(assistant?.message?.errorMessage, "upstream 503 body");
+      assert.equal(assistant?.message?.statusCode, 503);
+      assert.equal(assistant?.message?.body, "{\"err\":\"navigator-raw\"}");
+      assert.equal(assistant?.message?.code, "remote_503");
+      assert.equal(assistant?.message?.errno, -54);
+      assert.deepEqual(await readLatestTypedProviderHttpObservation(runDir), {
+        httpStatus: 503,
+        provider: "openai-codex",
+      });
+    } finally {
+      if (previousPi === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousPi;
+      if (previousRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = previousRun;
+    }
+  });
+});
+
+test("#307 aborted raw: session aborted stop projects held payload into error.json", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj-aborted-raw");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-aborted-raw-001";
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`);
+    const sessionDirectory = join(runDirectory, "session");
+    await mkdir(sessionDirectory, { recursive: true });
+    // Real SessionManager principal — production retain writes the target session JSON.
+    const sessionManager = SessionManager.create(project, sessionDirectory);
+    const sessionFile = sessionManager.getSessionFile();
+    assert.ok(sessionFile);
+    const faux = fauxProvider({ provider: "xai" });
+    // Real auditor projector entry: return aborted stop without HTTP/diagnostics testimony.
+    // Config provider/model and local-looking body/code/errno are not upstream testimony.
+    await assert.rejects(runComplianceAudit({
+      tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
+      systemPrompt: "Audit.",
+      serializedInput: "aborted raw",
+      roleLabel: "judge auditor",
+      invalidDecisionLabel: "invalid audit decision",
+      runCompletion: async () => ({
+        ...fauxAssistantMessage("", {
+          stopReason: "aborted",
+          errorMessage: "stream aborted mid-token",
+        }),
+        body: "{\"abort\":true}",
+        code: "aborted_upstream",
+        errno: -1,
+      }),
+      context: {
+        cwd: project,
+        model: faux.getModel(),
+        thinkingLevel: "off",
+        modelRegistry: {
+          getProvider() { return faux.provider; },
+          async getProviderAuth() { return { auth: { apiKey: "test" } }; },
+          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
+        },
+        sessionManager,
+      } as unknown as ExtensionContext,
+    }));
+    // Production retain already holds the aborted stop; flush parent session to disk.
+    flushRetainedParentSession(sessionManager);
+    // Disk session carries the retained aborted stop (not piRunner-synthesized JSON).
+    const diskStop = await readSessionProviderStop(sessionFile);
+    assert.equal(diskStop?.stopReason, "aborted");
+    assert.equal(diskStop?.errorMessage, "stream aborted mid-token");
+    const { errorBody } = await settleDiskSessionStopToErrorJson({
+      home,
+      project,
+      runId,
+      sessionFile,
+      sessionDirectory,
+      exitCode: 1,
+    });
+    assert.equal(errorBody.cause, "unrecognized");
+    assert.equal(errorBody.diagnostic, "stream aborted mid-token");
+    const details = errorBody.details as Record<string, unknown> | undefined;
+    assert.equal(details?.errorMessage, "stream aborted mid-token");
+    // Process exit fact is preserved separately from any remote code.
+    assert.equal(details?.exitCode, 1);
+    // No testimony ⇒ no provider/model identity and no body/code/errno projection.
+    assert.equal(details?.provider, undefined);
+    assert.equal(details?.model, undefined);
+    assert.equal(details?.body, undefined);
+    assert.equal(details?.code, undefined);
+    assert.equal(details?.errno, undefined);
+  });
+});
+
+test("#307 SDK structured payload: confirmed remote status+body reaches error.json", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj-sdk-structured");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const padded = "  500: keep surrounding spaces  ";
+    const runId = "run-sdk-structured-001";
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`);
+    const sessionDirectory = join(runDirectory, "session");
+    await mkdir(sessionDirectory, { recursive: true });
+    // Real SessionManager principal — production ak_compliance_response retain owns the bytes.
+    const sessionManager = SessionManager.create(project, sessionDirectory);
+    const sessionFile = sessionManager.getSessionFile();
+    assert.ok(sessionFile);
+    const faux = fauxProvider({ provider: "openai-codex" });
+    // Real evidence-child/auditor projector seam: throw structured remote diagnostics
+    // through runCompletion → projectStructuredRemote → ak_compliance_response retain.
+    // Target session JSON is never hand-written by piRunner.
+    await assert.rejects(runComplianceAudit({
+      tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
+      systemPrompt: "Audit.",
+      serializedInput: "SDK structured payload",
+      roleLabel: "judge auditor",
+      invalidDecisionLabel: "invalid audit decision",
+      runCompletion: async () => {
+        throw Object.assign(new Error(padded), {
+          status: 500,
+          statusCode: 500,
+          body: "{\"upstream\":\"raw-body-bytes\"}",
+          code: "remote_internal",
+          errno: 61,
+          diagnostics: [{ type: "provider_error", error: { message: padded } }],
+        });
+      },
+      context: {
+        cwd: project,
+        model: faux.getModel(),
+        thinkingLevel: "off",
+        modelRegistry: {
+          getProvider() { return faux.provider; },
+          async getProviderAuth() { return { auth: { apiKey: "test" } }; },
+          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
+        },
+        sessionManager,
+      } as unknown as ExtensionContext,
+    }));
+    // Production retain already holds the structured stop; flush parent session to disk.
+    flushRetainedParentSession(sessionManager);
+    const diskStop = await readSessionProviderStop(sessionFile);
+    assert.equal(diskStop?.errorMessage, padded);
+    assert.equal(diskStop?.httpStatus, 500);
+    assert.equal(diskStop?.body, "{\"upstream\":\"raw-body-bytes\"}");
+    assert.equal(diskStop?.code, "remote_internal");
+    assert.equal(diskStop?.errno, 61);
+    const { errorBody } = await settleDiskSessionStopToErrorJson({
+      home,
+      project,
+      runId,
+      sessionFile,
+      sessionDirectory,
+      exitCode: 1,
+    });
+    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.diagnostic, padded);
+    const details = errorBody.details as Record<string, unknown> | undefined;
+    assert.equal(details?.errorMessage, padded);
+    assert.equal(details?.httpStatus, 500);
+    assert.equal(details?.body, "{\"upstream\":\"raw-body-bytes\"}");
+    // SDK remote code and process exit code coexist without collision.
+    assert.equal(details?.code, "remote_internal");
+    assert.equal(details?.exitCode, 1);
+    assert.equal(details?.errno, 61);
+    assert.equal(details?.provider, "openai-codex");
+  });
+});
+
+test("#307 2xx clears prior typed HTTP observation rather than persisting success", async () => {
+  const runDir = await mkdtemp(join(tmpdir(), "http-2xx-clear-"));
+  try {
+    // Single shortest real tracer: production after_provider_response only.
+    await observeTyped429ViaProductionHandler({
+      runDirectory: runDir,
+      provider: "openai-codex",
+      httpStatus: 500,
+    });
+    assert.deepEqual(await readLatestTypedProviderHttpObservation(runDir), {
+      httpStatus: 500,
+      provider: "openai-codex",
+    });
+    await observeTyped429ViaProductionHandler({
+      runDirectory: runDir,
+      provider: "openai-codex",
+      httpStatus: 200,
+    });
+    assert.equal(await readLatestTypedProviderHttpObservation(runDir), undefined);
+  } finally {
+    await rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep real cause", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj-typed-http-read");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-typed-http-read-001";
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`);
+    await mkdir(runDirectory, { recursive: true });
+    const sessionFile = join(runDirectory, "session", "missing-session.jsonl");
+
+    // Absence (no sidecar): ENOENT → undefined observation, no forged failure.
+    assert.equal(await readLatestTypedProviderHttpObservation(runDirectory), undefined);
+    assert.equal(await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+      runDirectory,
+    }), undefined);
+
+    // Non-absence: existing sidecar with illegal typed shape keeps real cause on settlement chain.
+    await writeFile(join(runDirectory, "typed-provider-http.json"), JSON.stringify({ httpStatus: 500 }), "utf8");
+    const badShape = await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+      runDirectory,
+    });
+    assert.equal(badShape?.cause, "session");
+    assert.match(badShape?.diagnostic ?? "", /provider/);
+
+    // Non-absence: malformed JSON keeps SyntaxError identity (not laundered as absence).
+    await writeFile(join(runDirectory, "typed-provider-http.json"), "{not-json\n", "utf8");
+    const malformed = await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+      runDirectory,
+    });
+    assert.equal(malformed?.cause, "session");
+    assert.equal(malformed?.identity?.name, "SyntaxError");
+    assert.match(malformed?.diagnostic ?? "", /JSON/i);
+
+    // Non-absence: EISDIR on the observation path keeps real errno cause.
+    await rm(join(runDirectory, "typed-provider-http.json"), { force: true });
+    await mkdir(join(runDirectory, "typed-provider-http.json"));
+    const eisdir = await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+      runDirectory,
+    });
+    assert.equal(eisdir?.cause, "session");
+    assert.equal(eisdir?.identity?.code, "EISDIR");
+  });
+});
+
+test("#307 typed HTTP non-absence failure settles once via controlled failure (no outer escape)", async () => {
+  // Public failure tracer: EISDIR on the typed-HTTP sidecar must enter the existing
+  // controlled-failure → error.json chain once. Resume must not re-read/rethrow to cli outer catch.
+  await withTempHome(async (home) => {
+    const project = join(home, "proj-typed-http-resume-once");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-typed-http-resume-once-001";
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "typed http sidecar is a directory"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => runId,
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const runDir = join(sessionDir, "..");
+          await mkdir(sessionDir, { recursive: true });
+          // Sidecar path occupied as a directory → readFile EISDIR (non-absence).
+          await mkdir(join(runDir, "typed-provider-http.json"), { recursive: true });
+          return {
+            code: 1,
+            stderr: "provider child exited",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.resume, undefined);
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    if (result.terminal!.roleOutcome.kind === "failure") {
+      assert.equal(result.terminal!.roleOutcome.cause, "session");
+      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+    }
+    // Must publish error.json through controlled settlement — not wash at cli outer catch.
+    const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
+    assert.ok(errorRef, "controlled failure must publish error artifact");
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause?: string;
+      identity?: { code?: string };
+    };
+    assert.equal(errorBody.cause, "session");
+    assert.equal(errorBody.identity?.code, "EISDIR");
+    // Outer catch path prints a bare diagnostic without Terminal; controlled path keeps Terminal on stdout/structured.
+    assert.equal(stdout.length + stderr.length > 0, true);
+    assert.equal(
+      stderr.some((line) => line.includes("unrecognized exception")),
+      false,
+    );
   });
 });

@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { ModelRuntime, SessionManager, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
@@ -13,13 +13,17 @@ import {
   mintNavigatorInvocationId,
 } from "./navigator-invocation-identity.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
-import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
 import { openInProcessAgentSession } from "./in-process-session.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
+import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
+import {
+  hasUpstreamErrorTestimony,
+  isNonSuccessHttpStatus,
+  projectConfirmedRemotePayload,
+} from "./upstream-error-testimony.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
@@ -233,12 +237,14 @@ export type NavigatorPreparationSession = {
   providerFailure?(): NavigatorProviderFailureFact | undefined;
   setModel?(model: string, thinkingLevel: "off" | "max"): Promise<void>;
   getThinkingLevel?(): string;
+  /** Durable record pointer for unchanged no-receipt lifecycle facts. Required — missing pointer fails honestly. */
+  recordPointer(): string;
   dispose(): void;
 };
 
 export type NavigatorSessionFactory = (options: {
   context: ExtensionContext;
-  sessionDir: string;
+  subject: string;
   modelSettingPath?: string;
   tool: ToolDefinition;
 }) => Promise<NavigatorPreparationSession>;
@@ -248,7 +254,6 @@ export type NavigatorAttendanceOptions = {
   role: string;
   phase: NavigatorPhase;
   subjectKey: string;
-  sessionDir: string;
   loadSoul: () => Promise<string>;
   loadRoutePlaybook?: () => Promise<string>;
   loadRoleHelp: (role: NavigatorTargetRole) => Promise<string>;
@@ -257,7 +262,6 @@ export type NavigatorAttendanceOptions = {
   subject: string;
   authority: string;
   contextError?: unknown;
-  sessionDirectory?: (subjectKey: string) => string;
   /** Exact principal owned by shared role lifecycle; attendance never overrides it. */
   invocationId?: string;
   onEvent: (event: NavigatorEvent, report: NavigatorReport) => void | Promise<void>;
@@ -426,15 +430,6 @@ export function navigatorSubjectKeyForInput(subjectRoot: string, reference: stri
   return navigatorSubjectKey(subjectRoot, resolvedReference);
 }
 
-function subjectDirectory(cwd: string, subjectKey: string): string {
-  const book = activationBookDirectory(
-    resolveActivationLedgerHome(),
-    resolveBookKeyFromGit(cwd),
-  );
-  const digest = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
-  return join(book, "navigator", digest);
-}
-
 export function navigatorModelSettingPath(): string {
   return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "navigator-model.json");
 }
@@ -588,7 +583,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let subject = options.subject;
   let authority = options.authority;
   let contextError = options.contextError;
-  let sessionDir = options.sessionDir;
   let candidates: NavigatorCandidate[] | undefined;
   // Shared lifecycle owns the principal when supplied; otherwise mint once per attendance.
   const invocationPrincipal = options.invocationId ?? mintNavigatorInvocationId();
@@ -721,7 +715,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         sessionReady = (async () => {
           let created: NavigatorPreparationSession;
           try {
-            created = await options.createSession({ context: options.context, sessionDir, ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }), tool });
+            created = await options.createSession({ context: options.context, subject: subjectKey, ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }), tool });
           } catch (error) {
             throw navigatorUnavailableError("session", error);
           }
@@ -841,7 +835,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
           }
           if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
-            const facts = delivery.facts({ runPointer: sessionDir, attemptPointer: invocationId });
+            const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
             activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
             preparationNoReceipt = true;
             candidates = [];
@@ -884,7 +878,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       subject = next.subject;
       authority = next.authority;
       contextError = next.contextError;
-      sessionDir = options.sessionDirectory?.(next.subjectKey) ?? options.sessionDir;
     },
     /**
      * Start live-help subprocesses during activation without beginning full
@@ -1056,7 +1049,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
   // Pre-warm once per factory (per process). Concurrent prepares share the same
   // runtime construction rather than each paying ModelRuntime.create under load.
   const sharedModelRuntime = ModelRuntime.create({ allowModelNetwork: false });
-  return async ({ context, sessionDir, modelSettingPath, tool }) => {
+  return async ({ context, subject, modelSettingPath, tool }) => {
     let configured: string;
     try {
       configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
@@ -1079,16 +1072,6 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       throw navigatorUnavailableError("auth", error);
     }
     if (!auth.ok) throw new NavigatorUnavailableError("auth", auth.error);
-    try {
-      const sessionInfo = await stat(sessionDir);
-      if (!sessionInfo.isDirectory()) throw new NavigatorUnavailableError("session", `Navigator session path is not a directory: ${sessionDir}`);
-    } catch (error) {
-      if (error instanceof NavigatorUnavailableError) throw error;
-      // Contract: README.md#Navigator-attendance — the resumable session directory may be created by session setup; retain and classify every other filesystem cause.
-      if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) {
-        throw navigatorUnavailableError("session", error);
-      }
-    }
     let providerFailure: NavigatorProviderFailureFact | undefined;
     const assignProviderFailure = (fact: NavigatorProviderFailureFact | undefined): void => {
       if (fact !== undefined) providerFailure = fact;
@@ -1115,19 +1098,37 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       }
       assignProviderFailure(navigatorProviderFailureFromStatus(status));
     };
-    const humanProviderError = <T extends Record<string, unknown>>(error: T): T => {
-      const human = { ...error };
-      delete human.statusCode;
-      delete human.code;
-      delete human.navigatorFailure;
-      return human;
+    /** Project only fields actually held on the call surface — never forge upstream payload. */
+    const projectHeldUpstream = (error: unknown): Record<string, unknown> => {
+      if (!exactRecord(error)) return {};
+      // Shape reading stays local; testimony + confirmed-remote payload use shared authority.
+      const status = typeof error.statusCode === "number"
+        ? error.statusCode
+        : typeof error.status === "number"
+          ? error.status
+          : typeof error.httpStatus === "number"
+            ? error.httpStatus
+            : undefined;
+      const httpStatus = isNonSuccessHttpStatus(status) ? status : undefined;
+      const diagnostics = Array.isArray(error.diagnostics) && error.diagnostics.length > 0
+        ? error.diagnostics
+        : undefined;
+      const testimony = hasUpstreamErrorTestimony({
+        ...(httpStatus === undefined ? {} : { httpStatus }),
+        ...(diagnostics === undefined ? {} : { diagnostics }),
+      });
+      return {
+        ...(httpStatus === undefined ? {} : { statusCode: httpStatus, status: httpStatus }),
+        ...(diagnostics === undefined ? {} : { diagnostics }),
+        ...(testimony ? projectConfirmedRemotePayload(error) : {}),
+      };
     };
-    let providerFailureEvidenceNumber = 0;
-    let providerFailureEvidence: { id: string; error: unknown } | undefined;
-    const retainProviderFailure = (error: unknown): string => {
-      const id = `navigator-provider-failure-${++providerFailureEvidenceNumber}`;
-      providerFailureEvidence = { id, error };
-      return id;
+    /** Keep held upstream fields; strip only the local navigatorFailure classification marker. */
+    const retainUpstreamMessage = <T extends Record<string, unknown>>(error: T): T => {
+      if (!("navigatorFailure" in error)) return error;
+      const copy = { ...error };
+      delete copy.navigatorFailure;
+      return copy;
     };
     const setupFailureMessage = (error: unknown) => ({
       role: "assistant" as const,
@@ -1138,15 +1139,27 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       stopReason: "error" as const,
       errorMessage: error instanceof Error ? error.message : String(error),
-      navigatorFailureEvidenceId: retainProviderFailure(error),
       timestamp: Date.now(),
+      ...projectHeldUpstream(error),
     });
+    const persistNavigatorHttpObservation = async (
+      status: number,
+      model: unknown,
+    ): Promise<void> => {
+      const runDir = process.env.AK_ROLE_RUN_DIR;
+      if (typeof runDir !== "string" || runDir.trim() === "") return;
+      const provider = exactRecord(model) && typeof model.provider === "string" && model.provider.trim() !== ""
+        ? model.provider
+        : undefined;
+      if (provider === undefined) return;
+      await recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider });
+    };
     const instrumentProvider = <TProvider extends NonNullable<typeof provider>>(sourceProvider: TProvider): TProvider => {
       type StreamFn = TProvider["stream"];
       type StreamSimpleFn = TProvider["streamSimple"];
       type StreamOptionsArg = Parameters<StreamFn>[2];
       type StreamSimpleOptionsArg = Parameters<StreamSimpleFn>[2];
-      const instrumentStreamOptions = <TOptions>(options: TOptions): TOptions => {
+      const instrumentStreamOptions = <TOptions>(options: TOptions, observedStatus: { value?: number }): TOptions => {
         const record = (exactRecord(options) ? options : {}) as Record<string, unknown>;
         const previous = typeof record.onResponse === "function"
           ? record.onResponse as (response: { status: number; headers: Record<string, string> }, model: unknown) => void | Promise<void>
@@ -1154,12 +1167,23 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         return {
           ...record,
           onResponse: async (response: { status: number; headers: Record<string, string> }, model: unknown) => {
+            observedStatus.value = response.status;
             classifyProviderResponseStatus(response.status);
+            // Durable run-dossier sink for typed non-success HTTP (2xx clears).
+            await persistNavigatorHttpObservation(response.status, model);
             await previous?.(response, model);
           },
         } as TOptions;
       };
-      const wrapProviderStream = (source: ReturnType<StreamFn>): ReturnType<StreamFn> => {
+      /** Attach a directly observed non-success HTTP status when the terminal message lacks one. */
+      const withObservedStatus = <T extends Record<string, unknown>>(message: T, observedStatus: number | undefined): T => {
+        if (observedStatus === undefined || observedStatus >= 200 && observedStatus < 300) return message;
+        if (typeof message.statusCode === "number" || typeof message.status === "number" || typeof message.httpStatus === "number") {
+          return message;
+        }
+        return { ...message, statusCode: observedStatus, status: observedStatus };
+      };
+      const wrapProviderStream = (source: ReturnType<StreamFn>, observedStatus: { value?: number }): ReturnType<StreamFn> => {
         const wrapped = createAssistantMessageEventStream();
         void (async () => {
           let result: Awaited<ReturnType<typeof source.result>> | undefined;
@@ -1170,13 +1194,14 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
                 sawTerminal = true;
                 if (event.type === "done" && exactRecord(event.message)) {
                   assignProviderFailure(navigatorProviderFailureFromDiagnostics(event.message.diagnostics));
-                  result = humanProviderError(event.message) as typeof event.message;
+                  // Keep held message/status/body/code/errno/diagnostics on the session surface.
+                  result = withObservedStatus(retainUpstreamMessage(event.message), observedStatus.value) as typeof event.message;
                   wrapped.push({ ...event, message: result });
                   continue;
                 }
                 if (event.type === "error" && exactRecord(event.error)) {
                   classifyProviderStreamError(event.error);
-                  result = humanProviderError(event.error) as typeof event.error;
+                  result = withObservedStatus(retainUpstreamMessage(event.error), observedStatus.value) as typeof event.error;
                   wrapped.push({ ...event, error: result });
                   continue;
                 }
@@ -1186,24 +1211,24 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
             // Only await result after a terminal done/error event. end(undefined) leaves result() unresolved forever.
             if (sawTerminal) {
               const terminal = await source.result();
-              if (result === undefined && exactRecord(terminal)) result = humanProviderError(terminal) as typeof terminal;
-              else if (result === undefined) result = terminal;
+              if (result === undefined && exactRecord(terminal)) {
+                result = withObservedStatus(retainUpstreamMessage(terminal), observedStatus.value) as typeof terminal;
+              } else if (result === undefined) result = terminal;
             }
           } catch (error) {
-            // Contract: README.md#Navigator-attendance — synthetic provider errors retain a stable pointer to the raw rejection while exposing only human-safe text.
+            // Stream throw: project held upstream fields onto the synthetic terminal message (session is durable).
             classifyProviderStreamError(error);
-            if (providerFailure === undefined) providerFailure = { source: "transport", cause: "transport" };
+            if (providerFailure === undefined) providerFailure = { source: "unknown", cause: "unknown" };
             if (!sawTerminal) {
-              const message = setupFailureMessage(error);
+              const message = withObservedStatus(setupFailureMessage(error), observedStatus.value);
               wrapped.push({ type: "error", reason: "error", error: message });
               result = message;
               sawTerminal = true;
             }
           } finally {
-            // No terminal stream event means the provider produced no response.
-            // Emit a synthetic error so callers do not hang waiting for done/error, and never await an unresolved source.result().
+            // No terminal stream event: unknown only — do not forge upstream payload.
             if (!sawTerminal) {
-              if (providerFailure === undefined) providerFailure = { source: "transport", cause: "transport" };
+              if (providerFailure === undefined) providerFailure = { source: "unknown", cause: "unknown" };
               const message = setupFailureMessage(new Error("Navigator provider produced no response"));
               wrapped.push({ type: "error", reason: "error", error: message });
               result = message;
@@ -1214,15 +1239,16 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         })();
         return wrapped as ReturnType<StreamFn>;
       };
-      const invokeInstrumentedStream = (invoke: () => ReturnType<StreamFn>): ReturnType<StreamFn> => {
+      const invokeInstrumentedStream = (invoke: (observedStatus: { value?: number }) => ReturnType<StreamFn>): ReturnType<StreamFn> => {
         // Reset before invoking the selected provider so setup throws cannot leave a prior call's fact.
         providerFailure = undefined;
+        const observedStatus: { value?: number } = {};
         try {
-          return wrapProviderStream(invoke());
+          return wrapProviderStream(invoke(observedStatus), observedStatus);
         } catch (error) {
-          // Contract: README.md#Navigator-attendance — setup failures become terminal synthetic errors, with the raw rejection retained by stable evidence pointer.
+          // Setup failures become terminal synthetic errors with held upstream fields projected when present.
           classifyProviderStreamError(error);
-          if (providerFailure === undefined) providerFailure = { source: "transport", cause: "transport" };
+          if (providerFailure === undefined) providerFailure = { source: "unknown", cause: "unknown" };
           const wrapped = createAssistantMessageEventStream();
           const message = setupFailureMessage(error);
           queueMicrotask(() => {
@@ -1235,12 +1261,16 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       return {
         ...sourceProvider,
         stream(model: Parameters<StreamFn>[0], streamContext: Parameters<StreamFn>[1], options: StreamOptionsArg) {
-          const instrumented = instrumentStreamOptions(options);
-          return invokeInstrumentedStream(() => sourceProvider.stream(model, streamContext, instrumented) as ReturnType<StreamFn>) as ReturnType<StreamFn>;
+          return invokeInstrumentedStream((observedStatus) => {
+            const instrumented = instrumentStreamOptions(options, observedStatus);
+            return sourceProvider.stream(model, streamContext, instrumented) as ReturnType<StreamFn>;
+          }) as ReturnType<StreamFn>;
         },
         streamSimple(model: Parameters<StreamSimpleFn>[0], streamContext: Parameters<StreamSimpleFn>[1], options: StreamSimpleOptionsArg) {
-          const instrumented = instrumentStreamOptions(options);
-          return invokeInstrumentedStream(() => sourceProvider.streamSimple(model, streamContext, instrumented) as ReturnType<StreamFn>) as ReturnType<StreamSimpleFn>;
+          return invokeInstrumentedStream((observedStatus) => {
+            const instrumented = instrumentStreamOptions(options, observedStatus);
+            return sourceProvider.streamSimple(model, streamContext, instrumented) as ReturnType<StreamFn>;
+          }) as ReturnType<StreamSimpleFn>;
         },
       } as TProvider;
     };
@@ -1253,13 +1283,15 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
     }
     let opened: Awaited<ReturnType<typeof openInProcessAgentSession>>;
     try {
-      // Shared in-process session open (#233) — same ModelRuntime module instance.
+      // Shared in-process session open (#233) — Sitian SessionManager from identity relations.
       opened = await openInProcessAgentSession({
         cwd: context.cwd,
+        kind: "navigator",
+        subject,
+        parent: context.sessionManager,
         model,
         modelRuntime,
         thinkingLevel: parsed.thinkingLevel,
-        sessionManager: SessionManager.continueRecent(context.cwd, sessionDir),
         noTools: "all",
         tools: [NAVIGATOR_PREPARE_TOOL_NAME],
         customTools: [tool],
@@ -1312,6 +1344,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         }
       },
       getThinkingLevel: () => opened.session.thinkingLevel,
+      recordPointer: () => opened.session.sessionManager.getSessionDir(),
       dispose: () => opened.dispose(),
     };
   };
@@ -1324,12 +1357,6 @@ export function registerNavigatorModelCommand(pi: ExtensionAPI, path = navigator
       await writeNavigatorModelSetting(args.trim(), path);
     },
   });
-}
-
-export function navigatorSessionDirectory(context: ExtensionContext, subjectKey?: string): string {
-  const current = context.sessionManager.getSessionDir();
-  const key = subjectKey ?? subjectPath(current, context.cwd);
-  return subjectDirectory(context.cwd, key);
 }
 
 export { subjectPath };

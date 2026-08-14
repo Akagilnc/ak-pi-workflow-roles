@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Sole scheduling owner for `npm run test:all` (Issue #160).
 // Discovers test/{unit,contract,integration,package}/**/*.test.ts, partitions
-// the exact heavyweight real-Pi/Navigator manifest into a serial child, and
+// the exact heavyweight real-Pi/Navigator manifest into a concurrency=2 child, and
 // runs ordinary files first under default Node file parallelism.
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
@@ -13,7 +13,12 @@ import { isolatedTestProcessEnv } from "./test-process-env.mjs";
 const HEAVYWEIGHT_MANIFEST = Object.freeze([
   "test/integration/audit-failure-subprocess.test.ts",
   "test/integration/public-cli-judge-run.test.ts",
-  "test/package/package-entrypoint.integration.test.ts",
+  // #319 Batch 4 R1: package-entrypoint split — all thematic files stay in heavy
+  // manifest (庭定『先拆且全留 heavy』; Batch 5 R9: heavy child concurrency=2).
+  "test/package/package-entrypoint-cold-help.integration.test.ts",
+  "test/package/package-entrypoint-navigator.integration.test.ts",
+  "test/package/package-entrypoint-observation.integration.test.ts",
+  "test/package/package-entrypoint-packaged-workers.integration.test.ts",
 ]);
 
 const TIERS = Object.freeze([
@@ -92,7 +97,7 @@ function partition(discovered) {
     else ordinary.push(file);
   }
 
-  // Preserve manifest order for the heavy child (deterministic serial lane).
+  // Preserve manifest order for the heavy child (deterministic argv order).
   const heavyOrdered = HEAVYWEIGHT_MANIFEST.filter((f) => heavy.includes(f));
   if (heavyOrdered.length !== HEAVYWEIGHT_MANIFEST.length) {
     fail("heavyweight partition lost manifest entries");
@@ -157,5 +162,5 @@ if (ordinaryCode !== 0) {
   process.exit(ordinaryCode);
 }
 
-const heavyCode = await runNodeTest(heavy, { concurrency: 1 });
+const heavyCode = await runNodeTest(heavy, { concurrency: 2 });
 process.exit(heavyCode);

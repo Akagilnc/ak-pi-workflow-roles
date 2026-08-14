@@ -14,6 +14,13 @@ import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
 import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure, readReviewerDispatchRejection } from "./explicit-internal.ts";
 import {
+  isV1ResumableProvider,
+  readLatestTypedProviderHttpObservation,
+  readTypedHttp429Observation,
+  type TypedHttp429Observation,
+  type TypedProviderHttpObservation,
+} from "./run-lifecycle.ts";
+import {
   AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
   AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
@@ -367,14 +374,16 @@ export function classifyPostAdmissionFailure(input: {
       input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
         ? input.knownDiagnostic
         : conciseChildDiagnostic(input.stderr, fallback);
-    const { code: _knownCode, timedOut: _knownTimedOut, ...knownDetails } =
+    const { timedOut: _knownTimedOut, ...knownDetails } =
       input.knownDetails ?? {};
+    const remoteCode = knownDetails.code;
     return {
       cause: input.knownCause,
       diagnostic,
       details: {
         ...knownDetails,
-        code: input.code,
+        ...(remoteCode === undefined ? {} : { code: remoteCode }),
+        exitCode: input.code,
         ...(input.timedOut ? { timedOut: true as const } : {}),
       },
       ...(input.knownIdentity === undefined
@@ -386,7 +395,7 @@ export function classifyPostAdmissionFailure(input: {
     return {
       cause: "timeout",
       diagnostic: "role run timed out",
-      details: { timedOut: true, code: input.code },
+      details: { timedOut: true, exitCode: input.code },
     };
   }
   if (input.code !== 0) {
@@ -394,27 +403,27 @@ export function classifyPostAdmissionFailure(input: {
     return {
       cause: "activation",
       diagnostic: conciseChildDiagnostic(input.stderr, fallback),
-      details: { code: input.code },
+      details: { exitCode: input.code },
     };
   }
   if (input.session?.state === "missing") {
     return {
       cause: "session",
       diagnostic: "role run left no readable session transcript",
-      details: { code: input.code, session: "missing" },
+      details: { exitCode: input.code, session: "missing" },
     };
   }
   if (input.session?.state === "unreadable") {
     return {
       cause: "session",
       diagnostic: input.session.diagnostic,
-      details: { code: input.code, session: "unreadable" },
+      details: { exitCode: input.code, session: "unreadable" },
     };
   }
   return {
     cause: "output",
     diagnostic: "role run completed without a lawful typed terminal result",
-    details: { code: input.code },
+    details: { exitCode: input.code },
   };
 }
 
@@ -448,6 +457,15 @@ type SessionMessage = {
   provider?: string;
   model?: string;
   api?: string;
+  rawStopReason?: string;
+  diagnostics?: unknown;
+  /** Typed HTTP / SDK structured fields when held on the call surface. */
+  statusCode?: number;
+  status?: number;
+  httpStatus?: number;
+  body?: unknown;
+  code?: unknown;
+  errno?: unknown;
 };
 
 type SessionEntry = {
@@ -546,19 +564,65 @@ async function readBoundSessionEntries(
 }
 
 /**
- * Latest native assistant provider-stop in a session (stopReason === "error").
+ * Latest native assistant provider-stop in a session (stopReason error|aborted).
  * Only the final assistant turn decides terminality — an older error followed by a
  * later non-error stop is not a provider failure (would wash a no-lawful-output path).
  * Typed production source for provider cause — not child stderr prose.
  */
-export function extractSessionProviderStop(
-  entries: readonly SessionEntry[],
-): {
-  stopReason: "error";
+type SessionProviderStop = {
+  stopReason: "error" | "aborted";
   errorMessage?: string;
   provider?: string;
   model?: string;
-} | undefined {
+  api?: string;
+  rawStopReason?: string;
+  diagnostics?: unknown;
+  httpStatus?: number;
+  body?: unknown;
+  code?: unknown;
+  errno?: unknown;
+};
+
+function typedHttpStatusFromMessage(message: SessionMessage): number | undefined {
+  for (const candidate of [message.httpStatus, message.statusCode, message.status]) {
+    if (typeof candidate === "number" && (candidate < 200 || candidate >= 300)) return candidate;
+  }
+  return undefined;
+}
+
+function sessionProviderStopFromAssistant(message: SessionMessage | undefined): SessionProviderStop | undefined {
+  if (message?.role !== "assistant") return undefined;
+  if (message.stopReason !== "error" && message.stopReason !== "aborted") return undefined;
+  const httpStatus = typedHttpStatusFromMessage(message);
+  return {
+    stopReason: message.stopReason,
+    // Preserve held errorMessage bytes — emptiness check must not rewrite.
+    ...(typeof message.errorMessage === "string" && message.errorMessage.trim() !== ""
+      ? { errorMessage: message.errorMessage }
+      : {}),
+    ...(typeof message.provider === "string" && message.provider.trim() !== ""
+      ? { provider: message.provider }
+      : {}),
+    ...(typeof message.model === "string" && message.model.trim() !== ""
+      ? { model: message.model }
+      : {}),
+    ...(typeof message.api === "string" && message.api.trim() !== ""
+      ? { api: message.api }
+      : {}),
+    ...(typeof message.rawStopReason === "string" && message.rawStopReason.trim() !== ""
+      ? { rawStopReason: message.rawStopReason }
+      : {}),
+    ...(message.diagnostics === undefined ? {} : { diagnostics: message.diagnostics }),
+    ...(httpStatus === undefined ? {} : { httpStatus }),
+    ...(message.body === undefined ? {} : { body: message.body }),
+    ...(message.code === undefined ? {} : { code: message.code }),
+    ...(message.errno === undefined ? {} : { errno: message.errno }),
+  };
+}
+
+export function extractSessionProviderStop(
+  entries: readonly SessionEntry[],
+): SessionProviderStop | undefined {
   // A resumed dispatch appends a typed top-level user turn to the same session.
   // Retained audit state from an older attempt must not replace the newer attempt's
   // native provider stop. Sessions without a user turn are the initial attempt.
@@ -578,14 +642,8 @@ export function extractSessionProviderStop(
     const entry = entries[i];
     if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
     const response = isRecord(entry.data) && isRecord(entry.data.response) ? entry.data.response : undefined;
-    if (response?.role === "assistant" && response.stopReason === "error") {
-      return {
-        stopReason: "error",
-        ...(typeof response.errorMessage === "string" && response.errorMessage.trim() !== "" ? { errorMessage: response.errorMessage } : {}),
-        ...(typeof response.provider === "string" && response.provider.trim() !== "" ? { provider: response.provider } : {}),
-        ...(typeof response.model === "string" && response.model.trim() !== "" ? { model: response.model } : {}),
-      };
-    }
+    const stop = sessionProviderStopFromAssistant(response);
+    if (stop !== undefined) return stop;
     break;
   }
   for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
@@ -594,19 +652,7 @@ export function extractSessionProviderStop(
     const message = entry.message;
     if (message?.role !== "assistant") continue;
     // Latest assistant in the current attempt only (reviewer-child-executor lastAssistant pattern).
-    if (message.stopReason !== "error") return undefined;
-    return {
-      stopReason: "error",
-      ...(typeof message.errorMessage === "string" && message.errorMessage.trim() !== ""
-        ? { errorMessage: message.errorMessage }
-        : {}),
-      ...(typeof message.provider === "string" && message.provider.trim() !== ""
-        ? { provider: message.provider }
-        : {}),
-      ...(typeof message.model === "string" && message.model.trim() !== ""
-        ? { model: message.model }
-        : {}),
-    };
+    return sessionProviderStopFromAssistant(message);
   }
   return undefined;
 }
@@ -614,15 +660,7 @@ export function extractSessionProviderStop(
 /** Read the bound session principal and extract a typed provider-stop, if any. */
 export async function readSessionProviderStop(
   sessionFile: string,
-): Promise<
-  | {
-      stopReason: "error";
-      errorMessage?: string;
-      provider?: string;
-      model?: string;
-    }
-  | undefined
-> {
+): Promise<SessionProviderStop | undefined> {
   try {
     const entries = await readBoundSessionEntries(sessionFile);
     return extractSessionProviderStop(entries);
@@ -662,8 +700,7 @@ export async function readBoundEvidenceChildKnownFailure(
     return {
       ...primary,
       details: {
-        ...(stop.provider === undefined ? {} : { provider: stop.provider }),
-        ...(stop.model === undefined ? {} : { model: stop.model }),
+        ...(primary.details ?? {}),
         secondaryEvidence: "evidence-child",
       },
     };
@@ -721,10 +758,10 @@ export async function readBoundAuditorKnownFailure(
       if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord(entry.data)) continue;
       const parent = isRecord(entry.data.parent) ? entry.data.parent : undefined;
       const failure = isRecord(entry.data.failure) ? entry.data.failure : undefined;
-      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider") continue;
+      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || (failure?.cause !== "provider" && failure?.cause !== "unrecognized")) continue;
       const identity = isRecord(failure.identity) ? failure.identity : undefined;
       return {
-        cause: "provider",
+        cause: failure.cause === "provider" ? "provider" : "unrecognized",
         ...(identity === undefined ? {} : { identity: {
           ...(typeof identity.name === "string" ? { name: identity.name } : {}),
           ...(typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}),
@@ -737,8 +774,7 @@ export async function readBoundAuditorKnownFailure(
     return {
       ...primary,
       details: {
-        ...(stop.provider === undefined ? {} : { provider: stop.provider }),
-        ...(stop.model === undefined ? {} : { model: stop.model }),
+        ...(primary.details ?? {}),
         secondaryEvidence: "unavailable",
       },
     };
@@ -778,6 +814,153 @@ function typedFailedTerminatingToolKnownFailure(
   return undefined;
 }
 
+/**
+ * One audited-runner resolution: knownFailure plus the typed-HTTP sidecar outcome
+ * from the same read. Callers that also decide v1 resume must consume this once —
+ * never re-read the sidecar in presentControlledFailure.
+ */
+export type AuditedRunnerFailureResolution = {
+  readonly knownFailure?: ExplicitInternalKnownFailure;
+  /** Successful sidecar read (not absence). */
+  readonly typedHttpObservation?: TypedProviderHttpObservation;
+  /**
+   * True when this resolution already performed the typed-HTTP sidecar read
+   * (success, absence, or non-absence failure folded into knownFailure).
+   * False when an earlier evidence tier short-circuited before the sidecar.
+   */
+  readonly typedHttpObservationSettled: boolean;
+};
+
+function resolutionOf(
+  knownFailure: ExplicitInternalKnownFailure | undefined,
+  typedHttp: {
+    readonly settled: boolean;
+    readonly observation?: TypedProviderHttpObservation;
+  } = { settled: false },
+): AuditedRunnerFailureResolution {
+  return {
+    ...(knownFailure === undefined ? {} : { knownFailure }),
+    ...(typedHttp.observation === undefined ? {} : { typedHttpObservation: typedHttp.observation }),
+    typedHttpObservationSettled: typedHttp.settled,
+  };
+}
+
+/** Sole evidence-priority owner for public runners with Soul auditors. */
+export async function resolveAuditedRunnerFailureResolution(input: {
+  runner: ExplicitInternalKnownFailure | undefined;
+  sessionFile: string;
+  credential: ExplicitInternalKnownFailure | undefined;
+  /** Reviewer only: recover child-written rejection page into knownFailure.details. */
+  runDirectory?: string;
+}): Promise<AuditedRunnerFailureResolution> {
+  if (input.runner !== undefined) return resolutionOf(input.runner);
+  if (input.runDirectory !== undefined) {
+    try {
+      const rejection = await readReviewerDispatchRejection(input.runDirectory);
+      if (rejection !== undefined) return resolutionOf(rejection);
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      return resolutionOf({
+        cause: "activation",
+        identity: thrownIdentity(failure),
+        diagnostic: failure.message || failure.name,
+      });
+    }
+  }
+  // Bound auditor evidence outranks a parent failure that the auditor path itself
+  // caused (retention EISDIR race). A typed terminating-tool host failure is next:
+  // it outranks provider/credential and nonzero fallbacks, but not its recorded cause.
+  try {
+    const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
+    if (auditorFailure !== undefined) return resolutionOf(auditorFailure);
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
+    return resolutionOf({
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name,
+    });
+  }
+  try {
+    const terminatingFailure = typedFailedTerminatingToolKnownFailure(
+      await readBoundSessionEntries(input.sessionFile),
+    );
+    if (terminatingFailure !== undefined) return resolutionOf(terminatingFailure);
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
+      return resolutionOf({
+        cause: "session",
+        identity: thrownIdentity(failure),
+        diagnostic: failure.message || failure.name,
+      });
+    }
+  }
+  // Reviewer axis evidence-children are next: fixed two-axis dispatch fails
+  // during activation with only child stops durable. Parent stop remains the
+  // fallback; credential is last.
+  try {
+    const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
+    if (evidenceChildFailure !== undefined) return resolutionOf(evidenceChildFailure);
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound evidence-child failure");
+    return resolutionOf({
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name,
+    });
+  }
+  const parentStop = await readSessionProviderStop(input.sessionFile);
+  // Typed HTTP observation: ENOENT=absence; other read/parse/shape failures keep real cause.
+  // This is the single sidecar read for both knownFailure projection and v1 resume.
+  let httpObservation: TypedProviderHttpObservation | undefined;
+  if (input.runDirectory !== undefined) {
+    try {
+      httpObservation = await readLatestTypedProviderHttpObservation(input.runDirectory);
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      return resolutionOf(
+        {
+          cause: "session",
+          identity: thrownIdentity(failure),
+          diagnostic: failure.message || failure.name,
+        },
+        { settled: true },
+      );
+    }
+  }
+  const typedHttp = {
+    settled: input.runDirectory !== undefined,
+    ...(httpObservation === undefined ? {} : { observation: httpObservation }),
+  };
+  if (parentStop === undefined) {
+    if (input.credential !== undefined) return resolutionOf(input.credential, typedHttp);
+    if (httpObservation === undefined) return resolutionOf(undefined, typedHttp);
+    // Project the HTTP observation's status + provider/source association.
+    return resolutionOf(
+      knownFailureFromProviderStop({
+        stopReason: "error",
+        httpStatus: httpObservation.httpStatus,
+        provider: httpObservation.provider,
+      }),
+      typedHttp,
+    );
+  }
+  return resolutionOf(
+    knownFailureFromProviderStop({
+      ...parentStop,
+      ...(httpObservation === undefined
+        ? {}
+        : {
+          httpStatus: httpObservation.httpStatus,
+          // Observation association outranks session-configured provider name alone.
+          provider: httpObservation.provider,
+        }),
+    }),
+    typedHttp,
+  );
+}
+
 /** Sole evidence-priority owner for public runners with Soul auditors. */
 export async function resolveAuditedRunnerKnownFailure(input: {
   runner: ExplicitInternalKnownFailure | undefined;
@@ -786,63 +969,70 @@ export async function resolveAuditedRunnerKnownFailure(input: {
   /** Reviewer only: recover child-written rejection page into knownFailure.details. */
   runDirectory?: string;
 }): Promise<ExplicitInternalKnownFailure | undefined> {
-  if (input.runner !== undefined) return input.runner;
-  if (input.runDirectory !== undefined) {
-    try {
-      const rejection = await readReviewerDispatchRejection(input.runDirectory);
-      if (rejection !== undefined) return rejection;
-    } catch (error) {
-      const failure = error instanceof Error ? error : new Error(String(error));
+  return (await resolveAuditedRunnerFailureResolution(input)).knownFailure;
+}
+
+/**
+ * v1 resume observation for controlled-failure settlement — at most one sidecar read.
+ * Prefer the pre-resolved outcome from resolveAuditedRunnerFailureResolution.
+ * Non-absence failures never throw: they return observationReadFailure for the
+ * existing controlled-failure → error.json chain.
+ */
+export async function resolveControlledFailureResumeObservation(input: {
+  readonly runDirectory: string;
+  readonly typedHttpObservationSettled?: boolean;
+  readonly typedHttpObservation?: TypedProviderHttpObservation;
+}): Promise<{
+  readonly typedHttp429?: TypedHttp429Observation;
+  readonly observationReadFailure?: ExplicitInternalKnownFailure;
+}> {
+  if (input.typedHttpObservationSettled === true) {
+    const observation = input.typedHttpObservation;
+    if (
+      observation !== undefined &&
+      observation.httpStatus === 429 &&
+      isV1ResumableProvider(observation.provider)
+    ) {
       return {
-        cause: "activation",
-        identity: thrownIdentity(failure),
-        diagnostic: failure.message || failure.name,
+        typedHttp429: { httpStatus: 429, provider: observation.provider },
       };
     }
+    return {};
   }
-  // Bound auditor evidence outranks a parent failure that the auditor path itself
-  // caused (retention EISDIR race). A typed terminating-tool host failure is next:
-  // it outranks provider/credential and nonzero fallbacks, but not its recorded cause.
   try {
-    const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
-    if (auditorFailure !== undefined) return auditorFailure;
+    const typedHttp429 = await readTypedHttp429Observation(input.runDirectory);
+    return typedHttp429 === undefined ? {} : { typedHttp429 };
   } catch (error) {
-    const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
+    const failure = error instanceof Error ? error : new Error(String(error));
     return {
-      cause: "session",
-      identity: thrownIdentity(failure),
-      diagnostic: failure.message || failure.name,
+      observationReadFailure: {
+        cause: "session",
+        identity: thrownIdentity(failure),
+        diagnostic: failure.message || failure.name,
+      },
     };
   }
-  try {
-    const terminatingFailure = typedFailedTerminatingToolKnownFailure(
-      await readBoundSessionEntries(input.sessionFile),
-    );
-    if (terminatingFailure !== undefined) return terminatingFailure;
-  } catch (error) {
-    if (!isMissingPathError(error)) {
-      const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
-      return { cause: "session", identity: thrownIdentity(failure), diagnostic: failure.message || failure.name };
-    }
-  }
-  // Reviewer axis evidence-children are next: fixed two-axis dispatch fails
-  // during activation with only child stops durable. Parent stop remains the
-  // fallback; credential is last.
-  try {
-    const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
-    if (evidenceChildFailure !== undefined) return evidenceChildFailure;
-  } catch (error) {
-    const failure = sessionReadFailure(error, "failed to recover bound evidence-child failure");
-    return {
-      cause: "session",
-      identity: thrownIdentity(failure),
-      diagnostic: failure.message || failure.name,
-    };
-  }
-  const parentStop = await readSessionProviderStop(input.sessionFile);
-  return parentStop === undefined
-    ? input.credential
-    : knownFailureFromProviderStop(parentStop);
+}
+
+/** Spread into presentControlledFailure failureInput from one audited resolution. */
+export function controlledFailureInputFromResolution(
+  resolution: AuditedRunnerFailureResolution,
+): {
+  knownFailure?: ExplicitInternalKnownFailure;
+  typedHttpObservationSettled?: true;
+  typedHttpObservation?: TypedProviderHttpObservation;
+} {
+  return {
+    ...(resolution.knownFailure === undefined ? {} : { knownFailure: resolution.knownFailure }),
+    ...(resolution.typedHttpObservationSettled
+      ? {
+        typedHttpObservationSettled: true as const,
+        ...(resolution.typedHttpObservation === undefined
+          ? {}
+          : { typedHttpObservation: resolution.typedHttpObservation }),
+      }
+      : {}),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
