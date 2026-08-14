@@ -603,6 +603,8 @@ test("every registered whole-activation rejection terminates nonzero with a name
       const reject = async (): Promise<never> => { throw rejection; };
       const flags: Record<string, string> = {
         "ak-role": entry.role,
+        // Envelope-owned Reviewer transport must be present so soul rejection is the observed cause.
+        "ak-review-base": "main~1",
         "ak-doctor-case": "/lawful/case",
         "ak-merger-input": "/lawful/merger.json",
       };

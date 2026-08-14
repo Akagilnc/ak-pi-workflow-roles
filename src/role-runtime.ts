@@ -57,7 +57,10 @@ import {
   type SoulAuditResult,
 } from "./judge-role.ts";
 import {
+  assembleReviewerParentSystemPrompt,
   createReviewerRoleRuntime,
+  decodeReviewerAdmittedInputs,
+  REVIEWER_TRANSPORT_FLAGS,
   type ReviewerActivation,
 } from "./reviewer-role.ts";
 import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
@@ -214,7 +217,16 @@ type ActivationRuntime = {
   judge: { activate(): Promise<void> };
   fixer: WorkerArmable;
   coder: WorkerArmable;
-  reviewer: { activate(context: ExtensionContext): Promise<ReviewerActivation> };
+  reviewer: {
+    activate(
+      context: ExtensionContext,
+      admitted: import("./reviewer-role.ts").ReviewerAdmittedInputs,
+    ): Promise<ReviewerActivation>;
+  };
+  /** Envelope decodes Reviewer transport flags inside the activation stage. */
+  decodeReviewerAdmitted(): import("./reviewer-role.ts").ReviewerAdmittedInputs;
+  /** Envelope stores live parent activation for agent_start prompt assembly. */
+  bindReviewerParent(activation: ReviewerActivation): void;
   collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
   merger(): Promise<void>;
@@ -226,7 +238,10 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "fixer": return { id: "load-and-install", run: async () => runtime.fixer.activate() };
     case "coder": return { id: "load-and-install", run: async () => runtime.coder.activate(runtime.context) };
     case "reviewer": return { id: "load-install-and-dispatch", run: async () => {
-      const activation = await runtime.reviewer.activate(runtime.context);
+      // Envelope owns flag decode inside the activation stage (trace + fail-closed path).
+      const admitted = runtime.decodeReviewerAdmitted();
+      const activation = await runtime.reviewer.activate(runtime.context, admitted);
+      runtime.bindReviewerParent(activation);
       const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, { context: runtime.context });
       if (result.status !== "accepted") {
         const rejection = new ExplicitInternalActivationError(
@@ -419,9 +434,15 @@ export function createRoleRuntimeExtension(
     // #102: one shared package-owned tool registration surface for all role runtimes.
     installPackageOwnedToolRegistration(pi);
     pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
+    // Reviewer transport flags: shared envelope owns registration (ADR 0018).
+    for (const flag of REVIEWER_TRANSPORT_FLAGS) {
+      pi.registerFlag(flag.name, flag.definition);
+    }
 
     let admitted = false;
     let selectedRole: string | undefined;
+    /** Live Reviewer parent activation for envelope agent_start prompt assembly. */
+    let activeReviewerParent: ReviewerActivation | undefined;
     let navigatorAttendance: NavigatorAttendanceDependency | undefined;
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
@@ -469,6 +490,18 @@ export function createRoleRuntimeExtension(
         }
       }
       navigatorAttendance?.prepare();
+      // Envelope-owned Reviewer parent prompt assembly (soul + single verification-boundary true source).
+      if (role === "reviewer" && activeReviewerParent !== undefined) {
+        activeReviewerParent.captureCanonicalExpansion(event.prompt, ctx);
+        const specDisposition = activeReviewerParent.getSpecDisposition();
+        return {
+          systemPrompt: assembleReviewerParentSystemPrompt({
+            baseSystemPrompt: event.systemPrompt,
+            soul: activeReviewerParent.soul,
+            ...(specDisposition === undefined ? {} : { specDisposition }),
+          }),
+        };
+      }
     });
     pi.on("tool_result", async (event) => {
       const role = selectedRole;
@@ -839,6 +872,7 @@ export function createRoleRuntimeExtension(
     pi.on("session_start", async (event, ctx) => {
       admitted = false;
       selectedRole = undefined;
+      activeReviewerParent = undefined;
       receiptDelivery = createReceiptDeliveryPolicy();
       noReceiptRecorded = false;
       observationFace.reset();
@@ -862,6 +896,12 @@ export function createRoleRuntimeExtension(
         fixer,
         coder,
         reviewer,
+        decodeReviewerAdmitted() {
+          return decodeReviewerAdmittedInputs((name) => pi.getFlag(name));
+        },
+        bindReviewerParent(activation) {
+          activeReviewerParent = activation;
+        },
         collector,
         doctor,
         merger: async () => {
