@@ -16741,13 +16741,13 @@ var init_reviewer_construction = __esm({
       recipeId: "reviewer-common-bundle",
       version: 1,
       runtimeVersion: "1",
-      implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts+verification-cadence")
+      implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts")
     });
     REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
       adapterId: "reviewer-axis-output",
-      version: 3,
+      version: 4,
       implementationSha256: sha256Hex(
-        "reviewer-axis-output:v3:single-axis-verbatim-report+standards-three-priorities+verification-cadence"
+        "reviewer-axis-output:v4:single-axis-verbatim-report+standards-three-priorities"
       )
     });
     REVIEWER_VERIFICATION_BOUNDARY = [

@@ -7,22 +7,23 @@ export const REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
   recipeId: "reviewer-common-bundle",
   version: 1,
   runtimeVersion: "1",
-  implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts+verification-cadence"),
+  implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts"),
 });
 export type ReviewerConstructionIdentity = typeof REVIEWER_CONSTRUCTION_RECIPE;
 export type ReviewerAxis = "standards" | "spec";
 
 export const REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
   adapterId: "reviewer-axis-output",
-  version: 3,
+  version: 4,
   implementationSha256: sha256Hex(
-    "reviewer-axis-output:v3:single-axis-verbatim-report+standards-three-priorities+verification-cadence",
+    "reviewer-axis-output:v4:single-axis-verbatim-report+standards-three-priorities",
   ),
 });
 
 /**
  * Package-owned #1185 review verification cadence.
- * Shared by parent Reviewer injection, axis adapters, and evidence-child system prompts.
+ * Consumed by parent Reviewer system-prompt injection and the single evidence-child system-prompt carrier.
+ * Not duplicated into axis leg prompts (Standards/Spec children already receive it via system prompt).
  * Graded guidance only: does not narrow ADR 0064 tools and adds no command ban, allowlist, or runtime block.
  */
 export const REVIEWER_VERIFICATION_BOUNDARY = [
@@ -93,7 +94,6 @@ export function reviewerAxisMethodAdapter(axis: ReviewerAxis): string {
     question,
     `Emit one substantive ${axis === "standards" ? "Standards" : "Spec"} report. Incidental cross-axis content, headings, and finding-count annotations are presentation matters, not defects.`,
     renderAxisPriorityClause(contract),
-    REVIEWER_VERIFICATION_BOUNDARY,
     "Before making any substantive claim, actually use the canonical Skill and fixed range facts; a citation without reading those facts is not evidence.",
     "Independently acquire issue, authority, and context; do not treat caller prose as controlling authority or as the Spec source.",
     "You may use any supplied common fact, including facts relevant to the other axis; access and citation do not change the assigned question.",
