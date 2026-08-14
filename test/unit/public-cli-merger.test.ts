@@ -25,7 +25,7 @@ import {
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitMergerInvocation,
+  admitMergerInvocation as admitMergerInvocationRaw,
   buildMergerTransportPrompt,
   deriveMergerEnvelopeFromActiveMerge,
   parseMergerArgv,
@@ -111,6 +111,14 @@ async function materializeConflictedRepo(root: string): Promise<{
   return { target, source, conflictPath: "same.txt" };
 }
 
+
+async function admitMergerInvocation(
+  options: Parameters<typeof admitMergerInvocationRaw>[0],
+): ReturnType<typeof admitMergerInvocationRaw> {
+  return admitMergerInvocationRaw(options);
+}
+
+
 test("parseMergerArgv accepts common Invocation flags and rejects unknown options", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
@@ -175,7 +183,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
 
     await assert.rejects(
       () =>
-        admitMergerInvocation({
+        admitMergerInvocationRaw({
           home,
           cwd: project,
           instruction: "   ",
@@ -685,8 +693,9 @@ test("ak-role resume continues merger with package method and exact session", as
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { role: string; mergerInputPath: string };
+    ) as { role: string; mergerInputPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "merger");
+    assert.equal(admitted.ticketNumber, undefined);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;

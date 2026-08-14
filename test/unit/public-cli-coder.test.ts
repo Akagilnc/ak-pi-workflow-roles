@@ -26,7 +26,7 @@ import {
   buildCoderResumeActivationExtraArgs,
 } from "../../src/public-cli/coder-run.ts";
 import {
-  admitCoderInvocation,
+  admitCoderInvocation as admitCoderInvocationRaw,
   parseCoderArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -72,6 +72,14 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
+
+async function admitCoderInvocation(
+  options: Parameters<typeof admitCoderInvocationRaw>[0],
+): ReturnType<typeof admitCoderInvocationRaw> {
+  return admitCoderInvocationRaw(options);
+}
+
+
 test("parseCoderArgv defaults to apply and preserves explicit plan|apply", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
@@ -114,7 +122,7 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
 
     await assert.rejects(
       () =>
-        admitCoderInvocation({
+        admitCoderInvocationRaw({
           home,
           cwd: project,
           phase: "apply",
@@ -504,9 +512,10 @@ test("ak-role resume continues coder with preserved plan phase and exact session
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { phase: string; role: string; taskPath: string };
+    ) as { phase: string; role: string; taskPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "coder");
     assert.equal(admitted.phase, "plan");
+    assert.equal(admitted.ticketNumber, undefined);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
