@@ -116,8 +116,8 @@ export function extractReferencedAdrPaths(issueBody: string): readonly string[] 
 
 export type ReviewerIssueFetchResult = Readonly<{ title: string; body: string }>;
 /**
- * Soft issue fetch capability: undefined means tracker unreachable / not found / transport failure.
- * Never throws into a new rejection gate — caller degrades the Spec chain.
+ * Soft issue fetch capability: undefined means confirmed tracker unreachable / issue not found.
+ * Unrecognized runner failures and parse/implementation errors propagate with true cause (not washed into degrade).
  * Subprocess lifecycle is owned by the shared activation/execution seam; role modules only inject and consume this capability.
  */
 export type ReviewerIssueFetcher = (input: {

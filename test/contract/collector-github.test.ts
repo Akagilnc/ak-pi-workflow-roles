@@ -260,7 +260,7 @@ printf 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{"login":"colle
   });
 });
 
-test("createGhIssueSoftFetcher reuses shared runner and soft-fails", async () => {
+test("createGhIssueSoftFetcher softens tracker-unavailable only; other failures propagate", async () => {
   const calls: string[][] = [];
   const runner: GhApiRunner = async (args) => {
     calls.push([...args]);
@@ -274,6 +274,12 @@ test("createGhIssueSoftFetcher reuses shared runner and soft-fails", async () =>
     if (args.includes("repos/Acme/widgets/issues/404")) {
       return { status: 404, headers: {}, bodyText: "{\"message\":\"Not Found\"}" };
     }
+    if (args.includes("repos/Acme/widgets/issues/401")) {
+      // Shared runner tags auth/network/no-HTTP as ambiguousGhFailure = tracker unreachable.
+      throw Object.assign(new Error("gh api failed without a parseable HTTP response"), {
+        ambiguousGhFailure: true,
+      });
+    }
     throw new Error("spawn failed");
   };
   const fetchIssue = createGhIssueSoftFetcher(runner);
@@ -284,11 +290,49 @@ test("createGhIssueSoftFetcher reuses shared runner and soft-fails", async () =>
     true,
   );
 
+  // Issue not found / tracker non-success → authorized soft unavailable.
   const missing = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 404 });
   assert.equal(missing, undefined);
 
-  const boom = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 500 });
-  assert.equal(boom, undefined);
+  // Tagged tracker-unreachable transport → authorized soft unavailable (not a catch-all).
+  const unreachable = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 401 });
+  assert.equal(unreachable, undefined);
+
+  // Unrecognized runner exception keeps true cause — must not wash into unavailable.
+  await assert.rejects(
+    () => fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 500 }),
+    (error: unknown) => error instanceof Error && error.message === "spawn failed",
+  );
+
+  // Parse / payload shape failures keep true cause.
+  const badJsonRunner: GhApiRunner = async () => ({
+    status: 200,
+    headers: {},
+    bodyText: "not-json",
+  });
+  await assert.rejects(
+    () =>
+      createGhIssueSoftFetcher(badJsonRunner)({
+        owner: "Acme",
+        repo: "widgets",
+        ticketNumber: 1,
+      }),
+    /GitHub issue payload is not JSON/,
+  );
+  const badShapeRunner: GhApiRunner = async () => ({
+    status: 200,
+    headers: {},
+    bodyText: JSON.stringify({ title: 1, body: "x" }),
+  });
+  await assert.rejects(
+    () =>
+      createGhIssueSoftFetcher(badShapeRunner)({
+        owner: "Acme",
+        repo: "widgets",
+        ticketNumber: 1,
+      }),
+    /missing string title/,
+  );
 
   // null body projects to empty string (former gh --jq body // "").
   const nullBodyRunner: GhApiRunner = async () => ({

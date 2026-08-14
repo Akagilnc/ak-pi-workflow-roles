@@ -68,6 +68,24 @@ async function execGit<T extends "utf8" | "buffer">(args: readonly string[], opt
   }
 }
 function exitCode(error: unknown): number | undefined { const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined; return typeof code === "number" ? code : undefined; }
+function gitStderr(error: unknown): string {
+  if (typeof error !== "object" || error === null) return "";
+  const stderr = (error as { stderr?: unknown }).stderr;
+  return typeof stderr === "string" ? stderr : "";
+}
+/** Confirmed `origin` remote absence only (`git remote get-url origin`). */
+function isConfirmedMissingOriginRemote(error: unknown): boolean {
+  return /No such remote ['"]origin['"]/.test(gitStderr(error));
+}
+/** Confirmed path-at-pinned-tree absence only — exit 128 alone is not enough. */
+function isConfirmedPinnedPathAbsent(error: unknown, path: string): boolean {
+  const stderr = gitStderr(error);
+  const quoted = `'${path}'`;
+  return (
+    stderr.includes(`path ${quoted} does not exist in `) ||
+    stderr.includes(`path ${quoted} exists on disk, but not in `)
+  );
+}
 async function repositoryIsAvailable(root: string): Promise<{ available: boolean; cause?: unknown }> { try { await access(`${root}/.git`); return { available: true }; } catch (cause) { return { available: false, cause }; } }
 export const immutableReviewerPin = (pin: ReviewerPinnedTarget): ReviewerPinnedTarget => Object.freeze({
   repositoryRoot: pin.repositoryRoot, objectFormat: pin.objectFormat, targetHead: pin.targetHead, refs: immutableReviewerRefs(pin.refs),
@@ -203,10 +221,12 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
       let remoteUrl: string;
       try {
         remoteUrl = await gitText(repositoryRoot, ["remote", "get-url", "origin"]);
-      } catch {
-        // No origin / git remote failure = self-fetch unavailable (soft degrade).
-        return undefined;
+      } catch (error) {
+        // Only confirmed origin absence softens to unavailable; other Git failures keep true cause.
+        if (isConfirmedMissingOriginRemote(error)) return undefined;
+        throw error;
       }
+      // Non-github / unparseable remote URL = self-fetch unavailable (soft degrade).
       return parseGitHubOriginRemote(remoteUrl);
     },
     async commitMessagesNewestFirst(base: string) {
@@ -234,7 +254,8 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
         );
         return stdout;
       } catch (error) {
-        if (exitCode(error) === 128) return undefined;
+        // Only confirmed path-at-pinned-tree absence softens to missing; exit 128 is not a blanket.
+        if (isConfirmedPinnedPathAbsent(error, path)) return undefined;
         throw error;
       }
     },

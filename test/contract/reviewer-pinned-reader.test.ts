@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -211,7 +211,7 @@ test("pinned reader: origin/commit messages/readPinnedText for Spec self-fetch",
     await git(root, "commit", "-m", "feat: land #88 with adr");
     const reader = await createReviewerPinnedGitReader(root);
 
-    // No origin ⇒ self-fetch unavailable.
+    // Confirmed no origin ⇒ self-fetch unavailable.
     assert.equal(await reader.originRepository(), undefined);
     await git(root, "remote", "add", "origin", "git@github.com:Acme/widgets.git");
     // Reader is pinned at construction; re-create after remote add.
@@ -222,8 +222,14 @@ test("pinned reader: origin/commit messages/readPinnedText for Spec self-fetch",
     assert.equal(messages[0], "feat: land #88 with adr");
 
     assert.equal(await withRemote.readPinnedText("docs/adr/0001-x.md"), "# ADR\nbody\n");
+    // Confirmed path-at-pinned-tree absence ⇒ missing (not a blanket exit-128 wash).
     assert.equal(await withRemote.readPinnedText("docs/adr/missing.md"), undefined);
     assert.equal(await withRemote.readPinnedText("../escape"), undefined);
+
+    // Non-absence Git failure (repo dir gone) must keep true cause — not pretend unavailable/missing.
+    await rename(join(root, ".git"), join(root, ".git-hidden"));
+    await assert.rejects(() => withRemote.originRepository(), /git process failed/);
+    await assert.rejects(() => withRemote.readPinnedText("docs/adr/0001-x.md"), /git process failed/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

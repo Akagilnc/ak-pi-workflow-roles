@@ -10,8 +10,6 @@ import {
 } from "../../src/reviewer-construction.ts";
 import {
   createReviewerDispatcher,
-  extractReferencedAdrPaths,
-  resolveReviewerTicketNumber,
   type AcceptedReviewerExecution,
   type ReviewerIssueFetcher,
   type ReviewerPinnedGitReader,
@@ -37,7 +35,8 @@ const range = {
 
 const ISSUE_BODY_WITH_ADR = [
   "# Spec for login",
-  "See docs/adr/0001-roles-grow-by-demand.md and docs/adr/missing-adr.md.",
+  // Duplicate first path proves first-appearance order + dedupe at the real entry tracer.
+  "See docs/adr/0001-roles-grow-by-demand.md then docs/adr/missing-adr.md and docs/adr/0001-roles-grow-by-demand.md again.",
 ].join("\n");
 
 function harness(
@@ -112,62 +111,11 @@ function successfulFetcher(body = ISSUE_BODY_WITH_ADR): ReviewerIssueFetcher {
   return async () => Object.freeze({ title: "issue", body });
 }
 
-// --- pure ticket resolution ---
-
-test("ticket resolution: typed ticketNumber wins over branch and commit", () => {
-  const resolved = resolveReviewerTicketNumber({
-    ticketNumber: 176,
-    branchNames: ["fix/issue-99-other"],
-    commitMessagesNewestFirst: ["feat: land #12"],
-  });
-  assert.deepEqual(resolved?.adopted, { source: "typed-ticket-number", ticketNumber: 176 });
-  assert.deepEqual(resolved?.abandoned, [
-    { source: "branch-token", ticketNumber: 99 },
-    { source: "commit-message", ticketNumber: 12 },
-  ]);
-});
-
-test("ticket resolution: branch token wins over commit message", () => {
-  const resolved = resolveReviewerTicketNumber({
-    branchNames: ["feat/issue-343-spec-fetch"],
-    commitMessagesNewestFirst: ["chore: polish #99"],
-  });
-  assert.deepEqual(resolved?.adopted, { source: "branch-token", ticketNumber: 343 });
-  assert.deepEqual(resolved?.abandoned, [{ source: "commit-message", ticketNumber: 99 }]);
-});
-
-test("ticket resolution: newest commit first #N when no typed/branch", () => {
-  const resolved = resolveReviewerTicketNumber({
-    branchNames: ["feature-login"],
-    commitMessagesNewestFirst: ["fix: land #42 and mention #7", "older #1"],
-  });
-  assert.deepEqual(resolved?.adopted, { source: "commit-message", ticketNumber: 42 });
-  assert.deepEqual(resolved?.abandoned, []);
-});
-
-test("ticket resolution: no sources yields undefined", () => {
-  assert.equal(
-    resolveReviewerTicketNumber({
-      branchNames: ["main", "feature-login"],
-      commitMessagesNewestFirst: ["chore: no ticket token"],
-    }),
-    undefined,
-  );
-});
-
-test("extractReferencedAdrPaths preserves first-appearance order and dedupes", () => {
-  assert.deepEqual(
-    extractReferencedAdrPaths(
-      "See docs/adr/0001-a.md then docs/adr/0002-b.md and docs/adr/0001-a.md again.",
-    ),
-    ["docs/adr/0001-a.md", "docs/adr/0002-b.md"],
-  );
-});
-
-// --- production discovery: three ticket sources + conflict ---
+// --- production discovery: self-fetch real-entry tracers own ticket/ADR boundaries ---
 
 // One end-to-end tracer for the self-fetch byte propagation seam
 // (real dispatch entry → Spec material/prompt → receipt face).
+// Absorbs typed-over-branch/commit priority + ADR first-appearance/dedupe boundaries.
 test("production discovery: self-fetch bytes propagate from dispatch entry to receipt", async () => {
   const h = harness(pin, {
     ticketNumber: 176,
@@ -275,6 +223,8 @@ test("production discovery: self-fetch bytes propagate from dispatch entry to re
 test("production discovery: branch token self-fetch launches Spec", async () => {
   const h = harness(pin, {
     featureTokens: ["fix/issue-343-spec-fetch"],
+    // Commit candidate present but lower priority — abandoned, not adopted.
+    commitMessages: ["chore: polish #99"],
     origin: { owner: "Acme", repo: "widgets" },
     fetchIssue: successfulFetcher("branch-sourced body bytes"),
   });
@@ -284,6 +234,9 @@ test("production discovery: branch token self-fetch launches Spec", async () => 
   assert.equal(result.dispatch.specDisposition, "launched");
   assert.equal(result.dispatch.specFetchedMaterial?.adopted.source, "branch-token");
   assert.equal(result.dispatch.specFetchedMaterial?.ticketNumber, 343);
+  assert.deepEqual(result.dispatch.specFetchedMaterial?.abandoned, [
+    { source: "commit-message", ticketNumber: 99 },
+  ]);
   assert.equal(result.dispatch.specFetchedMaterial?.issueBody, "branch-sourced body bytes");
   assert.equal(
     result.dispatch.authorityRefs[0],
@@ -294,7 +247,8 @@ test("production discovery: branch token self-fetch launches Spec", async () => 
 test("production discovery: commit message #N self-fetch launches Spec", async () => {
   const h = harness(pin, {
     featureTokens: [],
-    commitMessages: ["fix: implement #88 carefully"],
+    // Newest subject only: first #N wins; older commits are not scanned.
+    commitMessages: ["fix: land #88 and mention #7", "older #1"],
     origin: { owner: "Acme", repo: "widgets" },
     fetchIssue: successfulFetcher("commit-sourced body"),
   });
@@ -304,6 +258,7 @@ test("production discovery: commit message #N self-fetch launches Spec", async (
   assert.equal(result.dispatch.specDisposition, "launched");
   assert.equal(result.dispatch.specFetchedMaterial?.adopted.source, "commit-message");
   assert.equal(result.dispatch.specFetchedMaterial?.ticketNumber, 88);
+  assert.deepEqual(result.dispatch.specFetchedMaterial?.abandoned, []);
   assert.equal(result.dispatch.specFetchedMaterial?.issueBody, "commit-sourced body");
 });
 
