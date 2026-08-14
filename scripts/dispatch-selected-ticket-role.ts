@@ -24,6 +24,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  injectPublicAttachArg,
+  publicCliCommandIndex,
+  publicRoleAcceptsAttach,
+} from "../src/public-cli/public-argv.ts";
+
 function usage(): never {
   console.error(`Usage: npx tsx scripts/dispatch-selected-ticket-role.ts <ticketNumber> [--project <site>] [--home <processHome>] -- <ak-role-args...>
   <ticketNumber>  board snapshot issue number already selected by the machine
@@ -37,72 +43,6 @@ function usage(): never {
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.stack ?? error.message;
   return String(error);
-}
-
-/**
- * Public role tokens whose argv grammar accepts `--attach` (bind-if-present).
- * Reviewer intentionally has no attachment channel and must stay unbound.
- */
-const ATTACH_CAPABLE_ROLES = new Set([
-  "judge",
-  "coder",
-  "fixer",
-  "collector",
-  "doctor",
-  "merger",
-]);
-
-/** First positional token after optional global flags (the role / support command). */
-function findRoleToken(akRoleArgs: readonly string[]): string | undefined {
-  let i = 0;
-  while (i < akRoleArgs.length) {
-    const token = akRoleArgs[i]!;
-    if (token === "--") {
-      return akRoleArgs[i + 1];
-    }
-    if (token.startsWith("-")) {
-      if (
-        !token.includes("=") &&
-        i + 1 < akRoleArgs.length &&
-        !akRoleArgs[i + 1]!.startsWith("-")
-      ) {
-        i += 2;
-      } else {
-        i += 1;
-      }
-      continue;
-    }
-    return token;
-  }
-  return undefined;
-}
-
-/** Insert `--attach <path>` after the role token (first non-flag arg). */
-function injectAttachArg(akRoleArgs: readonly string[], ticketPath: string): string[] {
-  const out = [...akRoleArgs];
-  // Find first positional token (role name) — skip leading global flags like --model.
-  let insertAt = 0;
-  while (insertAt < out.length) {
-    const token = out[insertAt]!;
-    if (token === "--") {
-      insertAt += 1;
-      break;
-    }
-    if (token.startsWith("-")) {
-      // Skip flag and its value when not --flag=value form and next is not a flag.
-      if (!token.includes("=") && insertAt + 1 < out.length && !out[insertAt + 1]!.startsWith("-")) {
-        insertAt += 2;
-      } else {
-        insertAt += 1;
-      }
-      continue;
-    }
-    // Landed on role token; attach immediately after it.
-    insertAt += 1;
-    break;
-  }
-  out.splice(insertAt, 0, "--attach", ticketPath);
-  return out;
 }
 
 const argv = process.argv.slice(2);
@@ -145,12 +85,15 @@ const resolvedAkRole =
     ? pathResolved.stdout.trim()
     : akRolePath;
 
-const roleToken = findRoleToken(akRoleArgs);
+const commandIndex = publicCliCommandIndex(akRoleArgs);
+const roleToken =
+  commandIndex === undefined ? undefined : akRoleArgs[commandIndex];
 const bindViaAttach =
-  roleToken !== undefined && ATTACH_CAPABLE_ROLES.has(roleToken);
+  roleToken !== undefined && publicRoleAcceptsAttach(roleToken);
 
 let ticketDir: string | undefined;
 let exitCode = 1;
+let cleanupFailure: unknown;
 try {
   let childArgs = [...akRoleArgs];
   if (bindViaAttach) {
@@ -162,7 +105,7 @@ try {
       `---\nticketNumber: ${ticketNumber}\n---\n# #${ticketNumber}\n`,
       "utf8",
     );
-    childArgs = injectAttachArg(akRoleArgs, ticketPath);
+    childArgs = [...injectPublicAttachArg(akRoleArgs, ticketPath)];
   }
 
   const childEnv = { ...process.env };
@@ -188,9 +131,15 @@ try {
   if (ticketDir !== undefined) {
     try {
       rmSync(ticketDir, { recursive: true, force: true });
-    } catch {
-      // Best-effort cleanup of the ephemeral ticket face directory.
+    } catch (error) {
+      // Cleanup failure is never silent: surface it, and fail closed when the
+      // child otherwise succeeded. Child non-zero status stays primary.
+      cleanupFailure = error;
+      console.error(`ticket face cleanup failed: ${formatError(error)}`);
     }
   }
+}
+if (cleanupFailure !== undefined && exitCode === 0) {
+  exitCode = 1;
 }
 process.exit(exitCode);
