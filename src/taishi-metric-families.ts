@@ -43,13 +43,13 @@ function readFamilyExport(
 }
 
 /**
- * Discover family modules from a directory of independent files.
- * `directory` override exists so tests can prove B-slice drop-in registration
- * without touching the production loader or shared lists.
+ * Discover family modules from the production family-module directory.
+ * B-slice registration is drop-in: add a file under that directory only.
  */
-export async function loadTaishiIssueMetricFamilies(
-  directory: string = TAISHI_ISSUE_METRIC_FAMILIES_DIR,
-): Promise<readonly TaishiMetricFamilyModule[]> {
+export async function loadTaishiIssueMetricFamilies(): Promise<
+  readonly TaishiMetricFamilyModule[]
+> {
+  const directory = TAISHI_ISSUE_METRIC_FAMILIES_DIR;
   let names: string[];
   try {
     names = await readdir(directory);

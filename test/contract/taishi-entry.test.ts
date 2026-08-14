@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -19,8 +19,11 @@ import {
 } from "../../src/activation-ledger-topology.ts";
 import { runTaishi } from "../../src/taishi-entry.ts";
 import { medianNumber } from "../../src/taishi-median.ts";
-import { composeTaishiMetricFamilySections } from "../../src/taishi-metric-family.ts";
-import { loadTaishiIssueMetricFamilies } from "../../src/taishi-metric-families.ts";
+import {
+  loadTaishiIssueMetricFamilies,
+  TAISHI_ISSUE_METRIC_FAMILIES,
+  TAISHI_ISSUE_METRIC_FAMILIES_DIR,
+} from "../../src/taishi-metric-families.ts";
 import {
   taishiIssuePagePath,
   type TaishiIssueMetricsPage,
@@ -293,45 +296,28 @@ test("taishi shared median primitive: even-sample mean of two middles (fixture w
   assert.equal(medianNumber([]), undefined);
 });
 
-test("taishi metric-family directory discovery: four independent files register without shared-list edits", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "taishi-families-"));
-  try {
-    for (const id of ["b1", "b2", "b3", "b4"] as const) {
-      const sectionKey = `${id}Section`;
-      await writeFile(
-        join(dir, `${id}-family.ts`),
-        `
-export default {
-  id: ${JSON.stringify(id)},
-  contribute() {
-    return { ${sectionKey}: { kind: ${JSON.stringify(id)} } };
-  },
-};
-`,
-        "utf8",
-      );
-    }
+test("taishi metric-family production discovery: real family files register without shared-list edits", async () => {
+  // Registration proof stays on the production path — real family modules under
+  // taishi-metric-families/ are discovered by the real loader (no test-only dir hook).
+  const names = (await readdir(TAISHI_ISSUE_METRIC_FAMILIES_DIR))
+    .filter((name) => {
+      if (name.endsWith(".d.ts")) return false;
+      if (name.includes(".test.")) return false;
+      return name.endsWith(".ts") || name.endsWith(".js") || name.endsWith(".mjs");
+    })
+    .sort((a, b) => a.localeCompare(b));
+  assert.deepEqual(names, ["a2-seam-probe.ts"]);
 
-    const families = await loadTaishiIssueMetricFamilies(dir);
-    assert.deepEqual(
-      families.map((family) => family.id),
-      ["b1", "b2", "b3", "b4"],
-    );
-
-    const sections = composeTaishiMetricFamilySections(families, {
-      projectRoot: ISSUE_PROJECT_ROOT,
-      runs: [],
-      unreadable: [],
-    });
-    assert.deepEqual(sections, {
-      b1Section: { kind: "b1" },
-      b2Section: { kind: "b2" },
-      b3Section: { kind: "b3" },
-      b4Section: { kind: "b4" },
-    });
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  const families = await loadTaishiIssueMetricFamilies();
+  assert.deepEqual(
+    families.map((family) => family.id),
+    ["a2-seam-probe"],
+  );
+  // Production registry is the same discovery product (loaded once at import).
+  assert.deepEqual(
+    TAISHI_ISSUE_METRIC_FAMILIES.map((family) => family.id),
+    ["a2-seam-probe"],
+  );
 });
 
 test("taishi issue-mode entry: taishi path symlink into consumer repo is refused without porcelain change", async () => {
