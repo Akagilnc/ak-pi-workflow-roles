@@ -1,6 +1,6 @@
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.js";
-import { immutableReviewerPin } from "./reviewer-pinned-git.js";
-export { createReviewerPinnedGitReader, immutableReviewerPin } from "./reviewer-pinned-git.js";
+import { branchNamesAtPinnedHead, immutableReviewerPin } from "./reviewer-pinned-git.js";
+export { branchNamesAtPinnedHead, createReviewerPinnedGitReader, immutableReviewerPin } from "./reviewer-pinned-git.js";
 import { isReviewerPromptText, sameReviewerPromptText } from "./reviewer-prompt-identity.js";
 import { sha256Hex } from "./sha256.js";
 import { constructReviewerDispatch, } from "./reviewer-construction.js";
@@ -91,6 +91,13 @@ export function extractReferencedAdrPaths(issueBody) {
     }
     return Object.freeze(paths);
 }
+/** Optional AbortSignal carried on the dispatch invocation bag (same shape runDispatch already reads). */
+function optionalInvocationSignal(invocation) {
+    if (typeof invocation !== "object" || invocation === null)
+        return undefined;
+    const signal = invocation.signal;
+    return signal instanceof AbortSignal ? signal : undefined;
+}
 /**
  * Unique production owner of code-review Skill step 2 Spec discovery (#343).
  * Primary: self-fetch latest issue by ticket number (typed → branch token → commit #N).
@@ -100,13 +107,15 @@ export function extractReferencedAdrPaths(issueBody) {
  * Construction builds Standards/Spec solely from this product.
  */
 export async function discoverReviewerSpecAuthority(input) {
+    // Path-matching tokens (heads/tags/remotes) stay separate from branch-ticket provenance.
     const featureTokens = await input.reader.featureTokens();
     const commitMessages = input.baseCommit === undefined
         ? Object.freeze([])
         : await input.reader.commitMessagesNewestFirst(input.baseCommit);
     const ticketResolution = resolveReviewerTicketNumber({
         ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
-        branchNames: featureTokens,
+        // Branch ticket source: real heads/remotes at targetHead only — never tags via featureTokens.
+        branchNames: branchNamesAtPinnedHead(input.reader.pin),
         commitMessagesNewestFirst: commitMessages,
     });
     // ① Primary: self-fetch latest issue + referenced docs/adr via injected capability only.
@@ -117,6 +126,7 @@ export async function discoverReviewerSpecAuthority(input) {
                 owner: origin.owner,
                 repo: origin.repo,
                 ticketNumber: ticketResolution.adopted.ticketNumber,
+                ...(input.signal === undefined ? {} : { signal: input.signal }),
             });
             if (issue !== undefined) {
                 const adrPaths = extractReferencedAdrPaths(issue.body);
@@ -225,12 +235,14 @@ export function createReviewerDispatcher(d) {
                 const base = await d.reader.resolve(baseRevision);
                 const range = await d.reader.range(base);
                 const authorityRefs = Object.freeze([...(d.authorityRefs ?? [])]);
+                const signal = optionalInvocationSignal(invocation);
                 const specAuthority = await discoverReviewerSpecAuthority({
                     authorityRefs,
                     reader: d.reader,
                     baseCommit: base,
                     ...(d.ticketNumber === undefined ? {} : { ticketNumber: d.ticketNumber }),
                     ...(d.fetchIssue === undefined ? {} : { fetchIssue: d.fetchIssue }),
+                    ...(signal === undefined ? {} : { signal }),
                 });
                 dispatch = constructReviewerDispatch({
                     identity,

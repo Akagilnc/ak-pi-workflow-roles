@@ -48,6 +48,35 @@ catch (cause) {
 export const immutableReviewerPin = (pin) => Object.freeze({
     repositoryRoot: pin.repositoryRoot, objectFormat: pin.objectFormat, targetHead: pin.targetHead, refs: immutableReviewerRefs(pin.refs),
 });
+/** Short name from a full ref, stripping heads/tags/remotes namespaces (and remote remote-name). */
+function shortNameFromPinnedRef(refName) {
+    const short = refName.startsWith("refs/heads/")
+        ? refName.slice("refs/heads/".length)
+        : refName.startsWith("refs/tags/")
+            ? refName.slice("refs/tags/".length)
+            : refName.startsWith("refs/remotes/")
+                ? refName.slice("refs/remotes/".length).replace(/^[^/]+\//, "")
+                : refName;
+    const trimmed = short.trim();
+    return trimmed === "" ? undefined : trimmed;
+}
+/**
+ * Branch-only short names at pinned targetHead for ticket-number provenance (#343).
+ * Heads and remotes only — tags never supply branch-token ticket candidates.
+ */
+export function branchNamesAtPinnedHead(pin) {
+    const names = new Set();
+    for (const [refName, entry] of Object.entries(pin.refs)) {
+        if (entry.peeledCommitId !== pin.targetHead)
+            continue;
+        if (!refName.startsWith("refs/heads/") && !refName.startsWith("refs/remotes/"))
+            continue;
+        const short = shortNameFromPinnedRef(refName);
+        if (short !== undefined)
+            names.add(short);
+    }
+    return Object.freeze([...names]);
+}
 async function gitText(root, args) {
     const { stdout } = await execGit(["-C", root, ...args], { encoding: "utf8" });
     return stdout.trim();
@@ -166,19 +195,14 @@ export async function createReviewerPinnedGitReader(root = process.cwd()) {
         async featureTokens() {
             // Pinned ref snapshot is the target-tree fact — no live branch/symbolic-ref walk,
             // no catch-to-empty. Detached/remote-only tips surface via refs/remotes/* entries.
+            // Includes tags for local Spec-path matching only; ticket branch source is separate.
             const names = new Set();
             for (const [refName, entry] of Object.entries(pin.refs)) {
                 if (entry.peeledCommitId !== targetHead)
                     continue;
-                const short = refName.startsWith("refs/heads/")
-                    ? refName.slice("refs/heads/".length)
-                    : refName.startsWith("refs/tags/")
-                        ? refName.slice("refs/tags/".length)
-                        : refName.startsWith("refs/remotes/")
-                            ? refName.slice("refs/remotes/".length).replace(/^[^/]+\//, "")
-                            : refName;
-                if (short.trim() !== "")
-                    names.add(short.trim());
+                const short = shortNameFromPinnedRef(refName);
+                if (short !== undefined)
+                    names.add(short);
             }
             return Object.freeze([...names]);
         },
