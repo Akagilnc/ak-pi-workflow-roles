@@ -12,7 +12,11 @@
  */
 import { readFile } from "node:fs/promises";
 
-import { physicalPathIdentity, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
+import {
+  errnoCode,
+  physicalPathIdentity,
+  resolveActivationLedgerHome,
+} from "./activation-ledger-topology.ts";
 import {
   runTaishiCohortMode,
   type TaishiCohortModeInput,
@@ -39,8 +43,25 @@ import {
 } from "./taishi-page.ts";
 
 /**
- * #338 compute-if-missing failure — names the issue identity + real cause.
+ * #338 compute-if-missing typed terminal failure (schema owner).
+ * Public surface projects this object as-is — error code / issue / real cause
+ * are typed fields, never prose cells for machine consumers.
  * Never wash into cohort/model-groups typed absent.
+ */
+export type TaishiIssueComputeFailure = {
+  readonly code: "taishi-issue-compute-failed";
+  readonly projectRoot: string;
+  readonly issueNumber?: number;
+  /** Real cause identity (errno / name when held) — no diagnostic prose cell. */
+  readonly cause: {
+    readonly code?: string;
+    readonly name?: string;
+  };
+};
+
+/**
+ * #338 compute-if-missing failure — names the issue identity + real cause.
+ * Sole schema owner for the public typed terminal failure face.
  */
 export class TaishiIssueComputeError extends Error {
   readonly code = "taishi-issue-compute-failed" as const;
@@ -69,6 +90,22 @@ export class TaishiIssueComputeError extends Error {
     if (input.issueNumber !== undefined) {
       this.issueNumber = input.issueNumber;
     }
+  }
+
+  /** Canonical typed terminal failure object for public CLI / machine consumers. */
+  toTypedFailure(): TaishiIssueComputeFailure {
+    const rootCause = this.cause;
+    const code = errnoCode(rootCause);
+    const name = rootCause instanceof Error ? rootCause.name : undefined;
+    return {
+      code: this.code,
+      projectRoot: this.projectRoot,
+      ...(this.issueNumber === undefined ? {} : { issueNumber: this.issueNumber }),
+      cause: {
+        ...(code === undefined ? {} : { code }),
+        ...(name === undefined ? {} : { name }),
+      },
+    };
   }
 }
 

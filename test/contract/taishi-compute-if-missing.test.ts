@@ -435,15 +435,21 @@ test("taishi #338 whole-compute failure: write-page blocked → typed terminal i
 
       // Whole-compute failure terminates this pull — not usage (2), not pending/success.
       assert.equal(result.exitCode, 1);
-      const err = stderr.join("");
-      assert.match(err, /^ak-role: /);
-      // Typed code + failed issue identity + real write cause.
-      assert.match(err, /taishi-issue-compute-failed/);
-      assert.match(err, new RegExp(String(NEG_ISSUE)));
-      assert.match(err, /EISDIR|illegal operation on a directory/i);
-      // Must not wash into absent-shaped or pending success payload.
-      const out = stdout.join("").trim();
-      assert.equal(out, "", "terminal failure must not emit a result envelope");
+      // Typed terminal failure object (schema owner fields) — no stderr prose contract.
+      const body = JSON.parse(stdout.join("")) as {
+        code: string;
+        projectRoot: string;
+        issueNumber?: number;
+        cause: { code?: string; name?: string };
+        mode?: string;
+      };
+      assert.equal(body.code, "taishi-issue-compute-failed");
+      assert.equal(body.issueNumber, NEG_ISSUE);
+      assert.equal(body.projectRoot, physicalPathIdentity(NEG_ROOT));
+      assert.equal(body.cause.code, "EISDIR");
+      // Must not wash into cohort/issue success envelope.
+      assert.equal(body.mode, undefined);
+      assert.equal(stderr.join(""), "");
 
       // Index unchanged by the failed ensure of NEG; no silent partial cohort page set.
       const afterIndex = await readFile(taishiLibraryIndexPath(ledgerHome), "utf8");

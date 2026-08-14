@@ -5,7 +5,8 @@
  * #338: three query faces (issue / cohort / model-groups) on one seam;
  * retrieval is synchronous compute-if-missing (readOrComputeTaishiIssuePage):
  * wait for sole kernel + existing writer, then emit the full result. Whole-compute
- * failure ends this pull as typed terminal (exit 1) — no pending/partial envelope.
+ * failure ends this pull as typed terminal (exit 1): schema owner projects
+ * code/issue/cause fields on the same JSON stdout envelope — no pending/partial.
  * "Unobtrusive" binds #337 merge auto-trigger only, not this user-initiated query.
  */
 import {
@@ -28,7 +29,7 @@ import type {
   ParseTaishiArgvResult,
   ParseTaishiIssueArgv,
 } from "./invocation.ts";
-import { formatCliDiagnostic, presentStructuralRejection } from "./settlement.ts";
+import { presentStructuralRejection } from "./settlement.ts";
 
 export type TaishiRunEnv = {
   readonly home: string;
@@ -133,9 +134,9 @@ export async function runPublicTaishi(
       return { exitCode: 2 };
     }
     if (error instanceof TaishiIssueComputeError) {
-      // Typed terminal failure for this retrieval — names issue + real cause.
-      // Exit 1 ends the pull now; no pending envelope, no absent/partial success.
-      io.stderr(formatCliDiagnostic(`${error.code}: ${error.message}`));
+      // Typed terminal failure via sole schema owner — code/issue/cause as fields.
+      // Same JSON stdout envelope as success; exit 1 ends the pull (not partial).
+      io.stdout(`${JSON.stringify(error.toTypedFailure(), null, 2)}\n`);
       return { exitCode: 1 };
     }
     throw error;
