@@ -2109,7 +2109,14 @@ export function parseTaishiTicketNumber(
       `taishi ${flag} must be a positive integer, got ${raw}`,
     );
   }
-  return Number(trimmed);
+  const value = Number(trimmed);
+  // Digit-only strings beyond MAX_SAFE_INTEGER round or become Infinity — reject.
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new CliUsageError(
+      `taishi ${flag} must be a positive integer, got ${raw}`,
+    );
+  }
+  return value;
 }
 
 function parseTaishiIssueNumberList(raw: string, flag: string): number[] {
