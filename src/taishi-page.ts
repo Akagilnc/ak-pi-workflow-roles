@@ -16,7 +16,7 @@ import {
   physicalPathIdentity,
 } from "./activation-ledger-topology.ts";
 import type { TaishiReadableRunFacts } from "./taishi-ledger.ts";
-import { TAISHI_ISSUE_METRIC_FAMILIES } from "./taishi-metric-families.ts";
+import { loadTaishiIssueMetricFamilies } from "./taishi-metric-families.ts";
 import { composeTaishiMetricFamilySections } from "./taishi-metric-family.ts";
 
 /** Required run sources that may render a loud unreadable exclusion. */
@@ -221,7 +221,7 @@ export function summarizeTaishiRunEfficiency(
   return { totalElapsedMs, lastActivityAt };
 }
 
-export function buildTaishiIssueMetricsPage(input: {
+export async function buildTaishiIssueMetricsPage(input: {
   readonly projectRoot: string;
   readonly runs: readonly TaishiReadableRunFacts[];
   readonly unreadable: readonly TaishiUnreadableRun[];
@@ -231,7 +231,10 @@ export function buildTaishiIssueMetricsPage(input: {
   readonly changedLines?: number;
   /** Caller typed issue number — retained on page for cohort index join. */
   readonly issueNumber?: number;
-}): TaishiIssueMetricsPage {
+}): Promise<TaishiIssueMetricsPage> {
+  // Discover before compose/write — missing family tree fails loud with native
+  // ENOENT/ENOTDIR (no empty-registry wash) and never emits a success page.
+  const families = await loadTaishiIssueMetricFamilies();
   // Sole run→leg projection owner: page envelope maps typed runs to A1 legs.
   const legs = sortLegs(
     input.runs.map((run) => ({
@@ -264,7 +267,7 @@ export function buildTaishiIssueMetricsPage(input: {
     msPerKLines,
     lastActivityAt,
   };
-  const sections = composeTaishiMetricFamilySections(TAISHI_ISSUE_METRIC_FAMILIES, {
+  const sections = composeTaishiMetricFamilySections(families, {
     projectRoot,
     runs: input.runs,
     unreadable,

@@ -133,7 +133,8 @@ async function runTaishiIssueMode(
   // exactOptionalPropertyTypes: only pass optional faces when caller supplied them.
   const issueNumber =
     "issueNumber" in input ? input.issueNumber : undefined;
-  const page = buildTaishiIssueMetricsPage({
+  // Page build discovers metric families first — missing tree fails before write.
+  const page = await buildTaishiIssueMetricsPage({
     projectRoot,
     runs: scan.runs,
     unreadable: scan.unreadable,
