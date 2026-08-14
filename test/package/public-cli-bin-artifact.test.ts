@@ -125,6 +125,16 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
       true,
       "public bin must pin the Reviewer base on activation",
     );
+    assert.equal(
+      committedText.includes("ak-review-authority-refs"),
+      true,
+      "public bin must transport admitted authorityRefs on Reviewer activation",
+    );
+    assert.equal(
+      committedText.includes("--authority-ref"),
+      true,
+      "public bin must admit repeatable Reviewer --authority-ref",
+    );
     // #114 public Merger adapter + package merge-only method must ship in the installed bin.
     assert.equal(
       /command\s*===\s*["']merger["']|case\s*["']merger["']/.test(committedText),

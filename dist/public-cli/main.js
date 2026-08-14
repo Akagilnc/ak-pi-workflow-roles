@@ -147,6 +147,18 @@ function validateRuntimeReviewerReceipt(output) {
         throw new Error("Successful Reviewer outcome lacks report");
       if (status === "failed" && report !== void 0) throw new Error("Failed Reviewer outcome cannot bind a report");
     }
+    const specDisposition = read(output, "specDisposition");
+    if (specDisposition === "launched") {
+      if (expectedAxes.length !== 2 || expectedAxes[0] !== "standards" || expectedAxes[1] !== "spec") {
+        throw new Error("Reviewer specDisposition launched requires Standards+Spec accepted legs");
+      }
+    } else if (specDisposition === "skipped-missing") {
+      if (expectedAxes.length !== 1 || expectedAxes[0] !== "standards") {
+        throw new Error("Reviewer specDisposition skipped-missing requires Standards-only accepted legs");
+      }
+    } else if (specDisposition !== void 0) {
+      throw new Error("Invalid Reviewer specDisposition");
+    }
   }
   return output;
 }
@@ -15484,6 +15496,17 @@ function requireOptionPath(flag, value) {
   }
   return value;
 }
+function requireAuthorityRef(value) {
+  if (value === void 0 || value.trim() === "") {
+    throw new CliUsageError("--authority-ref requires a nonempty durable reference");
+  }
+  if (/\s/.test(value)) {
+    throw new CliUsageError(
+      "--authority-ref requires a durable reference, not inline Spec prose"
+    );
+  }
+  return value;
+}
 function parseJudgeArgv(args) {
   const attachmentPaths = [];
   let project;
@@ -16446,6 +16469,7 @@ function buildDoctorTransportPrompt(admitted) {
 }
 function parseReviewerArgv(args) {
   const attachmentPaths = [];
+  const authorityRefs = [];
   let project;
   let baseRevision;
   const positional = [];
@@ -16472,6 +16496,14 @@ function parseReviewerArgv(args) {
       baseRevision = requireOptionPath("--base", token.slice("--base=".length));
       continue;
     }
+    if (token === "--authority-ref") {
+      authorityRefs.push(requireAuthorityRef(tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--authority-ref=")) {
+      authorityRefs.push(requireAuthorityRef(token.slice("--authority-ref=".length)));
+      continue;
+    }
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown reviewer option: ${token}`);
     }
@@ -16484,6 +16516,7 @@ function parseReviewerArgv(args) {
     instruction: positional.join(" "),
     attachmentPaths,
     baseRevision,
+    authorityRefs,
     ...project === void 0 ? {} : { project }
   };
 }
@@ -16494,6 +16527,9 @@ async function admitReviewerInvocation(options) {
   if (options.baseRevision.trim() === "") {
     throw new CliUsageError("--base requires a nonempty revision");
   }
+  const authorityRefs = Object.freeze(
+    (options.authorityRefs ?? []).map((ref) => requireAuthorityRef(ref))
+  );
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
@@ -16519,6 +16555,7 @@ async function admitReviewerInvocation(options) {
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
+    authorityRefs: [...authorityRefs],
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
       frozenPath: a.frozenPath,
@@ -16548,6 +16585,7 @@ async function admitReviewerInvocation(options) {
     sessionFile,
     admittedRequestPath,
     baseRevision: options.baseRevision,
+    authorityRefs,
     ...ticketFields
   };
 }
@@ -17072,7 +17110,7 @@ var init_reviewer_scope_prompt = __esm({
 });
 
 // src/reviewer-construction.ts
-var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER, REVIEWER_STANDARDS_CONCLUSION_KEYS, REVIEWER_STANDARDS_CONCLUSION_LABELS;
+var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER, REVIEWER_VERIFICATION_BOUNDARY, REVIEWER_STANDARDS_CONCLUSION_KEYS, REVIEWER_STANDARDS_CONCLUSION_LABELS;
 var init_reviewer_construction = __esm({
   "src/reviewer-construction.ts"() {
     "use strict";
@@ -17089,6 +17127,14 @@ var init_reviewer_construction = __esm({
       version: 1,
       implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities")
     });
+    REVIEWER_VERIFICATION_BOUNDARY = [
+      "Verification-Boundary: you may run focused product tests during this review turn when independent verification needs them.",
+      "A full repository test suite is not forbidden, but do not re-run it every review round;",
+      "prefer once at family wrap-up unless this review specifically requires a broader run.",
+      "Slice and review work should not trigger frequent full-suite reruns.",
+      "Independently discover test facts (including existing coder/fixer receipts and any tests you run);",
+      "do not treat caller prose as the source of those facts."
+    ].join(" ");
     REVIEWER_STANDARDS_CONCLUSION_KEYS = Object.freeze([
       "constitutionality",
       "minimum-necessary-test-cost",
@@ -17112,6 +17158,7 @@ var init_reviewer_dispatch = __esm({
     init_reviewer_pinned_git();
     init_reviewer_prompt_identity();
     init_sha256();
+    init_reviewer_construction();
     init_reviewer_construction();
     init_reviewer_preflight_error();
     init_sha256();
@@ -17908,6 +17955,7 @@ async function loadResumableRunRecord(home, runId) {
   let prerequisitesPath;
   let prerequisites;
   let baseRevision;
+  let authorityRefs;
   let mergerInputPath;
   let derived;
   let correlationId;
@@ -17945,6 +17993,18 @@ async function loadResumableRunRecord(home, runId) {
       if (typeof record4.baseRevision === "string" && record4.baseRevision.trim() !== "") {
         baseRevision = record4.baseRevision;
       }
+      if (Array.isArray(record4.authorityRefs)) {
+        authorityRefs = Object.freeze(
+          record4.authorityRefs.map((ref) => {
+            if (typeof ref !== "string") {
+              throw new CliUsageError(
+                "role run admitted authority refs must be durable reference strings"
+              );
+            }
+            return requireAuthorityRef(ref);
+          })
+        );
+      }
       if (typeof record4.mergerInputPath === "string" && record4.mergerInputPath.trim() !== "") {
         mergerInputPath = record4.mergerInputPath;
       }
@@ -17964,9 +18024,11 @@ async function loadResumableRunRecord(home, runId) {
       correlationId = fromAdmitted.correlationId;
       ticketNumber = fromAdmitted.ticketNumber;
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
     throw new CliUsageError(
-      `role run admitted request is unreadable: ${runId}`
+      `role run admitted request is unreadable: ${runId}`,
+      { cause: error }
     );
   }
   if (correlationId === void 0 || ticketNumber === void 0) {
@@ -18003,6 +18065,7 @@ async function loadResumableRunRecord(home, runId) {
       ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
       ...prerequisites === void 0 ? {} : { prerequisites },
       ...baseRevision === void 0 ? {} : { baseRevision },
+      ...authorityRefs === void 0 ? {} : { authorityRefs },
       ...mergerInputPath === void 0 ? {} : { mergerInputPath },
       ...derived === void 0 ? {} : { derived },
       ...correlationId === void 0 ? {} : { correlationId },
@@ -18158,6 +18221,7 @@ async function loadResumableReviewerRun(home, runId) {
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
+    authorityRefs: Object.freeze([...loaded.admittedFields.authorityRefs ?? []]),
     ...restoredTicketFields(loaded.admittedFields)
   };
   return {
@@ -18361,8 +18425,9 @@ var init_evidence_child_executor = __esm({
     "use strict";
     init_compliance_transport();
     init_package_owned_tool_idle();
-    init_stream_idle_guard();
     init_receipt_delivery_policy();
+    init_reviewer_construction();
+    init_stream_idle_guard();
     init_upstream_error_testimony();
   }
 });
@@ -19625,6 +19690,7 @@ function reviewerDecisiveFacts(output) {
   const axes = reviewerAxes(outcomes.readable ? outcomes.value : void 0);
   const reportAxes = reviewerAxes(reports.readable ? reports.value : void 0);
   const acceptedBatch = safelyRead(candidate, "acceptedBatch");
+  const specDisposition = safelyRead(candidate, "specDisposition");
   const facts = {
     axes,
     reportAxes,
@@ -19632,6 +19698,9 @@ function reviewerDecisiveFacts(output) {
     ...auditNoReceiptDecisiveFact(candidate)
   };
   if (status.readable && typeof status.value === "string") facts.reviewerStatus = status.value;
+  if (specDisposition.readable && (specDisposition.value === "launched" || specDisposition.value === "skipped-missing")) {
+    facts.specDisposition = specDisposition.value;
+  }
   const diagnostic = safelyRead(candidate, "diagnostic");
   if (status.readable && status.value === "refused" && diagnostic.readable) {
     facts.diagnosticPresent = typeof diagnostic.value === "string" && diagnostic.value.trim().length > 0;
@@ -20922,6 +20991,7 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
         sessionFile: admitted.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         baseRevision: admitted.baseRevision,
+        authorityRefs: [...admitted.authorityRefs],
         ...admitted.instructionEmpty ? {} : { callerProvenance: admitted.instruction },
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -23608,6 +23678,7 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     options.packageRoot,
     "code-review"
   );
+  const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
   return [
     "--no-skills",
     "--skill",
@@ -23624,6 +23695,7 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     "reviewer",
     "--ak-review-base",
     admitted.baseRevision,
+    ...authorityRefArgs,
     "--mode",
     "json",
     ...buildModelArgs7(options.model),
@@ -23635,6 +23707,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     options.packageRoot,
     "code-review"
   );
+  const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
   return [
     "--no-skills",
     "--skill",
@@ -23651,6 +23724,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     "reviewer",
     "--ak-review-base",
     admitted.baseRevision,
+    ...authorityRefArgs,
     "--mode",
     "json",
     ...buildModelArgs7(options.model),
@@ -23844,6 +23918,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       baseRevision: parsed.baseRevision,
+      authorityRefs: parsed.authorityRefs,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
       ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
     });

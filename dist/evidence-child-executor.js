@@ -9,9 +9,19 @@ import { join } from "node:path";
 import { createAssistantMessageEventStream, InMemoryCredentialStore, } from "@earendil-works/pi-ai";
 import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch, } from "./compliance-transport.js";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
-import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
+import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.js";
+import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
 import { hasUpstreamErrorTestimony, isNonSuccessHttpStatus, projectConfirmedRemotePayload, } from "./upstream-error-testimony.js";
+/** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
+function buildEvidenceChildSystemPrompt() {
+    return [
+        "Work only in the supplied workspace.",
+        "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
+        REVIEWER_VERIFICATION_BOUNDARY,
+        "Return one substantive non-blank report.",
+    ].join("\n");
+}
 // ── shared constants / types ──────────────────────────────────────────────
 export const AUDITOR_TURN_LIMIT = 32;
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
@@ -450,11 +460,7 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
             model: inherited.model,
             thinkingLevel: context.thinkingLevel ?? "off",
             modelRuntime: inherited.runtime,
-            systemPrompt: [
-                "Work only in the supplied workspace.",
-                "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
-                "Return one substantive non-blank report.",
-            ].join("\n"),
+            systemPrompt: buildEvidenceChildSystemPrompt(),
             sessionManager: createRecordSession({
                 cwd: workspace,
                 kind: "evidence-children",

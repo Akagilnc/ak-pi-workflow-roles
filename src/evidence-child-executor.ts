@@ -30,14 +30,25 @@ import {
   type AuditorParentAttemptBinding,
 } from "./compliance-transport.ts";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
+import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
-import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import {
   hasUpstreamErrorTestimony,
   isNonSuccessHttpStatus,
   projectConfirmedRemotePayload,
 } from "./upstream-error-testimony.ts";
+
+/** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
+function buildEvidenceChildSystemPrompt(): string {
+  return [
+    "Work only in the supplied workspace.",
+    "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
+    REVIEWER_VERIFICATION_BOUNDARY,
+    "Return one substantive non-blank report.",
+  ].join("\n");
+}
 
 // ── shared constants / types ──────────────────────────────────────────────
 
@@ -561,11 +572,7 @@ export async function executeEvidenceChild(
         model: inherited.model,
         thinkingLevel: context.thinkingLevel ?? "off",
         modelRuntime: inherited.runtime,
-        systemPrompt: [
-          "Work only in the supplied workspace.",
-          "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
-          "Return one substantive non-blank report.",
-        ].join("\n"),
+        systemPrompt: buildEvidenceChildSystemPrompt(),
         sessionManager: createRecordSession({
           cwd: workspace,
           kind: "evidence-children",

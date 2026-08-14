@@ -5,7 +5,8 @@ export function projectAcceptedDispatch(dispatch) {
     return {
         source: "reviewer-dispatch", type: "accepted", identity: dispatch.identity,
         recipe: dispatch.recipe, input: dispatch.input, target: dispatch.targetSnapshot,
-        range: dispatch.range, legs: dispatch.legs,
+        range: dispatch.range, authorityRefs: dispatch.authorityRefs,
+        specDisposition: dispatch.specDisposition, legs: dispatch.legs,
     };
 }
 export function projectReviewerDispatchOutcome(ledger, dispatch, result) {

@@ -26,11 +26,15 @@ export type RuntimeReviewerAcceptedBatch = Readonly<{
   identity: string;
   legs: readonly Readonly<{ axis: "standards" | "spec"; prompt: ReviewerReceiptPrompt }>[];
 }>;
+/** Honest Spec-child disposition on the receipt face. */
+export type RuntimeReviewerSpecDisposition = "launched" | "skipped-missing";
 export type RuntimeReviewerReceiptV2 = Readonly<{
   version: 2;
   status: "completed" | "refused";
   diagnostic?: string;
   acceptedBatch?: RuntimeReviewerAcceptedBatch;
+  /** Present on accepted batches: launched Spec child, or skipped after confirmed missing Spec. */
+  specDisposition?: RuntimeReviewerSpecDisposition;
   reports: Readonly<Partial<Record<"standards" | "spec", VerbatimChildReport>>>;
   outcomes: Readonly<Partial<Record<"standards" | "spec", RuntimeReviewerOutcome>>>;
   identities: Readonly<{
@@ -99,6 +103,21 @@ export function validateRuntimeReviewerReceipt(output: unknown): RuntimeReviewer
       if (status === "successful" && report === undefined)
         throw new Error("Successful Reviewer outcome lacks report");
       if (status === "failed" && report !== undefined) throw new Error("Failed Reviewer outcome cannot bind a report");
+    }
+
+    // One read inside the existing accepted-leg consistency cycle — not a second validator.
+    // launched ⇔ Standards+Spec; skipped-missing ⇔ Standards only.
+    const specDisposition = read(output, "specDisposition");
+    if (specDisposition === "launched") {
+      if (expectedAxes.length !== 2 || expectedAxes[0] !== "standards" || expectedAxes[1] !== "spec") {
+        throw new Error("Reviewer specDisposition launched requires Standards+Spec accepted legs");
+      }
+    } else if (specDisposition === "skipped-missing") {
+      if (expectedAxes.length !== 1 || expectedAxes[0] !== "standards") {
+        throw new Error("Reviewer specDisposition skipped-missing requires Standards-only accepted legs");
+      }
+    } else if (specDisposition !== undefined) {
+      throw new Error("Invalid Reviewer specDisposition");
     }
   }
   return output as RuntimeReviewerReceiptV2;
