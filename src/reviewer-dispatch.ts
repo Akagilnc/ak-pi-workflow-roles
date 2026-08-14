@@ -1,6 +1,3 @@
-import { readdir } from "node:fs/promises";
-import { join, relative } from "node:path";
-
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
@@ -19,45 +16,31 @@ import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts
 export { sha256Hex } from "./sha256.ts";
 export { isReviewerPromptText as isReviewerPromptIdentity, sameReviewerPromptText as sameReviewerPromptIdentity, type ReviewerPromptText as ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
-const LOCAL_SPEC_ROOTS = ["docs", "specs", ".scratch"] as const;
 const GENERIC_FEATURE_TOKENS = new Set(["", "head", "main", "master", "trunk", "develop", "development"]);
+/** Conventional branch shells that must not hide the feature token (feat/login → login). */
+const BRANCH_SHELL_PREFIX = /^(?:feat|feature|fix|bugfix|hotfix|chore|docs|refactor)-/;
 
 function normalizeFeatureToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-async function listLocalSpecCandidatePaths(repositoryRoot: string): Promise<readonly string[]> {
-  const found: string[] = [];
-  const walk = async (absoluteDir: string): Promise<void> => {
-    let entries;
-    try {
-      entries = await readdir(absoluteDir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const absolutePath = join(absoluteDir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(absolutePath);
-        continue;
-      }
-      if (entry.isFile()) {
-        found.push(relative(repositoryRoot, absolutePath).split("\\").join("/"));
-      }
-    }
-  };
-  for (const root of LOCAL_SPEC_ROOTS) {
-    await walk(join(repositoryRoot, root));
-  }
-  return Object.freeze(found);
+/** Expand one branch/ref name into matchable tokens, stripping conventional shells. */
+function expandFeatureTokens(raw: string): readonly string[] {
+  const normalized = normalizeFeatureToken(raw);
+  if (normalized.length === 0) return Object.freeze([]);
+  const tokens = new Set<string>([normalized]);
+  const stripped = normalized.replace(BRANCH_SHELL_PREFIX, "");
+  if (stripped.length > 0 && stripped !== normalized) tokens.add(stripped);
+  return Object.freeze([...tokens]);
 }
 
 /**
  * Unique production owner of code-review Skill step 2 Spec discovery.
  * Directly yields durable refs Spec child can read, or confirmed missing.
  * - Supplied authorityRefs ⇒ available with those refs as material.
- * - Matching local docs/specs/.scratch paths ⇒ available with those paths as material.
+ * - Matching pinned-target docs/specs/.scratch paths ⇒ available with those paths as material.
  * - Commit message bare #N without durable source ⇒ missing (not available).
+ * Only confirmed absence yields missing; other Git/I-O failures keep true cause for preflight.
  * Construction builds Standards/Spec solely from this product.
  */
 export async function discoverReviewerSpecAuthority(input: {
@@ -71,13 +54,18 @@ export async function discoverReviewerSpecAuthority(input: {
     });
   }
   const featureTokens = await input.reader.featureTokens();
-  const tokens = featureTokens
-    .map(normalizeFeatureToken)
-    .filter((token) => token.length >= 3 && !GENERIC_FEATURE_TOKENS.has(token));
+  const tokens = [
+    ...new Set(
+      featureTokens
+        .flatMap((raw) => expandFeatureTokens(raw))
+        .filter((token) => token.length >= 3 && !GENERIC_FEATURE_TOKENS.has(token)),
+    ),
+  ];
   if (tokens.length === 0) {
     return Object.freeze({ status: "missing" as const });
   }
-  const candidates = await listLocalSpecCandidatePaths(input.reader.pin.repositoryRoot);
+  // Pinned target tree only — Spec child cannot read live-worktree or gitignored paths.
+  const candidates = await input.reader.listSpecCandidatePaths();
   const matched = candidates.filter((relativePath) => {
     const normalizedPath = normalizeFeatureToken(relativePath);
     return tokens.some((token) => normalizedPath.includes(token));
