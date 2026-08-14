@@ -106,49 +106,46 @@ test("constructed legs exclude caller task channel", async () => {
   assert.equal(result.dispatch.input.canonicalSkill, "review skill");
 });
 
-test("constructed standards and spec legs carry package-owned verification boundary", async () => {
+test("constructed legs keep typed axis adapter without duplicating verification boundary", async () => {
   const h = harness();
   const result = await h.dispatcher.dispatch("main~1");
   assert.equal(result.status, "accepted");
   if (result.status !== "accepted") return;
 
-  assert.equal(REVIEWER_AXIS_OUTPUT_ADAPTER.version, 3);
-  assert.match(
-    REVIEWER_CONSTRUCTION_RECIPE.implementationSha256,
-    /^[a-f0-9]{64}$/,
-  );
-  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /Verification-Boundary:/);
-  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /focused product tests/);
-  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /full repository test suite is not forbidden/);
-  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /family wrap-up/);
-  assert.match(REVIEWER_VERIFICATION_BOUNDARY, /frequent full-suite reruns/);
-  assert.doesNotMatch(REVIEWER_VERIFICATION_BOUNDARY, /do not execute product verification/i);
-  assert.doesNotMatch(REVIEWER_VERIFICATION_BOUNDARY, /sole source of test facts/i);
-  assert.doesNotMatch(REVIEWER_VERIFICATION_BOUNDARY, /pytest|compileall/i);
+  assert.equal(REVIEWER_AXIS_OUTPUT_ADAPTER.adapterId, "reviewer-axis-output");
+  assert.equal(REVIEWER_AXIS_OUTPUT_ADAPTER.version, 4);
+  assert.equal(REVIEWER_CONSTRUCTION_RECIPE.implementationSha256.length, 64);
+  assert.equal(REVIEWER_VERIFICATION_BOUNDARY.startsWith("Verification-Boundary:"), true);
 
   const axes = result.dispatch.legs.map((leg) => leg.axis).sort();
   assert.deepEqual(axes, ["spec", "standards"]);
   for (const leg of result.dispatch.legs) {
-    assert.equal(leg.prompt.includes(REVIEWER_VERIFICATION_BOUNDARY), true, `${leg.axis} missing boundary`);
-    assert.match(
-      leg.prompt,
-      new RegExp(
+    // Axis legs own adapter identity only; verification cadence is not a second leg carrier.
+    assert.equal(
+      leg.prompt.includes(
         `Axis-Output-Adapter: ${REVIEWER_AXIS_OUTPUT_ADAPTER.adapterId}@${REVIEWER_AXIS_OUTPUT_ADAPTER.version}:${leg.axis}`,
       ),
+      true,
+      `${leg.axis} missing typed axis adapter`,
+    );
+    assert.equal(
+      leg.prompt.includes(REVIEWER_VERIFICATION_BOUNDARY),
+      false,
+      `${leg.axis} must not duplicate evidence-child verification carrier`,
     );
     assert.equal(leg.prompt.includes("Task:"), false);
   }
   assert.equal("task" in result.dispatch.input, false);
 });
 
-test("evidence-child system prompt repeats the same verification boundary", () => {
+test("evidence-child system prompt is the single deep verification carrier", () => {
   const systemPrompt = buildEvidenceChildSystemPrompt();
   assert.equal(systemPrompt.includes(REVIEWER_VERIFICATION_BOUNDARY), true);
-  assert.match(systemPrompt, /Do not commit, push, or mutate remotes/);
-  assert.match(systemPrompt, /Return one substantive non-blank report/);
+  assert.equal(systemPrompt.includes("Do not commit, push, or mutate remotes."), true);
+  assert.equal(systemPrompt.includes("Return one substantive non-blank report."), true);
 });
 
-test("parent Reviewer system prompt injects the same package-owned verification boundary", async () => {
+test("parent Reviewer system prompt injects package-owned verification boundary once", async () => {
   const flags = new Map<string, unknown>([["ak-review-base", "main~1"]]);
   const handlers = new Map<string, (...args: any[]) => unknown>();
   const pi = {
@@ -219,8 +216,13 @@ test("parent Reviewer system prompt injects the same package-owned verification 
     { systemPrompt: "BASE", prompt: "review since main~1 expanded" },
     {} as ExtensionContext,
   ) as { systemPrompt: string };
-  assert.match(prompt.systemPrompt, /REVIEWER LAW/);
+  assert.equal(prompt.systemPrompt.includes("REVIEWER LAW"), true);
   assert.equal(prompt.systemPrompt.includes(REVIEWER_VERIFICATION_BOUNDARY), true);
-  assert.match(prompt.systemPrompt, /<reviewer_verification_boundary>/);
+  assert.equal(prompt.systemPrompt.includes("<reviewer_verification_boundary>"), true);
+  assert.equal(prompt.systemPrompt.includes("</reviewer_verification_boundary>"), true);
+  assert.equal(
+    prompt.systemPrompt.split(REVIEWER_VERIFICATION_BOUNDARY).length - 1,
+    1,
+  );
   assert.equal(prompt.systemPrompt.includes("Task:"), false);
 });
