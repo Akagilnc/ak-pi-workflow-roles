@@ -571,3 +571,61 @@ test("taishi session span with inverted timestamps is page-local unreadable", as
     });
   });
 });
+
+test("taishi live run-state is not classified as terminal no-receipt", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async (home) => {
+      const runDir = join(
+        home,
+        ".ak-roles",
+        "books",
+        "fixture-book-c1",
+        "runs",
+        `${C1_ALPHA_RUN}@coder`,
+      );
+      await rm(join(runDir, "artifacts"), { recursive: true, force: true });
+      await writeFile(
+        join(runDir, "run-state.json"),
+        `${JSON.stringify({
+          runId: C1_ALPHA_RUN,
+          role: "coder",
+          state: "running",
+          bookKey: "fixture-book-c1",
+          projectRoot: ISSUE_ALPHA,
+          sessionDirectory: join(runDir, "session"),
+          sessionFile: join(runDir, "session", "session.jsonl"),
+          runDirectory: runDir,
+          admittedRequestPath: join(runDir, "invocation.json"),
+        }, null, 2)}\n`,
+        "utf8",
+      );
+
+      const result = await runTaishi({
+        mode: "issue",
+        projectRoot: ISSUE_ALPHA,
+      });
+      // Live run is omitted entirely — not a leg, not unreadable death.
+      assert.equal(
+        result.page.legs.some((leg) => leg.runId === C1_ALPHA_RUN),
+        false,
+      );
+      assert.equal(
+        result.page.unreadable.some((entry) => entry.runId === C1_ALPHA_RUN),
+        false,
+      );
+      assert.equal(result.page.totalElapsedMs, 0);
+      const page = result.page as TaishiIssueMetricsPage & {
+        acceptanceSuccessRework?: {
+          byRole: readonly {
+            role: string;
+            noReceiptCount: number;
+            appearanceLaneCount: number;
+          }[];
+        };
+      };
+      const coder = page.acceptanceSuccessRework?.byRole.find((r) => r.role === "coder");
+      assert.equal(coder?.noReceiptCount ?? 0, 0);
+      assert.equal(coder?.appearanceLaneCount ?? 0, 0);
+    });
+  });
+});
