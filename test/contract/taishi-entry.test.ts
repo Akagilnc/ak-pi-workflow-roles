@@ -65,6 +65,11 @@ const EXPECTED_UNREADABLE = [
     runId: LEG_C3_RUN,
     book: BOOK,
     missingSources: ["session-timeline"] as const,
+    // Prefix frame before completed-malformed line — A2 must retain it.
+    firstFrameAt: {
+      status: "present" as const,
+      at: "2026-08-01T00:00:30.000Z",
+    },
   },
 ] as const;
 
@@ -134,11 +139,13 @@ const EXPECTED_A2_SEAM_PROBE = {
 
 /**
  * B4 round-timeline hand values (#328).
- * Lane = book; rows sorted by startedAt asc; unreadable without first-frame → tail.
- * a1 wall=60_000 receipt completed (no classCount);
- * b2 wall=8_000 receipt converged classCount=2;
- * e5 wall=5_000 death no-receipt;
- * c3 unreadable placeholder at end, firstFrameAt absent.
+ * Lane = book; rows sorted by startedAt / present firstFrameAt asc;
+ * unreadable without first-frame → tail + absent annotation.
+ * a1 wall=60_000 receipt completed (no classCount) @ 00:00:00;
+ * c3 unreadable placeholder firstFrameAt present @ 00:00:30 (between a1 and b2 —
+ *   proves mid-lane insertion, not merely tail placement);
+ * b2 wall=8_000 receipt converged classCount=2 @ 00:01:00;
+ * e5 wall=5_000 death no-receipt @ 00:01:30.
  */
 const EXPECTED_ROUND_TIMELINE_ROWS = [
   {
@@ -150,6 +157,16 @@ const EXPECTED_ROUND_TIMELINE_ROWS = [
     endedAt: "2026-08-01T00:01:00.000Z",
     wallMs: 60_000,
     terminal: { kind: "receipt" as const, status: "completed" },
+  },
+  {
+    kind: "unreadable" as const,
+    runId: LEG_C3_RUN,
+    book: BOOK,
+    missingSources: ["session-timeline"] as const,
+    firstFrameAt: {
+      status: "present" as const,
+      at: "2026-08-01T00:00:30.000Z",
+    },
   },
   {
     kind: "run" as const,
@@ -170,13 +187,6 @@ const EXPECTED_ROUND_TIMELINE_ROWS = [
     endedAt: "2026-08-01T00:01:35.000Z",
     wallMs: 5_000,
     terminal: { kind: "death" as const, channel: "no-receipt" as const },
-  },
-  {
-    kind: "unreadable" as const,
-    runId: LEG_C3_RUN,
-    book: BOOK,
-    missingSources: ["session-timeline"] as const,
-    firstFrameAt: { status: "absent" as const },
   },
 ] as const;
 
@@ -315,6 +325,7 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
       assert.equal(damaged.runId, EXPECTED_UNREADABLE[0]!.runId);
       assert.equal(damaged.book, EXPECTED_UNREADABLE[0]!.book);
       assert.deepEqual(damaged.missingSources, [...EXPECTED_UNREADABLE[0]!.missingSources]);
+      assert.deepEqual(damaged.firstFrameAt, EXPECTED_UNREADABLE[0]!.firstFrameAt);
       assert.match(damaged.reason, /malformed JSONL record/i);
       // No wall-clock / duration field admitted for unreadable runs on A1 page.
       assert.equal(
@@ -370,6 +381,11 @@ test("taishi issue-mode entry: null terminal artifact is terminal-artifact unrea
       assert.ok(entry, "null terminal artifact must produce unreadable entry");
       assert.deepEqual(entry.missingSources, ["terminal-artifact"]);
       assert.match(entry.reason, /null/i);
+      // Session span was admitted before terminal failure — first frame stays present.
+      assert.deepEqual(entry.firstFrameAt, {
+        status: "present",
+        at: "2026-08-01T00:00:00.000Z",
+      });
       // Fixture session-damaged run remains; plus this terminal-artifact failure.
       assert.equal(result.page.unreadableCount, 2);
       assert.equal(result.page.unreadable.length, 2);
