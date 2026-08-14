@@ -1,0 +1,16 @@
+{
+  "role": "collector",
+  "runId": "019ff000-0009-7000-8000-0000000000c9",
+  "outcome": {
+    "kind": "accepted",
+    "role": "collector",
+    "status": "collected",
+    "decisiveFacts": {}
+  },
+  "receipt": {
+    "host": "github.com",
+    "repository": "fixture/demo",
+    "prNumber": 1,
+    "groups": []
+  }
+}
