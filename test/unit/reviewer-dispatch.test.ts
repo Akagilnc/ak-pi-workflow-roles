@@ -7,7 +7,6 @@ import {
 } from "../../src/reviewer-construction.ts";
 import {
   createReviewerDispatcher,
-  discoverReviewerSpecAuthority,
   extractReferencedAdrPaths,
   resolveReviewerTicketNumber,
   type AcceptedReviewerExecution,
@@ -163,7 +162,9 @@ test("extractReferencedAdrPaths preserves first-appearance order and dedupes", (
 
 // --- production discovery: three ticket sources + conflict ---
 
-test("production discovery: typed ticketNumber self-fetch launches Spec with bytes and abandoned", async () => {
+// One end-to-end tracer for the self-fetch byte propagation seam
+// (real dispatch entry → Spec material/prompt → receipt face).
+test("production discovery: self-fetch bytes propagate from dispatch entry to receipt", async () => {
   const h = harness(pin, {
     ticketNumber: 176,
     featureTokens: ["fix/issue-99-other"],
@@ -199,7 +200,72 @@ test("production discovery: typed ticketNumber self-fetch launches Spec with byt
   assert.equal(specPrompt.includes(reviewerFetchedSpecMaterial(fetched!)), true);
   assert.equal(specPrompt.includes(ISSUE_BODY_WITH_ADR), true);
   assert.equal(specPrompt.includes("source: typed-ticket-number"), true);
-  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes("Authority-Fetched-Spec:"), false);
+  assert.equal(
+    result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes(
+      "Authority-Fetched-Spec:",
+    ),
+    false,
+  );
+
+  const { assembleRuntimeReviewerReceipt } = await import("../../src/reviewer-settlement.ts");
+  const zeroUsage = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  const assembled = assembleRuntimeReviewerReceipt({
+    intent: { status: "completed" },
+    canonicalSkillText: "review skill",
+    record: {
+      rejections: [],
+      accepted: {
+        identity: result.dispatch.identity,
+        recipe: result.dispatch.recipe,
+        input: result.dispatch.input,
+        target: result.dispatch.targetSnapshot,
+        range: result.dispatch.range,
+        authorityRefs: result.dispatch.authorityRefs,
+        specDisposition: result.dispatch.specDisposition,
+        ...(result.dispatch.specFetchedMaterial === undefined
+          ? {}
+          : { specFetchedMaterial: result.dispatch.specFetchedMaterial }),
+        legs: result.dispatch.legs,
+      },
+      started: { dispatchIdentity: result.dispatch.identity, cardinality: 2 },
+      results: {
+        standards: {
+          dispatchIdentity: result.dispatch.identity,
+          axis: "standards",
+          status: "successful",
+          prompt: result.dispatch.legs[0]!.prompt,
+          target: pin,
+          workspaceDisposition: "deleted",
+          report: "Standards finding count: 0.",
+          usage: zeroUsage,
+        },
+        spec: {
+          dispatchIdentity: result.dispatch.identity,
+          axis: "spec",
+          status: "successful",
+          prompt: result.dispatch.legs[1]!.prompt,
+          target: pin,
+          workspaceDisposition: "deleted",
+          report: "Spec ok.",
+          usage: zeroUsage,
+        },
+      },
+    },
+  });
+  assert.equal(assembled.specFetchedMaterial?.issueBody, ISSUE_BODY_WITH_ADR);
+  assert.equal(assembled.specFetchedMaterial?.adopted.source, "typed-ticket-number");
+  assert.equal(assembled.specFetchedMaterial?.ticketNumber, 176);
+  assert.deepEqual(assembled.specFetchedMaterial?.abandoned, [
+    { source: "branch-token", ticketNumber: 99 },
+    { source: "commit-message", ticketNumber: 12 },
+  ]);
 });
 
 test("production discovery: branch token self-fetch launches Spec", async () => {
@@ -364,26 +430,6 @@ test("production discovery: non-absence Git/I-O failure does not become missing"
   assert.equal(h.execution, undefined);
 });
 
-test("discoverReviewerSpecAuthority direct: self-fetch product shape", async () => {
-  const h = harness(pin, {
-    ticketNumber: 7,
-    origin: { owner: "o", repo: "r" },
-    pinnedTexts: {},
-    fetchIssue: successfulFetcher("only body"),
-  });
-  const product = await discoverReviewerSpecAuthority({
-    authorityRefs: [],
-    reader: h.reader,
-    ticketNumber: 7,
-    baseCommit: "base",
-    fetchIssue: successfulFetcher("only body"),
-  });
-  assert.equal(product.status, "available");
-  if (product.status !== "available") return;
-  assert.equal(product.fetched?.issueBody, "only body");
-  assert.equal(product.fetched?.adopted.source, "typed-ticket-number");
-});
-
 test("construction builds solely from discovery product (no secondary launch decision)", () => {
   const missing = constructReviewerDispatch({
     identity: "id-missing",
@@ -409,35 +455,6 @@ test("construction builds solely from discovery product (no secondary launch dec
   assert.deepEqual(available.authorityRefs, [...refs]);
   assert.equal(
     available.legs.find((leg) => leg.axis === "spec")?.prompt.includes(reviewerAuthorityRefsMaterial(refs)),
-    true,
-  );
-
-  const fetched = Object.freeze({
-    issueRef: "https://github.com/o/r/issues/1",
-    owner: "o",
-    repo: "r",
-    ticketNumber: 1,
-    adopted: Object.freeze({ source: "typed-ticket-number" as const, ticketNumber: 1 }),
-    abandoned: Object.freeze([]),
-    issueBody: "fetched-bytes",
-    adrs: Object.freeze([]),
-  });
-  const withFetch = constructReviewerDispatch({
-    identity: "id-fetched",
-    canonicalSkill: "review skill",
-    target: pin,
-    range,
-    specAuthority: {
-      status: "available",
-      refs: Object.freeze([fetched.issueRef]),
-      fetched,
-    },
-  });
-  assert.equal(withFetch.specFetchedMaterial?.issueBody, "fetched-bytes");
-  assert.equal(
-    withFetch.legs.find((leg) => leg.axis === "spec")?.prompt.includes(
-      reviewerFetchedSpecMaterial(fetched),
-    ),
     true,
   );
 });
@@ -543,88 +560,4 @@ test("settlement records skipped-missing Spec disposition without Spec leg", asy
   assert.equal(assembled.reports.spec, undefined);
   assert.equal(assembled.outcomes.spec, undefined);
   assert.equal(assembled.reports.standards?.text, "Standards finding count: 0.");
-});
-
-test("settlement retains self-fetch bytes on receipt face", async () => {
-  const { assembleRuntimeReviewerReceipt } = await import("../../src/reviewer-settlement.ts");
-  const fetched = Object.freeze({
-    issueRef: "https://github.com/o/r/issues/9",
-    owner: "o",
-    repo: "r",
-    ticketNumber: 9,
-    adopted: Object.freeze({ source: "commit-message" as const, ticketNumber: 9 }),
-    abandoned: Object.freeze([]),
-    issueBody: "auditable-bytes",
-    adrs: Object.freeze([{ path: "docs/adr/x.md", status: "missing" as const }]),
-  });
-  const constructed = constructReviewerDispatch({
-    identity: "dispatch-fetched",
-    canonicalSkill: "review skill",
-    target: pin,
-    range,
-    specAuthority: {
-      status: "available",
-      refs: Object.freeze([fetched.issueRef]),
-      fetched,
-    },
-  });
-  const assembled = assembleRuntimeReviewerReceipt({
-    intent: { status: "completed" },
-    canonicalSkillText: "review skill",
-    record: {
-      rejections: [],
-      accepted: {
-        identity: constructed.identity,
-        recipe: constructed.recipe,
-        input: constructed.input,
-        target: constructed.targetSnapshot,
-        range: constructed.range,
-        authorityRefs: constructed.authorityRefs,
-        specDisposition: constructed.specDisposition,
-        ...(constructed.specFetchedMaterial === undefined
-          ? {}
-          : { specFetchedMaterial: constructed.specFetchedMaterial }),
-        legs: constructed.legs,
-      },
-      started: { dispatchIdentity: constructed.identity, cardinality: 2 },
-      results: {
-        standards: {
-          dispatchIdentity: constructed.identity,
-          axis: "standards",
-          status: "successful",
-          prompt: constructed.legs[0]!.prompt,
-          target: pin,
-          workspaceDisposition: "deleted",
-          report: "Standards finding count: 0.",
-          usage: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 0,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          },
-        },
-        spec: {
-          dispatchIdentity: constructed.identity,
-          axis: "spec",
-          status: "successful",
-          prompt: constructed.legs[1]!.prompt,
-          target: pin,
-          workspaceDisposition: "deleted",
-          report: "Spec ok.",
-          usage: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 0,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          },
-        },
-      },
-    },
-  });
-  assert.equal(assembled.specFetchedMaterial?.issueBody, "auditable-bytes");
-  assert.equal(assembled.specFetchedMaterial?.adopted.source, "commit-message");
 });

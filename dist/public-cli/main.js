@@ -23404,6 +23404,9 @@ function buildModelArgs7(model) {
     model.thinking
   ];
 }
+function buildReviewerTicketNumberArgs(ticketNumber) {
+  return ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(ticketNumber)];
+}
 function buildReviewerActivationExtraArgs(admitted, options) {
   const prompt = buildReviewerTransportPrompt(admitted);
   const skillPath = resolvePackagedMethodSkillPath(
@@ -23411,7 +23414,7 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     "code-review"
   );
   const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
-  const ticketNumberArgs = admitted.ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(admitted.ticketNumber)];
+  const ticketNumberArgs = buildReviewerTicketNumberArgs(admitted.ticketNumber);
   return [
     "--no-skills",
     "--skill",
@@ -23442,7 +23445,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     "code-review"
   );
   const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
-  const ticketNumberArgs = admitted.ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(admitted.ticketNumber)];
+  const ticketNumberArgs = buildReviewerTicketNumberArgs(admitted.ticketNumber);
   return [
     "--no-skills",
     "--skill",
