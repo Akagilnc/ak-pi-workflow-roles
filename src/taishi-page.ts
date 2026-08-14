@@ -25,11 +25,22 @@ export type TaishiMissingSource =
   | "tool-association"
   | "terminal-artifact";
 
+/**
+ * First usable session timestamp retained for an unreadable run when the
+ * unique session/ledger owner obtained it before the loud failure.
+ * Absent only when no usable timestamp was available — not a silent drop.
+ */
+export type TaishiFirstFrameAt =
+  | { readonly status: "present"; readonly at: string }
+  | { readonly status: "absent" };
+
 export type TaishiUnreadableRun = {
   readonly runId: string;
   readonly book: string;
   readonly missingSources: readonly TaishiMissingSource[];
   readonly reason: string;
+  /** Partial typed fact from A2 seam — B-wave projections sort/annotate from this. */
+  readonly firstFrameAt: TaishiFirstFrameAt;
 };
 
 /** One readable in-scope leg (A1 identity only; metric families enrich via sections). */

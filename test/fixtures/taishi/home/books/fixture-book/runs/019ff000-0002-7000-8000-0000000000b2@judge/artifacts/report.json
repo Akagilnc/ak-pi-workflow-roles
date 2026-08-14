@@ -5,6 +5,8 @@
     "kind": "accepted",
     "role": "judge",
     "status": "converged",
-    "decisiveFacts": {}
+    "decisiveFacts": {
+      "classCount": 2
+    }
   }
 }
