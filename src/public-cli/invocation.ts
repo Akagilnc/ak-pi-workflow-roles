@@ -362,10 +362,11 @@ function requireOptionPath(
 
 /**
  * Public --authority-ref admission grammar (refs-only).
+ * Unique owner for fresh argv and durable resume restore — no string-only parallel.
  * Accepts durable reference tokens as-is; rejects blank and inline Spec prose
  * (whitespace-bearing sentences). Does not fetch, normalize, or judge content.
  */
-function requireAuthorityRef(value: string | undefined): string {
+export function requireAuthorityRef(value: string | undefined): string {
   if (value === undefined || value.trim() === "") {
     throw new CliUsageError("--authority-ref requires a nonempty durable reference");
   }

@@ -24,6 +24,7 @@ export {
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import {
+  requireAuthorityRef,
   type AdmittedCoderInvocation,
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
@@ -508,11 +509,18 @@ async function loadResumableRunRecord(
       ) {
         baseRevision = record.baseRevision;
       }
-      if (
-        Array.isArray(record.authorityRefs) &&
-        record.authorityRefs.every((ref) => typeof ref === "string")
-      ) {
-        authorityRefs = Object.freeze(record.authorityRefs as string[]);
+      if (Array.isArray(record.authorityRefs)) {
+        // Reuse unique --authority-ref grammar; blank/inline prose must not resume as authority.
+        authorityRefs = Object.freeze(
+          record.authorityRefs.map((ref) => {
+            if (typeof ref !== "string") {
+              throw new CliUsageError(
+                "role run admitted authority refs must be durable reference strings",
+              );
+            }
+            return requireAuthorityRef(ref);
+          }),
+        );
       }
       if (
         typeof record.mergerInputPath === "string" &&
@@ -548,9 +556,12 @@ async function loadResumableRunRecord(
       correlationId = fromAdmitted.correlationId;
       ticketNumber = fromAdmitted.ticketNumber;
     }
-  } catch {
+  } catch (error) {
+    // Preserve unique --authority-ref grammar failures; do not collapse to unreadable.
+    if (error instanceof CliUsageError) throw error;
     throw new CliUsageError(
       `role run admitted request is unreadable: ${runId}`,
+      { cause: error },
     );
   }
   if (correlationId === undefined || ticketNumber === undefined) {
