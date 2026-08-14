@@ -78,11 +78,15 @@ export type TaishiOptionalTimestamp =
  * through directory discovery — keep this envelope stable.
  * C1 efficiency fields (完全耗时 / 排除后改动行数 / 耗时每千行 / 末次活动)
  * live on the envelope so sweep can project index rows without family dig.
+ * issueNumber = caller typed field retained for cohort index join (ADR 0068
+ * page key remains projectRoot; issueNumber is not the mechanical address).
  */
 export type TaishiIssueMetricsPage = {
   readonly kind: "taishi-issue-metrics";
   readonly mode: "issue";
   readonly projectRoot: string;
+  /** Caller typed issue number — present only when supplied on the entry. */
+  readonly issueNumber?: number;
   readonly legs: readonly TaishiLegEntry[];
   readonly unreadable: readonly TaishiUnreadableRun[];
   readonly unreadableCount: number;
@@ -198,6 +202,8 @@ export function buildTaishiIssueMetricsPage(input: {
   readonly unreadable: readonly TaishiUnreadableRun[];
   /** 排除后改动行数 — optional caller typed input (issue/sweep). */
   readonly changedLines?: number;
+  /** Caller typed issue number — retained on page for cohort index join. */
+  readonly issueNumber?: number;
 }): TaishiIssueMetricsPage {
   // Sole run→leg projection owner: page envelope maps typed runs to A1 legs.
   const legs = sortLegs(
@@ -219,6 +225,8 @@ export function buildTaishiIssueMetricsPage(input: {
     kind: "taishi-issue-metrics" as const,
     mode: "issue" as const,
     projectRoot,
+    // exactOptionalPropertyTypes: only materialize when caller supplied it.
+    ...(input.issueNumber === undefined ? {} : { issueNumber: input.issueNumber }),
     legs,
     unreadable,
     unreadableCount: unreadable.length,

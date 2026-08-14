@@ -1,0 +1,12 @@
+{
+  "role": "judge",
+  "runId": "019ff000-2006-7000-8000-0000000002c6",
+  "outcome": {
+    "kind": "accepted",
+    "role": "judge",
+    "status": "converged",
+    "decisiveFacts": {
+      "classCount": 1
+    }
+  }
+}

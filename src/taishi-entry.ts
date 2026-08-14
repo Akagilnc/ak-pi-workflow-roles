@@ -4,8 +4,14 @@
  * A1/A2: issue-mode typed input; C1 adds sweep mode on this same seam.
  * A2: scan retains typed per-run facts; page builder folds registered metric families.
  * C1: sweep = merged PR list + LOC → backfill issue pages + maintain library index.
+ * C2: cohort = two issue-number groups → join library index → contrast query output.
  */
 import { resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
+import {
+  runTaishiCohortMode,
+  type TaishiCohortModeInput,
+  type TaishiCohortModeResult,
+} from "./taishi-cohort.ts";
 import { scanTaishiIssueRuns } from "./taishi-ledger.ts";
 import {
   readTaishiLibraryIndexPage,
@@ -29,6 +35,12 @@ export type TaishiIssueModeInput = {
    * Omit or 0 → page retains typed 空缺 for LOC and 耗时/千行.
    */
   readonly changedLines?: number;
+  /**
+   * Caller typed issue number — retained on the metrics page for cohort index join.
+   * Page addressing remains projectRoot (ADR 0068); issueNumber is not the key.
+   * When present, issue mode also maintains the unique issueNumber→projectRoot index row.
+   */
+  readonly issueNumber?: number;
 };
 
 /** One merged-PR / issue entry for sweep-mode typed input. */
@@ -47,7 +59,10 @@ export type TaishiSweepModeInput = {
   readonly mergedPullRequests: readonly TaishiMergedPullRequest[];
 };
 
-export type TaishiInput = TaishiIssueModeInput | TaishiSweepModeInput;
+export type TaishiInput =
+  | TaishiIssueModeInput
+  | TaishiSweepModeInput
+  | TaishiCohortModeInput;
 
 export type TaishiIssueModeResult = {
   readonly mode: "issue";
@@ -63,7 +78,10 @@ export type TaishiSweepModeResult = {
   readonly indexPath: string;
 };
 
-export type TaishiResult = TaishiIssueModeResult | TaishiSweepModeResult;
+export type TaishiResult =
+  | TaishiIssueModeResult
+  | TaishiSweepModeResult
+  | TaishiCohortModeResult;
 
 async function runTaishiIssueMode(
   input: TaishiIssueModeInput | TaishiMergedPullRequest,
@@ -73,21 +91,30 @@ async function runTaishiIssueMode(
 
   const scan = await scanTaishiIssueRuns({ projectRoot });
 
-  // exactOptionalPropertyTypes: only pass changedLines when caller supplied it.
-  const page = input.changedLines === undefined
-    ? buildTaishiIssueMetricsPage({
-        projectRoot,
-        runs: scan.runs,
-        unreadable: scan.unreadable,
-      })
-    : buildTaishiIssueMetricsPage({
-        projectRoot,
-        runs: scan.runs,
-        unreadable: scan.unreadable,
-        changedLines: input.changedLines,
-      });
+  // exactOptionalPropertyTypes: only pass optional faces when caller supplied them.
+  const issueNumber =
+    "issueNumber" in input ? input.issueNumber : undefined;
+  const page = buildTaishiIssueMetricsPage({
+    projectRoot,
+    runs: scan.runs,
+    unreadable: scan.unreadable,
+    ...(input.changedLines === undefined ? {} : { changedLines: input.changedLines }),
+    ...(issueNumber === undefined ? {} : { issueNumber }),
+  });
 
   const pagePath = await writeTaishiIssueMetricsPage(ledgerHome, page);
+
+  // Issue number present → maintain the unique issueNumber→projectRoot index row
+  // so cohort can join without a second addressing kernel (ADR 0068 page key unchanged).
+  // Row carries C1 efficiency columns from the page (single index shape, no second kernel).
+  if (issueNumber !== undefined) {
+    const existing = await readTaishiLibraryIndexPage(ledgerHome);
+    const index = upsertTaishiLibraryIndexRows(existing, [
+      rowFromIssueMetricsPage(page),
+    ]);
+    await writeTaishiLibraryIndexPage(ledgerHome, index);
+  }
+
   return { mode: "issue", page, pagePath };
 }
 
@@ -112,17 +139,24 @@ async function runTaishiSweepMode(
 /**
  * Sole taishi entry.
  * - Issue mode: scope → scan (typed facts) → family compose → atomic replace.
+ *   When issueNumber present, also upsert library index (C2 cohort join face).
  * - Sweep mode: for each merged PR entry run issue kernel, upsert library index.
+ * - Cohort mode: join library index by issueNumber → fold present pages → contrast.
  * Metric-family kernels (B/C waves) drop a module under taishi-metric-families/
  * and consume scan facts without opening a second entry or second parse kernel.
  * Machine home is package-owned (ADR 0048) — never an invocation field.
  */
 export async function runTaishi(input: TaishiIssueModeInput): Promise<TaishiIssueModeResult>;
 export async function runTaishi(input: TaishiSweepModeInput): Promise<TaishiSweepModeResult>;
+export async function runTaishi(input: TaishiCohortModeInput): Promise<TaishiCohortModeResult>;
 export async function runTaishi(input: TaishiInput): Promise<TaishiResult>;
 export async function runTaishi(input: TaishiInput): Promise<TaishiResult> {
   if (input.mode === "sweep") {
     return runTaishiSweepMode(input);
+  }
+  if (input.mode === "cohort") {
+    const ledgerHome = resolveActivationLedgerHome();
+    return runTaishiCohortMode(ledgerHome, input);
   }
   return runTaishiIssueMode(input);
 }
