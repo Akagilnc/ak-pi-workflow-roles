@@ -230,7 +230,23 @@ async function classifyScopedRun(input: {
         partialLastFrameAt = { status: "present", at: span.endedAt };
       }
     } else {
-      frameSpan = { startedAt: span.startedAt, endedAt: span.endedAt };
+      // frameSpan gate: both edges must parse and end must not precede start.
+      // Damaged spans stay page-local unreadable — never throw or emit negative/NaN wallMs.
+      const startedMs = Date.parse(span.startedAt);
+      const endedMs = Date.parse(span.endedAt);
+      if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs)) {
+        missingSources.push("session-timeline");
+        reasons.push("session timeline timestamps are not parseable instants");
+        partialFirstFrameAt = { status: "present", at: span.startedAt };
+        partialLastFrameAt = { status: "present", at: span.endedAt };
+      } else if (endedMs < startedMs) {
+        missingSources.push("session-timeline");
+        reasons.push("session timeline end is earlier than start");
+        partialFirstFrameAt = { status: "present", at: span.startedAt };
+        partialLastFrameAt = { status: "present", at: span.endedAt };
+      } else {
+        frameSpan = { startedAt: span.startedAt, endedAt: span.endedAt };
+      }
     }
   } catch (error) {
     missingSources.push("session-timeline");
