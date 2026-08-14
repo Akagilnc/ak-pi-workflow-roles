@@ -3,10 +3,12 @@ import { Type } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
+export type { CanonicalSkillBinding };
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { appendActiveSessionCustomEntry } from "./compliance-transport.ts";
 import { REVIEWER_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";
+import { type ReviewerSpecDisposition } from "./reviewer-construction.ts";
 import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
@@ -16,6 +18,13 @@ import { REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent 
 export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
 export const AGENT_TOOL_NAME = "Agent";
+
+/** Frozen admitted inputs the behavior layer may consume — no flag surface. */
+export type ReviewerAdmittedInputs = Readonly<{
+  baseRevision: string;
+  reviewScopeKeys?: readonly string[];
+  authorityRefs?: readonly string[];
+}>;
 
 const reviewerOutputVariants = Type.Union([
   Type.Object({ status: Type.Literal("completed", { description: "Reviewer dispatch completed." }) }, { additionalProperties: false }),
@@ -42,157 +51,159 @@ function requireSoleReviewerOutputCall(id: string, ctx: ExtensionContext): void 
 export type ReviewerActivation = Readonly<{
   dispatcher: ReturnType<typeof createReviewerDispatcher>;
   fixedBaseRevision: string;
+  soul: string;
+  /** Frozen code-review binding — envelope owns expansion capture against this data. */
+  skillBinding: CanonicalSkillBinding<"code-review">;
+  /** Honest Spec disposition after accepted dispatch, for envelope parent prompt assembly. */
+  getSpecDisposition(): ReviewerSpecDisposition | undefined;
 }>;
 
-export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: ReviewerRoleDependencies, hostActions: ReviewerRoleHostActions): { activate(ctx?: ExtensionContext): Promise<ReviewerActivation> } {
+/**
+ * Reviewer behavior runtime: label, soul, evidence tools, decision tool, projection.
+ * No flag registration/decoding and no agent_start prompt lifecycle (ADR 0018 / envelope).
+ */
+export function createReviewerRoleRuntime(
+  pi: ExtensionAPI,
+  dependencies: ReviewerRoleDependencies,
+  hostActions: ReviewerRoleHostActions,
+): {
+  activate(ctx: ExtensionContext | undefined, admitted: ReviewerAdmittedInputs): Promise<ReviewerActivation>;
+} {
   let soul: string | undefined;
   let binding: CanonicalSkillBinding<"code-review"> | undefined;
   let reader: ReviewerPinnedGitReader | undefined;
   let dispatcher: ReturnType<typeof createReviewerDispatcher> | undefined;
-  let originalRequest: string | undefined;
-  let expansionCaptured = false;
   let registered = false;
-  let reviewScopeKeys: readonly string[] | undefined;
   let fixedBaseRevision: string | undefined;
+  let acceptedDispatch: AcceptedReviewerDispatch | undefined;
   const ledger = createReviewerExecutionLedger();
-  pi.registerFlag("ak-review-base", { description: "Fixed base revision for the pinned review target", type: "string" });
-  pi.registerFlag("ak-review-scope-keys", { description: "Optional comma-separated exact class keys limiting Reviewer scope", type: "string" });
 
-  return { async activate(ctx) {
-    soul = (await dependencies.loadSoul()).trim();
-    if (!soul) throw new Error("Reviewer soul is empty");
-    const rawScopeKeys = pi.getFlag("ak-review-scope-keys");
-    reviewScopeKeys = undefined;
-    if (rawScopeKeys !== undefined) {
-      if (typeof rawScopeKeys !== "string" || rawScopeKeys.length === 0) {
-        throw new Error("Reviewer scope keys must be a nonempty comma-separated string");
-      }
-      const parsed = rawScopeKeys.split(",");
-      if (parsed.some((key) => key.trim().length === 0) || new Set(parsed).size !== parsed.length) {
-        throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
-      }
-      reviewScopeKeys = parsed;
-    }
-    const baseRevision = pi.getFlag("ak-review-base");
-    if (typeof baseRevision !== "string" || !baseRevision.trim()) throw new Error("Reviewer role requires --ak-review-base");
-    fixedBaseRevision = baseRevision;
-    const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
-    if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
-    binding = loaded;
-    reader = await dependencies.createPinnedGitReader();
+  return {
+    async activate(_ctx, admitted) {
+      soul = (await dependencies.loadSoul()).trim();
+      if (!soul) throw new Error("Reviewer soul is empty");
+      // Behavior layer receives frozen admitted inputs only — no pi.getFlag.
+      fixedBaseRevision = admitted.baseRevision;
+      const reviewScopeKeys = admitted.reviewScopeKeys;
+      const authorityRefs = admitted.authorityRefs;
+      const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
+      if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
+      binding = loaded;
+      reader = await dependencies.createPinnedGitReader();
 
-    let acceptedDispatch: AcceptedReviewerDispatch | undefined;
-    const executeAndProjectDispatch = async (execution: AcceptedReviewerExecution, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
-      const dispatch = acceptedDispatch;
-      if (dispatch === undefined || dispatch.identity !== execution.identity) throw new Error("Reviewer execution lacks accepted construction evidence");
-      const { context, signal } = invocation as { context: ExtensionContext; signal?: AbortSignal };
-      ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: execution.identity, cardinality: execution.legs.length as 1 | 2 });
-      try {
-        const result = await dependencies.runDispatch(execution, { context, ...(signal === undefined ? {} : { signal }) });
-        projectReviewerDispatchOutcome(ledger, dispatch, result);
-        return result;
-      } catch (error) {
-        if (error instanceof ReviewerDispatchExecutionError) {
-          try { projectReviewerDispatchOutcome(ledger, dispatch, error.outcome); }
-          catch (mismatch) { throw ledger.recordInfrastructureFailure(mismatch); }
-          throw error;
-        }
-        throw ledger.recordInfrastructureFailure(error);
-      }
-    };
-    dispatcher = createReviewerDispatcher({
-      canonicalSkill: binding.snapshot.raw,
-      reader,
-      ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
-      decisionEvidence(decision) {
+      acceptedDispatch = undefined;
+      const executeAndProjectDispatch = async (execution: AcceptedReviewerExecution, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
+        const dispatch = acceptedDispatch;
+        if (dispatch === undefined || dispatch.identity !== execution.identity) throw new Error("Reviewer execution lacks accepted construction evidence");
+        const { context, signal } = invocation as { context: ExtensionContext; signal?: AbortSignal };
+        ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: execution.identity, cardinality: execution.legs.length as 1 | 2 });
         try {
-          if (decision.disposition === "accepted") {
-            ledger.append(projectAcceptedDispatch(decision.dispatch));
-            acceptedDispatch = decision.dispatch;
-          } else ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: decision.identity, violations: decision.violations, started: false });
+          const result = await dependencies.runDispatch(execution, { context, ...(signal === undefined ? {} : { signal }) });
+          projectReviewerDispatchOutcome(ledger, dispatch, result);
+          return result;
         } catch (error) {
+          if (error instanceof ReviewerDispatchExecutionError) {
+            try { projectReviewerDispatchOutcome(ledger, dispatch, error.outcome); }
+            catch (mismatch) { throw ledger.recordInfrastructureFailure(mismatch); }
+            throw error;
+          }
           throw ledger.recordInfrastructureFailure(error);
         }
-      },
-      run: executeAndProjectDispatch,
-    });
-
-    if (!registered) {
-      registered = true;
-      pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`,
-          "This runtime executes the Standards and Spec review legs for you as package-managed evidence-child sessions — that IS this runtime's implementation of the review Skill's parallel sub-agents. Do not refuse because no Agent tool appears in your tool list, and do not substitute your own sub-processes; work with the legs the runtime provides. The same rule applies to corrections and redos after an auditor bounce-back: complete them in this session with your own tools. Evidence-leg model and thinking tier follow the seat's active order; the reviewer seat does not choose them."], parameters: reviewerOutputSchema,
-        async execute(id, parameters, signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
-          if (!soul || !binding) throw new Error("Reviewer inputs were not loaded");
-          requireSoleReviewerOutputCall(id, toolCtx);
-          const output = validateReviewerIntent(parameters);
-          if (output.status === "completed" && !expansionCaptured) throw new Error("Reviewer completed requires canonical Skill expansion capture");
-          let record: ReviewerExecutionRecord;
-          try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx, id); throw error; }
-          const candidate = assembleRuntimeReviewerReceipt({
-            intent: output,
-            record,
-            canonicalSkillText: binding.snapshot.raw,
-          });
-          // First-record-then-audit: candidate lands on the parent session books
-          // before the auditor is spawned (zero hand-delivery).
+      };
+      dispatcher = createReviewerDispatcher({
+        canonicalSkill: binding.snapshot.raw,
+        reader,
+        ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
+        ...(authorityRefs === undefined ? {} : { authorityRefs }),
+        decisionEvidence(decision) {
           try {
-            appendActiveSessionCustomEntry(
-              toolCtx,
-              REVIEWER_CANDIDATE_ENTRY_TYPE,
-              { version: 1, candidate },
-              {
-                unavailable: "reviewer candidate retention is unavailable",
-                failed: "reviewer candidate retention failed",
-              },
-            );
+            if (decision.disposition === "accepted") {
+              ledger.append(projectAcceptedDispatch(decision.dispatch));
+              acceptedDispatch = decision.dispatch;
+            } else ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: decision.identity, violations: decision.violations, started: false });
           } catch (error) {
-            hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id);
+            throw ledger.recordInfrastructureFailure(error);
           }
-          let audit: ComplianceDecision;
-          try {
-            audit = await dependencies.auditCompliance({
-              context: toolCtx,
-              ...(signal === undefined ? {} : { signal }),
-            });
-          }
-          catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-          return disposeComplianceDecision<AgentToolResult<unknown>>(
-            audit,
-            {
-              pass: async (usage) => {
-                try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
-              },
-              noReceipt: async (auditNoReceipt, usageProjection) => {
-                try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                return { content: [{ type: "text" as const, text: "Reviewer report accepted; compliance audit produced no receipt" }], details: { ...candidate, auditNoReceipt }, terminate: true as const, ...usageProjection };
-              },
-              revise: (violations) => {
-                throw new AggregateError([], `Reviewer receipt rejected:\n${violations.join("\n")}`, { cause: Object.freeze([...violations]) });
-              },
-              escalate: async (result) => {
-                try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                return result;
-              },
-              auditIncomplete: (result) => result,
-            },
-            candidate,
-          );
-        } });
-      pi.on("input", (event) => { if (originalRequest !== undefined) return { action: "continue" as const }; originalRequest = event.text; return { action: "transform" as const, text: binding!.invocation(event.text), ...(event.images === undefined ? {} : { images: event.images }) }; });
-      pi.on("before_agent_start", async (event, toolCtx) => {
-        if (!expansionCaptured) {
-          if (originalRequest === undefined || binding!.captureExpansion(event.prompt, originalRequest) === undefined) {
-            const error = ledger.recordInfrastructureFailure(new Error("Canonical code-review Skill expansion did not match the captured request"));
-            hostActions.failInfrastructure(error, toolCtx);
-          }
-          expansionCaptured = true;
-        }
-        // Soul only — caller instruction is never injected as semantic control.
-        return { systemPrompt: `${event.systemPrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>` };
+        },
+        run: executeAndProjectDispatch,
       });
-      pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });
-    }
-    return Object.freeze({ dispatcher, fixedBaseRevision });
-  } };
+
+      if (!registered) {
+        registered = true;
+        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`,
+            "This runtime executes the Standards and Spec review legs for you as package-managed evidence-child sessions — that IS this runtime's implementation of the review Skill's parallel sub-agents. Do not refuse because no Agent tool appears in your tool list, and do not substitute your own sub-processes; work with the legs the runtime provides. The same rule applies to corrections and redos after an auditor bounce-back: complete them in this session with your own tools. Evidence-leg model and thinking tier follow the seat's active order; the reviewer seat does not choose them."], parameters: reviewerOutputSchema,
+          async execute(id, parameters, signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
+            if (!soul || !binding) throw new Error("Reviewer inputs were not loaded");
+            requireSoleReviewerOutputCall(id, toolCtx);
+            const output = validateReviewerIntent(parameters);
+            let record: ReviewerExecutionRecord;
+            try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx, id); throw error; }
+            const candidate = assembleRuntimeReviewerReceipt({
+              intent: output,
+              record,
+              canonicalSkillText: binding.snapshot.raw,
+            });
+            // First-record-then-audit: candidate lands on the parent session books
+            // before the auditor is spawned (zero hand-delivery).
+            try {
+              appendActiveSessionCustomEntry(
+                toolCtx,
+                REVIEWER_CANDIDATE_ENTRY_TYPE,
+                { version: 1, candidate },
+                {
+                  unavailable: "reviewer candidate retention is unavailable",
+                  failed: "reviewer candidate retention failed",
+                },
+              );
+            } catch (error) {
+              hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id);
+            }
+            let audit: ComplianceDecision;
+            try {
+              audit = await dependencies.auditCompliance({
+                context: toolCtx,
+                ...(signal === undefined ? {} : { signal }),
+              });
+            }
+            catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
+            return disposeComplianceDecision<AgentToolResult<unknown>>(
+              audit,
+              {
+                pass: async (usage) => {
+                  try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
+                  return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
+                },
+                noReceipt: async (auditNoReceipt, usageProjection) => {
+                  try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
+                  return { content: [{ type: "text" as const, text: "Reviewer report accepted; compliance audit produced no receipt" }], details: { ...candidate, auditNoReceipt }, terminate: true as const, ...usageProjection };
+                },
+                revise: (violations) => {
+                  throw new AggregateError([], `Reviewer receipt rejected:\n${violations.join("\n")}`, { cause: Object.freeze([...violations]) });
+                },
+                escalate: async (result) => {
+                  try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
+                  return result;
+                },
+                auditIncomplete: (result) => result,
+              },
+              candidate,
+            );
+          } });
+        // Skill invocation transform + agent_start expansion/prompt lifecycle: shared envelope (ADR 0018).
+        pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });
+      }
+      const activatedSoul = soul;
+      const activatedBase = fixedBaseRevision;
+      const activatedBinding = binding;
+      return Object.freeze({
+        dispatcher,
+        fixedBaseRevision: activatedBase,
+        soul: activatedSoul,
+        skillBinding: activatedBinding,
+        getSpecDisposition() {
+          return acceptedDispatch?.specDisposition;
+        },
+      });
+    },
+  };
 }

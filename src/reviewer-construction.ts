@@ -18,6 +18,22 @@ export const REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
   implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities"),
 });
 
+/**
+ * Package-owned #1185 review verification cadence.
+ * Single true source consumed by two real actor carriers: parent Reviewer system-prompt injection
+ * and evidence-child system prompt. Not part of axis-adapter identity or axis leg prompts.
+ * Graded guidance only: focused tests allowed; full suite not forbidden but avoid frequent every-round reruns.
+ * Does not narrow ADR 0064 tools and adds no command ban, allowlist, or runtime block.
+ */
+export const REVIEWER_VERIFICATION_BOUNDARY = [
+  "Verification-Boundary: you may run focused product tests during this review turn when independent verification needs them.",
+  "A full repository test suite is not forbidden, but do not re-run it every review round;",
+  "prefer once at family wrap-up unless this review specifically requires a broader run.",
+  "Slice and review work should not trigger frequent full-suite reruns.",
+  "Independently discover test facts (including existing coder/fixer receipts and any tests you run);",
+  "do not treat caller prose as the source of those facts.",
+].join(" ");
+
 /** Typed Standards conclusion keys owned by reviewer construction (presentation labels are not the contract). */
 export const REVIEWER_STANDARDS_CONCLUSION_KEYS = Object.freeze([
   "constitutionality",
@@ -85,6 +101,15 @@ export function reviewerAxisMethodAdapter(axis: ReviewerAxis): string {
 }
 
 export type ConstructedReviewerLeg = Readonly<{ axis: "standards" | "spec"; prompt: ReviewerPromptText }>;
+/**
+ * Unique discovery product for Skill step 2: durable refs Spec child can read, or confirmed missing.
+ * Construction builds Standards/Spec solely from this product — no secondary launch decision.
+ */
+export type ReviewerSpecAuthorityDiscovery =
+  | Readonly<{ status: "available"; refs: readonly string[] }>
+  | Readonly<{ status: "missing" }>;
+/** Spec-child cardinality decision recorded on the accepted dispatch. */
+export type ReviewerSpecDisposition = "launched" | "skipped-missing";
 export type ConstructedReviewerDispatch = Readonly<{
   identity: string;
   recipe: "reviewer-common-bundle-v1";
@@ -94,17 +119,40 @@ export type ConstructedReviewerDispatch = Readonly<{
   }>;
   targetSnapshot: ReviewerPinnedTarget;
   range: ReviewerRange;
+  /** Frozen durable authority references carried into Spec evidence-child material only. */
+  authorityRefs: readonly string[];
+  /** Honest Spec-child disposition: launched, or skipped after confirmed missing Spec. */
+  specDisposition: ReviewerSpecDisposition;
   legs: readonly ConstructedReviewerLeg[];
 }>;
 
-/** Deterministic compiler: fixed target/range plus packaged Skill in, dispatch text out. */
+/**
+ * Spec-only evidence-child material carrier for durable authority references.
+ * Exact values preserved; no prose extraction and no Standards/parent injection.
+ */
+export function reviewerAuthorityRefsMaterial(authorityRefs: readonly string[]): string {
+  return [
+    "Authority-Refs:",
+    JSON.stringify(Object.freeze([...authorityRefs])),
+    "These are durable authority references only. Read them as Spec grounding materials; do not invent Spec prose from caller instruction.",
+  ].join("\n");
+}
+
+/** Deterministic compiler: fixed target/range plus discovery product in, dispatch text out. */
 export function constructReviewerDispatch(input: {
   identity: string;
   canonicalSkill: string;
   target: ReviewerPinnedTarget;
   range: ReviewerRange;
   reviewScopeKeys?: readonly string[];
+  /** Unique discovery product (available+refs material, or missing). */
+  specAuthority: ReviewerSpecAuthorityDiscovery;
 }): ConstructedReviewerDispatch {
+  const launchSpec = input.specAuthority.status === "available";
+  const authorityRefs = Object.freeze(
+    input.specAuthority.status === "available" ? [...input.specAuthority.refs] : [],
+  );
+  const specDisposition: ReviewerSpecDisposition = launchSpec ? "launched" : "skipped-missing";
   const common = [
     `Target: ${input.range.target}`,
     `Base: ${input.range.base}`,
@@ -116,13 +164,20 @@ export function constructReviewerDispatch(input: {
     "Fixed-Range:",
     JSON.stringify(input.range, null, 2),
   ].join("\n");
-  const axes = [{ axis: "standards" as const }, { axis: "spec" as const }];
-  const legs = axes.map((x) =>
-    Object.freeze({
+  const axes: readonly { axis: "standards" | "spec" }[] = launchSpec
+    ? [{ axis: "standards" }, { axis: "spec" }]
+    : [{ axis: "standards" }];
+  const legs = axes.map((x) => {
+    const parts = [common, reviewerAxisMethodAdapter(x.axis)];
+    // Spec evidence-child only — never Standards or a parent replacement Spec leg.
+    if (x.axis === "spec" && authorityRefs.length > 0) {
+      parts.push(reviewerAuthorityRefsMaterial(authorityRefs));
+    }
+    return Object.freeze({
       axis: x.axis,
-      prompt: `${common}\n${reviewerAxisMethodAdapter(x.axis)}\n`,
-    }),
-  );
+      prompt: `${parts.join("\n")}\n`,
+    });
+  });
   return Object.freeze({
     identity: input.identity,
     recipe: "reviewer-common-bundle-v1",
@@ -132,6 +187,8 @@ export function constructReviewerDispatch(input: {
     }),
     targetSnapshot: input.target,
     range: input.range,
+    authorityRefs,
+    specDisposition,
     legs: Object.freeze(legs),
   });
 }

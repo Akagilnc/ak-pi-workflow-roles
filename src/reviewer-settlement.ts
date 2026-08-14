@@ -52,6 +52,10 @@ export function assembleRuntimeReviewerReceipt(input: {
         identity: accepted.identity,
         legs: accepted.legs.map(({ axis, prompt }) => ({ axis, prompt: receiptPrompt(prompt) })),
       },
+      // Honest Spec skipped/missing notation when independent discovery confirmed absence.
+      ...(accepted.specDisposition === undefined
+        ? {}
+        : { specDisposition: accepted.specDisposition }),
     }),
     reports,
     outcomes,

@@ -33,7 +33,12 @@ import {
   buildReviewerActivationExtraArgs,
   buildReviewerResumeActivationExtraArgs,
 } from "../../src/public-cli/reviewer-run.ts";
-import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
+import {
+  loadResumableReviewerRun,
+  markRunAdmitted,
+  markRunResumable,
+  RESUME_TRANSPORT_ENVELOPE,
+} from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractReviewerMethodInvocations,
   extractReviewerRoleOutcome,
@@ -153,6 +158,7 @@ test("parseReviewerArgv requires base and accepts optional provenance instructio
       instruction: "Review since the base.",
       attachmentPaths: [],
       baseRevision: "main",
+      authorityRefs: [],
       project: "/tmp/p",
     },
   );
@@ -160,12 +166,76 @@ test("parseReviewerArgv requires base and accepts optional provenance instructio
     instruction: "",
     attachmentPaths: [],
     baseRevision: "HEAD~1",
+    authorityRefs: [],
   });
+  assert.deepEqual(
+    parseReviewerArgv([
+      "--base",
+      "main",
+      "--authority-ref",
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+      "--authority-ref=https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      "Scope the review to the owner decision.",
+    ]),
+    {
+      instruction: "Scope the review to the owner decision.",
+      attachmentPaths: [],
+      baseRevision: "main",
+      authorityRefs: [
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      ],
+    },
+  );
   assert.throws(() => parseReviewerArgv(["--unknown-flag"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--base", "", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--project", "", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach", "spec.md", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach=spec.md", "task"]), isUsage);
+  assert.throws(() => parseReviewerArgv(["--base", "main", "--authority-ref", ""]), isUsage);
+  assert.throws(() => parseReviewerArgv(["--base", "main", "--authority-ref="]), isUsage);
+  // refs-only: representative inline Spec prose is rejected at the public admission seam.
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main",
+        "--authority-ref",
+        "The system SHALL launch two workers",
+      ]),
+    (error: unknown) =>
+      isUsage(error) &&
+      error instanceof Error &&
+      /durable reference, not inline Spec prose/i.test(error.message),
+  );
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main",
+        "--authority-ref",
+        "Requirements:\n1. Launch two workers\n2. Report cardinality honestly",
+      ]),
+    isUsage,
+  );
+  // Durable public reference forms remain accepted with bytes unchanged.
+  assert.deepEqual(
+    parseReviewerArgv([
+      "--base",
+      "main",
+      "--authority-ref",
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      "--authority-ref",
+      "docs/adr/0063-received-prompt-is-audit-evidence-not-authority.md",
+      "--authority-ref",
+      "git@github.com:Akagilnc/ak-pi-workflow-roles.git",
+    ]).authorityRefs,
+    [
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      "docs/adr/0063-received-prompt-is-audit-evidence-not-authority.md",
+      "git@github.com:Akagilnc/ak-pi-workflow-roles.git",
+    ],
+  );
 });
 
 test("admitReviewerInvocation persists fixed base; caller text is provenance only", async () => {
@@ -184,6 +254,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     });
     assert.equal(blank.instructionEmpty, true);
     assert.equal(blank.baseRevision, "origin/main");
+    assert.deepEqual(blank.authorityRefs, []);
     assert.equal("taskPath" in blank, false);
     await assert.rejects(
       () => access(join(blank.runDirectory, "task.md")),
@@ -202,10 +273,44 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     assert.equal(admitted.instruction, "Review the work since the base revision.");
     assert.equal(admitted.instructionEmpty, false);
     assert.equal(admitted.baseRevision, "origin/main");
+    assert.deepEqual(admitted.authorityRefs, []);
     assert.equal("taskPath" in admitted, false);
     await assert.rejects(
       () => access(join(admitted.runDirectory, "task.md")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+
+    const withRefs = await admitReviewerInvocation({
+      home,
+      cwd: project,
+      instruction: "Scope only; refs carry authority.",
+      attachmentPaths: [],
+      baseRevision: "origin/main",
+      authorityRefs: [
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      ],
+      createRunId: () => "run-reviewer-admit-refs",
+    });
+    assert.deepEqual(withRefs.authorityRefs, [
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+    ]);
+    await assert.rejects(
+      () =>
+        admitReviewerInvocation({
+          home,
+          cwd: project,
+          instruction: "",
+          attachmentPaths: [],
+          baseRevision: "origin/main",
+          authorityRefs: ["The system SHALL launch two workers"],
+          createRunId: () => "run-reviewer-admit-inline-rejected",
+        }),
+      (error: unknown) =>
+        error instanceof CliUsageError &&
+        error.code === "AK_ROLE_USAGE" &&
+        /durable reference, not inline Spec prose/i.test(error.message),
     );
 
     const bookKey = resolveBookKeyFromGit(project);
@@ -226,8 +331,16 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     assert.equal(persisted.role, "reviewer");
     assert.equal(persisted.baseRevision, "origin/main");
     assert.equal(persisted.instruction, "Review the work since the base revision.");
+    assert.deepEqual(persisted.authorityRefs, []);
     assert.equal("taskPath" in persisted, false);
     assert.equal("taskSha256" in persisted, false);
+    const persistedRefs = JSON.parse(
+      await readFile(withRefs.admittedRequestPath, "utf8"),
+    ) as Record<string, unknown>;
+    assert.deepEqual(persistedRefs.authorityRefs, [
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+    ]);
   });
 });
 
@@ -252,9 +365,41 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
     assert.equal(args.includes("--ak-review-task"), false);
     assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
+    assert.equal(args.includes("--ak-review-authority-refs"), false);
     assert.equal(
       args.some((a) => a.includes("Base revision for the fixed review target: HEAD~1")),
       true,
+    );
+
+    const admittedWithRefs = await admitReviewerInvocation({
+      home,
+      cwd: project,
+      instruction: "Scope the review.",
+      attachmentPaths: [],
+      baseRevision: "HEAD~1",
+      authorityRefs: [
+        "https://example.com/a",
+        "https://example.com/b,with-comma",
+      ],
+      createRunId: () => "run-reviewer-args-refs",
+    });
+    const argsWithRefs = buildReviewerActivationExtraArgs(admittedWithRefs, { packageRoot });
+    assert.equal(
+      argsWithRefs[argsWithRefs.indexOf("--ak-review-authority-refs") + 1],
+      JSON.stringify([
+        "https://example.com/a",
+        "https://example.com/b,with-comma",
+      ]),
+    );
+    const resumeWithRefs = buildReviewerResumeActivationExtraArgs(admittedWithRefs, {
+      packageRoot,
+    });
+    assert.equal(
+      resumeWithRefs[resumeWithRefs.indexOf("--ak-review-authority-refs") + 1],
+      JSON.stringify([
+        "https://example.com/a",
+        "https://example.com/b,with-comma",
+      ]),
     );
     assert.equal(args.some((a) => a.includes(admitted.instruction)), false);
     assert.equal(args.some((a) => a.includes(".agents/skills")), false);
@@ -426,6 +571,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal("taskPath" in evidence, false);
     assert.equal("taskSha256" in evidence, false);
     assert.equal(evidence.baseRevision, "main");
+    assert.deepEqual(evidence.authorityRefs, []);
     assert.equal(evidence.callerProvenance, "Review standards and spec axes.");
     assert.equal(evidence.methodProvenance.name, "code-review");
     assert.equal(
@@ -656,6 +802,50 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         "Review the latest commit on both axes.",
       );
     }
+  });
+});
+
+test("resume rejects blank/inline authorityRefs via unique --authority-ref grammar", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const admitted = await admitReviewerInvocationRaw({
+      home,
+      cwd: project,
+      instruction: "Scope only",
+      attachmentPaths: [],
+      baseRevision: "main",
+      authorityRefs: ["https://example.com/durable-ref"],
+      createRunId: () => "run-cli-reviewer-resume-bad-refs",
+    });
+    // Durable session principal required before resume load.
+    await mkdir(admitted.sessionDirectory, { recursive: true });
+    await writeFile(join(admitted.sessionDirectory, "session.jsonl"), "", "utf8");
+    await markRunAdmitted(admitted);
+    await markRunResumable(admitted.runDirectory, {
+      httpStatus: 429,
+      provider: "xai",
+    });
+
+    const persisted = JSON.parse(
+      await readFile(admitted.admittedRequestPath, "utf8"),
+    ) as Record<string, unknown>;
+    // Corrupt durable face with blank + inline Spec prose — must not restore as authority.
+    persisted.authorityRefs = ["", "The system SHALL launch two workers"];
+    await writeFile(
+      admitted.admittedRequestPath,
+      `${JSON.stringify(persisted, null, 2)}\n`,
+      "utf8",
+    );
+
+    await assert.rejects(
+      () => loadResumableReviewerRun(home, admitted.runId),
+      (error: unknown) =>
+        error instanceof CliUsageError &&
+        error.code === "AK_ROLE_USAGE" &&
+        (/nonempty durable reference|not inline Spec prose/i.test(error.message)),
+    );
   });
 });
 

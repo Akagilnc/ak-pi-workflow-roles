@@ -70,6 +70,7 @@ import {
 
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
+import { REVIEWER_VERIFICATION_BOUNDARY } from "../../src/reviewer-construction.ts";
 
 function sha256Hex(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -128,6 +129,7 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
             targetHead: oid("9"),
             refs: { "refs/heads/main": { objectId: oid("9"), peeledCommitId: oid("9") } },
           };
+          // Pinned-target Spec path for unique production discovery (two-axis fixture).
           return {
             pin,
             snapshot: async () => pin,
@@ -139,6 +141,8 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
               diffSha256: "2".repeat(64),
               commits: [oid("9")],
             }),
+            featureTokens: async () => Object.freeze(["feature-login"]),
+            listSpecCandidatePaths: async () => Object.freeze(["docs/feature-login.md"]),
           };
         },
         loadCanonicalSkillBinding: async (name) => {
@@ -600,6 +604,8 @@ test("every registered whole-activation rejection terminates nonzero with a name
       const reject = async (): Promise<never> => { throw rejection; };
       const flags: Record<string, string> = {
         "ak-role": entry.role,
+        // Envelope-owned Reviewer transport must be present so soul rejection is the observed cause.
+        "ak-review-base": "main~1",
         "ak-doctor-case": "/lawful/case",
         "ak-merger-input": "/lawful/merger.json",
       };
@@ -1469,6 +1475,133 @@ test("observation writer failure aborts through real ExtensionRunner emit with o
         assert.equal(aborts, 1);
         assert.equal(process.exitCode, 1);
         assert.ok(extensionErrors.some((error) => error.event === "tool_execution_end" && error.error.includes("stderr unavailable")));
+      });
+    } finally {
+      process.exitCode = priorExitCode;
+    }
+  });
+});
+
+test("shared envelope owns Reviewer skill expansion capture on before_agent_start", async () => {
+  await withActivationHome({ prefix: "ak-reviewer-envelope-expansion-" }, async ({ home, agentDir }) => {
+    const fixtureRoot = join(home, "reviewer-expansion-fixtures");
+    mkdirSync(fixtureRoot, { recursive: true });
+    const faux = fauxProvider({ api: "ak-reviewer-envelope-expansion", provider: "ak-reviewer-envelope-expansion" });
+    const raw = "# code-review skill\n";
+    const skillPath = "/skill/code-review/SKILL.md";
+    const skillBody = raw;
+    const originalRequest = "Base revision for the fixed review target: main~1";
+    const expectedContent = `References are relative to /skill/code-review.\n\n${skillBody}`;
+    const lawfulExpansion =
+      `<skill name="code-review" location="${skillPath}">\n${expectedContent}\n</skill>\n\n${originalRequest}`;
+
+    const deps = admissionDepsForRole("reviewer", fixtureRoot);
+    deps.loadCanonicalSkillBinding = async (name) => {
+      assert.equal(name, "code-review");
+      return {
+        name: "code-review" as const,
+        snapshot: {
+          raw,
+          path: skillPath,
+          baseDir: "/skill/code-review",
+          body: skillBody,
+          snapshotIdentity: Object.freeze({ text: raw }),
+        },
+        invocation: (request: string) => `/skill:code-review ${request}`,
+        captureExpansion: (prompt: string, request: string) => {
+          if (prompt !== lawfulExpansion || request !== originalRequest) return undefined;
+          return Object.freeze({
+            name: "code-review" as const,
+            location: skillPath,
+            content: expectedContent,
+            userMessage: request,
+          });
+        },
+      };
+    };
+    deps.loadReviewerSoul = async () => "REVIEWER ENVELOPE LAW";
+
+    const priorExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await withInProcessPi({
+        activationLedgerSession: true,
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        noExtensions: true,
+        systemPrompt: "REVIEWER EXPANSION",
+        mode: "print",
+        flags: {
+          "ak-role": "reviewer",
+          "ak-review-base": "main~1",
+        },
+        extensionFactories: [createRoleRuntimeExtension(deps)],
+      }, async ({ session }) => {
+        // Envelope owns input transform for package code-review invocation.
+        const inputResult = await session.extensionRunner.emitInput(originalRequest, undefined, "interactive");
+        assert.equal(inputResult.action, "transform");
+        if (inputResult.action !== "transform") throw new Error("expected transform");
+        assert.equal(inputResult.text, `/skill:code-review ${originalRequest}`);
+
+        const promptResult = await session.extensionRunner.emitBeforeAgentStart(
+          lawfulExpansion,
+          undefined,
+          "BASE",
+          { cwd: home },
+        );
+        assert.ok(promptResult?.systemPrompt, "envelope must assemble parent system prompt");
+        assert.match(promptResult.systemPrompt, /<reviewer_soul>\nREVIEWER ENVELOPE LAW\n<\/reviewer_soul>/);
+        assert.ok(
+          promptResult.systemPrompt.includes(REVIEWER_VERIFICATION_BOUNDARY),
+          "parent prompt must reference single verification-boundary true source",
+        );
+        assert.ok(
+          promptResult.systemPrompt.includes("<reviewer_verification_boundary>"),
+          "parent prompt must carry verification-boundary carrier tags",
+        );
+        // skipped-missing note is absent when Spec launched (fixture two-axis dispatch).
+        assert.equal(promptResult.systemPrompt.includes("Spec-Disposition: skipped-missing"), false);
+      });
+
+      // Separate admission: expansion mismatch aborts through real ExtensionRunner.
+      process.exitCode = undefined;
+      await withInProcessPi({
+        activationLedgerSession: true,
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        noExtensions: true,
+        systemPrompt: "REVIEWER EXPANSION FAIL",
+        mode: "print",
+        flags: {
+          "ak-role": "reviewer",
+          "ak-review-base": "main~1",
+        },
+        extensionFactories: [createRoleRuntimeExtension(deps)],
+      }, async ({ session }) => {
+        await session.extensionRunner.emitInput(originalRequest, undefined, "interactive");
+        // Do not re-bindExtensions here: that re-emits session_start and is a different seam.
+        // Observe the envelope-owned before_agent_start fail-closed path via extension errors + exit.
+        const extensionErrors: ExtensionError[] = [];
+        session.extensionRunner.onError((error) => { extensionErrors.push(error); });
+        process.exitCode = undefined;
+        await session.extensionRunner.emitBeforeAgentStart(
+          "not a canonical code-review expansion",
+          undefined,
+          "BASE",
+          { cwd: home },
+        );
+        assert.equal(process.exitCode, 1, "expansion mismatch must set nonzero exit");
+        assert.ok(
+          extensionErrors.some((error) => (
+            error.event === "before_agent_start"
+            && error.error.includes("Canonical code-review Skill expansion did not match the captured request")
+          )),
+          `envelope must surface expansion mismatch via extension error; got ${JSON.stringify(extensionErrors)}`,
+        );
       });
     } finally {
       process.exitCode = priorExitCode;
