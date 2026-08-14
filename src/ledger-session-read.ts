@@ -76,6 +76,11 @@ export type SessionToolInterval = {
   readonly toolName: string;
   readonly startedAt: string;
   readonly endedAt?: string;
+  /**
+   * String `command` argument when the toolCall carried one (bash observation
+   * material for action boards). Omitted when absent or non-string.
+   */
+  readonly command?: string;
 };
 
 /**
@@ -92,6 +97,7 @@ export function extractSessionToolIntervals(
     toolName: string;
     startedAt: string;
     endedAt?: string;
+    command?: string;
   };
   const order: Open[] = [];
   const openById = new Map<string, Open>();
@@ -119,10 +125,16 @@ export function extractSessionToolIntervals(
         if (openById.has(part.id)) {
           throw new Error(`duplicate toolCall id ${part.id}`);
         }
+        const args = isRecord(part.arguments) ? part.arguments : undefined;
+        const command =
+          args !== undefined && typeof args.command === "string"
+            ? args.command
+            : undefined;
         const interval: Open = {
           toolCallId: part.id,
           toolName: part.name,
           startedAt: callTimestamp,
+          ...(command !== undefined ? { command } : {}),
         };
         order.push(interval);
         openById.set(part.id, interval);
@@ -163,18 +175,15 @@ export function extractSessionToolIntervals(
     }
   }
 
-  return order.map((interval) =>
-    interval.endedAt === undefined
-      ? {
-          toolCallId: interval.toolCallId,
-          toolName: interval.toolName,
-          startedAt: interval.startedAt,
-        }
-      : {
-          toolCallId: interval.toolCallId,
-          toolName: interval.toolName,
-          startedAt: interval.startedAt,
-          endedAt: interval.endedAt,
-        },
-  );
+  return order.map((interval) => {
+    const base = {
+      toolCallId: interval.toolCallId,
+      toolName: interval.toolName,
+      startedAt: interval.startedAt,
+      ...(interval.command !== undefined ? { command: interval.command } : {}),
+    };
+    return interval.endedAt === undefined
+      ? base
+      : { ...base, endedAt: interval.endedAt };
+  });
 }

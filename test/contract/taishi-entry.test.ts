@@ -37,10 +37,15 @@ const BOOK = "fixture-book";
 const LEG_A1_RUN = "019ff000-0001-7000-8000-0000000000a1";
 const LEG_A1_DIR = `${LEG_A1_RUN}@coder`;
 
-/** Hand-computed from fixture (scope = ISSUE_PROJECT_ROOT). */
+/** Hand-computed from fixture (scope = ISSUE_PROJECT_ROOT; sort book/role/runId). */
 const EXPECTED_LEGS = [
   {
     runId: LEG_A1_RUN,
+    book: BOOK,
+    role: "coder",
+  },
+  {
+    runId: "019ff000-0005-7000-8000-0000000000e5",
     book: BOOK,
     role: "coder",
   },
@@ -80,12 +85,38 @@ const EXPECTED_A2_SEAM_PROBE = {
           toolName: "bash",
           startedAt: "2026-08-01T00:00:10.000Z",
           endedAt: "2026-08-01T00:00:40.000Z",
+          command: "echo hi",
         },
         {
           toolCallId: "call_out_a",
           toolName: "ak_coder_output",
           startedAt: "2026-08-01T00:00:55.000Z",
           endedAt: "2026-08-01T00:01:00.000Z",
+        },
+      ],
+      terminal: { status: "present", file: "report.json", role: "coder" },
+    },
+    {
+      runId: "019ff000-0005-7000-8000-0000000000e5",
+      book: BOOK,
+      role: "coder",
+      frameSpan: {
+        startedAt: "2026-08-01T00:02:00.000Z",
+        endedAt: "2026-08-01T00:03:40.000Z",
+      },
+      toolIntervals: [
+        {
+          toolCallId: "call_bash_overlap",
+          toolName: "bash",
+          startedAt: "2026-08-01T00:02:10.000Z",
+          endedAt: "2026-08-01T00:02:40.000Z",
+          command: "pnpm test:fast\nnode scripts/extra.js",
+        },
+        {
+          toolCallId: "call_read_overlap",
+          toolName: "read",
+          startedAt: "2026-08-01T00:02:25.000Z",
+          endedAt: "2026-08-01T00:02:50.000Z",
         },
       ],
       terminal: { status: "present", file: "report.json", role: "coder" },
@@ -280,7 +311,10 @@ test("taishi issue-mode entry: null terminal artifact is terminal-artifact unrea
       assert.equal(result.page.unreadable.length, 2);
       assert.deepEqual(
         result.page.legs.map((leg) => leg.runId),
-        ["019ff000-0002-7000-8000-0000000000b2"],
+        [
+          "019ff000-0005-7000-8000-0000000000e5",
+          "019ff000-0002-7000-8000-0000000000b2",
+        ],
       );
     });
   });
