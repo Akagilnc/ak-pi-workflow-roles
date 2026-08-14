@@ -428,6 +428,52 @@ test("taishi public CLI failure: ticket with no index row and no project-root â†
   });
 });
 
+test("taishi ticket parse rejects unsafe integers and infinity-length digit strings", () => {
+  assert.throws(
+    () => parseTaishiArgv(["--ticket", "9007199254740992"]), // MAX_SAFE_INTEGER + 1
+    (error: unknown) => {
+      assert.ok(error instanceof CliUsageError);
+      assert.match(error.message, /--ticket/);
+      assert.match(error.message, /positive integer/);
+      return true;
+    },
+  );
+  assert.throws(
+    () => parseTaishiArgv(["--ticket", "9".repeat(400)]),
+    (error: unknown) => {
+      assert.ok(error instanceof CliUsageError);
+      assert.match(error.message, /--ticket/);
+      return true;
+    },
+  );
+  assert.throws(
+    () =>
+      parseTaishiArgv([
+        "--cohort",
+        "--group-a-label",
+        "a",
+        "--group-a-issues",
+        "9007199254740993",
+        "--group-b-label",
+        "b",
+        "--group-b-issues",
+        "1",
+      ]),
+    (error: unknown) => {
+      assert.ok(error instanceof CliUsageError);
+      assert.match(error.message, /--group-a-issues/);
+      assert.doesNotMatch(error.message, /--ticket/);
+      return true;
+    },
+  );
+  // Boundary safe integer remains admitted.
+  const ok = parseTaishiArgv(["--ticket", String(Number.MAX_SAFE_INTEGER)]);
+  assert.equal(ok.query, "issue");
+  if (ok.query === "issue") {
+    assert.equal(ok.ticket, Number.MAX_SAFE_INTEGER);
+  }
+});
+
 test("taishi cohort list parse names the actual group flag, not --ticket", () => {
   assert.throws(
     () =>
