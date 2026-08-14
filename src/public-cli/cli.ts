@@ -32,6 +32,7 @@ import {
   parseJudgeArgv,
   parseMergerArgv,
   parseReviewerArgv,
+  parseTaishiArgv,
 } from "./invocation.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
@@ -40,6 +41,7 @@ import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import { runPublicMerger, runPublicMergerResume } from "./merger-run.ts";
 import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
+import { runPublicTaishi } from "./taishi-run.ts";
 import { peekRoleRunRole } from "./run-lifecycle.ts";
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
@@ -73,6 +75,8 @@ export const PUBLIC_ROLE_ARGV = {
   doctor: { parse: parseDoctorArgv },
   merger: { parse: parseMergerArgv },
   reviewer: { parse: parseReviewerArgv },
+  /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
+  taishi: { parse: parseTaishiArgv },
 } as const;
 
 type TakenPublicGlobalFlag =
@@ -947,6 +951,18 @@ export async function runAkRole(
         exitCode: result.exitCode,
         ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
       };
+    }
+
+    // Taishi public run path: deterministic issue-mode analysis seat (#336 / ADR 0068).
+    // Not an LLM PUBLIC_CALLABLE_ROLE — registered only on PUBLIC_ROLE_ARGV (#176).
+    if (parsed.command === "taishi") {
+      const result = await runPublicTaishi(
+        parsed.args,
+        { home },
+        io,
+        PUBLIC_ROLE_ARGV.taishi.parse,
+      );
+      return { exitCode: result.exitCode };
     }
 
     // #115: every PUBLIC_CALLABLE_ROLE has a completed handler above. Unknown

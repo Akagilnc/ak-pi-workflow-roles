@@ -327,6 +327,17 @@ export type ParseMergerArgvResult = {
   project?: string;
 };
 
+/**
+ * #336 taishi public argv — two scope faces, at least one required.
+ * ticket N = issueNumber (no conversion); project-root = ADR 0068 page key.
+ */
+export type ParseTaishiArgvResult = {
+  /** Caller ticket / issue number face (#176 numbering space). */
+  readonly ticket?: number;
+  /** Direct projectRoot mechanical key (ADR 0068). */
+  readonly projectRoot?: string;
+};
+
 /** Honest activation-class failure while deriving the active-merge envelope. */
 export class MergerEnvelopeDerivationError extends Error {
   readonly code = "merger-envelope-derivation" as const;
@@ -340,7 +351,13 @@ export class MergerEnvelopeDerivationError extends Error {
 
 /** Reject missing/blank path values so empty overrides cannot silently degrade. */
 function requireOptionPath(
-  flag: "--project" | "--attach" | "--prerequisites" | "--request-manifest" | "--base",
+  flag:
+    | "--project"
+    | "--attach"
+    | "--prerequisites"
+    | "--request-manifest"
+    | "--base"
+    | "--project-root",
   value: string | undefined,
 ): string {
   if (value === undefined || value.trim() === "") {
@@ -1995,4 +2012,83 @@ export function buildMergerTransportPrompt(
     }
   }
   return lines.join("\n");
+}
+
+const TAISHI_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
+
+/**
+ * Parse a positive ticket / issue number for public taishi admission.
+ * Leading zeros and non-integers are structural rejects (same face as #176).
+ */
+export function parseTaishiTicketNumber(raw: string): number {
+  const trimmed = raw.trim();
+  if (!TAISHI_TICKET_NUMBER_PATTERN.test(trimmed)) {
+    throw new CliUsageError(
+      `taishi --ticket must be a positive integer, got ${raw}`,
+    );
+  }
+  return Number(trimmed);
+}
+
+/**
+ * Parse taishi-specific argv after the `taishi` token (#336).
+ * Requires at least one of --ticket / --project-root; no second input type.
+ */
+export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult {
+  let ticketRaw: string | undefined;
+  let projectRoot: string | undefined;
+  const tokens = [...args];
+
+  while (tokens.length > 0) {
+    const token = tokens.shift()!;
+    if (token === "--") {
+      if (tokens.length > 0) {
+        throw new CliUsageError(`unexpected taishi argument: ${tokens[0]}`);
+      }
+      break;
+    }
+    if (token === "--ticket") {
+      const value = tokens.shift();
+      if (value === undefined || value.trim() === "") {
+        throw new CliUsageError("taishi --ticket requires a positive integer");
+      }
+      ticketRaw = value;
+      continue;
+    }
+    if (token.startsWith("--ticket=")) {
+      ticketRaw = token.slice("--ticket=".length);
+      if (ticketRaw.trim() === "") {
+        throw new CliUsageError("taishi --ticket requires a positive integer");
+      }
+      continue;
+    }
+    if (token === "--project-root") {
+      projectRoot = requireOptionPath("--project-root", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project-root=")) {
+      projectRoot = requireOptionPath(
+        "--project-root",
+        token.slice("--project-root=".length),
+      );
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown taishi option: ${token}`);
+    }
+    throw new CliUsageError(`unexpected taishi argument: ${token}`);
+  }
+
+  if (ticketRaw === undefined && projectRoot === undefined) {
+    throw new CliUsageError(
+      "usage: ak-role taishi (--ticket <N> | --project-root <P>)",
+    );
+  }
+
+  return {
+    ...(ticketRaw === undefined
+      ? {}
+      : { ticket: parseTaishiTicketNumber(ticketRaw) }),
+    ...(projectRoot === undefined ? {} : { projectRoot }),
+  };
 }
