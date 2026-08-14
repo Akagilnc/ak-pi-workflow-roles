@@ -39,7 +39,7 @@ import {
   type UnboundTrajectoryRun,
 } from "./ticket-trajectory.ts";
 import type { BoardSnapshot, SnapshotTicket, TicketIssueState } from "./ticket-snapshot.ts";
-import { TicketRunAttributionError } from "./ticket-dispatch-lease.ts";
+
 
 /** Unaccepted latest-run mtime bands (page-visible thresholds). */
 export const UNACCEPTED_FLYING_MS = 2 * 60 * 1000;
@@ -416,15 +416,19 @@ function renderUnboundRunCard(input: {
   bookKey: string;
   unbound: UnboundTrajectoryRun;
 }): string {
-  const { run, correlationId, role, observedAt } = input.unbound;
+  const { run, role, observedAt } = input.unbound;
+  const correlationId = input.unbound.correlationId;
   const stationLabel =
     run.station === "unknown" ? "未知站" : (YAMEN_LABELS[run.station] ?? run.station);
+  const corrAttr = correlationId === undefined ? "" : ` data-correlation="${attr(correlationId)}"`;
+  const corrMeta =
+    correlationId === undefined ? "" : ` · corr ${escapeHtml(correlationId)}`;
   return [
     `<article class="ticket unbound-run"`,
     ` data-unbound-run="true"`,
     ` data-book="${attr(input.bookKey)}"`,
     ` data-run-id="${attr(run.runId)}"`,
-    ` data-correlation="${attr(correlationId)}"`,
+    corrAttr,
     ` data-placement="unknown"`,
     `>`,
     `<header class="ticket-header">`,
@@ -432,7 +436,7 @@ function renderUnboundRunCard(input: {
     `<span class="yamen-tag yamen-unknown" data-yamen="unknown">${escapeHtml(stationLabel)}</span>`,
     `</header>`,
     `<p class="unbound-meta" data-unbound-meta="true">`,
-    `role ${escapeHtml(role)} · corr ${escapeHtml(correlationId)} · ${escapeHtml(observedAt)}`,
+    `role ${escapeHtml(role)}${corrMeta} · ${escapeHtml(observedAt)}`,
     `</p>`,
     `</article>`,
   ].join("");
@@ -898,8 +902,8 @@ async function renderLaneHtml(
   now: Date,
   options?: { hidden?: boolean },
 ): Promise<RenderedLane> {
-  // One book-level waiting.jsonl index shared by every ticket in this lane.
-  const bookIndex = buildTicketTrajectoryBookIndex(ledgerDir);
+  // One book-level flat-run index shared by every ticket in this lane.
+  const bookIndex = await buildTicketTrajectoryBookIndex(ledgerDir);
   const prepared = new Map<number, PreparedTicket>();
   for (const ticket of tickets) {
     prepared.set(ticket.issueNumber, await prepareTicket(ledgerDir, ticket, now, bookIndex));
@@ -1019,7 +1023,7 @@ async function renderLaneHtml(
     byPlacement.set(entry.placement, list);
   }
 
-  // Unbound activations: isolated from every ticket, honest on the unknown seam.
+  // Unbound flat runs: isolated from every ticket, honest on the unknown seam.
   const unboundRuns = await loadUnboundTrajectoryRuns(ledgerDir, bookIndex);
   for (const unbound of unboundRuns) {
     unknownEntries.push({
@@ -1522,27 +1526,13 @@ export async function renderFactoryBoardHtml(
       );
     }
     let lane: RenderedLane;
-    try {
-      lane = await renderLaneHtml(
-        book.bookKey,
-        resolve(book.ledgerDir),
-        bookSnap.tickets,
-        now,
-        { hidden: defaultBookKey !== undefined && bookSnap.bookKey !== defaultBookKey },
-      );
-    } catch (error) {
-      if (error instanceof TicketRunAttributionError) {
-        return renderErrorHtml(
-          {
-            kind: "binding",
-            bookKey: bookSnap.bookKey,
-            message: error.message,
-          },
-          generatedAt,
-        );
-      }
-      throw error;
-    }
+    lane = await renderLaneHtml(
+      book.bookKey,
+      resolve(book.ledgerDir),
+      bookSnap.tickets,
+      now,
+      { hidden: defaultBookKey !== undefined && bookSnap.bookKey !== defaultBookKey },
+    );
     laneHtmlParts.push(lane.html);
     unknownByBook.set(bookSnap.bookKey, lane.unknownTickets);
   }

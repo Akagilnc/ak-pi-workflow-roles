@@ -20,13 +20,7 @@ import {
 } from "../activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
-import {
-  claimTicketDispatchLease,
-  TicketDispatchLeaseError,
-  TicketDispatchLeaseHeldError,
-  TicketDispatchLeaseMissingError,
-  type ClaimedTicketDispatchLease,
-} from "../ticket-dispatch-lease.ts";
+import { resolveTicketNumberFromAttachmentBodies } from "../ticket-frontmatter.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -80,9 +74,15 @@ export type AdmittedRoleInvocationBase = {
   /** Exact Pi session file principal (bound at admission; reopened on resume). */
   readonly sessionFile: string;
   readonly admittedRequestPath: string;
-  /** Opaque invocation correlation generated at lease claim. Absent on doctor. */
+  /**
+   * Optional opaque invocation correlation restored from a prior admitted page
+   * (ADR 0049 host channel). Admission does not mint ticket-binding ids.
+   */
   readonly correlationId?: string;
-  /** Ticket identity from the claimed dispatch lease. Absent on doctor. */
+  /**
+   * Typed ticket face from frozen attachment frontmatter (`ticketNumber`).
+   * Absent when no attachment carries a valid contract field (unbound).
+   */
   readonly ticketNumber?: number;
 };
 
@@ -538,7 +538,7 @@ async function freezeRegularFileAttachment(
   sourcePath: string,
   destinationDir: string,
   index: number,
-): Promise<FrozenAttachment> {
+): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
   const absolute = isAbsolute(sourcePath) ? sourcePath : resolve(sourcePath);
   let st;
   try {
@@ -559,12 +559,47 @@ async function freezeRegularFileAttachment(
   const frozenPath = join(destinationDir, name);
   await writeFile(frozenPath, bytes);
   return {
-    provenancePath: absolute,
-    frozenPath,
-    byteLength: bytes.byteLength,
-    sha256: sha256Hex(bytes),
-    mediaKind: "regular-file",
+    attachment: {
+      provenancePath: absolute,
+      frozenPath,
+      byteLength: bytes.byteLength,
+      sha256: sha256Hex(bytes),
+      mediaKind: "regular-file",
+    },
+    body: bytes,
   };
+}
+
+/** Freeze attachments and resolve typed ticketNumber from frozen bodies (bind-if-present). */
+async function freezeAttachmentsWithTicketNumber(
+  attachmentPaths: readonly string[],
+  attachmentsDirectory: string,
+): Promise<{
+  readonly attachments: FrozenAttachment[];
+  readonly ticketNumber?: number;
+}> {
+  const attachments: FrozenAttachment[] = [];
+  const bodies: Buffer[] = [];
+  for (let i = 0; i < attachmentPaths.length; i += 1) {
+    const frozen = await freezeRegularFileAttachment(
+      attachmentPaths[i]!,
+      attachmentsDirectory,
+      i,
+    );
+    attachments.push(frozen.attachment);
+    bodies.push(frozen.body);
+  }
+  const ticketNumber = resolveTicketNumberFromAttachmentBodies(bodies);
+  return {
+    attachments,
+    ...(ticketNumber === undefined ? {} : { ticketNumber }),
+  };
+}
+
+function ticketAdmissionFields(
+  ticketNumber: number | undefined,
+): { ticketNumber?: number } {
+  return ticketNumber === undefined ? {} : { ticketNumber };
 }
 
 export type AdmitJudgeInvocationOptions = {
@@ -581,46 +616,6 @@ export type AdmitJudgeInvocationOptions = {
  * Atomically admit a Judge Role run: freeze Attachments, persist the request,
  * and reserve session placement under the #78 ledger book.
  */
-
-/**
- * Optional machine-dispatch binding: missing/held lease → admit without ticket.
- * Site mismatch and other lease faults stay loud. Never a require-always gate.
- */
-function claimTicketDispatchLeaseForAdmit(input: {
-  readonly ledgerHome: string;
-  readonly bookKey: string;
-  readonly siteIdentity: string;
-}): ClaimedTicketDispatchLease | undefined {
-  try {
-    return claimTicketDispatchLease({
-      ledgerHome: input.ledgerHome,
-      bookKey: input.bookKey,
-      siteIdentity: input.siteIdentity,
-    });
-  } catch (error) {
-    if (
-      error instanceof TicketDispatchLeaseMissingError ||
-      error instanceof TicketDispatchLeaseHeldError
-    ) {
-      return undefined;
-    }
-    if (error instanceof TicketDispatchLeaseError) {
-      throw new CliUsageError(error.message, { cause: error });
-    }
-    throw error;
-  }
-}
-
-function leaseAdmissionFields(
-  lease: ClaimedTicketDispatchLease | undefined,
-): { correlationId?: string; ticketNumber?: number } {
-  if (lease === undefined) return {};
-  return {
-    correlationId: lease.correlationId,
-    ticketNumber: lease.ticketNumber,
-  };
-}
-
 export async function admitJudgeInvocation(
   options: AdmitJudgeInvocationOptions,
 ): Promise<AdmittedJudgeInvocation> {
@@ -636,24 +631,11 @@ export async function admitJudgeInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  // Freeze request materials before consuming any dispatch lease.
-  const attachments: FrozenAttachment[] = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
-
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot,
-  });
-  const leaseFields = leaseAdmissionFields(dispatchLease);
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
@@ -665,7 +647,7 @@ export async function admitJudgeInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
-    ...leaseFields,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -692,7 +674,7 @@ export async function admitJudgeInvocation(
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
-    ...leaseFields,
+    ...ticketFields,
   };
 }
 
@@ -784,24 +766,11 @@ export async function admitCoderInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  // Freeze request materials before consuming any dispatch lease.
-  const attachments: FrozenAttachment[] = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
-
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot,
-  });
-  const leaseFields = leaseAdmissionFields(dispatchLease);
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   const taskPath = join(runDirectory, "task.md");
   await writeFile(taskPath, instruction, "utf8");
@@ -815,7 +784,7 @@ export async function admitCoderInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
-    ...leaseFields,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -845,7 +814,7 @@ export async function admitCoderInvocation(
     sessionFile,
     admittedRequestPath,
     taskPath,
-    ...leaseFields,
+    ...ticketFields,
   };
 }
 
@@ -901,7 +870,7 @@ export async function admitFixerInvocation(
     throw new CliUsageError("fixer phase must be plan or apply");
   }
 
-  // Validate/read prerequisites before any lease claim so bad input never consumes dispatch.
+  // Validate/read prerequisites before freezing request materials.
   let prerequisites: readonly FixerPrerequisite[] = Object.freeze([]);
   let prerequisitesSource: string | undefined;
   if (options.prerequisitesPath !== undefined) {
@@ -934,23 +903,11 @@ export async function admitFixerInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const attachments: FrozenAttachment[] = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
-
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot,
-  });
-  const leaseFields = leaseAdmissionFields(dispatchLease);
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   let prerequisitesPath: string | undefined;
   if (prerequisitesSource !== undefined) {
@@ -974,7 +931,7 @@ export async function admitFixerInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
-    ...leaseFields,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     packetPath,
@@ -1011,7 +968,7 @@ export async function admitFixerInvocation(
     packetPath,
     ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
     prerequisites,
-    ...leaseFields,
+    ...ticketFields,
   };
 }
 
@@ -1189,7 +1146,7 @@ export async function admitCollectorInvocation(
     repository = resolveGitHubRemoteRepository(projectRoot);
   }
 
-  // Validate optional request-manifest before lease claim.
+  // Validate optional request-manifest before freezing request materials.
   let manifest = emptyCollectorManifest();
   let manifestCanonicalJson: string | undefined;
   if (options.requestManifestPath !== undefined) {
@@ -1209,24 +1166,11 @@ export async function admitCollectorInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const attachments: FrozenAttachment[] = [];
-  const attachmentPaths = options.attachmentPaths ?? [];
-  for (let i = 0; i < attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
-
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot,
-  });
-  const leaseFields = leaseAdmissionFields(dispatchLease);
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths ?? [],
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   let requestManifestPath: string | undefined;
   if (manifestCanonicalJson !== undefined) {
@@ -1244,7 +1188,7 @@ export async function admitCollectorInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
-    ...leaseFields,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     prNumber,
@@ -1284,7 +1228,7 @@ export async function admitCollectorInvocation(
     repository,
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     manifestDigest,
-    ...leaseFields,
+    ...ticketFields,
   };
 }
 
@@ -1563,17 +1507,11 @@ export async function admitDoctorInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const attachments: FrozenAttachment[] = [];
-  const attachmentPaths = options.attachmentPaths ?? [];
-  for (let i = 0; i < attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths ?? [],
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
@@ -1585,6 +1523,7 @@ export async function admitDoctorInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     issueNumber: options.issueNumber,
@@ -1621,6 +1560,7 @@ export async function admitDoctorInvocation(
     issueNumber: options.issueNumber,
     caseRunsPath,
     caseIdentity,
+    ...ticketFields,
   };
 }
 
@@ -1726,23 +1666,11 @@ export async function admitReviewerInvocation(
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   // Public parse already rejects attachments; keep freeze loop for structural symmetry.
-  const attachments: FrozenAttachment[] = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
-
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot,
-  });
-  const leaseFields = leaseAdmissionFields(dispatchLease);
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
@@ -1754,7 +1682,7 @@ export async function admitReviewerInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
-    ...leaseFields,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
@@ -1787,7 +1715,7 @@ export async function admitReviewerInvocation(
     sessionFile,
     admittedRequestPath,
     baseRevision: options.baseRevision,
-    ...leaseFields,
+    ...ticketFields,
   };
 }
 
@@ -1955,16 +1883,11 @@ export async function admitMergerInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const attachments: FrozenAttachment[] = [];
-  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
-    attachments.push(
-      await freezeRegularFileAttachment(
-        options.attachmentPaths[i]!,
-        attachmentsDirectory,
-        i,
-      ),
-    );
-  }
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   // Intent materials seed primary-source investigation; the method owns the work.
   const targetIntent = mergerMaterialFromUtf8(
@@ -1976,7 +1899,7 @@ export async function admitMergerInvocation(
   const taskMaterial = mergerMaterialFromUtf8(instruction);
   const authorityMaterial = mergerMaterialFromUtf8(instruction);
 
-  // Validate merger envelope before consuming any dispatch lease.
+  // Validate merger envelope before placing admitted identity.
   const mergerInput = validateMergerInput({
     version: 1,
     attemptId: runId,
@@ -1994,13 +1917,6 @@ export async function admitMergerInvocation(
     authorizedChecks: [],
   });
 
-  const dispatchLease = claimTicketDispatchLeaseForAdmit({
-    ledgerHome,
-    bookKey,
-    siteIdentity: projectRoot,
-  });
-  const leaseFields = leaseAdmissionFields(dispatchLease);
-
   const mergerInputPath = join(runDirectory, "merger-input.json");
   await writeFile(
     mergerInputPath,
@@ -2016,7 +1932,7 @@ export async function admitMergerInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
-    ...leaseFields,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     mergerInputPath,
@@ -2057,7 +1973,7 @@ export async function admitMergerInvocation(
     admittedRequestPath,
     mergerInputPath,
     derived: admitted.derived,
-    ...leaseFields,
+    ...ticketFields,
   };
 }
 

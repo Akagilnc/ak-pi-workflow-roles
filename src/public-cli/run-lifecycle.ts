@@ -457,7 +457,8 @@ type LoadedAdmittedRequestFields = {
   readonly ticketNumber?: number;
 };
 
-function parsePersistedLeaseIdentity(
+/** Restore optional correlation + typed ticketNumber from a durable admitted page. */
+function parsePersistedTicketIdentity(
   record: Record<string, unknown>,
 ): { correlationId?: string; ticketNumber?: number } {
   const correlationId =
@@ -476,7 +477,7 @@ function parsePersistedLeaseIdentity(
   };
 }
 
-function restoredLeaseFields(fields: LoadedAdmittedRequestFields): {
+function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
   correlationId?: string;
   ticketNumber?: number;
 } {
@@ -597,7 +598,7 @@ async function loadResumableRunRecord(
           };
         }
       }
-      const fromAdmitted = parsePersistedLeaseIdentity(record);
+      const fromAdmitted = parsePersistedTicketIdentity(record);
       correlationId = fromAdmitted.correlationId;
       ticketNumber = fromAdmitted.ticketNumber;
     }
@@ -616,7 +617,7 @@ async function loadResumableRunRecord(
         typeof invocationRaw === "object" &&
         !Array.isArray(invocationRaw)
       ) {
-        const fromInvocation = parsePersistedLeaseIdentity(
+        const fromInvocation = parsePersistedTicketIdentity(
           invocationRaw as Record<string, unknown>,
         );
         if (correlationId === undefined) correlationId = fromInvocation.correlationId;
@@ -708,7 +709,7 @@ export async function loadResumableJudgeRun(
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
-    ...restoredLeaseFields(loaded.admittedFields),
+    ...restoredTicketFields(loaded.admittedFields),
   };
   return {
     admitted,
@@ -762,7 +763,7 @@ export async function loadResumableCoderRun(
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
-    ...restoredLeaseFields(loaded.admittedFields),
+    ...restoredTicketFields(loaded.admittedFields),
   };
   return {
     admitted,
@@ -821,7 +822,7 @@ export async function loadResumableFixerRun(
       ? {}
       : { prerequisitesPath: loaded.admittedFields.prerequisitesPath }),
     prerequisites,
-    ...restoredLeaseFields(loaded.admittedFields),
+    ...restoredTicketFields(loaded.admittedFields),
   };
   return {
     admitted,
@@ -867,7 +868,7 @@ export async function loadResumableReviewerRun(
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
-    ...restoredLeaseFields(loaded.admittedFields),
+    ...restoredTicketFields(loaded.admittedFields),
   };
   return {
     admitted,
@@ -927,7 +928,7 @@ export async function loadResumableMergerRun(
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,
-    ...restoredLeaseFields(loaded.admittedFields),
+    ...restoredTicketFields(loaded.admittedFields),
   };
   return {
     admitted,

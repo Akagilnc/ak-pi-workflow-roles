@@ -14,9 +14,7 @@ import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.t
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { settleJudgeTerminalResult } from "../../src/public-cli/settlement.ts";
-import { DISPATCH_STUB_EVENT } from "../../src/activation-reconciliation.ts";
-import { TICKET_BINDING_EVENT } from "../../src/ticket-dispatch-lease.ts";
-import { offerTestDispatchLease } from "../helpers/dispatch-lease.ts";
+
 import {
   packageRoot,
   piCli,
@@ -322,8 +320,6 @@ test(
         "test/fixtures/audit-failure-provider.ts",
       );
 
-      // Machine dispatch context: lease claim generates opaque correlation (not env).
-      offerTestDispatchLease(home, project);
       const result = await runAkRole(
         [
           "judge",
@@ -342,7 +338,7 @@ test(
           home,
           agentDir,
           cwd: project,
-          // Deprecated caller-correlation env must not become the ledger truth.
+          // ADR 0049 host correlation channel (optional; not ticket attribution).
           correlationId: "corr-106-e2e",
           createRunId: () => "run-e2e-judge-001",
           judgeExtraPiArgs: ["-e", providerPath],
@@ -448,7 +444,7 @@ test(
         false,
       );
       assert.match(indexText, /"event":"accepted-activation"/);
-      // binding + dispatch-stub + accepted-activation share one opaque machine correlation.
+      // Activation correlation comes from the ADR 0049 host channel when supplied.
       const rows = indexText
         .split("\n")
         .filter((line) => line.trim())
@@ -456,19 +452,11 @@ test(
           event?: string;
           correlation?: { kind?: string; id?: string };
         });
-      const binding = rows.find((row) => row.event === TICKET_BINDING_EVENT);
-      const stub = rows.find((row) => row.event === DISPATCH_STUB_EVENT);
+      assert.equal(rows.some((row) => row.event === "ticket-binding"), false);
       const activation = rows.find((row) => row.event === "accepted-activation");
-      assert.ok(binding, "ticket-binding fact required");
-      assert.ok(stub, "dispatch-stub fact required");
       assert.ok(activation, "accepted-activation fact required");
-      const corr = binding!.correlation?.id;
-      assert.equal(typeof corr, "string");
-      assert.ok((corr ?? "").length > 0);
-      assert.notEqual(corr, "corr-106-e2e");
-      assert.notEqual(corr, "176");
-      assert.equal(stub!.correlation?.id, corr);
-      assert.equal(activation!.correlation?.id, corr);
+      assert.equal(activation!.correlation?.kind, "caller");
+      assert.equal(activation!.correlation?.id, "corr-106-e2e");
 
       // pi binary used by harness exists (sanity for runner wiring).
       assert.equal(piCli.endsWith("/pi"), true);
