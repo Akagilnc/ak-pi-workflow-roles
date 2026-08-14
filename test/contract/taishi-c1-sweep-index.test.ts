@@ -629,3 +629,58 @@ test("taishi live run-state is not classified as terminal no-receipt", async () 
     });
   });
 });
+
+test("taishi reads publisher durable error.settlement fallback as terminal failure", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async (home) => {
+      const runDir = join(
+        home,
+        ".ak-roles",
+        "books",
+        "fixture-book-c1",
+        "runs",
+        `${C1_ALPHA_RUN}@coder`,
+      );
+      await rm(join(runDir, "artifacts"), { recursive: true, force: true });
+      await writeFile(
+        join(runDir, "error.settlement.json"),
+        `${JSON.stringify({
+          kind: "error",
+          role: "coder",
+          runId: C1_ALPHA_RUN,
+          cause: "provider",
+          diagnostic: "settled fallback failure",
+        }, null, 2)}\n`,
+        "utf8",
+      );
+
+      const result = await runTaishi({
+        mode: "issue",
+        projectRoot: ISSUE_ALPHA,
+      });
+      assert.equal(
+        result.page.legs.some((leg) => leg.runId === C1_ALPHA_RUN),
+        true,
+        "run with durable fallback error must remain readable",
+      );
+      const page = result.page as TaishiIssueMetricsPage & {
+        roundTimeline?: {
+          lanes: readonly {
+            lane: string;
+            rows: readonly {
+              kind: string;
+              runId?: string;
+              terminal?: { kind: string; channel?: string };
+            }[];
+          }[];
+        };
+      };
+      const row = page.roundTimeline?.lanes
+        .flatMap((lane) => lane.rows)
+        .find((entry) => entry.kind === "run" && entry.runId === C1_ALPHA_RUN);
+      assert.ok(row, "timeline must keep the fallback-error run");
+      assert.equal(row.terminal?.kind, "death");
+      assert.equal(row.terminal?.channel, "error");
+    });
+  });
+});
