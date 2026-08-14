@@ -42,18 +42,20 @@ export type TaishiModelGroupsPage = {
   /** Caller-typed scope (physical identities), stable-sorted. */
   readonly projectRoots: readonly string[];
   readonly groups: readonly TaishiModelGroupRow[];
+  /** Model-bearing legs only (sum of group dens); model-absent listed under unreadable. */
   readonly legCount: number;
   readonly unreadableCount: number;
+  /** Scan damage + session-model vacancy (no empty-string group). */
   readonly unreadable: readonly TaishiUnreadableRun[];
 };
 
 /**
  * Build the raw group key for one leg from its ordered-unique model sequence.
- * Empty sequence → empty key (honest vacancy group; not unreadable).
+ * Empty sequence → undefined (no inventable group; caller lists as typed vacancy).
  * One model → that raw id. Multi → `mixed:` + `+`-joined ordered uniques.
  */
-export function taishiModelGroupKey(models: readonly string[]): string {
-  if (models.length === 0) return "";
+export function taishiModelGroupKey(models: readonly string[]): string | undefined {
+  if (models.length === 0) return undefined;
   if (models.length === 1) return models[0]!;
   return `mixed:${models.join("+")}`;
 }
@@ -72,9 +74,33 @@ function displayNameFor(
   return aliased === undefined ? rawGroupKey : aliased;
 }
 
+function sortUnreadable(
+  unreadable: readonly TaishiUnreadableRun[],
+): TaishiUnreadableRun[] {
+  return [...unreadable].sort((a, b) => {
+    if (a.book !== b.book) return a.book.localeCompare(b.book);
+    return a.runId.localeCompare(b.runId);
+  });
+}
+
+/**
+ * Legs with no usable session model identity cannot join any model group.
+ * Reuse the typed unreadable path (locatable missing-source) — not an empty-key group.
+ */
+function modelIdentityAbsentEntry(run: TaishiReadableRunFacts): TaishiUnreadableRun {
+  return {
+    runId: run.runId,
+    book: run.book,
+    missingSources: ["session-model"],
+    reason: "session has no usable model identity",
+    firstFrameAt: { status: "present", at: run.frameSpan.startedAt },
+  };
+}
+
 /**
  * Aggregate readable runs into model groups.
  * Stats identity is always the raw key; mapping only projects displayName.
+ * Model-identity vacancy is excluded from every group den and listed as unreadable.
  */
 export function buildTaishiModelGroupsPage(input: {
   readonly projectRoots: readonly string[];
@@ -82,7 +108,18 @@ export function buildTaishiModelGroupsPage(input: {
   readonly unreadable: readonly TaishiUnreadableRun[];
   readonly combinationMapping?: Readonly<Record<string, string>>;
 }): TaishiModelGroupsPage {
-  const acceptance = buildAcceptanceSuccessReworkSection(input.runs);
+  // Split before B3 projection: only model-bearing legs enter group dens.
+  const groupedRuns: TaishiReadableRunFacts[] = [];
+  const modelAbsent: TaishiUnreadableRun[] = [];
+  for (const run of input.runs) {
+    if (taishiModelGroupKey(run.models) === undefined) {
+      modelAbsent.push(modelIdentityAbsentEntry(run));
+    } else {
+      groupedRuns.push(run);
+    }
+  }
+
+  const acceptance = buildAcceptanceSuccessReworkSection(groupedRuns);
   const legByRunId = new Map(
     (acceptance?.legs ?? []).map((leg) => [leg.runId, leg] as const),
   );
@@ -96,8 +133,14 @@ export function buildTaishiModelGroupsPage(input: {
   };
   const byRaw = new Map<string, Acc>();
 
-  for (const run of input.runs) {
+  for (const run of groupedRuns) {
     const rawGroupKey = taishiModelGroupKey(run.models);
+    // groupedRuns is pre-filtered to model-bearing legs only.
+    if (rawGroupKey === undefined) {
+      throw new Error(
+        `taishi model-groups: invariant — empty model key after filter for run ${run.runId}`,
+      );
+    }
     const leg = legByRunId.get(run.runId);
     if (leg === undefined) {
       // Readable run must project through B3 map; missing is an invariant break.
@@ -142,17 +185,14 @@ export function buildTaishiModelGroupsPage(input: {
     };
   });
 
-  const unreadable = [...input.unreadable].sort((a, b) => {
-    if (a.book !== b.book) return a.book.localeCompare(b.book);
-    return a.runId.localeCompare(b.runId);
-  });
+  const unreadable = sortUnreadable([...input.unreadable, ...modelAbsent]);
 
   return {
     kind: "taishi-model-groups",
     mode: "model-groups",
     projectRoots: [...input.projectRoots].sort((a, b) => a.localeCompare(b)),
     groups,
-    legCount: input.runs.length,
+    legCount: groupedRuns.length,
     unreadableCount: unreadable.length,
     unreadable,
   };

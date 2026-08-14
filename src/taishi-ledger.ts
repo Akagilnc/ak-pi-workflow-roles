@@ -126,7 +126,9 @@ export type TaishiReadableRunFacts = {
   readonly terminal: TaishiRunTerminalFace;
   /**
    * Ordered-unique session model ids for this leg (C3 model-group key material).
-   * Empty when no model face was present — not an unreadable condition.
+   * Empty when no model face was present — not a scan-level unreadable condition
+   * (timeline/tools/terminal still admit the run for issue-mode families).
+   * Model-groups mode lists empty as typed session-model vacancy, never as "".
    */
   readonly models: readonly string[];
 };
