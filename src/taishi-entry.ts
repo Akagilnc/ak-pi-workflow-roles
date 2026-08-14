@@ -199,17 +199,20 @@ export type TaishiResult =
  * whole-compute failure. Sweep / explicit recompute still use runTaishiIssueMode.
  */
 /**
- * Cached page may be reused only when it already represents the requested ticket
- * scope. projectRoot-only pages are keyed by root path alone and may include
- * other tickets at that root — a later --ticket N must recompute via the sole
- * kernel rather than accept a mismatched scope binding.
+ * Cached page may be reused only under bidirectional ticket-scope equality.
+ * - requested ticket present: page.issueNumber must equal it
+ * - requested ticket absent: only reuse a page that also lacks issueNumber
+ *   (a narrower ticket page must not stand in for the full root page)
+ * projectRoot path alone is not scope identity either direction.
  */
 function cachedPageMatchesRequestedScope(
   page: TaishiIssueMetricsPage,
   input: TaishiIssueModeInput,
 ): boolean {
   const requestedTicket = input.ticketNumber ?? input.issueNumber;
-  if (requestedTicket === undefined) return true;
+  if (requestedTicket === undefined) {
+    return page.issueNumber === undefined;
+  }
   return page.issueNumber === requestedTicket;
 }
 
