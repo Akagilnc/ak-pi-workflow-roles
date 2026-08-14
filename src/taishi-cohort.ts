@@ -1,7 +1,8 @@
 /**
- * Taishi cohort contrast aggregation (ADR 0068 / PRD #298 output ③ / #330).
+ * Taishi cohort contrast aggregation (ADR 0068 / PRD #298 output ③ / #330 / #338).
  *
- * Query product only — reads the library index + persisted issue metrics pages.
+ * Query product — joins the library index, ensures each hit has a metrics page
+ * (compute-if-missing via caller-supplied sole issue kernel), then folds pages.
  * No second ledger scan, no second parse kernel, no persistence of the contrast.
  *
  * Aggregation nails (ticket #330):
@@ -9,23 +10,28 @@
  * - convergence rounds sample = one per lane×role (page byRole.convergenceRounds)
  * - leg wall-clock median sample = one per leg (page legWallClock.ranking)
  * - missing index row / zero denominator → typed 空缺 (LOC vacancy shape)
- * - index hit + page ENOENT → real failure (never washed into absent)
+ * - index hit + missing page → ensure (compute-if-missing); ensure failure stays loud
+ *   (never washed into absent) — owner 2026-08-14 #338.
  */
-import { readFile } from "node:fs/promises";
-
 import {
   findTaishiLibraryIndexRow,
   readTaishiLibraryIndexPage,
   type TaishiLibraryIndexPage,
 } from "./taishi-index.ts";
 import { medianNumber } from "./taishi-median.ts";
-import {
-  taishiIssuePagePath,
-  type TaishiIssueMetricsPage,
-} from "./taishi-page.ts";
+import type { TaishiIssueMetricsPage } from "./taishi-page.ts";
 import type { TaishiRoleAcceptanceStats } from "./taishi-metric-families/acceptance-success-rework.ts";
 import type { TaishiLegWallClockSection } from "./taishi-metric-families/leg-wall-clock.ts";
 import type { TaishiAcceptanceSuccessReworkSection } from "./taishi-metric-families/acceptance-success-rework.ts";
+
+/**
+ * #338 page ensurer — read existing page or compute via sole issue kernel.
+ * Injected by the entry so cohort never opens a second compute route.
+ */
+export type TaishiIssuePageEnsuring = (input: {
+  readonly projectRoot: string;
+  readonly issueNumber: number;
+}) => Promise<TaishiIssueMetricsPage>;
 
 /** LOC-style optional metric — never encode absence as 0 or Infinity. */
 export type TaishiCohortOptionalMetric =
@@ -102,20 +108,6 @@ function optionalMedian(values: readonly number[]): TaishiCohortOptionalMetric {
   return median === undefined ? ABSENT : presentMetric(median);
 }
 
-/**
- * Load a persisted issue page by ADR 0068 projectRoot key.
- * Called only after an index hit — ENOENT/ENOTDIR stay loud (dangling ref),
- * never collapsed into the index-miss vacancy face.
- */
-async function readIssuePage(
-  ledgerHome: string,
-  projectRoot: string,
-): Promise<TaishiCohortSourcePage> {
-  const path = taishiIssuePagePath(ledgerHome, projectRoot);
-  const raw = await readFile(path, "utf8");
-  return JSON.parse(raw) as TaishiCohortSourcePage;
-}
-
 type RoleAccum = {
   convergenceRounds: number[];
   firstPassLaneCount: number;
@@ -153,9 +145,9 @@ function finishRole(role: string, accum: RoleAccum): TaishiCohortRoleStats {
 }
 
 async function aggregateGroup(
-  ledgerHome: string,
   index: TaishiLibraryIndexPage | undefined,
   input: TaishiCohortGroupInput,
+  ensureIssuePage: TaishiIssuePageEnsuring,
 ): Promise<TaishiCohortGroupResult> {
   const issueEntries: TaishiCohortIssueEntry[] = [];
   const roleAccums = new Map<string, RoleAccum>();
@@ -172,8 +164,12 @@ async function aggregateGroup(
       continue;
     }
 
-    // Index hit: page must be readable. Dangling refs keep real I/O failure.
-    const page = await readIssuePage(ledgerHome, row.projectRoot);
+    // Index hit: ensure page via sole compute-if-missing kernel (read or compute).
+    // Ensure failure stays loud with issue identity — never washed to absent.
+    const page = (await ensureIssuePage({
+      projectRoot: row.projectRoot,
+      issueNumber,
+    })) as TaishiCohortSourcePage;
 
     issueEntries.push({
       issueNumber,
@@ -215,16 +211,19 @@ async function aggregateGroup(
 }
 
 /**
- * Run cohort contrast: join index by issueNumber, fold present pages, emit
- * two side-by-side group results. Pure query — does not write ledger state.
+ * Run cohort contrast: join index by issueNumber, ensure pages (#338), fold,
+ * emit two side-by-side group results. Page writes happen only through the
+ * injected ensurer (sole issue kernel + existing writer) — cohort itself is
+ * not a second compute kernel or projection.
  */
 export async function runTaishiCohortMode(
   ledgerHome: string,
   input: TaishiCohortModeInput,
+  ensureIssuePage: TaishiIssuePageEnsuring,
 ): Promise<TaishiCohortModeResult> {
   const index = await readTaishiLibraryIndexPage(ledgerHome);
-  const group0 = await aggregateGroup(ledgerHome, index, input.groups[0]);
-  const group1 = await aggregateGroup(ledgerHome, index, input.groups[1]);
+  const group0 = await aggregateGroup(index, input.groups[0], ensureIssuePage);
+  const group1 = await aggregateGroup(index, input.groups[1], ensureIssuePage);
   return {
     mode: "cohort",
     groups: [group0, group1],
