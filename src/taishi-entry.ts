@@ -19,7 +19,11 @@ import {
   type TaishiCohortModeInput,
   type TaishiCohortModeResult,
 } from "./taishi-cohort.ts";
-import { scanTaishiIssueRuns, type TaishiReadableRunFacts } from "./taishi-ledger.ts";
+import {
+  scanTaishiIssueRuns,
+  type TaishiReadableRunFacts,
+  type TaishiScopedRunScan,
+} from "./taishi-ledger.ts";
 import {
   readTaishiLibraryIndexPage,
   rowFromIssueMetricsPage,
@@ -228,6 +232,8 @@ export async function readOrComputeTaishiIssuePage(
 
 async function runTaishiIssueMode(
   input: TaishiIssueModeInput | TaishiMergedPullRequest,
+  /** Caller-supplied scan facts — skip a second ledger walk when already scanned. */
+  precomputedScan?: TaishiScopedRunScan,
 ): Promise<TaishiIssueModeResult> {
   const ledgerHome = resolveActivationLedgerHome();
   const projectRoot = input.projectRoot;
@@ -235,9 +241,10 @@ async function runTaishiIssueMode(
   const ticketNumber =
     "ticketNumber" in input ? input.ticketNumber : undefined;
 
-  const scan = ticketNumber === undefined
-    ? await scanTaishiIssueRuns({ projectRoot })
-    : await scanTaishiIssueRuns({ projectRoot, ticketNumber });
+  const scan = precomputedScan ??
+    (ticketNumber === undefined
+      ? await scanTaishiIssueRuns({ projectRoot })
+      : await scanTaishiIssueRuns({ projectRoot, ticketNumber }));
 
   // exactOptionalPropertyTypes: only pass optional faces when caller supplied them.
   const issueNumber =
@@ -307,8 +314,7 @@ async function runTaishiSweepMode(
 async function runTaishiModelGroupsMode(
   input: TaishiModelGroupsModeInput,
 ): Promise<TaishiModelGroupsModeResult> {
-  // Resolve ledger home for side-effect-free topology readiness (scan uses it).
-  resolveActivationLedgerHome();
+  const ledgerHome = resolveActivationLedgerHome();
 
   const runs: TaishiReadableRunFacts[] = [];
   const unreadable: TaishiUnreadableRun[] = [];
@@ -322,16 +328,29 @@ async function runTaishiModelGroupsMode(
     projectRoots.push(identity);
   }
 
-  // #338: ensure each scope root has a persisted issue page (compute-if-missing)
-  // via the sole issue kernel + existing writer, then aggregate from live scan.
-  for (const projectRoot of projectRoots) {
-    await readOrComputeTaishiIssuePage({ mode: "issue", projectRoot });
-  }
-
+  // One ledger scan per root — shared by #338 ensure-page and model-group aggregate.
+  // No second scan pass; sole issue kernel + existing writer when page is missing.
   for (const projectRoot of projectRoots) {
     const scan = await scanTaishiIssueRuns({ projectRoot });
     runs.push(...scan.runs);
     unreadable.push(...scan.unreadable);
+
+    const pagePath = taishiIssuePagePath(ledgerHome, projectRoot);
+    try {
+      const raw = await readFile(pagePath, "utf8");
+      JSON.parse(raw); // present page must parse (same loud face as readOrCompute)
+    } catch (error) {
+      if (!isMissingPathError(error)) {
+        throw new TaishiIssueComputeError({ projectRoot, cause: error });
+      }
+      try {
+        // Reuse this root's scan facts — no second ledger walk on compute-if-missing.
+        await runTaishiIssueMode({ mode: "issue", projectRoot }, scan);
+      } catch (computeError) {
+        if (computeError instanceof TaishiIssueComputeError) throw computeError;
+        throw new TaishiIssueComputeError({ projectRoot, cause: computeError });
+      }
+    }
   }
 
   // exactOptionalPropertyTypes: only pass mapping when caller supplied it.
@@ -353,7 +372,7 @@ async function runTaishiModelGroupsMode(
  *   When issueNumber present, also upsert library index (C2 cohort join face).
  * - Sweep mode: for each merged PR entry run issue kernel, upsert library index.
  * - Cohort mode: join library index by issueNumber → ensure pages (#338) → contrast.
- * - Model-groups mode: issue-set scope → ensure pages (#338) → scan union → aggregate.
+ * - Model-groups mode: issue-set scope → one scan/root (ensure page #338 + aggregate).
  * Metric-family kernels (B/C waves) drop a module under taishi-metric-families/
  * and consume scan facts without opening a second entry or second parse kernel.
  * Machine home is package-owned (ADR 0048) — never an invocation field.
