@@ -8,14 +8,15 @@ export const REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
 });
 export const REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
     adapterId: "reviewer-axis-output",
-    version: 4,
-    implementationSha256: sha256Hex("reviewer-axis-output:v4:single-axis-verbatim-report+standards-three-priorities"),
+    version: 1,
+    implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities"),
 });
 /**
  * Package-owned #1185 review verification cadence.
- * Consumed by parent Reviewer system-prompt injection and the single evidence-child system-prompt carrier.
- * Not duplicated into axis leg prompts (Standards/Spec children already receive it via system prompt).
- * Graded guidance only: does not narrow ADR 0064 tools and adds no command ban, allowlist, or runtime block.
+ * Single true source consumed by two real actor carriers: parent Reviewer system-prompt injection
+ * and evidence-child system prompt. Not part of axis-adapter identity or axis leg prompts.
+ * Graded guidance only: focused tests allowed; full suite not forbidden but avoid frequent every-round reruns.
+ * Does not narrow ADR 0064 tools and adds no command ban, allowlist, or runtime block.
  */
 export const REVIEWER_VERIFICATION_BOUNDARY = [
     "Verification-Boundary: you may run focused product tests during this review turn when independent verification needs them.",

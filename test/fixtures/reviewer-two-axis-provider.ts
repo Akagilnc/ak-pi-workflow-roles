@@ -6,11 +6,15 @@ import {
   type Provider,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { REVIEWER_AXIS_OUTPUT_ADAPTER } from "../../src/reviewer-construction.ts";
+import {
+  REVIEWER_AXIS_OUTPUT_ADAPTER,
+  REVIEWER_VERIFICATION_BOUNDARY,
+} from "../../src/reviewer-construction.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 
 function axisFromPrompt(text: string): "standards" | "spec" | undefined {
+  // Identity from typed package constant — no hard-coded version contract in the fixture.
   const prefix = `Axis-Output-Adapter: ${REVIEWER_AXIS_OUTPUT_ADAPTER.adapterId}@${REVIEWER_AXIS_OUTPUT_ADAPTER.version}`;
   if (text.includes(`${prefix}:standards`)) return "standards";
   if (text.includes(`${prefix}:spec`)) return "spec";
@@ -25,6 +29,13 @@ function userText(context: Context): string {
     : message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
 }
 
+/** Fail closed if the real evidence-child system prompt lacks the package verification carrier. */
+function assertEvidenceChildBoundary(context: Context): void {
+  if (!context.systemPrompt?.includes(REVIEWER_VERIFICATION_BOUNDARY)) {
+    throw new Error("evidence-child system prompt missing package verification boundary");
+  }
+}
+
 /** Offline provider for public ak-role Reviewer fixed two-axis + auditor chain. */
 export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
   const faux = fauxProvider({
@@ -35,6 +46,7 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
   const axisSeen = new Set<string>();
   faux.setResponses([
     (context) => {
+      assertEvidenceChildBoundary(context);
       const axis = axisFromPrompt(userText(context));
       if (axis === undefined) throw new Error("child prompt missing typed axis adapter");
       axisSeen.add(axis);
@@ -45,6 +57,7 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
       );
     },
     (context) => {
+      assertEvidenceChildBoundary(context);
       const axis = axisFromPrompt(userText(context));
       if (axis === undefined) throw new Error("second child prompt missing typed axis adapter");
       axisSeen.add(axis);

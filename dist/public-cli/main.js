@@ -16745,10 +16745,8 @@ var init_reviewer_construction = __esm({
     });
     REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
       adapterId: "reviewer-axis-output",
-      version: 4,
-      implementationSha256: sha256Hex(
-        "reviewer-axis-output:v4:single-axis-verbatim-report+standards-three-priorities"
-      )
+      version: 1,
+      implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities")
     });
     REVIEWER_VERIFICATION_BOUNDARY = [
       "Verification-Boundary: you may run focused product tests during this review turn when independent verification needs them.",
