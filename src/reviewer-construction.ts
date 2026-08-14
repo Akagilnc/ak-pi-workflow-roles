@@ -101,7 +101,7 @@ export function reviewerAxisMethodAdapter(axis: ReviewerAxis): string {
 }
 
 export type ConstructedReviewerLeg = Readonly<{ axis: "standards" | "spec"; prompt: ReviewerPromptText }>;
-/** Independent discovery result for authoritative Spec materials. */
+/** Independent discovery result for authoritative Spec materials (code-review Skill step 2). */
 export type ReviewerSpecAuthorityDiscovery = Readonly<{ status: "available" | "missing" }>;
 /** Spec-child cardinality decision recorded on the accepted dispatch. */
 export type ReviewerSpecDisposition = "launched" | "skipped-missing";
@@ -121,20 +121,74 @@ export type ConstructedReviewerDispatch = Readonly<{
   legs: readonly ConstructedReviewerLeg[];
 }>;
 
+/** Issue / MR reference shapes from code-review Skill step 2 (commit-message scan). */
+export function messageHasIssueReference(text: string): boolean {
+  return (
+    /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+\b/i.test(text) ||
+    /(?:^|[\s(,[{])#\d+\b/.test(text) ||
+    /(?:^|[\s(,[{])!\d+\b/.test(text) ||
+    /https?:\/\/\S+\/(?:issues|pull|merge_requests)\/\d+/i.test(text)
+  );
+}
+
+const GENERIC_FEATURE_TOKENS = new Set(["", "head", "main", "master", "trunk", "develop", "development"]);
+
+/** Normalize branch/path tokens for local Spec path matching. */
+export function normalizeSpecFeatureToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+export function isMatchableSpecFeatureToken(token: string): boolean {
+  const normalized = normalizeSpecFeatureToken(token);
+  return normalized.length >= 3 && !GENERIC_FEATURE_TOKENS.has(normalized);
+}
+
 /**
- * Spec-child launch decision.
- * - Supplied authorityRefs ⇒ Spec materials present ⇒ launch Spec.
- * - Confirmed missing discovery AND no refs ⇒ skip Spec (canonical missing-Spec).
- * - Otherwise ⇒ launch Spec so independent discovery remains possible.
- * Absence of refs alone is never treated as missing Spec.
+ * Unique pure owner of Skill step 2 Spec-authority discovery for child cardinality.
+ * - Supplied authorityRefs ⇒ available.
+ * - Issue/MR refs in range commit messages ⇒ available (independent discovery).
+ * - Local docs/specs/.scratch paths matching feature tokens ⇒ available.
+ * - Otherwise ⇒ confirmed missing (skip Spec child).
+ * Absence of authorityRefs alone is never treated as missing Spec.
+ */
+export function discoverReviewerSpecAuthority(input: {
+  authorityRefs: readonly string[];
+  commitMessages: readonly string[];
+  localSpecCandidatePaths: readonly string[];
+  featureTokens: readonly string[];
+}): ReviewerSpecAuthorityDiscovery {
+  if (input.authorityRefs.length > 0) {
+    return Object.freeze({ status: "available" as const });
+  }
+  if (input.commitMessages.some((message) => messageHasIssueReference(message))) {
+    return Object.freeze({ status: "available" as const });
+  }
+  const tokens = input.featureTokens
+    .map(normalizeSpecFeatureToken)
+    .filter(isMatchableSpecFeatureToken);
+  if (tokens.length > 0) {
+    for (const relativePath of input.localSpecCandidatePaths) {
+      const normalizedPath = normalizeSpecFeatureToken(relativePath);
+      if (tokens.some((token) => normalizedPath.includes(token))) {
+        return Object.freeze({ status: "available" as const });
+      }
+    }
+  }
+  return Object.freeze({ status: "missing" as const });
+}
+
+/**
+ * Spec-child launch decision from the unique discovery owner result.
+ * - available ⇒ launch Spec.
+ * - missing AND no supplied refs ⇒ skip Spec (canonical missing-Spec).
+ * Supplied refs are always treated as available by discoverReviewerSpecAuthority.
  */
 export function shouldLaunchSpecEvidenceChild(input: {
   authorityRefs: readonly string[];
-  specAuthorityDiscovery?: ReviewerSpecAuthorityDiscovery;
+  specAuthorityDiscovery: ReviewerSpecAuthorityDiscovery;
 }): boolean {
   if (input.authorityRefs.length > 0) return true;
-  if (input.specAuthorityDiscovery?.status === "missing") return false;
-  return true;
+  return input.specAuthorityDiscovery.status !== "missing";
 }
 
 /**
@@ -158,15 +212,16 @@ export function constructReviewerDispatch(input: {
   reviewScopeKeys?: readonly string[];
   /** Durable references/URLs only; injected exclusively into the Spec leg. */
   authorityRefs?: readonly string[];
-  /** Independent discovery result; only confirmed missing omits the Spec child. */
-  specAuthorityDiscovery?: ReviewerSpecAuthorityDiscovery;
+  /**
+   * Result of discoverReviewerSpecAuthority (unique production owner).
+   * Only confirmed missing omits the Spec child.
+   */
+  specAuthorityDiscovery: ReviewerSpecAuthorityDiscovery;
 }): ConstructedReviewerDispatch {
   const authorityRefs = Object.freeze([...(input.authorityRefs ?? [])]);
   const launchSpec = shouldLaunchSpecEvidenceChild({
     authorityRefs,
-    ...(input.specAuthorityDiscovery === undefined
-      ? {}
-      : { specAuthorityDiscovery: input.specAuthorityDiscovery }),
+    specAuthorityDiscovery: input.specAuthorityDiscovery,
   });
   const specDisposition: ReviewerSpecDisposition = launchSpec ? "launched" : "skipped-missing";
   const common = [

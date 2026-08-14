@@ -25,6 +25,10 @@ export type ReviewerPinnedGitReader = {
   snapshot(): Promise<ReviewerPinnedTarget>;
   resolve(base: string): Promise<string>;
   range(base: string): Promise<ReviewerRange>;
+  /** Commit subjects/bodies for the fixed range (Skill step 2 issue-ref scan). */
+  rangeCommitMessages(range: ReviewerRange): Promise<readonly string[]>;
+  /** Branch/feature name tokens at the pinned target for local Spec path matching. */
+  featureTokens(): Promise<readonly string[]>;
 };
 
 const execFileAsync = promisify(execFile);
@@ -138,6 +142,43 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
       ]);
       if (diff.length === 0) invalid("range-invalid", "review range must contain a non-empty diff between base and pinned target");
       return Object.freeze({ base: mergeBase, target: targetHead, diffCommand, diffSha256: sha256Hex(Uint8Array.from(diff)), commits: Object.freeze(commitsText ? commitsText.split("\n") : []) });
+    },
+    async rangeCommitMessages(range: ReviewerRange) {
+      if (range.commits.length === 0) return Object.freeze([]);
+      const text = await gitText(repositoryRoot, [
+        "log",
+        "--format=%B%x1e",
+        `${range.base}..${range.target}`,
+      ]);
+      return Object.freeze(
+        text
+          .split("\x1e")
+          .map((message) => message.trim())
+          .filter((message) => message.length > 0),
+      );
+    },
+    async featureTokens() {
+      const names = new Set<string>();
+      try {
+        const pointed = await gitText(repositoryRoot, [
+          "branch",
+          "--points-at",
+          targetHead,
+          "--format=%(refname:short)",
+        ]);
+        for (const name of pointed.split("\n")) {
+          if (name.trim() !== "") names.add(name.trim());
+        }
+      } catch {
+        // Detached or bare tip is fine — featureTokens may be empty.
+      }
+      try {
+        const symbolic = await gitText(repositoryRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+        if (symbolic.trim() !== "") names.add(symbolic.trim());
+      } catch {
+        // Detached HEAD is fine.
+      }
+      return Object.freeze([...names]);
     },
 
   });

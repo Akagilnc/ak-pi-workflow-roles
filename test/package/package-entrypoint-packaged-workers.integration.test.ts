@@ -387,7 +387,15 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
               invocation: (request: string) => request,
               captureExpansion: () => ({ name: "code-review" as const, location: "/skill", content: skill }),
             }),
-            createPinnedGitReader: async () => ({ pin, snapshot: async () => pin, resolve: async () => "base", range: async () => ({ base: "base", target: "target", diffCommand: "git diff base...target", diffSha256: "a".repeat(64), commits: ["target"] }), material: async () => new TextEncoder().encode("material") }),
+            createPinnedGitReader: async () => ({
+              pin,
+              snapshot: async () => pin,
+              resolve: async () => "base",
+              range: async () => ({ base: "base", target: "target", diffCommand: "git diff base...target", diffSha256: "a".repeat(64), commits: ["target"] }),
+              rangeCommitMessages: async () => Object.freeze(["fixture #1"]),
+              featureTokens: async () => Object.freeze([]),
+              material: async () => new TextEncoder().encode("material"),
+            }),
             runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
             auditCompliance,
           }, { failInfrastructure(error: unknown) { throw error; } });
