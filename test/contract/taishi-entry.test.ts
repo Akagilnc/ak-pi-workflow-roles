@@ -24,6 +24,7 @@ import {
   TAISHI_ISSUE_METRIC_FAMILIES,
   TAISHI_ISSUE_METRIC_FAMILIES_DIR,
 } from "../../src/taishi-metric-families.ts";
+import type { TaishiRoundTimelineSection } from "../../src/taishi-metric-families/round-timeline.ts";
 import {
   taishiIssuePagePath,
   type TaishiIssueMetricsPage,
@@ -36,8 +37,11 @@ const ISSUE_PROJECT_ROOT = "/taishi-fixture/issue-demo";
 const BOOK = "fixture-book";
 const LEG_A1_RUN = "019ff000-0001-7000-8000-0000000000a1";
 const LEG_A1_DIR = `${LEG_A1_RUN}@coder`;
+const LEG_B2_RUN = "019ff000-0002-7000-8000-0000000000b2";
+const LEG_C3_RUN = "019ff000-0003-7000-8000-0000000000c3";
+const LEG_E5_RUN = "019ff000-0005-7000-8000-0000000000e5";
 
-/** Hand-computed from fixture (scope = ISSUE_PROJECT_ROOT). */
+/** Hand-computed from fixture (scope = ISSUE_PROJECT_ROOT). Legs sorted book/role/runId. */
 const EXPECTED_LEGS = [
   {
     runId: LEG_A1_RUN,
@@ -45,7 +49,12 @@ const EXPECTED_LEGS = [
     role: "coder",
   },
   {
-    runId: "019ff000-0002-7000-8000-0000000000b2",
+    runId: LEG_E5_RUN,
+    book: BOOK,
+    role: "coder",
+  },
+  {
+    runId: LEG_B2_RUN,
     book: BOOK,
     role: "judge",
   },
@@ -53,7 +62,7 @@ const EXPECTED_LEGS = [
 
 const EXPECTED_UNREADABLE = [
   {
-    runId: "019ff000-0003-7000-8000-0000000000c3",
+    runId: LEG_C3_RUN,
     book: BOOK,
     missingSources: ["session-timeline"] as const,
   },
@@ -62,6 +71,7 @@ const EXPECTED_UNREADABLE = [
 /**
  * A2 seam-probe hand values from fixture sessions (readable legs only).
  * Raw frame span / tool intervals / terminal face only — no derived metrics.
+ * Sorted book/role/runId (page compose order).
  */
 const EXPECTED_A2_SEAM_PROBE = {
   kind: "taishi-a2-seam-probe",
@@ -91,7 +101,18 @@ const EXPECTED_A2_SEAM_PROBE = {
       terminal: { status: "present", file: "report.json", role: "coder" },
     },
     {
-      runId: "019ff000-0002-7000-8000-0000000000b2",
+      runId: LEG_E5_RUN,
+      book: BOOK,
+      role: "coder",
+      frameSpan: {
+        startedAt: "2026-08-01T00:01:30.000Z",
+        endedAt: "2026-08-01T00:01:35.000Z",
+      },
+      toolIntervals: [],
+      terminal: { status: "absent" },
+    },
+    {
+      runId: LEG_B2_RUN,
       book: BOOK,
       role: "judge",
       frameSpan: {
@@ -110,6 +131,54 @@ const EXPECTED_A2_SEAM_PROBE = {
     },
   ],
 } as const;
+
+/**
+ * B4 round-timeline hand values (#328).
+ * Lane = book; rows sorted by startedAt asc; unreadable without first-frame → tail.
+ * a1 wall=60_000 receipt completed (no classCount);
+ * b2 wall=8_000 receipt converged classCount=2;
+ * e5 wall=5_000 death no-receipt;
+ * c3 unreadable placeholder at end, firstFrameAt absent.
+ */
+const EXPECTED_ROUND_TIMELINE_ROWS = [
+  {
+    kind: "run" as const,
+    runId: LEG_A1_RUN,
+    book: BOOK,
+    role: "coder",
+    startedAt: "2026-08-01T00:00:00.000Z",
+    endedAt: "2026-08-01T00:01:00.000Z",
+    wallMs: 60_000,
+    terminal: { kind: "receipt" as const, status: "completed" },
+  },
+  {
+    kind: "run" as const,
+    runId: LEG_B2_RUN,
+    book: BOOK,
+    role: "judge",
+    startedAt: "2026-08-01T00:01:00.000Z",
+    endedAt: "2026-08-01T00:01:08.000Z",
+    wallMs: 8_000,
+    terminal: { kind: "receipt" as const, status: "converged", classCount: 2 },
+  },
+  {
+    kind: "run" as const,
+    runId: LEG_E5_RUN,
+    book: BOOK,
+    role: "coder",
+    startedAt: "2026-08-01T00:01:30.000Z",
+    endedAt: "2026-08-01T00:01:35.000Z",
+    wallMs: 5_000,
+    terminal: { kind: "death" as const, channel: "no-receipt" as const },
+  },
+  {
+    kind: "unreadable" as const,
+    runId: LEG_C3_RUN,
+    book: BOOK,
+    missingSources: ["session-timeline"] as const,
+    firstFrameAt: { status: "absent" as const },
+  },
+] as const;
 
 function gitPorcelain(cwd: string): string {
   return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
@@ -200,6 +269,32 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
 
       // A2: example family consumes typed per-run facts (span/tools/terminal) only.
       assert.deepEqual(first.page.a2SeamProbe, EXPECTED_A2_SEAM_PROBE);
+
+      // B4: per-lane round timeline hand-equal (receipt / death / unreadable placeholder).
+      const pageRecord = first.page as TaishiIssueMetricsPage & {
+        readonly roundTimeline?: TaishiRoundTimelineSection;
+      };
+      assert.ok(pageRecord.roundTimeline, "B4 roundTimeline section must register via family module");
+      assert.equal(pageRecord.roundTimeline.kind, "taishi-round-timeline");
+      assert.equal(pageRecord.roundTimeline.lanes.length, 1);
+      const lane = pageRecord.roundTimeline.lanes[0]!;
+      assert.equal(lane.lane, BOOK);
+      assert.equal(lane.rows.length, EXPECTED_ROUND_TIMELINE_ROWS.length);
+      for (let i = 0; i < EXPECTED_ROUND_TIMELINE_ROWS.length; i += 1) {
+        const expected = EXPECTED_ROUND_TIMELINE_ROWS[i]!;
+        const actual = lane.rows[i]!;
+        if (expected.kind === "unreadable") {
+          assert.equal(actual.kind, "unreadable");
+          if (actual.kind !== "unreadable") continue;
+          assert.equal(actual.runId, expected.runId);
+          assert.equal(actual.book, expected.book);
+          assert.deepEqual(actual.missingSources, [...expected.missingSources]);
+          assert.deepEqual(actual.firstFrameAt, expected.firstFrameAt);
+          assert.match(actual.reason, /malformed JSONL record/i);
+        } else {
+          assert.deepEqual(actual, expected);
+        }
+      }
       // 零新指标: no per-run derived duration or aggregate median on the page.
       const probe = first.page.a2SeamProbe!;
       assert.equal(
@@ -280,7 +375,7 @@ test("taishi issue-mode entry: null terminal artifact is terminal-artifact unrea
       assert.equal(result.page.unreadable.length, 2);
       assert.deepEqual(
         result.page.legs.map((leg) => leg.runId),
-        ["019ff000-0002-7000-8000-0000000000b2"],
+        [LEG_E5_RUN, LEG_B2_RUN],
       );
     });
   });
@@ -312,16 +407,28 @@ test("taishi metric-family production discovery: real family files register with
     names.includes("a2-seam-probe.ts"),
     "A2 seam-probe family module must remain registered under production discovery",
   );
+  assert.ok(
+    names.includes("round-timeline.ts"),
+    "B4 round-timeline family module must register by drop-in file only",
+  );
 
   const families = await loadTaishiIssueMetricFamilies();
   assert.ok(
     families.some((family) => family.id === "a2-seam-probe"),
     "loaded families must include a2-seam-probe",
   );
+  assert.ok(
+    families.some((family) => family.id === "round-timeline"),
+    "loaded families must include round-timeline",
+  );
   // Production registry is the same discovery product (loaded once at import).
   assert.ok(
     TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "a2-seam-probe"),
     "production registry must include a2-seam-probe",
+  );
+  assert.ok(
+    TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "round-timeline"),
+    "production registry must include round-timeline",
   );
 });
 
