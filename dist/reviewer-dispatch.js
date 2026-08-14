@@ -8,9 +8,6 @@ export {} from "./reviewer-construction.js";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.js";
 export { sha256Hex } from "./sha256.js";
 export { isReviewerPromptText as isReviewerPromptIdentity, sameReviewerPromptText as sameReviewerPromptIdentity } from "./reviewer-prompt-identity.js";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-const execFileAsync = promisify(execFile);
 const GENERIC_FEATURE_TOKENS = new Set(["", "head", "main", "master", "trunk", "develop", "development"]);
 /** Conventional branch shells that must not hide the feature token (feat/login → login). */
 const BRANCH_SHELL_PREFIX = /^(?:feat|feature|fix|bugfix|hotfix|chore|docs|refactor)-/;
@@ -93,33 +90,6 @@ export function extractReferencedAdrPaths(issueBody) {
     }
     return Object.freeze(paths);
 }
-/** Default production fetcher: `gh api repos/{owner}/{repo}/issues/{N}`. Soft-fail on any error. */
-export function createGhReviewerIssueFetcher() {
-    return async (input) => {
-        try {
-            const { stdout } = await execFileAsync("gh", [
-                "api",
-                `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`,
-                "--jq",
-                "{title: .title, body: (.body // \"\")}",
-            ], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
-            const parsed = JSON.parse(stdout);
-            if (typeof parsed !== "object" ||
-                parsed === null ||
-                typeof parsed.title !== "string" ||
-                typeof parsed.body !== "string") {
-                return undefined;
-            }
-            return Object.freeze({
-                title: parsed.title,
-                body: parsed.body,
-            });
-        }
-        catch {
-            return undefined;
-        }
-    };
-}
 /**
  * Unique production owner of code-review Skill step 2 Spec discovery (#343).
  * Primary: self-fetch latest issue by ticket number (typed → branch token → commit #N).
@@ -138,12 +108,11 @@ export async function discoverReviewerSpecAuthority(input) {
         branchNames: featureTokens,
         commitMessagesNewestFirst: commitMessages,
     });
-    // ① Primary: self-fetch latest issue + referenced docs/adr.
+    // ① Primary: self-fetch latest issue + referenced docs/adr via injected capability only.
     if (ticketResolution !== undefined) {
         const origin = await input.reader.originRepository();
-        if (origin !== undefined) {
-            const fetchIssue = input.fetchIssue ?? createGhReviewerIssueFetcher();
-            const issue = await fetchIssue({
+        if (origin !== undefined && input.fetchIssue !== undefined) {
+            const issue = await input.fetchIssue({
                 owner: origin.owner,
                 repo: origin.repo,
                 ticketNumber: ticketResolution.adopted.ticketNumber,

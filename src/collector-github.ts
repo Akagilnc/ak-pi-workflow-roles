@@ -434,6 +434,52 @@ export function createGhApiRunner(
   };
 }
 
+export type GhIssueSoftFetchResult = Readonly<{ title: string; body: string }>;
+/**
+ * Soft single-issue fetch over the shared gh api runner.
+ * undefined = unreachable / not found / non-2xx / parse failure — never throws.
+ */
+export type GhIssueSoftFetcher = (input: {
+  owner: string;
+  repo: string;
+  ticketNumber: number;
+}) => Promise<GhIssueSoftFetchResult | undefined>;
+
+/**
+ * Production issue-fetch capability owned by the shared gh execution seam.
+ * Reuses createGhApiRunner lifecycle; soft-fails so callers can degrade.
+ */
+export function createGhIssueSoftFetcher(
+  runner: GhApiRunner = createGhApiRunner(),
+): GhIssueSoftFetcher {
+  return async (input) => {
+    try {
+      const path = `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
+      const response = await runner([
+        "api",
+        "--hostname",
+        "github.com",
+        "--include",
+        "-X",
+        "GET",
+        path,
+      ]);
+      if (response.status < 200 || response.status >= 300) return undefined;
+      const parsed: unknown = JSON.parse(response.bodyText);
+      if (typeof parsed !== "object" || parsed === null) return undefined;
+      const title = (parsed as { title?: unknown }).title;
+      if (typeof title !== "string") return undefined;
+      // Match former gh --jq `(.body // "")`: null/missing body projects to empty string.
+      const bodyRaw = (parsed as { body?: unknown }).body;
+      const body = typeof bodyRaw === "string" ? bodyRaw : bodyRaw == null ? "" : undefined;
+      if (body === undefined) return undefined;
+      return Object.freeze({ title, body });
+    } catch {
+      return undefined;
+    }
+  };
+}
+
 export function createGhCollectorGitHubTransport(
   runner: GhApiRunner = createGhApiRunner(),
 ): CollectorGitHubTransport {
