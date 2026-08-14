@@ -5,14 +5,15 @@
  * A2: scan retains typed per-run facts; page builder folds registered metric families.
  * C1: sweep = merged PR list + LOC → backfill issue pages + maintain library index.
  * C2: cohort = two issue-number groups → join library index → contrast query output.
+ * C3: model-groups = caller issue set → scan union → per-leg model aggregate.
  */
-import { resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
+import { physicalPathIdentity, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
 import {
   runTaishiCohortMode,
   type TaishiCohortModeInput,
   type TaishiCohortModeResult,
 } from "./taishi-cohort.ts";
-import { scanTaishiIssueRuns } from "./taishi-ledger.ts";
+import { scanTaishiIssueRuns, type TaishiReadableRunFacts } from "./taishi-ledger.ts";
 import {
   readTaishiLibraryIndexPage,
   rowFromIssueMetricsPage,
@@ -21,9 +22,14 @@ import {
   type TaishiLibraryIndexPage,
 } from "./taishi-index.ts";
 import {
+  buildTaishiModelGroupsPage,
+  type TaishiModelGroupsPage,
+} from "./taishi-model-groups.ts";
+import {
   buildTaishiIssueMetricsPage,
   writeTaishiIssueMetricsPage,
   type TaishiIssueMetricsPage,
+  type TaishiUnreadableRun,
 } from "./taishi-page.ts";
 
 /** Issue-mode typed input — single-issue scope via projectRoot mechanical key. */
@@ -59,10 +65,26 @@ export type TaishiSweepModeInput = {
   readonly mergedPullRequests: readonly TaishiMergedPullRequest[];
 };
 
+/**
+ * Model-groups mode typed input — caller-supplied issue set (+ optional alias map).
+ * Scope is never guessed; empty projectRoots → empty groups.
+ */
+export type TaishiModelGroupsModeInput = {
+  readonly mode: "model-groups";
+  /** Issue set (projectRoot mechanical keys) defining the stats scope. */
+  readonly projectRoots: readonly string[];
+  /**
+   * Optional combination mapping: raw group key → display alias only.
+   * Must not merge groups or change denominators; unmapped keys keep raw name.
+   */
+  readonly combinationMapping?: Readonly<Record<string, string>>;
+};
+
 export type TaishiInput =
   | TaishiIssueModeInput
   | TaishiSweepModeInput
-  | TaishiCohortModeInput;
+  | TaishiCohortModeInput
+  | TaishiModelGroupsModeInput;
 
 export type TaishiIssueModeResult = {
   readonly mode: "issue";
@@ -78,10 +100,17 @@ export type TaishiSweepModeResult = {
   readonly indexPath: string;
 };
 
+export type TaishiModelGroupsModeResult = {
+  readonly mode: "model-groups";
+  /** Query output — not persisted (PRD ④ is on-demand typed output). */
+  readonly page: TaishiModelGroupsPage;
+};
+
 export type TaishiResult =
   | TaishiIssueModeResult
   | TaishiSweepModeResult
-  | TaishiCohortModeResult;
+  | TaishiCohortModeResult
+  | TaishiModelGroupsModeResult;
 
 async function runTaishiIssueMode(
   input: TaishiIssueModeInput | TaishiMergedPullRequest,
@@ -136,12 +165,50 @@ async function runTaishiSweepMode(
   return { mode: "sweep", issuePages, index, indexPath };
 }
 
+async function runTaishiModelGroupsMode(
+  input: TaishiModelGroupsModeInput,
+): Promise<TaishiModelGroupsModeResult> {
+  // Resolve ledger home for side-effect-free topology readiness (scan uses it).
+  resolveActivationLedgerHome();
+
+  const runs: TaishiReadableRunFacts[] = [];
+  const unreadable: TaishiUnreadableRun[] = [];
+  // Dedupe scope roots by physical identity while preserving caller order for scan.
+  const seen = new Set<string>();
+  const projectRoots: string[] = [];
+  for (const root of input.projectRoots) {
+    const identity = physicalPathIdentity(root);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    projectRoots.push(identity);
+  }
+
+  for (const projectRoot of projectRoots) {
+    const scan = await scanTaishiIssueRuns({ projectRoot });
+    runs.push(...scan.runs);
+    unreadable.push(...scan.unreadable);
+  }
+
+  // exactOptionalPropertyTypes: only pass mapping when caller supplied it.
+  const page = input.combinationMapping === undefined
+    ? buildTaishiModelGroupsPage({ projectRoots, runs, unreadable })
+    : buildTaishiModelGroupsPage({
+        projectRoots,
+        runs,
+        unreadable,
+        combinationMapping: input.combinationMapping,
+      });
+
+  return { mode: "model-groups", page };
+}
+
 /**
  * Sole taishi entry.
  * - Issue mode: scope → scan (typed facts) → family compose → atomic replace.
  *   When issueNumber present, also upsert library index (C2 cohort join face).
  * - Sweep mode: for each merged PR entry run issue kernel, upsert library index.
  * - Cohort mode: join library index by issueNumber → fold present pages → contrast.
+ * - Model-groups mode: issue-set scope → scan union → per-leg model aggregate.
  * Metric-family kernels (B/C waves) drop a module under taishi-metric-families/
  * and consume scan facts without opening a second entry or second parse kernel.
  * Machine home is package-owned (ADR 0048) — never an invocation field.
@@ -149,6 +216,9 @@ async function runTaishiSweepMode(
 export async function runTaishi(input: TaishiIssueModeInput): Promise<TaishiIssueModeResult>;
 export async function runTaishi(input: TaishiSweepModeInput): Promise<TaishiSweepModeResult>;
 export async function runTaishi(input: TaishiCohortModeInput): Promise<TaishiCohortModeResult>;
+export async function runTaishi(
+  input: TaishiModelGroupsModeInput,
+): Promise<TaishiModelGroupsModeResult>;
 export async function runTaishi(input: TaishiInput): Promise<TaishiResult>;
 export async function runTaishi(input: TaishiInput): Promise<TaishiResult> {
   if (input.mode === "sweep") {
@@ -157,6 +227,9 @@ export async function runTaishi(input: TaishiInput): Promise<TaishiResult> {
   if (input.mode === "cohort") {
     const ledgerHome = resolveActivationLedgerHome();
     return runTaishiCohortMode(ledgerHome, input);
+  }
+  if (input.mode === "model-groups") {
+    return runTaishiModelGroupsMode(input);
   }
   return runTaishiIssueMode(input);
 }

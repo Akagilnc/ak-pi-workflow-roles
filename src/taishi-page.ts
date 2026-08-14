@@ -23,7 +23,9 @@ import { composeTaishiMetricFamilySections } from "./taishi-metric-family.ts";
 export type TaishiMissingSource =
   | "session-timeline"
   | "tool-association"
-  | "terminal-artifact";
+  | "terminal-artifact"
+  /** Model-groups mode: leg has no usable session model identity. */
+  | "session-model";
 
 /**
  * First usable session timestamp retained for an unreadable run when the

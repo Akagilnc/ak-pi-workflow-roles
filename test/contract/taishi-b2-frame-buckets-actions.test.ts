@@ -197,6 +197,7 @@ test("taishi B2 kernel: out-of-frame tool intervals clip so tool+model ≡ wall"
       },
     ],
     terminal: { status: "absent" },
+    models: [],
   });
 
   assert.equal(metrics.wallMs, 10_000);
