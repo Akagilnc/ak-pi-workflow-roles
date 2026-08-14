@@ -24,10 +24,16 @@ import {
   TAISHI_ISSUE_METRIC_FAMILIES,
   TAISHI_ISSUE_METRIC_FAMILIES_DIR,
 } from "../../src/taishi-metric-families.ts";
+import type { TaishiLegWallClockSection } from "../../src/taishi-metric-families/leg-wall-clock.ts";
 import {
   taishiIssuePagePath,
   type TaishiIssueMetricsPage,
 } from "../../src/taishi-page.ts";
+
+/** B1 section is contributed by family module — not on the A1/A2 page envelope type. */
+type PageWithLegWallClock = TaishiIssueMetricsPage & {
+  readonly legWallClock?: TaishiLegWallClockSection;
+};
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/taishi/home");
@@ -109,6 +115,32 @@ const EXPECTED_A2_SEAM_PROBE = {
       terminal: { status: "present", file: "report.json", role: "judge" },
     },
   ],
+} as const;
+
+/**
+ * B1 leg-wall-clock hand values from A1 fixture readable legs only.
+ * a1 frame 00:00:00→00:01:00 = 60_000ms; b2 00:01:00→00:01:08 = 8_000ms.
+ * Ranking wall-clock desc; median even-sample mean; total = Σ walls.
+ * Damaged/out-of-scope runs never enter (A1 contract).
+ */
+const EXPECTED_LEG_WALL_CLOCK = {
+  kind: "taishi-leg-wall-clock",
+  ranking: [
+    {
+      runId: LEG_A1_RUN,
+      book: BOOK,
+      role: "coder",
+      wallMs: 60_000,
+    },
+    {
+      runId: "019ff000-0002-7000-8000-0000000000b2",
+      book: BOOK,
+      role: "judge",
+      wallMs: 8_000,
+    },
+  ],
+  medianWallMs: 34_000,
+  totalElapsedMs: 68_000,
 } as const;
 
 function gitPorcelain(cwd: string): string {
@@ -288,12 +320,50 @@ test("taishi issue-mode entry: null terminal artifact is terminal-artifact unrea
 
 test("taishi shared median primitive: even-sample mean of two middles (fixture wall spans)", () => {
   // Fixture readable walls: a1=60000, b2=8000 → (8000+60000)/2 = 34000.
-  // Proved on the shared primitive only — not persisted on the issue page.
+  // Shared primitive remains the sole even-sample convention owner.
   assert.equal(medianNumber([60_000, 8_000]), 34_000);
   assert.equal(medianNumber([8_000, 60_000]), 34_000);
   assert.equal(medianNumber([3]), 3);
   assert.equal(medianNumber([1, 2, 3]), 2);
   assert.equal(medianNumber([]), undefined);
+});
+
+test("taishi B1 leg-wall-clock family: fixture ranking/median/total hand-equal; damaged excluded", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async () => {
+      const result = await runTaishi({
+        mode: "issue",
+        projectRoot: ISSUE_PROJECT_ROOT,
+      });
+      const page = result.page as PageWithLegWallClock;
+
+      // Ticket-pinned acceptance: ranking desc + median 34_000 + total 68_000.
+      assert.deepEqual(page.legWallClock, EXPECTED_LEG_WALL_CLOCK);
+      assert.equal(page.legWallClock?.medianWallMs, 34_000);
+      assert.equal(page.legWallClock?.totalElapsedMs, 68_000);
+      assert.deepEqual(
+        page.legWallClock?.ranking.map((leg) => leg.wallMs),
+        [60_000, 8_000],
+      );
+
+      // Damaged run stays unreadable; board covers exactly the readable leg set.
+      assert.equal(page.unreadableCount, 1);
+      assert.equal(page.unreadable[0]!.runId, EXPECTED_UNREADABLE[0]!.runId);
+      assert.equal(page.legWallClock?.ranking.length, 2);
+      assert.equal(page.legWallClock?.ranking.length, page.legs.length);
+      assert.deepEqual(
+        new Set(page.legWallClock?.ranking.map((leg) => leg.runId)),
+        new Set(page.legs.map((leg) => leg.runId)),
+      );
+
+      // Family module is discovery-registered (drop-in file only).
+      const families = await loadTaishiIssueMetricFamilies();
+      assert.ok(
+        families.some((family) => family.id === "leg-wall-clock"),
+        "leg-wall-clock family must register via production discovery",
+      );
+    });
+  });
 });
 
 test("taishi metric-family production discovery: real family files register without shared-list edits", async () => {
