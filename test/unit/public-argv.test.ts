@@ -1,41 +1,75 @@
 /**
- * Public argv grammar seams — lock launcher helpers to real CLI parsers.
+ * Public argv grammar seams — behavioral locks on the single production source.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import {
-  parseCoderArgv,
-  parseCollectorArgv,
-  parseDoctorArgv,
-  parseFixerArgv,
-  parseJudgeArgv,
-  parseMergerArgv,
-  parseReviewerArgv,
-} from "../../src/public-cli/invocation.ts";
 import {
   injectPublicAttachArg,
   publicCliCommandIndex,
   publicRoleAcceptsAttach,
+  takePublicGlobalFlag,
 } from "../../src/public-cli/public-argv.ts";
-import { PUBLIC_CALLABLE_ROLES } from "../../src/public-cli/registry.ts";
 
-test("publicCliCommandIndex matches real global-flag grammar", () => {
+test("takePublicGlobalFlag is the sole global-flag grammar", () => {
+  assert.deepEqual(takePublicGlobalFlag(["--help"], 0), {
+    flag: "help",
+    consume: 1,
+  });
+  assert.deepEqual(takePublicGlobalFlag(["-h", "roles"], 0), {
+    flag: "help",
+    consume: 1,
+  });
+  assert.deepEqual(takePublicGlobalFlag(["--model", "m", "judge"], 0), {
+    flag: "model",
+    consume: 2,
+    value: "m",
+  });
+  assert.deepEqual(takePublicGlobalFlag(["--model"], 0), {
+    flag: "model",
+    consume: 1,
+    value: undefined,
+  });
+  assert.deepEqual(takePublicGlobalFlag(["--model=m"], 0), {
+    flag: "model",
+    consume: 1,
+    value: "m",
+  });
+  assert.deepEqual(takePublicGlobalFlag(["--thinking", "high"], 0), {
+    flag: "thinking",
+    consume: 2,
+    raw: "high",
+  });
+  assert.deepEqual(takePublicGlobalFlag(["--thinking=low"], 0), {
+    flag: "thinking",
+    consume: 1,
+    raw: "low",
+  });
+  // Unknown dashed tokens are not global (positional under parseArgv).
+  assert.equal(takePublicGlobalFlag(["--unknown", "judge"], 0), undefined);
+  assert.equal(takePublicGlobalFlag(["judge"], 0), undefined);
+});
+
+test("publicCliCommandIndex uses takePublicGlobalFlag grammar", () => {
   assert.equal(publicCliCommandIndex(["judge", "x"]), 0);
   assert.equal(publicCliCommandIndex(["--model", "m", "fixer", "x"]), 2);
   assert.equal(publicCliCommandIndex(["--thinking=high", "coder"]), 1);
   assert.equal(publicCliCommandIndex(["--help", "roles"]), 1);
-  assert.equal(publicCliCommandIndex(["--model", "m", "--thinking", "low", "doctor"]), 4);
-  // Unknown dashed tokens are positional (same as parseArgv).
+  assert.equal(
+    publicCliCommandIndex(["--model", "m", "--thinking", "low", "doctor"]),
+    4,
+  );
   assert.equal(publicCliCommandIndex(["--unknown", "judge"]), 0);
   assert.equal(publicCliCommandIndex(["--"]), undefined);
   assert.equal(publicCliCommandIndex(["--", "merger"]), 1);
 });
 
-test("injectPublicAttachArg inserts only for attach-capable commands", () => {
+test("injectPublicAttachArg inserts only when role argv accepts --attach", () => {
   assert.deepEqual(
-    injectPublicAttachArg(["--model", "m", "judge", "--project", "/p", "go"], "/t.md"),
+    injectPublicAttachArg(
+      ["--model", "m", "judge", "--project", "/p", "go"],
+      "/t.md",
+    ),
     ["--model", "m", "judge", "--attach", "/t.md", "--project", "/p", "go"],
   );
   assert.deepEqual(
@@ -45,60 +79,14 @@ test("injectPublicAttachArg inserts only for attach-capable commands", () => {
   assert.deepEqual(injectPublicAttachArg(["roles"], "/t.md"), ["roles"]);
 });
 
-test("publicRoleAcceptsAttach tracks parse*Argv attach grammar for every public role", () => {
-  const probes: Record<
-    (typeof PUBLIC_CALLABLE_ROLES)[number],
-    () => void
-  > = {
-    judge: () => {
-      parseJudgeArgv(["--attach", "/t.md", "instruction"]);
-    },
-    coder: () => {
-      parseCoderArgv(["--attach", "/t.md", "instruction"]);
-    },
-    fixer: () => {
-      parseFixerArgv(["--attach", "/t.md", "instruction"]);
-    },
-    collector: () => {
-      parseCollectorArgv(["--attach", "/t.md", "--pr", "1", "instruction"]);
-    },
-    doctor: () => {
-      parseDoctorArgv(["--attach", "/t.md", "--issue", "1", "instruction"]);
-    },
-    merger: () => {
-      parseMergerArgv(["--attach", "/t.md", "instruction"]);
-    },
-    reviewer: () => {
-      parseReviewerArgv(["--attach", "/t.md", "--base", "HEAD"]);
-    },
-  };
-
-  for (const role of PUBLIC_CALLABLE_ROLES) {
-    const accepts = publicRoleAcceptsAttach(role);
-    let threwAttachUnknown = false;
-    try {
-      probes[role]();
-    } catch (error) {
-      assert.ok(error instanceof CliUsageError, `${role} probe error type`);
-      threwAttachUnknown =
-        error.message.includes("unknown") && error.message.includes("--attach");
-      if (!threwAttachUnknown) throw error;
-    }
-    if (accepts) {
-      assert.equal(
-        threwAttachUnknown,
-        false,
-        `${role} parser must accept --attach when publicRoleAcceptsAttach is true`,
-      );
-    } else {
-      assert.equal(
-        threwAttachUnknown,
-        true,
-        `${role} parser must reject --attach when publicRoleAcceptsAttach is false`,
-      );
-    }
-  }
-
+test("publicRoleAcceptsAttach derives from production parse*Argv contracts", () => {
+  assert.equal(publicRoleAcceptsAttach("judge"), true);
+  assert.equal(publicRoleAcceptsAttach("coder"), true);
+  assert.equal(publicRoleAcceptsAttach("fixer"), true);
+  assert.equal(publicRoleAcceptsAttach("collector"), true);
+  assert.equal(publicRoleAcceptsAttach("doctor"), true);
+  assert.equal(publicRoleAcceptsAttach("merger"), true);
+  assert.equal(publicRoleAcceptsAttach("reviewer"), false);
   assert.equal(publicRoleAcceptsAttach("roles"), false);
   assert.equal(publicRoleAcceptsAttach("not-a-role"), false);
 });

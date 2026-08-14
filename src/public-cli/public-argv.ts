@@ -1,26 +1,66 @@
 /**
- * Public `ak-role` argv grammar seams shared by the CLI and internal launchers.
- *
- * Keep aligned with `parseArgv` global flags in `./cli.ts` and with each
- * role's `parse*Argv` in `./invocation.ts` (whether `--attach` is accepted).
+ * Public `ak-role` argv grammar seams shared by the production CLI and
+ * internal launchers. Global-flag recognition here is the sole definition;
+ * `parseArgv` in `./cli.ts` consumes it. Attachment capability is derived from
+ * the real role `parse*Argv` contracts in `./invocation.ts` — not a parallel set.
  */
+import { publicRoleAcceptsAttach } from "./invocation.ts";
+export { publicRoleAcceptsAttach };
 
-/** Span of a leading global flag at `index`, or 0 when the token is not global. */
-function globalFlagSpan(argv: readonly string[], index: number): number {
+export type TakenPublicGlobalFlag =
+  | { flag: "help"; consume: 1 }
+  | { flag: "model"; consume: 1 | 2; value: string | undefined }
+  | { flag: "thinking"; consume: 1 | 2; raw: string | undefined };
+
+/**
+ * If `argv[index]` is a public global flag, describe its span and payload.
+ * Value/raw may be undefined when a value-taking flag is missing its argument
+ * (callers decide whether that is an error). Unknown dashed tokens are not
+ * global — same rule as production `parseArgv`.
+ */
+export function takePublicGlobalFlag(
+  argv: readonly string[],
+  index: number,
+): TakenPublicGlobalFlag | undefined {
   const token = argv[index];
-  if (token === undefined) return 0;
-  if (token === "--help" || token === "-h") return 1;
-  if (token === "--model" || token === "--thinking") {
-    return index + 1 < argv.length ? 2 : 1;
+  if (token === undefined) return undefined;
+  if (token === "--help" || token === "-h") {
+    return { flag: "help", consume: 1 };
   }
-  if (token.startsWith("--model=") || token.startsWith("--thinking=")) return 1;
-  return 0;
+  if (token === "--model") {
+    const value = argv[index + 1];
+    if (value === undefined) {
+      return { flag: "model", consume: 1, value: undefined };
+    }
+    return { flag: "model", consume: 2, value };
+  }
+  if (token.startsWith("--model=")) {
+    return {
+      flag: "model",
+      consume: 1,
+      value: token.slice("--model=".length),
+    };
+  }
+  if (token === "--thinking") {
+    const raw = argv[index + 1];
+    if (raw === undefined) {
+      return { flag: "thinking", consume: 1, raw: undefined };
+    }
+    return { flag: "thinking", consume: 2, raw };
+  }
+  if (token.startsWith("--thinking=")) {
+    return {
+      flag: "thinking",
+      consume: 1,
+      raw: token.slice("--thinking=".length),
+    };
+  }
+  return undefined;
 }
 
 /**
  * Index of the public command token under the real global-flag grammar
- * (`--model` / `--thinking` / `--help`; unknown dashed tokens are positional,
- * matching `parseArgv` in `./cli.ts`).
+ * (`--model` / `--thinking` / `--help`; unknown dashed tokens are positional).
  */
 export function publicCliCommandIndex(
   argv: readonly string[],
@@ -31,34 +71,14 @@ export function publicCliCommandIndex(
     if (token === "--") {
       return i + 1 < argv.length ? i + 1 : undefined;
     }
-    const span = globalFlagSpan(argv, i);
-    if (span > 0) {
-      i += span;
+    const taken = takePublicGlobalFlag(argv, i);
+    if (taken !== undefined) {
+      i += taken.consume;
       continue;
     }
     return i;
   }
   return undefined;
-}
-
-/**
- * Whether the named public role's argv grammar accepts `--attach`.
- * Authority lives with the corresponding `parse*Argv` implementation:
- * every packaged role except reviewer handles `--attach`; reviewer rejects it
- * as an unknown option (transition unbound — #176 / #333).
- */
-export function publicRoleAcceptsAttach(command: string): boolean {
-  switch (command) {
-    case "judge":
-    case "coder":
-    case "fixer":
-    case "collector":
-    case "doctor":
-    case "merger":
-      return true;
-    default:
-      return false;
-  }
 }
 
 /**

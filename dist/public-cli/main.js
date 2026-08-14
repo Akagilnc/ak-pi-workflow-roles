@@ -17012,6 +17012,50 @@ var init_explicit_internal = __esm({
   }
 });
 
+// src/public-cli/public-argv.ts
+function takePublicGlobalFlag(argv, index) {
+  const token = argv[index];
+  if (token === void 0) return void 0;
+  if (token === "--help" || token === "-h") {
+    return { flag: "help", consume: 1 };
+  }
+  if (token === "--model") {
+    const value = argv[index + 1];
+    if (value === void 0) {
+      return { flag: "model", consume: 1, value: void 0 };
+    }
+    return { flag: "model", consume: 2, value };
+  }
+  if (token.startsWith("--model=")) {
+    return {
+      flag: "model",
+      consume: 1,
+      value: token.slice("--model=".length)
+    };
+  }
+  if (token === "--thinking") {
+    const raw = argv[index + 1];
+    if (raw === void 0) {
+      return { flag: "thinking", consume: 1, raw: void 0 };
+    }
+    return { flag: "thinking", consume: 2, raw };
+  }
+  if (token.startsWith("--thinking=")) {
+    return {
+      flag: "thinking",
+      consume: 1,
+      raw: token.slice("--thinking=".length)
+    };
+  }
+  return void 0;
+}
+var init_public_argv = __esm({
+  "src/public-cli/public-argv.ts"() {
+    "use strict";
+    init_invocation();
+  }
+});
+
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
 import { readFile as readFile6, realpath as realpath4 } from "node:fs/promises";
@@ -23506,40 +23550,34 @@ function parseArgv(argv) {
   let help = false;
   const positional = [];
   while (args.length > 0) {
-    const token = args.shift();
-    if (token === "--") {
+    if (args[0] === "--") {
+      args.shift();
       positional.push(...args);
       break;
     }
-    if (token === "--help" || token === "-h") {
-      help = true;
+    const taken = takePublicGlobalFlag(args, 0);
+    if (taken !== void 0) {
+      if (taken.flag === "help") {
+        help = true;
+        args.splice(0, taken.consume);
+        continue;
+      }
+      if (taken.flag === "model") {
+        if (taken.value === void 0) {
+          throw new CliUsageError("--model requires a value");
+        }
+        model = taken.value;
+        args.splice(0, taken.consume);
+        continue;
+      }
+      if (taken.raw === void 0) {
+        throw new CliUsageError("--thinking requires a value");
+      }
+      thinking = parseThinking(taken.raw);
+      args.splice(0, taken.consume);
       continue;
     }
-    if (token === "--model") {
-      const value = args.shift();
-      if (value === void 0) throw new CliUsageError("--model requires a value");
-      model = value;
-      continue;
-    }
-    if (token.startsWith("--model=")) {
-      model = token.slice("--model=".length);
-      continue;
-    }
-    if (token === "--thinking") {
-      const value = args.shift();
-      if (value === void 0) throw new CliUsageError("--thinking requires a value");
-      thinking = parseThinking(value);
-      continue;
-    }
-    if (token.startsWith("--thinking=")) {
-      thinking = parseThinking(token.slice("--thinking=".length));
-      continue;
-    }
-    if (token.startsWith("-") && token !== "-") {
-      positional.push(token);
-      continue;
-    }
-    positional.push(token);
+    positional.push(args.shift());
   }
   const [command, ...rest] = positional;
   return {
@@ -24106,6 +24144,7 @@ var init_cli = __esm({
     init_cli_errors();
     init_explicit_internal();
     init_invocation();
+    init_public_argv();
     init_coder_run();
     init_collector_run();
     init_doctor_run();

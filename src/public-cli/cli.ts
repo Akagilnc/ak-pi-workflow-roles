@@ -33,6 +33,7 @@ import {
   parseMergerArgv,
   parseReviewerArgv,
 } from "./invocation.ts";
+import { takePublicGlobalFlag } from "./public-argv.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
@@ -167,44 +168,38 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
 
   // Global flags may appear before or after the subcommand
   // (`ak-role --model x roles` and `ak-role roles --model x`).
+  // Grammar authority: takePublicGlobalFlag in ./public-argv.ts.
   while (args.length > 0) {
-    const token = args.shift()!;
-    if (token === "--") {
+    if (args[0] === "--") {
+      args.shift();
       positional.push(...args);
       break;
     }
-    if (token === "--help" || token === "-h") {
-      help = true;
+    const taken = takePublicGlobalFlag(args, 0);
+    if (taken !== undefined) {
+      if (taken.flag === "help") {
+        help = true;
+        args.splice(0, taken.consume);
+        continue;
+      }
+      if (taken.flag === "model") {
+        if (taken.value === undefined) {
+          throw new CliUsageError("--model requires a value");
+        }
+        model = taken.value;
+        args.splice(0, taken.consume);
+        continue;
+      }
+      if (taken.raw === undefined) {
+        throw new CliUsageError("--thinking requires a value");
+      }
+      thinking = parseThinking(taken.raw);
+      args.splice(0, taken.consume);
       continue;
     }
-    if (token === "--model") {
-      const value = args.shift();
-      if (value === undefined) throw new CliUsageError("--model requires a value");
-      model = value;
-      continue;
-    }
-    if (token.startsWith("--model=")) {
-      model = token.slice("--model=".length);
-      continue;
-    }
-    if (token === "--thinking") {
-      const value = args.shift();
-      if (value === undefined) throw new CliUsageError("--thinking requires a value");
-      thinking = parseThinking(value);
-      continue;
-    }
-    if (token.startsWith("--thinking=")) {
-      thinking = parseThinking(token.slice("--thinking=".length));
-      continue;
-    }
-    if (token.startsWith("-") && token !== "-") {
-      // Subcommands may own additional flags later; only reject unknowns at the
-      // top level when they appear before any positional command is collected
-      // and the command is one that does not accept free flags (enforced below).
-      positional.push(token);
-      continue;
-    }
-    positional.push(token);
+    // Subcommands may own additional flags later; unknown dashed tokens stay
+    // positional here (same as pre-unification parseArgv).
+    positional.push(args.shift()!);
   }
 
   const [command, ...rest] = positional;
