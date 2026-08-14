@@ -15403,6 +15403,11 @@ function requireAuthorityRef(value) {
   if (value === void 0 || value.trim() === "") {
     throw new CliUsageError("--authority-ref requires a nonempty durable reference");
   }
+  if (/\s/.test(value)) {
+    throw new CliUsageError(
+      "--authority-ref requires a durable reference, not inline Spec prose"
+    );
+  }
   return value;
 }
 function parseJudgeArgv(args) {
@@ -16413,12 +16418,7 @@ async function admitReviewerInvocation(options) {
     throw new CliUsageError("--base requires a nonempty revision");
   }
   const authorityRefs = Object.freeze(
-    (options.authorityRefs ?? []).map((ref) => {
-      if (typeof ref !== "string" || ref.trim() === "") {
-        throw new CliUsageError("--authority-ref requires a nonempty durable reference");
-      }
-      return ref;
-    })
+    (options.authorityRefs ?? []).map((ref) => requireAuthorityRef(ref))
   );
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
@@ -19273,6 +19273,7 @@ function reviewerDecisiveFacts(output) {
   const axes = reviewerAxes(outcomes.readable ? outcomes.value : void 0);
   const reportAxes = reviewerAxes(reports.readable ? reports.value : void 0);
   const acceptedBatch = safelyRead(candidate, "acceptedBatch");
+  const specDisposition = safelyRead(candidate, "specDisposition");
   const facts = {
     axes,
     reportAxes,
@@ -19280,6 +19281,9 @@ function reviewerDecisiveFacts(output) {
     ...auditNoReceiptDecisiveFact(candidate)
   };
   if (status.readable && typeof status.value === "string") facts.reviewerStatus = status.value;
+  if (specDisposition.readable && (specDisposition.value === "launched" || specDisposition.value === "skipped-missing")) {
+    facts.specDisposition = specDisposition.value;
+  }
   const diagnostic = safelyRead(candidate, "diagnostic");
   if (status.readable && status.value === "refused" && diagnostic.readable) {
     facts.diagnosticPresent = typeof diagnostic.value === "string" && diagnostic.value.trim().length > 0;

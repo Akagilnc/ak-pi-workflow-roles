@@ -26,11 +26,15 @@ export type RuntimeReviewerAcceptedBatch = Readonly<{
   identity: string;
   legs: readonly Readonly<{ axis: "standards" | "spec"; prompt: ReviewerReceiptPrompt }>[];
 }>;
+/** Honest Spec-child disposition on the receipt face. */
+export type RuntimeReviewerSpecDisposition = "launched" | "skipped-missing";
 export type RuntimeReviewerReceiptV2 = Readonly<{
   version: 2;
   status: "completed" | "refused";
   diagnostic?: string;
   acceptedBatch?: RuntimeReviewerAcceptedBatch;
+  /** Present on accepted batches: launched Spec child, or skipped after confirmed missing Spec. */
+  specDisposition?: RuntimeReviewerSpecDisposition;
   reports: Readonly<Partial<Record<"standards" | "spec", VerbatimChildReport>>>;
   outcomes: Readonly<Partial<Record<"standards" | "spec", RuntimeReviewerOutcome>>>;
   identities: Readonly<{

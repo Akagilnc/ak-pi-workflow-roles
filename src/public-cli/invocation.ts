@@ -347,10 +347,20 @@ function requireOptionPath(
   return value;
 }
 
-/** Reject missing/blank durable authority references (no URL-format validator). */
+/**
+ * Public --authority-ref admission grammar (refs-only).
+ * Accepts durable reference tokens as-is; rejects blank and inline Spec prose
+ * (whitespace-bearing sentences). Does not fetch, normalize, or judge content.
+ */
 function requireAuthorityRef(value: string | undefined): string {
   if (value === undefined || value.trim() === "") {
     throw new CliUsageError("--authority-ref requires a nonempty durable reference");
+  }
+  // Spec prose sentences contain whitespace; durable public refs are single tokens.
+  if (/\s/.test(value)) {
+    throw new CliUsageError(
+      "--authority-ref requires a durable reference, not inline Spec prose",
+    );
   }
   return value;
 }
@@ -1645,12 +1655,7 @@ export async function admitReviewerInvocation(
     throw new CliUsageError("--base requires a nonempty revision");
   }
   const authorityRefs = Object.freeze(
-    (options.authorityRefs ?? []).map((ref) => {
-      if (typeof ref !== "string" || ref.trim() === "") {
-        throw new CliUsageError("--authority-ref requires a nonempty durable reference");
-      }
-      return ref;
-    }),
+    (options.authorityRefs ?? []).map((ref) => requireAuthorityRef(ref)),
   );
 
   const projectRoot = resolve(options.project ?? options.cwd);
