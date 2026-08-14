@@ -54,11 +54,15 @@ export type TaishiLegEntry = {
  * Per-issue typed metrics page.
  * Extension seam: metric-family modules add optional top-level sections
  * through directory discovery — keep this envelope stable.
+ * issueNumber = caller typed field retained for cohort index join (ADR 0068
+ * page key remains projectRoot; issueNumber is not the mechanical address).
  */
 export type TaishiIssueMetricsPage = {
   readonly kind: "taishi-issue-metrics";
   readonly mode: "issue";
   readonly projectRoot: string;
+  /** Caller typed issue number — present only when supplied on the entry. */
+  readonly issueNumber?: number;
   readonly legs: readonly TaishiLegEntry[];
   readonly unreadable: readonly TaishiUnreadableRun[];
   readonly unreadableCount: number;
@@ -94,6 +98,8 @@ export function buildTaishiIssueMetricsPage(input: {
   readonly projectRoot: string;
   readonly runs: readonly TaishiReadableRunFacts[];
   readonly unreadable: readonly TaishiUnreadableRun[];
+  /** Caller typed issue number — retained on page for cohort index join. */
+  readonly issueNumber?: number;
 }): TaishiIssueMetricsPage {
   // Sole run→leg projection owner: page envelope maps typed runs to A1 legs.
   const legs = sortLegs(
@@ -105,10 +111,12 @@ export function buildTaishiIssueMetricsPage(input: {
   );
   const unreadable = sortUnreadable(input.unreadable);
   const projectRoot = physicalPathIdentity(input.projectRoot);
-  const envelope = {
+  const envelope: TaishiIssueMetricsPage = {
     kind: "taishi-issue-metrics" as const,
     mode: "issue" as const,
     projectRoot,
+    // exactOptionalPropertyTypes: only materialize when caller supplied it.
+    ...(input.issueNumber === undefined ? {} : { issueNumber: input.issueNumber }),
     legs,
     unreadable,
     unreadableCount: unreadable.length,
