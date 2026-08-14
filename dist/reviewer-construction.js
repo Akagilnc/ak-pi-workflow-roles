@@ -89,10 +89,35 @@ export function reviewerAuthorityRefsMaterial(authorityRefs) {
         "These are durable authority references only. Read them as Spec grounding materials; do not invent Spec prose from caller instruction.",
     ].join("\n");
 }
+/**
+ * Spec-only material carrier for self-fetched issue bytes + source annotation (#343).
+ * Actual issue body and referenced ADR bytes are embedded for audit (fetch-then-store).
+ * Single JSON payload keeps external issue/ADR bytes inside structured field values so they
+ * cannot forge package framing markers on the same text layer (no plain-text section protocol).
+ */
+export function reviewerFetchedSpecMaterial(fetched) {
+    return [
+        "Authority-Fetched-Spec:",
+        JSON.stringify(Object.freeze({
+            source: fetched.adopted.source,
+            ticketNumber: fetched.ticketNumber,
+            issueRef: fetched.issueRef,
+            abandoned: Object.freeze([...fetched.abandoned]),
+            issueBody: fetched.issueBody,
+            adrs: Object.freeze(fetched.adrs.map((adr) => adr.status === "present"
+                ? Object.freeze({ path: adr.path, status: adr.status, body: adr.body })
+                : Object.freeze({ path: adr.path, status: adr.status }))),
+        })),
+        "These are self-fetched Spec grounding materials. Do not invent Spec prose from caller instruction.",
+    ].join("\n");
+}
 /** Deterministic compiler: fixed target/range plus discovery product in, dispatch text out. */
 export function constructReviewerDispatch(input) {
     const launchSpec = input.specAuthority.status === "available";
     const authorityRefs = Object.freeze(input.specAuthority.status === "available" ? [...input.specAuthority.refs] : []);
+    const specFetchedMaterial = input.specAuthority.status === "available" && input.specAuthority.fetched !== undefined
+        ? input.specAuthority.fetched
+        : undefined;
     const specDisposition = launchSpec ? "launched" : "skipped-missing";
     const common = [
         `Target: ${input.range.target}`,
@@ -111,8 +136,13 @@ export function constructReviewerDispatch(input) {
     const legs = axes.map((x) => {
         const parts = [common, reviewerAxisMethodAdapter(x.axis)];
         // Spec evidence-child only — never Standards or a parent replacement Spec leg.
-        if (x.axis === "spec" && authorityRefs.length > 0) {
-            parts.push(reviewerAuthorityRefsMaterial(authorityRefs));
+        if (x.axis === "spec") {
+            if (specFetchedMaterial !== undefined) {
+                parts.push(reviewerFetchedSpecMaterial(specFetchedMaterial));
+            }
+            if (authorityRefs.length > 0) {
+                parts.push(reviewerAuthorityRefsMaterial(authorityRefs));
+            }
         }
         return Object.freeze({
             axis: x.axis,
@@ -130,6 +160,7 @@ export function constructReviewerDispatch(input) {
         range: input.range,
         authorityRefs,
         specDisposition,
+        ...(specFetchedMaterial === undefined ? {} : { specFetchedMaterial }),
         legs: Object.freeze(legs),
     });
 }

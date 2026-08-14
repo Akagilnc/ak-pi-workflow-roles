@@ -143,6 +143,9 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
             }),
             featureTokens: async () => Object.freeze(["feature-login"]),
             listSpecCandidatePaths: async () => Object.freeze(["docs/feature-login.md"]),
+            originRepository: async () => undefined,
+            commitMessagesNewestFirst: async () => Object.freeze([]),
+            readPinnedText: async () => undefined,
           };
         },
         loadCanonicalSkillBinding: async (name) => {

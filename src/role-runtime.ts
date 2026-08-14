@@ -61,7 +61,7 @@ import {
   type ReviewerActivation,
   type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
-import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+import type { AcceptedReviewerExecution, ReviewerIssueFetcher, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
   REVIEWER_VERIFICATION_BOUNDARY,
@@ -91,6 +91,13 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
     name: "ak-review-authority-refs",
     definition: Object.freeze({
       description: "JSON array of durable authority references for Spec evidence-child material only",
+      type: "string" as const,
+    }),
+  }),
+  Object.freeze({
+    name: "ak-review-ticket-number",
+    definition: Object.freeze({
+      description: "Typed ticketNumber for Spec self-fetch primary path",
       type: "string" as const,
     }),
   }),
@@ -134,6 +141,13 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
     authorityRefs = Object.freeze(parsed as string[]);
   }
 
+  let ticketNumber: number | undefined;
+  const rawTicketNumber = getFlag("ak-review-ticket-number");
+  // Shape-invalid flag values do not abort: omit typed candidate; branch→commit→degrade continues.
+  if (typeof rawTicketNumber === "string" && /^[1-9]\d*$/.test(rawTicketNumber)) {
+    ticketNumber = Number(rawTicketNumber);
+  }
+
   const baseRevision = getFlag("ak-review-base");
   if (typeof baseRevision !== "string" || !baseRevision.trim()) {
     throw new Error("Reviewer role requires --ak-review-base");
@@ -142,6 +156,7 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
     baseRevision,
     ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
     ...(authorityRefs === undefined ? {} : { authorityRefs }),
+    ...(ticketNumber === undefined ? {} : { ticketNumber }),
   });
 }
 
@@ -454,6 +469,8 @@ export type RoleRuntimeDependencies = {
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
   createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
+  /** Shared-seam issue-fetch capability for Reviewer Spec self-fetch (#343). */
+  createReviewerIssueFetcher?(): ReviewerIssueFetcher;
   loadCollectorSoul?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
@@ -892,6 +909,9 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadCanonicalSkillBinding(name);
         },
+        ...(dependencies.createReviewerIssueFetcher === undefined
+          ? {}
+          : { fetchIssue: dependencies.createReviewerIssueFetcher() }),
         async runDispatch(dispatch, options) {
           if (dependencies.runReviewerDispatch === undefined) throw new Error("Reviewer runtime dependencies are not configured");
           return dependencies.runReviewerDispatch(dispatch, options);

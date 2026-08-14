@@ -21006,6 +21006,8 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
         baseRevision: admitted.baseRevision,
         authorityRefs: [...admitted.authorityRefs],
         ...admitted.instructionEmpty ? {} : { callerProvenance: admitted.instruction },
+        // Self-fetch Spec bytes + source annotation when primary path produced material (#343).
+        ...options.reviewerReceipt?.specFetchedMaterial === void 0 ? {} : { specFetchedMaterial: options.reviewerReceipt.specFetchedMaterial },
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
           frozenPath: a.frozenPath,
@@ -23685,6 +23687,9 @@ function buildModelArgs7(model) {
     model.thinking
   ];
 }
+function buildReviewerTicketNumberArgs(ticketNumber) {
+  return ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(ticketNumber)];
+}
 function buildReviewerActivationExtraArgs(admitted, options) {
   const prompt = buildReviewerTransportPrompt(admitted);
   const skillPath = resolvePackagedMethodSkillPath(
@@ -23692,6 +23697,7 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     "code-review"
   );
   const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
+  const ticketNumberArgs = buildReviewerTicketNumberArgs(admitted.ticketNumber);
   return [
     "--no-skills",
     "--skill",
@@ -23709,6 +23715,7 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     "--ak-review-base",
     admitted.baseRevision,
     ...authorityRefArgs,
+    ...ticketNumberArgs,
     "--mode",
     "json",
     ...buildModelArgs7(options.model),
@@ -23721,6 +23728,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     "code-review"
   );
   const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
+  const ticketNumberArgs = buildReviewerTicketNumberArgs(admitted.ticketNumber);
   return [
     "--no-skills",
     "--skill",
@@ -23738,6 +23746,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     "--ak-review-base",
     admitted.baseRevision,
     ...authorityRefArgs,
+    ...ticketNumberArgs,
     "--mode",
     "json",
     ...buildModelArgs7(options.model),
