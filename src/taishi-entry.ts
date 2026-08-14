@@ -15,11 +15,6 @@ import {
 export type TaishiIssueModeInput = {
   readonly mode: "issue";
   readonly projectRoot: string;
-  /**
-   * Machine-home identity for tests/fixtures.
-   * Not a record destination — ledger topology alone computes page paths.
-   */
-  readonly home?: string;
 };
 
 export type TaishiInput = TaishiIssueModeInput;
@@ -34,16 +29,14 @@ export type TaishiIssueModeResult = {
  * Sole taishi entry. Issue mode: scope → scan → page envelope → atomic replace.
  * Metric-family kernels (B/C waves) will enrich the page via dedicated modules
  * without opening a second entry or second parse kernel.
+ * Machine home is package-owned (ADR 0048) — never an invocation field.
  */
 export async function runTaishi(input: TaishiInput): Promise<TaishiIssueModeResult> {
   // A1: issue mode only. Sweep/cohort/model modes join this same seam later.
-  const ledgerHome = resolveActivationLedgerHome(
-    input.home === undefined ? undefined : () => input.home!,
-  );
+  const ledgerHome = resolveActivationLedgerHome();
 
   const scan = await scanTaishiIssueRuns({
     projectRoot: input.projectRoot,
-    ...(input.home === undefined ? {} : { home: input.home }),
   });
 
   const page = buildTaishiIssueMetricsPage({

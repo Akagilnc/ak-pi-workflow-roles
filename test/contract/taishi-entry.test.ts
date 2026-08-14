@@ -3,16 +3,20 @@
  * Fixture ledger (2 readable legs + 1 damaged session run + 1 other-issue run)
  * → issue-mode typed page with hand-computed legs/unreadable equality,
  * business-repo porcelain unchanged, atomic page replace idempotent.
+ * Variants: null terminal artifact → unreadable; taishi symlink into consumer → refuse.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
+import {
+  ActivationLedgerError,
+  physicalPathIdentity,
+} from "../../src/activation-ledger-topology.ts";
 import { runTaishi } from "../../src/taishi-entry.ts";
 import {
   taishiIssuePagePath,
@@ -24,11 +28,13 @@ const fixtureHome = join(packageRoot, "test/fixtures/taishi/home");
 
 const ISSUE_PROJECT_ROOT = "/taishi-fixture/issue-demo";
 const BOOK = "fixture-book";
+const LEG_A1_RUN = "019ff000-0001-7000-8000-0000000000a1";
+const LEG_A1_DIR = `${LEG_A1_RUN}@coder`;
 
 /** Hand-computed from fixture (scope = ISSUE_PROJECT_ROOT). */
 const EXPECTED_LEGS = [
   {
-    runId: "019ff000-0001-7000-8000-0000000000a1",
+    runId: LEG_A1_RUN,
     book: BOOK,
     role: "coder",
   },
@@ -54,18 +60,7 @@ function gitPorcelain(cwd: string): string {
   });
 }
 
-async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "taishi-home-"));
-  try {
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-    return await fn(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-}
-
-test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain frozen, page replace idempotent", async () => {
-  // Consumer business repo — must stay byte-identical (zero write).
+async function withBusinessRepo<T>(fn: (repo: string, porcelainBefore: string) => Promise<T>): Promise<T> {
   const businessRepo = await mkdtemp(join(tmpdir(), "taishi-business-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
@@ -78,7 +73,34 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
     );
     const porcelainBefore = gitPorcelain(businessRepo);
     assert.equal(porcelainBefore, "", "business repo starts clean");
+    const result = await fn(businessRepo, porcelainBefore);
+    assert.equal(gitPorcelain(businessRepo), porcelainBefore, "business repo zero write");
+    return result;
+  } finally {
+    await rm(businessRepo, { recursive: true, force: true });
+  }
+}
 
+/**
+ * Fixture injection stays below the production contract: hermetic process HOME
+ * (os.homedir) — never a production invocation `home` field (ADR 0048).
+ */
+async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
+  const home = await mkdtemp(join(tmpdir(), "taishi-home-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
+    return await fn(home);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain frozen, page replace idempotent", async () => {
+  await withBusinessRepo(async () => {
     await withTempHome(async (home) => {
       const ledgerHome = join(home, ".ak-roles");
       const pagePath = taishiIssuePagePath(ledgerHome, ISSUE_PROJECT_ROOT);
@@ -89,7 +111,6 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
         pagePath,
         `${JSON.stringify({
           kind: "taishi-issue-metrics",
-          version: 1,
           mode: "issue",
           projectRoot: ISSUE_PROJECT_ROOT,
           legs: [],
@@ -103,15 +124,18 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
       const first = await runTaishi({
         mode: "issue",
         projectRoot: ISSUE_PROJECT_ROOT,
-        home,
       });
 
       assert.equal(first.mode, "issue");
       assert.equal(first.pagePath, pagePath);
       assert.equal(first.page.kind, "taishi-issue-metrics");
-      assert.equal(first.page.version, 1);
       assert.equal(first.page.mode, "issue");
       assert.equal(first.page.projectRoot, physicalPathIdentity(ISSUE_PROJECT_ROOT));
+      assert.equal(
+        "version" in (first.page as unknown as Record<string, unknown>),
+        false,
+        "page admits no readerless version field",
+      );
 
       // Hand-computed leg list (other-issue run excluded; damaged excluded from legs).
       assert.deepEqual(first.page.legs, [...EXPECTED_LEGS]);
@@ -133,22 +157,96 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
       const onDisk = JSON.parse(await readFile(pagePath, "utf8")) as TaishiIssueMetricsPage;
       assert.deepEqual(onDisk, first.page);
       assert.equal("stale" in (onDisk as unknown as Record<string, unknown>), false);
+      assert.equal("version" in (onDisk as unknown as Record<string, unknown>), false);
 
       // Atomic replace idempotent: second run yields equivalent page bytes/content.
       const firstBytes = await readFile(pagePath, "utf8");
       const second = await runTaishi({
         mode: "issue",
         projectRoot: ISSUE_PROJECT_ROOT,
-        home,
       });
       assert.deepEqual(second.page, first.page);
       assert.equal(await readFile(pagePath, "utf8"), firstBytes);
       const onDiskAgain = JSON.parse(await readFile(pagePath, "utf8")) as TaishiIssueMetricsPage;
       assert.deepEqual(onDiskAgain, first.page);
     });
+  });
+});
 
-    assert.equal(gitPorcelain(businessRepo), porcelainBefore, "business repo zero write");
-  } finally {
-    await rm(businessRepo, { recursive: true, force: true });
-  }
+test("taishi issue-mode entry: null terminal artifact is terminal-artifact unreadable and excluded from legs", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async (home) => {
+      const reportPath = join(
+        home,
+        ".ak-roles",
+        "books",
+        BOOK,
+        "runs",
+        LEG_A1_DIR,
+        "artifacts",
+        "report.json",
+      );
+      await writeFile(reportPath, "null\n", "utf8");
+
+      const result = await runTaishi({
+        mode: "issue",
+        projectRoot: ISSUE_PROJECT_ROOT,
+      });
+
+      assert.equal(
+        result.page.legs.some((leg) => leg.runId === LEG_A1_RUN),
+        false,
+        "run with null terminal artifact must leave legs",
+      );
+      const entry = result.page.unreadable.find((u) => u.runId === LEG_A1_RUN);
+      assert.ok(entry, "null terminal artifact must produce unreadable entry");
+      assert.deepEqual(entry.missingSources, ["terminal-artifact"]);
+      assert.match(entry.reason, /null/i);
+      // Fixture session-damaged run remains; plus this terminal-artifact failure.
+      assert.equal(result.page.unreadableCount, 2);
+      assert.equal(result.page.unreadable.length, 2);
+      assert.deepEqual(
+        result.page.legs.map((leg) => leg.runId),
+        ["019ff000-0002-7000-8000-0000000000b2"],
+      );
+    });
+  });
+});
+
+test("taishi issue-mode entry: taishi path symlink into consumer repo is refused without porcelain change", async () => {
+  await withBusinessRepo(async (businessRepo) => {
+    await withTempHome(async (home) => {
+      const ledgerHome = join(home, ".ak-roles");
+      await symlink(businessRepo, join(ledgerHome, "taishi"));
+
+      await assert.rejects(
+        () =>
+          runTaishi({
+            mode: "issue",
+            projectRoot: ISSUE_PROJECT_ROOT,
+          }),
+        (error: unknown) => {
+          assert.ok(error instanceof ActivationLedgerError);
+          assert.match(error.message, /symbolic link/i);
+          return true;
+        },
+      );
+
+      // No issues page may land in the consumer tree via the symlink.
+      const escaped = await readFile(
+        join(businessRepo, "issues", `${"x"}.json`),
+        "utf8",
+      ).then(
+        () => true,
+        () => false,
+      );
+      assert.equal(escaped, false);
+      // Directory listing of business repo stays commit-only.
+      const listing = execFileSync("ls", ["-la"], {
+        cwd: businessRepo,
+        encoding: "utf8",
+      });
+      assert.equal(listing.includes("issues"), false);
+    });
+  });
 });
