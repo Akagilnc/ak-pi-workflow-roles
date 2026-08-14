@@ -15399,6 +15399,12 @@ function requireOptionPath(flag, value) {
   }
   return value;
 }
+function requireAuthorityRef(value) {
+  if (value === void 0 || value.trim() === "") {
+    throw new CliUsageError("--authority-ref requires a nonempty durable reference");
+  }
+  return value;
+}
 function parseJudgeArgv(args) {
   const attachmentPaths = [];
   let project;
@@ -16348,6 +16354,7 @@ function buildDoctorTransportPrompt(admitted) {
 }
 function parseReviewerArgv(args) {
   const attachmentPaths = [];
+  const authorityRefs = [];
   let project;
   let baseRevision;
   const positional = [];
@@ -16374,6 +16381,14 @@ function parseReviewerArgv(args) {
       baseRevision = requireOptionPath("--base", token.slice("--base=".length));
       continue;
     }
+    if (token === "--authority-ref") {
+      authorityRefs.push(requireAuthorityRef(tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--authority-ref=")) {
+      authorityRefs.push(requireAuthorityRef(token.slice("--authority-ref=".length)));
+      continue;
+    }
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown reviewer option: ${token}`);
     }
@@ -16386,6 +16401,7 @@ function parseReviewerArgv(args) {
     instruction: positional.join(" "),
     attachmentPaths,
     baseRevision,
+    authorityRefs,
     ...project === void 0 ? {} : { project }
   };
 }
@@ -16396,6 +16412,14 @@ async function admitReviewerInvocation(options) {
   if (options.baseRevision.trim() === "") {
     throw new CliUsageError("--base requires a nonempty revision");
   }
+  const authorityRefs = Object.freeze(
+    (options.authorityRefs ?? []).map((ref) => {
+      if (typeof ref !== "string" || ref.trim() === "") {
+        throw new CliUsageError("--authority-ref requires a nonempty durable reference");
+      }
+      return ref;
+    })
+  );
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
@@ -16425,6 +16449,7 @@ async function admitReviewerInvocation(options) {
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
+    authorityRefs: [...authorityRefs],
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
       frozenPath: a.frozenPath,
@@ -16453,7 +16478,8 @@ async function admitReviewerInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
-    baseRevision: options.baseRevision
+    baseRevision: options.baseRevision,
+    authorityRefs
   };
 }
 function buildReviewerTransportPrompt(admitted) {
@@ -17561,6 +17587,7 @@ async function loadResumableRunRecord(home, runId) {
   let prerequisitesPath;
   let prerequisites;
   let baseRevision;
+  let authorityRefs;
   let mergerInputPath;
   let derived;
   try {
@@ -17596,6 +17623,9 @@ async function loadResumableRunRecord(home, runId) {
       if (typeof record4.baseRevision === "string" && record4.baseRevision.trim() !== "") {
         baseRevision = record4.baseRevision;
       }
+      if (Array.isArray(record4.authorityRefs) && record4.authorityRefs.every((ref) => typeof ref === "string")) {
+        authorityRefs = Object.freeze(record4.authorityRefs);
+      }
       if (typeof record4.mergerInputPath === "string" && record4.mergerInputPath.trim() !== "") {
         mergerInputPath = record4.mergerInputPath;
       }
@@ -17630,6 +17660,7 @@ async function loadResumableRunRecord(home, runId) {
       ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
       ...prerequisites === void 0 ? {} : { prerequisites },
       ...baseRevision === void 0 ? {} : { baseRevision },
+      ...authorityRefs === void 0 ? {} : { authorityRefs },
       ...mergerInputPath === void 0 ? {} : { mergerInputPath },
       ...derived === void 0 ? {} : { derived }
     }
@@ -17779,7 +17810,8 @@ async function loadResumableReviewerRun(home, runId) {
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
-    baseRevision
+    baseRevision,
+    authorityRefs: Object.freeze([...loaded.admittedFields.authorityRefs ?? []])
   };
   return {
     admitted,
@@ -20538,6 +20570,7 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
         sessionFile: admitted.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         baseRevision: admitted.baseRevision,
+        authorityRefs: [...admitted.authorityRefs],
         ...admitted.instructionEmpty ? {} : { callerProvenance: admitted.instruction },
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -23192,6 +23225,7 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     options.packageRoot,
     "code-review"
   );
+  const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
   return [
     "--no-skills",
     "--skill",
@@ -23208,6 +23242,7 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     "reviewer",
     "--ak-review-base",
     admitted.baseRevision,
+    ...authorityRefArgs,
     "--mode",
     "json",
     ...buildModelArgs7(options.model),
@@ -23219,6 +23254,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     options.packageRoot,
     "code-review"
   );
+  const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
   return [
     "--no-skills",
     "--skill",
@@ -23235,6 +23271,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     "reviewer",
     "--ak-review-base",
     admitted.baseRevision,
+    ...authorityRefArgs,
     "--mode",
     "json",
     ...buildModelArgs7(options.model),
@@ -23427,6 +23464,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       baseRevision: parsed.baseRevision,
+      authorityRefs: parsed.authorityRefs,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
       ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
     });

@@ -3165,6 +3165,7 @@ export async function publishReviewerArtifacts(
         sessionFile: admitted.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         baseRevision: admitted.baseRevision,
+        authorityRefs: [...admitted.authorityRefs],
         ...(admitted.instructionEmpty
           ? {}
           : { callerProvenance: admitted.instruction }),

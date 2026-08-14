@@ -55,6 +55,7 @@ export function createReviewerDispatcher(d) {
                     target,
                     range,
                     ...(d.reviewScopeKeys === undefined ? {} : { reviewScopeKeys: d.reviewScopeKeys }),
+                    ...(d.authorityRefs === undefined ? {} : { authorityRefs: d.authorityRefs }),
                 });
                 if (!sameReviewerPinnedTarget(await d.reader.snapshot(), target)) {
                     throw new ReviewerPreflightError("target-drift", "pinned target snapshot changed before child execution");

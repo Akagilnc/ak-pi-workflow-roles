@@ -123,6 +123,11 @@ export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
   readonly role: "reviewer";
   /** Required fixed base revision for the pinned review target (ADR 0037). */
   readonly baseRevision: string;
+  /**
+   * Optional durable authority references/URLs frozen at admission.
+   * Spec evidence-child material only — never Standards, never invocation prose promotion.
+   */
+  readonly authorityRefs: readonly string[];
 };
 
 /** Mechanical envelope derived from the active ordinary two-parent merge. */
@@ -305,6 +310,8 @@ export type ParseReviewerArgvResult = {
   attachmentPaths: string[];
   /** Required fixed base revision for the pinned review target. */
   baseRevision: string;
+  /** Repeatable durable authority references/URLs (exact order preserved). */
+  authorityRefs: string[];
   project?: string;
 };
 
@@ -336,6 +343,14 @@ function requireOptionPath(
         ? `${flag} requires a nonempty revision`
         : `${flag} requires a path`,
     );
+  }
+  return value;
+}
+
+/** Reject missing/blank durable authority references (no URL-format validator). */
+function requireAuthorityRef(value: string | undefined): string {
+  if (value === undefined || value.trim() === "") {
+    throw new CliUsageError("--authority-ref requires a nonempty durable reference");
   }
   return value;
 }
@@ -1540,13 +1555,15 @@ export function buildDoctorTransportPrompt(
 
 /**
  * Parse Reviewer-specific argv after the `reviewer` token.
- * Public flags: --project and required --base (the non-interactive CLI cannot answer the canonical fixed-point question).
+ * Public flags: --project, required --base, optional repeatable --authority-ref.
  * Reviewer gathers its own evidence; users submit neither attachments nor capability packets.
+ * Caller instruction remains scope/procedure provenance — not Spec authority.
  */
 export function parseReviewerArgv(
   args: readonly string[],
 ): ParseReviewerArgvResult {
   const attachmentPaths: string[] = [];
+  const authorityRefs: string[] = [];
   let project: string | undefined;
   let baseRevision: string | undefined;
   const positional: string[] = [];
@@ -1574,6 +1591,14 @@ export function parseReviewerArgv(
       baseRevision = requireOptionPath("--base", token.slice("--base=".length));
       continue;
     }
+    if (token === "--authority-ref") {
+      authorityRefs.push(requireAuthorityRef(tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--authority-ref=")) {
+      authorityRefs.push(requireAuthorityRef(token.slice("--authority-ref=".length)));
+      continue;
+    }
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown reviewer option: ${token}`);
     }
@@ -1587,6 +1612,7 @@ export function parseReviewerArgv(
     instruction: positional.join(" "),
     attachmentPaths,
     baseRevision,
+    authorityRefs,
     ...(project === undefined ? {} : { project }),
   };
 }
@@ -1598,6 +1624,8 @@ export type AdmitReviewerInvocationOptions = {
   instruction: string;
   attachmentPaths: readonly string[];
   baseRevision: string;
+  /** Optional durable authority references/URLs; frozen unchanged at admission. */
+  authorityRefs?: readonly string[];
   project?: string;
   createRunId?: () => string;
 };
@@ -1605,6 +1633,7 @@ export type AdmitReviewerInvocationOptions = {
 /**
  * Admit a Reviewer Role run on the fixed base only.
  * Caller instruction is optional provenance; Reviewer acquires issue/authority independently.
+ * Optional authorityRefs are frozen as durable references only — not Spec prose.
  */
 export async function admitReviewerInvocation(
   options: AdmitReviewerInvocationOptions,
@@ -1615,6 +1644,14 @@ export async function admitReviewerInvocation(
   if (options.baseRevision.trim() === "") {
     throw new CliUsageError("--base requires a nonempty revision");
   }
+  const authorityRefs = Object.freeze(
+    (options.authorityRefs ?? []).map((ref) => {
+      if (typeof ref !== "string" || ref.trim() === "") {
+        throw new CliUsageError("--authority-ref requires a nonempty durable reference");
+      }
+      return ref;
+    }),
+  );
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
@@ -1649,6 +1686,7 @@ export async function admitReviewerInvocation(
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
+    authorityRefs: [...authorityRefs],
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
       frozenPath: a.frozenPath,
@@ -1678,6 +1716,7 @@ export async function admitReviewerInvocation(
     sessionFile,
     admittedRequestPath,
     baseRevision: options.baseRevision,
+    authorityRefs,
   };
 }
 

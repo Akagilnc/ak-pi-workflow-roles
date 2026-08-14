@@ -193,3 +193,103 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
     });
   });
 });
+
+test("installed package transports exact authorityRefs into Spec child only", async () => {
+  process.env.CI = "true";
+  await withHermeticHome({ prefix: "ak-reviewer-authority-refs-" }, async ({ home }) => {
+    await withColdInstalledPackage(home, async ({ fixture, installedRoot }) => {
+      await git(fixture, "init");
+      await git(fixture, "config", "user.email", "consumer@example.com");
+      await git(fixture, "config", "user.name", "Consumer");
+      await writeFile(resolve(fixture, ".gitignore"), "node_modules\n.pi-agent*\n");
+      await writeFile(resolve(fixture, "consumer.txt"), "base\n");
+      await git(fixture, "add", ".gitignore", "consumer.txt");
+      await git(fixture, "commit", "-m", "base");
+      await git(fixture, "branch", "review-base");
+      await writeFile(resolve(fixture, "consumer.txt"), "reviewed\n");
+      await git(fixture, "commit", "-am", "reviewed change");
+
+      const nestedCwd = resolve(fixture, "nested", "invocation");
+      await mkdir(nestedCwd, { recursive: true });
+      const agentDir = resolve(fixture, ".pi-agent");
+      await mkdir(agentDir, { recursive: true });
+      const providerPath = resolve(packageRoot, "test/fixtures/reviewer-two-axis-provider.ts");
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const authorityRefs = [
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      ];
+
+      const reviewer = await runAkRole(
+        [
+          "reviewer",
+          "--model",
+          "ak-reviewer-two-axis/faux-1",
+          "--thinking",
+          "off",
+          "--project",
+          fixture,
+          "--base",
+          "review-base",
+          "--authority-ref",
+          authorityRefs[0]!,
+          "--authority-ref",
+          authorityRefs[1]!,
+          "Scope and procedure only; do not promote this prose to Spec authority.",
+        ],
+        {
+          packageRoot: installedRoot,
+          home,
+          agentDir,
+          cwd: nestedCwd,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => "run-public-reviewer-authority-refs-001",
+          reviewerExtraPiArgs: ["-e", providerPath],
+          reviewerTimeoutMs: 120_000,
+          io: {
+            stdout: (text) => {
+              stdout.push(text);
+            },
+            stderr: (text) => {
+              stderr.push(text);
+            },
+          },
+          piRunner: async (args, options) => {
+            const subprocess = await runPiSubprocess([...args], {
+              cwd: options.cwd,
+              env: {
+                ...options.env,
+                PI_OFFLINE: "1",
+                // Real package lifecycle tracer: Spec child must receive exact refs; Standards must not.
+                AK_REVIEW_EXPECT_AUTHORITY_REFS_JSON: JSON.stringify(authorityRefs),
+              },
+              timeoutMs: options.timeoutMs ?? 120_000,
+            });
+            return {
+              code: subprocess.code,
+              stdout: subprocess.stdout,
+              stderr: subprocess.stderr,
+              timedOut: subprocess.localTimeout,
+              args: [...args],
+            };
+          },
+        },
+      );
+
+      assert.equal(
+        reviewer.exitCode,
+        0,
+        stderr.join("") || JSON.stringify(reviewer.terminal) || "authorityRefs package lifecycle failed",
+      );
+      assert.equal(reviewer.terminal?.roleOutcome.kind, "accepted");
+
+      const evidenceArtifact = reviewer.terminal?.artifacts.find((item) => item.kind === "evidence");
+      assert.ok(evidenceArtifact, "reviewer must publish evidence artifact");
+      const evidence = JSON.parse(await readFile(evidenceArtifact!.path, "utf8")) as {
+        authorityRefs?: unknown;
+      };
+      assert.deepEqual(evidence.authorityRefs, authorityRefs);
+    });
+  });
+});

@@ -54,10 +54,12 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
   let expansionCaptured = false;
   let registered = false;
   let reviewScopeKeys: readonly string[] | undefined;
+  let authorityRefs: readonly string[] | undefined;
   let fixedBaseRevision: string | undefined;
   const ledger = createReviewerExecutionLedger();
   pi.registerFlag("ak-review-base", { description: "Fixed base revision for the pinned review target", type: "string" });
   pi.registerFlag("ak-review-scope-keys", { description: "Optional comma-separated exact class keys limiting Reviewer scope", type: "string" });
+  pi.registerFlag("ak-review-authority-refs", { description: "JSON array of durable authority references for Spec evidence-child material only", type: "string" });
 
   return { async activate(ctx) {
     soul = (await dependencies.loadSoul()).trim();
@@ -73,6 +75,23 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
         throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
       }
       reviewScopeKeys = parsed;
+    }
+    authorityRefs = undefined;
+    const rawAuthorityRefs = pi.getFlag("ak-review-authority-refs");
+    if (rawAuthorityRefs !== undefined) {
+      if (typeof rawAuthorityRefs !== "string" || rawAuthorityRefs.trim() === "") {
+        throw new Error("Reviewer authority refs must be a nonempty JSON array string");
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawAuthorityRefs);
+      } catch {
+        throw new Error("Reviewer authority refs must be a JSON array of durable references");
+      }
+      if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string" || ref.trim() === "")) {
+        throw new Error("Reviewer authority refs must be a JSON array of nonempty durable references");
+      }
+      authorityRefs = Object.freeze(parsed.map((ref) => ref as string));
     }
     const baseRevision = pi.getFlag("ak-review-base");
     if (typeof baseRevision !== "string" || !baseRevision.trim()) throw new Error("Reviewer role requires --ak-review-base");
@@ -105,6 +124,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       canonicalSkill: binding.snapshot.raw,
       reader,
       ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
+      ...(authorityRefs === undefined ? {} : { authorityRefs }),
       decisionEvidence(decision) {
         try {
           if (decision.disposition === "accepted") {

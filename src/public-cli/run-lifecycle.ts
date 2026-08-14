@@ -389,6 +389,7 @@ type LoadedAdmittedRequestFields = {
   readonly prerequisitesPath?: string;
   readonly prerequisites?: readonly FixerPrerequisite[];
   readonly baseRevision?: string;
+  readonly authorityRefs?: readonly string[];
   readonly mergerInputPath?: string;
   readonly derived?: DerivedMergerEnvelope;
 };
@@ -431,6 +432,7 @@ async function loadResumableRunRecord(
   let prerequisitesPath: string | undefined;
   let prerequisites: readonly FixerPrerequisite[] | undefined;
   let baseRevision: string | undefined;
+  let authorityRefs: readonly string[] | undefined;
   let mergerInputPath: string | undefined;
   let derived: DerivedMergerEnvelope | undefined;
   try {
@@ -471,6 +473,12 @@ async function loadResumableRunRecord(
         record.baseRevision.trim() !== ""
       ) {
         baseRevision = record.baseRevision;
+      }
+      if (
+        Array.isArray(record.authorityRefs) &&
+        record.authorityRefs.every((ref) => typeof ref === "string")
+      ) {
+        authorityRefs = Object.freeze(record.authorityRefs as string[]);
       }
       if (
         typeof record.mergerInputPath === "string" &&
@@ -521,6 +529,7 @@ async function loadResumableRunRecord(
       ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
       ...(prerequisites === undefined ? {} : { prerequisites }),
       ...(baseRevision === undefined ? {} : { baseRevision }),
+      ...(authorityRefs === undefined ? {} : { authorityRefs }),
       ...(mergerInputPath === undefined ? {} : { mergerInputPath }),
       ...(derived === undefined ? {} : { derived }),
     },
@@ -733,6 +742,7 @@ export async function loadResumableReviewerRun(
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
+    authorityRefs: Object.freeze([...(loaded.admittedFields.authorityRefs ?? [])]),
   };
   return {
     admitted,
