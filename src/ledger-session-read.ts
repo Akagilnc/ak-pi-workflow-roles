@@ -6,6 +6,32 @@ import { readFile } from "node:fs/promises";
 
 export type LedgerSessionRow = Record<string, unknown>;
 
+/**
+ * Loud JSONL failure that still retains rows parsed before the bad line.
+ * Callers that only need the throw keep catching Error; owners that must
+ * surface partial typed facts (e.g. first-frame timestamp) read prefixRows.
+ */
+export class LedgerSessionJsonlError extends Error {
+  readonly path: string;
+  readonly line: number;
+  readonly prefixRows: readonly LedgerSessionRow[];
+
+  constructor(
+    message: string,
+    init: {
+      readonly path: string;
+      readonly line: number;
+      readonly prefixRows: readonly LedgerSessionRow[];
+    },
+  ) {
+    super(message);
+    this.name = "LedgerSessionJsonlError";
+    this.path = init.path;
+    this.line = init.line;
+    this.prefixRows = init.prefixRows;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -17,6 +43,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * completed by a line terminator must fail loudly with file and 1-based
  * line context — even when no non-empty record follows — never silently
  * under-count.
+ *
+ * Loud failures throw LedgerSessionJsonlError carrying prefixRows so the
+ * single parse kernel can still expose facts obtained before the bad line.
  */
 export async function readLedgerSessionJsonl(path: string): Promise<LedgerSessionRow[]> {
   const text = await readFile(path, "utf8");
@@ -34,8 +63,9 @@ export async function readLedgerSessionJsonl(path: string): Promise<LedgerSessio
       if (!(error instanceof SyntaxError)) throw error;
       const completedByTerminator = index < lines.length - 1;
       if (completedByTerminator) {
-        throw new Error(
+        throw new LedgerSessionJsonlError(
           `malformed JSONL record in ${path} at line ${index + 1}: ${error.message}`,
+          { path, line: index + 1, prefixRows: rows },
         );
       }
       // unfinished fragment at EOF — keep prior complete rows
@@ -45,8 +75,9 @@ export async function readLedgerSessionJsonl(path: string): Promise<LedgerSessio
     // would under-count ledger evidence (failure honesty).
     if (!isRecord(row)) {
       const kind = row === null ? "null" : Array.isArray(row) ? "array" : typeof row;
-      throw new Error(
+      throw new LedgerSessionJsonlError(
         `complete non-object JSONL record in ${path} at line ${index + 1}: expected object, got ${kind}`,
+        { path, line: index + 1, prefixRows: rows },
       );
     }
     rows.push(row);
