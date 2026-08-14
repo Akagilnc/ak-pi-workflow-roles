@@ -286,6 +286,17 @@ test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start f
         }),
       };
     }
+    if (args.includes("repos/Acme/widgets/issues/778")) {
+      // Own-key presence alone discriminates — null marker value is still a PR payload.
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          body: "null pull_request marker must not become issue Spec",
+          pull_request: null,
+        }),
+      };
+    }
     if (args.includes("repos/Acme/widgets/issues/404")) {
       return { status: 404, headers: {}, bodyText: "{\"message\":\"Not Found\"}" };
     }
@@ -329,6 +340,10 @@ test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start f
   // PR payload on issues endpoint → authorized soft unavailable (not adopted as issue Spec).
   const prPayload = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 777 });
   assert.equal(prPayload, undefined);
+
+  // pull_request key present with null value → same soft unavailable (presence, not content).
+  const prNullMarker = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 778 });
+  assert.equal(prNullMarker, undefined);
 
   // Issue not found / tracker non-success → authorized soft unavailable.
   const missing = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 404 });
