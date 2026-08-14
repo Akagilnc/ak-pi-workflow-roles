@@ -328,14 +328,23 @@ export type ParseMergerArgvResult = {
 };
 
 /**
- * #336 taishi public argv — two scope faces, at least one required.
- * ticket N = issueNumber (no conversion); project-root = ADR 0068 page key.
+ * #336/#337 taishi public argv.
+ * Issue mode (#336): --ticket / --project-root (at least one).
+ * Sweep mode (#337): optional positional `sweep` and/or --attach paths;
+ * sweep payload rides exactly one typed JSON attachment (not argv/stdin).
  */
 export type ParseTaishiArgvResult = {
   /** Caller ticket / issue number face (#176 numbering space). */
   readonly ticket?: number;
   /** Direct projectRoot mechanical key (ADR 0068). */
   readonly projectRoot?: string;
+  /**
+   * Public CLI attachment paths (--attach). Sweep mode only (#337).
+   * Empty when issue mode; cardinality validated on the sweep run path.
+   */
+  readonly attachmentPaths: readonly string[];
+  /** True when caller selected sweep via positional `sweep` token. */
+  readonly sweepMode: boolean;
 };
 
 /** Honest activation-class failure while deriving the active-merge envelope. */
@@ -2031,12 +2040,16 @@ export function parseTaishiTicketNumber(raw: string): number {
 }
 
 /**
- * Parse taishi-specific argv after the `taishi` token (#336).
- * Requires at least one of --ticket / --project-root; no second input type.
+ * Parse taishi-specific argv after the `taishi` token (#336/#337).
+ * Issue: at least one of --ticket / --project-root.
+ * Sweep: positional `sweep` and/or --attach; payload is the attachment body only.
+ * Issue faces and sweep faces are mutually exclusive.
  */
 export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult {
   let ticketRaw: string | undefined;
   let projectRoot: string | undefined;
+  let sweepMode = false;
+  const attachmentPaths: string[] = [];
   const tokens = [...args];
 
   while (tokens.length > 0) {
@@ -2073,19 +2086,48 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
       );
       continue;
     }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length)),
+      );
+      continue;
+    }
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown taishi option: ${token}`);
+    }
+    // Optional sweep mode token (like coder plan/apply); only once, no other positionals.
+    if (token === "sweep") {
+      if (sweepMode) {
+        throw new CliUsageError("unexpected taishi argument: sweep");
+      }
+      sweepMode = true;
+      continue;
     }
     throw new CliUsageError(`unexpected taishi argument: ${token}`);
   }
 
-  if (ticketRaw === undefined && projectRoot === undefined) {
+  const hasIssueFace = ticketRaw !== undefined || projectRoot !== undefined;
+  const hasSweepFace = sweepMode || attachmentPaths.length > 0;
+
+  if (!hasIssueFace && !hasSweepFace) {
     throw new CliUsageError(
-      "usage: ak-role taishi (--ticket <N> | --project-root <P>)",
+      "usage: ak-role taishi ((--ticket <N> | --project-root <P>) | [sweep] --attach <sweep.json>)",
+    );
+  }
+
+  if (hasIssueFace && hasSweepFace) {
+    throw new CliUsageError(
+      "taishi sweep --attach cannot combine with --ticket or --project-root",
     );
   }
 
   return {
+    attachmentPaths,
+    sweepMode: hasSweepFace,
     ...(ticketRaw === undefined
       ? {}
       : { ticket: parseTaishiTicketNumber(ticketRaw) }),
