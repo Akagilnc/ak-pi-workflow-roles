@@ -31,7 +31,7 @@ import {
   buildFixerResumeActivationExtraArgs,
 } from "../../src/public-cli/fixer-run.ts";
 import {
-  admitFixerInvocation,
+  admitFixerInvocation as admitFixerInvocationRaw,
   parseFixerArgv,
 } from "../../src/public-cli/invocation.ts";
 import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
@@ -86,6 +86,14 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
+
+async function admitFixerInvocation(
+  options: Parameters<typeof admitFixerInvocationRaw>[0],
+): ReturnType<typeof admitFixerInvocationRaw> {
+  return admitFixerInvocationRaw(options);
+}
+
+
 test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus prerequisites path", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
@@ -132,7 +140,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
 
     await assert.rejects(
       () =>
-        admitFixerInvocation({
+        admitFixerInvocationRaw({
           home,
           cwd: project,
           phase: "apply",
@@ -621,9 +629,10 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { phase: string; role: string; packetPath: string };
+    ) as { phase: string; role: string; packetPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "fixer");
     assert.equal(admitted.phase, "plan");
+    assert.equal(admitted.ticketNumber, undefined);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
