@@ -1,6 +1,6 @@
 /**
  * #324 taishi-A1 — sole entry seam tracer.
- * Fixture ledger (2 readable legs + 1 damaged session run + 1 other-issue run)
+ * Fixture ledger (3 readable legs + 1 damaged session run + 1 other-issue run)
  * → issue-mode typed page with hand-computed legs/unreadable equality,
  * business-repo porcelain unchanged, atomic page replace idempotent.
  * Variants: null terminal artifact → unreadable; taishi symlink into consumer → refuse.
@@ -42,11 +42,17 @@ const ISSUE_PROJECT_ROOT = "/taishi-fixture/issue-demo";
 const BOOK = "fixture-book";
 const LEG_A1_RUN = "019ff000-0001-7000-8000-0000000000a1";
 const LEG_A1_DIR = `${LEG_A1_RUN}@coder`;
+const LEG_E5_RUN = "019ff000-0005-7000-8000-0000000000e5";
 
-/** Hand-computed from fixture (scope = ISSUE_PROJECT_ROOT). */
+/** Hand-computed from fixture (scope = ISSUE_PROJECT_ROOT; sort book/role/runId). */
 const EXPECTED_LEGS = [
   {
     runId: LEG_A1_RUN,
+    book: BOOK,
+    role: "coder",
+  },
+  {
+    runId: LEG_E5_RUN,
     book: BOOK,
     role: "coder",
   },
@@ -66,14 +72,21 @@ const EXPECTED_UNREADABLE = [
 ] as const;
 
 /**
- * B1 leg-wall-clock hand values from A1 fixture readable legs only.
- * a1 frame 00:00:00→00:01:00 = 60_000ms; b2 00:01:00→00:01:08 = 8_000ms.
- * Ranking wall-clock desc; median even-sample mean; total = Σ walls.
+ * B1 leg-wall-clock hand values from fixture readable legs only.
+ * a1 frame 00:00:00→00:01:00 = 60_000ms; e5 00:02:00→00:03:40 = 100_000ms;
+ * b2 00:01:00→00:01:08 = 8_000ms.
+ * Ranking wall-clock desc; median odd-sample middle; total = Σ walls.
  * Damaged/out-of-scope runs never enter (A1 contract).
  */
 const EXPECTED_LEG_WALL_CLOCK = {
   kind: "taishi-leg-wall-clock",
   ranking: [
+    {
+      runId: LEG_E5_RUN,
+      book: BOOK,
+      role: "coder",
+      wallMs: 100_000,
+    },
     {
       runId: LEG_A1_RUN,
       book: BOOK,
@@ -87,8 +100,8 @@ const EXPECTED_LEG_WALL_CLOCK = {
       wallMs: 8_000,
     },
   ],
-  medianWallMs: 34_000,
-  totalElapsedMs: 68_000,
+  medianWallMs: 60_000,
+  totalElapsedMs: 168_000,
 } as const;
 
 function gitPorcelain(cwd: string): string {
@@ -251,7 +264,10 @@ test("taishi issue-mode entry: null terminal artifact is terminal-artifact unrea
       assert.equal(result.page.unreadable.length, 2);
       assert.deepEqual(
         result.page.legs.map((leg) => leg.runId),
-        ["019ff000-0002-7000-8000-0000000000b2"],
+        [
+          LEG_E5_RUN,
+          "019ff000-0002-7000-8000-0000000000b2",
+        ],
       );
     });
   });
@@ -276,19 +292,19 @@ test("taishi B1 leg-wall-clock family: fixture ranking/median/total hand-equal; 
       });
       const page = result.page as PageWithLegWallClock;
 
-      // Ticket-pinned acceptance: ranking desc + median 34_000 + total 68_000.
+      // Ticket-pinned acceptance: ranking desc + median 60_000 + total 168_000 (e5 overlap fixture).
       assert.deepEqual(page.legWallClock, EXPECTED_LEG_WALL_CLOCK);
-      assert.equal(page.legWallClock?.medianWallMs, 34_000);
-      assert.equal(page.legWallClock?.totalElapsedMs, 68_000);
+      assert.equal(page.legWallClock?.medianWallMs, 60_000);
+      assert.equal(page.legWallClock?.totalElapsedMs, 168_000);
       assert.deepEqual(
         page.legWallClock?.ranking.map((leg) => leg.wallMs),
-        [60_000, 8_000],
+        [100_000, 60_000, 8_000],
       );
 
       // Damaged run stays unreadable; board covers exactly the readable leg set.
       assert.equal(page.unreadableCount, 1);
       assert.equal(page.unreadable[0]!.runId, EXPECTED_UNREADABLE[0]!.runId);
-      assert.equal(page.legWallClock?.ranking.length, 2);
+      assert.equal(page.legWallClock?.ranking.length, 3);
       assert.equal(page.legWallClock?.ranking.length, page.legs.length);
       assert.deepEqual(
         new Set(page.legWallClock?.ranking.map((leg) => leg.runId)),
@@ -308,8 +324,9 @@ test("taishi B1 leg-wall-clock family: fixture ranking/median/total hand-equal; 
 test("taishi metric-family production discovery: real family files register without shared-list edits", async () => {
   // Registration proof stays on the production path — real family modules under
   // taishi-metric-families/ are discovered by the real loader (no test-only dir hook).
-  // Inclusion only: B1 absorbed/replaced a2-seam-probe; pin the live product family,
-  // not the retired probe inventory.
+  // Inclusion only: B1 absorbed/replaced a2-seam-probe; pin the live product families,
+  // not the retired probe inventory. B2 drop-in may land alongside without re-pinning
+  // the full registry inventory here (B2 has its own assembly tracer).
   const names = (await readdir(TAISHI_ISSUE_METRIC_FAMILIES_DIR))
     .filter((name) => {
       if (name.endsWith(".d.ts")) return false;
@@ -326,6 +343,10 @@ test("taishi metric-family production discovery: real family files register with
     names.includes("leg-wall-clock.ts"),
     "B1 leg-wall-clock family module must register under production discovery",
   );
+  assert.ok(
+    names.includes("b2-frame-buckets-actions.ts"),
+    "B2 frame-buckets-actions family module must register under production discovery",
+  );
 
   const families = await loadTaishiIssueMetricFamilies();
   assert.equal(
@@ -337,6 +358,10 @@ test("taishi metric-family production discovery: real family files register with
     families.some((family) => family.id === "leg-wall-clock"),
     "loaded families must include leg-wall-clock",
   );
+  assert.ok(
+    families.some((family) => family.id === "b2-frame-buckets-actions"),
+    "loaded families must include b2-frame-buckets-actions",
+  );
   // Production registry is the same discovery product (loaded once at import).
   assert.equal(
     TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "a2-seam-probe"),
@@ -346,6 +371,10 @@ test("taishi metric-family production discovery: real family files register with
   assert.ok(
     TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "leg-wall-clock"),
     "production registry must include leg-wall-clock",
+  );
+  assert.ok(
+    TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "b2-frame-buckets-actions"),
+    "production registry must include b2-frame-buckets-actions",
   );
 });
 
