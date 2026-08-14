@@ -196,6 +196,21 @@ export type TaishiResult =
  * Single-run unreadable/damaged stays page-local exclusion (PRD #298), not a
  * whole-compute failure. Sweep / explicit recompute still use runTaishiIssueMode.
  */
+/**
+ * Cached page may be reused only when it already represents the requested ticket
+ * scope. projectRoot-only pages are keyed by root path alone and may include
+ * other tickets at that root — a later --ticket N must recompute via the sole
+ * kernel rather than accept a mismatched scope binding.
+ */
+function cachedPageMatchesRequestedScope(
+  page: TaishiIssueMetricsPage,
+  input: TaishiIssueModeInput,
+): boolean {
+  const requestedTicket = input.ticketNumber ?? input.issueNumber;
+  if (requestedTicket === undefined) return true;
+  return page.issueNumber === requestedTicket;
+}
+
 export async function readOrComputeTaishiIssuePage(
   input: TaishiIssueModeInput,
 ): Promise<TaishiIssueModeResult> {
@@ -206,7 +221,10 @@ export async function readOrComputeTaishiIssuePage(
   try {
     const raw = await readFile(pagePath, "utf8");
     const page = JSON.parse(raw) as TaishiIssueMetricsPage;
-    return { mode: "issue", page, pagePath };
+    if (cachedPageMatchesRequestedScope(page, input)) {
+      return { mode: "issue", page, pagePath };
+    }
+    // Existing page is for a different / absent ticket scope — same kernel recompute.
   } catch (error) {
     if (!isMissingPathError(error)) {
       // Corrupt / blocked page path — loud with issue identity, not absent.
