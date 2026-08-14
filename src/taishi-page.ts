@@ -17,7 +17,6 @@ import {
 } from "./activation-ledger-topology.ts";
 import type { TaishiReadableRunFacts } from "./taishi-ledger.ts";
 import { TAISHI_ISSUE_METRIC_FAMILIES } from "./taishi-metric-families.ts";
-import type { TaishiA2SeamProbeSection } from "./taishi-metric-families/a2-seam-probe.ts";
 import { composeTaishiMetricFamilySections } from "./taishi-metric-family.ts";
 
 /** Required run sources that may render a loud unreadable exclusion. */
@@ -52,8 +51,6 @@ export type TaishiIssueMetricsPage = {
   readonly legs: readonly TaishiLegEntry[];
   readonly unreadable: readonly TaishiUnreadableRun[];
   readonly unreadableCount: number;
-  /** A2 example family; absorbed/replaced when B1 lands. */
-  readonly a2SeamProbe?: TaishiA2SeamProbeSection;
 };
 
 export function taishiIssuePageKey(projectRoot: string): string {

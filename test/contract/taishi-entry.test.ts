@@ -66,58 +66,6 @@ const EXPECTED_UNREADABLE = [
 ] as const;
 
 /**
- * A2 seam-probe hand values from fixture sessions (readable legs only).
- * Raw frame span / tool intervals / terminal face only — no derived metrics.
- */
-const EXPECTED_A2_SEAM_PROBE = {
-  kind: "taishi-a2-seam-probe",
-  runs: [
-    {
-      runId: LEG_A1_RUN,
-      book: BOOK,
-      role: "coder",
-      frameSpan: {
-        startedAt: "2026-08-01T00:00:00.000Z",
-        endedAt: "2026-08-01T00:01:00.000Z",
-      },
-      toolIntervals: [
-        {
-          toolCallId: "call_bash_a",
-          toolName: "bash",
-          startedAt: "2026-08-01T00:00:10.000Z",
-          endedAt: "2026-08-01T00:00:40.000Z",
-        },
-        {
-          toolCallId: "call_out_a",
-          toolName: "ak_coder_output",
-          startedAt: "2026-08-01T00:00:55.000Z",
-          endedAt: "2026-08-01T00:01:00.000Z",
-        },
-      ],
-      terminal: { status: "present", file: "report.json", role: "coder" },
-    },
-    {
-      runId: "019ff000-0002-7000-8000-0000000000b2",
-      book: BOOK,
-      role: "judge",
-      frameSpan: {
-        startedAt: "2026-08-01T00:01:00.000Z",
-        endedAt: "2026-08-01T00:01:08.000Z",
-      },
-      toolIntervals: [
-        {
-          toolCallId: "call_judge_b",
-          toolName: "ak_judge_output",
-          startedAt: "2026-08-01T00:01:05.000Z",
-          endedAt: "2026-08-01T00:01:08.000Z",
-        },
-      ],
-      terminal: { status: "present", file: "report.json", role: "judge" },
-    },
-  ],
-} as const;
-
-/**
  * B1 leg-wall-clock hand values from A1 fixture readable legs only.
  * a1 frame 00:00:00→00:01:00 = 60_000ms; b2 00:01:00→00:01:08 = 8_000ms.
  * Ranking wall-clock desc; median even-sample mean; total = Σ walls.
@@ -229,21 +177,12 @@ test("taishi issue-mode entry: fixture legs+unreadable hand-equal, porcelain fro
 
       // Hand-computed leg list (other-issue run excluded; damaged excluded from legs).
       assert.deepEqual(first.page.legs, [...EXPECTED_LEGS]);
-
-      // A2: example family consumes typed per-run facts (span/tools/terminal) only.
-      assert.deepEqual(first.page.a2SeamProbe, EXPECTED_A2_SEAM_PROBE);
-      // 零新指标: no per-run derived duration or aggregate median on the page.
-      const probe = first.page.a2SeamProbe!;
+      // a2-seam-probe retired: B1 leg-wall-clock absorbs/replaces the A2 probe section.
       assert.equal(
-        "frameSpanMedianMs" in (probe as unknown as Record<string, unknown>),
+        "a2SeamProbe" in (first.page as unknown as Record<string, unknown>),
         false,
+        "retired a2-seam-probe must not appear on the issue page",
       );
-      for (const run of probe.runs) {
-        assert.equal(
-          "frameSpanMs" in (run as unknown as Record<string, unknown>),
-          false,
-        );
-      }
 
       // Damaged run: loud unreadable exclusion + single count; duration not on page.
       assert.equal(first.page.unreadableCount, 1);
@@ -369,8 +308,8 @@ test("taishi B1 leg-wall-clock family: fixture ranking/median/total hand-equal; 
 test("taishi metric-family production discovery: real family files register without shared-list edits", async () => {
   // Registration proof stays on the production path — real family modules under
   // taishi-metric-families/ are discovered by the real loader (no test-only dir hook).
-  // Inclusion only: B-wave family files may land alongside the A2 probe without
-  // forcing this shared tracer to re-pin the full registry inventory.
+  // Inclusion only: B1 absorbed/replaced a2-seam-probe; pin the live product family,
+  // not the retired probe inventory.
   const names = (await readdir(TAISHI_ISSUE_METRIC_FAMILIES_DIR))
     .filter((name) => {
       if (name.endsWith(".d.ts")) return false;
@@ -378,20 +317,35 @@ test("taishi metric-family production discovery: real family files register with
       return name.endsWith(".ts") || name.endsWith(".js") || name.endsWith(".mjs");
     })
     .sort((a, b) => a.localeCompare(b));
-  assert.ok(
+  assert.equal(
     names.includes("a2-seam-probe.ts"),
-    "A2 seam-probe family module must remain registered under production discovery",
+    false,
+    "retired a2-seam-probe family module must not remain under production discovery",
+  );
+  assert.ok(
+    names.includes("leg-wall-clock.ts"),
+    "B1 leg-wall-clock family module must register under production discovery",
   );
 
   const families = await loadTaishiIssueMetricFamilies();
-  assert.ok(
+  assert.equal(
     families.some((family) => family.id === "a2-seam-probe"),
-    "loaded families must include a2-seam-probe",
+    false,
+    "loaded families must not include retired a2-seam-probe",
+  );
+  assert.ok(
+    families.some((family) => family.id === "leg-wall-clock"),
+    "loaded families must include leg-wall-clock",
   );
   // Production registry is the same discovery product (loaded once at import).
-  assert.ok(
+  assert.equal(
     TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "a2-seam-probe"),
-    "production registry must include a2-seam-probe",
+    false,
+    "production registry must not include retired a2-seam-probe",
+  );
+  assert.ok(
+    TAISHI_ISSUE_METRIC_FAMILIES.some((family) => family.id === "leg-wall-clock"),
+    "production registry must include leg-wall-clock",
   );
 });
 
