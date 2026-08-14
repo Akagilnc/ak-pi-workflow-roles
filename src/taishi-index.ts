@@ -28,7 +28,7 @@ export type TaishiLibraryIndexRow = {
   readonly changedLines: TaishiOptionalMetricNumber;
   /** 耗时/千行 — absent when LOC absent/0 (never 0 or ∞ stand-in). */
   readonly msPerKLines: TaishiOptionalMetricNumber;
-  /** 末次活动时间戳 — max readable run end-frame timestamp. */
+  /** 末次活动时间戳 — max end-frame across ALL runs (incl. unreadable available). */
   readonly lastActivityAt: TaishiOptionalTimestamp;
 };
 
@@ -93,50 +93,11 @@ export function upsertTaishiLibraryIndexRows(
   return buildTaishiLibraryIndexPage([...byRoot.values()]);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isOptionalMetricNumber(value: unknown): value is TaishiOptionalMetricNumber {
-  if (!isRecord(value) || typeof value.status !== "string") return false;
-  if (value.status === "absent") return true;
-  return value.status === "present" && typeof value.value === "number";
-}
-
-function isOptionalTimestamp(value: unknown): value is TaishiOptionalTimestamp {
-  if (!isRecord(value) || typeof value.status !== "string") return false;
-  if (value.status === "absent") return true;
-  return value.status === "present" && typeof value.at === "string";
-}
-
-function parseLibraryIndexPage(raw: unknown): TaishiLibraryIndexPage {
-  if (!isRecord(raw) || raw.kind !== "taishi-library-index" || !Array.isArray(raw.rows)) {
-    throw new Error("taishi library index page has unexpected shape");
-  }
-  const rows: TaishiLibraryIndexRow[] = [];
-  for (const entry of raw.rows) {
-    if (
-      !isRecord(entry)
-      || typeof entry.projectRoot !== "string"
-      || typeof entry.totalElapsedMs !== "number"
-      || !isOptionalMetricNumber(entry.changedLines)
-      || !isOptionalMetricNumber(entry.msPerKLines)
-      || !isOptionalTimestamp(entry.lastActivityAt)
-    ) {
-      throw new Error("taishi library index row has unexpected shape");
-    }
-    rows.push({
-      projectRoot: entry.projectRoot,
-      totalElapsedMs: entry.totalElapsedMs,
-      changedLines: entry.changedLines,
-      msPerKLines: entry.msPerKLines,
-      lastActivityAt: entry.lastActivityAt,
-    });
-  }
-  return buildTaishiLibraryIndexPage(rows);
-}
-
-/** Read existing library index, or undefined when absent. */
+/**
+ * Read existing library index, or undefined when absent.
+ * Single typed producer writes this file — JSON.parse failure is loud;
+ * no bespoke shape validator on the self-read path.
+ */
 export async function readTaishiLibraryIndexPage(
   ledgerHome: string,
 ): Promise<TaishiLibraryIndexPage | undefined> {
@@ -154,7 +115,7 @@ export async function readTaishiLibraryIndexPage(
     }
     throw error;
   }
-  return parseLibraryIndexPage(JSON.parse(raw) as unknown);
+  return JSON.parse(raw) as TaishiLibraryIndexPage;
 }
 
 /**

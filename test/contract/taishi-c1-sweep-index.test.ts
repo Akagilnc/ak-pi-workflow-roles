@@ -37,12 +37,19 @@ const ISSUE_DEMO = "/taishi-fixture/issue-demo";
 const ISSUE_ALPHA = "/taishi-fixture/c1-issue-alpha";
 /** C1-owned fixture — runId 019ff000-1002, wall 10_000. */
 const ISSUE_BETA = "/taishi-fixture/c1-issue-beta";
+/**
+ * C1-owned negative: readable earlier + newer terminal-unreadable with later end-frame.
+ * runIds 019ff000-1003 / 019ff000-1004.
+ */
+const ISSUE_GAMMA = "/taishi-fixture/c1-issue-gamma";
 
 const C1_ALPHA_RUN = "019ff000-1001-7000-8000-0000000001a1";
 const C1_BETA_RUN = "019ff000-1002-7000-8000-0000000001b2";
+const C1_GAMMA_READABLE_RUN = "019ff000-1003-7000-8000-0000000001c3";
+const C1_GAMMA_UNREADABLE_RUN = "019ff000-1004-7000-8000-0000000001d4";
 
 /**
- * Hand values from shared board (B1 total) + max readable endedAt.
+ * Hand values from shared board (B1 total) + max available endedAt across ALL runs.
  * Σ wallMs = 302_000; latest endedAt = f1 @ 00:12:25.
  */
 const DEMO_TOTAL_ELAPSED_MS = 302_000;
@@ -55,6 +62,14 @@ const ALPHA_LAST_ACTIVITY_AT = "2026-08-02T00:00:40.000Z";
 /** Beta: single leg wall 10s @ 2026-08-02T01:00:00→01:00:10. */
 const BETA_TOTAL_ELAPSED_MS = 10_000;
 const BETA_LAST_ACTIVITY_AT = "2026-08-02T01:00:10.000Z";
+
+/**
+ * Gamma hand values:
+ * - readable 1003 wall 20s ends 02:00:20 → sole contributor to totalElapsedMs
+ * - unreadable 1004 (null terminal) ends 02:01:00 → wins lastActivityAt, not elapsed
+ */
+const GAMMA_TOTAL_ELAPSED_MS = 20_000;
+const GAMMA_LAST_ACTIVITY_AT = "2026-08-02T02:01:00.000Z";
 
 const ABSENT: TaishiOptionalMetricNumber = { status: "absent" };
 const present = (value: number): TaishiOptionalMetricNumber => ({
@@ -290,6 +305,61 @@ test("taishi C1 issue-mode optional LOC: present yields msPerK; omit yields type
       assert.equal(withoutLoc.page.totalElapsedMs, BETA_TOTAL_ELAPSED_MS);
       // Issue mode does not maintain the library index.
       assert.equal("index" in withoutLoc, false);
+    });
+  });
+});
+
+test("taishi C1 sweep: unreadable later end-frame still wins lastActivityAt; elapsed excludes it", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async (home) => {
+      const ledgerHome = join(home, ".ak-roles");
+      const indexPath = taishiLibraryIndexPath(ledgerHome);
+
+      const result = await runTaishi({
+        mode: "sweep",
+        mergedPullRequests: [{ projectRoot: ISSUE_GAMMA, changedLines: 100 }],
+      });
+
+      assert.equal(result.mode, "sweep");
+      assert.equal(result.issuePages.length, 1);
+      const page = result.issuePages[0]!.page;
+
+      // Readable-only elapsed; unreadable null-terminal excluded from legs/elapsed.
+      assert.equal(page.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
+      assert.deepEqual(page.legs.map((leg) => leg.runId), [C1_GAMMA_READABLE_RUN]);
+      assert.equal(page.unreadableCount, 1);
+      assert.equal(page.unreadable[0]?.runId, C1_GAMMA_UNREADABLE_RUN);
+      assert.deepEqual(page.unreadable[0]?.missingSources, ["terminal-artifact"]);
+      assert.deepEqual(page.unreadable[0]?.lastFrameAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
+
+      // PRD ②: lastActivityAt = max end-frame of ALL runs (unreadable available end wins).
+      assert.deepEqual(page.lastActivityAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
+      assert.deepEqual(page.changedLines, present(100));
+      assert.deepEqual(page.msPerKLines, present(200_000)); // 20000 / (100/1000)
+
+      const pagePath = taishiIssuePagePath(ledgerHome, ISSUE_GAMMA);
+      const onDisk = JSON.parse(await readFile(pagePath, "utf8")) as TaishiIssueMetricsPage;
+      assert.deepEqual(onDisk.lastActivityAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
+      assert.equal(onDisk.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
+
+      // Index row projects the same lastActivityAt through sweep → disk.
+      assert.equal(result.indexPath, indexPath);
+      assert.equal(result.index.rows.length, 1);
+      assert.deepEqual(
+        result.index.rows[0],
+        expectedRow({
+          projectRoot: ISSUE_GAMMA,
+          totalElapsedMs: GAMMA_TOTAL_ELAPSED_MS,
+          changedLines: present(100),
+          msPerKLines: present(200_000),
+          lastActivityAt: presentAt(GAMMA_LAST_ACTIVITY_AT),
+        }),
+      );
+      const indexOnDisk = JSON.parse(
+        await readFile(indexPath, "utf8"),
+      ) as TaishiLibraryIndexPage;
+      assert.deepEqual(indexOnDisk.rows[0]?.lastActivityAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
+      assert.equal(indexOnDisk.rows[0]?.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
     });
   });
 });

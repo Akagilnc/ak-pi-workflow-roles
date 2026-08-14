@@ -26,7 +26,7 @@ export type TaishiIssueModeInput = {
   readonly projectRoot: string;
   /**
    * 排除后改动行数 — optional caller typed input.
-   * Omit or ≤0 → page retains typed 空缺 for LOC and 耗时/千行.
+   * Omit or 0 → page retains typed 空缺 for LOC and 耗时/千行.
    */
   readonly changedLines?: number;
 };
@@ -35,7 +35,7 @@ export type TaishiIssueModeInput = {
 export type TaishiMergedPullRequest = {
   readonly projectRoot: string;
   /**
-   * 排除后改动行数 — caller typed; omit or ≤0 → typed 空缺.
+   * 排除后改动行数 — caller typed; omit or 0 → typed 空缺.
    * Sweep always carries the LOC face (present or absent) per issue.
    */
   readonly changedLines?: number;
