@@ -56,6 +56,10 @@ export function assembleRuntimeReviewerReceipt(input: {
       ...(accepted.specDisposition === undefined
         ? {}
         : { specDisposition: accepted.specDisposition }),
+      // Self-fetch bytes + source annotation retained for audit (#343 fetch-then-store).
+      ...(accepted.specFetchedMaterial === undefined
+        ? {}
+        : { specFetchedMaterial: accepted.specFetchedMaterial }),
     }),
     reports,
     outcomes,

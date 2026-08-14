@@ -6,7 +6,11 @@ export function projectAcceptedDispatch(dispatch) {
         source: "reviewer-dispatch", type: "accepted", identity: dispatch.identity,
         recipe: dispatch.recipe, input: dispatch.input, target: dispatch.targetSnapshot,
         range: dispatch.range, authorityRefs: dispatch.authorityRefs,
-        specDisposition: dispatch.specDisposition, legs: dispatch.legs,
+        specDisposition: dispatch.specDisposition,
+        ...(dispatch.specFetchedMaterial === undefined
+            ? {}
+            : { specFetchedMaterial: dispatch.specFetchedMaterial }),
+        legs: dispatch.legs,
     };
 }
 export function projectReviewerDispatchOutcome(ledger, dispatch, result) {

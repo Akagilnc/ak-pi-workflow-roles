@@ -189,3 +189,42 @@ test("shared ref snapshot helper canonicalizes refs immutably", () => {
   assert.deepEqual(Object.keys(refs), ["refs/heads/a", "refs/tags/z"]);
   assert.throws(() => (refs as unknown as Record<string, string>)["refs/heads/a"] = "changed");
 });
+
+test("pinned reader: origin/commit messages/readPinnedText for Spec self-fetch", async () => {
+  const { parseGitHubOriginRemote } = await import("../../src/reviewer-pinned-git.ts");
+  assert.deepEqual(parseGitHubOriginRemote("git@github.com:Acme/widgets.git"), {
+    owner: "Acme",
+    repo: "widgets",
+  });
+  assert.deepEqual(parseGitHubOriginRemote("https://github.com/Acme/widgets.git"), {
+    owner: "Acme",
+    repo: "widgets",
+  });
+  assert.equal(parseGitHubOriginRemote("https://gitlab.com/Acme/widgets.git"), undefined);
+
+  const root = await materializeSeededRepo("reviewer-pin-self-fetch-");
+  try {
+    const base = await git(root, "rev-parse", "HEAD");
+    await mkdir(join(root, "docs", "adr"), { recursive: true });
+    await writeFile(join(root, "docs", "adr", "0001-x.md"), "# ADR\nbody\n");
+    await git(root, "add", ".");
+    await git(root, "commit", "-m", "feat: land #88 with adr");
+    const reader = await createReviewerPinnedGitReader(root);
+
+    // No origin ⇒ self-fetch unavailable.
+    assert.equal(await reader.originRepository(), undefined);
+    await git(root, "remote", "add", "origin", "git@github.com:Acme/widgets.git");
+    // Reader is pinned at construction; re-create after remote add.
+    const withRemote = await createReviewerPinnedGitReader(root);
+    assert.deepEqual(await withRemote.originRepository(), { owner: "Acme", repo: "widgets" });
+
+    const messages = await withRemote.commitMessagesNewestFirst(base);
+    assert.equal(messages[0], "feat: land #88 with adr");
+
+    assert.equal(await withRemote.readPinnedText("docs/adr/0001-x.md"), "# ADR\nbody\n");
+    assert.equal(await withRemote.readPinnedText("docs/adr/missing.md"), undefined);
+    assert.equal(await withRemote.readPinnedText("../escape"), undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -94,6 +94,13 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
       type: "string" as const,
     }),
   }),
+  Object.freeze({
+    name: "ak-review-ticket-number",
+    definition: Object.freeze({
+      description: "Typed ticketNumber for Spec self-fetch primary path",
+      type: "string" as const,
+    }),
+  }),
 ] as const);
 
 /**
@@ -134,6 +141,15 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
     authorityRefs = Object.freeze(parsed as string[]);
   }
 
+  let ticketNumber: number | undefined;
+  const rawTicketNumber = getFlag("ak-review-ticket-number");
+  if (rawTicketNumber !== undefined) {
+    if (typeof rawTicketNumber !== "string" || !/^[1-9]\d*$/.test(rawTicketNumber)) {
+      throw new Error("Reviewer ticket number transport error: expected a positive integer string");
+    }
+    ticketNumber = Number(rawTicketNumber);
+  }
+
   const baseRevision = getFlag("ak-review-base");
   if (typeof baseRevision !== "string" || !baseRevision.trim()) {
     throw new Error("Reviewer role requires --ak-review-base");
@@ -142,6 +158,7 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
     baseRevision,
     ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
     ...(authorityRefs === undefined ? {} : { authorityRefs }),
+    ...(ticketNumber === undefined ? {} : { ticketNumber }),
   });
 }
 

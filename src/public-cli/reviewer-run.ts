@@ -122,6 +122,10 @@ export function buildReviewerActivationExtraArgs(
     admitted.authorityRefs.length === 0
       ? []
       : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
+  const ticketNumberArgs =
+    admitted.ticketNumber === undefined
+      ? []
+      : ["--ak-review-ticket-number", String(admitted.ticketNumber)];
   return [
     "--no-skills",
     "--skill",
@@ -139,6 +143,7 @@ export function buildReviewerActivationExtraArgs(
     "--ak-review-base",
     admitted.baseRevision,
     ...authorityRefArgs,
+    ...ticketNumberArgs,
     "--mode",
     "json",
     ...buildModelArgs(options.model),
@@ -166,6 +171,10 @@ export function buildReviewerResumeActivationExtraArgs(
     admitted.authorityRefs.length === 0
       ? []
       : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
+  const ticketNumberArgs =
+    admitted.ticketNumber === undefined
+      ? []
+      : ["--ak-review-ticket-number", String(admitted.ticketNumber)];
   return [
     "--no-skills",
     "--skill",
@@ -183,6 +192,7 @@ export function buildReviewerResumeActivationExtraArgs(
     "--ak-review-base",
     admitted.baseRevision,
     ...authorityRefArgs,
+    ...ticketNumberArgs,
     "--mode",
     "json",
     ...buildModelArgs(options.model),

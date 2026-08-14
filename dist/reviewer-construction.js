@@ -89,10 +89,34 @@ export function reviewerAuthorityRefsMaterial(authorityRefs) {
         "These are durable authority references only. Read them as Spec grounding materials; do not invent Spec prose from caller instruction.",
     ].join("\n");
 }
+/**
+ * Spec-only material carrier for self-fetched issue bytes + source annotation (#343).
+ * Actual issue body and referenced ADR bytes are embedded for audit (fetch-then-store).
+ */
+export function reviewerFetchedSpecMaterial(fetched) {
+    const lines = [
+        "Authority-Fetched-Spec:",
+        `source: ${fetched.adopted.source}`,
+        `ticketNumber: ${fetched.ticketNumber}`,
+        `issueRef: ${fetched.issueRef}`,
+        `abandoned: ${JSON.stringify(Object.freeze([...fetched.abandoned]))}`,
+        "--- issue body ---",
+        fetched.issueBody,
+    ];
+    for (const adr of fetched.adrs) {
+        lines.push(`--- ${adr.path} ---`);
+        lines.push(adr.status === "present" ? adr.body : "MISSING");
+    }
+    lines.push("These are self-fetched Spec grounding materials. Do not invent Spec prose from caller instruction.");
+    return lines.join("\n");
+}
 /** Deterministic compiler: fixed target/range plus discovery product in, dispatch text out. */
 export function constructReviewerDispatch(input) {
     const launchSpec = input.specAuthority.status === "available";
     const authorityRefs = Object.freeze(input.specAuthority.status === "available" ? [...input.specAuthority.refs] : []);
+    const specFetchedMaterial = input.specAuthority.status === "available" && input.specAuthority.fetched !== undefined
+        ? input.specAuthority.fetched
+        : undefined;
     const specDisposition = launchSpec ? "launched" : "skipped-missing";
     const common = [
         `Target: ${input.range.target}`,
@@ -111,8 +135,13 @@ export function constructReviewerDispatch(input) {
     const legs = axes.map((x) => {
         const parts = [common, reviewerAxisMethodAdapter(x.axis)];
         // Spec evidence-child only — never Standards or a parent replacement Spec leg.
-        if (x.axis === "spec" && authorityRefs.length > 0) {
-            parts.push(reviewerAuthorityRefsMaterial(authorityRefs));
+        if (x.axis === "spec") {
+            if (specFetchedMaterial !== undefined) {
+                parts.push(reviewerFetchedSpecMaterial(specFetchedMaterial));
+            }
+            if (authorityRefs.length > 0) {
+                parts.push(reviewerAuthorityRefsMaterial(authorityRefs));
+            }
         }
         return Object.freeze({
             axis: x.axis,
@@ -130,6 +159,7 @@ export function constructReviewerDispatch(input) {
         range: input.range,
         authorityRefs,
         specDisposition,
+        ...(specFetchedMaterial === undefined ? {} : { specFetchedMaterial }),
         legs: Object.freeze(legs),
     });
 }

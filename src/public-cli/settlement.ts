@@ -3176,6 +3176,10 @@ export async function publishReviewerArtifacts(
         ...(admitted.instructionEmpty
           ? {}
           : { callerProvenance: admitted.instruction }),
+        // Self-fetch Spec bytes + source annotation when primary path produced material (#343).
+        ...(options.reviewerReceipt?.specFetchedMaterial === undefined
+          ? {}
+          : { specFetchedMaterial: options.reviewerReceipt.specFetchedMaterial }),
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
           frozenPath: a.frozenPath,

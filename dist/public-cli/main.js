@@ -16881,7 +16881,9 @@ var init_reviewer_construction = __esm({
 });
 
 // src/reviewer-dispatch.ts
-var REVIEWER_PREFLIGHT_VIOLATIONS;
+import { execFile as execFile3 } from "node:child_process";
+import { promisify as promisify3 } from "node:util";
+var execFileAsync3, REVIEWER_PREFLIGHT_VIOLATIONS;
 var init_reviewer_dispatch = __esm({
   "src/reviewer-dispatch.ts"() {
     "use strict";
@@ -16895,6 +16897,7 @@ var init_reviewer_dispatch = __esm({
     init_reviewer_preflight_error();
     init_sha256();
     init_reviewer_prompt_identity();
+    execFileAsync3 = promisify3(execFile3);
     REVIEWER_PREFLIGHT_VIOLATIONS = ["base-invalid", "range-invalid", "prompt-identity-invalid", "target-drift"];
   }
 });
@@ -16921,12 +16924,12 @@ var init_upstream_error_testimony = __esm({
 });
 
 // src/public-cli/explicit-internal.ts
-import { execFile as execFile3, spawn } from "node:child_process";
+import { execFile as execFile4, spawn } from "node:child_process";
 import { constants, writeFileSync } from "node:fs";
 import { access, readFile as readFile5, realpath as realpath3, unlink } from "node:fs/promises";
 import { delimiter as delimiter2, isAbsolute as isAbsolute4, join as join6, resolve as resolve5 } from "node:path";
 import { platform } from "node:process";
-import { promisify as promisify3 } from "node:util";
+import { promisify as promisify4 } from "node:util";
 function isReviewerPreflightViolation(value) {
   return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
 }
@@ -17028,7 +17031,7 @@ async function resolveSelectedPi(command, cwd, env) {
 }
 async function selectedPiIdentity(command, cwd, env) {
   const executable = await resolveSelectedPi(command, cwd, env);
-  const { stdout } = await execFileAsync3(executable, ["--version"], {
+  const { stdout } = await execFileAsync4(executable, ["--version"], {
     cwd,
     env,
     encoding: "utf8"
@@ -17065,7 +17068,7 @@ async function runExplicitInternalActivation(options) {
     env
   });
 }
-var REVIEWER_DISPATCH_REJECTION_FILE, execFileAsync3, defaultExplicitInternalPiRunner;
+var REVIEWER_DISPATCH_REJECTION_FILE, execFileAsync4, defaultExplicitInternalPiRunner;
 var init_explicit_internal = __esm({
   "src/public-cli/explicit-internal.ts"() {
     "use strict";
@@ -17075,7 +17078,7 @@ var init_explicit_internal = __esm({
     init_upstream_error_testimony();
     init_upstream_error_testimony();
     REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
-    execFileAsync3 = promisify3(execFile3);
+    execFileAsync4 = promisify4(execFile4);
     defaultExplicitInternalPiRunner = async (args, options) => {
       const command = options.env.PI_BINARY ?? "pi";
       const piIdentity = await selectedPiIdentity(command, options.cwd, options.env);
@@ -20720,6 +20723,8 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
         baseRevision: admitted.baseRevision,
         authorityRefs: [...admitted.authorityRefs],
         ...admitted.instructionEmpty ? {} : { callerProvenance: admitted.instruction },
+        // Self-fetch Spec bytes + source annotation when primary path produced material (#343).
+        ...options.reviewerReceipt?.specFetchedMaterial === void 0 ? {} : { specFetchedMaterial: options.reviewerReceipt.specFetchedMaterial },
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
           frozenPath: a.frozenPath,
@@ -23406,6 +23411,7 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     "code-review"
   );
   const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
+  const ticketNumberArgs = admitted.ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(admitted.ticketNumber)];
   return [
     "--no-skills",
     "--skill",
@@ -23423,6 +23429,7 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     "--ak-review-base",
     admitted.baseRevision,
     ...authorityRefArgs,
+    ...ticketNumberArgs,
     "--mode",
     "json",
     ...buildModelArgs7(options.model),
@@ -23435,6 +23442,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     "code-review"
   );
   const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
+  const ticketNumberArgs = admitted.ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(admitted.ticketNumber)];
   return [
     "--no-skills",
     "--skill",
@@ -23452,6 +23460,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     "--ak-review-base",
     admitted.baseRevision,
     ...authorityRefArgs,
+    ...ticketNumberArgs,
     "--mode",
     "json",
     ...buildModelArgs7(options.model),

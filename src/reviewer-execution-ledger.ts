@@ -28,7 +28,11 @@ export function projectAcceptedDispatch(dispatch: AcceptedReviewerDispatch): Rev
     source: "reviewer-dispatch", type: "accepted", identity: dispatch.identity,
     recipe: dispatch.recipe, input: dispatch.input, target: dispatch.targetSnapshot,
     range: dispatch.range, authorityRefs: dispatch.authorityRefs,
-    specDisposition: dispatch.specDisposition, legs: dispatch.legs,
+    specDisposition: dispatch.specDisposition,
+    ...(dispatch.specFetchedMaterial === undefined
+      ? {}
+      : { specFetchedMaterial: dispatch.specFetchedMaterial }),
+    legs: dispatch.legs,
   };
 }
 
