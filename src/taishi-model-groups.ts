@@ -109,17 +109,21 @@ export function buildTaishiModelGroupsPage(input: {
   readonly combinationMapping?: Readonly<Record<string, string>>;
 }): TaishiModelGroupsPage {
   // Split before B3 projection: only model-bearing legs enter group dens.
-  const groupedRuns: TaishiReadableRunFacts[] = [];
+  // Carry the non-empty raw key so aggregation need not re-check vacancy.
+  const groupedRuns: { run: TaishiReadableRunFacts; rawGroupKey: string }[] = [];
   const modelAbsent: TaishiUnreadableRun[] = [];
   for (const run of input.runs) {
-    if (taishiModelGroupKey(run.models) === undefined) {
+    const rawGroupKey = taishiModelGroupKey(run.models);
+    if (rawGroupKey === undefined) {
       modelAbsent.push(modelIdentityAbsentEntry(run));
     } else {
-      groupedRuns.push(run);
+      groupedRuns.push({ run, rawGroupKey });
     }
   }
 
-  const acceptance = buildAcceptanceSuccessReworkSection(groupedRuns);
+  const acceptance = buildAcceptanceSuccessReworkSection(
+    groupedRuns.map(({ run }) => run),
+  );
   const legByRunId = new Map(
     (acceptance?.legs ?? []).map((leg) => [leg.runId, leg] as const),
   );
@@ -133,14 +137,7 @@ export function buildTaishiModelGroupsPage(input: {
   };
   const byRaw = new Map<string, Acc>();
 
-  for (const run of groupedRuns) {
-    const rawGroupKey = taishiModelGroupKey(run.models);
-    // groupedRuns is pre-filtered to model-bearing legs only.
-    if (rawGroupKey === undefined) {
-      throw new Error(
-        `taishi model-groups: invariant — empty model key after filter for run ${run.runId}`,
-      );
-    }
+  for (const { run, rawGroupKey } of groupedRuns) {
     const leg = legByRunId.get(run.runId);
     if (leg === undefined) {
       // Readable run must project through B3 map; missing is an invariant break.
