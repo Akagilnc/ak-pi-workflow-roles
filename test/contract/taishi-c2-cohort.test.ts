@@ -7,6 +7,8 @@
  * rate + leg wall-clock median.
  * Ratio metrics merge numerators/denominators across the group's present issues;
  * missing index row → typed vacancy entry; zero denominator → typed vacancy.
+ * Index rows come from the real issue-mode entry (no hand-written index assembly).
+ * Index hit + page ENOENT stays a real failure — never washed into absent.
  * C2 fixture runs use exclusive runId segment 019ff000-2xxx.
  */
 import assert from "node:assert/strict";
@@ -18,11 +20,6 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
-import {
-  buildTaishiLibraryIndexPage,
-  writeTaishiLibraryIndexPage,
-  type TaishiLibraryIndexRow,
-} from "../../src/taishi-index.ts";
 import { runTaishi } from "../../src/taishi-entry.ts";
 import type {
   TaishiCohortGroupResult,
@@ -144,10 +141,9 @@ function roleStats(
 
 test("taishi C2 cohort: side-by-side group metrics join index by issueNumber; vacancy + merged ratios", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
-      const ledgerHome = join(home, ".ak-roles");
-
-      // Persist issue pages (issue mode) carrying typed issueNumber.
+    await withTempHome(async () => {
+      // Persist issue pages (issue mode) carrying typed issueNumber;
+      // real entry also maintains the unique issueNumber→projectRoot index rows.
       const page201 = await runTaishi({
         mode: "issue",
         projectRoot: ISSUE_201_ROOT,
@@ -183,26 +179,8 @@ test("taishi C2 cohort: side-by-side group metrics join index by issueNumber; va
         [RUN_203_CODER, RUN_203_JUDGE].sort(),
       );
 
-      // Library index: issueNumber → page reference (projectRoot). No row for 204.
-      const indexRows: TaishiLibraryIndexRow[] = [
-        {
-          issueNumber: 201,
-          projectRoot: physicalPathIdentity(ISSUE_201_ROOT),
-        },
-        {
-          issueNumber: 202,
-          projectRoot: physicalPathIdentity(ISSUE_202_ROOT),
-        },
-        {
-          issueNumber: 203,
-          projectRoot: physicalPathIdentity(ISSUE_203_ROOT),
-        },
-      ];
-      await writeTaishiLibraryIndexPage(
-        ledgerHome,
-        buildTaishiLibraryIndexPage(indexRows),
-      );
-
+      // Library index rows were produced by the issue-mode entry above
+      // (issueNumber→projectRoot). No hand-written index; 204 has no row.
       const result = await runTaishi({
         mode: "cohort",
         groups: [
@@ -295,15 +273,8 @@ test("taishi C2 cohort: side-by-side group metrics join index by issueNumber; va
 
 test("taishi C2 cohort: all-absent group yields typed vacancy aggregates (no 0/∞ stand-in)", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
-      const ledgerHome = join(home, ".ak-roles");
-
-      // Empty index — every issue number is a vacancy entry.
-      await writeTaishiLibraryIndexPage(
-        ledgerHome,
-        buildTaishiLibraryIndexPage([]),
-      );
-
+    await withTempHome(async () => {
+      // No issue-mode production → no index rows → every issue is vacancy.
       const result = await runTaishi({
         mode: "cohort",
         groups: [
@@ -330,6 +301,36 @@ test("taishi C2 cohort: all-absent group yields typed vacancy aggregates (no 0/�
       assert.deepEqual(right.byRole, []);
       assert.deepEqual(right.reworkRatio, ABSENT);
       assert.deepEqual(right.medianWallMs, ABSENT);
+    });
+  });
+});
+
+test("taishi C2 cohort: index hit + page ENOENT keeps real failure (not washed to absent)", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async () => {
+      // Real entry produces page + unique index row.
+      const produced = await runTaishi({
+        mode: "issue",
+        projectRoot: ISSUE_201_ROOT,
+        issueNumber: 201,
+      });
+      // Dangle the index reference: remove page, keep index row.
+      await rm(produced.pagePath);
+
+      await assert.rejects(
+        () =>
+          runTaishi({
+            mode: "cohort",
+            groups: [
+              { groupLabel: "left", issues: [201] },
+              { groupLabel: "right", issues: [999] },
+            ],
+          }),
+        (err: unknown) =>
+          err instanceof Error
+          && "code" in err
+          && (err as NodeJS.ErrnoException).code === "ENOENT",
+      );
     });
   });
 });

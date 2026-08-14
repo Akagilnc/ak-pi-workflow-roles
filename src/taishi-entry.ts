@@ -11,6 +11,11 @@ import {
   type TaishiCohortModeInput,
   type TaishiCohortModeResult,
 } from "./taishi-cohort.ts";
+import {
+  readTaishiLibraryIndexPage,
+  upsertTaishiLibraryIndexRows,
+  writeTaishiLibraryIndexPage,
+} from "./taishi-index.ts";
 import { scanTaishiIssueRuns } from "./taishi-ledger.ts";
 import {
   buildTaishiIssueMetricsPage,
@@ -63,6 +68,20 @@ async function runTaishiIssueMode(
       });
 
   const pagePath = await writeTaishiIssueMetricsPage(ledgerHome, page);
+
+  // Issue number present → maintain the unique issueNumber→projectRoot index row
+  // so cohort can join without a second addressing kernel (ADR 0068 page key unchanged).
+  if (input.issueNumber !== undefined) {
+    const existing = await readTaishiLibraryIndexPage(ledgerHome);
+    const index = upsertTaishiLibraryIndexRows(existing, [
+      {
+        issueNumber: input.issueNumber,
+        projectRoot: page.projectRoot,
+      },
+    ]);
+    await writeTaishiLibraryIndexPage(ledgerHome, index);
+  }
+
   return { mode: "issue", page, pagePath };
 }
 

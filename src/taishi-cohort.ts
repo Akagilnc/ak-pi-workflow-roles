@@ -9,6 +9,7 @@
  * - convergence rounds sample = one per lane×role (page byRole.convergenceRounds)
  * - leg wall-clock median sample = one per leg (page legWallClock.ranking)
  * - missing index row / zero denominator → typed 空缺 (LOC vacancy shape)
+ * - index hit + page ENOENT → real failure (never washed into absent)
  */
 import { readFile } from "node:fs/promises";
 
@@ -43,7 +44,7 @@ export type TaishiCohortModeInput = {
   readonly groups: readonly [TaishiCohortGroupInput, TaishiCohortGroupInput];
 };
 
-/** Per-issue join face: index hit → present page ref; miss → typed vacancy. */
+/** Per-issue join face: index hit + readable page → present; index miss → typed vacancy. */
 export type TaishiCohortIssueEntry =
   | {
       readonly issueNumber: number;
@@ -101,24 +102,17 @@ function optionalMedian(values: readonly number[]): TaishiCohortOptionalMetric {
   return median === undefined ? ABSENT : presentMetric(median);
 }
 
+/**
+ * Load a persisted issue page by ADR 0068 projectRoot key.
+ * Called only after an index hit — ENOENT/ENOTDIR stay loud (dangling ref),
+ * never collapsed into the index-miss vacancy face.
+ */
 async function readIssuePage(
   ledgerHome: string,
   projectRoot: string,
-): Promise<TaishiCohortSourcePage | undefined> {
+): Promise<TaishiCohortSourcePage> {
   const path = taishiIssuePagePath(ledgerHome, projectRoot);
-  let raw: string;
-  try {
-    raw = await readFile(path, "utf8");
-  } catch (error) {
-    if (
-      error instanceof Error
-      && "code" in error
-      && (error.code === "ENOENT" || error.code === "ENOTDIR")
-    ) {
-      return undefined;
-    }
-    throw error;
-  }
+  const raw = await readFile(path, "utf8");
   return JSON.parse(raw) as TaishiCohortSourcePage;
 }
 
@@ -173,16 +167,13 @@ async function aggregateGroup(
   for (const issueNumber of input.issues) {
     const row = findTaishiLibraryIndexRow(index, issueNumber);
     if (row === undefined) {
+      // Only "index has no such row" is typed vacancy.
       issueEntries.push({ issueNumber, status: "absent" });
       continue;
     }
 
+    // Index hit: page must be readable. Dangling refs keep real I/O failure.
     const page = await readIssuePage(ledgerHome, row.projectRoot);
-    if (page === undefined) {
-      // Index row without a readable page — same vacancy face as missing row.
-      issueEntries.push({ issueNumber, status: "absent" });
-      continue;
-    }
 
     issueEntries.push({
       issueNumber,

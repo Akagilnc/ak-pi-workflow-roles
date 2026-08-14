@@ -69,6 +69,26 @@ export function findTaishiLibraryIndexRow(
 }
 
 /**
+ * Upsert issueNumber→projectRoot rows into an existing index (or empty).
+ * One unique row per issueNumber — re-issue overwrites that issue's row only.
+ */
+export function upsertTaishiLibraryIndexRows(
+  existing: TaishiLibraryIndexPage | undefined,
+  upserts: readonly TaishiLibraryIndexRow[],
+): TaishiLibraryIndexPage {
+  const byIssue = new Map<number, TaishiLibraryIndexRow>();
+  if (existing !== undefined) {
+    for (const row of existing.rows) {
+      byIssue.set(row.issueNumber, row);
+    }
+  }
+  for (const row of upserts) {
+    byIssue.set(row.issueNumber, row);
+  }
+  return buildTaishiLibraryIndexPage([...byIssue.values()]);
+}
+
+/**
  * Read existing library index, or undefined when absent.
  * Single typed producer writes this file — JSON.parse failure is loud.
  */
