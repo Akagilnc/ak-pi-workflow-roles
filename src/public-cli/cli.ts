@@ -953,7 +953,7 @@ export async function runAkRole(
       };
     }
 
-    // Taishi public run path: deterministic issue-mode analysis seat (#336 / ADR 0068).
+    // Taishi public run path: deterministic analysis seat (#336 issue / #337 sweep).
     // Not an LLM PUBLIC_CALLABLE_ROLE — registered only on PUBLIC_ROLE_ARGV (#176).
     if (parsed.command === "taishi") {
       const result = await runPublicTaishi(

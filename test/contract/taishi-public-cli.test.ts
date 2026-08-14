@@ -381,7 +381,9 @@ test("taishi public CLI failure: bare call → typed usage + zero taishi writes"
       const err = stderr.join("");
       assert.match(err, /^ak-role: /);
       assert.match(err, /usage:.*taishi/i);
+      // Issue faces and/or sweep attach carrier (usage names both modes).
       assert.match(err, /ticket|project-root/i);
+      assert.match(err, /attach/i);
 
       const after = await snapshotTaishiDir(ledgerHome);
       assertSnapshotsEqual(before, after);
