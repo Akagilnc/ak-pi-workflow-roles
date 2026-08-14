@@ -511,11 +511,10 @@ export function createGhIssueSoftFetcher(
     if (typeof parsed !== "object" || parsed === null) {
       throw new Error("GitHub issue payload must be a JSON object");
     }
-    // Issues endpoint also returns PRs. Presence of the standard pull_request marker means
-    // this is a PR payload — soft-unavailable so Spec does not adopt PR description as issue body.
-    // Minimal discriminator only; no PR schema, linked-issue chase, or marker-content parse.
-    const pullRequestMarker = (parsed as { pull_request?: unknown }).pull_request;
-    if (pullRequestMarker !== undefined && pullRequestMarker !== null) {
+    // Issues endpoint also returns PRs. Own-key presence of the standard pull_request marker
+    // means this is a PR payload — soft-unavailable so Spec does not adopt PR description as issue body.
+    // Key presence only; no marker-content parse, PR schema, or linked-issue chase.
+    if (Object.hasOwn(parsed, "pull_request")) {
       return undefined;
     }
     // Match former gh --jq `(.body // "")`: null/missing body projects to empty string.
