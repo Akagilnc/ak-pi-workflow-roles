@@ -503,3 +503,71 @@ test("taishi changedLines rejects non-finite negatives at issue and sweep bounda
     });
   });
 });
+
+test("taishi session span with inverted timestamps is page-local unreadable", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async (home) => {
+      const sessionPath = join(
+        home,
+        ".ak-roles",
+        "books",
+        "fixture-book-c1",
+        "runs",
+        `${C1_ALPHA_RUN}@coder`,
+        "session",
+        "session.jsonl",
+      );
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            type: "session",
+            version: 3,
+            id: "s-c1-a1-bad",
+            timestamp: "2026-08-02T00:00:40.000Z",
+            cwd: ISSUE_ALPHA,
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "m1",
+            parentId: null,
+            timestamp: "2026-08-02T00:00:40.000Z",
+            message: {
+              role: "assistant",
+              timestamp: "2026-08-02T00:00:40.000Z",
+              content: [],
+            },
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "m2",
+            parentId: "m1",
+            timestamp: "2026-08-02T00:00:00.000Z",
+            message: {
+              role: "assistant",
+              timestamp: "2026-08-02T00:00:00.000Z",
+              content: [],
+            },
+          }),
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      const result = await runTaishi({
+        mode: "issue",
+        projectRoot: ISSUE_ALPHA,
+      });
+      assert.equal(result.page.legs.length, 0);
+      assert.equal(result.page.totalElapsedMs, 0);
+      assert.equal(result.page.unreadableCount, 1);
+      const entry = result.page.unreadable[0]!;
+      assert.equal(entry.runId, C1_ALPHA_RUN);
+      assert.deepEqual(entry.missingSources, ["session-timeline"]);
+      assert.match(entry.reason, /end is earlier than start/i);
+      // Must not surface negative/NaN wall clocks on the page envelope.
+      assert.equal(Number.isFinite(result.page.totalElapsedMs), true);
+      assert.ok(result.page.totalElapsedMs >= 0);
+    });
+  });
+});
