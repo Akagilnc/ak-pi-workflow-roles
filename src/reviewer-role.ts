@@ -9,7 +9,7 @@ import type { ComplianceDecision } from "./compliance-transport.ts";
 import { appendActiveSessionCustomEntry } from "./compliance-transport.ts";
 import { REVIEWER_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";
 import { type ReviewerSpecDisposition } from "./reviewer-construction.ts";
-import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerIssueFetcher, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { assembleRuntimeReviewerReceipt } from "./reviewer-settlement.ts";
@@ -37,6 +37,8 @@ export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadCanonicalSkillBinding(name: "code-review"): Promise<AnyCanonicalSkillBinding>;
   createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
+  /** Injected issue-fetch capability; shared seam owns gh lifecycle. */
+  fetchIssue?: ReviewerIssueFetcher;
   runDispatch(execution: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
   shutdownAgent?(): Promise<void>;
   auditCompliance(options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
@@ -119,6 +121,7 @@ export function createReviewerRoleRuntime(
         ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
         ...(authorityRefs === undefined ? {} : { authorityRefs }),
         ...(ticketNumber === undefined ? {} : { ticketNumber }),
+        ...(dependencies.fetchIssue === undefined ? {} : { fetchIssue: dependencies.fetchIssue }),
         decisionEvidence(decision) {
           try {
             if (decision.disposition === "accepted") {

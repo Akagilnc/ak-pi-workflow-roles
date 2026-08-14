@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import test from "node:test";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   constructReviewerDispatch,
   reviewerAuthorityRefsMaterial,
@@ -14,6 +17,7 @@ import {
   type ReviewerPinnedGitReader,
   type ReviewerPinnedTarget,
 } from "../../src/reviewer-dispatch.ts";
+import { createReviewerRoleRuntime } from "../../src/reviewer-role.ts";
 
 const pin: ReviewerPinnedTarget = {
   repositoryRoot: "/repo",
@@ -560,4 +564,195 @@ test("settlement records skipped-missing Spec disposition without Spec leg", asy
   assert.equal(assembled.reports.spec, undefined);
   assert.equal(assembled.outcomes.spec, undefined);
   assert.equal(assembled.reports.standards?.text, "Standards finding count: 0.");
+});
+
+// --- lifecycle ownership: role module must not own gh subprocess ---
+
+test("role module source has no child_process / gh spawn lifecycle", async () => {
+  const source = await readFile(
+    resolve(import.meta.dirname, "../../src/reviewer-dispatch.ts"),
+    "utf8",
+  );
+  assert.equal(source.includes("node:child_process"), false);
+  assert.equal(source.includes("execFile"), false);
+  assert.equal(source.includes("createGhReviewerIssueFetcher"), false);
+});
+
+/** Minimal Pi surface for createReviewerRoleRuntime (role public entry). */
+function roleEntryPi(): ExtensionAPI {
+  return {
+    registerTool() {},
+    on() {},
+    getAllTools() {
+      return [];
+    },
+    setActiveTools() {},
+  } as unknown as ExtensionAPI;
+}
+
+const ZERO_USAGE = Object.freeze({
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }),
+});
+
+async function activateRolePublicEntry(options: {
+  ticketNumber?: number;
+  authorityRefs?: readonly string[];
+  fetchIssue?: ReviewerIssueFetcher;
+  origin?: { owner: string; repo: string } | undefined;
+  featureTokens?: readonly string[];
+  commitMessages?: readonly string[];
+  pinnedTexts?: Readonly<Record<string, string>>;
+}) {
+  const reader: ReviewerPinnedGitReader = {
+    pin,
+    async snapshot() {
+      return pin;
+    },
+    async resolve() {
+      return "base";
+    },
+    async range() {
+      return range;
+    },
+    async featureTokens() {
+      return Object.freeze([...(options.featureTokens ?? [])]);
+    },
+    async listSpecCandidatePaths() {
+      return Object.freeze([]);
+    },
+    async originRepository() {
+      return options.origin === undefined ? undefined : Object.freeze(options.origin);
+    },
+    async commitMessagesNewestFirst() {
+      return Object.freeze([...(options.commitMessages ?? [])]);
+    },
+    async readPinnedText(path: string) {
+      const body = options.pinnedTexts?.[path];
+      return body === undefined ? undefined : body;
+    },
+  };
+  const runtime = createReviewerRoleRuntime(
+    roleEntryPi(),
+    {
+      loadSoul: async () => "reviewer law",
+      loadCanonicalSkillBinding: async () => ({
+        name: "code-review",
+        snapshot: {
+          raw: "review skill",
+          path: "/skill",
+          baseDir: "/",
+          body: "review skill",
+          snapshotIdentity: Object.freeze({ text: "review skill" }),
+        },
+        invocation: (request: string) => request,
+        captureExpansion: () => undefined,
+      }),
+      createPinnedGitReader: async () => reader,
+      ...(options.fetchIssue === undefined ? {} : { fetchIssue: options.fetchIssue }),
+      runDispatch: async (execution) => {
+        const successfulLeg = (prompt: (typeof execution.legs)[number]["prompt"]) =>
+          Object.freeze({
+            status: "successful" as const,
+            report: "ok",
+            prompt,
+            target: execution.targetSnapshot,
+            workspaceDisposition: "deleted" as const,
+            usage: ZERO_USAGE,
+          });
+        const standards = execution.legs.find((leg) => leg.axis === "standards");
+        const spec = execution.legs.find((leg) => leg.axis === "spec");
+        if (standards === undefined) throw new Error("standards leg required");
+        if (spec === undefined) {
+          return Object.freeze({
+            identity: execution.identity,
+            target: execution.targetSnapshot,
+            legs: Object.freeze({ standards: successfulLeg(standards.prompt) }),
+          });
+        }
+        return Object.freeze({
+          identity: execution.identity,
+          target: execution.targetSnapshot,
+          legs: Object.freeze({
+            standards: successfulLeg(standards.prompt),
+            spec: successfulLeg(spec.prompt),
+          }),
+        });
+      },
+      auditCompliance: async () => ({ status: "pass" as const }),
+    },
+    {
+      failInfrastructure(error: unknown) {
+        throw error;
+      },
+    },
+  );
+  return runtime.activate(undefined, {
+    baseRevision: "main~1",
+    ...(options.ticketNumber === undefined ? {} : { ticketNumber: options.ticketNumber }),
+    ...(options.authorityRefs === undefined ? {} : { authorityRefs: options.authorityRefs }),
+  });
+}
+
+test("role public entry: injected issue-fetch self-fetches Spec bytes", async () => {
+  const activation = await activateRolePublicEntry({
+    ticketNumber: 343,
+    origin: { owner: "Acme", repo: "widgets" },
+    pinnedTexts: {
+      "docs/adr/0001-roles-grow-by-demand.md": "# ADR 0001\nbody\n",
+    },
+    fetchIssue: successfulFetcher(),
+  });
+  const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, {
+    context: {},
+  });
+  assert.equal(result.status, "accepted");
+  if (result.status !== "accepted") return;
+  assert.equal(result.dispatch.specDisposition, "launched");
+  assert.equal(result.dispatch.specFetchedMaterial?.issueBody, ISSUE_BODY_WITH_ADR);
+  assert.equal(result.dispatch.specFetchedMaterial?.adopted.source, "typed-ticket-number");
+  assert.equal(result.dispatch.specFetchedMaterial?.ticketNumber, 343);
+  assert.equal(activation.getSpecDisposition(), "launched");
+  const specPrompt = result.dispatch.legs.find((leg) => leg.axis === "spec")!.prompt;
+  assert.equal(specPrompt.includes(ISSUE_BODY_WITH_ADR), true);
+});
+
+test("role public entry: tracker failure degrades to skipped-missing", async () => {
+  const activation = await activateRolePublicEntry({
+    ticketNumber: 50,
+    origin: { owner: "Acme", repo: "widgets" },
+    featureTokens: [],
+    fetchIssue: async () => undefined,
+  });
+  const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, {
+    context: {},
+  });
+  assert.equal(result.status, "accepted");
+  if (result.status !== "accepted") return;
+  assert.equal(result.dispatch.specDisposition, "skipped-missing");
+  assert.equal(result.dispatch.specFetchedMaterial, undefined);
+  assert.deepEqual(result.dispatch.legs.map((leg) => leg.axis), ["standards"]);
+  assert.equal(activation.getSpecDisposition(), "skipped-missing");
+});
+
+test("role public entry: tracker failure degrades to supplied authorityRefs", async () => {
+  const refs = Object.freeze(["https://example.com/spec"]);
+  const activation = await activateRolePublicEntry({
+    ticketNumber: 50,
+    origin: { owner: "Acme", repo: "widgets" },
+    authorityRefs: refs,
+    fetchIssue: async () => undefined,
+  });
+  const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, {
+    context: {},
+  });
+  assert.equal(result.status, "accepted");
+  if (result.status !== "accepted") return;
+  assert.equal(result.dispatch.specDisposition, "launched");
+  assert.deepEqual(result.dispatch.authorityRefs, [...refs]);
+  assert.equal(result.dispatch.specFetchedMaterial, undefined);
 });

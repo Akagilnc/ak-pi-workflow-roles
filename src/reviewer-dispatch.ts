@@ -21,10 +21,6 @@ export {
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
 export { sha256Hex } from "./sha256.ts";
 export { isReviewerPromptText as isReviewerPromptIdentity, sameReviewerPromptText as sameReviewerPromptIdentity, type ReviewerPromptText as ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
 
 const GENERIC_FEATURE_TOKENS = new Set(["", "head", "main", "master", "trunk", "develop", "development"]);
 /** Conventional branch shells that must not hide the feature token (feat/login → login). */
@@ -120,47 +116,15 @@ export function extractReferencedAdrPaths(issueBody: string): readonly string[] 
 
 export type ReviewerIssueFetchResult = Readonly<{ title: string; body: string }>;
 /**
- * Soft issue fetch: undefined means tracker unreachable / not found / transport failure.
+ * Soft issue fetch capability: undefined means tracker unreachable / not found / transport failure.
  * Never throws into a new rejection gate — caller degrades the Spec chain.
+ * Subprocess lifecycle is owned by the shared activation/execution seam; role modules only inject and consume this capability.
  */
 export type ReviewerIssueFetcher = (input: {
   owner: string;
   repo: string;
   ticketNumber: number;
 }) => Promise<ReviewerIssueFetchResult | undefined>;
-
-/** Default production fetcher: `gh api repos/{owner}/{repo}/issues/{N}`. Soft-fail on any error. */
-export function createGhReviewerIssueFetcher(): ReviewerIssueFetcher {
-  return async (input) => {
-    try {
-      const { stdout } = await execFileAsync(
-        "gh",
-        [
-          "api",
-          `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`,
-          "--jq",
-          "{title: .title, body: (.body // \"\")}",
-        ],
-        { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
-      );
-      const parsed: unknown = JSON.parse(stdout);
-      if (
-        typeof parsed !== "object" ||
-        parsed === null ||
-        typeof (parsed as { title?: unknown }).title !== "string" ||
-        typeof (parsed as { body?: unknown }).body !== "string"
-      ) {
-        return undefined;
-      }
-      return Object.freeze({
-        title: (parsed as { title: string }).title,
-        body: (parsed as { body: string }).body,
-      });
-    } catch {
-      return undefined;
-    }
-  };
-}
 
 /**
  * Unique production owner of code-review Skill step 2 Spec discovery (#343).
@@ -177,7 +141,10 @@ export async function discoverReviewerSpecAuthority(input: {
   ticketNumber?: number;
   /** base..HEAD commit scan base (resolved oid). Required for commit-message ticket source. */
   baseCommit?: string;
-  /** Optional issue fetcher (defaults to gh). Injected in tests. */
+  /**
+   * Injected issue-fetch capability from the shared execution seam.
+   * Absent capability = self-fetch unavailable (degrade); role module never owns gh lifecycle.
+   */
   fetchIssue?: ReviewerIssueFetcher;
 }): Promise<ReviewerSpecAuthorityDiscovery> {
   const featureTokens = await input.reader.featureTokens();
@@ -191,12 +158,11 @@ export async function discoverReviewerSpecAuthority(input: {
     commitMessagesNewestFirst: commitMessages,
   });
 
-  // ① Primary: self-fetch latest issue + referenced docs/adr.
+  // ① Primary: self-fetch latest issue + referenced docs/adr via injected capability only.
   if (ticketResolution !== undefined) {
     const origin = await input.reader.originRepository();
-    if (origin !== undefined) {
-      const fetchIssue = input.fetchIssue ?? createGhReviewerIssueFetcher();
-      const issue = await fetchIssue({
+    if (origin !== undefined && input.fetchIssue !== undefined) {
+      const issue = await input.fetchIssue({
         owner: origin.owner,
         repo: origin.repo,
         ticketNumber: ticketResolution.adopted.ticketNumber,
@@ -293,7 +259,7 @@ type DispatcherDependencies = Readonly<{
   authorityRefs?: readonly string[];
   /** Typed #176 ticketNumber from admitted invocation (Spec self-fetch primary). */
   ticketNumber?: number;
-  /** Optional issue fetcher override (tests); production defaults to gh. */
+  /** Injected issue-fetch capability from shared execution seam (production/tests). */
   fetchIssue?: ReviewerIssueFetcher;
   run(execution: AcceptedReviewerExecution, invocation: unknown): Promise<unknown>;
   decisionEvidence?(decision: ReviewerDecisionEvidence): void;

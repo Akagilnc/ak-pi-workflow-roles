@@ -9,10 +9,12 @@ import {
   buildCollectorRequestMarker,
   createGhApiRunner,
   createGhCollectorGitHubTransport,
+  createGhIssueSoftFetcher,
   normalizeIssueComment,
   normalizePullRequest,
   normalizeReview,
   normalizeReviewComment,
+  type GhApiRunner,
 } from "../../src/collector-github.ts";
 import { createCollectorLedger } from "../../src/collector-ledger.ts";
 import {
@@ -256,6 +258,50 @@ printf 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{"login":"colle
     assert.match(log, /api --hostname github.com --include/);
     assert.doesNotMatch(log, / \| |&&/);
   });
+});
+
+test("createGhIssueSoftFetcher reuses shared runner and soft-fails", async () => {
+  const calls: string[][] = [];
+  const runner: GhApiRunner = async (args) => {
+    calls.push([...args]);
+    if (args.includes("repos/Acme/widgets/issues/343")) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({ title: "Spec", body: "issue body bytes", body_null_ok: true }),
+      };
+    }
+    if (args.includes("repos/Acme/widgets/issues/404")) {
+      return { status: 404, headers: {}, bodyText: "{\"message\":\"Not Found\"}" };
+    }
+    throw new Error("spawn failed");
+  };
+  const fetchIssue = createGhIssueSoftFetcher(runner);
+  const ok = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 343 });
+  assert.deepEqual(ok, { title: "Spec", body: "issue body bytes" });
+  assert.equal(
+    calls[0]?.join(" ").includes("api --hostname github.com --include -X GET repos/Acme/widgets/issues/343"),
+    true,
+  );
+
+  const missing = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 404 });
+  assert.equal(missing, undefined);
+
+  const boom = await fetchIssue({ owner: "Acme", repo: "widgets", ticketNumber: 500 });
+  assert.equal(boom, undefined);
+
+  // null body projects to empty string (former gh --jq body // "").
+  const nullBodyRunner: GhApiRunner = async () => ({
+    status: 200,
+    headers: {},
+    bodyText: JSON.stringify({ title: "empty", body: null }),
+  });
+  const empty = await createGhIssueSoftFetcher(nullBodyRunner)({
+    owner: "Acme",
+    repo: "widgets",
+    ticketNumber: 1,
+  });
+  assert.deepEqual(empty, { title: "empty", body: "" });
 });
 
 

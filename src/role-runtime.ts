@@ -61,7 +61,7 @@ import {
   type ReviewerActivation,
   type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
-import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+import type { AcceptedReviewerExecution, ReviewerIssueFetcher, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
   REVIEWER_VERIFICATION_BOUNDARY,
@@ -471,6 +471,8 @@ export type RoleRuntimeDependencies = {
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
   createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
+  /** Shared-seam issue-fetch capability for Reviewer Spec self-fetch (#343). */
+  createReviewerIssueFetcher?(): ReviewerIssueFetcher;
   loadCollectorSoul?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
@@ -909,6 +911,9 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadCanonicalSkillBinding(name);
         },
+        ...(dependencies.createReviewerIssueFetcher === undefined
+          ? {}
+          : { fetchIssue: dependencies.createReviewerIssueFetcher() }),
         async runDispatch(dispatch, options) {
           if (dependencies.runReviewerDispatch === undefined) throw new Error("Reviewer runtime dependencies are not configured");
           return dependencies.runReviewerDispatch(dispatch, options);
