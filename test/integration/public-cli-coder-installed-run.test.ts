@@ -318,8 +318,8 @@ test(
         assert.equal(roleReport.includes("COLD_INSTALLED_ROUTEBOOK_MARKER"), false);
 
         await chmod(installedRoutebook, 0o000);
-        const runWithUnreadableRoutebook = async (unavailable: boolean) =>
-          runAkRoleBin(
+        const runWithUnreadableRoutebook = async (unavailable: boolean) => {
+          return runAkRoleBin(
             installed.akRoleBin,
             [
               "coder",
@@ -343,6 +343,7 @@ test(
               },
             },
           );
+        };
 
         const knownRuns = new Set(runDirs);
         const continued = await runWithUnreadableRoutebook(false);

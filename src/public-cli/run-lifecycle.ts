@@ -391,7 +391,39 @@ type LoadedAdmittedRequestFields = {
   readonly baseRevision?: string;
   readonly mergerInputPath?: string;
   readonly derived?: DerivedMergerEnvelope;
+  readonly correlationId?: string;
+  readonly ticketNumber?: number;
 };
+
+/** Restore optional correlation + typed ticketNumber from a durable admitted page. */
+function parsePersistedTicketIdentity(
+  record: Record<string, unknown>,
+): { correlationId?: string; ticketNumber?: number } {
+  const correlationId =
+    typeof record.correlationId === "string" && record.correlationId.trim() !== ""
+      ? record.correlationId
+      : undefined;
+  const ticketNumber =
+    typeof record.ticketNumber === "number" &&
+    Number.isInteger(record.ticketNumber) &&
+    record.ticketNumber >= 1
+      ? record.ticketNumber
+      : undefined;
+  return {
+    ...(correlationId === undefined ? {} : { correlationId }),
+    ...(ticketNumber === undefined ? {} : { ticketNumber }),
+  };
+}
+
+function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
+  correlationId?: string;
+  ticketNumber?: number;
+} {
+  return {
+    ...(fields.correlationId === undefined ? {} : { correlationId: fields.correlationId }),
+    ...(fields.ticketNumber === undefined ? {} : { ticketNumber: fields.ticketNumber }),
+  };
+}
 
 async function loadResumableRunRecord(
   home: string,
@@ -433,6 +465,8 @@ async function loadResumableRunRecord(
   let baseRevision: string | undefined;
   let mergerInputPath: string | undefined;
   let derived: DerivedMergerEnvelope | undefined;
+  let correlationId: string | undefined;
+  let ticketNumber: number | undefined;
   try {
     const raw: unknown = JSON.parse(
       await readFile(run.admittedRequestPath, "utf8"),
@@ -502,11 +536,45 @@ async function loadResumableRunRecord(
           };
         }
       }
+      const fromAdmitted = parsePersistedTicketIdentity(record);
+      correlationId = fromAdmitted.correlationId;
+      ticketNumber = fromAdmitted.ticketNumber;
     }
   } catch {
     throw new CliUsageError(
       `role run admitted request is unreadable: ${runId}`,
     );
+  }
+  if (correlationId === undefined || ticketNumber === undefined) {
+    try {
+      const invocationRaw: unknown = JSON.parse(
+        await readFile(join(run.runDirectory, "invocation.json"), "utf8"),
+      );
+      if (
+        invocationRaw !== null &&
+        typeof invocationRaw === "object" &&
+        !Array.isArray(invocationRaw)
+      ) {
+        const fromInvocation = parsePersistedTicketIdentity(
+          invocationRaw as Record<string, unknown>,
+        );
+        if (correlationId === undefined) correlationId = fromInvocation.correlationId;
+        if (ticketNumber === undefined) ticketNumber = fromInvocation.ticketNumber;
+      }
+    } catch (error) {
+      if (
+        !(
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code?: unknown }).code === "ENOENT"
+        )
+      ) {
+        throw new CliUsageError(
+          `role run invocation identity is unreadable: ${runId}`,
+          { cause: error },
+        );
+      }
+    }
   }
   return {
     run,
@@ -523,6 +591,8 @@ async function loadResumableRunRecord(
       ...(baseRevision === undefined ? {} : { baseRevision }),
       ...(mergerInputPath === undefined ? {} : { mergerInputPath }),
       ...(derived === undefined ? {} : { derived }),
+      ...(correlationId === undefined ? {} : { correlationId }),
+      ...(ticketNumber === undefined ? {} : { ticketNumber }),
     },
   };
 }
@@ -577,6 +647,7 @@ export async function loadResumableJudgeRun(
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
+    ...restoredTicketFields(loaded.admittedFields),
   };
   return {
     admitted,
@@ -630,6 +701,7 @@ export async function loadResumableCoderRun(
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
+    ...restoredTicketFields(loaded.admittedFields),
   };
   return {
     admitted,
@@ -688,6 +760,7 @@ export async function loadResumableFixerRun(
       ? {}
       : { prerequisitesPath: loaded.admittedFields.prerequisitesPath }),
     prerequisites,
+    ...restoredTicketFields(loaded.admittedFields),
   };
   return {
     admitted,
@@ -733,6 +806,7 @@ export async function loadResumableReviewerRun(
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
+    ...restoredTicketFields(loaded.admittedFields),
   };
   return {
     admitted,
@@ -792,6 +866,7 @@ export async function loadResumableMergerRun(
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,
+    ...restoredTicketFields(loaded.admittedFields),
   };
   return {
     admitted,
