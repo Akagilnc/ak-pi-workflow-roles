@@ -20573,59 +20573,45 @@ function boundErroredToolCandidate(entries, resultIndex, message, toolName) {
   const diagnostic = toolResultText(message);
   return bound === void 0 || diagnostic === "" ? void 0 : { candidate: bound.candidate, diagnostic, callIndex: bound.callIndex };
 }
-function extractCollectorInfrastructureFailure(entries) {
+function extractInfrastructureToolFailure(entries, spec) {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.isError !== true) continue;
-    if (typeof message.toolName !== "string" || !COLLECTOR_INFRASTRUCTURE_TOOLS.has(message.toolName)) {
+    if (typeof message.toolName !== "string" || !spec.matchTool(message.toolName)) {
       continue;
     }
     const diagnostic = toolResultText(message);
     if (diagnostic.length === 0) continue;
     return {
-      cause: "activation",
+      cause: spec.cause,
       diagnostic,
-      identity: { name: "CollectorInfrastructureError" }
+      identity: { name: spec.identityName }
     };
   }
   return void 0;
+}
+async function readInfrastructureToolFailure(sessionFile, spec) {
+  try {
+    const entries = await readBoundSessionEntries(sessionFile);
+    return extractInfrastructureToolFailure(entries, spec);
+  } catch {
+    return void 0;
+  }
 }
 async function readCollectorInfrastructureFailure(sessionFile) {
-  try {
-    const entries = await readBoundSessionEntries(sessionFile);
-    return extractCollectorInfrastructureFailure(entries);
-  } catch {
-    return void 0;
-  }
-}
-function extractEngineDetourInfrastructureFailure(entries) {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.isError !== true) continue;
-    if (message.toolName !== ENGINE_DETOUR_TOOL_NAME) continue;
-    const diagnostic = toolResultText(message);
-    if (diagnostic.length === 0) continue;
-    return {
-      cause: "output",
-      diagnostic,
-      identity: { name: "EngineDetourInfrastructureError" }
-    };
-  }
-  return void 0;
+  return readInfrastructureToolFailure(
+    sessionFile,
+    COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC
+  );
 }
 async function readEngineDetourInfrastructureFailure(sessionFile) {
-  try {
-    const entries = await readBoundSessionEntries(sessionFile);
-    return extractEngineDetourInfrastructureFailure(entries);
-  } catch {
-    return void 0;
-  }
+  return readInfrastructureToolFailure(
+    sessionFile,
+    ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC
+  );
 }
 function assertCollectorReceiptMatchesAdmitted(receipt, admitted) {
   if (receipt.repository !== admitted.repository.canonical) {
@@ -22422,7 +22408,7 @@ function presentFailureTerminal(terminal, io) {
     }));
   }
 }
-var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS;
+var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS, COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC, ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC;
 var init_settlement = __esm({
   "src/public-cli/settlement.ts"() {
     "use strict";
@@ -22456,6 +22442,16 @@ var init_settlement = __esm({
       COLLECTOR_REQUEST_TOOL,
       COLLECTOR_WAIT_TOOL
     ]);
+    COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC = {
+      matchTool: (toolName) => COLLECTOR_INFRASTRUCTURE_TOOLS.has(toolName),
+      cause: "activation",
+      identityName: "CollectorInfrastructureError"
+    };
+    ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC = {
+      matchTool: (toolName) => toolName === ENGINE_DETOUR_TOOL_NAME,
+      cause: "output",
+      identityName: "EngineDetourInfrastructureError"
+    };
   }
 });
 

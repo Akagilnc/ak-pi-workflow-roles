@@ -1349,13 +1349,33 @@ const COLLECTOR_INFRASTRUCTURE_TOOLS = new Set<string>([
   COLLECTOR_WAIT_TOOL,
 ]);
 
+/** Shared match/cause/identity knobs for session-principal infrastructure failures. */
+type InfrastructureFailureSpec = Readonly<{
+  matchTool: (toolName: string) => boolean;
+  cause: ControlledFailureCause;
+  identityName: string;
+}>;
+
+const COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC: InfrastructureFailureSpec = {
+  matchTool: (toolName) => COLLECTOR_INFRASTRUCTURE_TOOLS.has(toolName),
+  cause: "activation",
+  identityName: "CollectorInfrastructureError",
+};
+
+const ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC: InfrastructureFailureSpec = {
+  matchTool: (toolName) => toolName === ENGINE_DETOUR_TOOL_NAME,
+  cause: "output",
+  identityName: "EngineDetourInfrastructureError",
+};
+
 /**
- * Prefer a real Collector infrastructure tool failure already on the session
- * principal over a later secondary provider-stop (failure-honesty).
- * Observe/request/wait host failures keep their diagnostic identity (e.g. HTTP 404).
+ * Prefer a real infrastructure tool failure already on the session principal
+ * over a later secondary provider-stop (failure-honesty).
+ * Tool match + cause + identity are call-site parameters — one extraction body.
  */
-export function extractCollectorInfrastructureFailure(
+function extractInfrastructureToolFailure(
   entries: readonly SessionEntry[],
+  spec: InfrastructureFailureSpec,
 ): ControlledFailure | undefined {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
@@ -1365,31 +1385,56 @@ export function extractCollectorInfrastructureFailure(
     if (message.isError !== true) continue;
     if (
       typeof message.toolName !== "string" ||
-      !COLLECTOR_INFRASTRUCTURE_TOOLS.has(message.toolName)
+      !spec.matchTool(message.toolName)
     ) {
       continue;
     }
     const diagnostic = toolResultText(message);
     if (diagnostic.length === 0) continue;
     return {
-      cause: "activation",
+      cause: spec.cause,
       diagnostic,
-      identity: { name: "CollectorInfrastructureError" },
+      identity: { name: spec.identityName },
     };
   }
   return undefined;
+}
+
+/** Read the bound session principal for a parameterized infrastructure tool failure. */
+async function readInfrastructureToolFailure(
+  sessionFile: string,
+  spec: InfrastructureFailureSpec,
+): Promise<ControlledFailure | undefined> {
+  try {
+    const entries = await readBoundSessionEntries(sessionFile);
+    return extractInfrastructureToolFailure(entries, spec);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Prefer a real Collector infrastructure tool failure already on the session
+ * principal over a later secondary provider-stop (failure-honesty).
+ * Observe/request/wait host failures keep their diagnostic identity (e.g. HTTP 404).
+ */
+export function extractCollectorInfrastructureFailure(
+  entries: readonly SessionEntry[],
+): ControlledFailure | undefined {
+  return extractInfrastructureToolFailure(
+    entries,
+    COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC,
+  );
 }
 
 /** Read the bound session principal for a Collector infrastructure tool failure. */
 export async function readCollectorInfrastructureFailure(
   sessionFile: string,
 ): Promise<ControlledFailure | undefined> {
-  try {
-    const entries = await readBoundSessionEntries(sessionFile);
-    return extractCollectorInfrastructureFailure(entries);
-  } catch {
-    return undefined;
-  }
+  return readInfrastructureToolFailure(
+    sessionFile,
+    COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC,
+  );
 }
 
 /**
@@ -1400,34 +1445,20 @@ export async function readCollectorInfrastructureFailure(
 export function extractEngineDetourInfrastructureFailure(
   entries: readonly SessionEntry[],
 ): ControlledFailure | undefined {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.isError !== true) continue;
-    if (message.toolName !== ENGINE_DETOUR_TOOL_NAME) continue;
-    const diagnostic = toolResultText(message);
-    if (diagnostic.length === 0) continue;
-    return {
-      cause: "output",
-      diagnostic,
-      identity: { name: "EngineDetourInfrastructureError" },
-    };
-  }
-  return undefined;
+  return extractInfrastructureToolFailure(
+    entries,
+    ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC,
+  );
 }
 
 /** Read the bound session principal for an engine-detour infrastructure failure. */
 export async function readEngineDetourInfrastructureFailure(
   sessionFile: string,
 ): Promise<ControlledFailure | undefined> {
-  try {
-    const entries = await readBoundSessionEntries(sessionFile);
-    return extractEngineDetourInfrastructureFailure(entries);
-  } catch {
-    return undefined;
-  }
+  return readInfrastructureToolFailure(
+    sessionFile,
+    ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC,
+  );
 }
 
 /**
