@@ -508,8 +508,9 @@ export type RoleRuntimeDependencies = {
   toolExecutionObservationMonoNow?(): number;
   toolExecutionObservationWriter?: ToolExecutionObservationWriter;
   /**
-   * #351 OAuth keepalive: optional providers/interval/scheduler injection for tests.
-   * Production defaults to static ["kimi-coding"] @ 60s via createOAuthKeepalive().
+   * #351 OAuth keepalive: providers/interval/scheduler.
+   * Production extension root reads oauth-keepalive.json and passes providers here
+   * (default ["kimi-coding"] when the setting file is absent). Tests may inject.
    */
   oauthKeepalive?: OAuthKeepaliveOptions;
 };

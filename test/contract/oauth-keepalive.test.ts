@@ -9,6 +9,8 @@
  * Soak (>30min live kimi-coding) is out of CI gate — not covered here.
  */
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -23,6 +25,8 @@ import {
   createOAuthKeepalive,
   DEFAULT_OAUTH_KEEPALIVE_PROVIDERS,
   OAUTH_KEEPALIVE_INTERVAL_MS,
+  OAUTH_KEEPALIVE_SETTING_FILENAME,
+  readOAuthKeepaliveProviders,
   type OAuthKeepaliveScheduler,
 } from "../../src/oauth-keepalive.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
@@ -481,3 +485,131 @@ test("#351 error path: refresh rejection emits one warning with provider + error
     console.warn = originalWarn;
   }
 });
+
+test("#351 dual surface: ui.notify + console both available → exactly one visible warning", async () => {
+  const consoleWarnings: string[] = [];
+  const notifications: string[] = [];
+  const notificationTypes: Array<string | undefined> = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    consoleWarnings.push(args.map(String).join(" "));
+  };
+
+  try {
+    const { scheduler, ticks } = manualScheduler();
+    let attempts = 0;
+    const keepalive = createOAuthKeepalive({
+      providers: ["kimi-coding"],
+      scheduler,
+    });
+    const boom = new Error("token endpoint down");
+    boom.name = "TokenEndpointError";
+
+    keepalive.start({
+      modelRegistry: {
+        async refresh() {
+          attempts += 1;
+          throw boom;
+        },
+      },
+      ui: {
+        notify(message, type) {
+          notifications.push(message);
+          notificationTypes.push(type);
+        },
+      },
+    });
+
+    await fireTick(ticks, 0);
+    assert.equal(attempts, 1);
+    assert.equal(notifications.length, 1, "ui.notify must receive exactly one warning");
+    assert.equal(notificationTypes[0], "warning");
+    assert.match(notifications[0]!, /kimi-coding/);
+    assert.match(notifications[0]!, /TokenEndpointError/);
+    assert.equal(
+      consoleWarnings.length,
+      0,
+      "must not also console.warn when ui.notify is available",
+    );
+
+    // No immediate retry / no circuit breaker — next natural tick tries again.
+    await fireTick(ticks, 0);
+    assert.equal(attempts, 2);
+    assert.equal(notifications.length, 2);
+    assert.equal(consoleWarnings.length, 0);
+
+    keepalive.stop();
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test(
+  "#351 production setting seam: non-default oauth-keepalive.json drives real session refresh filter",
+  async () => {
+    await withHermeticHome({ prefix: "ak-oauth-keepalive-setting-" }, async ({ home, agentDir }) => {
+      // Production extension root reads this file via readOAuthKeepaliveProviders().
+      await writeFile(
+        join(agentDir, OAUTH_KEEPALIVE_SETTING_FILENAME),
+        `${JSON.stringify({ providers: ["custom-oauth"] })}\n`,
+        "utf8",
+      );
+      const providers = readOAuthKeepaliveProviders();
+      assert.deepEqual(
+        [...providers],
+        ["custom-oauth"],
+        "production setting reader must surface non-default providers",
+      );
+
+      const { scheduler, ticks } = manualScheduler();
+      const custom: OAuthCounters = { refreshCount: 0, networkCalls: 0, lastAccess: undefined };
+      const side: OAuthCounters = { refreshCount: 0, networkCalls: 0, lastAccess: undefined };
+      const faux = fauxProvider({
+        api: "ak-oauth-keepalive-setting",
+        provider: "custom-oauth",
+        tokenSize: { min: 1000, max: 1000 },
+      });
+      const customProvider = createOAuthMockProvider({ id: "custom-oauth", faux, counters: custom });
+      const sideFaux = fauxProvider({
+        api: "ak-oauth-keepalive-setting-side",
+        provider: "kimi-coding",
+        tokenSize: { min: 1000, max: 1000 },
+      });
+      const sideProvider = createOAuthMockProvider({ id: "kimi-coding", faux: sideFaux, counters: side });
+      const credentials = new InMemoryCredentialStore();
+      await credentials.modify("custom-oauth", async () => oauthCredential());
+      await credentials.modify("kimi-coding", async () => oauthCredential({ access: "kimi-expired" }));
+
+      await withInProcessPi(
+        {
+          cwd: home,
+          agentDir,
+          faux,
+          provider: customProvider,
+          credentials,
+          modelsPath: null,
+          noExtensions: true,
+          noTools: "builtin",
+          systemPrompt: "OAUTH KEEPALIVE SETTING",
+          mode: "print",
+          flags: {},
+          extensionFactories: [
+            // Same production seam: setting-read providers enter createRoleRuntimeExtension.
+            createRoleRuntimeExtension(
+              minimalRoleDeps({ providers, scheduler }),
+            ),
+          ],
+        },
+        async ({ modelRuntime }) => {
+          modelRuntime.registerNativeProvider(sideProvider);
+          await modelRuntime.refresh({ allowNetwork: false });
+
+          await fireTick(ticks, 0);
+          assert.equal(custom.refreshCount, 1, "configured non-default provider must refresh");
+          assert.equal(side.refreshCount, 0, "default kimi-coding must stay zero when not in setting");
+          assert.equal(side.networkCalls, 0);
+        },
+      );
+    });
+  },
+);

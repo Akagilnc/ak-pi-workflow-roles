@@ -6,9 +6,65 @@
  * Does not read auth.json, touch pi-ai private APIs, or reuse the 183s idle gate.
  */
 
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 export const DEFAULT_OAUTH_KEEPALIVE_PROVIDERS = ["kimi-coding"] as const;
 
 export const OAUTH_KEEPALIVE_INTERVAL_MS = 60_000;
+
+/** Persistent extension setting filename under PI_CODING_AGENT_DIR / ~/.pi/agent. */
+export const OAUTH_KEEPALIVE_SETTING_FILENAME = "oauth-keepalive.json";
+
+/** Path to the static provider-list extension setting (default ["kimi-coding"]). */
+export function oauthKeepaliveSettingPath(): string {
+  return join(
+    process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"),
+    OAUTH_KEEPALIVE_SETTING_FILENAME,
+  );
+}
+
+function isExactRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read the static keepalive provider list from the extension setting file.
+ * Missing file → default ["kimi-coding"]. Malformed content fails closed.
+ * Production extension root is the sole caller that feeds this into keepalive.
+ */
+export function readOAuthKeepaliveProviders(
+  path = oauthKeepaliveSettingPath(),
+): readonly string[] {
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!isExactRecord(raw) || !Array.isArray(raw.providers)) {
+      throw new Error(
+        "OAuth keepalive setting is malformed: expected { providers: string[] }",
+      );
+    }
+    const providers = raw.providers.map((id, index) => {
+      if (typeof id !== "string" || id.trim() === "") {
+        throw new Error(
+          `OAuth keepalive setting providers[${index}] must be a non-empty string`,
+        );
+      }
+      return id;
+    });
+    return Object.freeze(providers.map((id) => id));
+  } catch (error) {
+    // Absent optional setting uses the documented default; all other causes propagate.
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return DEFAULT_OAUTH_KEEPALIVE_PROVIDERS;
+    }
+    throw error;
+  }
+}
 
 /** Injected interval scheduler (same shape as TrajectoryScheduler). */
 export type OAuthKeepaliveScheduler = {
@@ -79,13 +135,18 @@ function formatWarning(providerId: string, error: unknown): string {
 
 function emitWarning(ctx: OAuthKeepaliveContext, providerId: string, error: unknown): void {
   const text = formatWarning(providerId, error);
-  // print/json modes: ui.notify is a no-op — console.warn is the visible surface.
-  console.warn(text);
-  try {
-    ctx.ui?.notify?.(text, "warning");
-  } catch {
-    // Warning must not fault the keepalive lifecycle.
+  // Exactly one visible surface per failure: prefer ui.notify when present;
+  // console.warn only when notify is unavailable (print/json / headless).
+  const notify = ctx.ui?.notify;
+  if (typeof notify === "function") {
+    try {
+      notify(text, "warning");
+    } catch {
+      // Warning must not fault the keepalive lifecycle.
+    }
+    return;
   }
+  console.warn(text);
 }
 
 /**
