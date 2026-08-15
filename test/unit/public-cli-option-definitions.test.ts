@@ -484,11 +484,12 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     if (s.expect.ok) {
       assert.equal(parseTaishiArgv(s.argv).query, s.expect.query, s.name);
     } else {
+      const expectedRe = s.expect.re;
       assert.throws(
         () => parseTaishiArgv(s.argv),
         (e: unknown) => {
           assert.ok(e instanceof Error, s.name);
-          assert.match(e.message, s.expect.re, `${s.name}: ${e.message}`);
+          assert.match(e.message, expectedRe, `${s.name}: ${e.message}`);
           return true;
         },
         s.name,
