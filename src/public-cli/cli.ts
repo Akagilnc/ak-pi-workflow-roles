@@ -34,6 +34,14 @@ import {
   parseReviewerArgv,
   parseTaishiArgv,
 } from "./invocation.ts";
+import {
+  createTypedOptionConsumer,
+  optionsForOwner,
+  projectOwnerOptions,
+  renderOwnerOptionHelpLines,
+  type PublicOptionDefinition,
+  type TypedOptionConsumer,
+} from "./option-definitions.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
@@ -64,20 +72,24 @@ export { CliUsageError } from "./cli-errors.ts";
 export type { CliIo } from "./cli-io.ts";
 
 /**
- * Sole production map: public role command → argv parser.
- * cli handlers consume this table; no parallel set.
+ * Sole production map: public role command → argv parser + option definitions.
+ * cli handlers and help consume this table; no parallel spelling set (#342).
  */
 export const PUBLIC_ROLE_ARGV = {
-  judge: { parse: parseJudgeArgv },
-  coder: { parse: parseCoderArgv },
-  fixer: { parse: parseFixerArgv },
-  collector: { parse: parseCollectorArgv },
-  doctor: { parse: parseDoctorArgv },
-  merger: { parse: parseMergerArgv },
-  reviewer: { parse: parseReviewerArgv },
+  judge: { parse: parseJudgeArgv, options: optionsForOwner("judge") },
+  coder: { parse: parseCoderArgv, options: optionsForOwner("coder") },
+  fixer: { parse: parseFixerArgv, options: optionsForOwner("fixer") },
+  collector: { parse: parseCollectorArgv, options: optionsForOwner("collector") },
+  doctor: { parse: parseDoctorArgv, options: optionsForOwner("doctor") },
+  merger: { parse: parseMergerArgv, options: optionsForOwner("merger") },
+  reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
-  taishi: { parse: parseTaishiArgv },
+  taishi: { parse: parseTaishiArgv, options: optionsForOwner("taishi") },
 } as const;
+
+/** Global public options — same typed table as role rows (#342). */
+export const PUBLIC_GLOBAL_OPTIONS: readonly PublicOptionDefinition[] =
+  optionsForOwner("global");
 
 type TakenPublicGlobalFlag =
   | { flag: "help"; consume: 1 }
@@ -86,43 +98,33 @@ type TakenPublicGlobalFlag =
 
 /**
  * If `argv[index]` is a public global flag, describe its span and payload.
- * Sole global-flag grammar for parseArgv.
+ * Spellings + repeatable come solely from PUBLIC_OPTION_TABLE.global via the
+ * shared typed consumer (#342).
  */
 function takePublicGlobalFlag(
   argv: readonly string[],
   index: number,
+  options: TypedOptionConsumer,
 ): TakenPublicGlobalFlag | undefined {
-  const token = argv[index];
-  if (token === undefined) return undefined;
-  if (token === "--help" || token === "-h") {
-    return { flag: "help", consume: 1 };
+  const tokens = argv.slice(index);
+  const taken = options.takeDashed(tokens as string[]);
+  if (taken === undefined) return undefined;
+  const consumed = argv.length - index - tokens.length;
+  if (taken.def.id === "help") {
+    return { flag: "help", consume: consumed as 1 };
   }
-  if (token === "--model") {
-    const value = argv[index + 1];
-    if (value === undefined) {
-      return { flag: "model", consume: 1, value: undefined };
-    }
-    return { flag: "model", consume: 2, value };
-  }
-  if (token.startsWith("--model=")) {
+  if (taken.def.id === "model") {
     return {
       flag: "model",
-      consume: 1,
-      value: token.slice("--model=".length),
+      consume: consumed as 1 | 2,
+      value: taken.value,
     };
   }
-  if (token === "--thinking") {
-    const raw = argv[index + 1];
-    if (raw === undefined) {
-      return { flag: "thinking", consume: 1, raw: undefined };
-    }
-    return { flag: "thinking", consume: 2, raw };
-  }
-  if (token.startsWith("--thinking=")) {
+  if (taken.def.id === "thinking") {
     return {
       flag: "thinking",
-      consume: 1,
-      raw: token.slice("--thinking=".length),
+      consume: consumed as 1 | 2,
+      raw: taken.value,
     };
   }
   return undefined;
@@ -231,17 +233,18 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
   let thinking: PublicThinkingLevel | undefined;
   let help = false;
   const positional: string[] = [];
+  const globalOptions = createTypedOptionConsumer(PUBLIC_GLOBAL_OPTIONS);
 
   // Global flags may appear before or after the subcommand
   // (`ak-role --model x roles` and `ak-role roles --model x`).
-  // Grammar authority: takePublicGlobalFlag above.
+  // Grammar authority: shared typed consumer over PUBLIC_OPTION_TABLE.global.
   while (args.length > 0) {
     if (args[0] === "--") {
       args.shift();
       positional.push(...args);
       break;
     }
-    const taken = takePublicGlobalFlag(args, 0);
+    const taken = takePublicGlobalFlag(args, 0, globalOptions);
     if (taken !== undefined) {
       if (taken.flag === "help") {
         help = true;
@@ -292,7 +295,29 @@ export function helpDocument() {
     executable: "ak-role",
     capabilities: listHelpCapabilities(),
     internalEntrypoint: INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
+    /** #342 structured global options from the sole option table. */
+    globalOptions: projectOwnerOptions("global"),
   };
+}
+
+/** Structured help facts for one public command/role (#342). */
+export function helpDocumentForCommand(command: string) {
+  if (command === "global") {
+    return {
+      command: "global" as const,
+      kind: "global" as const,
+      options: projectOwnerOptions("global"),
+    };
+  }
+  if (command in PUBLIC_ROLE_ARGV) {
+    const owner = command as keyof typeof PUBLIC_ROLE_ARGV;
+    return {
+      command: owner,
+      kind: owner === "taishi" ? ("deterministic" as const) : ("role" as const),
+      options: projectOwnerOptions(owner),
+    };
+  }
+  return undefined;
 }
 
 function renderHelp(): string {
@@ -324,12 +349,40 @@ function renderHelp(): string {
       lines.push(`  ${cap.name}`);
     }
   }
+  lines.push("", "Global options:");
+  lines.push(...renderOwnerOptionHelpLines("global"));
   lines.push(
     "",
-    "Global options: --model provider/model --thinking level",
+    "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model:thinking>",
     "Effective seats: ak-role roles",
   );
+  return `${lines.join("\n")}\n`;
+}
+
+function renderCommandHelp(command: string): string | undefined {
+  const caps = listHelpCapabilities();
+  const match = caps.find((cap) => cap.name === command);
+  if (match === undefined) return undefined;
+  const lines: string[] = [];
+  if (match.kind === "support") {
+    lines.push(`command\t${match.name}\tkind\tsupport`);
+  } else if (match.kind === "deterministic") {
+    lines.push(`command\t${match.name}\tkind\tdeterministic`);
+  } else {
+    lines.push(
+      `command\t${match.name}\tkind\trole\tphases\t${match.phases
+        .map((p) => (p === null ? "none" : p))
+        .join(",")}\tdefault\t${match.defaultPhase ?? "none"}`,
+    );
+  }
+  if (command in PUBLIC_ROLE_ARGV) {
+    lines.push(
+      ...renderOwnerOptionHelpLines(
+        command as keyof typeof PUBLIC_ROLE_ARGV,
+      ),
+    );
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -430,25 +483,14 @@ export async function runAkRole(
       parsed.command === undefined ||
       parsed.command === "help"
     ) {
-      // Layered help: `help <topic>` still derives from the same typed registry.
+      // Layered help: `help <topic>` derives from the typed registry + option table (#342).
       if (parsed.command === "help" && parsed.args[0] !== undefined) {
         const topic = parsed.args[0];
-        const caps = listHelpCapabilities();
-        const match = caps.find((cap) => cap.name === topic);
-        if (match === undefined) {
+        const rendered = renderCommandHelp(topic);
+        if (rendered === undefined) {
           throw new CliUsageError(`unknown help topic: ${topic}`);
         }
-        if (match.kind === "support") {
-          io.stdout(`command\t${match.name}\tkind\tsupport\n`);
-        } else if (match.kind === "deterministic") {
-          io.stdout(`command\t${match.name}\tkind\tdeterministic\n`);
-        } else {
-          io.stdout(
-            `command\t${match.name}\tkind\trole\tphases\t${match.phases
-              .map((p) => (p === null ? "none" : p))
-              .join(",")}\tdefault\t${match.defaultPhase ?? "none"}\n`,
-          );
-        }
+        io.stdout(rendered);
         return { exitCode: 0 };
       }
       io.stdout(renderHelp());
