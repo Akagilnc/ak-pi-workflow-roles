@@ -594,9 +594,11 @@ const TAISHI_OPTIONS = [
     form: "option",
     modes: ["sweep"],
     selectsMode: "sweep",
+    requiredInModes: ["sweep"],
+    maxCountByMode: { sweep: 1 },
     description: {
-      en: "Sweep-only attachment path(s); payload is the attachment body (exactly one on the run path).",
-      zh: "仅 sweep 模式的附件路径；载荷为附件正文（运行路径上恰好一个）。",
+      en: "Sweep-mode attachment path; required exactly once in sweep; payload is the attachment body.",
+      zh: "sweep 模式附件路径；sweep 必填且恰一次；载荷为附件正文。",
     },
   },
   {
@@ -1045,6 +1047,11 @@ export const PUBLIC_CLI_OPTIONS_README_MARKERS = {
   end: README_END,
 } as const;
 
+/** Escape `|` so GFM table cells keep their column count (including inside code spans). */
+function escapeMarkdownTableCell(value: string): string {
+  return value.replaceAll("|", "\\|");
+}
+
 /** Markdown flag inventory for README generation (EN or ZH). */
 export function renderReadmeOptionsMarkdown(locale: "en" | "zh"): string {
   const lines: string[] = [];
@@ -1074,9 +1081,21 @@ export function renderReadmeOptionsMarkdown(locale: "en" | "zh"): string {
     );
     lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
     for (const opt of projectOwnerOptions(owner)) {
-      const aliases = opt.aliases.length === 0 ? "—" : opt.aliases.join(", ");
-      const value = opt.valueMetavar ?? "—";
-      const required = opt.required
+      const aliasesRaw =
+        opt.aliases.length === 0 ? "—" : opt.aliases.join(", ");
+      const aliases =
+        aliasesRaw === "—"
+          ? aliasesRaw
+          : aliasesRaw
+              .split(", ")
+              .map((a) => `\`${escapeMarkdownTableCell(a)}\``)
+              .join(", ");
+      const valueRaw = opt.valueMetavar ?? "—";
+      const value =
+        valueRaw === "—"
+          ? valueRaw
+          : `\`${escapeMarkdownTableCell(valueRaw)}\``;
+      const requiredRaw = opt.required
         ? locale === "zh"
           ? "是"
           : "yes"
@@ -1087,34 +1106,40 @@ export function renderReadmeOptionsMarkdown(locale: "en" | "zh"): string {
           : locale === "zh"
             ? "否"
             : "no";
-      const repeatable = opt.repeatable
-        ? locale === "zh"
-          ? "是"
-          : "yes"
-        : locale === "zh"
-          ? "否"
-          : "no";
-      const modePhase = [
-        opt.modes === undefined ? "" : `modes=${opt.modes.join("|")}`,
-        opt.phases === undefined ? "" : `phases=${opt.phases.join("|")}`,
-        opt.exclusiveWith === undefined
-          ? ""
-          : `xor=${opt.exclusiveWith.join("|")}`,
-        opt.maxCountByMode === undefined
-          ? ""
-          : `max=${Object.entries(opt.maxCountByMode)
-              .map(([m, n]) => `${m}:${n}`)
-              .join(",")}`,
-        opt.defaultValue === undefined ? "" : `default=${opt.defaultValue}`,
-      ]
-        .filter((part) => part !== "")
-        .join("; ");
-      const desc = locale === "zh" ? opt.description.zh : opt.description.en;
+      const required = escapeMarkdownTableCell(requiredRaw);
+      const repeatable = escapeMarkdownTableCell(
+        opt.repeatable
+          ? locale === "zh"
+            ? "是"
+            : "yes"
+          : locale === "zh"
+            ? "否"
+            : "no",
+      );
+      const modePhase = escapeMarkdownTableCell(
+        [
+          opt.modes === undefined ? "" : `modes=${opt.modes.join("|")}`,
+          opt.phases === undefined ? "" : `phases=${opt.phases.join("|")}`,
+          opt.exclusiveWith === undefined
+            ? ""
+            : `xor=${opt.exclusiveWith.join("|")}`,
+          opt.maxCountByMode === undefined
+            ? ""
+            : `max=${Object.entries(opt.maxCountByMode)
+                .map(([m, n]) => `${m}:${n}`)
+                .join(",")}`,
+          opt.defaultValue === undefined ? "" : `default=${opt.defaultValue}`,
+        ]
+          .filter((part) => part !== "")
+          .join("; ") || "—",
+      );
+      const desc = escapeMarkdownTableCell(
+        locale === "zh" ? opt.description.zh : opt.description.en,
+      );
+      const spelling = `\`${escapeMarkdownTableCell(opt.canonical)}\``;
+      const form = escapeMarkdownTableCell(opt.form);
       lines.push(
-        `| \`${opt.canonical}\` | ${aliases === "—" ? aliases : aliases
-            .split(", ")
-            .map((a) => `\`${a}\``)
-            .join(", ")} | ${value === "—" ? value : `\`${value}\``} | ${required} | ${repeatable} | ${opt.form} | ${modePhase || "—"} | ${desc} |`,
+        `| ${spelling} | ${aliases} | ${value} | ${required} | ${repeatable} | ${form} | ${modePhase} | ${desc} |`,
       );
     }
     lines.push("");

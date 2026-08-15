@@ -142,7 +142,7 @@ Codex fast 档：开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：
 | 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--model` | — | `provider/model` | 否 | 否 | option | — | 覆盖本调用有效席位模型（可置于子命令前或后）。 |
-| `--thinking` | — | `level` | 否 | 否 | option | — | 覆盖 thinking 档位：off|minimal|low|medium|high|xhigh|max。 |
+| `--thinking` | — | `level` | 否 | 否 | option | — | 覆盖 thinking 档位：off\|minimal\|low\|medium\|high\|xhigh\|max。 |
 | `--help` | `-h` | — | 否 | 否 | option | — | 显示公开 CLI 帮助并退出。 |
 
 ### `judge`
@@ -156,7 +156,7 @@ Codex fast 档：开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：
 
 | 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `plan|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
+| `plan\|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan\|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
 | `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
 | `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
 
@@ -164,7 +164,7 @@ Codex fast 档：开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：
 
 | 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `plan|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
+| `plan\|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan\|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
 | `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
 | `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
 | `--prerequisites` | — | `path` | 否 | 否 | option | — | {id, requirement} 前置条件 JSON 数组路径。 |
@@ -208,9 +208,9 @@ Codex fast 档：开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：
 | 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sweep` | — | — | 否 | 否 | positional | modes=sweep | 可选 sweep 模式词元（至多一次；不得夹带其他 positional）。 |
-| `--project-root` | — | `path` | 条件:model-groups | 是 | option | modes=issue|model-groups; max=issue:1 | projectRoot 范围键。issue：至多一个（与 --ticket 至少居其一）。model-groups：一个或多个且必填。 |
+| `--project-root` | — | `path` | 条件:model-groups | 是 | option | modes=issue\|model-groups; max=issue:1 | projectRoot 范围键。issue：至多一个（与 --ticket 至少居其一）。model-groups：一个或多个且必填。 |
 | `--ticket` | — | `number` | 否 | 否 | option | modes=issue | issue 模式的票号（与 --project-root 至少居其一）。 |
-| `--attach` | — | `path` | 否 | 是 | option | modes=sweep | 仅 sweep 模式的附件路径；载荷为附件正文（运行路径上恰好一个）。 |
+| `--attach` | — | `path` | 条件:sweep | 是 | option | modes=sweep; max=sweep:1 | sweep 模式附件路径；sweep 必填且恰一次；载荷为附件正文。 |
 | `--cohort` | — | — | 否 | 否 | option | modes=cohort; xor=model-groups | 选择 cohort 模式（与 --model-groups 互斥）。 |
 | `--model-groups` | — | — | 否 | 否 | option | modes=model-groups; xor=cohort | 选择 model-groups 模式（与 --cohort 互斥）。 |
 | `--group-a-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort A 组标签（cohort 模式必填）。 |

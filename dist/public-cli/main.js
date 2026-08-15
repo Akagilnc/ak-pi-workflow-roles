@@ -16020,9 +16020,11 @@ var init_option_definitions = __esm({
         form: "option",
         modes: ["sweep"],
         selectsMode: "sweep",
+        requiredInModes: ["sweep"],
+        maxCountByMode: { sweep: 1 },
         description: {
-          en: "Sweep-only attachment path(s); payload is the attachment body (exactly one on the run path).",
-          zh: "\u4EC5 sweep \u6A21\u5F0F\u7684\u9644\u4EF6\u8DEF\u5F84\uFF1B\u8F7D\u8377\u4E3A\u9644\u4EF6\u6B63\u6587\uFF08\u8FD0\u884C\u8DEF\u5F84\u4E0A\u6070\u597D\u4E00\u4E2A\uFF09\u3002"
+          en: "Sweep-mode attachment path; required exactly once in sweep; payload is the attachment body.",
+          zh: "sweep \u6A21\u5F0F\u9644\u4EF6\u8DEF\u5F84\uFF1Bsweep \u5FC5\u586B\u4E14\u6070\u4E00\u6B21\uFF1B\u8F7D\u8377\u4E3A\u9644\u4EF6\u6B63\u6587\u3002"
         }
       },
       {

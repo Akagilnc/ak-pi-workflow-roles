@@ -113,7 +113,7 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--model` | — | `provider/model` | no | no | option | — | Override the effective seat model for this invocation (before or after the command). |
-| `--thinking` | — | `level` | no | no | option | — | Override thinking level: off|minimal|low|medium|high|xhigh|max. |
+| `--thinking` | — | `level` | no | no | option | — | Override thinking level: off\|minimal\|low\|medium\|high\|xhigh\|max. |
 | `--help` | `-h` | — | no | no | option | — | Show public CLI help and exit. |
 
 ### `judge`
@@ -127,7 +127,7 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 
 | Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `plan|apply` | `plan`, `apply` | — | no | no | positional | phases=plan|apply; default=apply | Optional phase token before the instruction; defaults to apply. |
+| `plan\|apply` | `plan`, `apply` | — | no | no | positional | phases=plan\|apply; default=apply | Optional phase token before the instruction; defaults to apply. |
 | `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
 | `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
 
@@ -135,7 +135,7 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 
 | Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `plan|apply` | `plan`, `apply` | — | no | no | positional | phases=plan|apply; default=apply | Optional phase token before the instruction; defaults to apply. |
+| `plan\|apply` | `plan`, `apply` | — | no | no | positional | phases=plan\|apply; default=apply | Optional phase token before the instruction; defaults to apply. |
 | `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
 | `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
 | `--prerequisites` | — | `path` | no | no | option | — | JSON array of {id, requirement} prerequisite objects. |
@@ -179,9 +179,9 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sweep` | — | — | no | no | positional | modes=sweep | Optional sweep mode token (at most once; no other positionals). |
-| `--project-root` | — | `path` | when:model-groups | yes | option | modes=issue|model-groups; max=issue:1 | Project-root scope key. Issue: at most one (with --ticket at least one of the two). Model-groups: one or more required. |
+| `--project-root` | — | `path` | when:model-groups | yes | option | modes=issue\|model-groups; max=issue:1 | Project-root scope key. Issue: at most one (with --ticket at least one of the two). Model-groups: one or more required. |
 | `--ticket` | — | `number` | no | no | option | modes=issue | Ticket/issue number for issue mode (with --project-root at least one of the two). |
-| `--attach` | — | `path` | no | yes | option | modes=sweep | Sweep-only attachment path(s); payload is the attachment body (exactly one on the run path). |
+| `--attach` | — | `path` | when:sweep | yes | option | modes=sweep; max=sweep:1 | Sweep-mode attachment path; required exactly once in sweep; payload is the attachment body. |
 | `--cohort` | — | — | no | no | option | modes=cohort; xor=model-groups | Select cohort mode (mutually exclusive with --model-groups). |
 | `--model-groups` | — | — | no | no | option | modes=model-groups; xor=cohort | Select model-groups mode (mutually exclusive with --cohort). |
 | `--group-a-label` | — | `label` | when:cohort | no | option | modes=cohort | Cohort group A label (required in cohort mode). |
