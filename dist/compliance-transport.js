@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { executeAuditorChild, } from "./evidence-child-executor.js";
 import { createAuditorDossierTool } from "./auditor-dossier-tool.js";
+import { withPackageOwnedToolIdleSuspended } from "./package-owned-tool-idle.js";
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
 export const AUDITOR_DOSSIER_PROMPT = "Audit the current run dossier.";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
@@ -61,24 +62,28 @@ export function readComplianceCandidate(arguments_, usage) {
     return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === undefined ? "missing" : "unknown" }, candidate: arguments_, ...(usage === undefined ? {} : { usage }) };
 }
 export async function runComplianceAudit(options) {
-    const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
-    const receipt = await executeAuditorChild({
-        tool: options.tool,
-        dossierTool: createAuditorDossierTool(options.runDirectory),
-        systemPrompt: options.systemPrompt,
-        prompt,
-        roleLabel: options.roleLabel,
-        context: options.context,
-        retainResponse: (response) => retainComplianceResponse(options.context, response),
-        ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
+    // #339: only the real compliance-audit await leaves the outer package-owned
+    // idle owner. Pre/post-audit work stays under the single outer backstop.
+    return withPackageOwnedToolIdleSuspended(async () => {
+        const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
+        const receipt = await executeAuditorChild({
+            tool: options.tool,
+            dossierTool: createAuditorDossierTool(options.runDirectory),
+            systemPrompt: options.systemPrompt,
+            prompt,
+            roleLabel: options.roleLabel,
+            context: options.context,
+            retainResponse: (response) => retainComplianceResponse(options.context, response),
+            ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+        if (receipt.noReceiptLifecycle !== undefined) {
+            return {
+                status: "no-receipt",
+                ...receipt.noReceiptLifecycle,
+                ...(receipt.response.usage === undefined ? {} : { usage: receipt.response.usage }),
+            };
+        }
+        return readComplianceCandidate(receipt.decision, receipt.response.usage);
     });
-    if (receipt.noReceiptLifecycle !== undefined) {
-        return {
-            status: "no-receipt",
-            ...receipt.noReceiptLifecycle,
-            ...(receipt.response.usage === undefined ? {} : { usage: receipt.response.usage }),
-        };
-    }
-    return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }

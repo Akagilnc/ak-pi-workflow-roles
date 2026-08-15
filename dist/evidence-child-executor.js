@@ -296,6 +296,10 @@ export async function createInheritedRuntime(options) {
             },
         };
     runtime.registerNativeProvider(provider);
+    // registerNativeProvider fires a background refresh; await it so child
+    // AgentSession.prompt sees configured auth without racing void refresh
+    // (mock timers / slow CI otherwise stall before the compliance stream).
+    await runtime.refresh({ allowNetwork: false });
     return state;
 }
 function numericHttpStatus(value) {
