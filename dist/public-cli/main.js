@@ -15422,6 +15422,679 @@ var init_uuidv7 = __esm({
   }
 });
 
+// src/public-cli/option-definitions.ts
+function optionsForOwner(owner) {
+  return PUBLIC_OPTION_TABLE[owner];
+}
+function dashedSpellings(def) {
+  if (def.form !== "option") return [];
+  return [def.canonical, ...def.aliases];
+}
+function matchDashedOption(token, definitions) {
+  if (!token.startsWith("-") || token === "-") return void 0;
+  for (const def of definitions) {
+    if (def.form !== "option") continue;
+    for (const spelling of dashedSpellings(def)) {
+      if (token === spelling) {
+        return { def };
+      }
+      if (def.valueMetavar !== null && token.startsWith(`${spelling}=`)) {
+        return { def, inlineValue: token.slice(spelling.length + 1) };
+      }
+    }
+  }
+  return void 0;
+}
+function takeDashedOption(tokens, definitions) {
+  const token = tokens[0];
+  if (token === void 0) return void 0;
+  const matched = matchDashedOption(token, definitions);
+  if (matched === void 0) return void 0;
+  tokens.shift();
+  if (matched.def.valueMetavar === null) {
+    return { def: matched.def, value: void 0 };
+  }
+  if (matched.inlineValue !== void 0) {
+    return { def: matched.def, value: matched.inlineValue };
+  }
+  return { def: matched.def, value: tokens.shift() };
+}
+function projectOwnerOptions(owner) {
+  return optionsForOwner(owner).map((def) => ({
+    id: def.id,
+    owner: def.owner,
+    canonical: def.canonical,
+    aliases: def.aliases,
+    valueMetavar: def.valueMetavar,
+    required: def.required,
+    repeatable: def.repeatable,
+    ...def.defaultValue === void 0 ? {} : { defaultValue: def.defaultValue },
+    form: def.form,
+    ...def.phases === void 0 ? {} : { phases: def.phases },
+    ...def.modes === void 0 ? {} : { modes: def.modes },
+    ...def.requiredInModes === void 0 ? {} : { requiredInModes: def.requiredInModes },
+    ...def.exclusiveWith === void 0 ? {} : { exclusiveWith: def.exclusiveWith },
+    ...def.maxCountByMode === void 0 ? {} : { maxCountByMode: def.maxCountByMode },
+    description: def.description
+  }));
+}
+function renderOwnerOptionHelpLines(owner, locale2 = "en") {
+  const lines = [];
+  for (const opt of projectOwnerOptions(owner)) {
+    const aliasText = opt.aliases.length === 0 ? "-" : opt.aliases.join(",");
+    const metavar = opt.valueMetavar ?? "-";
+    const required = opt.required ? "required" : "optional";
+    const repeatable = opt.repeatable ? "repeatable" : "single";
+    const form = opt.form;
+    const phases = opt.phases === void 0 ? "-" : opt.phases.join("|");
+    const modes = opt.modes === void 0 ? "-" : opt.modes.join("|");
+    const requiredInModes = opt.requiredInModes === void 0 ? "-" : opt.requiredInModes.join("|");
+    const exclusiveWith = opt.exclusiveWith === void 0 ? "-" : opt.exclusiveWith.join("|");
+    const maxCount = opt.maxCountByMode === void 0 ? "-" : Object.entries(opt.maxCountByMode).map(([mode, n]) => `${mode}:${n}`).join(",");
+    const defaultValue = opt.defaultValue ?? "-";
+    const desc = locale2 === "zh" ? opt.description.zh : opt.description.en;
+    lines.push(
+      [
+        "option",
+        opt.id,
+        opt.canonical,
+        `aliases=${aliasText}`,
+        `metavar=${metavar}`,
+        required,
+        repeatable,
+        `form=${form}`,
+        `phases=${phases}`,
+        `modes=${modes}`,
+        `requiredInModes=${requiredInModes}`,
+        `exclusiveWith=${exclusiveWith}`,
+        `maxCountByMode=${maxCount}`,
+        `default=${defaultValue}`,
+        desc
+      ].join("	")
+    );
+  }
+  return lines;
+}
+var REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, JUDGE_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, MERGER_OPTIONS, TAISHI_OPTIONS, PUBLIC_OPTION_TABLE;
+var init_option_definitions = __esm({
+  "src/public-cli/option-definitions.ts"() {
+    "use strict";
+    REJECTED_PUBLIC_SPELLINGS = [
+      {
+        owner: "judge",
+        spellings: ["--burden", "--ak-judge-burden", "--judge-burden"],
+        reason: {
+          en: "Judge infers its own burden; no public burden selector.",
+          zh: "\u5927\u7406\u5BFA\u81EA\u884C\u63A8\u65AD\u4E3E\u8BC1\u8D23\u4EFB\uFF0C\u4E0D\u63A5\u53D7\u516C\u5F00 burden \u65D7\u6807\u3002"
+        }
+      },
+      {
+        owner: "merger",
+        spellings: ["--ak-merger-input"],
+        reason: {
+          en: "Merger input packet is assembled internally; not a public flag.",
+          zh: "\u6821\u4E66\u90CE input packet \u7531\u5185\u90E8\u88C5\u914D\uFF0C\u4E0D\u662F\u516C\u5F00\u65D7\u6807\u3002"
+        }
+      }
+    ];
+    GLOBAL_OPTIONS = [
+      {
+        id: "model",
+        owner: "global",
+        canonical: "--model",
+        aliases: [],
+        valueMetavar: "provider/model",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Override the effective seat model for this invocation (before or after the command).",
+          zh: "\u8986\u76D6\u672C\u8C03\u7528\u6709\u6548\u5E2D\u4F4D\u6A21\u578B\uFF08\u53EF\u7F6E\u4E8E\u5B50\u547D\u4EE4\u524D\u6216\u540E\uFF09\u3002"
+        }
+      },
+      {
+        id: "thinking",
+        owner: "global",
+        canonical: "--thinking",
+        aliases: [],
+        valueMetavar: "level",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Override thinking level: off|minimal|low|medium|high|xhigh|max.",
+          zh: "\u8986\u76D6 thinking \u6863\u4F4D\uFF1Aoff|minimal|low|medium|high|xhigh|max\u3002"
+        }
+      },
+      {
+        id: "help",
+        owner: "global",
+        canonical: "--help",
+        aliases: ["-h"],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Show public CLI help and exit.",
+          zh: "\u663E\u793A\u516C\u5F00 CLI \u5E2E\u52A9\u5E76\u9000\u51FA\u3002"
+        }
+      }
+    ];
+    JUDGE_OPTIONS = [
+      {
+        id: "project",
+        owner: "judge",
+        canonical: "--project",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Project root for ledger identity (defaults to process cwd).",
+          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
+        }
+      },
+      {
+        id: "attach",
+        owner: "judge",
+        canonical: "--attach",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: true,
+        form: "option",
+        description: {
+          en: "Attach a regular file; frozen at admission (repeatable).",
+          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
+        }
+      }
+    ];
+    CODER_OPTIONS = [
+      {
+        id: "phase",
+        owner: "coder",
+        canonical: "plan|apply",
+        aliases: ["plan", "apply"],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        defaultValue: "apply",
+        form: "positional",
+        phases: ["plan", "apply"],
+        description: {
+          en: "Optional phase token before the instruction; defaults to apply.",
+          zh: "\u6307\u4EE4\u524D\u53EF\u9009 phase \u8BCD\u5143\uFF1B\u9ED8\u8BA4 apply\u3002"
+        }
+      },
+      {
+        id: "project",
+        owner: "coder",
+        canonical: "--project",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Project root for ledger identity (defaults to process cwd).",
+          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
+        }
+      },
+      {
+        id: "attach",
+        owner: "coder",
+        canonical: "--attach",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: true,
+        form: "option",
+        description: {
+          en: "Attach a regular file; frozen at admission (repeatable).",
+          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
+        }
+      }
+    ];
+    FIXER_OPTIONS = [
+      {
+        id: "phase",
+        owner: "fixer",
+        canonical: "plan|apply",
+        aliases: ["plan", "apply"],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        defaultValue: "apply",
+        form: "positional",
+        phases: ["plan", "apply"],
+        description: {
+          en: "Optional phase token before the instruction; defaults to apply.",
+          zh: "\u6307\u4EE4\u524D\u53EF\u9009 phase \u8BCD\u5143\uFF1B\u9ED8\u8BA4 apply\u3002"
+        }
+      },
+      {
+        id: "project",
+        owner: "fixer",
+        canonical: "--project",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Project root for ledger identity (defaults to process cwd).",
+          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
+        }
+      },
+      {
+        id: "attach",
+        owner: "fixer",
+        canonical: "--attach",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: true,
+        form: "option",
+        description: {
+          en: "Attach a regular file; frozen at admission (repeatable).",
+          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
+        }
+      },
+      {
+        id: "prerequisites",
+        owner: "fixer",
+        canonical: "--prerequisites",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "JSON array of {id, requirement} prerequisite objects.",
+          zh: "{id, requirement} \u524D\u7F6E\u6761\u4EF6 JSON \u6570\u7EC4\u8DEF\u5F84\u3002"
+        }
+      }
+    ];
+    REVIEWER_OPTIONS = [
+      {
+        id: "project",
+        owner: "reviewer",
+        canonical: "--project",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Project root for ledger identity (defaults to process cwd).",
+          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
+        }
+      },
+      {
+        id: "base",
+        owner: "reviewer",
+        canonical: "--base",
+        aliases: [],
+        valueMetavar: "revision",
+        required: true,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Required fixed-point revision for the pinned review target.",
+          zh: "\u5FC5\u586B\uFF1B\u9489\u4F4F\u5BA1\u67E5\u76EE\u6807\u7684 fixed-point revision\u3002"
+        }
+      },
+      {
+        id: "authority-ref",
+        owner: "reviewer",
+        canonical: "--authority-ref",
+        aliases: [],
+        valueMetavar: "ref",
+        required: false,
+        repeatable: true,
+        form: "option",
+        description: {
+          en: "Durable authority reference/URL (repeatable; refs only, not inline prose).",
+          zh: "\u6301\u4E45 authority \u5F15\u7528/URL\uFF08\u53EF\u91CD\u590D\uFF1B\u4EC5 ref\uFF0C\u975E\u5185\u8054\u6563\u6587\uFF09\u3002"
+        }
+      }
+    ];
+    COLLECTOR_OPTIONS = [
+      {
+        id: "project",
+        owner: "collector",
+        canonical: "--project",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Project root for ledger identity (defaults to process cwd).",
+          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
+        }
+      },
+      {
+        id: "attach",
+        owner: "collector",
+        canonical: "--attach",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: true,
+        form: "option",
+        description: {
+          en: "Attach a regular file; frozen at admission (repeatable).",
+          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
+        }
+      },
+      {
+        id: "pr",
+        owner: "collector",
+        canonical: "--pr",
+        aliases: [],
+        valueMetavar: "number",
+        required: true,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Required positive GitHub pull request number.",
+          zh: "\u5FC5\u586B\uFF1B\u6B63\u6574\u6570 GitHub PR \u53F7\u3002"
+        }
+      },
+      {
+        id: "repo",
+        owner: "collector",
+        canonical: "--repo",
+        aliases: [],
+        valueMetavar: "owner/repo",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "GitHub owner/repo override (defaults from origin when github.com).",
+          zh: "GitHub owner/repo \u8986\u76D6\uFF08\u9ED8\u8BA4\u53D6 github.com origin\uFF09\u3002"
+        }
+      },
+      {
+        id: "request-manifest",
+        owner: "collector",
+        canonical: "--request-manifest",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Optional request manifest JSON path ({requests:[{id,body}]}).",
+          zh: "\u53EF\u9009 request manifest JSON \u8DEF\u5F84\uFF08{requests:[{id,body}]}\uFF09\u3002"
+        }
+      }
+    ];
+    DOCTOR_OPTIONS = [
+      {
+        id: "project",
+        owner: "doctor",
+        canonical: "--project",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Project root for ledger identity (defaults to process cwd).",
+          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
+        }
+      },
+      {
+        id: "attach",
+        owner: "doctor",
+        canonical: "--attach",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: true,
+        form: "option",
+        description: {
+          en: "Attach a regular file; frozen at admission (repeatable).",
+          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
+        }
+      },
+      {
+        id: "issue",
+        owner: "doctor",
+        canonical: "--issue",
+        aliases: [],
+        valueMetavar: "number",
+        required: true,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Required positive issue number for the retained case.",
+          zh: "\u5FC5\u586B\uFF1B\u7559\u5B58\u75C5\u4F8B\u7684\u6B63\u6574\u6570 issue \u53F7\u3002"
+        }
+      },
+      {
+        id: "runs",
+        owner: "doctor",
+        canonical: "--runs",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Optional project-relative .ak-roles/books/<book>/issues/<n>/runs override matching --issue.",
+          zh: "\u53EF\u9009\u9879\u76EE\u76F8\u5BF9 .ak-roles/books/<book>/issues/<n>/runs \u8986\u76D6\uFF0C\u4E14\u987B\u5339\u914D --issue\u3002"
+        }
+      }
+    ];
+    MERGER_OPTIONS = [
+      {
+        id: "project",
+        owner: "merger",
+        canonical: "--project",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Project root with one ordinary in-progress merge (defaults to cwd).",
+          zh: "\u5DF2\u6709\u8FDB\u884C\u4E2D ordinary merge \u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4 cwd\uFF09\u3002"
+        }
+      },
+      {
+        id: "attach",
+        owner: "merger",
+        canonical: "--attach",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: true,
+        form: "option",
+        description: {
+          en: "Attach a regular file; frozen at admission (repeatable).",
+          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
+        }
+      }
+    ];
+    TAISHI_OPTIONS = [
+      {
+        id: "sweep",
+        owner: "taishi",
+        canonical: "sweep",
+        aliases: [],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        form: "positional",
+        modes: ["sweep"],
+        description: {
+          en: "Optional sweep mode token (at most once; no other positionals).",
+          zh: "\u53EF\u9009 sweep \u6A21\u5F0F\u8BCD\u5143\uFF08\u81F3\u591A\u4E00\u6B21\uFF1B\u4E0D\u5F97\u5939\u5E26\u5176\u4ED6 positional\uFF09\u3002"
+        }
+      },
+      {
+        id: "project-root",
+        owner: "taishi",
+        canonical: "--project-root",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: true,
+        form: "option",
+        modes: ["issue", "model-groups"],
+        requiredInModes: ["model-groups"],
+        maxCountByMode: { issue: 1 },
+        description: {
+          en: "Project-root scope key. Issue: at most one (with --ticket at least one of the two). Model-groups: one or more required.",
+          zh: "projectRoot \u8303\u56F4\u952E\u3002issue\uFF1A\u81F3\u591A\u4E00\u4E2A\uFF08\u4E0E --ticket \u81F3\u5C11\u5C45\u5176\u4E00\uFF09\u3002model-groups\uFF1A\u4E00\u4E2A\u6216\u591A\u4E2A\u4E14\u5FC5\u586B\u3002"
+        }
+      },
+      {
+        id: "ticket",
+        owner: "taishi",
+        canonical: "--ticket",
+        aliases: [],
+        valueMetavar: "number",
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["issue"],
+        description: {
+          en: "Ticket/issue number for issue mode (with --project-root at least one of the two).",
+          zh: "issue \u6A21\u5F0F\u7684\u7968\u53F7\uFF08\u4E0E --project-root \u81F3\u5C11\u5C45\u5176\u4E00\uFF09\u3002"
+        }
+      },
+      {
+        id: "attach",
+        owner: "taishi",
+        canonical: "--attach",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: true,
+        form: "option",
+        modes: ["sweep"],
+        description: {
+          en: "Sweep-only attachment path(s); payload is the attachment body (exactly one on the run path).",
+          zh: "\u4EC5 sweep \u6A21\u5F0F\u7684\u9644\u4EF6\u8DEF\u5F84\uFF1B\u8F7D\u8377\u4E3A\u9644\u4EF6\u6B63\u6587\uFF08\u8FD0\u884C\u8DEF\u5F84\u4E0A\u6070\u597D\u4E00\u4E2A\uFF09\u3002"
+        }
+      },
+      {
+        id: "cohort",
+        owner: "taishi",
+        canonical: "--cohort",
+        aliases: [],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["cohort"],
+        exclusiveWith: ["model-groups"],
+        description: {
+          en: "Select cohort mode (mutually exclusive with --model-groups).",
+          zh: "\u9009\u62E9 cohort \u6A21\u5F0F\uFF08\u4E0E --model-groups \u4E92\u65A5\uFF09\u3002"
+        }
+      },
+      {
+        id: "model-groups",
+        owner: "taishi",
+        canonical: "--model-groups",
+        aliases: [],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["model-groups"],
+        exclusiveWith: ["cohort"],
+        description: {
+          en: "Select model-groups mode (mutually exclusive with --cohort).",
+          zh: "\u9009\u62E9 model-groups \u6A21\u5F0F\uFF08\u4E0E --cohort \u4E92\u65A5\uFF09\u3002"
+        }
+      },
+      {
+        id: "group-a-label",
+        owner: "taishi",
+        canonical: "--group-a-label",
+        aliases: [],
+        valueMetavar: "label",
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["cohort"],
+        requiredInModes: ["cohort"],
+        description: {
+          en: "Cohort group A label (required in cohort mode).",
+          zh: "cohort A \u7EC4\u6807\u7B7E\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
+        }
+      },
+      {
+        id: "group-a-issues",
+        owner: "taishi",
+        canonical: "--group-a-issues",
+        aliases: [],
+        valueMetavar: "N[,N...]",
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["cohort"],
+        requiredInModes: ["cohort"],
+        description: {
+          en: "Cohort group A comma-separated positive issue numbers (required in cohort mode).",
+          zh: "cohort A \u7EC4\u9017\u53F7\u5206\u9694\u6B63\u6574\u6570 issue \u5217\u8868\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
+        }
+      },
+      {
+        id: "group-b-label",
+        owner: "taishi",
+        canonical: "--group-b-label",
+        aliases: [],
+        valueMetavar: "label",
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["cohort"],
+        requiredInModes: ["cohort"],
+        description: {
+          en: "Cohort group B label (required in cohort mode).",
+          zh: "cohort B \u7EC4\u6807\u7B7E\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
+        }
+      },
+      {
+        id: "group-b-issues",
+        owner: "taishi",
+        canonical: "--group-b-issues",
+        aliases: [],
+        valueMetavar: "N[,N...]",
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["cohort"],
+        requiredInModes: ["cohort"],
+        description: {
+          en: "Cohort group B comma-separated positive issue numbers (required in cohort mode).",
+          zh: "cohort B \u7EC4\u9017\u53F7\u5206\u9694\u6B63\u6574\u6570 issue \u5217\u8868\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
+        }
+      }
+    ];
+    PUBLIC_OPTION_TABLE = {
+      global: GLOBAL_OPTIONS,
+      judge: JUDGE_OPTIONS,
+      coder: CODER_OPTIONS,
+      fixer: FIXER_OPTIONS,
+      reviewer: REVIEWER_OPTIONS,
+      collector: COLLECTOR_OPTIONS,
+      doctor: DOCTOR_OPTIONS,
+      merger: MERGER_OPTIONS,
+      taishi: TAISHI_OPTIONS
+    };
+  }
+});
+
 // src/public-cli/invocation.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import {
@@ -15503,6 +16176,18 @@ function requireOptionPath(flag, value) {
   }
   return value;
 }
+function isRejectedPublicSpelling(owner, token) {
+  for (const entry of REJECTED_PUBLIC_SPELLINGS) {
+    if (entry.owner !== owner) continue;
+    for (const spelling of entry.spellings) {
+      if (token === spelling || token.startsWith(`${spelling}=`)) return true;
+    }
+  }
+  return false;
+}
+function roleOptions(owner) {
+  return optionsForOwner(owner);
+}
 function requireAuthorityRef(value) {
   if (value === void 0 || value.trim() === "") {
     throw new CliUsageError("--authority-ref requires a nonempty durable reference");
@@ -15519,31 +16204,27 @@ function parseJudgeArgv(args) {
   let project;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("judge");
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
+    const taken = takeDashedOption(tokens, definitions);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown judge option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
-    if (token === "--burden" || token.startsWith("--burden=") || token === "--ak-judge-burden" || token.startsWith("--ak-judge-burden=") || token === "--judge-burden" || token.startsWith("--judge-burden=")) {
+    const token = tokens.shift();
+    if (isRejectedPublicSpelling("judge", token)) {
       throw new CliUsageError(
         "judge does not accept a public burden selector; Judge infers its own burden"
       );
@@ -15564,30 +16245,26 @@ function parseCoderArgv(args) {
   let project;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("coder");
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
+    const taken = takeDashedOption(tokens, definitions);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown coder option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
+    const token = tokens.shift();
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown coder option: ${token}`);
     }
@@ -15610,41 +16287,30 @@ function parseFixerArgv(args) {
   let prerequisitesPath;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("fixer");
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
+    const taken = takeDashedOption(tokens, definitions);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      if (taken.def.id === "prerequisites") {
+        prerequisitesPath = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown fixer option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
-    if (token === "--prerequisites") {
-      prerequisitesPath = requireOptionPath("--prerequisites", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--prerequisites=")) {
-      prerequisitesPath = requireOptionPath(
-        "--prerequisites",
-        token.slice("--prerequisites=".length)
-      );
-      continue;
-    }
+    const token = tokens.shift();
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown fixer option: ${token}`);
     }
@@ -16001,53 +16667,41 @@ function parseCollectorArgv(args) {
   let requestManifestPath;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("collector");
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
+    const taken = takeDashedOption(tokens, definitions);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      if (taken.def.id === "pr") {
+        prNumber = parsePositivePrOption(taken.value);
+        continue;
+      }
+      if (taken.def.id === "repo") {
+        repo = parseRepoOption(taken.value);
+        continue;
+      }
+      if (taken.def.id === "request-manifest") {
+        requestManifestPath = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown collector option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(requireOptionPath("--attach", token.slice(9)));
-      continue;
+    const token = tokens.shift();
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown collector option: ${token}`);
     }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice(10));
-      continue;
-    }
-    if (token === "--pr") {
-      prNumber = parsePositivePrOption(tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--pr=")) {
-      prNumber = parsePositivePrOption(token.slice(5));
-      continue;
-    }
-    if (token === "--repo") {
-      repo = parseRepoOption(tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--repo=")) {
-      repo = parseRepoOption(token.slice(7));
-      continue;
-    }
-    if (token === "--request-manifest") {
-      requestManifestPath = requireOptionPath("--request-manifest", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--request-manifest=")) {
-      requestManifestPath = requireOptionPath("--request-manifest", token.slice(19));
-      continue;
-    }
-    if (token.startsWith("-") && token !== "-") throw new CliUsageError(`unknown collector option: ${token}`);
     positional.push(token);
   }
   if (prNumber === void 0) throw new CliUsageError("collector requires --pr <positive-integer>");
@@ -16233,61 +16887,40 @@ function parseDoctorArgv(args) {
   let runs;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("doctor");
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--issue") {
-      const value = tokens.shift();
-      if (value === void 0 || value.trim() === "") {
-        throw new CliUsageError("doctor --issue requires a positive integer");
+    const taken = takeDashedOption(tokens, definitions);
+    if (taken !== void 0) {
+      if (taken.def.id === "issue") {
+        if (taken.value === void 0 || taken.value.trim() === "") {
+          throw new CliUsageError("doctor --issue requires a positive integer");
+        }
+        issueRaw = taken.value;
+        continue;
       }
-      issueRaw = value;
-      continue;
-    }
-    if (token.startsWith("--issue=")) {
-      issueRaw = token.slice("--issue=".length);
-      if (issueRaw.trim() === "") {
-        throw new CliUsageError("doctor --issue requires a positive integer");
+      if (taken.def.id === "runs") {
+        if (taken.value === void 0 || taken.value.trim() === "") {
+          throw new CliUsageError("doctor --runs requires a path");
+        }
+        runs = taken.value;
+        continue;
       }
-      continue;
-    }
-    if (token === "--runs") {
-      const value = tokens.shift();
-      if (value === void 0 || value.trim() === "") {
-        throw new CliUsageError("doctor --runs requires a path");
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
       }
-      runs = value;
-      continue;
-    }
-    if (token.startsWith("--runs=")) {
-      const value = token.slice("--runs=".length);
-      if (value.trim() === "") {
-        throw new CliUsageError("doctor --runs requires a path");
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
       }
-      runs = value;
-      continue;
+      throw new CliUsageError(`unknown doctor option: ${taken.def.canonical}`);
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
+    const token = tokens.shift();
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown doctor option: ${token}`);
     }
@@ -16481,36 +17114,30 @@ function parseReviewerArgv(args) {
   let baseRevision;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("reviewer");
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
+    const taken = takeDashedOption(tokens, definitions);
+    if (taken !== void 0) {
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      if (taken.def.id === "base") {
+        baseRevision = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      if (taken.def.id === "authority-ref") {
+        authorityRefs.push(requireAuthorityRef(taken.value));
+        continue;
+      }
+      throw new CliUsageError(`unknown reviewer option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
-    if (token === "--base") {
-      baseRevision = requireOptionPath("--base", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--base=")) {
-      baseRevision = requireOptionPath("--base", token.slice("--base=".length));
-      continue;
-    }
-    if (token === "--authority-ref") {
-      authorityRefs.push(requireAuthorityRef(tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--authority-ref=")) {
-      authorityRefs.push(requireAuthorityRef(token.slice("--authority-ref=".length)));
-      continue;
-    }
+    const token = tokens.shift();
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown reviewer option: ${token}`);
     }
@@ -16607,31 +17234,27 @@ function parseMergerArgv(args) {
   let project;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("merger");
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
+    const taken = takeDashedOption(tokens, definitions);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown merger option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
-    if (token === "--ak-merger-input" || token.startsWith("--ak-merger-input=") || token === "--targetObjectId" || token.startsWith("--targetObjectId=") || token === "--sourceObjectId" || token.startsWith("--sourceObjectId=") || token === "--expectedConflictPaths" || token.startsWith("--expectedConflictPaths=") || token === "--resolutionScope" || token.startsWith("--resolutionScope=")) {
+    const token = tokens.shift();
+    if (isRejectedPublicSpelling("merger", token) || token === "--targetObjectId" || token.startsWith("--targetObjectId=") || token === "--sourceObjectId" || token.startsWith("--sourceObjectId=") || token === "--expectedConflictPaths" || token.startsWith("--expectedConflictPaths=") || token === "--resolutionScope" || token.startsWith("--resolutionScope=")) {
       throw new CliUsageError(
         "merger does not accept public packet fields; the adapter derives the active-merge envelope"
       );
@@ -16839,119 +17462,81 @@ function parseTaishiArgv(args) {
   let sweepToken = false;
   const attachmentPaths = [];
   const tokens = [...args];
+  const definitions = roleOptions("taishi");
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       if (tokens.length > 0) {
         throw new CliUsageError(`unexpected taishi argument: ${tokens[0]}`);
       }
       break;
     }
-    if (token === "--cohort") {
-      if (query !== "issue") {
-        throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+    const taken = takeDashedOption(tokens, definitions);
+    if (taken !== void 0) {
+      if (taken.def.id === "cohort") {
+        if (query !== "issue") {
+          throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+        }
+        query = "cohort";
+        continue;
       }
-      query = "cohort";
-      continue;
-    }
-    if (token === "--model-groups") {
-      if (query !== "issue") {
-        throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+      if (taken.def.id === "model-groups") {
+        if (query !== "issue") {
+          throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+        }
+        query = "model-groups";
+        continue;
       }
-      query = "model-groups";
-      continue;
-    }
-    if (token === "--ticket") {
-      const value = tokens.shift();
-      if (value === void 0 || value.trim() === "") {
-        throw new CliUsageError("taishi --ticket requires a positive integer");
+      if (taken.def.id === "ticket") {
+        if (taken.value === void 0 || taken.value.trim() === "") {
+          throw new CliUsageError("taishi --ticket requires a positive integer");
+        }
+        ticketRaw = taken.value;
+        continue;
       }
-      ticketRaw = value;
-      continue;
-    }
-    if (token.startsWith("--ticket=")) {
-      ticketRaw = token.slice("--ticket=".length);
-      if (ticketRaw.trim() === "") {
-        throw new CliUsageError("taishi --ticket requires a positive integer");
+      if (taken.def.id === "project-root") {
+        projectRoots.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
       }
-      continue;
+      if (taken.def.id === "group-a-label") {
+        groupALabel = requireOptionValue(
+          taken.def.canonical,
+          taken.value,
+          "a label"
+        );
+        continue;
+      }
+      if (taken.def.id === "group-a-issues") {
+        groupAIssuesRaw = requireOptionValue(
+          taken.def.canonical,
+          taken.value,
+          "a comma-separated positive integer list"
+        );
+        continue;
+      }
+      if (taken.def.id === "group-b-label") {
+        groupBLabel = requireOptionValue(
+          taken.def.canonical,
+          taken.value,
+          "a label"
+        );
+        continue;
+      }
+      if (taken.def.id === "group-b-issues") {
+        groupBIssuesRaw = requireOptionValue(
+          taken.def.canonical,
+          taken.value,
+          "a comma-separated positive integer list"
+        );
+        continue;
+      }
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      throw new CliUsageError(`unknown taishi option: ${taken.def.canonical}`);
     }
-    if (token === "--project-root") {
-      projectRoots.push(requireOptionPath("--project-root", tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--project-root=")) {
-      projectRoots.push(
-        requireOptionPath("--project-root", token.slice("--project-root=".length))
-      );
-      continue;
-    }
-    if (token === "--group-a-label") {
-      groupALabel = requireOptionValue("--group-a-label", tokens.shift(), "a label");
-      continue;
-    }
-    if (token.startsWith("--group-a-label=")) {
-      groupALabel = requireOptionValue(
-        "--group-a-label",
-        token.slice("--group-a-label=".length),
-        "a label"
-      );
-      continue;
-    }
-    if (token === "--group-a-issues") {
-      groupAIssuesRaw = requireOptionValue(
-        "--group-a-issues",
-        tokens.shift(),
-        "a comma-separated positive integer list"
-      );
-      continue;
-    }
-    if (token.startsWith("--group-a-issues=")) {
-      groupAIssuesRaw = requireOptionValue(
-        "--group-a-issues",
-        token.slice("--group-a-issues=".length),
-        "a comma-separated positive integer list"
-      );
-      continue;
-    }
-    if (token === "--group-b-label") {
-      groupBLabel = requireOptionValue("--group-b-label", tokens.shift(), "a label");
-      continue;
-    }
-    if (token.startsWith("--group-b-label=")) {
-      groupBLabel = requireOptionValue(
-        "--group-b-label",
-        token.slice("--group-b-label=".length),
-        "a label"
-      );
-      continue;
-    }
-    if (token === "--group-b-issues") {
-      groupBIssuesRaw = requireOptionValue(
-        "--group-b-issues",
-        tokens.shift(),
-        "a comma-separated positive integer list"
-      );
-      continue;
-    }
-    if (token.startsWith("--group-b-issues=")) {
-      groupBIssuesRaw = requireOptionValue(
-        "--group-b-issues",
-        token.slice("--group-b-issues=".length),
-        "a comma-separated positive integer list"
-      );
-      continue;
-    }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
+    const token = tokens.shift();
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown taishi option: ${token}`);
     }
@@ -17065,6 +17650,7 @@ var init_invocation = __esm({
     init_sha256();
     init_uuidv7();
     init_cli_errors();
+    init_option_definitions();
     MergerEnvelopeDerivationError = class extends Error {
       code = "merger-envelope-derivation";
       /** Typed cause for #107 classifyPostAdmissionFailure (isTypedActivationError). */
@@ -26141,9 +26727,11 @@ var init_taishi_run = __esm({
 var cli_exports = {};
 __export(cli_exports, {
   CliUsageError: () => CliUsageError,
+  PUBLIC_GLOBAL_OPTIONS: () => PUBLIC_GLOBAL_OPTIONS,
   PUBLIC_ROLE_ARGV: () => PUBLIC_ROLE_ARGV,
   buildExplicitInternalActivationArgs: () => buildExplicitInternalActivationArgs,
   helpDocument: () => helpDocument,
+  helpDocumentForCommand: () => helpDocumentForCommand,
   resolveInternalRoleEntrypoint: () => resolveInternalRoleEntrypoint,
   runAkRole: () => runAkRole
 });
@@ -26151,37 +26739,25 @@ import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { join as join23 } from "node:path";
 function takePublicGlobalFlag(argv, index) {
-  const token = argv[index];
-  if (token === void 0) return void 0;
-  if (token === "--help" || token === "-h") {
-    return { flag: "help", consume: 1 };
+  const tokens = argv.slice(index);
+  const taken = takeDashedOption(tokens, PUBLIC_GLOBAL_OPTIONS);
+  if (taken === void 0) return void 0;
+  const consumed = argv.length - index - tokens.length;
+  if (taken.def.id === "help") {
+    return { flag: "help", consume: consumed };
   }
-  if (token === "--model") {
-    const value = argv[index + 1];
-    if (value === void 0) {
-      return { flag: "model", consume: 1, value: void 0 };
-    }
-    return { flag: "model", consume: 2, value };
-  }
-  if (token.startsWith("--model=")) {
+  if (taken.def.id === "model") {
     return {
       flag: "model",
-      consume: 1,
-      value: token.slice("--model=".length)
+      consume: consumed,
+      value: taken.value
     };
   }
-  if (token === "--thinking") {
-    const raw = argv[index + 1];
-    if (raw === void 0) {
-      return { flag: "thinking", consume: 1, raw: void 0 };
-    }
-    return { flag: "thinking", consume: 2, raw };
-  }
-  if (token.startsWith("--thinking=")) {
+  if (taken.def.id === "thinking") {
     return {
       flag: "thinking",
-      consume: 1,
-      raw: token.slice("--thinking=".length)
+      consume: consumed,
+      raw: taken.value
     };
   }
   return void 0;
@@ -26264,8 +26840,28 @@ function helpDocument() {
   return {
     executable: "ak-role",
     capabilities: listHelpCapabilities(),
-    internalEntrypoint: INTERNAL_ROLE_ENTRYPOINT_RELATIVE
+    internalEntrypoint: INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
+    /** #342 structured global options from the sole option table. */
+    globalOptions: projectOwnerOptions("global")
   };
+}
+function helpDocumentForCommand(command) {
+  if (command === "global") {
+    return {
+      command: "global",
+      kind: "global",
+      options: projectOwnerOptions("global")
+    };
+  }
+  if (command in PUBLIC_ROLE_ARGV) {
+    const owner = command;
+    return {
+      command: owner,
+      kind: owner === "taishi" ? "deterministic" : "role",
+      options: projectOwnerOptions(owner)
+    };
+  }
+  return void 0;
 }
 function renderHelp() {
   const doc = helpDocument();
@@ -26292,12 +26888,38 @@ function renderHelp() {
       lines.push(`  ${cap.name}`);
     }
   }
+  lines.push("", "Global options:");
+  lines.push(...renderOwnerOptionHelpLines("global"));
   lines.push(
     "",
-    "Global options: --model provider/model --thinking level",
+    "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model:thinking>",
     "Effective seats: ak-role roles"
   );
+  return `${lines.join("\n")}
+`;
+}
+function renderCommandHelp(command) {
+  const caps = listHelpCapabilities();
+  const match = caps.find((cap) => cap.name === command);
+  if (match === void 0) return void 0;
+  const lines = [];
+  if (match.kind === "support") {
+    lines.push(`command	${match.name}	kind	support`);
+  } else if (match.kind === "deterministic") {
+    lines.push(`command	${match.name}	kind	deterministic`);
+  } else {
+    lines.push(
+      `command	${match.name}	kind	role	phases	${match.phases.map((p) => p === null ? "none" : p).join(",")}	default	${match.defaultPhase ?? "none"}`
+    );
+  }
+  if (command in PUBLIC_ROLE_ARGV) {
+    lines.push(
+      ...renderOwnerOptionHelpLines(
+        command
+      )
+    );
+  }
   return `${lines.join("\n")}
 `;
 }
@@ -26382,23 +27004,11 @@ async function runAkRole(argv, env) {
     if (parsed.help || parsed.command === void 0 || parsed.command === "help") {
       if (parsed.command === "help" && parsed.args[0] !== void 0) {
         const topic = parsed.args[0];
-        const caps = listHelpCapabilities();
-        const match = caps.find((cap) => cap.name === topic);
-        if (match === void 0) {
+        const rendered = renderCommandHelp(topic);
+        if (rendered === void 0) {
           throw new CliUsageError(`unknown help topic: ${topic}`);
         }
-        if (match.kind === "support") {
-          io.stdout(`command	${match.name}	kind	support
-`);
-        } else if (match.kind === "deterministic") {
-          io.stdout(`command	${match.name}	kind	deterministic
-`);
-        } else {
-          io.stdout(
-            `command	${match.name}	kind	role	phases	${match.phases.map((p) => p === null ? "none" : p).join(",")}	default	${match.defaultPhase ?? "none"}
-`
-          );
-        }
+        io.stdout(rendered);
         return { exitCode: 0 };
       }
       io.stdout(renderHelp());
@@ -26819,7 +27429,7 @@ async function runAkRole(argv, env) {
     return { exitCode: 1 };
   }
 }
-var PUBLIC_ROLE_ARGV, THINKING_LEVELS2;
+var PUBLIC_ROLE_ARGV, PUBLIC_GLOBAL_OPTIONS, THINKING_LEVELS2;
 var init_cli = __esm({
   "src/public-cli/cli.ts"() {
     "use strict";
@@ -26827,6 +27437,7 @@ var init_cli = __esm({
     init_cli_errors();
     init_explicit_internal();
     init_invocation();
+    init_option_definitions();
     init_coder_run();
     init_collector_run();
     init_doctor_run();
@@ -26841,16 +27452,17 @@ var init_cli = __esm({
     init_explicit_internal();
     init_cli_errors();
     PUBLIC_ROLE_ARGV = {
-      judge: { parse: parseJudgeArgv },
-      coder: { parse: parseCoderArgv },
-      fixer: { parse: parseFixerArgv },
-      collector: { parse: parseCollectorArgv },
-      doctor: { parse: parseDoctorArgv },
-      merger: { parse: parseMergerArgv },
-      reviewer: { parse: parseReviewerArgv },
+      judge: { parse: parseJudgeArgv, options: optionsForOwner("judge") },
+      coder: { parse: parseCoderArgv, options: optionsForOwner("coder") },
+      fixer: { parse: parseFixerArgv, options: optionsForOwner("fixer") },
+      collector: { parse: parseCollectorArgv, options: optionsForOwner("collector") },
+      doctor: { parse: parseDoctorArgv, options: optionsForOwner("doctor") },
+      merger: { parse: parseMergerArgv, options: optionsForOwner("merger") },
+      reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
       /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
-      taishi: { parse: parseTaishiArgv }
+      taishi: { parse: parseTaishiArgv, options: optionsForOwner("taishi") }
     };
+    PUBLIC_GLOBAL_OPTIONS = optionsForOwner("global");
     THINKING_LEVELS2 = /* @__PURE__ */ new Set([
       "off",
       "minimal",
