@@ -27,6 +27,7 @@ import { DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES } from "../../src/evidence-child-ex
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import {
   flushEventLoopTurns,
+  waitForEventLoopCondition,
   withActivationHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
@@ -147,7 +148,12 @@ test(
             },
           );
 
-          await flushEventLoopTurns(80);
+          // Wait for real compliance child stream entry (not a fixed turn guess).
+          // Mock timers freeze setTimeout only; setImmediate + wall clock stay live.
+          await waitForEventLoopCondition(
+            () => complianceStreamAttempts >= 1,
+            { label: "judge submission entered real compliance child stream once" },
+          );
           assert.equal(
             complianceStreamAttempts,
             1,
@@ -156,7 +162,10 @@ test(
 
           // First inner idle budget: outer package gate must not settle the submission.
           t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
-          await flushEventLoopTurns(80);
+          await waitForEventLoopCondition(
+            () => complianceStreamAttempts >= 2,
+            { label: "first StreamIdleTimeoutError must finite-retry the compliance stream" },
+          );
           assert.equal(
             toolResults(session, JUDGE_OUTPUT_TOOL_NAME).length,
             0,
@@ -171,7 +180,10 @@ test(
 
           // Second idle budget → final attempt.
           t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
-          await flushEventLoopTurns(80);
+          await waitForEventLoopCondition(
+            () => complianceStreamAttempts >= DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES + 1,
+            { label: "inner owner arms the final compliance stream attempt" },
+          );
           assert.equal(
             toolResults(session, JUDGE_OUTPUT_TOOL_NAME).length,
             0,
