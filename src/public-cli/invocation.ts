@@ -239,28 +239,35 @@ async function writeRoleInvocationLedger(
 }
 
 /**
- * Merge the effective launch model onto the existing invocation identity page
- * (resume / temporary override path — same field shape as admission write).
+ * Merge the effective launch model (and optional initial engine) onto the
+ * existing invocation identity page (resume / temporary override path — same
+ * field shape as admission write).
  * Bare model clears any prior thinking key so absence stays honest.
+ * Engine is write-if-present only: undefined leaves any existing key untouched
+ * (resume model merge must not erase initial mechanical provenance).
  */
 export async function recordEffectiveInvocationModel(
   runDirectory: string,
-  model: InvocationEffectiveModel,
+  model?: InvocationEffectiveModel,
+  engine?: string,
 ): Promise<void> {
   const ledgerPath = join(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile(ledgerPath, "utf8")) as Record<
     string,
     unknown
   >;
-  const next: Record<string, unknown> = {
-    ...current,
-    provider: model.provider,
-    model: model.model,
-  };
-  if (model.thinking === undefined) {
-    delete next.thinking;
-  } else {
-    next.thinking = model.thinking;
+  const next: Record<string, unknown> = { ...current };
+  if (model !== undefined) {
+    next.provider = model.provider;
+    next.model = model.model;
+    if (model.thinking === undefined) {
+      delete next.thinking;
+    } else {
+      next.thinking = model.thinking;
+    }
+  }
+  if (engine !== undefined) {
+    next.engine = engine;
   }
   await writeFile(
     ledgerPath,
