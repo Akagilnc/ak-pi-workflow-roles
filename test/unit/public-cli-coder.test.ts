@@ -789,6 +789,7 @@ test("malformed --model thinking suffix is rejected at public entry without disp
     for (const badSpec of [
       "openai-codex/gpt-5.6-luna:bogus",
       "openai-codex/gpt-5.6-luna:",
+      ":provider/model",
     ] as const) {
       const { io, stderr } = captureIo();
       let dispatched = false;
@@ -807,7 +808,14 @@ test("malformed --model thinking suffix is rejected at public entry without disp
           home,
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
-          createRunId: () => `run-cli-coder-bad-thinking-${badSpec.endsWith(":") ? "trail" : "bogus"}`,
+          createRunId: () =>
+            `run-cli-coder-bad-thinking-${
+              badSpec.endsWith(":")
+                ? "trail"
+                : badSpec.startsWith(":")
+                  ? "leading"
+                  : "bogus"
+            }`,
           io,
           piRunner: async (args) => {
             dispatched = true;

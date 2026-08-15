@@ -14387,7 +14387,7 @@ function parseModelSpec(spec, fallbackThinking) {
   const thinkingSplit = trimmed.lastIndexOf(":");
   let modelPart = trimmed;
   let thinking = fallbackThinking;
-  if (thinkingSplit > 0) {
+  if (thinkingSplit !== -1) {
     const maybeThinking = trimmed.slice(thinkingSplit + 1);
     if (!THINKING_LEVELS.has(maybeThinking)) {
       throw new Error(
