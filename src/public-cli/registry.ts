@@ -49,7 +49,8 @@ export type PublicThinkingLevel =
 export type ModelRef = {
   provider: string;
   model: string;
-  thinking: PublicThinkingLevel;
+  /** Absent when invocation passed bare provider/model — pi/model default applies. */
+  thinking?: PublicThinkingLevel;
 };
 
 /**

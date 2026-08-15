@@ -29,6 +29,7 @@ import {
   type AdmittedMergerInvocation,
 } from "./invocation.ts";
 import {
+  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -88,17 +89,6 @@ export type MergerRunEnv = {
   timeoutMs?: number;
 };
 
-function buildModelArgs(model: SeatModelConfig | undefined): string[] {
-  if (model === undefined) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking,
-  ];
-}
 
 /**
  * Build Internal activation extra-args for an admitted Merger run.
@@ -136,7 +126,7 @@ export function buildMergerActivationExtraArgs(
     admitted.mergerInputPath,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt,
   ];
 }
@@ -175,7 +165,7 @@ export function buildMergerResumeActivationExtraArgs(
     admitted.mergerInputPath,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE,
   ];
 }
@@ -299,7 +289,7 @@ async function dispatchAdmittedMerger(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
@@ -516,6 +506,7 @@ export async function runPublicMerger(
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

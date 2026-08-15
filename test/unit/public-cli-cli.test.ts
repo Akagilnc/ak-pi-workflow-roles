@@ -274,3 +274,46 @@ test("unknown command exits nonzero without touching config", async () => {
     assert.equal(after, before);
   });
 });
+
+// #346: --model provider/model without :thinking is legal on the public CLI.
+test("roles accepts bare --model provider/model and records it without invented thinking", async () => {
+  await withTempHome(async (home) => {
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["roles", "--model", "kimi-coding/k3-256k"],
+      {
+        packageRoot,
+        home,
+        credentials: { "openai-codex": true, xai: false },
+        io,
+      },
+    );
+    assert.equal(result.exitCode, 0, stderr.join("") || "roles bare model failed");
+    const text = stdout.join("");
+    assert.match(text, /^coder\tcallable\tinvocation\tkimi-coding\/k3-256k$/m);
+    assert.equal(text.includes("kimi-coding/k3-256k:"), false);
+  });
+});
+
+test("config set still requires provider/model:thinking three-part syntax", async () => {
+  await withTempHome(async (home) => {
+    const bare = captureIo();
+    const bareResult = await runAkRole(
+      ["config", "set", "coder", "kimi-coding/k3-256k"],
+      { packageRoot, home, io: bare.io },
+    );
+    assert.notEqual(bareResult.exitCode, 0);
+    assert.match(
+      bare.stderr.join(""),
+      /model specification requires a thinking level \(provider\/model:thinking\)/,
+    );
+
+    const ok = captureIo();
+    const okResult = await runAkRole(
+      ["config", "set", "coder", "kimi-coding/k3-256k:high"],
+      { packageRoot, home, io: ok.io },
+    );
+    assert.equal(okResult.exitCode, 0, ok.stderr.join("") || "config set three-part failed");
+    assert.match(ok.stdout.join(""), /^coder\tkimi-coding\/k3-256k:high$/m);
+  });
+});

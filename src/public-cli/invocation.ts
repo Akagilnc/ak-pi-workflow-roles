@@ -173,13 +173,38 @@ type RoleInvocationLedgerSource = Pick<
 >;
 
 /**
+ * Effective provider/model selection recorded on the invocation identity page.
+ * thinking is present only when the caller/seat supplied it — bare model omits it.
+ */
+export type InvocationEffectiveModel = {
+  readonly provider: string;
+  readonly model: string;
+  readonly thinking?: string;
+};
+
+/** Project effective model onto ledger fields; absent thinking stays absent. */
+function effectiveModelLedgerFields(
+  model: InvocationEffectiveModel | undefined,
+): Record<string, string> {
+  if (model === undefined) return {};
+  return {
+    provider: model.provider,
+    model: model.model,
+    ...(model.thinking === undefined ? {} : { thinking: model.thinking }),
+  };
+}
+
+/**
  * Persist one `invocation.json` identity page for the public run.
  * Admission is the sole source for every field; this is the only identity
  * projection and callers never provide an independent ledger shape.
+ * When an effective model is known at admission, provider/model (and thinking
+ * only when supplied) are written onto the same page.
  */
 async function writeRoleInvocationLedger(
   source: RoleInvocationLedgerSource,
   role: AdmittedRoleInvocation["role"],
+  effectiveModel?: InvocationEffectiveModel,
 ): Promise<void> {
   const identity = {
     role,
@@ -191,10 +216,42 @@ async function writeRoleInvocationLedger(
     sessionFile: source.sessionFile,
     ...(source.correlationId === undefined ? {} : { correlationId: source.correlationId }),
     ...(source.ticketNumber === undefined ? {} : { ticketNumber: source.ticketNumber }),
+    ...effectiveModelLedgerFields(effectiveModel),
   };
   await writeFile(
     join(source.runDirectory, "invocation.json"),
     `${JSON.stringify(identity, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+/**
+ * Merge the effective launch model onto the existing invocation identity page
+ * (resume / temporary override path — same field shape as admission write).
+ * Bare model clears any prior thinking key so absence stays honest.
+ */
+export async function recordEffectiveInvocationModel(
+  runDirectory: string,
+  model: InvocationEffectiveModel,
+): Promise<void> {
+  const ledgerPath = join(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile(ledgerPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const next: Record<string, unknown> = {
+    ...current,
+    provider: model.provider,
+    model: model.model,
+  };
+  if (model.thinking === undefined) {
+    delete next.thinking;
+  } else {
+    next.thinking = model.thinking;
+  }
+  await writeFile(
+    ledgerPath,
+    `${JSON.stringify(next, null, 2)}\n`,
     "utf8",
   );
 }
@@ -686,6 +743,8 @@ export type AdmitJudgeInvocationOptions = {
   project?: string;
   /** Injectable clock/id for tests. */
   createRunId?: () => string;
+  /** Effective model for this invocation — written onto invocation.json. */
+  model?: InvocationEffectiveModel;
 };
 
 /**
@@ -736,7 +795,7 @@ export async function admitJudgeInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
 
   return {
     role: "judge",
@@ -811,6 +870,8 @@ export type AdmitCoderInvocationOptions = {
   attachmentPaths: readonly string[];
   project?: string;
   createRunId?: () => string;
+  /** Effective model for this invocation — written onto invocation.json. */
+  model?: InvocationEffectiveModel;
 };
 
 /**
@@ -874,7 +935,7 @@ export async function admitCoderInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
 
   return {
     role: "coder",
@@ -923,6 +984,8 @@ export type AdmitFixerInvocationOptions = {
   prerequisitesPath?: string;
   project?: string;
   createRunId?: () => string;
+  /** Effective model for this invocation — written onto invocation.json. */
+  model?: InvocationEffectiveModel;
 };
 
 /**
@@ -1026,7 +1089,7 @@ export async function admitFixerInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
 
   return {
     role: "fixer",
@@ -1188,6 +1251,8 @@ export type AdmitCollectorInvocationOptions = {
   /** Optional public request configuration; copied into the admitted run. */
   requestManifestPath?: string;
   createRunId?: () => string;
+  /** Effective model for this invocation — written onto invocation.json. */
+  model?: InvocationEffectiveModel;
 };
 
 /**
@@ -1286,7 +1351,7 @@ export async function admitCollectorInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
 
   return {
     role: "collector",
@@ -1440,6 +1505,8 @@ export type AdmitDoctorInvocationOptions = {
   attachmentPaths?: readonly string[];
   project?: string;
   createRunId?: () => string;
+  /** Effective model for this invocation — written onto invocation.json. */
+  model?: InvocationEffectiveModel;
 };
 
 /**
@@ -1619,7 +1686,7 @@ export async function admitDoctorInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
 
   return {
     role: "doctor",
@@ -1730,6 +1797,8 @@ export type AdmitReviewerInvocationOptions = {
   authorityRefs?: readonly string[];
   project?: string;
   createRunId?: () => string;
+  /** Effective model for this invocation — written onto invocation.json. */
+  model?: InvocationEffectiveModel;
 };
 
 /**
@@ -1794,7 +1863,7 @@ export async function admitReviewerInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
 
   return {
     role: "reviewer",
@@ -1945,6 +2014,8 @@ export type AdmitMergerInvocationOptions = {
   createRunId?: () => string;
   /** Test seam; production binds createProductionMergerGitState(projectRoot). */
   gitState?: MergerGitState;
+  /** Effective model for this invocation — written onto invocation.json. */
+  model?: InvocationEffectiveModel;
 };
 
 /**
@@ -2052,7 +2123,7 @@ export async function admitMergerInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
 
   return {
     role: "merger",

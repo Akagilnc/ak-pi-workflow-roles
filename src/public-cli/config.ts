@@ -108,12 +108,18 @@ export function parseModelSpec(
   const thinkingSplit = trimmed.lastIndexOf(":");
   let modelPart = trimmed;
   let thinking: PublicThinkingLevel | undefined = fallbackThinking;
-  if (thinkingSplit > 0) {
+  // #346: no colon → bare provider/model is legal. Colon present (any index,
+  // including 0) → suffix must be a typed PublicThinkingLevel (empty/unknown
+  // stay format rejects; never swallow ":…" into the model name).
+  if (thinkingSplit !== -1) {
     const maybeThinking = trimmed.slice(thinkingSplit + 1);
-    if (THINKING_LEVELS.has(maybeThinking as PublicThinkingLevel)) {
-      thinking = maybeThinking as PublicThinkingLevel;
-      modelPart = trimmed.slice(0, thinkingSplit);
+    if (!THINKING_LEVELS.has(maybeThinking as PublicThinkingLevel)) {
+      throw new Error(
+        `model specification must be provider/model[:thinking], got ${spec}`,
+      );
     }
+    thinking = maybeThinking as PublicThinkingLevel;
+    modelPart = trimmed.slice(0, thinkingSplit);
   }
   const slash = modelPart.indexOf("/");
   if (slash <= 0 || slash === modelPart.length - 1) {
@@ -123,16 +129,48 @@ export function parseModelSpec(
   }
   const provider = modelPart.slice(0, slash);
   const model = modelPart.slice(slash + 1);
-  if (!thinking) {
+  // #346: bare provider/model is legal on invocation — do not invent thinking.
+  // Persistent config set still requires thinking via parsePersistentModelSpec.
+  return thinking === undefined
+    ? { provider, model }
+    : { provider, model, thinking };
+}
+
+/** Persistent seat config keeps the three-part provider/model:thinking grammar. */
+export function parsePersistentModelSpec(spec: string): SeatModelConfig & {
+  thinking: PublicThinkingLevel;
+} {
+  const parsed = parseModelSpec(spec);
+  if (parsed.thinking === undefined) {
     throw new Error(
       `model specification requires a thinking level (provider/model:thinking), got ${spec}`,
     );
   }
-  return { provider, model, thinking };
+  return {
+    provider: parsed.provider,
+    model: parsed.model,
+    thinking: parsed.thinking,
+  };
 }
 
 export function formatModelSpec(selection: SeatModelConfig): string {
-  return `${selection.provider}/${selection.model}:${selection.thinking}`;
+  const base = `${selection.provider}/${selection.model}`;
+  return selection.thinking === undefined ? base : `${base}:${selection.thinking}`;
+}
+
+/**
+ * Single source: seat model selection → Pi argv at the public CLI execution seam.
+ * Bare provider/model omits --thinking so pi/model defaults apply; suffix passes through.
+ */
+export function buildSeatModelCliArgs(model: SeatModelConfig | undefined): string[] {
+  if (model === undefined) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    ...(model.thinking === undefined ? [] : ["--thinking", model.thinking]),
+  ];
 }
 
 function parsePublicCliConfig(value: unknown): PublicCliConfig {

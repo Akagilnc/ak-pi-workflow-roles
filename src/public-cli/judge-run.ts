@@ -19,6 +19,7 @@ import {
   type AdmittedJudgeInvocation,
 } from "./invocation.ts";
 import {
+  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -89,17 +90,6 @@ export type JudgeRunEnv = {
 };
 
 
-function buildModelArgs(model: SeatModelConfig | undefined): string[] {
-  if (model === undefined) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking,
-  ];
-}
 
 /**
  * Build Internal activation extra-args for an admitted Judge run
@@ -129,7 +119,7 @@ export function buildJudgeActivationExtraArgs(
     "judge",
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt,
   ];
 }
@@ -160,7 +150,7 @@ export function buildJudgeResumeActivationExtraArgs(
     "judge",
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE,
   ];
 }
@@ -276,7 +266,7 @@ async function dispatchAdmittedJudge(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     // Attempt-scoped observation: drop any prior dispatch's 429 evidence so only
     // the current initial/resume attempt can qualify v1 resume.
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -422,6 +412,7 @@ export async function runPublicJudge(
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

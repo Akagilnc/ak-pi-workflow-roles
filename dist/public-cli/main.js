@@ -14387,12 +14387,15 @@ function parseModelSpec(spec, fallbackThinking) {
   const thinkingSplit = trimmed.lastIndexOf(":");
   let modelPart = trimmed;
   let thinking = fallbackThinking;
-  if (thinkingSplit > 0) {
+  if (thinkingSplit !== -1) {
     const maybeThinking = trimmed.slice(thinkingSplit + 1);
-    if (THINKING_LEVELS.has(maybeThinking)) {
-      thinking = maybeThinking;
-      modelPart = trimmed.slice(0, thinkingSplit);
+    if (!THINKING_LEVELS.has(maybeThinking)) {
+      throw new Error(
+        `model specification must be provider/model[:thinking], got ${spec}`
+      );
     }
+    thinking = maybeThinking;
+    modelPart = trimmed.slice(0, thinkingSplit);
   }
   const slash = modelPart.indexOf("/");
   if (slash <= 0 || slash === modelPart.length - 1) {
@@ -14402,15 +14405,34 @@ function parseModelSpec(spec, fallbackThinking) {
   }
   const provider = modelPart.slice(0, slash);
   const model = modelPart.slice(slash + 1);
-  if (!thinking) {
+  return thinking === void 0 ? { provider, model } : { provider, model, thinking };
+}
+function parsePersistentModelSpec(spec) {
+  const parsed = parseModelSpec(spec);
+  if (parsed.thinking === void 0) {
     throw new Error(
       `model specification requires a thinking level (provider/model:thinking), got ${spec}`
     );
   }
-  return { provider, model, thinking };
+  return {
+    provider: parsed.provider,
+    model: parsed.model,
+    thinking: parsed.thinking
+  };
 }
 function formatModelSpec(selection) {
-  return `${selection.provider}/${selection.model}:${selection.thinking}`;
+  const base = `${selection.provider}/${selection.model}`;
+  return selection.thinking === void 0 ? base : `${base}:${selection.thinking}`;
+}
+function buildSeatModelCliArgs(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
+  ];
 }
 function parsePublicCliConfig(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -15432,7 +15454,15 @@ import {
   writeFile as writeFile2
 } from "node:fs/promises";
 import { basename as basename3, isAbsolute as isAbsolute3, join as join5, resolve as resolve4, sep as sep3 } from "node:path";
-async function writeRoleInvocationLedger(source, role) {
+function effectiveModelLedgerFields(model) {
+  if (model === void 0) return {};
+  return {
+    provider: model.provider,
+    model: model.model,
+    ...model.thinking === void 0 ? {} : { thinking: model.thinking }
+  };
+}
+async function writeRoleInvocationLedger(source, role, effectiveModel) {
   const identity = {
     role,
     runId: source.runId,
@@ -15442,11 +15472,32 @@ async function writeRoleInvocationLedger(source, role) {
     sessionDirectory: source.sessionDirectory,
     sessionFile: source.sessionFile,
     ...source.correlationId === void 0 ? {} : { correlationId: source.correlationId },
-    ...source.ticketNumber === void 0 ? {} : { ticketNumber: source.ticketNumber }
+    ...source.ticketNumber === void 0 ? {} : { ticketNumber: source.ticketNumber },
+    ...effectiveModelLedgerFields(effectiveModel)
   };
   await writeFile2(
     join5(source.runDirectory, "invocation.json"),
     `${JSON.stringify(identity, null, 2)}
+`,
+    "utf8"
+  );
+}
+async function recordEffectiveInvocationModel(runDirectory, model) {
+  const ledgerPath = join5(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile4(ledgerPath, "utf8"));
+  const next = {
+    ...current,
+    provider: model.provider,
+    model: model.model
+  };
+  if (model.thinking === void 0) {
+    delete next.thinking;
+  } else {
+    next.thinking = model.thinking;
+  }
+  await writeFile2(
+    ledgerPath,
+    `${JSON.stringify(next, null, 2)}
 `,
     "utf8"
   );
@@ -15753,7 +15804,7 @@ async function admitJudgeInvocation(options) {
   const admittedRequestPath = join5(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
   return {
     role: "judge",
     runId,
@@ -15835,7 +15886,7 @@ async function admitCoderInvocation(options) {
   const admittedRequestPath = join5(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
   return {
     role: "coder",
     phase: options.phase,
@@ -15950,7 +16001,7 @@ async function admitFixerInvocation(options) {
   const admittedRequestPath = join5(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
   return {
     role: "fixer",
     phase: options.phase,
@@ -16194,7 +16245,7 @@ async function admitCollectorInvocation(options) {
 `,
     "utf8"
   );
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
   return {
     role: "collector",
     runId,
@@ -16444,7 +16495,7 @@ async function admitDoctorInvocation(options) {
 `,
     "utf8"
   );
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
   return {
     role: "doctor",
     runId,
@@ -16578,7 +16629,7 @@ async function admitReviewerInvocation(options) {
 `,
     "utf8"
   );
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
   return {
     role: "reviewer",
     runId,
@@ -16765,7 +16816,7 @@ async function admitMergerInvocation(options) {
 `,
     "utf8"
   );
-  await writeRoleInvocationLedger(admitted, admitted.role);
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
   return {
     role: "merger",
     runId,
@@ -17816,7 +17867,10 @@ async function markRunAdmitted(admitted) {
     ...admitted.role === "coder" || admitted.role === "fixer" ? { phase: admitted.phase } : {}
   });
 }
-async function markRunRunning(runDirectory) {
+async function markRunRunning(runDirectory, effectiveModel) {
+  if (effectiveModel !== void 0) {
+    await recordEffectiveInvocationModel(runDirectory, effectiveModel);
+  }
   const current = await readRoleRunState(runDirectory);
   if (current === void 0) {
     throw new Error("cannot mark running: run state missing");
@@ -21605,17 +21659,6 @@ var init_settlement = __esm({
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
 import { join as join11 } from "node:path";
-function buildModelArgs(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking
-  ];
-}
 function buildCoderActivationExtraArgs(admitted, options) {
   const prompt = buildCoderTransportPrompt(admitted);
   const skillArgs = admitted.phase === "apply" ? [
@@ -21641,7 +21684,7 @@ function buildCoderActivationExtraArgs(admitted, options) {
     admitted.taskPath,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt
   ];
 }
@@ -21669,7 +21712,7 @@ function buildCoderResumeActivationExtraArgs(admitted, options) {
     admitted.taskPath,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
@@ -21735,7 +21778,7 @@ async function dispatchAdmittedCoder(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -21841,7 +21884,8 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
-      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+      ...env.model === void 0 ? {} : { model: env.model }
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -21995,17 +22039,6 @@ var init_coder_run = __esm({
 // src/public-cli/collector-run.ts
 import { writeFile as writeFile7 } from "node:fs/promises";
 import { join as join12 } from "node:path";
-function buildModelArgs2(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking
-  ];
-}
 function buildCollectorActivationExtraArgs(admitted, options = {}) {
   const prompt = buildCollectorTransportPrompt(admitted);
   return [
@@ -22027,7 +22060,7 @@ function buildCollectorActivationExtraArgs(admitted, options = {}) {
     ...admitted.requestManifestPath === void 0 ? [] : ["--ak-collector-request-manifest", admitted.requestManifestPath],
     "--mode",
     "json",
-    ...buildModelArgs2(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt
   ];
 }
@@ -22068,7 +22101,7 @@ async function dispatchAdmittedCollector(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22181,7 +22214,8 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
       ...parsed.project === void 0 ? {} : { project: parsed.project },
       ...parsed.repo === void 0 ? {} : { repo: parsed.repo },
       ...parsed.requestManifestPath === void 0 ? {} : { requestManifestPath: parsed.requestManifestPath },
-      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+      ...env.model === void 0 ? {} : { model: env.model }
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -22232,17 +22266,6 @@ var init_collector_run = __esm({
 // src/public-cli/doctor-run.ts
 import { writeFile as writeFile8 } from "node:fs/promises";
 import { join as join13 } from "node:path";
-function buildModelArgs3(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking
-  ];
-}
 function buildDoctorActivationExtraArgs(admitted, options = {}) {
   const prompt = buildDoctorTransportPrompt(admitted);
   return [
@@ -22261,7 +22284,7 @@ function buildDoctorActivationExtraArgs(admitted, options = {}) {
     admitted.caseRunsPath,
     "--mode",
     "json",
-    ...buildModelArgs3(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt
   ];
 }
@@ -22299,7 +22322,7 @@ async function dispatchAdmittedDoctor(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22417,7 +22440,8 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
       attachmentPaths: parsed.attachmentPaths,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
       ...parsed.runs === void 0 ? {} : { runs: parsed.runs },
-      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+      ...env.model === void 0 ? {} : { model: env.model }
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -22465,17 +22489,6 @@ var init_doctor_run = __esm({
 // src/public-cli/fixer-run.ts
 import { writeFile as writeFile9 } from "node:fs/promises";
 import { join as join14 } from "node:path";
-function buildModelArgs4(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking
-  ];
-}
 function buildFixerActivationExtraArgs(admitted, options) {
   const prompt = buildFixerTransportPrompt(admitted);
   const diagnosisSkillPath = resolvePackagedMethodSkillPath(
@@ -22507,7 +22520,7 @@ function buildFixerActivationExtraArgs(admitted, options) {
     ...prerequisiteArgs,
     "--mode",
     "json",
-    ...buildModelArgs4(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt
   ];
 }
@@ -22541,7 +22554,7 @@ function buildFixerResumeActivationExtraArgs(admitted, options) {
     ...prerequisiteArgs,
     "--mode",
     "json",
-    ...buildModelArgs4(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
@@ -22604,7 +22617,7 @@ async function dispatchAdmittedFixer(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22733,7 +22746,8 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
       attachmentPaths: parsed.attachmentPaths,
       ...parsed.prerequisitesPath === void 0 ? {} : { prerequisitesPath: parsed.prerequisitesPath },
       ...parsed.project === void 0 ? {} : { project: parsed.project },
-      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+      ...env.model === void 0 ? {} : { model: env.model }
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -22873,17 +22887,6 @@ var init_fixer_run = __esm({
 // src/public-cli/judge-run.ts
 import { writeFile as writeFile10 } from "node:fs/promises";
 import { join as join15 } from "node:path";
-function buildModelArgs5(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking
-  ];
-}
 function buildJudgeActivationExtraArgs(admitted, options = {}) {
   const prompt = buildJudgeTransportPrompt(admitted);
   return [
@@ -22901,7 +22904,7 @@ function buildJudgeActivationExtraArgs(admitted, options = {}) {
     "judge",
     "--mode",
     "json",
-    ...buildModelArgs5(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt
   ];
 }
@@ -22920,7 +22923,7 @@ function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
     "judge",
     "--mode",
     "json",
-    ...buildModelArgs5(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
@@ -22983,7 +22986,7 @@ async function dispatchAdmittedJudge(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -23102,7 +23105,8 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
-      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+      ...env.model === void 0 ? {} : { model: env.model }
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -23205,17 +23209,6 @@ var init_judge_run = __esm({
 // src/public-cli/merger-run.ts
 import { mkdir as mkdir4, writeFile as writeFile11 } from "node:fs/promises";
 import { join as join16, resolve as resolve7 } from "node:path";
-function buildModelArgs6(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking
-  ];
-}
 function buildMergerActivationExtraArgs(admitted, options) {
   const prompt = buildMergerTransportPrompt(admitted);
   const skillPath = resolvePackagedMethodSkillPath(
@@ -23240,7 +23233,7 @@ function buildMergerActivationExtraArgs(admitted, options) {
     admitted.mergerInputPath,
     "--mode",
     "json",
-    ...buildModelArgs6(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt
   ];
 }
@@ -23267,7 +23260,7 @@ function buildMergerResumeActivationExtraArgs(admitted, options) {
     admitted.mergerInputPath,
     "--mode",
     "json",
-    ...buildModelArgs6(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
@@ -23333,7 +23326,7 @@ async function dispatchAdmittedMerger(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -23509,7 +23502,8 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
-      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+      ...env.model === void 0 ? {} : { model: env.model }
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -23676,17 +23670,6 @@ var init_merger_run = __esm({
 // src/public-cli/reviewer-run.ts
 import { writeFile as writeFile12 } from "node:fs/promises";
 import { join as join17 } from "node:path";
-function buildModelArgs7(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking
-  ];
-}
 function buildReviewerTicketNumberArgs(ticketNumber) {
   return ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(ticketNumber)];
 }
@@ -23718,7 +23701,7 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     ...ticketNumberArgs,
     "--mode",
     "json",
-    ...buildModelArgs7(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt
   ];
 }
@@ -23749,7 +23732,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     ...ticketNumberArgs,
     "--mode",
     "json",
-    ...buildModelArgs7(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
@@ -23812,7 +23795,7 @@ async function dispatchAdmittedReviewer(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     await clearReviewerDispatchRejection(admitted.runDirectory);
     const childEnv = {
@@ -23942,7 +23925,8 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
       baseRevision: parsed.baseRevision,
       authorityRefs: parsed.authorityRefs,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
-      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+      ...env.model === void 0 ? {} : { model: env.model }
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -26365,7 +26349,7 @@ async function runConfigCommand(args, home, io) {
       if (!isPublicConfigurableSeat(seat)) {
         throw new CliUsageError(`unknown configurable seat: ${seat}`);
       }
-      config = setPersistentSeatConfig(config, seat, parseModelSpec(spec));
+      config = setPersistentSeatConfig(config, seat, parsePersistentModelSpec(spec));
     }
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));

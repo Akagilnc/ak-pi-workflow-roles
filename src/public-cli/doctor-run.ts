@@ -20,6 +20,7 @@ import {
   type ParseDoctorArgvResult,
 } from "./invocation.ts";
 import {
+  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -70,17 +71,6 @@ export type DoctorRunEnv = {
   timeoutMs?: number;
 };
 
-function buildModelArgs(model: SeatModelConfig | undefined): string[] {
-  if (model === undefined) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking,
-  ];
-}
 
 /**
  * Build Internal activation extra-args for an admitted Doctor run.
@@ -111,7 +101,7 @@ export function buildDoctorActivationExtraArgs(
     admitted.caseRunsPath,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt,
   ];
 }
@@ -183,7 +173,7 @@ async function dispatchAdmittedDoctor(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
@@ -319,6 +309,7 @@ export async function runPublicDoctor(
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(parsed.runs === undefined ? {} : { runs: parsed.runs }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

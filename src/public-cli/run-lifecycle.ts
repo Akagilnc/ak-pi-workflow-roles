@@ -24,6 +24,7 @@ export {
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import {
+  recordEffectiveInvocationModel,
   requireAuthorityRef,
   type AdmittedCoderInvocation,
   type AdmittedFixerInvocation,
@@ -34,6 +35,7 @@ import {
   type CoderPhase,
   type DerivedMergerEnvelope,
   type FrozenAttachment,
+  type InvocationEffectiveModel,
 } from "./invocation.ts";
 
 /** Providers eligible for v1 typed-429 resume (Codex / xAI only). */
@@ -226,7 +228,18 @@ export async function markRunAdmitted(
   });
 }
 
-export async function markRunRunning(runDirectory: string): Promise<void> {
+/**
+ * Shared dispatch execution seam: record the effective launch model (initial or
+ * resume override) onto invocation.json when known, then transition to running.
+ * Role runners must not coordinate lifecycle ledger writes themselves.
+ */
+export async function markRunRunning(
+  runDirectory: string,
+  effectiveModel?: InvocationEffectiveModel,
+): Promise<void> {
+  if (effectiveModel !== undefined) {
+    await recordEffectiveInvocationModel(runDirectory, effectiveModel);
+  }
   const current = await readRoleRunState(runDirectory);
   if (current === undefined) {
     throw new Error("cannot mark running: run state missing");

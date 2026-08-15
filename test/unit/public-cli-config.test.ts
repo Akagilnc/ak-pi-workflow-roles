@@ -6,7 +6,9 @@ import test from "node:test";
 
 import {
   effectiveSeatConfigurations,
+  formatModelSpec,
   loadPublicCliConfig,
+  parseModelSpec,
   publicCliConfigPath,
   resolveEffectiveSeat,
   savePublicCliConfig,
@@ -154,5 +156,80 @@ test("persistent seat config wins over startup candidates", () => {
     provider: "xai",
     model: "grok-4.5",
     thinking: "high",
+  });
+});
+
+// #346: public CLI --model :thinking suffix is optional on invocation.
+test("bare provider/model invocation is legal and does not invent thinking", () => {
+  const bare = parseModelSpec("kimi-coding/k3-256k");
+  assert.deepEqual(bare, {
+    provider: "kimi-coding",
+    model: "k3-256k",
+  });
+  assert.equal("thinking" in bare, false);
+  assert.equal(formatModelSpec(bare), "kimi-coding/k3-256k");
+
+  const effective = resolveEffectiveSeat(
+    { seats: {} },
+    "coder",
+    { "openai-codex": true, xai: false },
+    { model: "kimi-coding/k3-256k" },
+  );
+  assert.equal(effective.source, "invocation");
+  assert.deepEqual(effective.selection, {
+    provider: "kimi-coding",
+    model: "k3-256k",
+  });
+  assert.equal(effective.selection !== undefined && "thinking" in effective.selection, false);
+});
+
+test("provider/model:thinking suffix still parses and formats with thinking", () => {
+  const withThinking = parseModelSpec("openai-codex/gpt-5.6-luna:high");
+  assert.deepEqual(withThinking, {
+    provider: "openai-codex",
+    model: "gpt-5.6-luna",
+    thinking: "high",
+  });
+  assert.equal(formatModelSpec(withThinking), "openai-codex/gpt-5.6-luna:high");
+
+  const effective = resolveEffectiveSeat(
+    { seats: {} },
+    "coder",
+    { "openai-codex": true, xai: false },
+    { model: "openai-codex/gpt-5.6-luna:medium" },
+  );
+  assert.deepEqual(effective.selection, {
+    provider: "openai-codex",
+    model: "gpt-5.6-luna",
+    thinking: "medium",
+  });
+});
+
+test("malformed model specs keep the pre-#346 typed rejection surface", () => {
+  assert.throws(
+    () => parseModelSpec(""),
+    /model specification must be non-empty/,
+  );
+  assert.throws(
+    () => parseModelSpec("no-slash-model"),
+    /model specification must be provider\/model\[:thinking\]/,
+  );
+  assert.throws(
+    () => parseModelSpec("/missing-provider"),
+    /model specification must be provider\/model\[:thinking\]/,
+  );
+  // Colon present but suffix empty/unknown: typed format reject (not swallowed into model).
+  assert.throws(
+    () => parseModelSpec("openai-codex/gpt-5.6-luna:bogus"),
+    /model specification must be provider\/model\[:thinking\]/,
+  );
+  assert.throws(
+    () => parseModelSpec("openai-codex/gpt-5.6-luna:"),
+    /model specification must be provider\/model\[:thinking\]/,
+  );
+  // Unknown provider/model is syntactically legal — resolution is not this parser's job.
+  assert.deepEqual(parseModelSpec("no-such-provider/no-such-model"), {
+    provider: "no-such-provider",
+    model: "no-such-model",
   });
 });

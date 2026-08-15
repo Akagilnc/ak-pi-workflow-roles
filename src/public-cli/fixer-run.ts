@@ -26,6 +26,7 @@ import {
   type AdmittedFixerInvocation,
 } from "./invocation.ts";
 import {
+  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -87,17 +88,6 @@ export type FixerRunEnv = {
   timeoutMs?: number;
 };
 
-function buildModelArgs(model: SeatModelConfig | undefined): string[] {
-  if (model === undefined) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking,
-  ];
-}
 
 /**
  * Build Internal activation extra-args for an admitted Fixer run.
@@ -145,7 +135,7 @@ export function buildFixerActivationExtraArgs(
     ...prerequisiteArgs,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt,
   ];
 }
@@ -194,7 +184,7 @@ export function buildFixerResumeActivationExtraArgs(
     ...prerequisiteArgs,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE,
   ];
 }
@@ -303,7 +293,7 @@ async function dispatchAdmittedFixer(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
@@ -461,6 +451,7 @@ export async function runPublicFixer(
         : { prerequisitesPath: parsed.prerequisitesPath }),
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
