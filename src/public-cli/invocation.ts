@@ -47,6 +47,10 @@ import {
 } from "../merger-contracts.ts";
 import { sha256Hex } from "../sha256.ts";
 import { uuidv7 } from "../uuidv7.ts";
+import {
+  appendEngineSessionMaterial,
+  type EngineSessionMaterial,
+} from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   REJECTED_PUBLIC_SPELLINGS,
@@ -809,6 +813,7 @@ export async function admitJudgeInvocation(
 /** Build the Pi prompt transport for an admitted Judge request. */
 export function buildJudgeTransportPrompt(
   admitted: AdmittedJudgeInvocation,
+  engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
@@ -818,7 +823,7 @@ export function buildJudgeTransportPrompt(
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return lines.join("\n");
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 /** Load admitted-request.json written at admission (Navigator work-context seam). */
@@ -1404,6 +1409,7 @@ export async function admitCollectorInvocation(
 export function buildCollectorTransportPrompt(
   _admitted: AdmittedCollectorInvocation,
 ): string {
+  // Exact historical fixed kickoff bytes (one-shot observation).
   return COLLECTOR_FIXED_KICKOFF;
 }
 

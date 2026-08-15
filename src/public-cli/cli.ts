@@ -6,6 +6,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import {
+  assertLegalEngineName,
+} from "../package-resources/engine-material.ts";
+import {
   effectiveSeatConfigurations,
   formatModelSpec,
   loadCredentialProviders,
@@ -14,6 +17,8 @@ import {
   resolveEffectiveSeat,
   savePublicCliConfig,
   setPersistentSeatConfig,
+  setPersistentSeatEngine,
+  validatePublicCliConfigEngines,
   type CredentialProviders,
   type EffectiveSeat,
   type InvocationModelOverride,
@@ -94,7 +99,8 @@ export const PUBLIC_GLOBAL_OPTIONS: readonly PublicOptionDefinition[] =
 type TakenPublicGlobalFlag =
   | { flag: "help"; consume: 1 }
   | { flag: "model"; consume: 1 | 2; value: string | undefined }
-  | { flag: "thinking"; consume: 1 | 2; raw: string | undefined };
+  | { flag: "thinking"; consume: 1 | 2; raw: string | undefined }
+  | { flag: "engine"; consume: 1 | 2; value: string | undefined };
 
 /**
  * If `argv[index]` is a public global flag, describe its span and payload.
@@ -125,6 +131,13 @@ function takePublicGlobalFlag(
       flag: "thinking",
       consume: consumed as 1 | 2,
       raw: taken.value,
+    };
+  }
+  if (taken.def.id === "engine") {
+    return {
+      flag: "engine",
+      consume: consumed as 1 | 2,
+      value: taken.value,
     };
   }
   return undefined;
@@ -217,6 +230,7 @@ type ParsedGlobal = {
   args: string[];
   model?: string;
   thinking?: PublicThinkingLevel;
+  engine?: string;
   help: boolean;
 };
 
@@ -231,6 +245,7 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
   const args = [...argv];
   let model: string | undefined;
   let thinking: PublicThinkingLevel | undefined;
+  let engine: string | undefined;
   let help = false;
   const positional: string[] = [];
   const globalOptions = createTypedOptionConsumer(PUBLIC_GLOBAL_OPTIONS);
@@ -259,12 +274,24 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
         args.splice(0, taken.consume);
         continue;
       }
-      if (taken.raw === undefined) {
-        throw new CliUsageError("--thinking requires a value");
+      if (taken.flag === "thinking") {
+        if (taken.raw === undefined) {
+          throw new CliUsageError("--thinking requires a value");
+        }
+        thinking = parseThinking(taken.raw);
+        args.splice(0, taken.consume);
+        continue;
       }
-      thinking = parseThinking(taken.raw);
-      args.splice(0, taken.consume);
-      continue;
+      if (taken.flag === "engine") {
+        if (taken.value === undefined) {
+          throw new CliUsageError("--engine requires a value");
+        }
+        engine = taken.value;
+        args.splice(0, taken.consume);
+        continue;
+      }
+      // Exhaustive for known global flags; unknown id is a table bug.
+      throw new CliUsageError(`unhandled global option: ${String((taken as { flag: string }).flag)}`);
     }
     // Subcommands may own additional flags later; unknown dashed tokens stay
     // positional here (same as pre-unification parseArgv).
@@ -277,16 +304,52 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
     args: rest,
     ...(model === undefined ? {} : { model }),
     ...(thinking === undefined ? {} : { thinking }),
+    ...(engine === undefined ? {} : { engine }),
     help,
   };
 }
 
 function invocationFromParsed(parsed: ParsedGlobal): InvocationModelOverride | undefined {
-  if (parsed.model === undefined && parsed.thinking === undefined) return undefined;
+  if (
+    parsed.model === undefined &&
+    parsed.thinking === undefined &&
+    parsed.engine === undefined
+  ) {
+    return undefined;
+  }
   return {
     ...(parsed.model === undefined ? {} : { model: parsed.model }),
     ...(parsed.thinking === undefined ? {} : { thinking: parsed.thinking }),
+    ...(parsed.engine === undefined ? {} : { engine: parsed.engine }),
   };
+}
+
+function requireLegalEngineName(packageRoot: string, name: string): string {
+  try {
+    return assertLegalEngineName(packageRoot, name);
+  } catch (error) {
+    throw new CliUsageError(
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+}
+
+function loadAndValidateConfig(
+  home: string,
+  packageRoot: string,
+): Promise<PublicCliConfig> {
+  return loadPublicCliConfig(home).then((config) => {
+    try {
+      validatePublicCliConfigEngines(config, packageRoot);
+    } catch (error) {
+      throw new CliUsageError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
+    }
+    return config;
+  });
 }
 
 /** Typed facts used by help presentation — not layout. */
@@ -355,6 +418,7 @@ function renderHelp(): string {
     "",
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model:thinking>",
+    "Persistent engine (judge only): ak-role config set-engine judge <name> | unset-engine judge",
     "Effective seats: ak-role roles",
   );
   return `${lines.join("\n")}\n`;
@@ -398,7 +462,7 @@ function renderRoles(seats: readonly EffectiveSeat[]): string {
 }
 
 function renderConfig(config: PublicCliConfig): string {
-  const lines: string[] = ["seat\tmodel"];
+  const lines: string[] = ["seat\tmodel\tengine"];
   const keys = Object.keys(config.seats) as (keyof typeof config.seats)[];
   if (keys.length === 0) {
     lines.push("(empty)");
@@ -406,7 +470,8 @@ function renderConfig(config: PublicCliConfig): string {
     for (const seat of keys.sort()) {
       const selection = config.seats[seat];
       if (selection === undefined) continue;
-      lines.push(`${seat}\t${formatModelSpec(selection)}`);
+      const engine = selection.engine === undefined ? "-" : selection.engine;
+      lines.push(`${seat}\t${formatModelSpec(selection)}\t${engine}`);
     }
   }
   return `${lines.join("\n")}\n`;
@@ -415,10 +480,11 @@ function renderConfig(config: PublicCliConfig): string {
 async function runConfigCommand(
   args: readonly string[],
   home: string,
+  packageRoot: string,
   io: CliIo,
 ): Promise<number> {
   if (args.length === 0 || args[0] === "get" || args[0] === "list" || args[0] === "show") {
-    const config = await loadPublicCliConfig(home);
+    const config = await loadAndValidateConfig(home, packageRoot);
     if (args[0] === "get" && args[1] !== undefined) {
       if (!isPublicConfigurableSeat(args[1])) {
         throw new CliUsageError(`unknown configurable seat: ${args[1]}`);
@@ -427,7 +493,9 @@ async function runConfigCommand(
       if (selection === undefined) {
         io.stdout(`${args[1]}\t(unconfigured)\n`);
       } else {
-        io.stdout(`${args[1]}\t${formatModelSpec(selection)}\n`);
+        const engine =
+          selection.engine === undefined ? "-" : selection.engine;
+        io.stdout(`${args[1]}\t${formatModelSpec(selection)}\t${engine}\n`);
       }
       return 0;
     }
@@ -448,7 +516,7 @@ async function runConfigCommand(
         "config set requires seat/spec pairs: ak-role config set <seat> <spec> [<seat> <spec> ...]",
       );
     }
-    let config = await loadPublicCliConfig(home);
+    let config = await loadAndValidateConfig(home, packageRoot);
     for (let i = 0; i < pairs.length; i += 2) {
       const seat = pairs[i]!;
       const spec = pairs[i + 1]!;
@@ -456,6 +524,66 @@ async function runConfigCommand(
         throw new CliUsageError(`unknown configurable seat: ${seat}`);
       }
       config = setPersistentSeatConfig(config, seat, parsePersistentModelSpec(spec));
+    }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
+
+  if (args[0] === "set-engine") {
+    if (args.length !== 3) {
+      throw new CliUsageError(
+        "usage: ak-role config set-engine judge <name>",
+      );
+    }
+    const seat = args[1]!;
+    const name = args[2]!;
+    if (!isPublicConfigurableSeat(seat)) {
+      throw new CliUsageError(`unknown configurable seat: ${seat}`);
+    }
+    if (seat !== "judge") {
+      throw new CliUsageError(
+        `engine axis is judge-only; refused seat ${seat}`,
+      );
+    }
+    requireLegalEngineName(packageRoot, name);
+    let config = await loadAndValidateConfig(home, packageRoot);
+    try {
+      config = setPersistentSeatEngine(config, seat, name);
+    } catch (error) {
+      throw new CliUsageError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
+    }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
+
+  if (args[0] === "unset-engine") {
+    if (args.length !== 2) {
+      throw new CliUsageError(
+        "usage: ak-role config unset-engine judge",
+      );
+    }
+    const seat = args[1]!;
+    if (!isPublicConfigurableSeat(seat)) {
+      throw new CliUsageError(`unknown configurable seat: ${seat}`);
+    }
+    if (seat !== "judge") {
+      throw new CliUsageError(
+        `engine axis is judge-only; refused seat ${seat}`,
+      );
+    }
+    let config = await loadAndValidateConfig(home, packageRoot);
+    try {
+      config = setPersistentSeatEngine(config, seat, undefined);
+    } catch (error) {
+      throw new CliUsageError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
     }
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));
@@ -477,6 +605,21 @@ export async function runAkRole(
     // runtime entry, activation argv, or invocation provenance is derived.
     env = { ...env, packageRoot: await realpath(env.packageRoot) };
     const parsed = parseArgv(argv);
+    // Invocation --engine rejects at the call-request seam (not role submission).
+    // #356 MVP: engine axis is Judge-only (not resume / non-Judge seats).
+    if (parsed.engine !== undefined) {
+      requireLegalEngineName(env.packageRoot, parsed.engine);
+      if (
+        !parsed.help &&
+        parsed.command !== undefined &&
+        parsed.command !== "help" &&
+        parsed.command !== "judge"
+      ) {
+        throw new CliUsageError(
+          `engine axis is judge-only; refused command ${parsed.command}`,
+        );
+      }
+    }
 
     if (
       parsed.help ||
@@ -501,7 +644,7 @@ export async function runAkRole(
       if (parsed.args.length > 0) {
         throw new CliUsageError("roles takes no arguments");
       }
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ??
         (await loadCredentialProviders(resolveAgentDir(env, home)));
@@ -515,7 +658,9 @@ export async function runAkRole(
     }
 
     if (parsed.command === "config") {
-      return { exitCode: await runConfigCommand(parsed.args, home, io) };
+      return {
+        exitCode: await runConfigCommand(parsed.args, home, env.packageRoot, io),
+      };
     }
 
     // Resume reopens an exact Role run after a typed HTTP 429 (#108/#109).
@@ -523,7 +668,7 @@ export async function runAkRole(
     if (parsed.command === "resume") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const resumeRunId = parsed.args[0];
@@ -706,7 +851,7 @@ export async function runAkRole(
     if (parsed.command === "judge") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const seat = resolveEffectiveSeat(
@@ -728,6 +873,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.judgeExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.judgeExtraPiArgs }),
@@ -749,7 +895,7 @@ export async function runAkRole(
     if (parsed.command === "coder") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const seat = resolveEffectiveSeat(
@@ -792,7 +938,7 @@ export async function runAkRole(
     if (parsed.command === "fixer") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const seat = resolveEffectiveSeat(
@@ -835,7 +981,7 @@ export async function runAkRole(
     if (parsed.command === "collector") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const seat = resolveEffectiveSeat(
@@ -878,7 +1024,7 @@ export async function runAkRole(
     if (parsed.command === "reviewer") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const seat = resolveEffectiveSeat(
@@ -921,7 +1067,7 @@ export async function runAkRole(
     if (parsed.command === "doctor") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const seat = resolveEffectiveSeat(
@@ -964,7 +1110,7 @@ export async function runAkRole(
     if (parsed.command === "merger") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const seat = resolveEffectiveSeat(

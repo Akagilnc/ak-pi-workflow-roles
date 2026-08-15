@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { assertLegalEngineName } from "../package-resources/engine-material.ts";
 import {
   AUTOMATIC_NAVIGATOR_SEAT,
   PUBLIC_CALLABLE_ROLES,
@@ -22,11 +23,19 @@ export type CredentialProviders = {
 
 export type SeatModelConfig = ModelRef;
 
+/** Persistent seat row: required model triple + optional engine axis (#356). */
+export type PersistentSeatConfig = SeatModelConfig & {
+  engine?: string;
+};
+
 export type PublicCliConfig = {
-  seats: Partial<Record<PublicConfigurableSeat, SeatModelConfig>>;
+  seats: Partial<Record<PublicConfigurableSeat, PersistentSeatConfig>>;
 };
 
 export type EffectiveSource = "persistent" | "startup" | "invocation" | "unconfigured";
+
+/** Engine axis source is independent of model source (#356). */
+export type EngineSource = "invocation" | "persistent" | "unconfigured";
 
 export type EffectiveSeat = {
   seat: PublicConfigurableSeat;
@@ -34,11 +43,16 @@ export type EffectiveSeat = {
   automatic: boolean;
   source: EffectiveSource;
   selection?: SeatModelConfig;
+  /** Selected engine name when configured; undefined = no engine (default path). */
+  engine?: string;
+  engineSource: EngineSource;
 };
 
 export type InvocationModelOverride = {
   model?: string;
   thinking?: PublicThinkingLevel;
+  /** Optional engine override for this invocation only (#356). */
+  engine?: string;
 };
 
 const THINKING_LEVELS = new Set<PublicThinkingLevel>([
@@ -89,12 +103,89 @@ export function setPersistentSeatConfig(
   seat: PublicConfigurableSeat,
   selection: SeatModelConfig,
 ): PublicCliConfig {
+  const previous = config.seats[seat];
   return {
     seats: {
       ...config.seats,
-      [seat]: { ...selection },
+      [seat]: {
+        ...selection,
+        // Model rewrite preserves a previously configured engine axis.
+        ...(previous?.engine === undefined ? {} : { engine: previous.engine }),
+      },
     },
   };
+}
+
+/**
+ * Set or clear persistent engine on the Judge seat only (#356 MVP).
+ * Engine-only seats are rejected — model triple remains required.
+ */
+export function setPersistentSeatEngine(
+  config: PublicCliConfig,
+  seat: PublicConfigurableSeat,
+  engine: string | undefined,
+): PublicCliConfig {
+  if (seat !== "judge") {
+    throw new Error(`engine axis is judge-only; refused seat ${seat}`);
+  }
+  const previous = config.seats[seat];
+  if (previous === undefined) {
+    throw new Error(
+      `config seat ${seat} has no persistent model; set provider/model:thinking before engine`,
+    );
+  }
+  if (engine === undefined) {
+    const { engine: _dropped, ...modelOnly } = previous;
+    return {
+      seats: {
+        ...config.seats,
+        [seat]: modelOnly,
+      },
+    };
+  }
+  // Engine-name legality is owned solely by assertLegalEngineName
+  // (call-request + config-parse seams). Setter is pure seat mutation.
+  return {
+    seats: {
+      ...config.seats,
+      [seat]: { ...previous, engine },
+    },
+  };
+}
+
+/** Strip optional engine so activation model argv never sees the engine axis. */
+export function seatModelOnly(seat: PersistentSeatConfig): SeatModelConfig {
+  return seat.thinking === undefined
+    ? { provider: seat.provider, model: seat.model }
+    : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
+}
+
+/**
+ * Config-parse seam: engine axis is Judge-only; Judge engine names must exist
+ * in package materials. Call with packageRoot after load / before dispatch (#356).
+ * Legality authority = assertLegalEngineName (no injected duplicate).
+ */
+export function validatePublicCliConfigEngines(
+  config: PublicCliConfig,
+  packageRoot: string,
+): void {
+  for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
+    const row = config.seats[seat];
+    if (row?.engine === undefined) continue;
+    if (seat !== "judge") {
+      throw new Error(
+        `config seat ${seat} engine is not allowed; engine axis is judge-only`,
+      );
+    }
+    try {
+      assertLegalEngineName(packageRoot, row.engine);
+    } catch (error) {
+      throw new Error(
+        `config seat ${seat} engine is unknown: ${row.engine}`,
+        { cause: error },
+      );
+    }
+  }
 }
 
 export function parseModelSpec(
@@ -200,7 +291,7 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
   return { seats };
 }
 
-function parseSeatModelConfig(value: unknown, seat: string): SeatModelConfig {
+function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfig {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`config seat ${seat} must be an object`);
   }
@@ -217,11 +308,20 @@ function parseSeatModelConfig(value: unknown, seat: string): SeatModelConfig {
   ) {
     throw new Error(`config seat ${seat} requires a valid thinking level`);
   }
-  return {
+  const parsed: PersistentSeatConfig = {
     provider: raw.provider,
     model: raw.model,
     thinking: raw.thinking as PublicThinkingLevel,
   };
+  if (raw.engine !== undefined) {
+    // Shape only: engine must be a string field. Name legality is deferred to
+    // validatePublicCliConfigEngines → assertLegalEngineName (single authority).
+    if (typeof raw.engine !== "string") {
+      throw new Error(`config seat ${seat} engine must be a string`);
+    }
+    parsed.engine = raw.engine;
+  }
+  return parsed;
 }
 
 export function providerConfigured(
@@ -258,6 +358,39 @@ function pickStartupCandidate(
   return undefined;
 }
 
+function attachEngineAxis(
+  seat: EffectiveSeat,
+  config: PublicCliConfig,
+  invocation?: InvocationModelOverride,
+): EffectiveSeat {
+  // #356 MVP: engine axis is Judge-only. Other seats stay unconfigured.
+  if (seat.seat !== "judge") {
+    return {
+      ...seat,
+      engineSource: "unconfigured",
+    };
+  }
+  const persistentEngine = config.seats.judge?.engine;
+  if (invocation?.engine !== undefined) {
+    return {
+      ...seat,
+      engine: invocation.engine,
+      engineSource: "invocation",
+    };
+  }
+  if (persistentEngine !== undefined) {
+    return {
+      ...seat,
+      engine: persistentEngine,
+      engineSource: "persistent",
+    };
+  }
+  return {
+    ...seat,
+    engineSource: "unconfigured",
+  };
+}
+
 function resolveBaseSeat(
   config: PublicCliConfig,
   seat: PublicConfigurableSeat,
@@ -270,7 +403,8 @@ function resolveBaseSeat(
       seat,
       automatic,
       source: "persistent",
-      selection: { ...persistent },
+      selection: seatModelOnly(persistent),
+      engineSource: "unconfigured",
     };
   }
   const startup = pickStartupCandidate(seat, credentials);
@@ -280,9 +414,10 @@ function resolveBaseSeat(
       automatic,
       source: "startup",
       selection: startup,
+      engineSource: "unconfigured",
     };
   }
-  return { seat, automatic, source: "unconfigured" };
+  return { seat, automatic, source: "unconfigured", engineSource: "unconfigured" };
 }
 
 export function resolveEffectiveSeat(
@@ -292,36 +427,46 @@ export function resolveEffectiveSeat(
   invocation?: InvocationModelOverride,
 ): EffectiveSeat {
   const automatic = seat === AUTOMATIC_NAVIGATOR_SEAT;
-  const hasInvocation =
+  const hasModelInvocation =
     invocation !== undefined &&
     (invocation.model !== undefined || invocation.thinking !== undefined);
-  if (!hasInvocation || invocation === undefined) {
-    return resolveBaseSeat(config, seat, credentials);
-  }
 
-  if (invocation.model !== undefined) {
+  let modelSeat: EffectiveSeat;
+  if (!hasModelInvocation || invocation === undefined) {
+    modelSeat = resolveBaseSeat(config, seat, credentials);
+  } else if (invocation.model !== undefined) {
     const spec =
       invocation.model.includes(":") || invocation.thinking === undefined
         ? invocation.model
         : `${invocation.model}:${invocation.thinking}`;
-    return {
+    modelSeat = {
       seat,
       automatic,
       source: "invocation",
       selection: parseModelSpec(spec),
+      engineSource: "unconfigured",
     };
+  } else {
+    const base = resolveBaseSeat(config, seat, credentials);
+    if (base.selection === undefined || invocation.thinking === undefined) {
+      modelSeat = {
+        seat,
+        automatic,
+        source: "unconfigured",
+        engineSource: "unconfigured",
+      };
+    } else {
+      modelSeat = {
+        seat,
+        automatic,
+        source: "invocation",
+        selection: { ...base.selection, thinking: invocation.thinking },
+        engineSource: "unconfigured",
+      };
+    }
   }
 
-  const base = resolveBaseSeat(config, seat, credentials);
-  if (base.selection === undefined || invocation.thinking === undefined) {
-    return { seat, automatic, source: "unconfigured" };
-  }
-  return {
-    seat,
-    automatic,
-    source: "invocation",
-    selection: { ...base.selection, thinking: invocation.thinking },
-  };
+  return attachEngineAxis(modelSeat, config, invocation);
 }
 
 export function effectiveSeatConfigurations(
