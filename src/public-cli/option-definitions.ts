@@ -4,7 +4,13 @@
  * PUBLIC_ROLE_ARGV rows reference these definitions. Production parsers and
  * `help <command>` consume this table; README flag inventory is generated from
  * it. Do not maintain a parallel spelling set in parsers, help, or docs.
+ *
+ * Dashed-option take, positional selector match, role-phase resolution, and
+ * `repeatable` enforcement share one consumer (`createTypedOptionConsumer`).
+ * Parsers must not restate phase tokens or add parallel repeatability checks.
  */
+
+import { CliUsageError } from "./cli-errors.ts";
 
 /** Taishi query faces (#336/#337/#338). */
 export type TaishiMode = "issue" | "sweep" | "cohort" | "model-groups";
@@ -882,6 +888,7 @@ export function matchDashedOption(
 /**
  * Consume one dashed option from the front of `tokens` (mutates).
  * Returns undefined when tokens[0] is not a known definition spelling.
+ * Does not enforce `repeatable` — production parsers use `createTypedOptionConsumer`.
  */
 export function takeDashedOption(
   tokens: string[],
@@ -899,6 +906,110 @@ export function takeDashedOption(
     return { def: matched.def, value: matched.inlineValue };
   }
   return { def: matched.def, value: tokens.shift() };
+}
+
+/**
+ * Match a bare token against form:"positional" definitions (canonical or alias).
+ * Does not record occurrence — use `createTypedOptionConsumer().takePositional`.
+ */
+export function matchPositionalOption(
+  token: string,
+  definitions: readonly PublicOptionDefinition[],
+): PublicOptionDefinition | undefined {
+  for (const def of definitions) {
+    if (def.form !== "positional") continue;
+    if (def.canonical === token || def.aliases.includes(token)) {
+      return def;
+    }
+  }
+  return undefined;
+}
+
+export type TakenTypedOption = {
+  readonly def: PublicOptionDefinition;
+  readonly value: string | undefined;
+};
+
+/**
+ * Shared typed-table argv consumer (#342 findings ①③).
+ * Single path for dashed take, positional selector take, leading role-phase
+ * resolution, and `repeatable:false` rejection via CliUsageError.
+ */
+export type TypedOptionConsumer = {
+  /** Take one dashed option from `tokens` front; enforces repeatable. */
+  readonly takeDashed: (tokens: string[]) => TakenTypedOption | undefined;
+  /**
+   * If `token` is a known positional spelling, record it (repeatable-enforced)
+   * and return its definition; otherwise undefined.
+   */
+  readonly takePositional: (token: string) => PublicOptionDefinition | undefined;
+  /**
+   * Consume a leading role phase token from `positional` using the owner's
+   * typed `phase` definition (aliases + defaultValue). Mutates `positional`
+   * when a phase token is taken. No hardcoded plan/apply branch at call sites.
+   */
+  readonly consumeLeadingPhase: (positional: string[]) => RolePhase;
+  /** Occurrence count for an option id (0 when never seen). */
+  readonly count: (id: string) => number;
+};
+
+/**
+ * Build the sole production consumer for one owner definition list.
+ * Every public argv parser shares this path — no parallel phase/repeatable logic.
+ */
+export function createTypedOptionConsumer(
+  definitions: readonly PublicOptionDefinition[],
+): TypedOptionConsumer {
+  const counts = new Map<string, number>();
+
+  const note = (def: PublicOptionDefinition): void => {
+    const next = (counts.get(def.id) ?? 0) + 1;
+    counts.set(def.id, next);
+    if (next > 1 && !def.repeatable) {
+      throw new CliUsageError(`${def.canonical} cannot be repeated`);
+    }
+  };
+
+  return {
+    takeDashed(tokens) {
+      const taken = takeDashedOption(tokens, definitions);
+      if (taken === undefined) return undefined;
+      note(taken.def);
+      return taken;
+    },
+    takePositional(token) {
+      const def = matchPositionalOption(token, definitions);
+      if (def === undefined) return undefined;
+      note(def);
+      return def;
+    },
+    consumeLeadingPhase(positional) {
+      const phaseDef = definitions.find(
+        (def) => def.id === "phase" && def.form === "positional",
+      );
+      const defaultPhase: RolePhase =
+        phaseDef?.defaultValue === "plan" || phaseDef?.defaultValue === "apply"
+          ? phaseDef.defaultValue
+          : "apply";
+      if (phaseDef === undefined || positional.length === 0) {
+        return defaultPhase;
+      }
+      const token = positional[0]!;
+      // Aliases carry single-token spellings; canonical may be a joint label (plan|apply).
+      if (!phaseDef.aliases.includes(token) && phaseDef.canonical !== token) {
+        return defaultPhase;
+      }
+      positional.shift();
+      note(phaseDef);
+      if (token !== "plan" && token !== "apply") {
+        throw new CliUsageError(`invalid phase token: ${token}`);
+      }
+      return token;
+    },
+    count(id) {
+      return counts.get(id) ?? 0;
+    },
+  };
 }
 
 /** Structured option projection used by help and acceptance tests. */

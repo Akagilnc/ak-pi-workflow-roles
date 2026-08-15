@@ -15552,6 +15552,61 @@ function takeDashedOption(tokens, definitions) {
   }
   return { def: matched.def, value: tokens.shift() };
 }
+function matchPositionalOption(token, definitions) {
+  for (const def of definitions) {
+    if (def.form !== "positional") continue;
+    if (def.canonical === token || def.aliases.includes(token)) {
+      return def;
+    }
+  }
+  return void 0;
+}
+function createTypedOptionConsumer(definitions) {
+  const counts = /* @__PURE__ */ new Map();
+  const note = (def) => {
+    const next = (counts.get(def.id) ?? 0) + 1;
+    counts.set(def.id, next);
+    if (next > 1 && !def.repeatable) {
+      throw new CliUsageError(`${def.canonical} cannot be repeated`);
+    }
+  };
+  return {
+    takeDashed(tokens) {
+      const taken = takeDashedOption(tokens, definitions);
+      if (taken === void 0) return void 0;
+      note(taken.def);
+      return taken;
+    },
+    takePositional(token) {
+      const def = matchPositionalOption(token, definitions);
+      if (def === void 0) return void 0;
+      note(def);
+      return def;
+    },
+    consumeLeadingPhase(positional) {
+      const phaseDef = definitions.find(
+        (def) => def.id === "phase" && def.form === "positional"
+      );
+      const defaultPhase = phaseDef?.defaultValue === "plan" || phaseDef?.defaultValue === "apply" ? phaseDef.defaultValue : "apply";
+      if (phaseDef === void 0 || positional.length === 0) {
+        return defaultPhase;
+      }
+      const token = positional[0];
+      if (!phaseDef.aliases.includes(token) && phaseDef.canonical !== token) {
+        return defaultPhase;
+      }
+      positional.shift();
+      note(phaseDef);
+      if (token !== "plan" && token !== "apply") {
+        throw new CliUsageError(`invalid phase token: ${token}`);
+      }
+      return token;
+    },
+    count(id) {
+      return counts.get(id) ?? 0;
+    }
+  };
+}
 function projectOwnerOptions(owner) {
   return optionsForOwner(owner).map((def) => ({
     id: def.id,
@@ -15613,6 +15668,7 @@ var TAISHI_REQUIRE_ANY_OF, TAISHI_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBA
 var init_option_definitions = __esm({
   "src/public-cli/option-definitions.ts"() {
     "use strict";
+    init_cli_errors();
     TAISHI_REQUIRE_ANY_OF = [
       { mode: "issue", optionIds: ["ticket", "project-root"] }
     ];
@@ -16307,13 +16363,14 @@ function parseJudgeArgv(args) {
   const positional = [];
   const tokens = [...args];
   const definitions = roleOptions("judge");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
       tokens.shift();
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== void 0) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
@@ -16348,13 +16405,14 @@ function parseCoderArgv(args) {
   const positional = [];
   const tokens = [...args];
   const definitions = roleOptions("coder");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
       tokens.shift();
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== void 0) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
@@ -16372,10 +16430,7 @@ function parseCoderArgv(args) {
     }
     positional.push(token);
   }
-  let phase = "apply";
-  if (positional[0] === "plan" || positional[0] === "apply") {
-    phase = positional.shift();
-  }
+  const phase = options.consumeLeadingPhase(positional);
   return {
     phase,
     instruction: positional.join(" "),
@@ -16390,13 +16445,14 @@ function parseFixerArgv(args) {
   const positional = [];
   const tokens = [...args];
   const definitions = roleOptions("fixer");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
       tokens.shift();
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== void 0) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
@@ -16418,10 +16474,7 @@ function parseFixerArgv(args) {
     }
     positional.push(token);
   }
-  let phase = "apply";
-  if (positional[0] === "plan" || positional[0] === "apply") {
-    phase = positional.shift();
-  }
+  const phase = options.consumeLeadingPhase(positional);
   return {
     phase,
     instruction: positional.join(" "),
@@ -16770,13 +16823,14 @@ function parseCollectorArgv(args) {
   const positional = [];
   const tokens = [...args];
   const definitions = roleOptions("collector");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
       tokens.shift();
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== void 0) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
@@ -16990,13 +17044,14 @@ function parseDoctorArgv(args) {
   const positional = [];
   const tokens = [...args];
   const definitions = roleOptions("doctor");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
       tokens.shift();
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== void 0) {
       if (taken.def.id === "issue") {
         if (taken.value === void 0 || taken.value.trim() === "") {
@@ -17217,13 +17272,14 @@ function parseReviewerArgv(args) {
   const positional = [];
   const tokens = [...args];
   const definitions = roleOptions("reviewer");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
       tokens.shift();
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== void 0) {
       if (taken.def.id === "project") {
         project = requireOptionPath(taken.def.canonical, taken.value);
@@ -17337,13 +17393,14 @@ function parseMergerArgv(args) {
   const positional = [];
   const tokens = [...args];
   const definitions = roleOptions("merger");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
       tokens.shift();
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== void 0) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
@@ -17557,6 +17614,7 @@ function parseTaishiArgv(args) {
   const valueLists = /* @__PURE__ */ new Map();
   const tokens = [...args];
   const definitions = roleOptions("taishi");
+  const options = createTypedOptionConsumer(definitions);
   const pushValue = (id, value) => {
     const existing = valueLists.get(id);
     if (existing === void 0) valueLists.set(id, [value]);
@@ -17570,7 +17628,7 @@ function parseTaishiArgv(args) {
       }
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== void 0) {
       if (taken.def.valueMetavar === null) {
         pushValue(taken.def.id, "");
@@ -17621,13 +17679,8 @@ function parseTaishiArgv(args) {
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown taishi option: ${token}`);
     }
-    const positional = definitions.find(
-      (def) => def.form === "positional" && (def.canonical === token || def.aliases.includes(token))
-    );
+    const positional = options.takePositional(token);
     if (positional !== void 0) {
-      if ((valueLists.get(positional.id)?.length ?? 0) > 0) {
-        throw new CliUsageError(`unexpected taishi argument: ${token}`);
-      }
       pushValue(positional.id, "");
       continue;
     }
@@ -26785,9 +26838,9 @@ __export(cli_exports, {
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { join as join23 } from "node:path";
-function takePublicGlobalFlag(argv, index) {
+function takePublicGlobalFlag(argv, index, options) {
   const tokens = argv.slice(index);
-  const taken = takeDashedOption(tokens, PUBLIC_GLOBAL_OPTIONS);
+  const taken = options.takeDashed(tokens);
   if (taken === void 0) return void 0;
   const consumed = argv.length - index - tokens.length;
   if (taken.def.id === "help") {
@@ -26837,13 +26890,14 @@ function parseArgv(argv) {
   let thinking;
   let help = false;
   const positional = [];
+  const globalOptions = createTypedOptionConsumer(PUBLIC_GLOBAL_OPTIONS);
   while (args.length > 0) {
     if (args[0] === "--") {
       args.shift();
       positional.push(...args);
       break;
     }
-    const taken = takePublicGlobalFlag(args, 0);
+    const taken = takePublicGlobalFlag(args, 0, globalOptions);
     if (taken !== void 0) {
       if (taken.flag === "help") {
         help = true;

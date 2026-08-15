@@ -17,6 +17,7 @@ import {
   PUBLIC_ROLE_ARGV,
   runAkRole,
 } from "../../src/public-cli/cli.ts";
+import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   PUBLIC_OPTION_TABLE,
   PUBLIC_ROLE_OPTION_OWNERS,
@@ -25,10 +26,12 @@ import {
   TAISHI_REQUIRE_ANY_OF,
   allRejectedSpellingTokens,
   applyReadmeOptionsSection,
+  createTypedOptionConsumer,
   optionsForOwner,
   projectOwnerOptions,
   renderReadmeOptionsMarkdown,
   type OptionOwner,
+  type PublicOptionDefinition,
   type PublicRoleOptionOwner,
   type TaishiMode,
 } from "../../src/public-cli/option-definitions.ts";
@@ -97,6 +100,149 @@ test("PUBLIC_ROLE_ARGV rows expose the sole option table (no parallel spelling o
     optionsForOwner("global").some(
       (o) => o.canonical === "--help" && o.aliases.includes("-h"),
     ),
+  );
+});
+
+test("shared typed consumer: phase from table aliases/default; repeatable:false rejects duplicates", () => {
+  const isUsage = (error: unknown): boolean =>
+    error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
+
+  // ① Phase resolution consumes the typed phase row — not a hardcoded plan/apply branch.
+  // Synthetic defaultValue "plan" proves the consumer reads the table (production default is apply).
+  const syntheticPhase: PublicOptionDefinition = {
+    id: "phase",
+    owner: "coder",
+    canonical: "plan|apply",
+    aliases: ["plan", "apply"],
+    valueMetavar: null,
+    required: false,
+    repeatable: false,
+    defaultValue: "plan",
+    form: "positional",
+    description: { en: "synthetic", zh: "合成" },
+  };
+  const synthetic = createTypedOptionConsumer([syntheticPhase]);
+  const leading = ["apply", "do work"];
+  assert.equal(synthetic.consumeLeadingPhase(leading), "apply");
+  assert.deepEqual(leading, ["do work"]);
+  assert.equal(synthetic.consumeLeadingPhase(["unrelated"]), "plan");
+  assert.equal(synthetic.consumeLeadingPhase([]), "plan");
+
+  // Production coder/fixer still resolve plan|apply via their table rows.
+  assert.equal(parseCoderArgv(["task"]).phase, "apply");
+  assert.equal(parseCoderArgv(["plan", "task"]).phase, "plan");
+  assert.equal(parseCoderArgv(["apply", "task"]).phase, "apply");
+  assert.equal(parseFixerArgv(["plan", "fix it"]).phase, "plan");
+  assert.equal(parseFixerArgv(["just fix"]).phase, "apply");
+
+  // ③ Non-repeatable dashed options reject a second occurrence on the shared path.
+  const nonRepeatableOwners: Array<{
+    name: string;
+    parse: (args: readonly string[]) => unknown;
+    dup: string[];
+    canonical: string;
+  }> = [
+    {
+      name: "judge/--project",
+      parse: parseJudgeArgv,
+      dup: ["--project", "/a", "--project", "/b", "task"],
+      canonical: "--project",
+    },
+    {
+      name: "coder/--project",
+      parse: parseCoderArgv,
+      dup: ["--project", "/a", "--project", "/b", "task"],
+      canonical: "--project",
+    },
+    {
+      name: "fixer/--project",
+      parse: parseFixerArgv,
+      dup: ["--project", "/a", "--project", "/b", "task"],
+      canonical: "--project",
+    },
+    {
+      name: "reviewer/--base",
+      parse: parseReviewerArgv,
+      dup: ["--base", "main", "--base", "dev", "task"],
+      canonical: "--base",
+    },
+    {
+      name: "doctor/--issue",
+      parse: parseDoctorArgv,
+      dup: ["--issue", "1", "--issue", "2"],
+      canonical: "--issue",
+    },
+    {
+      name: "collector/--pr",
+      parse: parseCollectorArgv,
+      dup: ["--pr", "1", "--pr", "2", "--repo", "acme/x"],
+      canonical: "--pr",
+    },
+    {
+      name: "merger/--project",
+      parse: parseMergerArgv,
+      dup: ["--project", "/a", "--project", "/b", "task"],
+      canonical: "--project",
+    },
+    {
+      name: "taishi/--ticket",
+      parse: parseTaishiArgv,
+      dup: ["--ticket", "1", "--ticket", "2"],
+      canonical: "--ticket",
+    },
+  ];
+  for (const row of nonRepeatableOwners) {
+    assert.throws(
+      () => row.parse(row.dup),
+      (error: unknown) =>
+        isUsage(error)
+        && error instanceof Error
+        && error.message.includes(`${row.canonical} cannot be repeated`),
+      row.name,
+    );
+  }
+
+  // Repeatable options still accept multiple occurrences.
+  const coderMulti = parseCoderArgv([
+    "--attach",
+    "/a",
+    "--attach",
+    "/b",
+    "task",
+  ]);
+  assert.deepEqual(coderMulti.attachmentPaths, ["/a", "/b"]);
+  const reviewerMulti = parseReviewerArgv([
+    "--base",
+    "main",
+    "--authority-ref",
+    "https://example.test/a",
+    "--authority-ref",
+    "https://example.test/b",
+    "task",
+  ]);
+  assert.deepEqual(reviewerMulti.authorityRefs, [
+    "https://example.test/a",
+    "https://example.test/b",
+  ]);
+  const modelGroups = parseTaishiArgv([
+    "--model-groups",
+    "--project-root",
+    "/a",
+    "--project-root",
+    "/b",
+  ]);
+  assert.equal(modelGroups.query, "model-groups");
+  if (modelGroups.query === "model-groups") {
+    assert.deepEqual(modelGroups.projectRoots, ["/a", "/b"]);
+  }
+
+  // Positional non-repeatable (taishi sweep) also goes through the shared path.
+  assert.throws(
+    () => parseTaishiArgv(["sweep", "sweep", "--attach", "/x"]),
+    (error: unknown) =>
+      isUsage(error)
+      && error instanceof Error
+      && error.message.includes("sweep cannot be repeated"),
   );
 });
 

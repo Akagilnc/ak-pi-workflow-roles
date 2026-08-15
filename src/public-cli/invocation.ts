@@ -50,10 +50,10 @@ import { uuidv7 } from "../uuidv7.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   REJECTED_PUBLIC_SPELLINGS,
+  createTypedOptionConsumer,
   evaluateTaishiModeOptionContract,
   optionsForOwner,
   resolveTaishiMode,
-  takeDashedOption,
   type OptionOwner,
   type PublicOptionDefinition,
 } from "./option-definitions.ts";
@@ -458,6 +458,7 @@ export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions("judge");
+  const options = createTypedOptionConsumer(definitions);
 
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
@@ -465,7 +466,7 @@ export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== undefined) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
@@ -507,6 +508,7 @@ export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions("coder");
+  const options = createTypedOptionConsumer(definitions);
 
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
@@ -514,7 +516,7 @@ export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== undefined) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
@@ -533,10 +535,8 @@ export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
     positional.push(token);
   }
 
-  let phase: CoderPhase = "apply";
-  if (positional[0] === "plan" || positional[0] === "apply") {
-    phase = positional.shift() as CoderPhase;
-  }
+  // Phase aliases + default come solely from the typed coder phase row (#342 ①).
+  const phase = options.consumeLeadingPhase(positional);
 
   return {
     phase,
@@ -557,6 +557,7 @@ export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions("fixer");
+  const options = createTypedOptionConsumer(definitions);
 
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
@@ -564,7 +565,7 @@ export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== undefined) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
@@ -587,10 +588,8 @@ export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
     positional.push(token);
   }
 
-  let phase: FixerPhase = "apply";
-  if (positional[0] === "plan" || positional[0] === "apply") {
-    phase = positional.shift() as FixerPhase;
-  }
+  // Phase aliases + default come solely from the typed fixer phase row (#342 ①).
+  const phase = options.consumeLeadingPhase(positional);
 
   return {
     phase,
@@ -1076,13 +1075,14 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions("collector");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
       tokens.shift();
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== undefined) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
@@ -1365,6 +1365,7 @@ export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult 
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions("doctor");
+  const options = createTypedOptionConsumer(definitions);
 
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
@@ -1372,7 +1373,7 @@ export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult 
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== undefined) {
       if (taken.def.id === "issue") {
         if (taken.value === undefined || taken.value.trim() === "") {
@@ -1665,6 +1666,7 @@ export function parseReviewerArgv(
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions("reviewer");
+  const options = createTypedOptionConsumer(definitions);
 
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
@@ -1672,7 +1674,7 @@ export function parseReviewerArgv(
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== undefined) {
       if (taken.def.id === "project") {
         project = requireOptionPath(taken.def.canonical, taken.value);
@@ -1825,6 +1827,7 @@ export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult 
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions("merger");
+  const options = createTypedOptionConsumer(definitions);
 
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
@@ -1832,7 +1835,7 @@ export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult 
       positional.push(...tokens);
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== undefined) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
@@ -2135,6 +2138,8 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
   const valueLists = new Map<string, string[]>();
   const tokens = [...args];
   const definitions = roleOptions("taishi");
+  // Shared typed consumer: dashed + positional take and repeatable (#342 ①③).
+  const options = createTypedOptionConsumer(definitions);
 
   const pushValue = (id: string, value: string): void => {
     const existing = valueLists.get(id);
@@ -2150,7 +2155,7 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
       }
       break;
     }
-    const taken = takeDashedOption(tokens, definitions);
+    const taken = options.takeDashed(tokens);
     if (taken !== undefined) {
       if (taken.def.valueMetavar === null) {
         pushValue(taken.def.id, "");
@@ -2203,16 +2208,9 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown taishi option: ${token}`);
     }
-    // Positional selectors (e.g. sweep) come from the option table — not a parallel list.
-    const positional = definitions.find(
-      (def) =>
-        def.form === "positional"
-        && (def.canonical === token || def.aliases.includes(token)),
-    );
+    // Positional selectors (e.g. sweep) via shared typed consumer — not a parallel list.
+    const positional = options.takePositional(token);
     if (positional !== undefined) {
-      if ((valueLists.get(positional.id)?.length ?? 0) > 0) {
-        throw new CliUsageError(`unexpected taishi argument: ${token}`);
-      }
       pushValue(positional.id, "");
       continue;
     }

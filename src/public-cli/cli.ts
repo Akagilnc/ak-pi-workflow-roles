@@ -35,11 +35,12 @@ import {
   parseTaishiArgv,
 } from "./invocation.ts";
 import {
+  createTypedOptionConsumer,
   optionsForOwner,
   projectOwnerOptions,
   renderOwnerOptionHelpLines,
-  takeDashedOption,
   type PublicOptionDefinition,
+  type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
@@ -97,14 +98,16 @@ type TakenPublicGlobalFlag =
 
 /**
  * If `argv[index]` is a public global flag, describe its span and payload.
- * Spellings come solely from PUBLIC_OPTION_TABLE.global (#342).
+ * Spellings + repeatable come solely from PUBLIC_OPTION_TABLE.global via the
+ * shared typed consumer (#342).
  */
 function takePublicGlobalFlag(
   argv: readonly string[],
   index: number,
+  options: TypedOptionConsumer,
 ): TakenPublicGlobalFlag | undefined {
   const tokens = argv.slice(index);
-  const taken = takeDashedOption(tokens as string[], PUBLIC_GLOBAL_OPTIONS);
+  const taken = options.takeDashed(tokens as string[]);
   if (taken === undefined) return undefined;
   const consumed = argv.length - index - tokens.length;
   if (taken.def.id === "help") {
@@ -230,17 +233,18 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
   let thinking: PublicThinkingLevel | undefined;
   let help = false;
   const positional: string[] = [];
+  const globalOptions = createTypedOptionConsumer(PUBLIC_GLOBAL_OPTIONS);
 
   // Global flags may appear before or after the subcommand
   // (`ak-role --model x roles` and `ak-role roles --model x`).
-  // Grammar authority: takePublicGlobalFlag above.
+  // Grammar authority: shared typed consumer over PUBLIC_OPTION_TABLE.global.
   while (args.length > 0) {
     if (args[0] === "--") {
       args.shift();
       positional.push(...args);
       break;
     }
-    const taken = takePublicGlobalFlag(args, 0);
+    const taken = takePublicGlobalFlag(args, 0, globalOptions);
     if (taken !== undefined) {
       if (taken.flag === "help") {
         help = true;
