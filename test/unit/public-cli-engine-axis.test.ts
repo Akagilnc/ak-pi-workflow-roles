@@ -16,6 +16,7 @@ import test from "node:test";
 import {
   resolveEngineMaterialPath,
 } from "../../src/package-resources/engine-material.ts";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   loadPublicCliConfig,
@@ -34,6 +35,20 @@ import {
   type AdmittedJudgeInvocation,
 } from "../../src/public-cli/invocation.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+
+/** Read the durable invocation identity page for a public Judge run (#358). */
+function readJudgeInvocation(
+  home: string,
+  bookKey: string,
+  runId: string,
+): Record<string, unknown> {
+  return JSON.parse(
+    readFileSync(
+      join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`, "invocation.json"),
+      "utf8",
+    ),
+  ) as Record<string, unknown>;
+}
 
 /** Frozen baseline golden: Judge activation argv + session initial material @ 3aec6621. */
 const BASELINE_GOLDEN_PATH = join(
@@ -335,6 +350,7 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
     const materialKimi = resolveEngineMaterialPath(packageRoot, "kimi");
     await access(materialCursor);
     await access(materialKimi);
+    const bookKey = resolveBookKeyFromGit(project);
 
     // Persistent engine alone.
     {
@@ -373,6 +389,9 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
       const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
       assertEngineCoordinatesInPrompt(capturedPrompt, "cursor", materialCursor);
       assertNoEngineFlagsInArgv(capturedArgs!);
+      // #358 mechanical provenance: selected engine lands on the identity page.
+      const invocation = readJudgeInvocation(home, bookKey, "engine-persist-001");
+      assert.equal(invocation.engine, "cursor");
     }
 
     // Invocation --engine overrides persistent.
@@ -412,6 +431,51 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
       // Override must not keep the persistent engine material path.
       assert.equal(capturedPrompt.includes(materialCursor), false);
       assertNoEngineFlagsInArgv(capturedArgs!);
+      // #358 mechanical provenance: override engine is the recorded identity.
+      const invocation = readJudgeInvocation(home, bookKey, "engine-invoke-001");
+      assert.equal(invocation.engine, "kimi");
+    }
+
+    // No engine selected → identity page keeps engine key absent (shape unchanged).
+    {
+      const unset = await runAkRole(
+        ["config", "unset-engine", "judge"],
+        { packageRoot, home, io: captureIo().io },
+      );
+      assert.equal(unset.exitCode, 0);
+      let capturedArgs: string[] | undefined;
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        ["judge", "--project", project, "engine absent path"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "engine-none-001",
+          credentials,
+          io,
+          piRunner: async (args) => {
+            capturedArgs = [...args];
+            return {
+              code: 1,
+              stderr: "stop after capture",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.notEqual(result.exitCode, 2, stderr.join(""));
+      assert.equal(
+        Array.isArray(capturedArgs),
+        true,
+        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+      );
+      const invocation = readJudgeInvocation(home, bookKey, "engine-none-001");
+      assert.equal("engine" in invocation, false);
+      // Case remains readable at the same identity seam.
+      assert.equal(invocation.role, "judge");
+      assert.equal(invocation.runId, "engine-none-001");
     }
 
     // Illegal --engine → structural reject (exit 2), not role submission.
