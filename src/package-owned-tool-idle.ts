@@ -29,13 +29,13 @@ export const PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE = "AK_PACKAGE_OWNED_TOOL_IDLE_
  * - ak_judge_output / ak_reviewer_output / ak_doctor_output → yes (compliance child)
  * - ak_coder_output / ak_fixer_output / ak_collector_output / ak_merger_output → no
  */
-export const PACKAGE_OWNED_TOOLS_WITH_COMPLIANCE_STREAM_IDLE_OWNER = Object.freeze([
+const PACKAGE_OWNED_TOOLS_WITH_COMPLIANCE_STREAM_IDLE_OWNER = Object.freeze([
   JUDGE_OUTPUT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
   DOCTOR_OUTPUT_TOOL_NAME,
 ] as const);
 
-export function hasComplianceStreamIdleOwner(toolName: string): boolean {
+function hasComplianceStreamIdleOwner(toolName: string): boolean {
   return (PACKAGE_OWNED_TOOLS_WITH_COMPLIANCE_STREAM_IDLE_OWNER as readonly string[])
     .includes(toolName);
 }
