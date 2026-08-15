@@ -61,8 +61,157 @@ export type PublicOptionDefinition = {
   readonly exclusiveWith?: readonly string[];
   /** Per-mode maximum occurrences (issue `--project-root` ≤ 1). */
   readonly maxCountByMode?: Readonly<Partial<Record<TaishiMode, number>>>;
+  /**
+   * When this option (or positional) is present it activates this mode.
+   * Mode resolution consumes only this field — parsers must not restate selectors.
+   */
+  readonly selectsMode?: TaishiMode;
   readonly description: { readonly en: string; readonly zh: string };
 };
+
+/**
+ * Cross-field at-least-one rules for taishi modes (cannot hang on one option row).
+ * Parser-consumed sole source together with per-option modes/required/exclusive/max (#342).
+ */
+export type TaishiRequireAnyOfRule = {
+  readonly mode: TaishiMode;
+  readonly optionIds: readonly string[];
+};
+
+/** Issue face: ticket | project-root at least one. */
+export const TAISHI_REQUIRE_ANY_OF = [
+  { mode: "issue", optionIds: ["ticket", "project-root"] },
+] as const satisfies readonly TaishiRequireAnyOfRule[];
+
+/** Residual taishi mode when no `selectsMode` option is present. */
+export const TAISHI_DEFAULT_MODE: TaishiMode = "issue";
+
+/**
+ * Resolve taishi mode from collected option ids via `selectsMode` on the table.
+ * Deterministic preference when multiple selectors co-occur; exclusiveWith then rejects.
+ */
+export function resolveTaishiMode(
+  presentOptionIds: ReadonlySet<string>,
+): TaishiMode {
+  const selected = new Set<TaishiMode>();
+  for (const def of optionsForOwner("taishi")) {
+    if (def.selectsMode === undefined) continue;
+    if (presentOptionIds.has(def.id)) selected.add(def.selectsMode);
+  }
+  if (selected.size === 0) return TAISHI_DEFAULT_MODE;
+  if (selected.has("cohort")) return "cohort";
+  if (selected.has("model-groups")) return "model-groups";
+  if (selected.has("sweep")) return "sweep";
+  if (selected.has("issue")) return "issue";
+  return TAISHI_DEFAULT_MODE;
+}
+
+export type TaishiOptionCounts = ReadonlyMap<string, number>;
+
+/**
+ * Evaluate taishi cross-field / cross-mode structured contracts from the sole typed table.
+ * Covers: modes admission, requiredInModes, exclusiveWith, maxCountByMode, TAISHI_REQUIRE_ANY_OF.
+ */
+export function evaluateTaishiModeOptionContract(
+  mode: TaishiMode,
+  counts: TaishiOptionCounts,
+): { ok: true } | { ok: false; message: string } {
+  const definitions = optionsForOwner("taishi");
+  const byId = new Map(definitions.map((def) => [def.id, def] as const));
+
+  for (const def of definitions) {
+    const count = counts.get(def.id) ?? 0;
+    if (count === 0 || def.exclusiveWith === undefined) continue;
+    for (const otherId of def.exclusiveWith) {
+      if ((counts.get(otherId) ?? 0) === 0) continue;
+      const other = byId.get(otherId);
+      return {
+        ok: false,
+        message: `taishi accepts only one of ${def.canonical} / ${other?.canonical ?? otherId}`,
+      };
+    }
+  }
+
+  for (const def of definitions) {
+    const count = counts.get(def.id) ?? 0;
+    if (count === 0) continue;
+    if (def.modes !== undefined && !def.modes.includes(mode)) {
+      // Sweep face historically names the attach carrier on mix-face rejects.
+      if (mode === "sweep") {
+        return {
+          ok: false,
+          message: `taishi sweep --attach cannot combine with ${def.canonical}`,
+        };
+      }
+      return {
+        ok: false,
+        message: `taishi ${mode} does not accept ${def.canonical}`,
+      };
+    }
+    const max = def.maxCountByMode?.[mode];
+    if (max !== undefined && count > max) {
+      return {
+        ok: false,
+        message:
+          max === 1
+            ? `taishi ${mode} accepts at most one ${def.canonical}`
+            : `taishi ${mode} accepts at most ${max} ${def.canonical}`,
+      };
+    }
+  }
+
+  const missingRequired: PublicOptionDefinition[] = [];
+  for (const def of definitions) {
+    if (def.requiredInModes === undefined) continue;
+    if (!def.requiredInModes.includes(mode)) continue;
+    if ((counts.get(def.id) ?? 0) === 0) missingRequired.push(def);
+  }
+  if (missingRequired.length > 0) {
+    if (mode === "cohort") {
+      return {
+        ok: false,
+        message:
+          "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]",
+      };
+    }
+    if (mode === "model-groups") {
+      return {
+        ok: false,
+        message:
+          "usage: ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]",
+      };
+    }
+    return {
+      ok: false,
+      message: `usage: ak-role taishi ${mode} requires ${missingRequired
+        .map((def) => def.canonical)
+        .join(" ")}`,
+    };
+  }
+
+  for (const rule of TAISHI_REQUIRE_ANY_OF) {
+    if (rule.mode !== mode) continue;
+    const hit = rule.optionIds.some((id) => (counts.get(id) ?? 0) > 0);
+    if (hit) continue;
+    if (mode === "issue") {
+      // Bare-usage surface names issue faces and the sweep attach carrier.
+      return {
+        ok: false,
+        message:
+          "usage: ak-role taishi ((--ticket <N> | --project-root <P>) | [sweep] --attach <sweep.json> | --cohort ... | --model-groups ...)",
+      };
+    }
+    const flags = rule.optionIds
+      .map((id) => byId.get(id)?.canonical ?? id)
+      .join(" | ");
+    return {
+      ok: false,
+      message: `usage: ak-role taishi ${mode} requires one of ${flags}`,
+    };
+  }
+
+  return { ok: true };
+}
 
 /**
  * Rejected / internal spellings retained by parsers for explicit refusal.
@@ -496,6 +645,7 @@ const TAISHI_OPTIONS = [
     repeatable: false,
     form: "positional",
     modes: ["sweep"],
+    selectsMode: "sweep",
     description: {
       en: "Optional sweep mode token (at most once; no other positionals).",
       zh: "可选 sweep 模式词元（至多一次；不得夹带其他 positional）。",
@@ -543,6 +693,7 @@ const TAISHI_OPTIONS = [
     repeatable: true,
     form: "option",
     modes: ["sweep"],
+    selectsMode: "sweep",
     description: {
       en: "Sweep-only attachment path(s); payload is the attachment body (exactly one on the run path).",
       zh: "仅 sweep 模式的附件路径；载荷为附件正文（运行路径上恰好一个）。",
@@ -559,6 +710,7 @@ const TAISHI_OPTIONS = [
     form: "option",
     modes: ["cohort"],
     exclusiveWith: ["model-groups"],
+    selectsMode: "cohort",
     description: {
       en: "Select cohort mode (mutually exclusive with --model-groups).",
       zh: "选择 cohort 模式（与 --model-groups 互斥）。",
@@ -575,6 +727,7 @@ const TAISHI_OPTIONS = [
     form: "option",
     modes: ["model-groups"],
     exclusiveWith: ["cohort"],
+    selectsMode: "model-groups",
     description: {
       en: "Select model-groups mode (mutually exclusive with --cohort).",
       zh: "选择 model-groups 模式（与 --cohort 互斥）。",
@@ -764,6 +917,7 @@ export type StructuredOptionProjection = {
   readonly requiredInModes?: readonly TaishiMode[];
   readonly exclusiveWith?: readonly string[];
   readonly maxCountByMode?: Readonly<Partial<Record<TaishiMode, number>>>;
+  readonly selectsMode?: TaishiMode;
   readonly description: { readonly en: string; readonly zh: string };
 };
 
@@ -791,6 +945,7 @@ export function projectOwnerOptions(
     ...(def.maxCountByMode === undefined
       ? {}
       : { maxCountByMode: def.maxCountByMode }),
+    ...(def.selectsMode === undefined ? {} : { selectsMode: def.selectsMode }),
     description: def.description,
   }));
 }
