@@ -28,11 +28,17 @@ export default function auditorRpcExtension(pi: ExtensionAPI) {
       const output = createAssistantMessageEventStream();
       const socket = createConnection(config.socketPath);
       let buffer = "";
+      let settled = false;
       socket.setEncoding("utf8");
-      const fail = (message: string) => {
-        const error: AssistantMessage = { role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "error", errorMessage: message, timestamp: Date.now() };
-        output.push({ type: "error", reason: "error", error });
+      const fail = (cause: { name?: string; message: string }, aborted = true) => {
+        if (settled) return;
+        settled = true;
+        const message = cause.name && cause.name !== "Error" ? `${cause.name}: ${cause.message}` : cause.message;
+        const error: AssistantMessage = { role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: aborted ? "aborted" : "error", errorMessage: message, timestamp: Date.now() };
+        output.push({ type: "error", reason: aborted ? "aborted" : "error", error });
       };
+      const abort = () => { fail({ name: "AbortError", message: String(request?.signal?.reason instanceof Error ? request.signal.reason.message : request?.signal?.reason ?? "provider request aborted") }, true); socket.destroy(); };
+      if (request?.signal?.aborted) abort(); else request?.signal?.addEventListener("abort", abort, { once: true });
       socket.on("connect", () => {
         const { signal: _signal, ...serializable } = request ?? {};
         socket.write(`${JSON.stringify({ type: "stream", context, request: serializable })}\n`);
@@ -45,11 +51,12 @@ export default function auditorRpcExtension(pi: ExtensionAPI) {
           const envelope = JSON.parse(buffer.slice(0, i)) as any;
           buffer = buffer.slice(i + 1);
           if (envelope.type === "event") output.push(envelope.event);
-          else if (envelope.type === "result") output.end(envelope.message);
-          else if (envelope.type === "error") fail(envelope.message);
+          else if (envelope.type === "result") { settled = true; request?.signal?.removeEventListener("abort", abort); output.end(envelope.message); }
+          else if (envelope.type === "error") fail(envelope.error);
         }
       });
-      socket.on("error", (error) => fail(error.message));
+      socket.on("error", (error) => fail(error));
+      socket.on("close", () => { request?.signal?.removeEventListener("abort", abort); if (!settled) fail({ name: "Error", message: "auditor provider bridge disconnected" }); });
       return output;
     },
     streamSimple(model, context, request) { return this.stream(model, context, request as any); },

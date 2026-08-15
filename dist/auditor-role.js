@@ -14,7 +14,7 @@ export async function runAuditorRole(options) {
     if (parentFile === undefined)
         throw new Error(`${options.roleLabel} requires a durable parent session`);
     const sessionDir = resolve(options.context.sessionManager.getSessionDir(), "auditor-roles");
-    const nonce = `${Date.now()}-${process.pid}`;
+    const nonce = `${Date.now()}-${process.pid}-${randomUUID()}`;
     const configPath = join(sessionDir, `config-${nonce}.json`);
     const socketPath = join(tmpdir(), `ak-aud-${process.pid}-${randomUUID()}.sock`);
     await mkdir(sessionDir, { recursive: true });
@@ -22,23 +22,23 @@ export async function runAuditorRole(options) {
     const provider = typeof options.context.modelRegistry.getProvider === "function" ? options.context.modelRegistry.getProvider(model.provider) : { id: model.provider, name: options.roleLabel, auth: {}, getModels: () => [dispatch.model], stream() { throw new Error("host provider dispatch is unavailable"); }, streamSimple() { throw new Error("host provider dispatch is unavailable"); } };
     if (provider === undefined)
         throw new Error(`${options.roleLabel} provider not found: ${model.provider}`);
-    const bridge = await createAuditorProviderBridge({ socketPath, provider, model: dispatch.model, auth: dispatch.auth });
-    const childModel = {
-        id: AUDITOR_BRIDGE_MODEL_ID,
-        provider: AUDITOR_BRIDGE_PROVIDER_ID,
-        name: "Private auditor bridge",
-        api: dispatch.model.api,
-        reasoning: dispatch.model.reasoning,
-        input: dispatch.model.input,
-        cost: dispatch.model.cost,
-        contextWindow: dispatch.model.contextWindow,
-        maxTokens: dispatch.model.maxTokens,
-    };
-    await writeFile(configPath, `${JSON.stringify({ systemPrompt: options.systemPrompt, model: childModel, socketPath, tool: { name: options.tool.name, description: options.tool.description, parameters: options.tool.parameters } })}\n`, "utf8");
-    const extensionPath = fileURLToPath(new URL("../extensions/auditor-rpc.ts", import.meta.url));
-    let result;
+    let bridge;
     try {
-        result = await runMachinePiRpc({
+        bridge = await createAuditorProviderBridge({ socketPath, provider, model: dispatch.model, auth: dispatch.auth, ...(options.signal === undefined ? {} : { signal: options.signal }) });
+        const childModel = {
+            id: AUDITOR_BRIDGE_MODEL_ID,
+            provider: AUDITOR_BRIDGE_PROVIDER_ID,
+            name: "Private auditor bridge",
+            api: dispatch.model.api,
+            reasoning: dispatch.model.reasoning,
+            input: dispatch.model.input,
+            cost: dispatch.model.cost,
+            contextWindow: dispatch.model.contextWindow,
+            maxTokens: dispatch.model.maxTokens,
+        };
+        await writeFile(configPath, `${JSON.stringify({ systemPrompt: options.systemPrompt, model: childModel, socketPath, tool: { name: options.tool.name, description: options.tool.description, parameters: options.tool.parameters } })}\n`, "utf8");
+        const extensionPath = fileURLToPath(new URL("../extensions/auditor-rpc.ts", import.meta.url));
+        const result = await runMachinePiRpc({
             runtime: machinePiRuntimeFromActivation(),
             env: { ...process.env, AK_AUDITOR_RPC_CONFIG: configPath },
             cwd: options.context.cwd ?? process.cwd(),
@@ -52,11 +52,15 @@ export async function runAuditorRole(options) {
             decisionToolName: options.tool.name,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
+        if (result.decision === undefined || result.response === undefined) {
+            const response = result.response;
+            if (typeof response?.errorMessage === "string" && response.errorMessage !== "")
+                throw new Error(response.errorMessage);
+            throw new Error(`${options.roleLabel} exited without a readable decision receipt${result.stderr === "" ? "" : `: ${result.stderr}`}`);
+        }
+        return { decision: result.decision, response: result.response };
     }
     finally {
-        await bridge.close();
+        await bridge?.close();
     }
-    if (result.decision === undefined || result.response === undefined)
-        throw new Error(`${options.roleLabel} exited without a readable decision receipt${result.stderr === "" ? "" : `: ${result.stderr}`}`);
-    return { decision: result.decision, response: result.response };
 }

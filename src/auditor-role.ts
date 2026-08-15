@@ -17,15 +17,17 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
   const parentFile = options.context.sessionManager?.getSessionFile();
   if (parentFile === undefined) throw new Error(`${options.roleLabel} requires a durable parent session`);
   const sessionDir = resolve(options.context.sessionManager.getSessionDir(), "auditor-roles");
-  const nonce = `${Date.now()}-${process.pid}`;
+  const nonce = `${Date.now()}-${process.pid}-${randomUUID()}`;
   const configPath = join(sessionDir, `config-${nonce}.json`);
   const socketPath = join(tmpdir(), `ak-aud-${process.pid}-${randomUUID()}.sock`);
   await mkdir(sessionDir, { recursive: true });
   const dispatch = await prepareComplianceDispatch(model, options.context, options.roleLabel);
   const provider = typeof options.context.modelRegistry.getProvider === "function" ? options.context.modelRegistry.getProvider(model.provider) : { id: model.provider, name: options.roleLabel, auth: {}, getModels: () => [dispatch.model], stream() { throw new Error("host provider dispatch is unavailable"); }, streamSimple() { throw new Error("host provider dispatch is unavailable"); } };
   if (provider === undefined) throw new Error(`${options.roleLabel} provider not found: ${model.provider}`);
-  const bridge = await createAuditorProviderBridge({ socketPath, provider, model: dispatch.model, auth: dispatch.auth });
-  const childModel = {
+  let bridge: Awaited<ReturnType<typeof createAuditorProviderBridge>> | undefined;
+  try {
+    bridge = await createAuditorProviderBridge({ socketPath, provider, model: dispatch.model, auth: dispatch.auth, ...(options.signal === undefined ? {} : { signal: options.signal }) });
+    const childModel = {
     id: AUDITOR_BRIDGE_MODEL_ID,
     provider: AUDITOR_BRIDGE_PROVIDER_ID,
     name: "Private auditor bridge",
@@ -36,10 +38,9 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
     contextWindow: dispatch.model.contextWindow,
     maxTokens: dispatch.model.maxTokens,
   };
-  await writeFile(configPath, `${JSON.stringify({ systemPrompt: options.systemPrompt, model: childModel, socketPath, tool: { name: options.tool.name, description: options.tool.description, parameters: options.tool.parameters } })}\n`, "utf8");
-  const extensionPath = fileURLToPath(new URL("../extensions/auditor-rpc.ts", import.meta.url));
-  let result;
-  try { result = await runMachinePiRpc({
+    await writeFile(configPath, `${JSON.stringify({ systemPrompt: options.systemPrompt, model: childModel, socketPath, tool: { name: options.tool.name, description: options.tool.description, parameters: options.tool.parameters } })}\n`, "utf8");
+    const extensionPath = fileURLToPath(new URL("../extensions/auditor-rpc.ts", import.meta.url));
+    const result = await runMachinePiRpc({
     runtime: machinePiRuntimeFromActivation(),
     env: { ...process.env, AK_AUDITOR_RPC_CONFIG: configPath },
     cwd: options.context.cwd ?? process.cwd(),
@@ -52,7 +53,14 @@ export async function runAuditorRole(options: { systemPrompt: string; serialized
     ],
     decisionToolName: options.tool.name,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
-  }); } finally { await bridge.close(); }
-  if (result.decision === undefined || result.response === undefined) throw new Error(`${options.roleLabel} exited without a readable decision receipt${result.stderr === "" ? "" : `: ${result.stderr}`}`);
-  return { decision: result.decision, response: result.response as unknown as AssistantMessage };
+    });
+    if (result.decision === undefined || result.response === undefined) {
+      const response = result.response as unknown as { errorMessage?: unknown } | undefined;
+      if (typeof response?.errorMessage === "string" && response.errorMessage !== "") throw new Error(response.errorMessage);
+      throw new Error(`${options.roleLabel} exited without a readable decision receipt${result.stderr === "" ? "" : `: ${result.stderr}`}`);
+    }
+    return { decision: result.decision, response: result.response as unknown as AssistantMessage };
+  } finally {
+    await bridge?.close();
+  }
 }

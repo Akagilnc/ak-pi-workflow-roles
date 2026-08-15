@@ -340,10 +340,10 @@ function assertJsonAbortFacts(
       (event) =>
         event.type === "message_end" &&
         event.message?.role === "assistant" &&
-        (event.message.stopReason === "error" || event.message.stopReason === "aborted"),
+        event.message.stopReason === "aborted",
     ),
     true,
-    `${label} stops with the provider's typed error/abort reason`,
+    `${label} stops with typed aborted reason`,
   );
 }
 
@@ -458,7 +458,7 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
       (event) =>
         event.type === "message_end" &&
         event.message?.role === "assistant" &&
-        (event.message.stopReason === "error" || event.message.stopReason === "aborted"),
+        event.message.stopReason === "aborted",
     ),
     true,
   );
