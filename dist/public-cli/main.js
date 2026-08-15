@@ -18448,11 +18448,14 @@ var init_tool_execution_observation = __esm({
 });
 
 // src/package-owned-tool-idle.ts
+import { AsyncLocalStorage } from "node:async_hooks";
+var packageOwnedToolIdleScope;
 var init_package_owned_tool_idle = __esm({
   "src/package-owned-tool-idle.ts"() {
     "use strict";
     init_stream_idle_guard();
     init_tool_execution_observation();
+    packageOwnedToolIdleScope = new AsyncLocalStorage();
   }
 });
 
@@ -18524,6 +18527,7 @@ var init_compliance_transport = __esm({
     init_build();
     init_evidence_child_executor();
     init_auditor_dossier_tool();
+    init_package_owned_tool_idle();
     nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
     decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
     complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
