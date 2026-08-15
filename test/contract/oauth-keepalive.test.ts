@@ -442,6 +442,78 @@ test("#351 single-flight: in-flight refresh causes second tick to skip", async (
   keepalive.stop();
 });
 
+test(
+  "#351 restart single-flight: stop→start keeps max concurrent refresh === 1 across generations",
+  async () => {
+    let releaseOld!: () => void;
+    const oldHold = {
+      promise: new Promise<void>((resolve) => {
+        releaseOld = resolve;
+      }),
+    };
+    let active = 0;
+    let maxConcurrent = 0;
+    const refreshStarted: number[] = [];
+    const refreshSettled: number[] = [];
+    let callIndex = 0;
+
+    const { scheduler, ticks } = manualScheduler();
+    const keepalive = createOAuthKeepalive({
+      providers: ["kimi-coding"],
+      scheduler,
+    });
+
+    const modelRegistry = {
+      async refresh(_options?: { signal?: AbortSignal }) {
+        // Ignore abort: models the slow refresh that outlives stop()/generation change.
+        const id = callIndex++;
+        refreshStarted.push(id);
+        active += 1;
+        maxConcurrent = Math.max(maxConcurrent, active);
+        try {
+          if (id === 0) await oldHold.promise;
+          return { aborted: false, errors: new Map<string, Error>() };
+        } finally {
+          active -= 1;
+          refreshSettled.push(id);
+        }
+      },
+    };
+
+    keepalive.start({ modelRegistry });
+    assert.equal(ticks.length, 1);
+
+    // Generation-0 tick: refresh starts and is held open (ignores abort).
+    ticks[0]!();
+    await flushEventLoopTurns(5);
+    assert.deepEqual(refreshStarted, [0]);
+    assert.equal(active, 1);
+
+    // stop→start: new generation interval; old refresh still unsettled.
+    keepalive.stop();
+    keepalive.start({ modelRegistry });
+    assert.equal(ticks.length, 1, "restart must schedule exactly one new interval");
+
+    // New-generation tick while old refresh still in flight — must be skipped.
+    ticks[0]!();
+    await flushEventLoopTurns(5);
+    assert.deepEqual(refreshStarted, [0], "new tick must not start while old refresh unsettled");
+    assert.equal(maxConcurrent, 1);
+
+    // Old call settles; next tick may run.
+    releaseOld();
+    await flushEventLoopTurns(10);
+    assert.deepEqual(refreshSettled, [0]);
+
+    ticks[0]!();
+    await flushEventLoopTurns(10);
+    assert.deepEqual(refreshStarted, [0, 1], "post-settle tick must run");
+    assert.equal(maxConcurrent, 1, "instance concurrent refresh must stay ≤ 1 across restart");
+
+    keepalive.stop();
+  },
+);
+
 test("#351 error path: refresh rejection emits one warning with provider + error class; interval continues", async () => {
   const warnings: string[] = [];
   const originalWarn = console.warn;
@@ -611,5 +683,47 @@ test(
         },
       );
     });
+  },
+);
+
+test(
+  "#351 setting whitespace: padded provider id is normalized into refresh providers",
+  async () => {
+    await withHermeticHome(
+      { prefix: "ak-oauth-keepalive-ws-" },
+      async ({ agentDir }) => {
+        await writeFile(
+          join(agentDir, OAUTH_KEEPALIVE_SETTING_FILENAME),
+          `${JSON.stringify({ providers: ["  custom-oauth  "] })}\n`,
+          "utf8",
+        );
+        const providers = readOAuthKeepaliveProviders();
+        assert.deepEqual(
+          [...providers],
+          ["custom-oauth"],
+          "setting reader must return trimmed provider ids",
+        );
+
+        const { scheduler, ticks } = manualScheduler();
+        const seenProviders: string[][] = [];
+        const keepalive = createOAuthKeepalive({ providers, scheduler });
+        keepalive.start({
+          modelRegistry: {
+            async refresh(options) {
+              seenProviders.push([...(options?.providers ?? [])]);
+              return { aborted: false, errors: new Map<string, Error>() };
+            },
+          },
+        });
+
+        await fireTick(ticks, 0);
+        assert.deepEqual(
+          seenProviders,
+          [["custom-oauth"]],
+          "refresh must receive normalized provider ids from the setting entry",
+        );
+        keepalive.stop();
+      },
+    );
   },
 );
