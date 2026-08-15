@@ -16380,18 +16380,21 @@ async function writeRoleInvocationLedger(source, role, effectiveModel) {
     "utf8"
   );
 }
-async function recordEffectiveInvocationModel(runDirectory, model) {
+async function recordEffectiveInvocationModel(runDirectory, model, engine) {
   const ledgerPath = join6(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile4(ledgerPath, "utf8"));
-  const next = {
-    ...current,
-    provider: model.provider,
-    model: model.model
-  };
-  if (model.thinking === void 0) {
-    delete next.thinking;
-  } else {
-    next.thinking = model.thinking;
+  const next = { ...current };
+  if (model !== void 0) {
+    next.provider = model.provider;
+    next.model = model.model;
+    if (model.thinking === void 0) {
+      delete next.thinking;
+    } else {
+      next.thinking = model.thinking;
+    }
+  }
+  if (engine !== void 0) {
+    next.engine = engine;
   }
   await writeFile2(
     ledgerPath,
@@ -18629,9 +18632,13 @@ async function markRunAdmitted(admitted) {
     ...admitted.role === "coder" || admitted.role === "fixer" ? { phase: admitted.phase } : {}
   });
 }
-async function markRunRunning(runDirectory, effectiveModel) {
-  if (effectiveModel !== void 0) {
-    await recordEffectiveInvocationModel(runDirectory, effectiveModel);
+async function markRunRunning(runDirectory, effectiveModel, effectiveEngine) {
+  if (effectiveModel !== void 0 || effectiveEngine !== void 0) {
+    await recordEffectiveInvocationModel(
+      runDirectory,
+      effectiveModel,
+      effectiveEngine
+    );
   }
   const current = await readRoleRunState(runDirectory);
   if (current === void 0) {
@@ -23742,7 +23749,7 @@ async function presentControlledFailure6(admitted, failureInput, io) {
   };
 }
 async function dispatchAdmittedJudge(input) {
-  const { admitted, env, io, extraArgs, lease } = input;
+  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -23755,7 +23762,11 @@ async function dispatchAdmittedJudge(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(
+      admitted.runDirectory,
+      env.model,
+      effectiveEngine
+    );
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -23909,7 +23920,9 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     },
     io,
     extraArgs,
-    lease
+    lease,
+    // #358: only initial Judge dispatch records mechanical engine provenance.
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 async function runPublicResume(argv, env, io) {
