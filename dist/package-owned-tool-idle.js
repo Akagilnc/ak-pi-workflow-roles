@@ -53,8 +53,8 @@ function isPackageOwnedToolActivityUpdate(partialResult) {
 }
 /**
  * #339: suspend the active package-owned execute idle for one real compliance
- * audit await. Nested suspensions are depth-counted. No-op outside a wrapped
- * package-owned execute. Does not invent a second timeout or retry layer.
+ * audit await. Single-layer only — production has one runComplianceAudit seam.
+ * No-op outside a wrapped package-owned execute. No second timeout or retry.
  */
 export async function withPackageOwnedToolIdleSuspended(run) {
     const scope = packageOwnedToolIdleScope.getStore();
@@ -83,7 +83,7 @@ export function wrapPackageOwnedToolDefinition(tool) {
         const onUpdate = args[3];
         return new Promise((resolve, reject) => {
             let settled = false;
-            let suspensionDepth = 0;
+            let suspended = false;
             let idle = createStreamIdleGuard({
                 idleTimeoutMs: PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
             });
@@ -101,23 +101,17 @@ export function wrapPackageOwnedToolDefinition(tool) {
             idle.signal.addEventListener("abort", onIdle, { once: true });
             const suspension = {
                 suspend() {
-                    if (settled)
+                    if (settled || suspended)
                         return;
-                    suspensionDepth += 1;
-                    if (suspensionDepth !== 1)
-                        return;
+                    suspended = true;
                     // ADR 0059 owns the audit interval — drop this layer until audit returns.
                     idle.signal.removeEventListener("abort", onIdle);
                     idle.dispose();
                 },
                 resume() {
-                    if (settled)
+                    if (settled || !suspended)
                         return;
-                    if (suspensionDepth === 0)
-                        return;
-                    suspensionDepth -= 1;
-                    if (suspensionDepth !== 0)
-                        return;
+                    suspended = false;
                     // Fresh single-layer silence window for post-audit work (e.g. cleanup).
                     idle = createStreamIdleGuard({
                         idleTimeoutMs: PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,

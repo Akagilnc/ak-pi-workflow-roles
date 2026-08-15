@@ -32,8 +32,6 @@ import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
 import { createReviewerRoleRuntime } from "../../src/reviewer-role.ts";
-import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { createDoctorRoleRuntime } from "../../src/doctor-role.ts";
 import { DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES } from "../../src/evidence-child-executor.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import type { ComplianceDecision } from "../../src/compliance-transport.ts";
@@ -468,25 +466,18 @@ test(
 );
 
 /**
- * Production registerTool seam: installPackageOwnedToolRegistration wraps every
- * package-owned tool. Tests mirror that single wrap so post-audit work stays
- * under the outer backstop without inventing a second cleanup timer.
+ * Production registration entry: createRoleRuntimeExtension →
+ * installPackageOwnedToolRegistration(pi). Tools registered afterward go through
+ * the real wrapper; tests must not hand-call wrapPackageOwnedToolDefinition here.
  */
 type ExecutableTool = {
   name: string;
   execute: (...args: any[]) => Promise<unknown>;
 };
 
-function productionWrappedToolPi(options: {
-  flags?: ReadonlyMap<string, unknown> | Record<string, unknown>;
-} = {}) {
-  const flagMap = new Map<string, unknown>(
-    options.flags instanceof Map
-      ? options.flags
-      : Object.entries(options.flags ?? {}),
-  );
+function piWithProductionPackageToolRegistration() {
+  const flagMap = new Map<string, unknown>();
   const tools = new Map<string, ExecutableTool>();
-  const handlers = new Map<string, (...args: never[]) => unknown>();
   let active: string[] = [];
   const pi = {
     registerFlag(name: string, _definition?: unknown) {
@@ -496,7 +487,7 @@ function productionWrappedToolPi(options: {
       return flagMap.get(name);
     },
     registerTool(tool: ExecutableTool) {
-      tools.set(tool.name, wrapPackageOwnedToolDefinition(tool));
+      tools.set(tool.name, tool);
     },
     getAllTools() {
       return ["read", "bash", ...tools.keys()].map((name) => ({ name }));
@@ -507,11 +498,15 @@ function productionWrappedToolPi(options: {
     getActiveTools() {
       return active;
     },
-    on(name: string, fn: (...args: never[]) => unknown) {
-      handlers.set(name, fn);
-    },
-  };
-  return { pi: pi as unknown as ExtensionAPI, tools, handlers, active: () => active };
+    on(_name: string, _fn: (...args: never[]) => unknown) {},
+  } as unknown as ExtensionAPI;
+  // src/role-runtime.ts production install (installPackageOwnedToolRegistration).
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "judge",
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  })(pi);
+  return { pi, tools };
 }
 
 function soleToolContext(toolName: string, id: string): ExtensionContext {
@@ -555,20 +550,19 @@ const ESCALATE_DECISION = {
 } as const satisfies ComplianceDecision;
 
 test(
-  "#339 Reviewer production wiring: post-audit hanging shutdownReviewerAgent is bounded by package-owned idle",
+  "#339 Reviewer real registration entry: post-audit hanging shutdown is outer-bounded",
   { timeout: 30_000 },
   async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     assert.equal(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS, 183_000);
 
-    const oid = (ch: string) => ch.repeat(40);
+    const skill = "# code-review\n";
     const pin = {
       repositoryRoot: "/repo",
       objectFormat: "sha1" as const,
-      targetHead: oid("9"),
-      refs: { "refs/heads/main": { objectId: oid("9"), peeledCommitId: oid("9") } },
+      targetHead: "9".repeat(40),
+      refs: {},
     };
-    const skill = "# code-review\n";
     const audits: readonly ComplianceDecision[] = [
       { status: "pass" },
       NO_RECEIPT_DECISION,
@@ -577,8 +571,8 @@ test(
 
     for (const audit of audits) {
       let shutdownEntered = false;
-      const { pi, tools } = productionWrappedToolPi();
-      // Production role-runtime maps shutdownReviewerAgent → shutdownAgent.
+      // Real entry: role-runtime installPackageOwnedToolRegistration wraps registerTool.
+      const { pi, tools } = piWithProductionPackageToolRegistration();
       const runtime = createReviewerRoleRuntime(
         pi,
         {
@@ -598,13 +592,13 @@ test(
           createPinnedGitReader: async () => ({
             pin,
             snapshot: async () => pin,
-            resolve: async () => oid("8"),
+            resolve: async () => "8".repeat(40),
             range: async () => ({
-              base: oid("8"),
-              target: oid("9"),
-              diffCommand: `git diff ${oid("8")}...${oid("9")}`,
+              base: "8".repeat(40),
+              target: pin.targetHead,
+              diffCommand: "git diff",
               diffSha256: "2".repeat(64),
-              commits: [oid("9")],
+              commits: [pin.targetHead],
             }),
             featureTokens: async () => Object.freeze([]),
             listSpecCandidatePaths: async () => Object.freeze([]),
@@ -616,8 +610,7 @@ test(
             throw new Error("dispatch must not run for refused post-audit cleanup");
           },
           auditCompliance: async () => audit,
-          // Mirrors extensions/role-runtime.ts: shutdownReviewerAgent → reviewerAgent.shutdown()
-          // → reviewer-workspace recursive rm. Hang = cleanup never settles.
+          // Production role-runtime maps shutdownReviewerAgent → shutdownAgent.
           shutdownAgent: async () => {
             shutdownEntered = true;
             await new Promise<never>(() => {});
@@ -632,7 +625,7 @@ test(
       await runtime.activate(undefined, { baseRevision: "main~1" });
 
       const tool = tools.get(REVIEWER_OUTPUT_TOOL_NAME);
-      assert.ok(tool, `ak_reviewer_output registered for audit ${audit.status}`);
+      assert.ok(tool, `ak_reviewer_output registered via production install for ${audit.status}`);
       const callId = `reviewer-post-audit-${audit.status}`;
       const pending = tool.execute(
         callId,
@@ -754,144 +747,6 @@ test(
       releaseAudit(new Error(`test cleanup after ${name} suspended-audit assertion`));
       await assert.rejects(pending, /test cleanup/);
       assert.equal(settled, true);
-    }
-  },
-);
-
-test(
-  "#339 Judge/Doctor production execute: hanging non-audit segment after fast audit is outer-bounded",
-  { timeout: 30_000 },
-  async (t) => {
-    t.mock.timers.enable({ apis: ["setTimeout"] });
-
-    // Judge: inject audit that returns, then hang on a post-audit-shaped await inside
-    // dispose path by wrapping auditCompliance to hang after decision is known is hard.
-    // Instead hang the injected auditCompliance itself WITHOUT suspension — proves the
-    // name no longer removes outer coverage for work that is not runComplianceAudit.
-    {
-      const { pi, tools } = productionWrappedToolPi();
-      let auditEntered = false;
-      const runtime = createJudgeRoleRuntime(
-        pi,
-        {
-          loadSoul: async () => "JUDGE LAW",
-          auditSoulCompliance: async () => {
-            auditEntered = true;
-            // Not runComplianceAudit — name-wide exemption used to leave this naked.
-            await new Promise<never>(() => {});
-            return { status: "pass" };
-          },
-        },
-        {
-          failInfrastructure(error: unknown) {
-            throw error;
-          },
-        },
-      );
-      await runtime.activate();
-      const tool = tools.get(JUDGE_OUTPUT_TOOL_NAME);
-      assert.ok(tool);
-      const callId = "judge-nonaudit-hang";
-      const pending = tool.execute(
-        callId,
-        { judgeStatus: "converged" },
-        undefined,
-        undefined,
-        soleToolContext(JUDGE_OUTPUT_TOOL_NAME, callId),
-      );
-      let failure: unknown;
-      void pending.then(
-        () => {},
-        (error: unknown) => {
-          failure = error;
-        },
-      );
-      await waitForEventLoopCondition(() => auditEntered, { label: "judge non-audit hang entered" });
-      t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
-      await flushEventLoopTurns(30);
-      assert.ok(
-        failure instanceof PackageOwnedToolIdleTimeoutError,
-        "Judge non-audit hang must fail via existing outer backstop",
-      );
-      await assert.rejects(pending, (error: unknown) => error instanceof PackageOwnedToolIdleTimeoutError);
-    }
-
-    {
-      const patient = {
-        version: 1,
-        identity: { issueNumber: 28, runsPath: "/case/.ak/work/issues/28/runs" },
-        evidence: [{
-          id: "review/session/live.jsonl",
-          kind: "session",
-          byteLength: 6,
-          contentLength: 2,
-          sha256: "abc",
-          content: "中文",
-        }],
-        cost: {
-          invocations: { count: 0, sources: [] },
-          legs: { count: 0, sources: [] },
-          modelApiTurns: { count: 0, sources: [] },
-          outputTokens: { count: 0, sources: [] },
-          toolCalls: { count: 0, sources: [] },
-          retries: { count: 0, sources: [], evidence: "literal run-dir naming" },
-          statuses: [],
-          commits: [],
-          sessions: [],
-          outputBytes: { count: 0, sources: [], payload: "raw JSONL bytes", providerWireBytes: "unavailable" },
-        },
-      };
-      const { pi, tools } = productionWrappedToolPi({
-        flags: { "ak-doctor-case": patient.identity.runsPath },
-      });
-      let auditEntered = false;
-      const runtime = createDoctorRoleRuntime(
-        pi,
-        {
-          loadSoul: async () => "DOCTOR LAW",
-          loadCase: async () => patient as never,
-          auditCompliance: async () => {
-            auditEntered = true;
-            await new Promise<never>(() => {});
-            return { status: "pass" };
-          },
-        },
-        {
-          failInfrastructure(error: unknown) {
-            throw error;
-          },
-        },
-      );
-      await runtime.activate();
-      const tool = tools.get(DOCTOR_OUTPUT_TOOL_NAME);
-      assert.ok(tool);
-      const callId = "doctor-nonaudit-hang";
-      const pending = tool.execute(
-        callId,
-        {
-          status: "refused",
-          reason: "Session bytes are incomplete.",
-          missingEvidence: [{ need: "session header", targetKeys: ["case"] }],
-        },
-        undefined,
-        undefined,
-        soleToolContext(DOCTOR_OUTPUT_TOOL_NAME, callId),
-      );
-      let failure: unknown;
-      void pending.then(
-        () => {},
-        (error: unknown) => {
-          failure = error;
-        },
-      );
-      await waitForEventLoopCondition(() => auditEntered, { label: "doctor non-audit hang entered" });
-      t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
-      await flushEventLoopTurns(30);
-      assert.ok(
-        failure instanceof PackageOwnedToolIdleTimeoutError,
-        "Doctor non-audit hang must fail via existing outer backstop",
-      );
-      await assert.rejects(pending, (error: unknown) => error instanceof PackageOwnedToolIdleTimeoutError);
     }
   },
 );

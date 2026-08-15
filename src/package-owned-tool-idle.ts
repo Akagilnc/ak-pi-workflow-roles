@@ -71,8 +71,8 @@ function isPackageOwnedToolActivityUpdate(partialResult: unknown): boolean {
 
 /**
  * #339: suspend the active package-owned execute idle for one real compliance
- * audit await. Nested suspensions are depth-counted. No-op outside a wrapped
- * package-owned execute. Does not invent a second timeout or retry layer.
+ * audit await. Single-layer only — production has one runComplianceAudit seam.
+ * No-op outside a wrapped package-owned execute. No second timeout or retry.
  */
 export async function withPackageOwnedToolIdleSuspended<T>(
   run: () => Promise<T>,
@@ -107,7 +107,7 @@ export function wrapPackageOwnedToolDefinition<T extends PackageOwnedToolLike>(t
     const onUpdate = args[3] as ((partialResult: unknown) => void) | undefined;
     return new Promise((resolve, reject) => {
       let settled = false;
-      let suspensionDepth = 0;
+      let suspended = false;
       let idle: StreamIdleGuard = createStreamIdleGuard({
         idleTimeoutMs: PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
       });
@@ -126,18 +126,15 @@ export function wrapPackageOwnedToolDefinition<T extends PackageOwnedToolLike>(t
 
       const suspension: PackageOwnedToolIdleSuspension = {
         suspend(): void {
-          if (settled) return;
-          suspensionDepth += 1;
-          if (suspensionDepth !== 1) return;
+          if (settled || suspended) return;
+          suspended = true;
           // ADR 0059 owns the audit interval — drop this layer until audit returns.
           idle.signal.removeEventListener("abort", onIdle);
           idle.dispose();
         },
         resume(): void {
-          if (settled) return;
-          if (suspensionDepth === 0) return;
-          suspensionDepth -= 1;
-          if (suspensionDepth !== 0) return;
+          if (settled || !suspended) return;
+          suspended = false;
           // Fresh single-layer silence window for post-audit work (e.g. cleanup).
           idle = createStreamIdleGuard({
             idleTimeoutMs: PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
