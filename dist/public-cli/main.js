@@ -15516,6 +15516,9 @@ function evaluateTaishiModeOptionContract(mode, counts) {
   }
   return { ok: true };
 }
+function bindOwner(owner, semantics) {
+  return { ...semantics, owner };
+}
 function optionsForOwner(owner) {
   return PUBLIC_OPTION_TABLE[owner];
 }
@@ -15604,6 +15607,16 @@ function createTypedOptionConsumer(definitions) {
     },
     count(id) {
       return counts.get(id) ?? 0;
+    },
+    assertRequired() {
+      for (const def of definitions) {
+        if (!def.required) continue;
+        if ((counts.get(def.id) ?? 0) > 0) continue;
+        const suffix = def.valueMetavar === null ? "" : ` <${def.valueMetavar}>`;
+        throw new CliUsageError(
+          `${def.owner} requires ${def.canonical}${suffix}`
+        );
+      }
     }
   };
 }
@@ -15664,7 +15677,7 @@ function renderOwnerOptionHelpLines(owner, locale2 = "en") {
   }
   return lines;
 }
-var TAISHI_REQUIRE_ANY_OF, TAISHI_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, JUDGE_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, MERGER_OPTIONS, TAISHI_OPTIONS, PUBLIC_OPTION_TABLE;
+var TAISHI_REQUIRE_ANY_OF, TAISHI_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, SHARED_PROJECT_SEMANTICS, SHARED_ATTACH_SEMANTICS, JUDGE_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, MERGER_OPTIONS, TAISHI_OPTIONS, PUBLIC_OPTION_TABLE;
 var init_option_definitions = __esm({
   "src/public-cli/option-definitions.ts"() {
     "use strict";
@@ -15735,35 +15748,35 @@ var init_option_definitions = __esm({
         }
       }
     ];
-    JUDGE_OPTIONS = [
-      {
-        id: "project",
-        owner: "judge",
-        canonical: "--project",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: false,
-        form: "option",
-        description: {
-          en: "Project root for ledger identity (defaults to process cwd).",
-          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
-        }
-      },
-      {
-        id: "attach",
-        owner: "judge",
-        canonical: "--attach",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: true,
-        form: "option",
-        description: {
-          en: "Attach a regular file; frozen at admission (repeatable).",
-          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
-        }
+    SHARED_PROJECT_SEMANTICS = {
+      id: "project",
+      canonical: "--project",
+      aliases: [],
+      valueMetavar: "path",
+      required: false,
+      repeatable: false,
+      form: "option",
+      description: {
+        en: "Project root for ledger identity (defaults to process cwd).",
+        zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
       }
+    };
+    SHARED_ATTACH_SEMANTICS = {
+      id: "attach",
+      canonical: "--attach",
+      aliases: [],
+      valueMetavar: "path",
+      required: false,
+      repeatable: true,
+      form: "option",
+      description: {
+        en: "Attach a regular file; frozen at admission (repeatable).",
+        zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
+      }
+    };
+    JUDGE_OPTIONS = [
+      bindOwner("judge", SHARED_PROJECT_SEMANTICS),
+      bindOwner("judge", SHARED_ATTACH_SEMANTICS)
     ];
     CODER_OPTIONS = [
       {
@@ -15782,34 +15795,8 @@ var init_option_definitions = __esm({
           zh: "\u6307\u4EE4\u524D\u53EF\u9009 phase \u8BCD\u5143\uFF1B\u9ED8\u8BA4 apply\u3002"
         }
       },
-      {
-        id: "project",
-        owner: "coder",
-        canonical: "--project",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: false,
-        form: "option",
-        description: {
-          en: "Project root for ledger identity (defaults to process cwd).",
-          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
-        }
-      },
-      {
-        id: "attach",
-        owner: "coder",
-        canonical: "--attach",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: true,
-        form: "option",
-        description: {
-          en: "Attach a regular file; frozen at admission (repeatable).",
-          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
-        }
-      }
+      bindOwner("coder", SHARED_PROJECT_SEMANTICS),
+      bindOwner("coder", SHARED_ATTACH_SEMANTICS)
     ];
     FIXER_OPTIONS = [
       {
@@ -15828,34 +15815,8 @@ var init_option_definitions = __esm({
           zh: "\u6307\u4EE4\u524D\u53EF\u9009 phase \u8BCD\u5143\uFF1B\u9ED8\u8BA4 apply\u3002"
         }
       },
-      {
-        id: "project",
-        owner: "fixer",
-        canonical: "--project",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: false,
-        form: "option",
-        description: {
-          en: "Project root for ledger identity (defaults to process cwd).",
-          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
-        }
-      },
-      {
-        id: "attach",
-        owner: "fixer",
-        canonical: "--attach",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: true,
-        form: "option",
-        description: {
-          en: "Attach a regular file; frozen at admission (repeatable).",
-          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
-        }
-      },
+      bindOwner("fixer", SHARED_PROJECT_SEMANTICS),
+      bindOwner("fixer", SHARED_ATTACH_SEMANTICS),
       {
         id: "prerequisites",
         owner: "fixer",
@@ -15872,20 +15833,8 @@ var init_option_definitions = __esm({
       }
     ];
     REVIEWER_OPTIONS = [
-      {
-        id: "project",
-        owner: "reviewer",
-        canonical: "--project",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: false,
-        form: "option",
-        description: {
-          en: "Project root for ledger identity (defaults to process cwd).",
-          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
-        }
-      },
+      bindOwner("reviewer", SHARED_PROJECT_SEMANTICS),
+      // Reviewer deliberately has no --attach face (gathers its own evidence).
       {
         id: "base",
         owner: "reviewer",
@@ -15916,34 +15865,8 @@ var init_option_definitions = __esm({
       }
     ];
     COLLECTOR_OPTIONS = [
-      {
-        id: "project",
-        owner: "collector",
-        canonical: "--project",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: false,
-        form: "option",
-        description: {
-          en: "Project root for ledger identity (defaults to process cwd).",
-          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
-        }
-      },
-      {
-        id: "attach",
-        owner: "collector",
-        canonical: "--attach",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: true,
-        form: "option",
-        description: {
-          en: "Attach a regular file; frozen at admission (repeatable).",
-          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
-        }
-      },
+      bindOwner("collector", SHARED_PROJECT_SEMANTICS),
+      bindOwner("collector", SHARED_ATTACH_SEMANTICS),
       {
         id: "pr",
         owner: "collector",
@@ -15988,34 +15911,8 @@ var init_option_definitions = __esm({
       }
     ];
     DOCTOR_OPTIONS = [
-      {
-        id: "project",
-        owner: "doctor",
-        canonical: "--project",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: false,
-        form: "option",
-        description: {
-          en: "Project root for ledger identity (defaults to process cwd).",
-          zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
-        }
-      },
-      {
-        id: "attach",
-        owner: "doctor",
-        canonical: "--attach",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: true,
-        form: "option",
-        description: {
-          en: "Attach a regular file; frozen at admission (repeatable).",
-          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
-        }
-      },
+      bindOwner("doctor", SHARED_PROJECT_SEMANTICS),
+      bindOwner("doctor", SHARED_ATTACH_SEMANTICS),
       {
         id: "issue",
         owner: "doctor",
@@ -16046,6 +15943,7 @@ var init_option_definitions = __esm({
       }
     ];
     MERGER_OPTIONS = [
+      // Merger project face differs: requires an in-progress ordinary merge root.
       {
         id: "project",
         owner: "merger",
@@ -16060,20 +15958,7 @@ var init_option_definitions = __esm({
           zh: "\u5DF2\u6709\u8FDB\u884C\u4E2D ordinary merge \u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4 cwd\uFF09\u3002"
         }
       },
-      {
-        id: "attach",
-        owner: "merger",
-        canonical: "--attach",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: true,
-        form: "option",
-        description: {
-          en: "Attach a regular file; frozen at admission (repeatable).",
-          zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
-        }
-      }
+      bindOwner("merger", SHARED_ATTACH_SEMANTICS)
     ];
     TAISHI_OPTIONS = [
       {
@@ -16393,6 +16278,7 @@ function parseJudgeArgv(args) {
     }
     positional.push(token);
   }
+  options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
@@ -16431,6 +16317,7 @@ function parseCoderArgv(args) {
     positional.push(token);
   }
   const phase = options.consumeLeadingPhase(positional);
+  options.assertRequired();
   return {
     phase,
     instruction: positional.join(" "),
@@ -16475,6 +16362,7 @@ function parseFixerArgv(args) {
     positional.push(token);
   }
   const phase = options.consumeLeadingPhase(positional);
+  options.assertRequired();
   return {
     phase,
     instruction: positional.join(" "),
@@ -16860,8 +16748,15 @@ function parseCollectorArgv(args) {
     }
     positional.push(token);
   }
-  if (prNumber === void 0) throw new CliUsageError("collector requires --pr <positive-integer>");
-  return { prNumber, instruction: positional.join(" "), attachmentPaths, ...project === void 0 ? {} : { project }, ...repo === void 0 ? {} : { repo }, ...requestManifestPath === void 0 ? {} : { requestManifestPath } };
+  options.assertRequired();
+  return {
+    prNumber,
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...project === void 0 ? {} : { project },
+    ...repo === void 0 ? {} : { repo },
+    ...requestManifestPath === void 0 ? {} : { requestManifestPath }
+  };
 }
 function resolveGitHubRemoteRepository(projectRoot) {
   let remoteUrl;
@@ -17083,9 +16978,7 @@ function parseDoctorArgv(args) {
     }
     positional.push(token);
   }
-  if (issueRaw === void 0) {
-    throw new CliUsageError("doctor requires --issue <positive-integer>");
-  }
+  options.assertRequired();
   const issueNumber = parseDoctorIssueNumber(issueRaw);
   if (runs !== void 0 && runs.trim() === "") {
     throw new CliUsageError("doctor --runs requires a path");
@@ -17301,9 +17194,7 @@ function parseReviewerArgv(args) {
     }
     positional.push(token);
   }
-  if (baseRevision === void 0) {
-    throw new CliUsageError("reviewer requires --base <revision>; canonical code-review requires the caller to select a fixed point");
-  }
+  options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
@@ -17423,6 +17314,7 @@ function parseMergerArgv(args) {
     }
     positional.push(token);
   }
+  options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
@@ -17690,6 +17582,7 @@ function parseTaishiArgv(args) {
   for (const [id, values] of valueLists) {
     counts.set(id, values.length);
   }
+  options.assertRequired();
   const mode = resolveTaishiMode(new Set(counts.keys()));
   const verdict = evaluateTaishiModeOptionContract(mode, counts);
   if (!verdict.ok) {

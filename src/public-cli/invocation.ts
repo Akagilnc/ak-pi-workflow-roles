@@ -491,6 +491,7 @@ export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
     positional.push(token);
   }
 
+  options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
@@ -535,8 +536,9 @@ export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
     positional.push(token);
   }
 
-  // Phase aliases + default come solely from the typed coder phase row (#342 ①).
+  // Phase aliases + default come solely from the typed coder phase row (#342).
   const phase = options.consumeLeadingPhase(positional);
+  options.assertRequired();
 
   return {
     phase,
@@ -588,8 +590,9 @@ export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
     positional.push(token);
   }
 
-  // Phase aliases + default come solely from the typed fixer phase row (#342 ①).
+  // Phase aliases + default come solely from the typed fixer phase row (#342).
   const phase = options.consumeLeadingPhase(positional);
+  options.assertRequired();
 
   return {
     phase,
@@ -1112,8 +1115,16 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
     }
     positional.push(token);
   }
-  if (prNumber === undefined) throw new CliUsageError("collector requires --pr <positive-integer>");
-  return { prNumber, instruction: positional.join(" "), attachmentPaths, ...(project === undefined ? {} : { project }), ...(repo === undefined ? {} : { repo }), ...(requestManifestPath === undefined ? {} : { requestManifestPath }) };
+  // Unconditional required (e.g. --pr) from typed table via shared consumer (#342).
+  options.assertRequired();
+  return {
+    prNumber: prNumber!,
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...(project === undefined ? {} : { project }),
+    ...(repo === undefined ? {} : { repo }),
+    ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
+  };
 }
 
 /**
@@ -1406,10 +1417,9 @@ export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult 
     positional.push(token);
   }
 
-  if (issueRaw === undefined) {
-    throw new CliUsageError("doctor requires --issue <positive-integer>");
-  }
-  const issueNumber = parseDoctorIssueNumber(issueRaw);
+  // Unconditional required (e.g. --issue) from typed table via shared consumer (#342).
+  options.assertRequired();
+  const issueNumber = parseDoctorIssueNumber(issueRaw!);
 
   if (runs !== undefined && runs.trim() === "") {
     throw new CliUsageError("doctor --runs requires a path");
@@ -1697,13 +1707,12 @@ export function parseReviewerArgv(
     positional.push(token);
   }
 
-  if (baseRevision === undefined) {
-    throw new CliUsageError("reviewer requires --base <revision>; canonical code-review requires the caller to select a fixed point");
-  }
+  // Unconditional required (e.g. --base) from typed table via shared consumer (#342).
+  options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
-    baseRevision,
+    baseRevision: baseRevision!,
     authorityRefs,
     ...(project === undefined ? {} : { project }),
   };
@@ -1870,6 +1879,7 @@ export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult 
     positional.push(token);
   }
 
+  options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
@@ -2131,14 +2141,15 @@ function requireOptionValue(
 /**
  * Parse taishi-specific argv after the `taishi` token (#336/#337/#338).
  * Spellings + mode relation contracts from PUBLIC_OPTION_TABLE.taishi / TAISHI_* (#342).
- * Mode exclusion, requiredness, cardinality, and at-least-one are table-driven —
- * do not restate them as parallel handwritten branches here.
+ * Mode exclusion, conditional requiredness, cardinality, and at-least-one are
+ * table-driven — do not restate them as parallel handwritten branches here.
+ * Unconditional required:true also goes through the shared consumer.
  */
 export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult {
   const valueLists = new Map<string, string[]>();
   const tokens = [...args];
   const definitions = roleOptions("taishi");
-  // Shared typed consumer: dashed + positional take and repeatable (#342 ①③).
+  // Shared typed consumer: dashed + positional take, repeatable, required (#342).
   const options = createTypedOptionConsumer(definitions);
 
   const pushValue = (id: string, value: string): void => {
@@ -2221,6 +2232,7 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
   for (const [id, values] of valueLists) {
     counts.set(id, values.length);
   }
+  options.assertRequired();
   const mode = resolveTaishiMode(new Set(counts.keys()));
   const verdict = evaluateTaishiModeOptionContract(mode, counts);
   if (!verdict.ok) {
