@@ -55,12 +55,24 @@ function hasGraphqlField(block: string, name: string): boolean {
   return new RegExp(String.raw`\b${name}\b(?!\s*:)`).test(block);
 }
 
+/** Balanced `{...}` span for one named selection (optional args). Brace depth only. */
+type GraphqlSelectionRange = {
+  /** Index of the field name match start. */
+  start: number;
+  /** Index of the opening `{`. */
+  openBrace: number;
+  /** Index just past the closing `}`. */
+  end: number;
+};
+
 /**
- * Find `fieldName` (optional args) followed by a balanced `{...}` and return
- * the interior. Ownership-sensitive: only the direct selection body counts.
- * Not a GraphQL parser — brace depth only; no full-query equality.
+ * Single balanced-brace range primitive. Extract/strip reuse this — no second walk.
+ * Not a GraphQL parser; no full-query equality.
  */
-function extractGraphqlSelectionBody(block: string, fieldName: string): string | null {
+function findGraphqlSelectionRange(
+  block: string,
+  fieldName: string,
+): GraphqlSelectionRange | null {
   const re = new RegExp(String.raw`\b${fieldName}\b(?!\s*:)\s*(?:\([^)]*\))?\s*\{`);
   const m = re.exec(block);
   if (!m) return null;
@@ -71,28 +83,24 @@ function extractGraphqlSelectionBody(block: string, fieldName: string): string |
     if (ch === "{") depth++;
     else if (ch === "}") {
       depth--;
-      if (depth === 0) return block.slice(openBrace + 1, i);
+      if (depth === 0) return { start: m.index, openBrace, end: i + 1 };
     }
   }
   return null;
 }
 
+/** Interior of one named selection body. Ownership-sensitive. */
+function extractGraphqlSelectionBody(block: string, fieldName: string): string | null {
+  const range = findGraphqlSelectionRange(block, fieldName);
+  if (!range) return null;
+  return block.slice(range.openBrace + 1, range.end - 1);
+}
+
 /** Drop one named selection (field + optional args + balanced braces) from block. */
 function stripGraphqlSelection(block: string, fieldName: string): string {
-  const re = new RegExp(String.raw`\b${fieldName}\b(?!\s*:)\s*(?:\([^)]*\))?\s*\{`);
-  const m = re.exec(block);
-  if (!m) return block;
-  const openBrace = m.index + m[0].length - 1;
-  let depth = 0;
-  for (let i = openBrace; i < block.length; i++) {
-    const ch = block[i]!;
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) return block.slice(0, m.index) + block.slice(i + 1);
-    }
-  }
-  return block;
+  const range = findGraphqlSelectionRange(block, fieldName);
+  if (!range) return block;
+  return block.slice(0, range.start) + block.slice(range.end);
 }
 
 /**
@@ -174,6 +182,42 @@ async function loadFixtureRunner(): Promise<GhApiRunner> {
   };
 }
 
+/** Production-shaped closed-family query; optional per-alias body mutator for negatives. */
+function buildFrozenClosedFamilyQuery(
+  mutateAliasBody?: (body: string) => string,
+): string {
+  const aliases = CLOSED_FAMILY_ALIASES.map(({ alias, issueNumber }) => {
+    let body = `
+      number
+      title
+      state
+      closedAt
+      milestone { title }
+      parent { number }
+      blockedBy(first: 100) {
+          pageInfo { hasNextPage endCursor }
+          nodes { number state }
+        }`;
+    if (mutateAliasBody) body = mutateAliasBody(body);
+    return `
+    ${alias}: issue(number: ${issueNumber}) {${body}
+    }`;
+  }).join("\n");
+  return `query($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    ${aliases}
+  }
+}`;
+}
+
+async function assertFixtureRejectsQuery(query: string): Promise<void> {
+  const runner = await loadFixtureRunner();
+  await assert.rejects(
+    () => runner(["api", "graphql", "-f", `query=${query}`]),
+    /unexpected graphql query/,
+  );
+}
+
 test("fixture GitHub snapshot keeps #78 family parent and blocked_by edges", async () => {
   const runner = await loadFixtureRunner();
   const transport = createGhTicketSnapshotTransport(runner);
@@ -232,4 +276,26 @@ test("fixture GitHub snapshot keeps #78 family parent and blocked_by edges", asy
     blocked.some((edge) => edge.issueNumber === 127),
     "#128 must list blocked_by #127",
   );
+});
+
+test("fixture runner rejects blockedBy.pageInfo parked under another alias parent", async () => {
+  // pageInfo still present in the alias, but under milestone — not blockedBy.
+  const query = buildFrozenClosedFamilyQuery(
+    (body) =>
+      body
+        .replace("milestone { title }", "milestone { title pageInfo { hasNextPage endCursor } }")
+        .replace("pageInfo { hasNextPage endCursor }\n          nodes", "nodes"),
+  );
+  await assertFixtureRejectsQuery(query);
+});
+
+test("fixture runner rejects blockedBy.nodes.state parked under another alias parent", async () => {
+  // state still present in the alias, but under parent — not blockedBy.nodes.
+  const query = buildFrozenClosedFamilyQuery(
+    (body) =>
+      body
+        .replace("parent { number }", "parent { number state }")
+        .replace("nodes { number state }", "nodes { number }"),
+  );
+  await assertFixtureRejectsQuery(query);
 });
