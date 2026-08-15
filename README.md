@@ -37,7 +37,7 @@ Receipts are typed, so callers compose roles without parsing prose; ordering and
 
 ## Call the roles
 
-Most roles accept `--attach <file>` (repeatable, frozen at admission), but Reviewer does not. Reviewer requires `--base <revision>` to select the fixed point, and its review materials are acquired through the package-owned bundle mechanism rather than caller attachments. All roles accept `--project <path>`. An instruction is optional for judge, collector, and doctor, and required nonblank for coder, fixer, reviewer, and merger.
+Public option identity, aliases, requiredness, and mode faces live in the generated [Public CLI options](#public-cli-options-generated) table and in `ak-role help <command>` — both project the same typed source. The examples below are usage sketches, not a second flag contract. An instruction is optional for judge, collector, and doctor, and required nonblank for coder, fixer, reviewer, and merger.
 
 ```bash
 # judge — adjudicate the supplied materials; infers its burden, no burden flag
@@ -102,3 +102,90 @@ Discipline:
 - keep `stderr.log` and `invocation.json` in the same `runs/` directory, as in the example above.
 
 Codex fast tier: enable fast tier with `echo "fast_mode = on" > ~/.pi-codex-fast`; disable it with `echo "fast_mode = off" > ~/.pi-codex-fast` (or delete the file). The change takes effect on the next request without a restart. Fast tier costs more than the default tier.
+
+<!-- BEGIN GENERATED: public-cli-options -->
+## Public CLI options (generated)
+
+Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <command>`. Do not hand-edit this section.
+
+### `global`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--model` | — | `provider/model` | no | no | option | — | Override the effective seat model for this invocation (before or after the command). |
+| `--thinking` | — | `level` | no | no | option | — | Override thinking level: off|minimal|low|medium|high|xhigh|max. |
+| `--help` | `-h` | — | no | no | option | — | Show public CLI help and exit. |
+
+### `judge`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+
+### `coder`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `plan|apply` | `plan`, `apply` | — | no | no | positional | phases=plan|apply; default=apply | Optional phase token before the instruction; defaults to apply. |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+
+### `fixer`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `plan|apply` | `plan`, `apply` | — | no | no | positional | phases=plan|apply; default=apply | Optional phase token before the instruction; defaults to apply. |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+| `--prerequisites` | — | `path` | no | no | option | — | JSON array of {id, requirement} prerequisite objects. |
+
+### `reviewer`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--base` | — | `revision` | yes | no | option | — | Required fixed-point revision for the pinned review target. |
+| `--authority-ref` | — | `ref` | no | yes | option | — | Durable authority reference/URL (repeatable; refs only, not inline prose). |
+
+### `collector`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+| `--pr` | — | `number` | yes | no | option | — | Required positive GitHub pull request number. |
+| `--repo` | — | `owner/repo` | no | no | option | — | GitHub owner/repo override (defaults from origin when github.com). |
+| `--request-manifest` | — | `path` | no | no | option | — | Optional request manifest JSON path ({requests:[{id,body}]}). |
+
+### `doctor`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+| `--issue` | — | `number` | yes | no | option | — | Required positive issue number for the retained case. |
+| `--runs` | — | `path` | no | no | option | — | Optional project-relative .ak-roles/books/<book>/issues/<n>/runs override matching --issue. |
+
+### `merger`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root with one ordinary in-progress merge (defaults to cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+
+### `taishi`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sweep` | — | — | no | no | positional | modes=sweep | Optional sweep mode token (at most once; no other positionals). |
+| `--project-root` | — | `path` | when:model-groups | yes | option | modes=issue|model-groups; max=issue:1 | Project-root scope key. Issue: at most one (with --ticket at least one of the two). Model-groups: one or more required. |
+| `--ticket` | — | `number` | no | no | option | modes=issue | Ticket/issue number for issue mode (with --project-root at least one of the two). |
+| `--attach` | — | `path` | no | yes | option | modes=sweep | Sweep-only attachment path(s); payload is the attachment body (exactly one on the run path). |
+| `--cohort` | — | — | no | no | option | modes=cohort; xor=model-groups | Select cohort mode (mutually exclusive with --model-groups). |
+| `--model-groups` | — | — | no | no | option | modes=model-groups; xor=cohort | Select model-groups mode (mutually exclusive with --cohort). |
+| `--group-a-label` | — | `label` | when:cohort | no | option | modes=cohort | Cohort group A label (required in cohort mode). |
+| `--group-a-issues` | — | `N[,N...]` | when:cohort | no | option | modes=cohort | Cohort group A comma-separated positive issue numbers (required in cohort mode). |
+| `--group-b-label` | — | `label` | when:cohort | no | option | modes=cohort | Cohort group B label (required in cohort mode). |
+| `--group-b-issues` | — | `N[,N...]` | when:cohort | no | option | modes=cohort | Cohort group B comma-separated positive issue numbers (required in cohort mode). |
+<!-- END GENERATED: public-cli-options -->
