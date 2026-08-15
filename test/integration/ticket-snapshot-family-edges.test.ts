@@ -42,6 +42,60 @@ function ok(body: unknown): GhApiResponse {
   };
 }
 
+/** Frozen closed-family alias → issue identity (sorted 78,127,128,130 → c0..c3). */
+const CLOSED_FAMILY_ALIASES = [
+  { alias: "c0", issueNumber: 78 },
+  { alias: "c1", issueNumber: 127 },
+  { alias: "c2", issueNumber: 128 },
+  { alias: "c3", issueNumber: 130 },
+] as const;
+
+/** GraphQL field selection name (not an argument key like `number:`). */
+function hasGraphqlField(block: string, name: string): boolean {
+  return new RegExp(String.raw`\b${name}\b(?!\s*:)`).test(block);
+}
+
+function graphqlFieldCount(block: string, name: string): number {
+  return block.match(new RegExp(String.raw`\b${name}\b(?!\s*:)`, "g"))?.length ?? 0;
+}
+
+/**
+ * Local structure/count match for the frozen closed-family query.
+ * Proves c0..c3 → 78/127/128/130 and each alias carries adapter-required
+ * selections (including blockedBy pageInfo + nodes number). Not full-query equality.
+ */
+function isFrozenClosedFamilyQuery(query: string): boolean {
+  const starts: number[] = [];
+  let from = 0;
+  for (const { alias, issueNumber } of CLOSED_FAMILY_ALIASES) {
+    const marker = `${alias}: issue(number: ${issueNumber})`;
+    const at = query.indexOf(marker, from);
+    if (at === -1) return false;
+    starts.push(at);
+    from = at + marker.length;
+  }
+
+  for (let i = 0; i < CLOSED_FAMILY_ALIASES.length; i++) {
+    const block = query.slice(
+      starts[i],
+      i + 1 < starts.length ? starts[i + 1] : query.length,
+    );
+    // Distinctive single-occurrence adapter fields
+    for (const field of ["closedAt", "milestone", "parent", "blockedBy", "pageInfo"] as const) {
+      if (!hasGraphqlField(block, field)) return false;
+    }
+    // issue.title + milestone.title
+    if (graphqlFieldCount(block, "title") < 2) return false;
+    // issue.state + blockedBy nodes.state (adapter maps both)
+    if (graphqlFieldCount(block, "state") < 2) return false;
+    // issue.number + parent.number + nodes.number (alias argument `number:` excluded)
+    if (graphqlFieldCount(block, "number") < 3) return false;
+    // blockedBy nodes must select number for adapter edge parsing
+    if (!/\bnodes\s*\{[^}]*\bnumber\b/.test(block)) return false;
+  }
+  return true;
+}
+
 async function loadFixtureRunner(): Promise<GhApiRunner> {
   const fixture = JSON.parse(await readFile(FIXTURE_URL, "utf8")) as Family78GraphqlFixture;
 
@@ -52,8 +106,8 @@ async function loadFixtureRunner(): Promise<GhApiRunner> {
     if (query.includes("issues(states: OPEN")) {
       return ok(fixture.openIssues);
     }
-    // Named closed drills for the frozen family (sorted 78,127,128,130 → c0..c3).
-    if (query.includes("c0: issue(number: 78)")) {
+    // Named closed drills: require full frozen-family identity + adapter selections.
+    if (isFrozenClosedFamilyQuery(query)) {
       return ok(fixture.closedDrills);
     }
     throw new Error(`unexpected graphql query (fixture runner is offline-only): ${query.slice(0, 160)}`);
