@@ -333,6 +333,8 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
   assert.equal(byId.get("model-groups")?.selectsMode, "model-groups");
   assert.equal(byId.get("sweep")?.selectsMode, "sweep");
   assert.equal(byId.get("attach")?.selectsMode, "sweep");
+  assert.deepEqual(byId.get("attach")?.requiredInModes, ["sweep"]);
+  assert.deepEqual(byId.get("attach")?.maxCountByMode, { sweep: 1 });
   for (const id of [
     "group-a-label",
     "group-a-issues",
@@ -453,10 +455,22 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
       expect: { ok: true, query: "sweep" },
     },
     {
-      name: "sweep token",
+      name: "sweep token + attach",
       rule: "selectsMode:sweep→sweep",
-      argv: ["sweep"],
+      argv: ["sweep", "--attach", "/tmp/s.json"],
       expect: { ok: true, query: "sweep" },
+    },
+    {
+      name: "sweep zero attach",
+      rule: "requiredInModes:sweep:attach",
+      argv: ["sweep"],
+      expect: { ok: false, re: /requires --attach/i },
+    },
+    {
+      name: "sweep double attach",
+      rule: "maxCountByMode:attach:sweep:1",
+      argv: ["sweep", "--attach", "/a", "--attach", "/b"],
+      expect: { ok: false, re: /at most one --attach/i },
     },
     {
       name: "sweep×ticket",
@@ -501,6 +515,8 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     "maxCountByMode:project-root:issue:1",
     "requiredInModes:cohort:group-*",
     "requiredInModes:model-groups:project-root",
+    "requiredInModes:sweep:attach",
+    "maxCountByMode:attach:sweep:1",
     "exclusiveWith:cohort×model-groups",
     "modes:ticket:issue-only",
     "modes:project-root:issue|model-groups",
@@ -679,6 +695,28 @@ function sampleValue(metavar: string, id: string): string {
   }
 }
 
+/** Split a GFM table row on unescaped `|` cell boundaries. */
+function splitUnescapedMarkdownTableCells(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  for (let i = 0; i < line.length; i += 1) {
+    if (line[i] === "\\" && line[i + 1] === "|") {
+      current += "\\";
+      current += "|";
+      i += 1;
+      continue;
+    }
+    if (line[i] === "|") {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+    current += line[i];
+  }
+  cells.push(current);
+  return cells;
+}
+
 test("README EN/ZH generated regions are regeneration-clean", async () => {
   const en = await readFile(resolve(packageRoot, "README.md"), "utf8");
   const zh = await readFile(resolve(packageRoot, "README.zh-CN.md"), "utf8");
@@ -697,6 +735,22 @@ test("README EN/ZH generated regions are regeneration-clean", async () => {
   for (const spelling of allRejectedSpellingTokens()) {
     assert.equal(renderReadmeOptionsMarkdown("en").includes(spelling), false);
     assert.equal(renderReadmeOptionsMarkdown("zh").includes(spelling), false);
+  }
+  // Each generated data row must keep exactly 8 unescaped pipe-delimited cells.
+  for (const locale of ["en", "zh"] as const) {
+    const md = renderReadmeOptionsMarkdown(locale);
+    for (const line of md.split("\n")) {
+      if (!line.startsWith("|") || line.startsWith("| ---") || line.startsWith("| Spelling") || line.startsWith("| 拼写")) {
+        continue;
+      }
+      const parts = splitUnescapedMarkdownTableCells(line);
+      // Leading + trailing empties from boundary pipes → cell count = parts.length - 2.
+      assert.equal(
+        parts.length - 2,
+        8,
+        `${locale} row cell count ${parts.length - 2}: ${line}`,
+      );
+    }
   }
 });
 
