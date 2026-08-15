@@ -5,9 +5,10 @@
  * `help <command>` consume this table; README flag inventory is generated from
  * it. Do not maintain a parallel spelling set in parsers, help, or docs.
  *
- * Dashed-option take, positional selector match, role-phase resolution, and
- * `repeatable` enforcement share one consumer (`createTypedOptionConsumer`).
- * Parsers must not restate phase tokens or add parallel repeatability checks.
+ * Dashed-option take, positional selector match, role-phase resolution,
+ * `repeatable` enforcement, and unconditional `required` checks share one
+ * consumer (`createTypedOptionConsumer`). Parsers must not restate phase
+ * tokens or add parallel repeatability / requiredness branches.
  */
 
 import { CliUsageError } from "./cli-errors.ts";
@@ -293,35 +294,56 @@ const GLOBAL_OPTIONS = [
   },
 ] as const satisfies readonly PublicOptionDefinition[];
 
+/**
+ * Immutable shared semantics for the common ledger `--project` face.
+ * Role rows bind owner only — do not copy these fields per role.
+ * Role-specific project faces (merger merge-root; taishi `--project-root`)
+ * stay explicit below and must not use this binding.
+ */
+const SHARED_PROJECT_SEMANTICS = {
+  id: "project",
+  canonical: "--project",
+  aliases: [] as const,
+  valueMetavar: "path",
+  required: false,
+  repeatable: false,
+  form: "option" as const,
+  description: {
+    en: "Project root for ledger identity (defaults to process cwd).",
+    zh: "卷宗身份用的项目根（默认进程 cwd）。",
+  },
+} as const satisfies Omit<PublicOptionDefinition, "owner">;
+
+/**
+ * Immutable shared semantics for the common frozen-file `--attach` face.
+ * Role rows bind owner only. Reviewer has no attach face; taishi sweep attach
+ * keeps its own modes/selectsMode/description and must not use this binding.
+ */
+const SHARED_ATTACH_SEMANTICS = {
+  id: "attach",
+  canonical: "--attach",
+  aliases: [] as const,
+  valueMetavar: "path",
+  required: false,
+  repeatable: true,
+  form: "option" as const,
+  description: {
+    en: "Attach a regular file; frozen at admission (repeatable).",
+    zh: "附加普通文件；受理即冻结（可重复）。",
+  },
+} as const satisfies Omit<PublicOptionDefinition, "owner">;
+
+/** Minimal owner-binding: one immutable semantic row → one role table entry. */
+function bindOwner(
+  owner: OptionOwner,
+  semantics: Omit<PublicOptionDefinition, "owner">,
+): PublicOptionDefinition {
+  return { ...semantics, owner };
+}
+
 const JUDGE_OPTIONS = [
-  {
-    id: "project",
-    owner: "judge",
-    canonical: "--project",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: false,
-    form: "option",
-    description: {
-      en: "Project root for ledger identity (defaults to process cwd).",
-      zh: "卷宗身份用的项目根（默认进程 cwd）。",
-    },
-  },
-  {
-    id: "attach",
-    owner: "judge",
-    canonical: "--attach",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: true,
-    form: "option",
-    description: {
-      en: "Attach a regular file; frozen at admission (repeatable).",
-      zh: "附加普通文件；受理即冻结（可重复）。",
-    },
-  },
+  bindOwner("judge", SHARED_PROJECT_SEMANTICS),
+  bindOwner("judge", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const CODER_OPTIONS = [
@@ -341,34 +363,8 @@ const CODER_OPTIONS = [
       zh: "指令前可选 phase 词元；默认 apply。",
     },
   },
-  {
-    id: "project",
-    owner: "coder",
-    canonical: "--project",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: false,
-    form: "option",
-    description: {
-      en: "Project root for ledger identity (defaults to process cwd).",
-      zh: "卷宗身份用的项目根（默认进程 cwd）。",
-    },
-  },
-  {
-    id: "attach",
-    owner: "coder",
-    canonical: "--attach",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: true,
-    form: "option",
-    description: {
-      en: "Attach a regular file; frozen at admission (repeatable).",
-      zh: "附加普通文件；受理即冻结（可重复）。",
-    },
-  },
+  bindOwner("coder", SHARED_PROJECT_SEMANTICS),
+  bindOwner("coder", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const FIXER_OPTIONS = [
@@ -388,34 +384,8 @@ const FIXER_OPTIONS = [
       zh: "指令前可选 phase 词元；默认 apply。",
     },
   },
-  {
-    id: "project",
-    owner: "fixer",
-    canonical: "--project",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: false,
-    form: "option",
-    description: {
-      en: "Project root for ledger identity (defaults to process cwd).",
-      zh: "卷宗身份用的项目根（默认进程 cwd）。",
-    },
-  },
-  {
-    id: "attach",
-    owner: "fixer",
-    canonical: "--attach",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: true,
-    form: "option",
-    description: {
-      en: "Attach a regular file; frozen at admission (repeatable).",
-      zh: "附加普通文件；受理即冻结（可重复）。",
-    },
-  },
+  bindOwner("fixer", SHARED_PROJECT_SEMANTICS),
+  bindOwner("fixer", SHARED_ATTACH_SEMANTICS),
   {
     id: "prerequisites",
     owner: "fixer",
@@ -433,20 +403,8 @@ const FIXER_OPTIONS = [
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const REVIEWER_OPTIONS = [
-  {
-    id: "project",
-    owner: "reviewer",
-    canonical: "--project",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: false,
-    form: "option",
-    description: {
-      en: "Project root for ledger identity (defaults to process cwd).",
-      zh: "卷宗身份用的项目根（默认进程 cwd）。",
-    },
-  },
+  bindOwner("reviewer", SHARED_PROJECT_SEMANTICS),
+  // Reviewer deliberately has no --attach face (gathers its own evidence).
   {
     id: "base",
     owner: "reviewer",
@@ -478,34 +436,8 @@ const REVIEWER_OPTIONS = [
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const COLLECTOR_OPTIONS = [
-  {
-    id: "project",
-    owner: "collector",
-    canonical: "--project",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: false,
-    form: "option",
-    description: {
-      en: "Project root for ledger identity (defaults to process cwd).",
-      zh: "卷宗身份用的项目根（默认进程 cwd）。",
-    },
-  },
-  {
-    id: "attach",
-    owner: "collector",
-    canonical: "--attach",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: true,
-    form: "option",
-    description: {
-      en: "Attach a regular file; frozen at admission (repeatable).",
-      zh: "附加普通文件；受理即冻结（可重复）。",
-    },
-  },
+  bindOwner("collector", SHARED_PROJECT_SEMANTICS),
+  bindOwner("collector", SHARED_ATTACH_SEMANTICS),
   {
     id: "pr",
     owner: "collector",
@@ -551,34 +483,8 @@ const COLLECTOR_OPTIONS = [
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const DOCTOR_OPTIONS = [
-  {
-    id: "project",
-    owner: "doctor",
-    canonical: "--project",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: false,
-    form: "option",
-    description: {
-      en: "Project root for ledger identity (defaults to process cwd).",
-      zh: "卷宗身份用的项目根（默认进程 cwd）。",
-    },
-  },
-  {
-    id: "attach",
-    owner: "doctor",
-    canonical: "--attach",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: true,
-    form: "option",
-    description: {
-      en: "Attach a regular file; frozen at admission (repeatable).",
-      zh: "附加普通文件；受理即冻结（可重复）。",
-    },
-  },
+  bindOwner("doctor", SHARED_PROJECT_SEMANTICS),
+  bindOwner("doctor", SHARED_ATTACH_SEMANTICS),
   {
     id: "issue",
     owner: "doctor",
@@ -610,6 +516,7 @@ const DOCTOR_OPTIONS = [
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const MERGER_OPTIONS = [
+  // Merger project face differs: requires an in-progress ordinary merge root.
   {
     id: "project",
     owner: "merger",
@@ -624,20 +531,7 @@ const MERGER_OPTIONS = [
       zh: "已有进行中 ordinary merge 的项目根（默认 cwd）。",
     },
   },
-  {
-    id: "attach",
-    owner: "merger",
-    canonical: "--attach",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: true,
-    form: "option",
-    description: {
-      en: "Attach a regular file; frozen at admission (repeatable).",
-      zh: "附加普通文件；受理即冻结（可重复）。",
-    },
-  },
+  bindOwner("merger", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const TAISHI_OPTIONS = [
@@ -931,9 +825,10 @@ export type TakenTypedOption = {
 };
 
 /**
- * Shared typed-table argv consumer (#342 findings ①③).
+ * Shared typed-table argv consumer (#342).
  * Single path for dashed take, positional selector take, leading role-phase
- * resolution, and `repeatable:false` rejection via CliUsageError.
+ * resolution, `repeatable:false` rejection, and unconditional `required:true`
+ * missing checks via CliUsageError.
  */
 export type TypedOptionConsumer = {
   /** Take one dashed option from `tokens` front; enforces repeatable. */
@@ -951,11 +846,16 @@ export type TypedOptionConsumer = {
   readonly consumeLeadingPhase: (positional: string[]) => RolePhase;
   /** Occurrence count for an option id (0 when never seen). */
   readonly count: (id: string) => number;
+  /**
+   * Reject when any definition with unconditional `required:true` has count 0.
+   * Table-driven sole missing-required gate — parsers must not restate it.
+   */
+  readonly assertRequired: () => void;
 };
 
 /**
  * Build the sole production consumer for one owner definition list.
- * Every public argv parser shares this path — no parallel phase/repeatable logic.
+ * Every public argv parser shares this path — no parallel phase/repeatable/required logic.
  */
 export function createTypedOptionConsumer(
   definitions: readonly PublicOptionDefinition[],
@@ -1008,6 +908,17 @@ export function createTypedOptionConsumer(
     },
     count(id) {
       return counts.get(id) ?? 0;
+    },
+    assertRequired() {
+      for (const def of definitions) {
+        if (!def.required) continue;
+        if ((counts.get(def.id) ?? 0) > 0) continue;
+        const suffix =
+          def.valueMetavar === null ? "" : ` <${def.valueMetavar}>`;
+        throw new CliUsageError(
+          `${def.owner} requires ${def.canonical}${suffix}`,
+        );
+      }
     },
   };
 }

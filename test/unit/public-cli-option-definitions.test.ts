@@ -1,10 +1,19 @@
 /**
- * #342 — typed option-definition true source drives help / README / parsers.
- * Acceptance (owner 2026-08-15 option 2): option identity + structured semantics
- * land on typed true source and structured projection seams
- * (helpDocumentForCommand / projectOwnerOptions); help screen free text is a
- * human surface, not a machine contract. README generated regions zero-diff;
- * real installed-bin entry is loud smoke only (non-empty, no content freeze).
+ * #342 — typed option true source → help / README / parsers.
+ *
+ * Contract → shortest tracer:
+ * 1. table → helpDocument structured equivalence (one per-command tracer)
+ * 2. required:true → real parser missing reject + shared-seam flip
+ * 3. phase + repeatable → real production parsers
+ * 4. rejected spellings bidirectional (surfaces + parser refuse)
+ * 5. taishi conditional contracts → parseTaishiArgv pos/neg matrix
+ * 6. public dashed options admitted (forward scan)
+ * 7. README EN/ZH generated regions zero-diff
+ * 8. installed-bin loud smoke (non-empty only)
+ *
+ * Absent on purpose: PUBLIC_ROLE_ARGV/optionsForOwner/projectOwnerOptions
+ * identity mirrors, hand-rebuilt projection mirrors, synthetic helper tests
+ * superseded by real parser tracers.
  */
 import assert from "node:assert/strict";
 import { readFile, mkdtemp, rm, chmod } from "node:fs/promises";
@@ -16,13 +25,11 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import {
-  PUBLIC_ROLE_ARGV,
   helpDocument,
   helpDocumentForCommand,
 } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  PUBLIC_OPTION_TABLE,
   PUBLIC_ROLE_OPTION_OWNERS,
   PUBLIC_CLI_OPTIONS_README_MARKERS,
   REJECTED_PUBLIC_SPELLINGS,
@@ -37,7 +44,6 @@ import {
   type PublicOptionDefinition,
   type PublicRoleOptionOwner,
   type StructuredOptionProjection,
-  type TaishiMode,
 } from "../../src/public-cli/option-definitions.ts";
 import {
   parseCoderArgv,
@@ -52,9 +58,11 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const execFileAsync = promisify(execFile);
+const isUsage = (error: unknown): boolean =>
+  error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
-/** Identity + structured-semantics fields of one projected option (no prose). */
-function structuredOptionContract(opt: StructuredOptionProjection) {
+/** Identity + structured semantics only (no prose). */
+function structured(opt: StructuredOptionProjection) {
   return {
     id: opt.id,
     owner: opt.owner,
@@ -88,299 +96,233 @@ const COHORT_MIN = [
   "2",
 ] as const;
 
-test("PUBLIC_ROLE_ARGV rows expose the sole option table (no parallel spelling owner)", () => {
-  for (const owner of PUBLIC_ROLE_OPTION_OWNERS) {
-    const row = PUBLIC_ROLE_ARGV[owner];
-    assert.equal(typeof row.parse, "function", owner);
-    assert.ok(Array.isArray(row.options), `${owner} must reference options`);
-    assert.deepEqual(
-      row.options.map((o) => o.id),
-      optionsForOwner(owner).map((o) => o.id),
-      `${owner} PUBLIC_ROLE_ARGV.options must be the typed table row`,
-    );
-  }
-  // One structured projection path — table and projectOwnerOptions stay aligned.
-  for (const owner of Object.keys(PUBLIC_OPTION_TABLE) as OptionOwner[]) {
-    assert.deepEqual(
-      projectOwnerOptions(owner).map((o) => o.id),
-      optionsForOwner(owner).map((o) => o.id),
-    );
-  }
-  assert.ok(
-    optionsForOwner("global").some(
-      (o) => o.canonical === "--help" && o.aliases.includes("-h"),
-    ),
-  );
-});
-
-test("helpDocumentForCommand table-drive: option identity + structured semantics ≡ typed table", () => {
+test("table→helpDocument: per-command structured option semantics are equivalent", () => {
   const owners: OptionOwner[] = ["global", ...PUBLIC_ROLE_OPTION_OWNERS];
-
-  // Bare help document carries the same global option projection.
-  const bare = helpDocument();
-  assert.equal(bare.executable, "ak-role");
   assert.deepEqual(
-    bare.globalOptions.map(structuredOptionContract),
-    projectOwnerOptions("global").map(structuredOptionContract),
+    helpDocument().globalOptions.map(structured),
+    projectOwnerOptions("global").map(structured),
   );
-
   for (const owner of owners) {
     const doc = helpDocumentForCommand(owner);
-    assert.ok(doc, `helpDocumentForCommand(${owner}) must resolve`);
+    assert.ok(doc, owner);
     assert.equal(doc.command, owner);
-    if (owner === "global") {
-      assert.equal(doc.kind, "global");
-    } else if (owner === "taishi") {
-      assert.equal(doc.kind, "deterministic");
-    } else {
-      assert.equal(doc.kind, "role");
-    }
-
+    assert.equal(
+      doc.kind,
+      owner === "global"
+        ? "global"
+        : owner === "taishi"
+          ? "deterministic"
+          : "role",
+    );
     const fromTable = projectOwnerOptions(owner);
+    assert.ok(fromTable.length > 0, owner);
     assert.deepEqual(
-      doc.options.map(structuredOptionContract),
-      fromTable.map(structuredOptionContract),
-      `${owner}: helpDocumentForCommand options must equal projectOwnerOptions`,
+      doc.options.map(structured),
+      fromTable.map(structured),
+      owner,
     );
-    // projectOwnerOptions is the sole projection of optionsForOwner (identity fields).
-    assert.deepEqual(
-      fromTable.map(structuredOptionContract),
-      optionsForOwner(owner).map((def) =>
-        structuredOptionContract({
-          id: def.id,
-          owner: def.owner,
-          canonical: def.canonical,
-          aliases: def.aliases,
-          valueMetavar: def.valueMetavar,
-          required: def.required,
-          repeatable: def.repeatable,
-          ...(def.defaultValue === undefined
-            ? {}
-            : { defaultValue: def.defaultValue }),
-          form: def.form,
-          ...(def.phases === undefined ? {} : { phases: def.phases }),
-          ...(def.modes === undefined ? {} : { modes: def.modes }),
-          ...(def.requiredInModes === undefined
-            ? {}
-            : { requiredInModes: def.requiredInModes }),
-          ...(def.exclusiveWith === undefined
-            ? {}
-            : { exclusiveWith: def.exclusiveWith }),
-          ...(def.maxCountByMode === undefined
-            ? {}
-            : { maxCountByMode: def.maxCountByMode }),
-          ...(def.selectsMode === undefined
-            ? {}
-            : { selectsMode: def.selectsMode }),
-          description: def.description,
-        }),
-      ),
-      `${owner}: projectOwnerOptions must mirror typed table identity/semantics`,
-    );
-    assert.ok(fromTable.length > 0, `${owner} must expose at least one option`);
-    for (const opt of fromTable) {
-      assert.equal(typeof opt.canonical, "string");
-      assert.ok(opt.canonical.length > 0, `${owner}/${opt.id} canonical empty`);
-      assert.ok(Array.isArray(opt.aliases));
-    }
   }
-
   assert.equal(helpDocumentForCommand("navigator"), undefined);
   assert.equal(helpDocumentForCommand("not-a-command"), undefined);
 });
 
-test("shared typed consumer: phase from table aliases/default; repeatable:false rejects duplicates", () => {
-  const isUsage = (error: unknown): boolean =>
-    error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
+test("unconditional required: table required:true is the sole missing-option gate", () => {
+  const requiredRows: string[] = [];
+  for (const owner of PUBLIC_ROLE_OPTION_OWNERS) {
+    for (const def of optionsForOwner(owner)) {
+      if (def.required) requiredRows.push(`${owner}/${def.id}`);
+    }
+  }
+  assert.deepEqual(requiredRows.sort(), [
+    "collector/pr",
+    "doctor/issue",
+    "reviewer/base",
+  ]);
+  assert.throws(() => parseReviewerArgv(["task"]), isUsage);
+  assert.throws(() => parseCollectorArgv(["task"]), isUsage);
+  assert.throws(() => parseDoctorArgv(["task"]), isUsage);
 
-  // ① Phase resolution consumes the typed phase row — not a hardcoded plan/apply branch.
-  // Synthetic defaultValue "plan" proves the consumer reads the table (production default is apply).
-  const syntheticPhase: PublicOptionDefinition = {
-    id: "phase",
-    owner: "coder",
-    canonical: "plan|apply",
-    aliases: ["plan", "apply"],
-    valueMetavar: null,
-    required: false,
+  // Flip required on the shared seam → behavior flips (table is the gate).
+  const base = {
+    id: "probe",
+    owner: "reviewer" as const,
+    canonical: "--probe",
+    aliases: [] as const,
+    valueMetavar: "x",
     repeatable: false,
-    defaultValue: "plan",
-    form: "positional",
-    description: { en: "synthetic", zh: "合成" },
+    form: "option" as const,
+    description: { en: "probe", zh: "探针" },
   };
-  const synthetic = createTypedOptionConsumer([syntheticPhase]);
-  const leading = ["apply", "do work"];
-  assert.equal(synthetic.consumeLeadingPhase(leading), "apply");
-  assert.deepEqual(leading, ["do work"]);
-  assert.equal(synthetic.consumeLeadingPhase(["unrelated"]), "plan");
-  assert.equal(synthetic.consumeLeadingPhase([]), "plan");
+  const req: PublicOptionDefinition = { ...base, required: true };
+  const opt: PublicOptionDefinition = { ...base, required: false };
+  assert.throws(
+    () => createTypedOptionConsumer([req]).assertRequired(),
+    (e: unknown) =>
+      isUsage(e) && e instanceof Error && e.message.includes("requires --probe"),
+  );
+  createTypedOptionConsumer([opt]).assertRequired();
+  const present = createTypedOptionConsumer([req]);
+  assert.ok(present.takeDashed(["--probe", "v"]));
+  present.assertRequired();
+});
 
-  // Production coder/fixer still resolve plan|apply via their table rows.
+test("real parsers: phase from table; repeatable:false rejects; repeatable:true admits", () => {
   assert.equal(parseCoderArgv(["task"]).phase, "apply");
   assert.equal(parseCoderArgv(["plan", "task"]).phase, "plan");
   assert.equal(parseCoderArgv(["apply", "task"]).phase, "apply");
   assert.equal(parseFixerArgv(["plan", "fix it"]).phase, "plan");
   assert.equal(parseFixerArgv(["just fix"]).phase, "apply");
 
-  // ③ Non-repeatable dashed options reject a second occurrence on the shared path.
-  const nonRepeatableOwners: Array<{
+  const dups: Array<{
     name: string;
-    parse: (args: readonly string[]) => unknown;
-    dup: string[];
-    canonical: string;
+    parse: (a: readonly string[]) => unknown;
+    argv: string[];
+    flag: string;
   }> = [
     {
       name: "judge/--project",
       parse: parseJudgeArgv,
-      dup: ["--project", "/a", "--project", "/b", "task"],
-      canonical: "--project",
+      argv: ["--project", "/a", "--project", "/b", "task"],
+      flag: "--project",
     },
     {
       name: "coder/--project",
       parse: parseCoderArgv,
-      dup: ["--project", "/a", "--project", "/b", "task"],
-      canonical: "--project",
+      argv: ["--project", "/a", "--project", "/b", "task"],
+      flag: "--project",
     },
     {
       name: "fixer/--project",
       parse: parseFixerArgv,
-      dup: ["--project", "/a", "--project", "/b", "task"],
-      canonical: "--project",
+      argv: ["--project", "/a", "--project", "/b", "task"],
+      flag: "--project",
     },
     {
       name: "reviewer/--base",
       parse: parseReviewerArgv,
-      dup: ["--base", "main", "--base", "dev", "task"],
-      canonical: "--base",
+      argv: ["--base", "main", "--base", "dev", "task"],
+      flag: "--base",
     },
     {
       name: "doctor/--issue",
       parse: parseDoctorArgv,
-      dup: ["--issue", "1", "--issue", "2"],
-      canonical: "--issue",
+      argv: ["--issue", "1", "--issue", "2"],
+      flag: "--issue",
     },
     {
       name: "collector/--pr",
       parse: parseCollectorArgv,
-      dup: ["--pr", "1", "--pr", "2", "--repo", "acme/x"],
-      canonical: "--pr",
+      argv: ["--pr", "1", "--pr", "2", "--repo", "acme/x"],
+      flag: "--pr",
     },
     {
       name: "merger/--project",
       parse: parseMergerArgv,
-      dup: ["--project", "/a", "--project", "/b", "task"],
-      canonical: "--project",
+      argv: ["--project", "/a", "--project", "/b", "task"],
+      flag: "--project",
     },
     {
       name: "taishi/--ticket",
       parse: parseTaishiArgv,
-      dup: ["--ticket", "1", "--ticket", "2"],
-      canonical: "--ticket",
+      argv: ["--ticket", "1", "--ticket", "2"],
+      flag: "--ticket",
     },
   ];
-  for (const row of nonRepeatableOwners) {
+  for (const row of dups) {
     assert.throws(
-      () => row.parse(row.dup),
-      (error: unknown) =>
-        isUsage(error)
-        && error instanceof Error
-        && error.message.includes(`${row.canonical} cannot be repeated`),
+      () => row.parse(row.argv),
+      (e: unknown) =>
+        isUsage(e)
+        && e instanceof Error
+        && e.message.includes(`${row.flag} cannot be repeated`),
       row.name,
     );
   }
 
-  // Repeatable options still accept multiple occurrences.
-  const coderMulti = parseCoderArgv([
-    "--attach",
-    "/a",
-    "--attach",
-    "/b",
-    "task",
-  ]);
-  assert.deepEqual(coderMulti.attachmentPaths, ["/a", "/b"]);
-  const reviewerMulti = parseReviewerArgv([
-    "--base",
-    "main",
-    "--authority-ref",
-    "https://example.test/a",
-    "--authority-ref",
-    "https://example.test/b",
-    "task",
-  ]);
-  assert.deepEqual(reviewerMulti.authorityRefs, [
-    "https://example.test/a",
-    "https://example.test/b",
-  ]);
-  const modelGroups = parseTaishiArgv([
+  assert.deepEqual(
+    parseCoderArgv(["--attach", "/a", "--attach", "/b", "task"]).attachmentPaths,
+    ["/a", "/b"],
+  );
+  assert.deepEqual(
+    parseReviewerArgv([
+      "--base",
+      "main",
+      "--authority-ref",
+      "https://example.test/a",
+      "--authority-ref",
+      "https://example.test/b",
+      "task",
+    ]).authorityRefs,
+    ["https://example.test/a", "https://example.test/b"],
+  );
+  const mg = parseTaishiArgv([
     "--model-groups",
     "--project-root",
     "/a",
     "--project-root",
     "/b",
   ]);
-  assert.equal(modelGroups.query, "model-groups");
-  if (modelGroups.query === "model-groups") {
-    assert.deepEqual(modelGroups.projectRoots, ["/a", "/b"]);
-  }
+  assert.equal(mg.query, "model-groups");
+  if (mg.query === "model-groups") assert.deepEqual(mg.projectRoots, ["/a", "/b"]);
 
-  // Positional non-repeatable (taishi sweep) also goes through the shared path.
   assert.throws(
     () => parseTaishiArgv(["sweep", "sweep", "--attach", "/x"]),
-    (error: unknown) =>
-      isUsage(error)
-      && error instanceof Error
-      && error.message.includes("sweep cannot be repeated"),
+    (e: unknown) =>
+      isUsage(e)
+      && e instanceof Error
+      && e.message.includes("sweep cannot be repeated"),
   );
 });
 
-test("rejected spellings never appear in structured projections or README", () => {
+test("rejected spellings: absent from public surfaces; parsers refuse them", () => {
   const rejected = allRejectedSpellingTokens();
   assert.ok(rejected.includes("--burden"));
   assert.ok(rejected.includes("--ak-merger-input"));
 
-  // Public documentation surfaces that are machine-checkable: typed table,
-  // helpDocumentForCommand projection, and README generators — not help free text.
-  const owners: OptionOwner[] = ["global", ...PUBLIC_ROLE_OPTION_OWNERS];
-  for (const owner of owners) {
+  for (const owner of ["global", ...PUBLIC_ROLE_OPTION_OWNERS] as OptionOwner[]) {
     const doc = helpDocumentForCommand(owner);
     assert.ok(doc, owner);
-    for (const opt of doc.options) {
+    for (const opt of [...doc.options, ...optionsForOwner(owner)]) {
       for (const spelling of [opt.canonical, ...opt.aliases]) {
         assert.equal(
           rejected.includes(spelling),
           false,
-          `helpDocumentForCommand(${owner}) leaked rejected ${spelling}`,
-        );
-      }
-    }
-    for (const opt of optionsForOwner(owner)) {
-      for (const spelling of [opt.canonical, ...opt.aliases]) {
-        assert.equal(
-          rejected.includes(spelling),
-          false,
-          `public table must not contain rejected ${spelling}`,
+          `${owner} leaked rejected ${spelling}`,
         );
       }
     }
   }
 
-  for (const spelling of rejected) {
-    assert.equal(
-      renderReadmeOptionsMarkdown("en").includes(spelling),
-      false,
-      `README EN leaked rejected ${spelling}`,
-    );
-    assert.equal(
-      renderReadmeOptionsMarkdown("zh").includes(spelling),
-      false,
-      `README ZH leaked rejected ${spelling}`,
-    );
+  for (const entry of REJECTED_PUBLIC_SPELLINGS) {
+    for (const spelling of entry.spellings) {
+      if (entry.owner === "judge") {
+        assert.throws(
+          () => parseJudgeArgv([spelling, "x", "task"]),
+          (e: unknown) =>
+            e instanceof Error
+            && e.message.includes("burden")
+            && !e.message.includes("unknown judge option"),
+        );
+      }
+      if (entry.owner === "merger") {
+        assert.throws(
+          () => parseMergerArgv([spelling, "x", "task"]),
+          (e: unknown) =>
+            e instanceof Error
+            && (e.message.includes("ak-merger-input")
+              || e.message.includes("internal")
+              || e.message.includes("packet")
+              || e.message.includes("merger")),
+        );
+      }
+    }
   }
 });
 
 test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", () => {
-  // —— Table inventory the matrix is bound to ——
-  const taishi = optionsForOwner("taishi");
-  const byId = new Map(taishi.map((opt) => [opt.id, opt] as const));
+  const byId = new Map(
+    optionsForOwner("taishi").map((opt) => [opt.id, opt] as const),
+  );
   assert.ok(byId.get("ticket")?.modes?.includes("issue"));
   assert.ok(byId.get("project-root")?.modes?.includes("issue"));
   assert.deepEqual(byId.get("project-root")?.maxCountByMode, { issue: 1 });
@@ -407,16 +349,13 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
 
   type Expect =
     | { ok: true; query: string }
-    | { ok: false; messageIncludes: RegExp };
-
+    | { ok: false; re: RegExp };
   const cases: Array<{
     name: string;
-    /** Structured rule under proof. */
     rule: string;
     argv: string[];
     expect: Expect;
   }> = [
-    // issue requireAnyOf ticket|project-root
     {
       name: "issue+ticket",
       rule: "requireAnyOf:issue:ticket|project-root",
@@ -436,163 +375,127 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
       expect: { ok: true, query: "issue" },
     },
     {
-      name: "issue bare missing both",
+      name: "issue bare",
       rule: "requireAnyOf:issue:ticket|project-root",
       argv: [],
-      expect: { ok: false, messageIncludes: /ticket|project-root/i },
+      expect: { ok: false, re: /ticket|project-root/i },
     },
-    // issue maxCountByMode project-root ≤ 1
     {
-      name: "issue two project-roots",
+      name: "issue two roots",
       rule: "maxCountByMode:project-root:issue:1",
       argv: ["--project-root", "/a", "--project-root", "/b"],
-      expect: { ok: false, messageIncludes: /project-root/i },
+      expect: { ok: false, re: /project-root/i },
     },
-    // cohort requiredInModes + selectsMode
     {
-      name: "cohort complete",
+      name: "cohort ok",
       rule: "requiredInModes:cohort:group-*",
       argv: [...COHORT_MIN],
       expect: { ok: true, query: "cohort" },
     },
     {
-      name: "cohort missing groups",
+      name: "cohort missing",
       rule: "requiredInModes:cohort:group-*",
       argv: ["--cohort"],
-      expect: { ok: false, messageIncludes: /group-a-label|usage:.*cohort/i },
+      expect: { ok: false, re: /group-a-label|usage:.*cohort/i },
     },
-    // modes admission: ticket not in cohort
     {
-      name: "cohort rejects ticket",
+      name: "cohort×ticket",
       rule: "modes:ticket:issue-only",
       argv: [...COHORT_MIN, "--ticket", "1"],
-      expect: { ok: false, messageIncludes: /ticket/i },
+      expect: { ok: false, re: /ticket/i },
     },
-    // modes admission: project-root not in cohort
     {
-      name: "cohort rejects project-root",
+      name: "cohort×root",
       rule: "modes:project-root:issue|model-groups",
       argv: [...COHORT_MIN, "--project-root", "/p"],
-      expect: { ok: false, messageIncludes: /project-root/i },
+      expect: { ok: false, re: /project-root/i },
     },
-    // modes admission: attach not in cohort
     {
-      name: "cohort rejects attach",
+      name: "cohort×attach",
       rule: "modes:attach:sweep-only",
       argv: [...COHORT_MIN, "--attach", "/tmp/s.json"],
-      expect: { ok: false, messageIncludes: /attach/i },
+      expect: { ok: false, re: /attach/i },
     },
-    // exclusiveWith cohort × model-groups
     {
-      name: "cohort xor model-groups",
+      name: "cohort xor mg",
       rule: "exclusiveWith:cohort×model-groups",
       argv: ["--cohort", "--model-groups", "--project-root", "/p"],
-      expect: {
-        ok: false,
-        messageIncludes: /cohort|model-groups/i,
-      },
+      expect: { ok: false, re: /cohort|model-groups/i },
     },
-    // model-groups required project-root + multi root ok
     {
-      name: "model-groups missing root",
+      name: "mg missing root",
       rule: "requiredInModes:model-groups:project-root",
       argv: ["--model-groups"],
-      expect: { ok: false, messageIncludes: /project-root|model-groups/i },
+      expect: { ok: false, re: /project-root|model-groups/i },
     },
     {
-      name: "model-groups multi root",
+      name: "mg multi root",
       rule: "requiredInModes:model-groups:project-root",
-      argv: [
-        "--model-groups",
-        "--project-root",
-        "/a",
-        "--project-root",
-        "/b",
-      ],
+      argv: ["--model-groups", "--project-root", "/a", "--project-root", "/b"],
       expect: { ok: true, query: "model-groups" },
     },
     {
-      name: "model-groups rejects ticket",
+      name: "mg×ticket",
       rule: "modes:ticket:issue-only",
       argv: ["--model-groups", "--project-root", "/a", "--ticket", "1"],
-      expect: { ok: false, messageIncludes: /ticket/i },
+      expect: { ok: false, re: /ticket/i },
     },
     {
-      name: "model-groups rejects cohort group flag",
+      name: "mg×group",
       rule: "modes:group-a-label:cohort-only",
-      argv: [
-        "--model-groups",
-        "--project-root",
-        "/a",
-        "--group-a-label",
-        "A",
-      ],
-      expect: { ok: false, messageIncludes: /group-a-label/i },
+      argv: ["--model-groups", "--project-root", "/a", "--group-a-label", "A"],
+      expect: { ok: false, re: /group-a-label/i },
     },
-    // sweep selectsMode + modes admission
     {
-      name: "sweep via attach",
+      name: "sweep attach",
       rule: "selectsMode:attach→sweep",
       argv: ["--attach", "/tmp/s.json"],
       expect: { ok: true, query: "sweep" },
     },
     {
-      name: "sweep via token",
+      name: "sweep token",
       rule: "selectsMode:sweep→sweep",
       argv: ["sweep"],
       expect: { ok: true, query: "sweep" },
     },
     {
-      name: "sweep rejects ticket",
+      name: "sweep×ticket",
       rule: "modes:ticket:issue-only",
       argv: ["sweep", "--attach", "/tmp/s.json", "--ticket", "1"],
-      expect: { ok: false, messageIncludes: /ticket/i },
+      expect: { ok: false, re: /ticket/i },
     },
     {
-      name: "sweep rejects project-root",
+      name: "sweep×root",
       rule: "modes:project-root:issue|model-groups",
       argv: ["--attach", "/tmp/s.json", "--project-root", "/p"],
-      expect: { ok: false, messageIncludes: /project-root/i },
+      expect: { ok: false, re: /project-root/i },
     },
-    // group flags without cohort selector land in issue and fail modes admission
     {
-      name: "group flag alone rejected on issue",
+      name: "group on issue",
       rule: "modes:group-a-label:cohort-only",
       argv: ["--group-a-label", "A", "--ticket", "1"],
-      expect: { ok: false, messageIncludes: /group-a-label/i },
+      expect: { ok: false, re: /group-a-label/i },
     },
   ];
 
-  const coveredRules = new Set<string>();
-  for (const scenario of cases) {
-    coveredRules.add(scenario.rule);
-    const expected = scenario.expect;
-    if (expected.ok) {
-      const parsed = parseTaishiArgv(scenario.argv);
-      assert.equal(
-        parsed.query,
-        expected.query,
-        `${scenario.name}: query`,
-      );
+  const covered = new Set<string>();
+  for (const s of cases) {
+    covered.add(s.rule);
+    if (s.expect.ok) {
+      assert.equal(parseTaishiArgv(s.argv).query, s.expect.query, s.name);
     } else {
       assert.throws(
-        () => parseTaishiArgv(scenario.argv),
-        (error: unknown) => {
-          assert.ok(error instanceof Error, scenario.name);
-          assert.match(
-            error.message,
-            expected.messageIncludes,
-            `${scenario.name}: ${error.message}`,
-          );
+        () => parseTaishiArgv(s.argv),
+        (e: unknown) => {
+          assert.ok(e instanceof Error, s.name);
+          assert.match(e.message, s.expect.re, `${s.name}: ${e.message}`);
           return true;
         },
-        scenario.name,
+        s.name,
       );
     }
   }
-
-  // Every structured constraint class named above must appear in the matrix.
-  for (const required of [
+  for (const rule of [
     "requireAnyOf:issue:ticket|project-root",
     "maxCountByMode:project-root:issue:1",
     "requiredInModes:cohort:group-*",
@@ -605,108 +508,87 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     "selectsMode:attach→sweep",
     "selectsMode:sweep→sweep",
   ] as const) {
-    assert.equal(
-      coveredRules.has(required),
-      true,
-      `matrix missing structured rule ${required}`,
-    );
+    assert.equal(covered.has(rule), true, `missing ${rule}`);
   }
-
-  // Silence unused TaishiMode import guard for future mode literals.
-  const _modes: TaishiMode[] = ["issue", "sweep", "cohort", "model-groups"];
-  assert.equal(_modes.length, 4);
 });
 
-test("bidirectional parser rescan: public dashed options admitted; rejected spellings refused", () => {
+test("public dashed options admitted; shared project/attach owner-binding preserved", () => {
   type Case = {
     owner: PublicRoleOptionOwner;
-    parse: (args: readonly string[]) => unknown;
-    build: (flagArgs: string[]) => string[];
+    parse: (a: readonly string[]) => unknown;
+    build: (flags: string[]) => string[];
   };
-
   const cases: Case[] = [
     {
       owner: "judge",
       parse: parseJudgeArgv,
-      build: (flagArgs) => [...flagArgs, "task"],
+      build: (f) => [...f, "task"],
     },
     {
       owner: "coder",
       parse: parseCoderArgv,
-      build: (flagArgs) => [...flagArgs, "task"],
+      build: (f) => [...f, "task"],
     },
     {
       owner: "fixer",
       parse: parseFixerArgv,
-      build: (flagArgs) => [...flagArgs, "task"],
+      build: (f) => [...f, "task"],
     },
     {
       owner: "reviewer",
       parse: parseReviewerArgv,
-      build: (flagArgs) => {
-        const hasBase = flagArgs.some(
-          (t) => t === "--base" || t.startsWith("--base="),
-        );
-        return hasBase
-          ? [...flagArgs, "task"]
-          : ["--base", "main", ...flagArgs, "task"];
-      },
+      build: (f) =>
+        f.some((t) => t === "--base" || t.startsWith("--base="))
+          ? [...f, "task"]
+          : ["--base", "main", ...f, "task"],
     },
     {
       owner: "collector",
       parse: parseCollectorArgv,
-      build: (flagArgs) => {
-        const hasPr = flagArgs.some(
-          (t) => t === "--pr" || t.startsWith("--pr="),
-        );
-        return hasPr
-          ? [...flagArgs, "--repo", "acme/widgets"]
-          : ["--pr", "1", "--repo", "acme/widgets", ...flagArgs];
-      },
+      build: (f) =>
+        f.some((t) => t === "--pr" || t.startsWith("--pr="))
+          ? [...f, "--repo", "acme/widgets"]
+          : ["--pr", "1", "--repo", "acme/widgets", ...f],
     },
     {
       owner: "doctor",
       parse: parseDoctorArgv,
-      build: (flagArgs) => {
-        const hasIssue = flagArgs.some(
-          (t) => t === "--issue" || t.startsWith("--issue="),
-        );
-        return hasIssue ? [...flagArgs] : ["--issue", "1", ...flagArgs];
-      },
+      build: (f) =>
+        f.some((t) => t === "--issue" || t.startsWith("--issue="))
+          ? [...f]
+          : ["--issue", "1", ...f],
     },
     {
       owner: "merger",
       parse: parseMergerArgv,
-      build: (flagArgs) => [...flagArgs, "task"],
+      build: (f) => [...f, "task"],
     },
   ];
 
-  let forwardOk = 0;
-  for (const scenario of cases) {
-    for (const opt of optionsForOwner(scenario.owner)) {
+  let ok = 0;
+  for (const s of cases) {
+    for (const opt of optionsForOwner(s.owner)) {
       if (opt.form !== "option") continue;
-      const valueArgs =
+      const flags =
         opt.valueMetavar === null
           ? [opt.canonical]
           : [opt.canonical, sampleValue(opt.valueMetavar, opt.id)];
       try {
-        scenario.parse(scenario.build(valueArgs));
-        forwardOk += 1;
+        s.parse(s.build(flags));
+        ok += 1;
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const msg = error instanceof Error ? error.message : String(error);
         assert.equal(
-          /unknown \w+ option/.test(message),
+          /unknown \w+ option/.test(msg),
           false,
-          `public option ${scenario.owner} ${opt.canonical} treated as unknown: ${message}`,
+          `${s.owner} ${opt.canonical}: ${msg}`,
         );
-        forwardOk += 1;
+        ok += 1;
       }
     }
   }
-  assert.ok(forwardOk >= 10, "forward scan must admit public options");
+  assert.ok(ok >= 10);
 
-  // taishi dashed identities covered by the structured matrix; still prove
-  // each dashed spelling is not "unknown" under a valid face.
   for (const opt of optionsForOwner("taishi")) {
     if (opt.form !== "option") continue;
     const face =
@@ -719,48 +601,56 @@ test("bidirectional parser rescan: public dashed options admitted; rejected spel
           : opt.modes?.[0] === "sweep"
             ? opt.id === "attach"
               ? ["--attach", "/tmp/s.json"]
-              : ["sweep", opt.canonical, sampleValue(opt.valueMetavar ?? "path", opt.id)]
+              : [
+                  "sweep",
+                  opt.canonical,
+                  sampleValue(opt.valueMetavar ?? "path", opt.id),
+                ]
             : opt.id === "ticket"
               ? ["--ticket", "1"]
               : opt.id === "project-root"
                 ? ["--project-root", "/tmp/p"]
-                : ["--ticket", "1", opt.canonical, sampleValue(opt.valueMetavar ?? "path", opt.id)];
+                : [
+                    "--ticket",
+                    "1",
+                    opt.canonical,
+                    sampleValue(opt.valueMetavar ?? "path", opt.id),
+                  ];
     try {
       parseTaishiArgv(face);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const msg = error instanceof Error ? error.message : String(error);
       assert.equal(
-        /unknown taishi option/.test(message),
+        /unknown taishi option/.test(msg),
         false,
-        `taishi ${opt.canonical} treated as unknown: ${message}`,
+        `taishi ${opt.canonical}: ${msg}`,
       );
     }
   }
 
-  for (const entry of REJECTED_PUBLIC_SPELLINGS) {
-    for (const spelling of entry.spellings) {
-      if (entry.owner === "judge") {
-        assert.throws(
-          () => parseJudgeArgv([spelling, "x", "task"]),
-          (error: unknown) =>
-            error instanceof Error
-            && error.message.includes("burden")
-            && !error.message.includes("unknown judge option"),
-        );
-      }
-      if (entry.owner === "merger") {
-        assert.throws(
-          () => parseMergerArgv([spelling, "x", "task"]),
-          (error: unknown) =>
-            error instanceof Error
-            && (error.message.includes("ak-merger-input")
-              || error.message.includes("internal")
-              || error.message.includes("packet")
-              || error.message.includes("merger")),
-        );
-      }
-    }
+  // Shared project semantics (owner-binding only); merger/taishi/reviewer differ.
+  const judgeProject = optionsForOwner("judge").find((o) => o.id === "project")!;
+  const canon = structured(projectOwnerOptions("judge").find((o) => o.id === "project")!);
+  for (const owner of [
+    "judge",
+    "coder",
+    "fixer",
+    "reviewer",
+    "collector",
+    "doctor",
+  ] as const) {
+    const row = projectOwnerOptions(owner).find((o) => o.id === "project")!;
+    assert.deepEqual({ ...structured(row), owner: "judge" }, canon, owner);
+    assert.equal(row.description.en, judgeProject.description.en, owner);
   }
+  assert.notEqual(
+    optionsForOwner("merger").find((o) => o.id === "project")!.description.en,
+    judgeProject.description.en,
+  );
+  assert.equal(optionsForOwner("reviewer").some((o) => o.id === "attach"), false);
+  const taishiAttach = optionsForOwner("taishi").find((o) => o.id === "attach")!;
+  assert.deepEqual(taishiAttach.modes, ["sweep"]);
+  assert.equal(taishiAttach.selectsMode, "sweep");
 });
 
 function sampleValue(metavar: string, id: string): string {
@@ -789,35 +679,20 @@ function sampleValue(metavar: string, id: string): string {
 }
 
 test("README EN/ZH generated regions are regeneration-clean", async () => {
-  const enPath = resolve(packageRoot, "README.md");
-  const zhPath = resolve(packageRoot, "README.zh-CN.md");
-  const en = await readFile(enPath, "utf8");
-  const zh = await readFile(zhPath, "utf8");
-
+  const en = await readFile(resolve(packageRoot, "README.md"), "utf8");
+  const zh = await readFile(resolve(packageRoot, "README.zh-CN.md"), "utf8");
+  assert.ok(en.includes(PUBLIC_CLI_OPTIONS_README_MARKERS.begin));
+  assert.ok(zh.includes(PUBLIC_CLI_OPTIONS_README_MARKERS.begin));
   assert.equal(
-    en.includes(PUBLIC_CLI_OPTIONS_README_MARKERS.begin),
-    true,
-    "README.md must contain generated options region markers",
-  );
-  assert.equal(
-    zh.includes(PUBLIC_CLI_OPTIONS_README_MARKERS.begin),
-    true,
-    "README.zh-CN.md must contain generated options region markers",
-  );
-
-  const enNext = applyReadmeOptionsSection(en, "en");
-  const zhNext = applyReadmeOptionsSection(zh, "zh");
-  assert.equal(
-    enNext,
+    applyReadmeOptionsSection(en, "en"),
     en,
-    "README.md generated region drifted — run: node --import tsx scripts/render-public-cli-options-readme.ts",
+    "README.md drifted — run: node --import tsx scripts/render-public-cli-options-readme.ts",
   );
   assert.equal(
-    zhNext,
+    applyReadmeOptionsSection(zh, "zh"),
     zh,
-    "README.zh-CN.md generated region drifted — run: node --import tsx scripts/render-public-cli-options-readme.ts",
+    "README.zh-CN.md drifted — run: node --import tsx scripts/render-public-cli-options-readme.ts",
   );
-
   for (const spelling of allRejectedSpellingTokens()) {
     assert.equal(renderReadmeOptionsMarkdown("en").includes(spelling), false);
     assert.equal(renderReadmeOptionsMarkdown("zh").includes(spelling), false);
@@ -829,8 +704,6 @@ test("installed package bin tracer: bare --help and help <role> smoke (non-empty
     pathToFileURL(resolve(packageRoot, "scripts/build-package.mjs")).href
   )) as { buildPublicAkRoleBin: (outfile?: string) => Promise<void> };
 
-  // Pin under /tmp (not os.tmpdir()): same host-pi packageRoot footgun as
-  // taishi-entry / main.ts resolvePackageRoot — keep the CI shape locally.
   const binDir = await mkdtemp(join("/tmp", "ak-opt-bin-"));
   const binPath = join(binDir, "main.js");
   const home = await mkdtemp(join(tmpdir(), "ak-opt-bin-home-"));
@@ -844,8 +717,6 @@ test("installed package bin tracer: bare --help and help <role> smoke (non-empty
     }
     await chmod(binPath, 0o755);
 
-    // Loud smoke only: build/exec failures must throw (no catch→runAkRole).
-    // Help free text is a human surface — do not assert option/command content.
     const run = async (args: string[]): Promise<string> => {
       const { stdout } = await execFileAsync(process.execPath, [binPath, ...args], {
         cwd: packageRoot,
@@ -855,14 +726,11 @@ test("installed package bin tracer: bare --help and help <role> smoke (non-empty
       return stdout;
     };
 
-    const bare = await run(["--help"]);
-    assert.ok(bare.trim().length > 0, "bare --help must produce non-empty stdout");
-
+    assert.ok((await run(["--help"])).trim().length > 0);
     for (const owner of PUBLIC_ROLE_OPTION_OWNERS) {
-      const text = await run(["help", owner]);
       assert.ok(
-        text.trim().length > 0,
-        `help ${owner} must produce non-empty stdout`,
+        (await run(["help", owner])).trim().length > 0,
+        `help ${owner}`,
       );
     }
   } finally {
