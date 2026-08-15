@@ -14,7 +14,6 @@ import {
 } from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
-  recordEffectiveInvocationModel,
   admitDoctorInvocation,
   buildDoctorTransportPrompt,
   type AdmittedDoctorInvocation,
@@ -174,10 +173,7 @@ async function dispatchAdmittedDoctor(input: {
         io,
       );
     }
-    if (env.model !== undefined) {
-      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
-    }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {

@@ -14389,10 +14389,13 @@ function parseModelSpec(spec, fallbackThinking) {
   let thinking = fallbackThinking;
   if (thinkingSplit > 0) {
     const maybeThinking = trimmed.slice(thinkingSplit + 1);
-    if (THINKING_LEVELS.has(maybeThinking)) {
-      thinking = maybeThinking;
-      modelPart = trimmed.slice(0, thinkingSplit);
+    if (!THINKING_LEVELS.has(maybeThinking)) {
+      throw new Error(
+        `model specification must be provider/model[:thinking], got ${spec}`
+      );
     }
+    thinking = maybeThinking;
+    modelPart = trimmed.slice(0, thinkingSplit);
   }
   const slash = modelPart.indexOf("/");
   if (slash <= 0 || slash === modelPart.length - 1) {
@@ -17864,7 +17867,10 @@ async function markRunAdmitted(admitted) {
     ...admitted.role === "coder" || admitted.role === "fixer" ? { phase: admitted.phase } : {}
   });
 }
-async function markRunRunning(runDirectory) {
+async function markRunRunning(runDirectory, effectiveModel) {
+  if (effectiveModel !== void 0) {
+    await recordEffectiveInvocationModel(runDirectory, effectiveModel);
+  }
   const current = await readRoleRunState(runDirectory);
   if (current === void 0) {
     throw new Error("cannot mark running: run state missing");
@@ -21772,10 +21778,7 @@ async function dispatchAdmittedCoder(input) {
         io
       );
     }
-    if (env.model !== void 0) {
-      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
-    }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22098,10 +22101,7 @@ async function dispatchAdmittedCollector(input) {
         io
       );
     }
-    if (env.model !== void 0) {
-      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
-    }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22322,10 +22322,7 @@ async function dispatchAdmittedDoctor(input) {
         io
       );
     }
-    if (env.model !== void 0) {
-      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
-    }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22620,10 +22617,7 @@ async function dispatchAdmittedFixer(input) {
         io
       );
     }
-    if (env.model !== void 0) {
-      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
-    }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22992,10 +22986,7 @@ async function dispatchAdmittedJudge(input) {
         io
       );
     }
-    if (env.model !== void 0) {
-      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
-    }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -23335,10 +23326,7 @@ async function dispatchAdmittedMerger(input) {
         io
       );
     }
-    if (env.model !== void 0) {
-      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
-    }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -23807,10 +23795,7 @@ async function dispatchAdmittedReviewer(input) {
         io
       );
     }
-    if (env.model !== void 0) {
-      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
-    }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     await clearReviewerDispatchRejection(admitted.runDirectory);
     const childEnv = {
