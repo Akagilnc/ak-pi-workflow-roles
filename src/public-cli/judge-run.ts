@@ -254,12 +254,17 @@ async function dispatchAdmittedJudge(input: {
   io: CliIo;
   extraArgs: string[];
   lease: RunWriterLease;
+  /**
+   * Mechanical engine provenance for initial Judge dispatch only.
+   * Explicit — never read from env.engine here, so resume cannot rewrite it.
+   */
+  effectiveEngine?: string;
 }): Promise<{
   exitCode: number;
   admitted: AdmittedJudgeInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease } = input;
+  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
   try {
     // Fail closed at the public credential seam before model dispatch: missing
     // selected-provider auth must not be washed by ambient keys or zero-exit runs.
@@ -274,7 +279,11 @@ async function dispatchAdmittedJudge(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(
+      admitted.runDirectory,
+      env.model,
+      effectiveEngine,
+    );
     // Attempt-scoped observation: drop any prior dispatch's 429 evidence so only
     // the current initial/resume attempt can qualify v1 resume.
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -459,6 +468,8 @@ export async function runPublicJudge(
     io,
     extraArgs,
     lease,
+    // #358: only initial Judge dispatch records mechanical engine provenance.
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 
