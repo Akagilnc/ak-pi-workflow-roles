@@ -50,9 +50,10 @@ export function readOAuthKeepaliveProviders(
           `OAuth keepalive setting providers[${index}] must be a non-empty string`,
         );
       }
-      return id;
+      // Accept via trim-non-empty; return the normalized id so refresh can hit real providers.
+      return id.trim();
     });
-    return Object.freeze(providers.map((id) => id));
+    return Object.freeze(providers);
   } catch (error) {
     // Absent optional setting uses the documented default; all other causes propagate.
     if (
@@ -162,21 +163,23 @@ export function createOAuthKeepalive(options: OAuthKeepaliveOptions = {}): OAuth
 
   let cancel: (() => void) | undefined;
   let abortController: AbortController | undefined;
-  let inFlight = false;
+  /** Owner token for the single in-flight refresh; survives stop/start until that call settles. */
+  let inFlightToken: object | undefined;
 
   const stop = (): void => {
     cancel?.();
     cancel = undefined;
     abortController?.abort();
     abortController = undefined;
-    inFlight = false;
+    // Do not clear unsettled inFlight — single-flight ownership is continuous across stop/start.
   };
 
   const runTick = async (ctx: OAuthKeepaliveContext): Promise<void> => {
-    if (inFlight) return;
+    if (inFlightToken !== undefined) return;
     const ac = abortController;
     if (ac === undefined || ac.signal.aborted) return;
-    inFlight = true;
+    const token = {};
+    inFlightToken = token;
     try {
       const result = await ctx.modelRegistry.refresh({
         providers: [...providers],
@@ -194,7 +197,8 @@ export function createOAuthKeepalive(options: OAuthKeepaliveOptions = {}): OAuth
         emitWarning(ctx, providerId, error);
       }
     } finally {
-      inFlight = false;
+      // Only the owner of this flight may release the gate (old finally must not clear a newer one).
+      if (inFlightToken === token) inFlightToken = undefined;
     }
   };
 
