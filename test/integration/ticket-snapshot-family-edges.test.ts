@@ -55,14 +55,51 @@ function hasGraphqlField(block: string, name: string): boolean {
   return new RegExp(String.raw`\b${name}\b(?!\s*:)`).test(block);
 }
 
-function graphqlFieldCount(block: string, name: string): number {
-  return block.match(new RegExp(String.raw`\b${name}\b(?!\s*:)`, "g"))?.length ?? 0;
+/**
+ * Find `fieldName` (optional args) followed by a balanced `{...}` and return
+ * the interior. Ownership-sensitive: only the direct selection body counts.
+ * Not a GraphQL parser — brace depth only; no full-query equality.
+ */
+function extractGraphqlSelectionBody(block: string, fieldName: string): string | null {
+  const re = new RegExp(String.raw`\b${fieldName}\b(?!\s*:)\s*(?:\([^)]*\))?\s*\{`);
+  const m = re.exec(block);
+  if (!m) return null;
+  const openBrace = m.index + m[0].length - 1;
+  let depth = 0;
+  for (let i = openBrace; i < block.length; i++) {
+    const ch = block[i]!;
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return block.slice(openBrace + 1, i);
+    }
+  }
+  return null;
+}
+
+/** Drop one named selection (field + optional args + balanced braces) from block. */
+function stripGraphqlSelection(block: string, fieldName: string): string {
+  const re = new RegExp(String.raw`\b${fieldName}\b(?!\s*:)\s*(?:\([^)]*\))?\s*\{`);
+  const m = re.exec(block);
+  if (!m) return block;
+  const openBrace = m.index + m[0].length - 1;
+  let depth = 0;
+  for (let i = openBrace; i < block.length; i++) {
+    const ch = block[i]!;
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return block.slice(0, m.index) + block.slice(i + 1);
+    }
+  }
+  return block;
 }
 
 /**
- * Local structure/count match for the frozen closed-family query.
+ * Local nested-ownership match for the frozen closed-family query.
  * Proves c0..c3 → 78/127/128/130 and each alias carries adapter-required
- * selections (including blockedBy pageInfo + nodes number). Not full-query equality.
+ * selections under the correct parents (milestone.title, parent.number,
+ * blockedBy.{pageInfo pagination, nodes number/state}). Not full-query equality.
  */
 function isFrozenClosedFamilyQuery(query: string): boolean {
   const starts: number[] = [];
@@ -80,18 +117,41 @@ function isFrozenClosedFamilyQuery(query: string): boolean {
       starts[i],
       i + 1 < starts.length ? starts[i + 1] : query.length,
     );
-    // Distinctive single-occurrence adapter fields
-    for (const field of ["closedAt", "milestone", "parent", "blockedBy", "pageInfo"] as const) {
-      if (!hasGraphqlField(block, field)) return false;
+
+    // Nested ownership: required children must live under the right parent field.
+    const milestoneBody = extractGraphqlSelectionBody(block, "milestone");
+    if (milestoneBody === null || !hasGraphqlField(milestoneBody, "title")) return false;
+
+    const parentBody = extractGraphqlSelectionBody(block, "parent");
+    if (parentBody === null || !hasGraphqlField(parentBody, "number")) return false;
+
+    const blockedByBody = extractGraphqlSelectionBody(block, "blockedBy");
+    if (blockedByBody === null) return false;
+    const pageInfoBody = extractGraphqlSelectionBody(blockedByBody, "pageInfo");
+    if (
+      pageInfoBody === null ||
+      !hasGraphqlField(pageInfoBody, "hasNextPage") ||
+      !hasGraphqlField(pageInfoBody, "endCursor")
+    ) {
+      return false;
     }
-    // issue.title + milestone.title
-    if (graphqlFieldCount(block, "title") < 2) return false;
-    // issue.state + blockedBy nodes.state (adapter maps both)
-    if (graphqlFieldCount(block, "state") < 2) return false;
-    // issue.number + parent.number + nodes.number (alias argument `number:` excluded)
-    if (graphqlFieldCount(block, "number") < 3) return false;
-    // blockedBy nodes must select number for adapter edge parsing
-    if (!/\bnodes\s*\{[^}]*\bnumber\b/.test(block)) return false;
+    const nodesBody = extractGraphqlSelectionBody(blockedByBody, "nodes");
+    if (
+      nodesBody === null ||
+      !hasGraphqlField(nodesBody, "number") ||
+      !hasGraphqlField(nodesBody, "state")
+    ) {
+      return false;
+    }
+
+    // Top-level issue fields must remain on the issue itself (not only nested).
+    let topLevel = block;
+    for (const nested of ["milestone", "parent", "blockedBy"] as const) {
+      topLevel = stripGraphqlSelection(topLevel, nested);
+    }
+    for (const field of ["number", "title", "state", "closedAt"] as const) {
+      if (!hasGraphqlField(topLevel, field)) return false;
+    }
   }
   return true;
 }
