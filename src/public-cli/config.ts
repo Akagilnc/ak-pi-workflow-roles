@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { assertLegalEngineName } from "../package-resources/engine-material.ts";
 import {
   AUTOMATIC_NAVIGATOR_SEAT,
   PUBLIC_CALLABLE_ROLES,
@@ -139,12 +140,8 @@ export function setPersistentSeatEngine(
       },
     };
   }
-  if (typeof engine !== "string" || engine.trim() === "" || engine.trim() !== engine) {
-    throw new Error(`config seat ${seat} engine must be a non-empty trimmed name`);
-  }
-  if (engine.includes("/") || engine.includes("\\") || engine.includes("\0") || engine.includes("..")) {
-    throw new Error(`config seat ${seat} engine name is illegal: ${engine}`);
-  }
+  // Engine-name legality is owned solely by assertLegalEngineName
+  // (call-request + config-parse seams). Setter is pure seat mutation.
   return {
     seats: {
       ...config.seats,
@@ -163,17 +160,17 @@ export function seatModelOnly(seat: PersistentSeatConfig): SeatModelConfig {
 /**
  * Config-parse seam: every persisted engine name must exist in package materials.
  * Call with packageRoot after load / before dispatch (#356).
+ * Legality authority = assertLegalEngineName (no injected duplicate).
  */
 export function validatePublicCliConfigEngines(
   config: PublicCliConfig,
   packageRoot: string,
-  assertLegal: (packageRoot: string, name: string) => string,
 ): void {
   for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
     const row = config.seats[seat];
     if (row?.engine === undefined) continue;
     try {
-      assertLegal(packageRoot, row.engine);
+      assertLegalEngineName(packageRoot, row.engine);
     } catch (error) {
       throw new Error(
         `config seat ${seat} engine is unknown: ${row.engine}`,
@@ -309,16 +306,10 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
     thinking: raw.thinking as PublicThinkingLevel,
   };
   if (raw.engine !== undefined) {
-    if (typeof raw.engine !== "string" || raw.engine.trim() === "" || raw.engine.trim() !== raw.engine) {
-      throw new Error(`config seat ${seat} engine must be a non-empty trimmed name`);
-    }
-    if (
-      raw.engine.includes("/") ||
-      raw.engine.includes("\\") ||
-      raw.engine.includes("\0") ||
-      raw.engine.includes("..")
-    ) {
-      throw new Error(`config seat ${seat} engine name is illegal: ${raw.engine}`);
+    // Shape only: engine must be a string field. Name legality is deferred to
+    // validatePublicCliConfigEngines → assertLegalEngineName (single authority).
+    if (typeof raw.engine !== "string") {
+      throw new Error(`config seat ${seat} engine must be a string`);
     }
     parsed.engine = raw.engine;
   }

@@ -1,0 +1,127 @@
+{
+  "provenance": {
+    "baseline": "3aec6621",
+    "note": "Generated from baseline builders at 3aec6621 with frozen admitted inputs. Non-deterministic bytes (run id/timestamp/LLM output) are absent from these builders' outputs under frozen inputs.",
+    "command": "git worktree add --detach /tmp/ak-engine-baseline-3aec6621 3aec6621 && ln -sfn <repo>/node_modules /tmp/ak-engine-baseline-3aec6621/node_modules && mkdir -p /tmp/ak-engine-baseline-3aec6621/scripts && cp <repo>/scripts/generate-engine-axis-baseline-oracle.mts /tmp/ak-engine-baseline-3aec6621/scripts/ && cd /tmp/ak-engine-baseline-3aec6621 && GOLDEN_OUT=<repo>/test/fixtures/engine-axis-baseline node --import tsx ./scripts/generate-engine-axis-baseline-oracle.mts",
+    "generator": "scripts/generate-engine-axis-baseline-oracle.mts"
+  },
+  "inputs": {
+    "judge": {
+      "role": "judge",
+      "runId": "run-engine-oracle",
+      "bookKey": "book",
+      "projectRoot": "/project",
+      "instruction": "Decide the matter.",
+      "instructionEmpty": false,
+      "attachments": [],
+      "runDirectory": "/runs/r",
+      "sessionDirectory": "/runs/r/session",
+      "sessionFile": "/runs/r/session/session.jsonl",
+      "admittedRequestPath": "/runs/r/admitted-request.json"
+    },
+    "coder": {
+      "role": "coder",
+      "runId": "run-engine-oracle",
+      "bookKey": "book",
+      "projectRoot": "/project",
+      "phase": "apply",
+      "instruction": "Implement the slice.",
+      "instructionEmpty": false,
+      "attachments": [],
+      "runDirectory": "/runs/r",
+      "sessionDirectory": "/runs/r/session",
+      "sessionFile": "/runs/r/session/session.jsonl",
+      "admittedRequestPath": "/runs/r/admitted-request.json",
+      "taskPath": "/runs/r/task.md"
+    },
+    "collector": {
+      "role": "collector",
+      "runId": "run-engine-oracle",
+      "bookKey": "book",
+      "projectRoot": "/project",
+      "instruction": "",
+      "instructionEmpty": true,
+      "attachments": [],
+      "runDirectory": "/runs/r",
+      "sessionDirectory": "/runs/r/session",
+      "sessionFile": "/runs/r/session/session.jsonl",
+      "admittedRequestPath": "/runs/r/admitted-request.json",
+      "prNumber": 42,
+      "repository": {
+        "display": "acme/widgets",
+        "canonical": "acme/widgets",
+        "owner": "acme",
+        "repo": "widgets"
+      },
+      "manifestDigest": "abc"
+    },
+    "packageRoot": "/frozen-package-root"
+  },
+  "outputs": {
+    "judge": {
+      "transportPrompt": "Decide the matter.",
+      "activationArgv": [
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+        "--session",
+        "/runs/r/session/session.jsonl",
+        "--session-dir",
+        "/runs/r/session",
+        "--ak-role",
+        "judge",
+        "--mode",
+        "json",
+        "Decide the matter."
+      ]
+    },
+    "coder": {
+      "transportPrompt": "Implement the slice.",
+      "activationArgv": [
+        "--no-skills",
+        "--skill",
+        "/frozen-package-root/resources/methods/tdd/SKILL.md",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+        "--session",
+        "/runs/r/session/session.jsonl",
+        "--session-dir",
+        "/runs/r/session",
+        "--ak-role",
+        "coder",
+        "--ak-coder-phase",
+        "apply",
+        "--ak-coder-task",
+        "/runs/r/task.md",
+        "--mode",
+        "json",
+        "Implement the slice."
+      ]
+    },
+    "collector": {
+      "transportPrompt": "Start collection for the validated runtime-owned target. Observe GitHub materials and submit exactly one ak_collector_output when observation is complete.",
+      "activationArgv": [
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+        "--session",
+        "/runs/r/session/session.jsonl",
+        "--session-dir",
+        "/runs/r/session",
+        "--ak-role",
+        "collector",
+        "--ak-collector-repo",
+        "acme/widgets",
+        "--ak-collector-pr",
+        "42",
+        "--mode",
+        "json",
+        "Start collection for the validated runtime-owned target. Observe GitHub materials and submit exactly one ak_collector_output when observation is complete."
+      ],
+      "fixedKickoff": "Start collection for the validated runtime-owned target. Observe GitHub materials and submit exactly one ak_collector_output when observation is complete."
+    }
+  }
+}
