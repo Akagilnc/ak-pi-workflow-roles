@@ -53,13 +53,8 @@ export type EngineDetourToolRegistration = {
 export function registerEngineDetourTool(
   pi: ExtensionAPI,
   hostActions: EngineDetourHostActions,
-  options: {
-    /** Optional override for tests; production reads process.env. */
-    env?: NodeJS.ProcessEnv;
-  } = {},
 ): EngineDetourToolRegistration & { resetLatch(): void } {
-  const env = options.env ?? process.env;
-  const engineName = engineNameFromEnv(env);
+  const engineName = engineNameFromEnv();
   if (engineName === undefined) {
     return {
       registered: false,

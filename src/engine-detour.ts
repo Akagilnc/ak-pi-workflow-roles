@@ -94,11 +94,9 @@ export function engineDetourFailureDiagnostic(result: {
   return `engine detour exited with code ${result.code}`;
 }
 
-/** Non-empty trimmed engine name from child env, else undefined. */
-export function engineNameFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  const raw = env[AK_ROLE_ENGINE_ENV];
+/** Non-empty trimmed engine name from process.env, else undefined. */
+export function engineNameFromEnv(): string | undefined {
+  const raw = process.env[AK_ROLE_ENGINE_ENV];
   if (typeof raw !== "string") return undefined;
   const trimmed = raw.trim();
   return trimmed === "" ? undefined : trimmed;
