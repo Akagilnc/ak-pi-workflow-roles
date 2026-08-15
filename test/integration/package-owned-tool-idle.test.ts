@@ -9,22 +9,34 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
+  type AssistantMessage,
   type Context,
 } from "@earendil-works/pi-ai";
 import {
   defineTool,
+  SessionManager,
   type AgentToolUpdateCallback,
   type ExtensionAPI,
+  type ExtensionContext,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
 import {
   PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
+  PackageOwnedToolIdleTimeoutError,
+  withPackageOwnedToolIdleSuspended,
+  wrapPackageOwnedToolDefinition,
 } from "../../src/package-owned-tool-idle.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
+import { createReviewerRoleRuntime } from "../../src/reviewer-role.ts";
+import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
+import { createDoctorRoleRuntime } from "../../src/doctor-role.ts";
 import { DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES } from "../../src/evidence-child-executor.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import type { ComplianceDecision } from "../../src/compliance-transport.ts";
 import {
   flushEventLoopTurns,
   waitForEventLoopCondition,
@@ -452,6 +464,435 @@ test(
       assert.equal(results.length, 1);
       assert.equal((results[0] as { isError?: boolean }).isError, true);
     });
+  },
+);
+
+/**
+ * Production registerTool seam: installPackageOwnedToolRegistration wraps every
+ * package-owned tool. Tests mirror that single wrap so post-audit work stays
+ * under the outer backstop without inventing a second cleanup timer.
+ */
+type ExecutableTool = {
+  name: string;
+  execute: (...args: any[]) => Promise<unknown>;
+};
+
+function productionWrappedToolPi(options: {
+  flags?: ReadonlyMap<string, unknown> | Record<string, unknown>;
+} = {}) {
+  const flagMap = new Map<string, unknown>(
+    options.flags instanceof Map
+      ? options.flags
+      : Object.entries(options.flags ?? {}),
+  );
+  const tools = new Map<string, ExecutableTool>();
+  const handlers = new Map<string, (...args: never[]) => unknown>();
+  let active: string[] = [];
+  const pi = {
+    registerFlag(name: string, _definition?: unknown) {
+      if (!flagMap.has(name)) flagMap.set(name, undefined);
+    },
+    getFlag(name: string) {
+      return flagMap.get(name);
+    },
+    registerTool(tool: ExecutableTool) {
+      tools.set(tool.name, wrapPackageOwnedToolDefinition(tool));
+    },
+    getAllTools() {
+      return ["read", "bash", ...tools.keys()].map((name) => ({ name }));
+    },
+    setActiveTools(names: string[]) {
+      active = names;
+    },
+    getActiveTools() {
+      return active;
+    },
+    on(name: string, fn: (...args: never[]) => unknown) {
+      handlers.set(name, fn);
+    },
+  };
+  return { pi: pi as unknown as ExtensionAPI, tools, handlers, active: () => active };
+}
+
+function soleToolContext(toolName: string, id: string): ExtensionContext {
+  const sessionManager = SessionManager.inMemory();
+  const message: AssistantMessage = {
+    role: "assistant",
+    content: [{ type: "toolCall", id, name: toolName, arguments: {} }],
+    api: "openai-responses",
+    provider: "test",
+    model: "test",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "toolUse",
+    timestamp: 0,
+  };
+  sessionManager.appendMessage(message);
+  return { sessionManager, abort() {} } as unknown as ExtensionContext;
+}
+
+const NO_RECEIPT_DECISION = {
+  status: "no-receipt",
+  acceptedReceipt: false,
+  terminalToolCalled: true,
+  rejectedReceipts: [{ reason: "audit quiet", diagnosticAvailable: true }],
+  deliveryTurns: 2,
+  sessionCompletion: "settled-without-accepted-receipt",
+  runPointer: "/run",
+  attemptPointer: "attempt-1",
+} as const satisfies ComplianceDecision;
+
+const ESCALATE_DECISION = {
+  status: "escalate",
+  conflicts: ["needs human"],
+  decisionGate: { question: "Proceed?", options: ["yes", "no"] },
+} as const satisfies ComplianceDecision;
+
+test(
+  "#339 Reviewer production wiring: post-audit hanging shutdownReviewerAgent is bounded by package-owned idle",
+  { timeout: 30_000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    assert.equal(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS, 183_000);
+
+    const oid = (ch: string) => ch.repeat(40);
+    const pin = {
+      repositoryRoot: "/repo",
+      objectFormat: "sha1" as const,
+      targetHead: oid("9"),
+      refs: { "refs/heads/main": { objectId: oid("9"), peeledCommitId: oid("9") } },
+    };
+    const skill = "# code-review\n";
+    const audits: readonly ComplianceDecision[] = [
+      { status: "pass" },
+      NO_RECEIPT_DECISION,
+      ESCALATE_DECISION,
+    ];
+
+    for (const audit of audits) {
+      let shutdownEntered = false;
+      const { pi, tools } = productionWrappedToolPi();
+      // Production role-runtime maps shutdownReviewerAgent → shutdownAgent.
+      const runtime = createReviewerRoleRuntime(
+        pi,
+        {
+          loadSoul: async () => "REVIEWER LAW",
+          loadCanonicalSkillBinding: async () => ({
+            name: "code-review" as const,
+            snapshot: {
+              raw: skill,
+              path: "/skill",
+              baseDir: "/",
+              body: skill,
+              snapshotIdentity: Object.freeze({ text: skill }),
+            },
+            invocation: (request: string) => request,
+            captureExpansion: () => undefined,
+          }),
+          createPinnedGitReader: async () => ({
+            pin,
+            snapshot: async () => pin,
+            resolve: async () => oid("8"),
+            range: async () => ({
+              base: oid("8"),
+              target: oid("9"),
+              diffCommand: `git diff ${oid("8")}...${oid("9")}`,
+              diffSha256: "2".repeat(64),
+              commits: [oid("9")],
+            }),
+            featureTokens: async () => Object.freeze([]),
+            listSpecCandidatePaths: async () => Object.freeze([]),
+            originRepository: async () => undefined,
+            commitMessagesNewestFirst: async () => Object.freeze([]),
+            readPinnedText: async () => undefined,
+          }),
+          runDispatch: async () => {
+            throw new Error("dispatch must not run for refused post-audit cleanup");
+          },
+          auditCompliance: async () => audit,
+          // Mirrors extensions/role-runtime.ts: shutdownReviewerAgent → reviewerAgent.shutdown()
+          // → reviewer-workspace recursive rm. Hang = cleanup never settles.
+          shutdownAgent: async () => {
+            shutdownEntered = true;
+            await new Promise<never>(() => {});
+          },
+        },
+        {
+          failInfrastructure(error: unknown) {
+            throw error;
+          },
+        },
+      );
+      await runtime.activate(undefined, { baseRevision: "main~1" });
+
+      const tool = tools.get(REVIEWER_OUTPUT_TOOL_NAME);
+      assert.ok(tool, `ak_reviewer_output registered for audit ${audit.status}`);
+      const callId = `reviewer-post-audit-${audit.status}`;
+      const pending = tool.execute(
+        callId,
+        { status: "refused", diagnostic: "no accepted dispatch" },
+        undefined,
+        undefined,
+        soleToolContext(REVIEWER_OUTPUT_TOOL_NAME, callId),
+      );
+      let failure: unknown;
+      void pending.then(
+        () => {
+          failure = new Error(`unexpected resolve after audit ${audit.status}`);
+        },
+        (error: unknown) => {
+          failure = error;
+        },
+      );
+
+      await waitForEventLoopCondition(
+        () => shutdownEntered,
+        { label: `post-audit shutdown entered after ${audit.status}` },
+      );
+      assert.equal(failure === undefined, true, `still pending immediately after ${audit.status}`);
+
+      t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS - 1);
+      await flushEventLoopTurns(20);
+      assert.equal(failure === undefined, true, `still pending 1ms before outer budget after ${audit.status}`);
+
+      t.mock.timers.tick(1);
+      await flushEventLoopTurns(30);
+      assert.ok(
+        failure instanceof PackageOwnedToolIdleTimeoutError,
+        `audit ${audit.status} + hanging shutdown must fail via existing package-owned idle backstop`,
+      );
+      await assert.rejects(pending, (error: unknown) => error instanceof PackageOwnedToolIdleTimeoutError);
+    }
+  },
+);
+
+test(
+  "#339 Judge/Doctor/Reviewer names no longer exempt non-audit hang; only suspended audit await does",
+  { timeout: 30_000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+
+    const named = [
+      JUDGE_OUTPUT_TOOL_NAME,
+      REVIEWER_OUTPUT_TOOL_NAME,
+      DOCTOR_OUTPUT_TOOL_NAME,
+    ] as const;
+
+    // Bidirectional scan: name alone must not skip the outer backstop.
+    for (const name of named) {
+      const tool = wrapPackageOwnedToolDefinition({
+        name,
+        async execute() {
+          await new Promise<never>(() => {});
+        },
+      });
+      const pending = tool.execute();
+      let failureName: string | undefined;
+      void pending.then(
+        () => {},
+        (error: unknown) => {
+          failureName = error instanceof Error ? error.name : undefined;
+        },
+      );
+      await flushEventLoopTurns();
+      t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS - 1);
+      await flushEventLoopTurns();
+      assert.equal(failureName, undefined, `${name} still pending before budget`);
+      t.mock.timers.tick(1);
+      await flushEventLoopTurns(20);
+      assert.equal(
+        failureName,
+        "PackageOwnedToolIdleTimeoutError",
+        `${name} non-audit hang must stay under outer package-owned idle`,
+      );
+      await assert.rejects(pending, (error: unknown) => error instanceof PackageOwnedToolIdleTimeoutError);
+    }
+
+    // Inverse: only the real compliance-audit suspension leaves the outer owner.
+    for (const name of named) {
+      let enteredAudit = false;
+      let releaseAudit!: (error: Error) => void;
+      const tool = wrapPackageOwnedToolDefinition({
+        name,
+        async execute() {
+          await withPackageOwnedToolIdleSuspended(async () => {
+            enteredAudit = true;
+            await new Promise<never>((_resolve, reject) => {
+              releaseAudit = reject;
+            });
+          });
+          return { content: [{ type: "text" as const, text: "unreachable" }], details: {} };
+        },
+      });
+      const pending = tool.execute();
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await waitForEventLoopCondition(
+        () => enteredAudit,
+        { label: `${name} entered suspended audit await` },
+      );
+      t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
+      await flushEventLoopTurns(30);
+      assert.equal(
+        settled,
+        false,
+        `${name} suspended audit await must not be settled by outer 183s gate`,
+      );
+      releaseAudit(new Error(`test cleanup after ${name} suspended-audit assertion`));
+      await assert.rejects(pending, /test cleanup/);
+      assert.equal(settled, true);
+    }
+  },
+);
+
+test(
+  "#339 Judge/Doctor production execute: hanging non-audit segment after fast audit is outer-bounded",
+  { timeout: 30_000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+
+    // Judge: inject audit that returns, then hang on a post-audit-shaped await inside
+    // dispose path by wrapping auditCompliance to hang after decision is known is hard.
+    // Instead hang the injected auditCompliance itself WITHOUT suspension — proves the
+    // name no longer removes outer coverage for work that is not runComplianceAudit.
+    {
+      const { pi, tools } = productionWrappedToolPi();
+      let auditEntered = false;
+      const runtime = createJudgeRoleRuntime(
+        pi,
+        {
+          loadSoul: async () => "JUDGE LAW",
+          auditSoulCompliance: async () => {
+            auditEntered = true;
+            // Not runComplianceAudit — name-wide exemption used to leave this naked.
+            await new Promise<never>(() => {});
+            return { status: "pass" };
+          },
+        },
+        {
+          failInfrastructure(error: unknown) {
+            throw error;
+          },
+        },
+      );
+      await runtime.activate();
+      const tool = tools.get(JUDGE_OUTPUT_TOOL_NAME);
+      assert.ok(tool);
+      const callId = "judge-nonaudit-hang";
+      const pending = tool.execute(
+        callId,
+        { judgeStatus: "converged" },
+        undefined,
+        undefined,
+        soleToolContext(JUDGE_OUTPUT_TOOL_NAME, callId),
+      );
+      let failure: unknown;
+      void pending.then(
+        () => {},
+        (error: unknown) => {
+          failure = error;
+        },
+      );
+      await waitForEventLoopCondition(() => auditEntered, { label: "judge non-audit hang entered" });
+      t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
+      await flushEventLoopTurns(30);
+      assert.ok(
+        failure instanceof PackageOwnedToolIdleTimeoutError,
+        "Judge non-audit hang must fail via existing outer backstop",
+      );
+      await assert.rejects(pending, (error: unknown) => error instanceof PackageOwnedToolIdleTimeoutError);
+    }
+
+    {
+      const patient = {
+        version: 1,
+        identity: { issueNumber: 28, runsPath: "/case/.ak/work/issues/28/runs" },
+        evidence: [{
+          id: "review/session/live.jsonl",
+          kind: "session",
+          byteLength: 6,
+          contentLength: 2,
+          sha256: "abc",
+          content: "中文",
+        }],
+        cost: {
+          invocations: { count: 0, sources: [] },
+          legs: { count: 0, sources: [] },
+          modelApiTurns: { count: 0, sources: [] },
+          outputTokens: { count: 0, sources: [] },
+          toolCalls: { count: 0, sources: [] },
+          retries: { count: 0, sources: [], evidence: "literal run-dir naming" },
+          statuses: [],
+          commits: [],
+          sessions: [],
+          outputBytes: { count: 0, sources: [], payload: "raw JSONL bytes", providerWireBytes: "unavailable" },
+        },
+      };
+      const { pi, tools } = productionWrappedToolPi({
+        flags: { "ak-doctor-case": patient.identity.runsPath },
+      });
+      let auditEntered = false;
+      const runtime = createDoctorRoleRuntime(
+        pi,
+        {
+          loadSoul: async () => "DOCTOR LAW",
+          loadCase: async () => patient as never,
+          auditCompliance: async () => {
+            auditEntered = true;
+            await new Promise<never>(() => {});
+            return { status: "pass" };
+          },
+        },
+        {
+          failInfrastructure(error: unknown) {
+            throw error;
+          },
+        },
+      );
+      await runtime.activate();
+      const tool = tools.get(DOCTOR_OUTPUT_TOOL_NAME);
+      assert.ok(tool);
+      const callId = "doctor-nonaudit-hang";
+      const pending = tool.execute(
+        callId,
+        {
+          status: "refused",
+          reason: "Session bytes are incomplete.",
+          missingEvidence: [{ need: "session header", targetKeys: ["case"] }],
+        },
+        undefined,
+        undefined,
+        soleToolContext(DOCTOR_OUTPUT_TOOL_NAME, callId),
+      );
+      let failure: unknown;
+      void pending.then(
+        () => {},
+        (error: unknown) => {
+          failure = error;
+        },
+      );
+      await waitForEventLoopCondition(() => auditEntered, { label: "doctor non-audit hang entered" });
+      t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
+      await flushEventLoopTurns(30);
+      assert.ok(
+        failure instanceof PackageOwnedToolIdleTimeoutError,
+        "Doctor non-audit hang must fail via existing outer backstop",
+      );
+      await assert.rejects(pending, (error: unknown) => error instanceof PackageOwnedToolIdleTimeoutError);
+    }
   },
 );
 

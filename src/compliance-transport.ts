@@ -7,6 +7,7 @@ import {
 } from "./evidence-child-executor.ts";
 import { createAuditorDossierTool } from "./auditor-dossier-tool.ts";
 import type { DossierObservation } from "./dossier-resolution.ts";
+import { withPackageOwnedToolIdleSuspended } from "./package-owned-tool-idle.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 
 export type ComplianceCompletion = AuditorCompletion;
@@ -116,24 +117,28 @@ export type RunComplianceAuditOptions = {
 };
 
 export async function runComplianceAudit(options: RunComplianceAuditOptions): Promise<ComplianceDecision> {
-  const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
-  const receipt = await executeAuditorChild({
-    tool: options.tool,
-    dossierTool: createAuditorDossierTool(options.runDirectory),
-    systemPrompt: options.systemPrompt,
-    prompt,
-    roleLabel: options.roleLabel,
-    context: options.context,
-    retainResponse: (response) => retainComplianceResponse(options.context, response),
-    ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  // #339: only the real compliance-audit await leaves the outer package-owned
+  // idle owner. Pre/post-audit work stays under the single outer backstop.
+  return withPackageOwnedToolIdleSuspended(async () => {
+    const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
+    const receipt = await executeAuditorChild({
+      tool: options.tool,
+      dossierTool: createAuditorDossierTool(options.runDirectory),
+      systemPrompt: options.systemPrompt,
+      prompt,
+      roleLabel: options.roleLabel,
+      context: options.context,
+      retainResponse: (response) => retainComplianceResponse(options.context, response),
+      ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    if (receipt.noReceiptLifecycle !== undefined) {
+      return {
+        status: "no-receipt",
+        ...receipt.noReceiptLifecycle,
+        ...(receipt.response.usage === undefined ? {} : { usage: receipt.response.usage }),
+      };
+    }
+    return readComplianceCandidate(receipt.decision, receipt.response.usage);
   });
-  if (receipt.noReceiptLifecycle !== undefined) {
-    return {
-      status: "no-receipt",
-      ...receipt.noReceiptLifecycle,
-      ...(receipt.response.usage === undefined ? {} : { usage: receipt.response.usage }),
-    };
-  }
-  return readComplianceCandidate(receipt.decision, receipt.response.usage);
 }
