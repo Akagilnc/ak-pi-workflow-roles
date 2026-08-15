@@ -1,0 +1,94 @@
+{
+  "openIssues": {
+    "data": {
+      "repository": {
+        "issues": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          },
+          "nodes": []
+        }
+      }
+    }
+  },
+  "closedDrills": {
+    "data": {
+      "repository": {
+        "c0": {
+          "number": 78,
+          "title": "司天第一期：信封激活自记 + 候簿一家多簿（如实记录基座）",
+          "state": "CLOSED",
+          "closedAt": "2026-08-05T15:11:42Z",
+          "milestone": {
+            "title": "趋势观测席（太史/钦天监，命名与宪章待 grill）"
+          },
+          "parent": null,
+          "blockedBy": {
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": []
+          }
+        },
+        "c1": {
+          "number": 127,
+          "title": "78-S1: 信封激活自记——受理后候簿首墨（tracer）",
+          "state": "CLOSED",
+          "closedAt": "2026-08-05T12:37:00Z",
+          "milestone": null,
+          "parent": {
+            "number": 78
+          },
+          "blockedBy": {
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": []
+          }
+        },
+        "c2": {
+          "number": 128,
+          "title": "78-S2: 双面对账——pending/幽灵定谳 D1a",
+          "state": "CLOSED",
+          "closedAt": "2026-08-05T14:55:47Z",
+          "milestone": null,
+          "parent": {
+            "number": 78
+          },
+          "blockedBy": {
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "MQ"
+            },
+            "nodes": [
+              {
+                "number": 127,
+                "state": "CLOSED"
+              }
+            ]
+          }
+        },
+        "c3": {
+          "number": 130,
+          "title": "78-S4: 太医定位器最小兼容——D3a 窄口",
+          "state": "CLOSED",
+          "closedAt": "2026-08-05T04:03:43Z",
+          "milestone": null,
+          "parent": {
+            "number": 78
+          },
+          "blockedBy": {
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": []
+          }
+        }
+      }
+    }
+  }
+}
