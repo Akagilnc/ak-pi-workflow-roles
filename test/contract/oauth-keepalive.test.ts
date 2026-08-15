@@ -616,6 +616,51 @@ test("#351 dual surface: ui.notify + console both available → exactly one visi
   }
 });
 
+test("#351 notify throw: falls back once to console.warn with provider/class and notify cause", async () => {
+  const consoleArgs: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    consoleArgs.push(args);
+  };
+
+  try {
+    const { scheduler, ticks } = manualScheduler();
+    const keepalive = createOAuthKeepalive({
+      providers: ["kimi-coding"],
+      scheduler,
+    });
+    const boom = new Error("token endpoint down");
+    boom.name = "TokenEndpointError";
+    const notifyBoom = new Error("ui bus closed");
+    notifyBoom.name = "NotifyTransportError";
+
+    keepalive.start({
+      modelRegistry: {
+        async refresh() {
+          throw boom;
+        },
+      },
+      ui: {
+        notify() {
+          throw notifyBoom;
+        },
+      },
+    });
+
+    await fireTick(ticks, 0);
+    assert.equal(consoleArgs.length, 1, "exactly one console fallback when notify throws");
+    const [text, cause] = consoleArgs[0]!;
+    assert.equal(typeof text, "string");
+    assert.match(String(text), /kimi-coding/);
+    assert.match(String(text), /TokenEndpointError/);
+    assert.equal(cause, notifyBoom, "fallback must carry the notify throw cause");
+
+    keepalive.stop();
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test(
   "#351 production setting seam: non-default oauth-keepalive.json drives real session refresh filter",
   async () => {

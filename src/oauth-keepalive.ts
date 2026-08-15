@@ -137,13 +137,15 @@ function formatWarning(providerId: string, error: unknown): string {
 function emitWarning(ctx: OAuthKeepaliveContext, providerId: string, error: unknown): void {
   const text = formatWarning(providerId, error);
   // Exactly one visible surface per failure: prefer ui.notify when present;
-  // console.warn only when notify is unavailable (print/json / headless).
+  // console.warn only when notify is unavailable (print/json / headless)
+  // or when notify itself throws (still one surface; carry the notify cause).
   const notify = ctx.ui?.notify;
   if (typeof notify === "function") {
     try {
       notify(text, "warning");
-    } catch {
-      // Warning must not fault the keepalive lifecycle.
+    } catch (notifyError) {
+      // Notify threw: fall back once so refresh failure stays visible.
+      console.warn(text, notifyError);
     }
     return;
   }
@@ -163,23 +165,22 @@ export function createOAuthKeepalive(options: OAuthKeepaliveOptions = {}): OAuth
 
   let cancel: (() => void) | undefined;
   let abortController: AbortController | undefined;
-  /** Owner token for the single in-flight refresh; survives stop/start until that call settles. */
-  let inFlightToken: object | undefined;
+  /** Bare single-flight gate; survives stop/start until the in-flight call settles. */
+  let inFlight = false;
 
   const stop = (): void => {
     cancel?.();
     cancel = undefined;
     abortController?.abort();
     abortController = undefined;
-    // Do not clear unsettled inFlight — single-flight ownership is continuous across stop/start.
+    // Do not clear unsettled inFlight — single-flight is continuous across stop/start.
   };
 
   const runTick = async (ctx: OAuthKeepaliveContext): Promise<void> => {
-    if (inFlightToken !== undefined) return;
+    if (inFlight) return;
     const ac = abortController;
     if (ac === undefined || ac.signal.aborted) return;
-    const token = {};
-    inFlightToken = token;
+    inFlight = true;
     try {
       const result = await ctx.modelRegistry.refresh({
         providers: [...providers],
@@ -197,8 +198,7 @@ export function createOAuthKeepalive(options: OAuthKeepaliveOptions = {}): OAuth
         emitWarning(ctx, providerId, error);
       }
     } finally {
-      // Only the owner of this flight may release the gate (old finally must not clear a newer one).
-      if (inFlightToken === token) inFlightToken = undefined;
+      inFlight = false;
     }
   };
 
