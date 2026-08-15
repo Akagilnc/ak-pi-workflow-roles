@@ -108,10 +108,10 @@ export function parseModelSpec(
   const thinkingSplit = trimmed.lastIndexOf(":");
   let modelPart = trimmed;
   let thinking: PublicThinkingLevel | undefined = fallbackThinking;
-  // #346: no colon → bare provider/model is legal. Colon present → suffix must
-  // be a typed PublicThinkingLevel (empty/unknown stay format rejects; never
-  // swallow ":…" into the model name).
-  if (thinkingSplit > 0) {
+  // #346: no colon → bare provider/model is legal. Colon present (any index,
+  // including 0) → suffix must be a typed PublicThinkingLevel (empty/unknown
+  // stay format rejects; never swallow ":…" into the model name).
+  if (thinkingSplit !== -1) {
     const maybeThinking = trimmed.slice(thinkingSplit + 1);
     if (!THINKING_LEVELS.has(maybeThinking as PublicThinkingLevel)) {
       throw new Error(
