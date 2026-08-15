@@ -1,15 +1,19 @@
 /**
- * Live GitHub contract for factory-board S2 ticket snapshot adapter.
+ * #78 family edge contract for factory-board S2 ticket snapshot adapter.
  *
- * Asserts only the #136-frozen minimal #78 family edges:
+ * Fixture-backed (no network / no gh auth). Bytes enter only through the
+ * production seam: GhApiRunner → createGhTicketSnapshotTransport → fetchBoardSnapshot.
+ *
+ * Asserts the #136-frozen minimal #78 family edges:
  *   #127 / #128 / #130 are native children of #78
  *   #128 blocked_by #127
  * Shape fields required; title copy is not asserted.
  */
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { createGhApiRunner } from "../../src/collector-github.ts";
+import type { GhApiRunner, GhApiResponse } from "../../src/collector-github.ts";
 import {
   createGhTicketSnapshotTransport,
   fetchBoardSnapshot,
@@ -20,8 +24,47 @@ const REPO = "ak-pi-workflow-roles";
 // Frozen #78 family drills — each member is fetched whether open or closed.
 const FROZEN_FAMILY_ISSUE_NUMBERS = [78, 127, 128, 130] as const;
 
-test("live GitHub snapshot keeps #78 family parent and blocked_by edges", async () => {
-  const transport = createGhTicketSnapshotTransport(createGhApiRunner());
+const FIXTURE_URL = new URL(
+  "../fixtures/ticket-snapshot/family-78-graphql.json",
+  import.meta.url,
+);
+
+type Family78GraphqlFixture = {
+  openIssues: unknown;
+  closedDrills: unknown;
+};
+
+function ok(body: unknown): GhApiResponse {
+  return {
+    status: 200,
+    headers: {},
+    bodyText: JSON.stringify(body),
+  };
+}
+
+async function loadFixtureRunner(): Promise<GhApiRunner> {
+  const fixture = JSON.parse(await readFile(FIXTURE_URL, "utf8")) as Family78GraphqlFixture;
+  assert.ok(fixture.openIssues !== undefined, "fixture.openIssues required");
+  assert.ok(fixture.closedDrills !== undefined, "fixture.closedDrills required");
+
+  return async (args) => {
+    const queryArg = args.find((a, i) => args[i - 1] === "-f" && a.startsWith("query="));
+    const query = queryArg?.slice("query=".length) ?? "";
+
+    if (query.includes("issues(states: OPEN")) {
+      return ok(fixture.openIssues);
+    }
+    // Named closed drills for the frozen family (sorted 78,127,128,130 → c0..c3).
+    if (query.includes("c0: issue(number: 78)")) {
+      return ok(fixture.closedDrills);
+    }
+    throw new Error(`unexpected graphql query (fixture runner is offline-only): ${query.slice(0, 160)}`);
+  };
+}
+
+test("fixture GitHub snapshot keeps #78 family parent and blocked_by edges", async () => {
+  const runner = await loadFixtureRunner();
+  const transport = createGhTicketSnapshotTransport(runner);
   // Named closed/open drills keep frozen family members present even when not in the open list.
   const snapshot = await fetchBoardSnapshot({
     bindings: [{ bookKey: "ak-pi-workflow-roles", owner: OWNER, repo: REPO }],
