@@ -47,6 +47,10 @@ import {
 } from "../merger-contracts.ts";
 import { sha256Hex } from "../sha256.ts";
 import { uuidv7 } from "../uuidv7.ts";
+import {
+  appendEngineSessionMaterial,
+  type EngineSessionMaterial,
+} from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   REJECTED_PUBLIC_SPELLINGS,
@@ -809,6 +813,7 @@ export async function admitJudgeInvocation(
 /** Build the Pi prompt transport for an admitted Judge request. */
 export function buildJudgeTransportPrompt(
   admitted: AdmittedJudgeInvocation,
+  engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
@@ -818,7 +823,7 @@ export function buildJudgeTransportPrompt(
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return lines.join("\n");
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 /** Load admitted-request.json written at admission (Navigator work-context seam). */
@@ -955,6 +960,7 @@ export async function admitCoderInvocation(
  */
 export function buildCoderTransportPrompt(
   admitted: AdmittedCoderInvocation,
+  engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [admitted.instruction];
   if (admitted.attachments.length > 0) {
@@ -964,7 +970,7 @@ export function buildCoderTransportPrompt(
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return lines.join("\n");
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 export type AdmitFixerInvocationOptions = {
@@ -1111,6 +1117,7 @@ export async function admitFixerInvocation(
  */
 export function buildFixerTransportPrompt(
   admitted: AdmittedFixerInvocation,
+  engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [admitted.instruction];
   if (admitted.attachments.length > 0) {
@@ -1120,7 +1127,7 @@ export function buildFixerTransportPrompt(
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return lines.join("\n");
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 function parsePositivePrOption(raw: string | undefined): number {
@@ -1403,8 +1410,13 @@ export async function admitCollectorInvocation(
  */
 export function buildCollectorTransportPrompt(
   _admitted: AdmittedCollectorInvocation,
+  engineMaterial?: EngineSessionMaterial,
 ): string {
-  return COLLECTOR_FIXED_KICKOFF;
+  // No engine: exact historical fixed kickoff bytes (default-path oracle).
+  if (engineMaterial === undefined) return COLLECTOR_FIXED_KICKOFF;
+  return appendEngineSessionMaterial([COLLECTOR_FIXED_KICKOFF], engineMaterial).join(
+    "\n",
+  );
 }
 
 /** Positive Issue number grammar shared with Doctor case path identity. */
@@ -1714,6 +1726,7 @@ export async function admitDoctorInvocation(
 /** Build the Pi prompt transport for an admitted Doctor request. */
 export function buildDoctorTransportPrompt(
   admitted: AdmittedDoctorInvocation,
+  engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
@@ -1723,7 +1736,7 @@ export function buildDoctorTransportPrompt(
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return lines.join("\n");
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 /**
@@ -1888,11 +1901,13 @@ export async function admitReviewerInvocation(
  */
 export function buildReviewerTransportPrompt(
   admitted: AdmittedReviewerInvocation,
+  engineMaterial?: EngineSessionMaterial,
 ): string {
-  return [
+  const lines = [
     `Base revision for the fixed review target: ${admitted.baseRevision}`,
     "Use this exact revision as the fixed review point.",
-  ].join("\n");
+  ];
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 /**
@@ -2144,6 +2159,7 @@ export async function admitMergerInvocation(
  */
 export function buildMergerTransportPrompt(
   admitted: AdmittedMergerInvocation,
+  engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [
     `/skill:resolving-merge-conflicts ${admitted.instruction}`,
@@ -2155,7 +2171,7 @@ export function buildMergerTransportPrompt(
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return lines.join("\n");
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 const TAISHI_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
