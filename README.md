@@ -114,7 +114,7 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--model` | — | `provider/model` | no | no | option | — | Override the effective seat model for this invocation (before or after the command). |
 | `--thinking` | — | `level` | no | no | option | — | Override thinking level: off\|minimal\|low\|medium\|high\|xhigh\|max. |
-| `--engine` | — | `name` | no | no | option | — | Optional labor engine for this invocation (name must exist in packaged engine materials). |
+| `--engine` | — | `name` | no | no | option | — | Optional Judge labor engine for this invocation (name must exist in packaged engine materials; judge-only). |
 | `--help` | `-h` | — | no | no | option | — | Show public CLI help and exit. |
 
 ### `judge`

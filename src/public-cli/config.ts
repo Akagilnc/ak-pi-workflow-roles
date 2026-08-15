@@ -117,14 +117,17 @@ export function setPersistentSeatConfig(
 }
 
 /**
- * Set or clear persistent engine on an already-configured seat.
- * Engine-only seats are rejected — model triple remains required (#356).
+ * Set or clear persistent engine on the Judge seat only (#356 MVP).
+ * Engine-only seats are rejected — model triple remains required.
  */
 export function setPersistentSeatEngine(
   config: PublicCliConfig,
   seat: PublicConfigurableSeat,
   engine: string | undefined,
 ): PublicCliConfig {
+  if (seat !== "judge") {
+    throw new Error(`engine axis is judge-only; refused seat ${seat}`);
+  }
   const previous = config.seats[seat];
   if (previous === undefined) {
     throw new Error(
@@ -158,8 +161,8 @@ export function seatModelOnly(seat: PersistentSeatConfig): SeatModelConfig {
 }
 
 /**
- * Config-parse seam: every persisted engine name must exist in package materials.
- * Call with packageRoot after load / before dispatch (#356).
+ * Config-parse seam: engine axis is Judge-only; Judge engine names must exist
+ * in package materials. Call with packageRoot after load / before dispatch (#356).
  * Legality authority = assertLegalEngineName (no injected duplicate).
  */
 export function validatePublicCliConfigEngines(
@@ -169,6 +172,11 @@ export function validatePublicCliConfigEngines(
   for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
     const row = config.seats[seat];
     if (row?.engine === undefined) continue;
+    if (seat !== "judge") {
+      throw new Error(
+        `config seat ${seat} engine is not allowed; engine axis is judge-only`,
+      );
+    }
     try {
       assertLegalEngineName(packageRoot, row.engine);
     } catch (error) {
@@ -355,7 +363,14 @@ function attachEngineAxis(
   config: PublicCliConfig,
   invocation?: InvocationModelOverride,
 ): EffectiveSeat {
-  const persistentEngine = config.seats[seat.seat]?.engine;
+  // #356 MVP: engine axis is Judge-only. Other seats stay unconfigured.
+  if (seat.seat !== "judge") {
+    return {
+      ...seat,
+      engineSource: "unconfigured",
+    };
+  }
+  const persistentEngine = config.seats.judge?.engine;
   if (invocation?.engine !== undefined) {
     return {
       ...seat,
