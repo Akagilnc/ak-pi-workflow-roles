@@ -50,7 +50,9 @@ import { uuidv7 } from "../uuidv7.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   REJECTED_PUBLIC_SPELLINGS,
+  evaluateTaishiModeOptionContract,
   optionsForOwner,
+  resolveTaishiMode,
   takeDashedOption,
   type OptionOwner,
   type PublicOptionDefinition,
@@ -2125,20 +2127,20 @@ function requireOptionValue(
 
 /**
  * Parse taishi-specific argv after the `taishi` token (#336/#337/#338).
- * Spellings from PUBLIC_OPTION_TABLE.taishi (#342). Mode faces mutually exclusive.
+ * Spellings + mode relation contracts from PUBLIC_OPTION_TABLE.taishi / TAISHI_* (#342).
+ * Mode exclusion, requiredness, cardinality, and at-least-one are table-driven —
+ * do not restate them as parallel handwritten branches here.
  */
 export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult {
-  let query: "issue" | "cohort" | "model-groups" = "issue";
-  let ticketRaw: string | undefined;
-  const projectRoots: string[] = [];
-  let groupALabel: string | undefined;
-  let groupAIssuesRaw: string | undefined;
-  let groupBLabel: string | undefined;
-  let groupBIssuesRaw: string | undefined;
-  let sweepToken = false;
-  const attachmentPaths: string[] = [];
+  const valueLists = new Map<string, string[]>();
   const tokens = [...args];
   const definitions = roleOptions("taishi");
+
+  const pushValue = (id: string, value: string): void => {
+    const existing = valueLists.get(id);
+    if (existing === undefined) valueLists.set(id, [value]);
+    else existing.push(value);
+  };
 
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
@@ -2150,65 +2152,49 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
     }
     const taken = takeDashedOption(tokens, definitions);
     if (taken !== undefined) {
-      if (taken.def.id === "cohort") {
-        if (query !== "issue") {
-          throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
-        }
-        query = "cohort";
-        continue;
-      }
-      if (taken.def.id === "model-groups") {
-        if (query !== "issue") {
-          throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
-        }
-        query = "model-groups";
+      if (taken.def.valueMetavar === null) {
+        pushValue(taken.def.id, "");
         continue;
       }
       if (taken.def.id === "ticket") {
         if (taken.value === undefined || taken.value.trim() === "") {
           throw new CliUsageError("taishi --ticket requires a positive integer");
         }
-        ticketRaw = taken.value;
+        pushValue("ticket", taken.value);
         continue;
       }
       if (taken.def.id === "project-root") {
-        projectRoots.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "group-a-label") {
-        groupALabel = requireOptionValue(
-          taken.def.canonical,
-          taken.value,
-          "a label",
-        );
-        continue;
-      }
-      if (taken.def.id === "group-a-issues") {
-        groupAIssuesRaw = requireOptionValue(
-          taken.def.canonical,
-          taken.value,
-          "a comma-separated positive integer list",
-        );
-        continue;
-      }
-      if (taken.def.id === "group-b-label") {
-        groupBLabel = requireOptionValue(
-          taken.def.canonical,
-          taken.value,
-          "a label",
-        );
-        continue;
-      }
-      if (taken.def.id === "group-b-issues") {
-        groupBIssuesRaw = requireOptionValue(
-          taken.def.canonical,
-          taken.value,
-          "a comma-separated positive integer list",
+        pushValue(
+          "project-root",
+          requireOptionPath(taken.def.canonical, taken.value),
         );
         continue;
       }
       if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        pushValue(
+          "attach",
+          requireOptionPath(taken.def.canonical, taken.value),
+        );
+        continue;
+      }
+      if (taken.def.id === "group-a-label" || taken.def.id === "group-b-label") {
+        pushValue(
+          taken.def.id,
+          requireOptionValue(taken.def.canonical, taken.value, "a label"),
+        );
+        continue;
+      }
+      if (
+        taken.def.id === "group-a-issues" || taken.def.id === "group-b-issues"
+      ) {
+        pushValue(
+          taken.def.id,
+          requireOptionValue(
+            taken.def.canonical,
+            taken.value,
+            "a comma-separated positive integer list",
+          ),
+        );
         continue;
       }
       throw new CliUsageError(`unknown taishi option: ${taken.def.canonical}`);
@@ -2217,45 +2203,37 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown taishi option: ${token}`);
     }
-    // Optional sweep mode token (positional from the option table); only once.
-    if (token === "sweep") {
-      if (sweepToken) {
-        throw new CliUsageError("unexpected taishi argument: sweep");
+    // Positional selectors (e.g. sweep) come from the option table — not a parallel list.
+    const positional = definitions.find(
+      (def) =>
+        def.form === "positional"
+        && (def.canonical === token || def.aliases.includes(token)),
+    );
+    if (positional !== undefined) {
+      if ((valueLists.get(positional.id)?.length ?? 0) > 0) {
+        throw new CliUsageError(`unexpected taishi argument: ${token}`);
       }
-      sweepToken = true;
+      pushValue(positional.id, "");
       continue;
     }
     throw new CliUsageError(`unexpected taishi argument: ${token}`);
   }
 
-  const hasSweepFace = sweepToken || attachmentPaths.length > 0;
-  const hasCohortFlags =
-    groupALabel !== undefined
-    || groupAIssuesRaw !== undefined
-    || groupBLabel !== undefined
-    || groupBIssuesRaw !== undefined;
+  const counts = new Map<string, number>();
+  for (const [id, values] of valueLists) {
+    counts.set(id, values.length);
+  }
+  const mode = resolveTaishiMode(new Set(counts.keys()));
+  const verdict = evaluateTaishiModeOptionContract(mode, counts);
+  if (!verdict.ok) {
+    throw new CliUsageError(verdict.message);
+  }
 
-  if (query === "cohort") {
-    if (
-      groupALabel === undefined
-      || groupAIssuesRaw === undefined
-      || groupBLabel === undefined
-      || groupBIssuesRaw === undefined
-    ) {
-      throw new CliUsageError(
-        "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>",
-      );
-    }
-    if (ticketRaw !== undefined || projectRoots.length > 0) {
-      throw new CliUsageError(
-        "taishi --cohort does not accept --ticket or --project-root",
-      );
-    }
-    if (hasSweepFace) {
-      throw new CliUsageError(
-        "taishi --cohort does not accept sweep --attach",
-      );
-    }
+  if (mode === "cohort") {
+    const groupALabel = valueLists.get("group-a-label")![0]!;
+    const groupAIssuesRaw = valueLists.get("group-a-issues")![0]!;
+    const groupBLabel = valueLists.get("group-b-label")![0]!;
+    const groupBIssuesRaw = valueLists.get("group-b-issues")![0]!;
     return {
       query: "cohort",
       groups: [
@@ -2271,58 +2249,22 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
     };
   }
 
-  if (query === "model-groups") {
-    if (projectRoots.length === 0) {
-      throw new CliUsageError(
-        "usage: ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]",
-      );
-    }
-    if (ticketRaw !== undefined) {
-      throw new CliUsageError("taishi --model-groups does not accept --ticket");
-    }
-    if (hasCohortFlags) {
-      throw new CliUsageError("taishi --model-groups does not accept cohort group flags");
-    }
-    if (hasSweepFace) {
-      throw new CliUsageError(
-        "taishi --model-groups does not accept sweep --attach",
-      );
-    }
+  if (mode === "model-groups") {
     return {
       query: "model-groups",
-      projectRoots,
+      projectRoots: valueLists.get("project-root") ?? [],
     };
   }
 
-  // default issue or sweep (#336/#337 faces)
-  if (hasCohortFlags) {
-    throw new CliUsageError("taishi issue query does not accept cohort group flags");
-  }
-
-  if (hasSweepFace) {
-    if (ticketRaw !== undefined || projectRoots.length > 0) {
-      throw new CliUsageError(
-        "taishi sweep --attach cannot combine with --ticket or --project-root",
-      );
-    }
+  if (mode === "sweep") {
     return {
       query: "sweep",
-      attachmentPaths,
+      attachmentPaths: valueLists.get("attach") ?? [],
     };
   }
 
-  if (projectRoots.length > 1) {
-    throw new CliUsageError(
-      "taishi issue query accepts at most one --project-root (use --model-groups for many)",
-    );
-  }
-  const projectRoot = projectRoots[0];
-  if (ticketRaw === undefined && projectRoot === undefined) {
-    throw new CliUsageError(
-      "usage: ak-role taishi ((--ticket <N> | --project-root <P>) | [sweep] --attach <sweep.json> | --cohort ... | --model-groups ...)",
-    );
-  }
-
+  const ticketRaw = valueLists.get("ticket")?.[0];
+  const projectRoot = valueLists.get("project-root")?.[0];
   return {
     query: "issue",
     ...(ticketRaw === undefined
