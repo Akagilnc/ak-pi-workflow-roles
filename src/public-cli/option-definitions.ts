@@ -279,6 +279,20 @@ const GLOBAL_OPTIONS = [
     },
   },
   {
+    id: "engine",
+    owner: "global",
+    canonical: "--engine",
+    aliases: [],
+    valueMetavar: "name",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Optional Judge labor engine for this invocation (name must exist in packaged engine materials; judge-only).",
+      zh: "本调用可选 Judge 劳动引擎（名字须存在于包内引擎调法材料；仅 Judge）。",
+    },
+  },
+  {
     id: "help",
     owner: "global",
     canonical: "--help",
