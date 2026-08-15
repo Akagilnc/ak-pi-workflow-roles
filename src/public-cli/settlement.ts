@@ -33,6 +33,7 @@ import {
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 } from "../collector-ledger.ts";
+import { ENGINE_DETOUR_TOOL_NAME } from "../engine-detour.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
@@ -1386,6 +1387,44 @@ export async function readCollectorInfrastructureFailure(
   try {
     const entries = await readBoundSessionEntries(sessionFile);
     return extractCollectorInfrastructureFailure(entries);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Prefer a real engine-detour infrastructure tool failure already on the session
+ * principal over a later secondary provider-stop (failure-honesty / #357 T2).
+ * Cause stays `output` — labor leg failed before accepted typed Receipt.
+ */
+export function extractEngineDetourInfrastructureFailure(
+  entries: readonly SessionEntry[],
+): ControlledFailure | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.isError !== true) continue;
+    if (message.toolName !== ENGINE_DETOUR_TOOL_NAME) continue;
+    const diagnostic = toolResultText(message);
+    if (diagnostic.length === 0) continue;
+    return {
+      cause: "output",
+      diagnostic,
+      identity: { name: "EngineDetourInfrastructureError" },
+    };
+  }
+  return undefined;
+}
+
+/** Read the bound session principal for an engine-detour infrastructure failure. */
+export async function readEngineDetourInfrastructureFailure(
+  sessionFile: string,
+): Promise<ControlledFailure | undefined> {
+  try {
+    const entries = await readBoundSessionEntries(sessionFile);
+    return extractEngineDetourInfrastructureFailure(entries);
   } catch {
     return undefined;
   }

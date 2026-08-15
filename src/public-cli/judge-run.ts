@@ -6,6 +6,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { AK_ROLE_ENGINE_ENV } from "../engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   runExplicitInternalActivation,
@@ -58,6 +59,7 @@ import {
   resolveControlledFailureResumeObservation,
   controlledFailureInputFromResolution,
   explicitInternalKnownFailureClassificationInput,
+  readEngineDetourInfrastructureFailure,
   settleJudgeFailureTerminalResult,
   trySettleJudgeTerminalResult,
   trySettleComplianceAuditIncompleteTerminalResult,
@@ -287,6 +289,10 @@ async function dispatchAdmittedJudge(input: {
       // and role-runtime can record typed provider HTTP observations.
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
+    // Engine presence/name signal: registration gate + label only (no per-engine branch).
+    if (env.engine !== undefined && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== undefined && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -368,6 +374,11 @@ async function dispatchAdmittedJudge(input: {
       };
     }
 
+    // Prefer engine-detour infrastructure failure already on the session principal
+    // over a later secondary provider-stop after abort (#357 T2 / collector-isomorphic).
+    const infrastructureFailure = await readEngineDetourInfrastructureFailure(
+      admitted.sessionFile,
+    );
     // Production-owned typed cause channel — never inferred from stderr wording.
     const credentialFailure = postRunMissingCredentialFailure(
       result,
@@ -375,7 +386,17 @@ async function dispatchAdmittedJudge(input: {
       env.credentials,
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result.knownFailure,
+      runner:
+        result.knownFailure ??
+        (infrastructureFailure === undefined
+          ? undefined
+          : {
+              cause: infrastructureFailure.cause,
+              diagnostic: infrastructureFailure.diagnostic,
+              ...(infrastructureFailure.identity === undefined
+                ? {}
+                : { identity: infrastructureFailure.identity }),
+            }),
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
