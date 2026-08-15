@@ -20,6 +20,7 @@ import {
   type ParseCollectorArgvResult,
 } from "./invocation.ts";
 import {
+  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -69,17 +70,6 @@ export type CollectorRunEnv = {
   timeoutMs?: number;
 };
 
-function buildModelArgs(model: SeatModelConfig | undefined): string[] {
-  if (model === undefined) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking,
-  ];
-}
 
 /**
  * Build Internal activation extra-args for an admitted Collector run.
@@ -114,7 +104,7 @@ export function buildCollectorActivationExtraArgs(
       : ["--ak-collector-request-manifest", admitted.requestManifestPath]),
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt,
   ];
 }
@@ -202,7 +192,7 @@ async function dispatchAdmittedCollector(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
@@ -340,6 +330,7 @@ export async function runPublicCollector(
       ...(parsed.repo === undefined ? {} : { repo: parsed.repo }),
       ...(parsed.requestManifestPath === undefined ? {} : { requestManifestPath: parsed.requestManifestPath }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

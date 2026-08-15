@@ -27,6 +27,7 @@ import {
   type AdmittedReviewerInvocation,
 } from "./invocation.ts";
 import {
+  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -88,17 +89,6 @@ export type ReviewerRunEnv = {
   timeoutMs?: number;
 };
 
-function buildModelArgs(model: SeatModelConfig | undefined): string[] {
-  if (model === undefined) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    "--thinking",
-    model.thinking,
-  ];
-}
 
 /** Encode admitted ticketNumber as CLI argv for activation/resume (no defaults). */
 function buildReviewerTicketNumberArgs(
@@ -152,7 +142,7 @@ export function buildReviewerActivationExtraArgs(
     ...ticketNumberArgs,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt,
   ];
 }
@@ -198,7 +188,7 @@ export function buildReviewerResumeActivationExtraArgs(
     ...ticketNumberArgs,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE,
   ];
 }
@@ -306,7 +296,7 @@ async function dispatchAdmittedReviewer(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     await clearReviewerDispatchRejection(admitted.runDirectory);
 
@@ -463,6 +453,7 @@ export async function runPublicReviewer(
       authorityRefs: parsed.authorityRefs,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

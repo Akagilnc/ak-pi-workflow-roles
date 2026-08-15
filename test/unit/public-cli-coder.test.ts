@@ -570,3 +570,273 @@ test("ak-role resume continues coder with preserved plan phase and exact session
     );
   });
 });
+
+// #346: bare --model provider/model dispatches without inventing --thinking.
+test("bare --model provider/model dispatches without --thinking; suffix still passes thinking", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    // Bare model: legal, passes provider/model, omits --thinking entirely.
+    {
+      const { io, stdout, stderr } = captureIo();
+      let captured: string[] | undefined;
+      const result = await runAkRole(
+        [
+          "--model",
+          "kimi-coding/k3-256k",
+          "coder",
+          "plan",
+          "--project",
+          project,
+          "Propose with bare model override.",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          // Non-catalog provider (kimi-coding) skips credential fail-closed; still pin facts.
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => "run-cli-coder-bare-model",
+          io,
+          piRunner: async (args) => {
+            captured = [...args];
+            const sessionIdx = args.indexOf("--session");
+            const sessionFile = args[sessionIdx + 1]!;
+            await mkdir(join(sessionFile, ".."), { recursive: true });
+            const receipt = {
+              status: "planned",
+              report: "Plan under bare model override.",
+            };
+            await writeFile(
+              sessionFile,
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "bare1",
+                  toolName: CODER_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: receipt,
+                },
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.equal(
+        result.exitCode,
+        0,
+        stderr.join("") || stdout.join("") || "bare model dispatch failed",
+      );
+      assert.equal(Array.isArray(captured), true);
+      assert.equal(captured![captured!.indexOf("--provider") + 1], "kimi-coding");
+      assert.equal(captured![captured!.indexOf("--model") + 1], "k3-256k");
+      assert.equal(captured!.includes("--thinking"), false);
+      // invocation evidence: model identity is the override; thinking stays absent.
+      const bookKey = resolveBookKeyFromGit(project);
+      const invocation = JSON.parse(
+        await readFile(
+          join(
+            home,
+            ".ak-roles",
+            "books",
+            bookKey,
+            "runs",
+            "run-cli-coder-bare-model@coder",
+            "invocation.json",
+          ),
+          "utf8",
+        ),
+      ) as Record<string, unknown>;
+      // invocation evidence records the effective provider/model; thinking stays absent for bare model.
+      assert.equal(invocation.provider, "kimi-coding");
+      assert.equal(invocation.model, "k3-256k");
+      assert.equal("thinking" in invocation, false);
+      assert.equal(
+        result.terminal?.roleOutcome.kind === "accepted"
+          ? result.terminal.roleOutcome.status
+          : undefined,
+        "planned",
+      );
+    }
+
+    // Suffix override: --thinking still forwarded unchanged.
+    {
+      const { io, stderr } = captureIo();
+      let captured: string[] | undefined;
+      const result = await runAkRole(
+        [
+          "--model",
+          "openai-codex/gpt-5.6-luna:high",
+          "coder",
+          "plan",
+          "--project",
+          project,
+          "Propose with thinking suffix.",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => "run-cli-coder-thinking-suffix",
+          io,
+          piRunner: async (args) => {
+            captured = [...args];
+            return {
+              code: 1,
+              stderr: "stop after args capture",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.equal(Array.isArray(captured), true, stderr.join("") || "suffix dispatch missing args");
+      assert.equal(captured![captured!.indexOf("--provider") + 1], "openai-codex");
+      assert.equal(captured![captured!.indexOf("--model") + 1], "gpt-5.6-luna");
+      assert.equal(captured!.includes("--thinking"), true);
+      assert.equal(captured![captured!.indexOf("--thinking") + 1], "high");
+      // invocation evidence records provider/model and the supplied thinking level.
+      const bookKey = resolveBookKeyFromGit(project);
+      const invocation = JSON.parse(
+        await readFile(
+          join(
+            home,
+            ".ak-roles",
+            "books",
+            bookKey,
+            "runs",
+            "run-cli-coder-thinking-suffix@coder",
+            "invocation.json",
+          ),
+          "utf8",
+        ),
+      ) as Record<string, unknown>;
+      assert.equal(invocation.provider, "openai-codex");
+      assert.equal(invocation.model, "gpt-5.6-luna");
+      assert.equal(invocation.thinking, "high");
+      // Failure after dispatch is fine — we only assert model/thinking pass-through.
+      assert.notEqual(result.exitCode, 2);
+    }
+  });
+});
+
+test("syntactically valid unknown provider/model is not rejected at thinking parse", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stderr } = captureIo();
+    let dispatched = false;
+    let captured: string[] | undefined;
+    const result = await runAkRole(
+      [
+        "--model",
+        "no-such-provider/no-such-model",
+        "coder",
+        "plan",
+        "--project",
+        project,
+        "Unknown model must reach resolution, not thinking parse.",
+      ],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-cli-coder-unknown-model",
+        io,
+        piRunner: async (args) => {
+          dispatched = true;
+          captured = [...args];
+          // Simulate existing typed model-resolution refusal from the host runtime.
+          return {
+            code: 1,
+            stderr: "Unknown model: no-such-provider/no-such-model",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+    assert.equal(dispatched, true, stderr.join("") || "unknown model must reach pi dispatch");
+    assert.equal(captured![captured!.indexOf("--provider") + 1], "no-such-provider");
+    assert.equal(captured![captured!.indexOf("--model") + 1], "no-such-model");
+    assert.equal(captured!.includes("--thinking"), false);
+    // Must not be the pre-#346 thinking-required structural wash.
+    assert.equal(stderr.join("").includes("requires a thinking level"), false);
+    assert.notEqual(result.exitCode, 0);
+  });
+});
+
+// #346: colon present with empty/illegal thinking stays a typed format reject at the real entry.
+test("malformed --model thinking suffix is rejected at public entry without dispatch", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    for (const badSpec of [
+      "openai-codex/gpt-5.6-luna:bogus",
+      "openai-codex/gpt-5.6-luna:",
+      ":provider/model",
+    ] as const) {
+      const { io, stderr } = captureIo();
+      let dispatched = false;
+      const result = await runAkRole(
+        [
+          "--model",
+          badSpec,
+          "coder",
+          "plan",
+          "--project",
+          project,
+          "Malformed thinking must not dispatch.",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () =>
+            `run-cli-coder-bad-thinking-${
+              badSpec.endsWith(":")
+                ? "trail"
+                : badSpec.startsWith(":")
+                  ? "leading"
+                  : "bogus"
+            }`,
+          io,
+          piRunner: async (args) => {
+            dispatched = true;
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.equal(dispatched, false, `${badSpec} must not reach pi dispatch`);
+      assert.notEqual(result.exitCode, 0, `${badSpec} must be rejected`);
+      assert.match(
+        stderr.join(""),
+        /model specification must be provider\/model\[:thinking\]/,
+        `${badSpec} must keep typed format rejection; got: ${stderr.join("")}`,
+      );
+      // Must not wash into the persistent-config "thinking required" channel.
+      assert.equal(stderr.join("").includes("requires a thinking level"), false);
+    }
+  });
+});
