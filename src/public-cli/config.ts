@@ -152,6 +152,21 @@ export function formatModelSpec(selection: SeatModelConfig): string {
   return selection.thinking === undefined ? base : `${base}:${selection.thinking}`;
 }
 
+/**
+ * Single source: seat model selection → Pi argv at the public CLI execution seam.
+ * Bare provider/model omits --thinking so pi/model defaults apply; suffix passes through.
+ */
+export function buildSeatModelCliArgs(model: SeatModelConfig | undefined): string[] {
+  if (model === undefined) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    ...(model.thinking === undefined ? [] : ["--thinking", model.thinking]),
+  ];
+}
+
 function parsePublicCliConfig(value: unknown): PublicCliConfig {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("public CLI config must be an object");

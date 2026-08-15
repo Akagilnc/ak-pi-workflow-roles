@@ -23,12 +23,14 @@ import {
 } from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
+  recordEffectiveInvocationModel,
   admitMergerInvocation,
   buildMergerTransportPrompt,
   MergerEnvelopeDerivationError,
   type AdmittedMergerInvocation,
 } from "./invocation.ts";
 import {
+  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -88,17 +90,6 @@ export type MergerRunEnv = {
   timeoutMs?: number;
 };
 
-function buildModelArgs(model: SeatModelConfig | undefined): string[] {
-  if (model === undefined) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    // #346: bare provider/model omits --thinking; pi/model default applies.
-    ...(model.thinking === undefined ? [] : ["--thinking", model.thinking]),
-  ];
-}
 
 /**
  * Build Internal activation extra-args for an admitted Merger run.
@@ -136,7 +127,7 @@ export function buildMergerActivationExtraArgs(
     admitted.mergerInputPath,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt,
   ];
 }
@@ -175,7 +166,7 @@ export function buildMergerResumeActivationExtraArgs(
     admitted.mergerInputPath,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE,
   ];
 }
@@ -298,6 +289,9 @@ async function dispatchAdmittedMerger(input: {
         missingCredential,
         io,
       );
+    }
+    if (env.model !== undefined) {
+      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
     }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -516,6 +510,7 @@ export async function runPublicMerger(
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

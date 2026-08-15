@@ -14,12 +14,14 @@ import {
 } from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
+  recordEffectiveInvocationModel,
   admitDoctorInvocation,
   buildDoctorTransportPrompt,
   type AdmittedDoctorInvocation,
   type ParseDoctorArgvResult,
 } from "./invocation.ts";
 import {
+  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -70,17 +72,6 @@ export type DoctorRunEnv = {
   timeoutMs?: number;
 };
 
-function buildModelArgs(model: SeatModelConfig | undefined): string[] {
-  if (model === undefined) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    // #346: bare provider/model omits --thinking; pi/model default applies.
-    ...(model.thinking === undefined ? [] : ["--thinking", model.thinking]),
-  ];
-}
 
 /**
  * Build Internal activation extra-args for an admitted Doctor run.
@@ -111,7 +102,7 @@ export function buildDoctorActivationExtraArgs(
     admitted.caseRunsPath,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt,
   ];
 }
@@ -182,6 +173,9 @@ async function dispatchAdmittedDoctor(input: {
         missingCredential,
         io,
       );
+    }
+    if (env.model !== undefined) {
+      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
     }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -319,6 +313,7 @@ export async function runPublicDoctor(
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(parsed.runs === undefined ? {} : { runs: parsed.runs }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

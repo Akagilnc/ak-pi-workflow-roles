@@ -19,11 +19,13 @@ import {
 } from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
+  recordEffectiveInvocationModel,
   admitCoderInvocation,
   buildCoderTransportPrompt,
   type AdmittedCoderInvocation,
 } from "./invocation.ts";
 import {
+  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -84,17 +86,6 @@ export type CoderRunEnv = {
   timeoutMs?: number;
 };
 
-function buildModelArgs(model: SeatModelConfig | undefined): string[] {
-  if (model === undefined) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    // #346: bare provider/model omits --thinking; pi/model default applies.
-    ...(model.thinking === undefined ? [] : ["--thinking", model.thinking]),
-  ];
-}
 
 /**
  * Build Internal activation extra-args for an admitted Coder run.
@@ -136,7 +127,7 @@ export function buildCoderActivationExtraArgs(
     admitted.taskPath,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt,
   ];
 }
@@ -179,7 +170,7 @@ export function buildCoderResumeActivationExtraArgs(
     admitted.taskPath,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE,
   ];
 }
@@ -303,6 +294,9 @@ async function dispatchAdmittedCoder(input: {
         missingCredential,
         io,
       );
+    }
+    if (env.model !== undefined) {
+      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
     }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -434,6 +428,7 @@ export async function runPublicCoder(
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

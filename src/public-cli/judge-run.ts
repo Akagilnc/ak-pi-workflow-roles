@@ -14,11 +14,13 @@ import {
 } from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
+  recordEffectiveInvocationModel,
   admitJudgeInvocation,
   buildJudgeTransportPrompt,
   type AdmittedJudgeInvocation,
 } from "./invocation.ts";
 import {
+  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -89,17 +91,6 @@ export type JudgeRunEnv = {
 };
 
 
-function buildModelArgs(model: SeatModelConfig | undefined): string[] {
-  if (model === undefined) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    // #346: bare provider/model omits --thinking; pi/model default applies.
-    ...(model.thinking === undefined ? [] : ["--thinking", model.thinking]),
-  ];
-}
 
 /**
  * Build Internal activation extra-args for an admitted Judge run
@@ -129,7 +120,7 @@ export function buildJudgeActivationExtraArgs(
     "judge",
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt,
   ];
 }
@@ -160,7 +151,7 @@ export function buildJudgeResumeActivationExtraArgs(
     "judge",
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE,
   ];
 }
@@ -275,6 +266,9 @@ async function dispatchAdmittedJudge(input: {
         missingCredential,
         io,
       );
+    }
+    if (env.model !== undefined) {
+      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
     }
     await markRunRunning(admitted.runDirectory);
     // Attempt-scoped observation: drop any prior dispatch's 429 evidence so only
@@ -422,6 +416,7 @@ export async function runPublicJudge(
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
