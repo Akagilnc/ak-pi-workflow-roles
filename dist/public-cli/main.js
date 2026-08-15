@@ -18394,11 +18394,20 @@ var init_tool_execution_observation = __esm({
 });
 
 // src/package-owned-tool-idle.ts
+var PACKAGE_OWNED_TOOLS_WITH_COMPLIANCE_STREAM_IDLE_OWNER;
 var init_package_owned_tool_idle = __esm({
   "src/package-owned-tool-idle.ts"() {
     "use strict";
+    init_doctor_contracts();
+    init_judge_output();
+    init_reviewer_output();
     init_stream_idle_guard();
     init_tool_execution_observation();
+    PACKAGE_OWNED_TOOLS_WITH_COMPLIANCE_STREAM_IDLE_OWNER = Object.freeze([
+      JUDGE_OUTPUT_TOOL_NAME,
+      REVIEWER_OUTPUT_TOOL_NAME,
+      DOCTOR_OUTPUT_TOOL_NAME
+    ]);
   }
 });
 

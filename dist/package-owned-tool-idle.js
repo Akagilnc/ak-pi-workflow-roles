@@ -1,7 +1,28 @@
+import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.js";
+import { JUDGE_OUTPUT_TOOL_NAME } from "./package-contracts/judge-output.js";
+import { REVIEWER_OUTPUT_TOOL_NAME } from "./package-contracts/reviewer-output.js";
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, createStreamIdleGuard, } from "./stream-idle-guard.js";
 import { isProducingToolUpdate } from "./tool-execution-observation.js";
 export const PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS = DEFAULT_STREAM_IDLE_TIMEOUT_MS;
 export const PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE = "AK_PACKAGE_OWNED_TOOL_IDLE_TIMEOUT";
+/**
+ * #339 scan: package-owned terminating submission tools whose execute already
+ * owns ADR 0059 compliance stream-idle (runComplianceAudit → executeAuditorChild
+ * idleRetry). Outer 183s package-owned idle must not stack on these leaves.
+ *
+ * Inventory (terminating submission tools only):
+ * - ak_judge_output / ak_reviewer_output / ak_doctor_output → yes (compliance child)
+ * - ak_coder_output / ak_fixer_output / ak_collector_output / ak_merger_output → no
+ */
+export const PACKAGE_OWNED_TOOLS_WITH_COMPLIANCE_STREAM_IDLE_OWNER = Object.freeze([
+    JUDGE_OUTPUT_TOOL_NAME,
+    REVIEWER_OUTPUT_TOOL_NAME,
+    DOCTOR_OUTPUT_TOOL_NAME,
+]);
+export function hasComplianceStreamIdleOwner(toolName) {
+    return PACKAGE_OWNED_TOOLS_WITH_COMPLIANCE_STREAM_IDLE_OWNER
+        .includes(toolName);
+}
 const WRAPPED = Symbol.for("ak.packageOwnedToolIdleWrapped");
 export class PackageOwnedToolIdleTimeoutError extends Error {
     code = PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE;
@@ -41,6 +62,10 @@ export function wrapPackageOwnedToolDefinition(tool) {
     // Mark the execute function, not the tool object — callers may spread tool fields
     // onto a new definition with a different execute (e.g. auditor customTools).
     if (tool.execute[WRAPPED] === true)
+        return tool;
+    // #339: inner StreamIdleTimeoutError finite retry + exhaustion is the sole idle
+    // owner for audit-type terminating submissions. Do not stack the outer 183s gate.
+    if (hasComplianceStreamIdleOwner(tool.name))
         return tool;
     const originalExecute = tool.execute.bind(tool);
     const wrappedExecute = function packageOwnedToolIdleExecute(...args) {

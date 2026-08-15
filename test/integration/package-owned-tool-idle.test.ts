@@ -20,8 +20,14 @@ import {
 
 import {
   PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
+  PackageOwnedToolIdleTimeoutError,
 } from "../../src/package-owned-tool-idle.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import {
+  StreamIdleTimeoutError,
+  isStreamIdleTimeoutError,
+} from "../../src/stream-idle-guard.ts";
 import {
   flushEventLoopTurns,
   withActivationHome,
@@ -74,6 +80,223 @@ async function withPackageToolSession<T>(
     }, async ({ session }) => run({ session, faux }));
   });
 }
+
+test(
+  "#339 real judge entry: audit-type submission past 183000ms does not yield outer PackageOwnedToolIdleTimeoutError",
+  { timeout: 30_000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    assert.equal(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS, 183_000);
+
+    let releaseAudit!: (decision: { status: "pass" }) => void;
+    const auditGate = new Promise<{ status: "pass" }>((resolve) => {
+      releaseAudit = resolve;
+    });
+    let auditCalls = 0;
+    const originalExitCode = process.exitCode;
+    const callId = "judge-idle-exempt-183";
+
+    try {
+      await withActivationHome({ prefix: "ak-judge-idle-exempt-" }, async ({ home, agentDir }) => {
+        const faux = fauxProvider({
+          api: "ak-judge-idle-exempt",
+          provider: "ak-judge-idle-exempt",
+          tokenSize: { min: 1000, max: 1000 },
+        });
+        await withInProcessPi({
+          activationLedgerSession: true,
+          cwd: home,
+          agentDir,
+          faux,
+          modelsPath: null,
+          noExtensions: true,
+          noTools: "builtin",
+          systemPrompt: "JUDGE IDLE EXEMPT",
+          mode: "print",
+          flags: { "ak-role": "judge" },
+          extensionFactories: [
+            createRoleRuntimeExtension({
+              loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
+              transcriptFromContext: () => "adjudication evidence",
+              auditSoulCompliance: async () => {
+                auditCalls += 1;
+                return auditGate;
+              },
+            }),
+          ],
+        }, async ({ session }) => {
+          faux.setResponses([
+            () =>
+              fauxAssistantMessage(
+                fauxToolCall(
+                  JUDGE_OUTPUT_TOOL_NAME,
+                  { judgeStatus: "converged" },
+                  { id: callId },
+                ),
+                { stopReason: "toolUse" },
+              ),
+            () => fauxAssistantMessage("post-terminal should not be required"),
+          ]);
+
+          const promptDone = session.prompt("adjudicate slowly audited verdict");
+          let promptSettled = false;
+          void promptDone.then(
+            () => {
+              promptSettled = true;
+            },
+            () => {
+              promptSettled = true;
+            },
+          );
+
+          await flushEventLoopTurns(50);
+          assert.equal(auditCalls, 1, "judge submission entered real execute / audit once");
+
+          t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
+          await flushEventLoopTurns(50);
+
+          const mid = toolResults(session, JUDGE_OUTPUT_TOOL_NAME);
+          assert.equal(mid.length, 0, "outer 183s gate must not settle judge submission");
+          assert.equal(promptSettled, false, "session still awaits inner compliance owner");
+          assert.equal(auditCalls, 1, "outer gate must not re-enter audit");
+
+          releaseAudit({ status: "pass" });
+          await flushEventLoopTurns(50);
+          await promptDone;
+
+          const results = toolResults(session, JUDGE_OUTPUT_TOOL_NAME);
+          assert.equal(results.length, 1, "exactly one judge tool result after inner settle");
+          const result = results[0] as {
+            isError?: boolean;
+            toolCallId?: string;
+            content: Array<{ type: string; text?: string }>;
+          };
+          assert.equal(result.isError, false, "accepted path must not surface outer idle isError");
+          assert.equal(result.toolCallId, callId);
+          const text = result.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text ?? "")
+            .join("\n");
+          assert.doesNotMatch(text, /PackageOwnedToolIdleTimeoutError/);
+          assert.doesNotMatch(text, /package-owned tool idle timeout/i);
+          assert.equal(auditCalls, 1, "finite single audit attempt; no outer-driven re-audit");
+        });
+      });
+    } finally {
+      process.exitCode = originalExitCode;
+    }
+  },
+);
+
+test(
+  "#339 real judge entry: inner StreamIdleTimeoutError exhausts once without outer package idle identity",
+  { timeout: 30_000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+
+    let releaseAudit!: (error: Error) => void;
+    const auditGate = new Promise<never>((_resolve, reject) => {
+      releaseAudit = reject;
+    });
+    let auditCalls = 0;
+    const originalExitCode = process.exitCode;
+    const callId = "judge-inner-idle-exhaust";
+
+    try {
+      await withActivationHome({ prefix: "ak-judge-inner-idle-" }, async ({ home, agentDir }) => {
+        const faux = fauxProvider({
+          api: "ak-judge-inner-idle",
+          provider: "ak-judge-inner-idle",
+          tokenSize: { min: 1000, max: 1000 },
+        });
+        await withInProcessPi({
+          activationLedgerSession: true,
+          cwd: home,
+          agentDir,
+          faux,
+          modelsPath: null,
+          noExtensions: true,
+          noTools: "builtin",
+          systemPrompt: "JUDGE INNER IDLE",
+          mode: "print",
+          flags: { "ak-role": "judge" },
+          extensionFactories: [
+            createRoleRuntimeExtension({
+              loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
+              transcriptFromContext: () => "adjudication evidence",
+              auditSoulCompliance: async () => {
+                auditCalls += 1;
+                return auditGate;
+              },
+            }),
+          ],
+        }, async ({ session }) => {
+          faux.setResponses([
+            () =>
+              fauxAssistantMessage(
+                fauxToolCall(
+                  JUDGE_OUTPUT_TOOL_NAME,
+                  { judgeStatus: "converged" },
+                  { id: callId },
+                ),
+                { stopReason: "toolUse" },
+              ),
+            () => fauxAssistantMessage("continuation after infrastructure failure"),
+          ]);
+
+          const promptDone = session.prompt("adjudicate with exhausted inner idle");
+          await flushEventLoopTurns(50);
+          assert.equal(auditCalls, 1);
+
+          // Outer budget elapses while inner compliance is still the owner.
+          t.mock.timers.tick(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS);
+          await flushEventLoopTurns(30);
+          assert.equal(
+            toolResults(session, JUDGE_OUTPUT_TOOL_NAME).length,
+            0,
+            "outer package idle must not pre-empt inner owner",
+          );
+
+          releaseAudit(new StreamIdleTimeoutError(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS));
+          await flushEventLoopTurns(50);
+          await promptDone.catch(() => undefined);
+
+          assert.equal(auditCalls, 1, "inner exhaustion must not loop re-audit at submission");
+
+          const results = toolResults(session, JUDGE_OUTPUT_TOOL_NAME);
+          // Infrastructure failure may abort without a settled toolResult, or surface
+          // the thrown cause. Either way it must not be the outer package-idle identity.
+          for (const row of results) {
+            const result = row as {
+              isError?: boolean;
+              content?: Array<{ type: string; text?: string }>;
+            };
+            const text = (result.content ?? [])
+              .filter((part) => part.type === "text")
+              .map((part) => part.text ?? "")
+              .join("\n");
+            assert.doesNotMatch(text, /PackageOwnedToolIdleTimeoutError/);
+            assert.doesNotMatch(text, /package-owned tool idle timeout/i);
+            if (result.isError === true) {
+              assert.match(text, /stream idle timeout/i);
+            }
+          }
+          assert.ok(
+            isStreamIdleTimeoutError(
+              new StreamIdleTimeoutError(PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS),
+            ),
+          );
+          assert.equal(
+            new PackageOwnedToolIdleTimeoutError() instanceof StreamIdleTimeoutError,
+            false,
+          );
+        });
+      });
+    } finally {
+      process.exitCode = originalExitCode;
+    }
+  },
+);
 
 test(
   "silent package-owned tool is pending at 182999ms then yields one isError timeout at 183000ms; LLM continues",
