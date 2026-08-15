@@ -19417,6 +19417,16 @@ var init_collector_ledger = __esm({
   }
 });
 
+// src/engine-detour.ts
+var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
+var init_engine_detour = __esm({
+  "src/engine-detour.ts"() {
+    "use strict";
+    ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
+    AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
+  }
+});
+
 // src/work-subject-identity.ts
 import { resolve as resolve6 } from "node:path";
 function issueRoot(value) {
@@ -20570,33 +20580,45 @@ function boundErroredToolCandidate(entries, resultIndex, message, toolName) {
   const diagnostic = toolResultText(message);
   return bound === void 0 || diagnostic === "" ? void 0 : { candidate: bound.candidate, diagnostic, callIndex: bound.callIndex };
 }
-function extractCollectorInfrastructureFailure(entries) {
+function extractInfrastructureToolFailure(entries, spec) {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.isError !== true) continue;
-    if (typeof message.toolName !== "string" || !COLLECTOR_INFRASTRUCTURE_TOOLS.has(message.toolName)) {
+    if (typeof message.toolName !== "string" || !spec.matchTool(message.toolName)) {
       continue;
     }
     const diagnostic = toolResultText(message);
     if (diagnostic.length === 0) continue;
     return {
-      cause: "activation",
+      cause: spec.cause,
       diagnostic,
-      identity: { name: "CollectorInfrastructureError" }
+      identity: { name: spec.identityName }
     };
   }
   return void 0;
 }
-async function readCollectorInfrastructureFailure(sessionFile) {
+async function readInfrastructureToolFailure(sessionFile, spec) {
   try {
     const entries = await readBoundSessionEntries(sessionFile);
-    return extractCollectorInfrastructureFailure(entries);
+    return extractInfrastructureToolFailure(entries, spec);
   } catch {
     return void 0;
   }
+}
+async function readCollectorInfrastructureFailure(sessionFile) {
+  return readInfrastructureToolFailure(
+    sessionFile,
+    COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC
+  );
+}
+async function readEngineDetourInfrastructureFailure(sessionFile) {
+  return readInfrastructureToolFailure(
+    sessionFile,
+    ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC
+  );
 }
 function assertCollectorReceiptMatchesAdmitted(receipt, admitted) {
   if (receipt.repository !== admitted.repository.canonical) {
@@ -22393,7 +22415,7 @@ function presentFailureTerminal(terminal, io) {
     }));
   }
 }
-var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS;
+var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS, COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC, ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC;
 var init_settlement = __esm({
   "src/public-cli/settlement.ts"() {
     "use strict";
@@ -22406,6 +22428,7 @@ var init_settlement = __esm({
     init_run_lifecycle();
     init_compliance_transport();
     init_collector_ledger();
+    init_engine_detour();
     init_judge_output();
     init_collector_output();
     init_worker_output();
@@ -22426,6 +22449,16 @@ var init_settlement = __esm({
       COLLECTOR_REQUEST_TOOL,
       COLLECTOR_WAIT_TOOL
     ]);
+    COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC = {
+      matchTool: (toolName) => COLLECTOR_INFRASTRUCTURE_TOOLS.has(toolName),
+      cause: "activation",
+      identityName: "CollectorInfrastructureError"
+    };
+    ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC = {
+      matchTool: (toolName) => toolName === ENGINE_DETOUR_TOOL_NAME,
+      cause: "output",
+      identityName: "EngineDetourInfrastructureError"
+    };
   }
 });
 
@@ -23776,6 +23809,12 @@ async function dispatchAdmittedJudge(input) {
       // and role-runtime can record typed provider HTTP observations.
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
+    delete childEnv[AK_ROLE_ENGINE_ENV];
+    if (env.engine !== void 0 && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
+    }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -23850,13 +23889,20 @@ async function dispatchAdmittedJudge(input) {
         terminal: auditIncomplete
       };
     }
+    const infrastructureFailure = await readEngineDetourInfrastructureFailure(
+      admitted.sessionFile
+    );
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
       env.model,
       env.credentials
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result2.knownFailure,
+      runner: result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
+        cause: infrastructureFailure.cause,
+        diagnostic: infrastructureFailure.diagnostic,
+        ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
+      }),
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
@@ -23980,6 +24026,7 @@ async function runPublicResume(argv, env, io) {
 var init_judge_run = __esm({
   "src/public-cli/judge-run.ts"() {
     "use strict";
+    init_engine_detour();
     init_engine_material();
     init_explicit_internal();
     init_cli_errors();

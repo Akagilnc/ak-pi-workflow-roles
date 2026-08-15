@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { AK_ROLE_ENGINE_ENV } from "../../src/engine-detour.ts";
 import {
   resolveEngineMaterialPath,
 } from "../../src/package-resources/engine-material.ts";
@@ -556,6 +557,84 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
       assert.match(stderr.join(""), /engine axis is judge-only; refused seat coder/);
     }
   });
+});
+
+test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free judge run", async () => {
+  const previous = process.env[AK_ROLE_ENGINE_ENV];
+  process.env[AK_ROLE_ENGINE_ENV] = "kimi";
+  try {
+    await withTempHome(async (home) => {
+      const project = join(home, "project");
+      await mkdir(project, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: project });
+      execFileSync("git", ["config", "user.email", "engine@test.local"], {
+        cwd: project,
+      });
+      execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
+        cwd: project,
+      });
+
+      const seed = captureIo();
+      const setModel = await runAkRole(
+        ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
+        { packageRoot, home, io: seed.io },
+      );
+      assert.equal(setModel.exitCode, 0, seed.stderr.join(""));
+
+      let capturedEnv: NodeJS.ProcessEnv | undefined;
+      let capturedArgs: string[] | undefined;
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        ["judge", "--project", project, "engine-free under ambient AK_ROLE_ENGINE"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "engine-ambient-free-001",
+          credentials,
+          io,
+          piRunner: async (args, options) => {
+            capturedArgs = [...args];
+            capturedEnv = options.env;
+            return {
+              code: 1,
+              stderr: "stop after capture",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.notEqual(
+        result.exitCode,
+        2,
+        `structural reject: ${stderr.join("")}`,
+      );
+      assert.equal(
+        capturedEnv !== undefined && capturedArgs !== undefined,
+        true,
+        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+      );
+      // Registration gate signal must be absent (AC4 family: no detour without engine).
+      const ambient = capturedEnv![AK_ROLE_ENGINE_ENV];
+      assert.equal(
+        typeof ambient === "string" && ambient.trim() !== "",
+        false,
+        `ambient AK_ROLE_ENGINE leaked into child env: ${String(ambient)}`,
+      );
+      assertNoEngineFlagsInArgv(capturedArgs!);
+      const materialKimi = resolveEngineMaterialPath(packageRoot, "kimi");
+      assert.equal(
+        String(capturedArgs!.at(-1) ?? "").includes(materialKimi),
+        false,
+        "engine-free run must not deliver ambient engine material",
+      );
+    });
+  } finally {
+    if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
+    else process.env[AK_ROLE_ENGINE_ENV] = previous;
+  }
 });
 
 test("unset-engine clears persistent judge engine; no-engine path keeps default-path oracle", async () => {
