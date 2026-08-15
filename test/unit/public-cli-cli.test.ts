@@ -314,6 +314,6 @@ test("config set still requires provider/model:thinking three-part syntax", asyn
       { packageRoot, home, io: ok.io },
     );
     assert.equal(okResult.exitCode, 0, ok.stderr.join("") || "config set three-part failed");
-    assert.match(ok.stdout.join(""), /^coder\tkimi-coding\/k3-256k:high$/m);
+    assert.match(ok.stdout.join(""), /^coder\tkimi-coding\/k3-256k:high\t-$/m);
   });
 });

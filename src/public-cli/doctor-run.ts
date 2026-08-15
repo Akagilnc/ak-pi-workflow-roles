@@ -6,6 +6,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   runExplicitInternalActivation,
   type ExplicitInternalKnownFailure,
@@ -65,6 +66,8 @@ export type DoctorRunEnv = {
   correlationId?: string;
   piRunner?: ExplicitInternalPiRunner;
   model?: SeatModelConfig;
+  /** Optional labor engine name (config→activation; session material only). */
+  engine?: string;
   credentials?: CredentialProviders;
   createRunId?: () => string;
   extraPiArgs?: readonly string[];
@@ -81,10 +84,15 @@ export function buildDoctorActivationExtraArgs(
   admitted: AdmittedDoctorInvocation,
   options: {
     model?: SeatModelConfig;
+    engine?: string;
+    packageRoot?: string;
     extraPiArgs?: readonly string[];
   } = {},
 ): string[] {
-  const prompt = buildDoctorTransportPrompt(admitted);
+  const prompt = buildDoctorTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options),
+  );
   return [
     "--no-skills",
     "--no-prompt-templates",
@@ -333,7 +341,9 @@ export async function runPublicDoctor(
   }
 
   const extraArgs = buildDoctorActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
