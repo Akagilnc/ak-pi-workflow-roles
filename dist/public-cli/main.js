@@ -19410,6 +19410,16 @@ var init_collector_ledger = __esm({
   }
 });
 
+// src/engine-detour.ts
+var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
+var init_engine_detour = __esm({
+  "src/engine-detour.ts"() {
+    "use strict";
+    ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
+    AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
+  }
+});
+
 // src/work-subject-identity.ts
 import { resolve as resolve6 } from "node:path";
 function issueRoot(value) {
@@ -20587,6 +20597,32 @@ async function readCollectorInfrastructureFailure(sessionFile) {
   try {
     const entries = await readBoundSessionEntries(sessionFile);
     return extractCollectorInfrastructureFailure(entries);
+  } catch {
+    return void 0;
+  }
+}
+function extractEngineDetourInfrastructureFailure(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.isError !== true) continue;
+    if (message.toolName !== ENGINE_DETOUR_TOOL_NAME) continue;
+    const diagnostic = toolResultText(message);
+    if (diagnostic.length === 0) continue;
+    return {
+      cause: "output",
+      diagnostic,
+      identity: { name: "EngineDetourInfrastructureError" }
+    };
+  }
+  return void 0;
+}
+async function readEngineDetourInfrastructureFailure(sessionFile) {
+  try {
+    const entries = await readBoundSessionEntries(sessionFile);
+    return extractEngineDetourInfrastructureFailure(entries);
   } catch {
     return void 0;
   }
@@ -22399,6 +22435,7 @@ var init_settlement = __esm({
     init_run_lifecycle();
     init_compliance_transport();
     init_collector_ledger();
+    init_engine_detour();
     init_judge_output();
     init_collector_output();
     init_worker_output();
@@ -23765,6 +23802,9 @@ async function dispatchAdmittedJudge(input) {
       // and role-runtime can record typed provider HTTP observations.
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
+    if (env.engine !== void 0 && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -23839,13 +23879,20 @@ async function dispatchAdmittedJudge(input) {
         terminal: auditIncomplete
       };
     }
+    const infrastructureFailure = await readEngineDetourInfrastructureFailure(
+      admitted.sessionFile
+    );
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
       env.model,
       env.credentials
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result2.knownFailure,
+      runner: result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
+        cause: infrastructureFailure.cause,
+        diagnostic: infrastructureFailure.diagnostic,
+        ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
+      }),
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
@@ -23967,6 +24014,7 @@ async function runPublicResume(argv, env, io) {
 var init_judge_run = __esm({
   "src/public-cli/judge-run.ts"() {
     "use strict";
+    init_engine_detour();
     init_engine_material();
     init_explicit_internal();
     init_cli_errors();

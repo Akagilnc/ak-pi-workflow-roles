@@ -21,6 +21,7 @@ import {
   writeToolExecutionObservationRecord,
   type ToolExecutionObservationWriter,
 } from "./tool-execution-observation.ts";
+import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 import { installWorkerGitHooks } from "./worker-submission-gates.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
@@ -284,6 +285,7 @@ export {
   type JudgeVerdict,
   type SoulAuditResult,
 } from "./judge-role.ts";
+export { ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV } from "./engine-detour.ts";
 export {
   AGENT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
@@ -590,6 +592,8 @@ export function createRoleRuntimeExtension(
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     const pendingInfrastructureToolCallIds = new Set<string>();
+    // #357 T2: engine detour once-latch + registration (Judge+engine only).
+    let engineDetourRegistration: ReturnType<typeof registerEngineDetourTool> | undefined;
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
@@ -1053,6 +1057,7 @@ export function createRoleRuntimeExtension(
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
+      engineDetourRegistration?.resetLatch();
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
@@ -1164,6 +1169,14 @@ export function createRoleRuntimeExtension(
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
+        // #357 T2: Judge+engine activation registers the package detour tool once.
+        // Gate is env presence only — no per-engine execute branch; no judge-role spawn.
+        if (entry.role === "judge" && engineDetourRegistration === undefined) {
+          engineDetourRegistration = registerEngineDetourTool(pi, hostActions);
+          if (!engineDetourRegistration.registered) {
+            engineDetourRegistration = undefined;
+          }
+        }
         // Worker gates ②④ + ① baseline: envelope arms the worktree after role install.
         // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.
         if (entry.role === "coder" || entry.role === "fixer") {
