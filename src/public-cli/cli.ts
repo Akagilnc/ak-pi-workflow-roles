@@ -10,7 +10,7 @@ import {
   formatModelSpec,
   loadCredentialProviders,
   loadPublicCliConfig,
-  parseModelSpec,
+  parsePersistentModelSpec,
   resolveEffectiveSeat,
   savePublicCliConfig,
   setPersistentSeatConfig,
@@ -402,7 +402,7 @@ async function runConfigCommand(
       if (!isPublicConfigurableSeat(seat)) {
         throw new CliUsageError(`unknown configurable seat: ${seat}`);
       }
-      config = setPersistentSeatConfig(config, seat, parseModelSpec(spec));
+      config = setPersistentSeatConfig(config, seat, parsePersistentModelSpec(spec));
     }
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));
