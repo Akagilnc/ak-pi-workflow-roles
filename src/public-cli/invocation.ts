@@ -960,7 +960,6 @@ export async function admitCoderInvocation(
  */
 export function buildCoderTransportPrompt(
   admitted: AdmittedCoderInvocation,
-  engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [admitted.instruction];
   if (admitted.attachments.length > 0) {
@@ -970,7 +969,7 @@ export function buildCoderTransportPrompt(
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  return lines.join("\n");
 }
 
 export type AdmitFixerInvocationOptions = {
@@ -1117,7 +1116,6 @@ export async function admitFixerInvocation(
  */
 export function buildFixerTransportPrompt(
   admitted: AdmittedFixerInvocation,
-  engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [admitted.instruction];
   if (admitted.attachments.length > 0) {
@@ -1127,7 +1125,7 @@ export function buildFixerTransportPrompt(
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  return lines.join("\n");
 }
 
 function parsePositivePrOption(raw: string | undefined): number {
@@ -1410,13 +1408,9 @@ export async function admitCollectorInvocation(
  */
 export function buildCollectorTransportPrompt(
   _admitted: AdmittedCollectorInvocation,
-  engineMaterial?: EngineSessionMaterial,
 ): string {
-  // No engine: exact historical fixed kickoff bytes (default-path oracle).
-  if (engineMaterial === undefined) return COLLECTOR_FIXED_KICKOFF;
-  return appendEngineSessionMaterial([COLLECTOR_FIXED_KICKOFF], engineMaterial).join(
-    "\n",
-  );
+  // Exact historical fixed kickoff bytes (one-shot observation).
+  return COLLECTOR_FIXED_KICKOFF;
 }
 
 /** Positive Issue number grammar shared with Doctor case path identity. */
@@ -1726,7 +1720,6 @@ export async function admitDoctorInvocation(
 /** Build the Pi prompt transport for an admitted Doctor request. */
 export function buildDoctorTransportPrompt(
   admitted: AdmittedDoctorInvocation,
-  engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
@@ -1736,7 +1729,7 @@ export function buildDoctorTransportPrompt(
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  return lines.join("\n");
 }
 
 /**
@@ -1901,13 +1894,11 @@ export async function admitReviewerInvocation(
  */
 export function buildReviewerTransportPrompt(
   admitted: AdmittedReviewerInvocation,
-  engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines = [
+  return [
     `Base revision for the fixed review target: ${admitted.baseRevision}`,
     "Use this exact revision as the fixed review point.",
-  ];
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  ].join("\n");
 }
 
 /**
@@ -2159,7 +2150,6 @@ export async function admitMergerInvocation(
  */
 export function buildMergerTransportPrompt(
   admitted: AdmittedMergerInvocation,
-  engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [
     `/skill:resolving-merge-conflicts ${admitted.instruction}`,
@@ -2171,7 +2161,7 @@ export function buildMergerTransportPrompt(
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  return lines.join("\n");
 }
 
 const TAISHI_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;

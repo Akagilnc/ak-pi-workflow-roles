@@ -1,8 +1,9 @@
 /**
- * #356 T1 — engine axis on existing per-seat config → activation material seams.
+ * #356 T1 — Judge-only engine axis on config → activation material seams.
  * Covers: priority, illegal rejection, public CLI tracer, default-path byte oracle.
  * Zero assertions on engine material body CLI invocation text.
  * Zero assertions on free-prose delivery wording / layout.
+ * Non-Judge seats deliberately have no engine selection/passthrough/material.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -12,9 +13,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  COLLECTOR_FIXED_KICKOFF,
-} from "../../src/collector-config.ts";
 import {
   resolveEngineMaterialPath,
 } from "../../src/package-resources/engine-material.ts";
@@ -29,26 +27,15 @@ import {
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
 import {
-  buildCollectorActivationExtraArgs,
-  type CollectorRunEnv,
-} from "../../src/public-cli/collector-run.ts";
-import {
-  buildCoderActivationExtraArgs,
-} from "../../src/public-cli/coder-run.ts";
-import {
   buildJudgeActivationExtraArgs,
 } from "../../src/public-cli/judge-run.ts";
 import {
-  buildCollectorTransportPrompt,
-  buildCoderTransportPrompt,
   buildJudgeTransportPrompt,
-  type AdmittedCoderInvocation,
-  type AdmittedCollectorInvocation,
   type AdmittedJudgeInvocation,
 } from "../../src/public-cli/invocation.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-/** Frozen baseline golden: activation argv + session initial material @ 3aec6621. */
+/** Frozen baseline golden: Judge activation argv + session initial material @ 3aec6621. */
 const BASELINE_GOLDEN_PATH = join(
   packageRoot,
   "test/fixtures/engine-axis-baseline/default-path-no-engine.json",
@@ -63,18 +50,10 @@ type BaselineGolden = {
   };
   inputs: {
     judge: AdmittedJudgeInvocation;
-    coder: AdmittedCoderInvocation;
-    collector: AdmittedCollectorInvocation;
     packageRoot: string;
   };
   outputs: {
     judge: { transportPrompt: string; activationArgv: string[] };
-    coder: { transportPrompt: string; activationArgv: string[] };
-    collector: {
-      transportPrompt: string;
-      activationArgv: string[];
-      fixedKickoff: string;
-    };
   };
 };
 
@@ -149,7 +128,7 @@ const credentials = { "openai-codex": true, xai: true } as const;
 
 // --- config parse + priority -------------------------------------------------
 
-test("persistent seat engine round-trips; illegal engine rejected at parse/validate", async () => {
+test("persistent judge engine round-trips; illegal engine rejected at parse/validate", async () => {
   await withTempHome(async (home) => {
     let config: PublicCliConfig = { seats: {} };
     config = setPersistentSeatConfig(config, "judge", {
@@ -190,7 +169,28 @@ test("persistent seat engine round-trips; illegal engine rejected at parse/valid
     assert.equal(legacy.seats.coder?.engine, undefined);
     assert.equal("engine" in (legacy.seats.coder ?? {}), false);
 
-    // Illegal engine name in on-disk config is rejected at validate seam.
+    // Non-judge engine field is refused at validate seam (MVP judge-only).
+    await writeFile(
+      join(home, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({
+        seats: {
+          coder: {
+            provider: "xai",
+            model: "grok-4.5",
+            thinking: "medium",
+            engine: "kimi",
+          },
+        },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    const nonJudge = await loadPublicCliConfig(home);
+    assert.throws(
+      () => validatePublicCliConfigEngines(nonJudge, packageRoot),
+      /config seat coder engine is not allowed; engine axis is judge-only/,
+    );
+
+    // Illegal engine name in on-disk judge config is rejected at validate seam.
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
       `${JSON.stringify({
@@ -213,23 +213,23 @@ test("persistent seat engine round-trips; illegal engine rejected at parse/valid
   });
 });
 
-test("engine priority: invocation > persistent > unconfigured", () => {
+test("engine priority: invocation > persistent > unconfigured (judge only)", () => {
   const config = setPersistentSeatEngine(
     setPersistentSeatConfig(
       { seats: {} },
-      "fixer",
+      "judge",
       { provider: "xai", model: "grok-4.5", thinking: "high" },
     ),
-    "fixer",
+    "judge",
     "cursor",
   );
 
-  const fromPersistent = resolveEffectiveSeat(config, "fixer", credentials);
+  const fromPersistent = resolveEffectiveSeat(config, "judge", credentials);
   assert.equal(fromPersistent.engine, "cursor");
   assert.equal(fromPersistent.engineSource, "persistent");
   assert.equal(fromPersistent.source, "persistent");
 
-  const fromInvocation = resolveEffectiveSeat(config, "fixer", credentials, {
+  const fromInvocation = resolveEffectiveSeat(config, "judge", credentials, {
     engine: "kimi",
   });
   assert.equal(fromInvocation.engine, "kimi");
@@ -242,18 +242,25 @@ test("engine priority: invocation > persistent > unconfigured", () => {
     thinking: "high",
   });
 
-  const bare = resolveEffectiveSeat({ seats: {} }, "fixer", credentials);
+  const bare = resolveEffectiveSeat({ seats: {} }, "judge", credentials);
   assert.equal(bare.engine, undefined);
   assert.equal(bare.engineSource, "unconfigured");
+
+  // Non-judge seats never attach engine even if invocation carries one.
+  const fixer = resolveEffectiveSeat({ seats: {} }, "fixer", credentials, {
+    engine: "kimi",
+  });
+  assert.equal(fixer.engine, undefined);
+  assert.equal(fixer.engineSource, "unconfigured");
 });
 
 // --- default-path byte oracle (frozen baseline 3aec6621 golden) --------------
 
-test("default path byte oracle: no-engine activation argv + transport prompt match frozen baseline", () => {
+test("default path byte oracle: no-engine judge activation argv + transport prompt match frozen baseline", () => {
   const golden = loadBaselineGolden();
   assert.equal(golden.provenance.baseline, "3aec6621");
 
-  const { judge, coder, collector, packageRoot: frozenPackageRoot } = golden.inputs;
+  const { judge } = golden.inputs;
 
   // Construction-head builders under the same frozen inputs must match golden bytes.
   assertBytesEqual(
@@ -265,33 +272,6 @@ test("default path byte oracle: no-engine activation argv + transport prompt mat
     buildJudgeActivationExtraArgs(judge, {}),
     golden.outputs.judge.activationArgv,
     "judge activation argv",
-  );
-
-  assertBytesEqual(
-    buildCoderTransportPrompt(coder),
-    golden.outputs.coder.transportPrompt,
-    "coder transport prompt",
-  );
-  assertBytesEqual(
-    buildCoderActivationExtraArgs(coder, { packageRoot: frozenPackageRoot }),
-    golden.outputs.coder.activationArgv,
-    "coder activation argv",
-  );
-
-  assertBytesEqual(
-    buildCollectorTransportPrompt(collector),
-    golden.outputs.collector.transportPrompt,
-    "collector transport prompt",
-  );
-  assertBytesEqual(
-    buildCollectorActivationExtraArgs(collector, {}),
-    golden.outputs.collector.activationArgv,
-    "collector activation argv",
-  );
-  assertBytesEqual(
-    COLLECTOR_FIXED_KICKOFF,
-    golden.outputs.collector.fixedKickoff,
-    "collector fixed kickoff constant",
   );
 });
 
@@ -445,6 +425,17 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
       assert.match(stderr.join(""), /unknown engine: nope-engine/);
     }
 
+    // Non-judge command with --engine → structural reject (MVP judge-only).
+    {
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        ["coder", "--engine", "kimi", "--project", project, "x"],
+        { packageRoot, home, cwd: project, credentials, io },
+      );
+      assert.equal(result.exitCode, 2);
+      assert.match(stderr.join(""), /engine axis is judge-only; refused command coder/);
+    }
+
     // Illegal persistent engine on load → structural reject.
     {
       await writeFile(
@@ -485,38 +476,50 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
       assert.equal(result.exitCode, 2);
       assert.match(stderr.join(""), /unknown engine: still-fake/);
     }
+
+    // set-engine on non-judge seat rejects.
+    {
+      await runAkRole(
+        ["config", "set", "coder", "openai-codex/gpt-5.6-sol:high"],
+        { packageRoot, home, io: captureIo().io },
+      );
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        ["config", "set-engine", "coder", "kimi"],
+        { packageRoot, home, io },
+      );
+      assert.equal(result.exitCode, 2);
+      assert.match(stderr.join(""), /engine axis is judge-only; refused seat coder/);
+    }
   });
 });
 
-test("unset-engine clears persistent engine; no-engine path keeps collector kickoff exact", async () => {
+test("unset-engine clears persistent judge engine; no-engine path keeps default-path oracle", async () => {
   await withTempHome(async (home) => {
     await runAkRole(
-      ["config", "set", "collector", "openai-codex/gpt-5.6-sol:high"],
+      ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
       { packageRoot, home, io: captureIo().io },
     );
     await runAkRole(
-      ["config", "set-engine", "collector", "codex"],
+      ["config", "set-engine", "judge", "codex"],
       { packageRoot, home, io: captureIo().io },
     );
-    assert.equal((await loadPublicCliConfig(home)).seats.collector?.engine, "codex");
+    assert.equal((await loadPublicCliConfig(home)).seats.judge?.engine, "codex");
 
     const unset = await runAkRole(
-      ["config", "unset-engine", "collector"],
+      ["config", "unset-engine", "judge"],
       { packageRoot, home, io: captureIo().io },
     );
     assert.equal(unset.exitCode, 0);
     const after = await loadPublicCliConfig(home);
-    assert.equal(after.seats.collector?.engine, undefined);
+    assert.equal(after.seats.judge?.engine, undefined);
 
-    // Transport oracle: collector without engine remains exact fixed kickoff.
+    // Transport oracle: judge without engine remains exact frozen default-path bytes.
     const golden = loadBaselineGolden();
     assertBytesEqual(
-      buildCollectorTransportPrompt(golden.inputs.collector),
-      golden.outputs.collector.transportPrompt,
-      "collector transport after unset-engine path",
+      buildJudgeTransportPrompt(golden.inputs.judge),
+      golden.outputs.judge.transportPrompt,
+      "judge transport after unset-engine path",
     );
   });
 });
-
-// Silence unused type import if Tree-shaken away in some runners.
-void (null as unknown as CollectorRunEnv);

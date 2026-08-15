@@ -418,7 +418,7 @@ function renderHelp(): string {
     "",
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model:thinking>",
-    "Persistent engine: ak-role config set-engine <seat> <name> | unset-engine <seat>",
+    "Persistent engine (judge only): ak-role config set-engine judge <name> | unset-engine judge",
     "Effective seats: ak-role roles",
   );
   return `${lines.join("\n")}\n`;
@@ -533,13 +533,18 @@ async function runConfigCommand(
   if (args[0] === "set-engine") {
     if (args.length !== 3) {
       throw new CliUsageError(
-        "usage: ak-role config set-engine <seat> <name>",
+        "usage: ak-role config set-engine judge <name>",
       );
     }
     const seat = args[1]!;
     const name = args[2]!;
     if (!isPublicConfigurableSeat(seat)) {
       throw new CliUsageError(`unknown configurable seat: ${seat}`);
+    }
+    if (seat !== "judge") {
+      throw new CliUsageError(
+        `engine axis is judge-only; refused seat ${seat}`,
+      );
     }
     requireLegalEngineName(packageRoot, name);
     let config = await loadAndValidateConfig(home, packageRoot);
@@ -559,12 +564,17 @@ async function runConfigCommand(
   if (args[0] === "unset-engine") {
     if (args.length !== 2) {
       throw new CliUsageError(
-        "usage: ak-role config unset-engine <seat>",
+        "usage: ak-role config unset-engine judge",
       );
     }
     const seat = args[1]!;
     if (!isPublicConfigurableSeat(seat)) {
       throw new CliUsageError(`unknown configurable seat: ${seat}`);
+    }
+    if (seat !== "judge") {
+      throw new CliUsageError(
+        `engine axis is judge-only; refused seat ${seat}`,
+      );
     }
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
@@ -596,8 +606,19 @@ export async function runAkRole(
     env = { ...env, packageRoot: await realpath(env.packageRoot) };
     const parsed = parseArgv(argv);
     // Invocation --engine rejects at the call-request seam (not role submission).
+    // #356 MVP: engine axis is Judge-only (not resume / non-Judge seats).
     if (parsed.engine !== undefined) {
       requireLegalEngineName(env.packageRoot, parsed.engine);
+      if (
+        !parsed.help &&
+        parsed.command !== undefined &&
+        parsed.command !== "help" &&
+        parsed.command !== "judge"
+      ) {
+        throw new CliUsageError(
+          `engine axis is judge-only; refused command ${parsed.command}`,
+        );
+      }
     }
 
     if (
@@ -696,7 +717,6 @@ export async function runAkRole(
               : { correlationId: env.correlationId }),
             ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
             ...(env.coderExtraPiArgs === undefined
               ? {}
               : { extraPiArgs: env.coderExtraPiArgs }),
@@ -725,7 +745,6 @@ export async function runAkRole(
               : { correlationId: env.correlationId }),
             ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
             ...(env.fixerExtraPiArgs === undefined
               ? {}
               : { extraPiArgs: env.fixerExtraPiArgs }),
@@ -754,7 +773,6 @@ export async function runAkRole(
               : { correlationId: env.correlationId }),
             ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
             ...(env.reviewerExtraPiArgs === undefined
               ? {}
               : { extraPiArgs: env.reviewerExtraPiArgs }),
@@ -783,7 +801,6 @@ export async function runAkRole(
               : { correlationId: env.correlationId }),
             ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
             ...(env.mergerExtraPiArgs === undefined
               ? {}
               : { extraPiArgs: env.mergerExtraPiArgs }),
@@ -811,7 +828,6 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.judgeExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.judgeExtraPiArgs }),
@@ -901,7 +917,6 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.coderExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.coderExtraPiArgs }),
@@ -945,7 +960,6 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.fixerExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.fixerExtraPiArgs }),
@@ -989,7 +1003,6 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.collectorExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.collectorExtraPiArgs }),
@@ -1033,7 +1046,6 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.reviewerExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.reviewerExtraPiArgs }),
@@ -1077,7 +1089,6 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.doctorExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.doctorExtraPiArgs }),
@@ -1121,7 +1132,6 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.mergerExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.mergerExtraPiArgs }),

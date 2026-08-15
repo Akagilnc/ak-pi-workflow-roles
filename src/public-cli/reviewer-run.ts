@@ -7,7 +7,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -84,8 +83,6 @@ export type ReviewerRunEnv = {
   correlationId?: string;
   piRunner?: ExplicitInternalPiRunner;
   model?: SeatModelConfig;
-  /** Optional labor engine name (config→activation; session material only). */
-  engine?: string;
   credentials?: CredentialProviders;
   createRunId?: () => string;
   extraPiArgs?: readonly string[];
@@ -112,14 +109,10 @@ export function buildReviewerActivationExtraArgs(
   options: {
     packageRoot: string;
     model?: SeatModelConfig;
-    engine?: string;
     extraPiArgs?: readonly string[];
   },
 ): string[] {
-  const prompt = buildReviewerTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options),
-  );
+  const prompt = buildReviewerTransportPrompt(admitted);
   const skillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "code-review",
@@ -503,7 +496,6 @@ export async function runPublicReviewer(
   const extraArgs = buildReviewerActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 

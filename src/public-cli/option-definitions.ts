@@ -288,8 +288,8 @@ const GLOBAL_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Optional labor engine for this invocation (name must exist in packaged engine materials).",
-      zh: "本调用可选劳动引擎（名字须存在于包内引擎调法材料）。",
+      en: "Optional Judge labor engine for this invocation (name must exist in packaged engine materials; judge-only).",
+      zh: "本调用可选 Judge 劳动引擎（名字须存在于包内引擎调法材料；仅 Judge）。",
     },
   },
   {
