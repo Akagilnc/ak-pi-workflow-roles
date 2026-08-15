@@ -24,6 +24,7 @@ import {
 import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 import { installWorkerGitHooks } from "./worker-submission-gates.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
+import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -506,6 +507,11 @@ export type RoleRuntimeDependencies = {
   /** Monotonic ms clock for update throttling; defaults to performance.now (not Date.now). */
   toolExecutionObservationMonoNow?(): number;
   toolExecutionObservationWriter?: ToolExecutionObservationWriter;
+  /**
+   * #351 OAuth keepalive: optional providers/interval/scheduler injection for tests.
+   * Production defaults to static ["kimi-coding"] @ 60s via createOAuthKeepalive().
+   */
+  oauthKeepalive?: OAuthKeepaliveOptions;
 };
 
 function abortContext(ctx: ExtensionContext): void {
@@ -577,6 +583,8 @@ export function createRoleRuntimeExtension(
     let reviewerOriginalRequest: string | undefined;
     let reviewerExpansionCaptured = false;
     let navigatorAttendance: NavigatorAttendanceDependency | undefined;
+    // #351: session-lifecycle owner for periodic OAuth refresh (orthogonal to role admission).
+    const oauthKeepalive = createOAuthKeepalive(dependencies.oauthKeepalive);
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
@@ -809,6 +817,8 @@ export function createRoleRuntimeExtension(
       }, { triggerTurn: false });
     });
     pi.on("session_shutdown", async () => {
+      // #351: stop OAuth keepalive first so shutdown yields zero further ticks.
+      oauthKeepalive.stop();
       // Flush any still-pending affirmative attendance before teardown. Accepted
       // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
@@ -1043,6 +1053,9 @@ export function createRoleRuntimeExtension(
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
       navigatorWorkContext = undefined;
+      // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
+      // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
+      oauthKeepalive.start(ctx);
       const rawRole = pi.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = PACKAGED_ROLE_REGISTRY.find(({ role }) => role === rawRole);

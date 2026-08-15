@@ -25,6 +25,7 @@ import {
 } from "./test-subprocess.ts";
 
 import {
+  type CredentialStore,
   type FauxProviderHandle,
   InMemoryCredentialStore,
   type Model,
@@ -955,6 +956,11 @@ export interface InProcessPiOptions {
    * durable-session persistence. cwd/Navigator subject semantics stay fixture-owned.
    */
   activationLedgerSession?: boolean;
+  /**
+   * Optional credential store for OAuth/auth fixtures (#351 keepalive E2E).
+   * Defaults to a fresh InMemoryCredentialStore when omitted.
+   */
+  credentials?: CredentialStore;
 }
 
 export interface InProcessPiFixture {
@@ -990,7 +996,7 @@ export async function withInProcessPi<T>(
     },
   };
   const modelRuntime = await ModelRuntime.create({
-    credentials: new InMemoryCredentialStore(),
+    credentials: options.credentials ?? new InMemoryCredentialStore(),
     modelsPath: options.modelsPath === undefined
       ? resolve(options.agentDir, "models.json")
       : options.modelsPath,
