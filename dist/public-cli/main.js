@@ -23798,8 +23798,11 @@ async function dispatchAdmittedJudge(input) {
       // and role-runtime can record typed provider HTTP observations.
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
+    delete childEnv[AK_ROLE_ENGINE_ENV];
     if (env.engine !== void 0 && env.engine.trim() !== "") {
       childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
     }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {

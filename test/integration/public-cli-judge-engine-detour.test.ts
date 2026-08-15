@@ -316,6 +316,51 @@ test(
 );
 
 test(
+  "failure boundary: whitespace-only stderr → stable fallback diagnostic",
+  { timeout: 120_000 },
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "ak-engine-detour-ws-stderr-"));
+    try {
+      const project = join(home, "work");
+      const binDir = join(home, "bin");
+      await mkdir(project, { recursive: true });
+      await mkdir(binDir, { recursive: true });
+      seedGitProject(project);
+      // Nonzero exit + whitespace-only stderr + empty stdout: stderr is absent after trim.
+      await writeExecutable(
+        join(binDir, "kimi"),
+        "#!/bin/sh\nprintf '  \\n\\t  ' >&2\nexit 1\n",
+      );
+
+      const result = await runJudgeWithEngine({
+        home,
+        project,
+        binDir,
+        runId: "run-engine-detour-ws-stderr-001",
+        engine: "kimi",
+      });
+
+      assert.notEqual(result.exitCode, 0, result.stderr.join(""));
+      assert.equal(result.terminal?.roleOutcome.kind, "failure");
+      if (result.terminal?.roleOutcome.kind !== "failure") assert.fail("expected failure");
+      assert.equal(result.terminal.roleOutcome.cause, "output");
+      assert.equal(
+        result.terminal.roleOutcome.diagnostic,
+        ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC,
+      );
+      const errorRef = result.terminal.artifacts.find((a) => a.kind === "error");
+      assert.ok(errorRef, "must publish Error Artifact");
+      const durable = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
+        diagnostic: string;
+      };
+      assert.equal(durable.diagnostic, ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   "AC4 governance: no engine → no detour tool; default typed path still accepts",
   { timeout: 120_000 },
   async () => {

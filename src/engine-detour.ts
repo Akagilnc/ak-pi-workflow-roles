@@ -82,14 +82,14 @@ export function isEngineDetourFailure(result: {
 
 /**
  * Diagnostic string for shared settlement / Terminal Error Artifact.
- * Prefer engine stderr 原样; stable fallback when stderr is empty.
+ * Prefer engine stderr 原样; whitespace-only/empty stderr is absent → stable fallback.
  */
 export function engineDetourFailureDiagnostic(result: {
   stderr: string;
   code: number;
   stdout: string;
 }): string {
-  if (result.stderr.length > 0) return result.stderr;
+  if (result.stderr.trim().length > 0) return result.stderr;
   if (result.stdout.trim() === "") return ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC;
   return `engine detour exited with code ${result.code}`;
 }

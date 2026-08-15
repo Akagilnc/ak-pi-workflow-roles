@@ -290,8 +290,12 @@ async function dispatchAdmittedJudge(input: {
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
     // Engine presence/name signal: registration gate + label only (no per-engine branch).
+    // Delete ambient inheritance first; own-key undefined mask survives process.env re-merge.
+    delete childEnv[AK_ROLE_ENGINE_ENV];
     if (env.engine !== undefined && env.engine.trim() !== "") {
       childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = undefined;
     }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== undefined && correlationId.trim() !== "") {
