@@ -14402,15 +14402,24 @@ function parseModelSpec(spec, fallbackThinking) {
   }
   const provider = modelPart.slice(0, slash);
   const model = modelPart.slice(slash + 1);
-  if (!thinking) {
+  return thinking === void 0 ? { provider, model } : { provider, model, thinking };
+}
+function parsePersistentModelSpec(spec) {
+  const parsed = parseModelSpec(spec);
+  if (parsed.thinking === void 0) {
     throw new Error(
       `model specification requires a thinking level (provider/model:thinking), got ${spec}`
     );
   }
-  return { provider, model, thinking };
+  return {
+    provider: parsed.provider,
+    model: parsed.model,
+    thinking: parsed.thinking
+  };
 }
 function formatModelSpec(selection) {
-  return `${selection.provider}/${selection.model}:${selection.thinking}`;
+  const base = `${selection.provider}/${selection.model}`;
+  return selection.thinking === void 0 ? base : `${base}:${selection.thinking}`;
 }
 function parsePublicCliConfig(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -21612,8 +21621,8 @@ function buildModelArgs(model) {
     model.provider,
     "--model",
     model.model,
-    "--thinking",
-    model.thinking
+    // #346: bare provider/model omits --thinking; pi/model default applies.
+    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
   ];
 }
 function buildCoderActivationExtraArgs(admitted, options) {
@@ -22002,8 +22011,8 @@ function buildModelArgs2(model) {
     model.provider,
     "--model",
     model.model,
-    "--thinking",
-    model.thinking
+    // #346: bare provider/model omits --thinking; pi/model default applies.
+    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
   ];
 }
 function buildCollectorActivationExtraArgs(admitted, options = {}) {
@@ -22239,8 +22248,8 @@ function buildModelArgs3(model) {
     model.provider,
     "--model",
     model.model,
-    "--thinking",
-    model.thinking
+    // #346: bare provider/model omits --thinking; pi/model default applies.
+    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
   ];
 }
 function buildDoctorActivationExtraArgs(admitted, options = {}) {
@@ -22472,8 +22481,8 @@ function buildModelArgs4(model) {
     model.provider,
     "--model",
     model.model,
-    "--thinking",
-    model.thinking
+    // #346: bare provider/model omits --thinking; pi/model default applies.
+    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
   ];
 }
 function buildFixerActivationExtraArgs(admitted, options) {
@@ -22880,8 +22889,8 @@ function buildModelArgs5(model) {
     model.provider,
     "--model",
     model.model,
-    "--thinking",
-    model.thinking
+    // #346: bare provider/model omits --thinking; pi/model default applies.
+    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
   ];
 }
 function buildJudgeActivationExtraArgs(admitted, options = {}) {
@@ -23212,8 +23221,8 @@ function buildModelArgs6(model) {
     model.provider,
     "--model",
     model.model,
-    "--thinking",
-    model.thinking
+    // #346: bare provider/model omits --thinking; pi/model default applies.
+    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
   ];
 }
 function buildMergerActivationExtraArgs(admitted, options) {
@@ -23683,8 +23692,8 @@ function buildModelArgs7(model) {
     model.provider,
     "--model",
     model.model,
-    "--thinking",
-    model.thinking
+    // #346: bare provider/model omits --thinking; pi/model default applies.
+    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
   ];
 }
 function buildReviewerTicketNumberArgs(ticketNumber) {
@@ -26365,7 +26374,7 @@ async function runConfigCommand(args, home, io) {
       if (!isPublicConfigurableSeat(seat)) {
         throw new CliUsageError(`unknown configurable seat: ${seat}`);
       }
-      config = setPersistentSeatConfig(config, seat, parseModelSpec(spec));
+      config = setPersistentSeatConfig(config, seat, parsePersistentModelSpec(spec));
     }
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));

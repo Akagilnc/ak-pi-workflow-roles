@@ -123,16 +123,33 @@ export function parseModelSpec(
   }
   const provider = modelPart.slice(0, slash);
   const model = modelPart.slice(slash + 1);
-  if (!thinking) {
+  // #346: bare provider/model is legal on invocation — do not invent thinking.
+  // Persistent config set still requires thinking via parsePersistentModelSpec.
+  return thinking === undefined
+    ? { provider, model }
+    : { provider, model, thinking };
+}
+
+/** Persistent seat config keeps the three-part provider/model:thinking grammar. */
+export function parsePersistentModelSpec(spec: string): SeatModelConfig & {
+  thinking: PublicThinkingLevel;
+} {
+  const parsed = parseModelSpec(spec);
+  if (parsed.thinking === undefined) {
     throw new Error(
       `model specification requires a thinking level (provider/model:thinking), got ${spec}`,
     );
   }
-  return { provider, model, thinking };
+  return {
+    provider: parsed.provider,
+    model: parsed.model,
+    thinking: parsed.thinking,
+  };
 }
 
 export function formatModelSpec(selection: SeatModelConfig): string {
-  return `${selection.provider}/${selection.model}:${selection.thinking}`;
+  const base = `${selection.provider}/${selection.model}`;
+  return selection.thinking === undefined ? base : `${base}:${selection.thinking}`;
 }
 
 function parsePublicCliConfig(value: unknown): PublicCliConfig {

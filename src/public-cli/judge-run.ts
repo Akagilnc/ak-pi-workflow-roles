@@ -96,8 +96,8 @@ function buildModelArgs(model: SeatModelConfig | undefined): string[] {
     model.provider,
     "--model",
     model.model,
-    "--thinking",
-    model.thinking,
+    // #346: bare provider/model omits --thinking; pi/model default applies.
+    ...(model.thinking === undefined ? [] : ["--thinking", model.thinking]),
   ];
 }
 
