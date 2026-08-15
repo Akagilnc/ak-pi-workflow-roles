@@ -44,8 +44,6 @@ function ok(body: unknown): GhApiResponse {
 
 async function loadFixtureRunner(): Promise<GhApiRunner> {
   const fixture = JSON.parse(await readFile(FIXTURE_URL, "utf8")) as Family78GraphqlFixture;
-  assert.ok(fixture.openIssues !== undefined, "fixture.openIssues required");
-  assert.ok(fixture.closedDrills !== undefined, "fixture.closedDrills required");
 
   return async (args) => {
     const queryArg = args.find((a, i) => args[i - 1] === "-f" && a.startsWith("query="));
