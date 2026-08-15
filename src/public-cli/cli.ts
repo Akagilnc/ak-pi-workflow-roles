@@ -341,7 +341,7 @@ function loadAndValidateConfig(
 ): Promise<PublicCliConfig> {
   return loadPublicCliConfig(home).then((config) => {
     try {
-      validatePublicCliConfigEngines(config, packageRoot, assertLegalEngineName);
+      validatePublicCliConfigEngines(config, packageRoot);
     } catch (error) {
       throw new CliUsageError(
         error instanceof Error ? error.message : String(error),

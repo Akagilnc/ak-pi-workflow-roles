@@ -14466,12 +14466,6 @@ function setPersistentSeatEngine(config, seat, engine) {
       }
     };
   }
-  if (typeof engine !== "string" || engine.trim() === "" || engine.trim() !== engine) {
-    throw new Error(`config seat ${seat} engine must be a non-empty trimmed name`);
-  }
-  if (engine.includes("/") || engine.includes("\\") || engine.includes("\0") || engine.includes("..")) {
-    throw new Error(`config seat ${seat} engine name is illegal: ${engine}`);
-  }
   return {
     seats: {
       ...config.seats,
@@ -14482,12 +14476,12 @@ function setPersistentSeatEngine(config, seat, engine) {
 function seatModelOnly(seat) {
   return seat.thinking === void 0 ? { provider: seat.provider, model: seat.model } : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
 }
-function validatePublicCliConfigEngines(config, packageRoot2, assertLegal) {
+function validatePublicCliConfigEngines(config, packageRoot2) {
   for (const seat of Object.keys(config.seats)) {
     const row = config.seats[seat];
     if (row?.engine === void 0) continue;
     try {
-      assertLegal(packageRoot2, row.engine);
+      assertLegalEngineName(packageRoot2, row.engine);
     } catch (error) {
       throw new Error(
         `config seat ${seat} engine is unknown: ${row.engine}`,
@@ -14593,11 +14587,8 @@ function parseSeatModelConfig(value, seat) {
     thinking: raw.thinking
   };
   if (raw.engine !== void 0) {
-    if (typeof raw.engine !== "string" || raw.engine.trim() === "" || raw.engine.trim() !== raw.engine) {
-      throw new Error(`config seat ${seat} engine must be a non-empty trimmed name`);
-    }
-    if (raw.engine.includes("/") || raw.engine.includes("\\") || raw.engine.includes("\0") || raw.engine.includes("..")) {
-      throw new Error(`config seat ${seat} engine name is illegal: ${raw.engine}`);
+    if (typeof raw.engine !== "string") {
+      throw new Error(`config seat ${seat} engine must be a string`);
     }
     parsed.engine = raw.engine;
   }
@@ -14731,6 +14722,7 @@ var THINKING_LEVELS;
 var init_config2 = __esm({
   "src/public-cli/config.ts"() {
     "use strict";
+    init_engine_material();
     init_registry2();
     THINKING_LEVELS = /* @__PURE__ */ new Set([
       "off",
@@ -27073,7 +27065,7 @@ function requireLegalEngineName(packageRoot2, name) {
 function loadAndValidateConfig(home, packageRoot2) {
   return loadPublicCliConfig(home).then((config) => {
     try {
-      validatePublicCliConfigEngines(config, packageRoot2, assertLegalEngineName);
+      validatePublicCliConfigEngines(config, packageRoot2);
     } catch (error) {
       throw new CliUsageError(
         error instanceof Error ? error.message : String(error),

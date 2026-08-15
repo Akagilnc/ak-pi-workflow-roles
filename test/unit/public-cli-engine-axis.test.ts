@@ -2,9 +2,11 @@
  * #356 T1 — engine axis on existing per-seat config → activation material seams.
  * Covers: priority, illegal rejection, public CLI tracer, default-path byte oracle.
  * Zero assertions on engine material body CLI invocation text.
+ * Zero assertions on free-prose delivery wording / layout.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,7 +28,6 @@ import {
   validatePublicCliConfigEngines,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
-import { assertLegalEngineName } from "../../src/package-resources/engine-material.ts";
 import {
   buildCollectorActivationExtraArgs,
   type CollectorRunEnv,
@@ -46,6 +47,77 @@ import {
   type AdmittedJudgeInvocation,
 } from "../../src/public-cli/invocation.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+
+/** Frozen baseline golden: activation argv + session initial material @ 3aec6621. */
+const BASELINE_GOLDEN_PATH = join(
+  packageRoot,
+  "test/fixtures/engine-axis-baseline/default-path-no-engine.json",
+);
+
+type BaselineGolden = {
+  provenance: {
+    baseline: string;
+    note: string;
+    command: string;
+    generator?: string;
+  };
+  inputs: {
+    judge: AdmittedJudgeInvocation;
+    coder: AdmittedCoderInvocation;
+    collector: AdmittedCollectorInvocation;
+    packageRoot: string;
+  };
+  outputs: {
+    judge: { transportPrompt: string; activationArgv: string[] };
+    coder: { transportPrompt: string; activationArgv: string[] };
+    collector: {
+      transportPrompt: string;
+      activationArgv: string[];
+      fixedKickoff: string;
+    };
+  };
+};
+
+function loadBaselineGolden(): BaselineGolden {
+  return JSON.parse(readFileSync(BASELINE_GOLDEN_PATH, "utf8")) as BaselineGolden;
+}
+
+/** Byte-stable JSON form used for argv/prompt oracle comparison. */
+function stableBytes(value: unknown): Buffer {
+  return Buffer.from(JSON.stringify(value), "utf8");
+}
+
+function assertBytesEqual(actual: unknown, expected: unknown, label: string): void {
+  const a = stableBytes(actual);
+  const e = stableBytes(expected);
+  assert.equal(
+    a.equals(e),
+    true,
+    `${label} byte mismatch\n actual=${a.toString("utf8")}\n expect=${e.toString("utf8")}`,
+  );
+}
+
+/** Typed coordinates only — no prose/layout pins. */
+function assertEngineCoordinatesInPrompt(
+  prompt: string,
+  engineName: string,
+  materialPath: string,
+): void {
+  assert.equal(prompt.includes(engineName), true, `engine name missing: ${engineName}`);
+  assert.equal(
+    prompt.includes(materialPath),
+    true,
+    `material absolute path missing: ${materialPath}`,
+  );
+}
+
+function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
+  assert.equal(
+    argv.some((a) => a === "--engine" || a.startsWith("--ak-engine")),
+    false,
+    "engine must not leak as argv flag",
+  );
+}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-engine-axis-"));
@@ -75,65 +147,6 @@ function captureIo() {
 
 const credentials = { "openai-codex": true, xai: true } as const;
 
-function judgeAdmitted(overrides: Partial<AdmittedJudgeInvocation> = {}): AdmittedJudgeInvocation {
-  return {
-    role: "judge",
-    runId: "run-engine-oracle",
-    bookKey: "book",
-    projectRoot: "/project",
-    instruction: "Decide the matter.",
-    instructionEmpty: false,
-    attachments: [],
-    runDirectory: "/runs/r",
-    sessionDirectory: "/runs/r/session",
-    sessionFile: "/runs/r/session/session.jsonl",
-    admittedRequestPath: "/runs/r/admitted-request.json",
-    ...overrides,
-  };
-}
-
-function coderAdmitted(): AdmittedCoderInvocation {
-  return {
-    role: "coder",
-    runId: "run-engine-oracle",
-    bookKey: "book",
-    projectRoot: "/project",
-    phase: "apply",
-    instruction: "Implement the slice.",
-    instructionEmpty: false,
-    attachments: [],
-    runDirectory: "/runs/r",
-    sessionDirectory: "/runs/r/session",
-    sessionFile: "/runs/r/session/session.jsonl",
-    admittedRequestPath: "/runs/r/admitted-request.json",
-    taskPath: "/runs/r/task.md",
-  };
-}
-
-function collectorAdmitted(): AdmittedCollectorInvocation {
-  return {
-    role: "collector",
-    runId: "run-engine-oracle",
-    bookKey: "book",
-    projectRoot: "/project",
-    instruction: "",
-    instructionEmpty: true,
-    attachments: [],
-    runDirectory: "/runs/r",
-    sessionDirectory: "/runs/r/session",
-    sessionFile: "/runs/r/session/session.jsonl",
-    admittedRequestPath: "/runs/r/admitted-request.json",
-    prNumber: 42,
-    repository: {
-      display: "acme/widgets",
-      canonical: "acme/widgets",
-      owner: "acme",
-      repo: "widgets",
-    },
-    manifestDigest: "abc",
-  };
-}
-
 // --- config parse + priority -------------------------------------------------
 
 test("persistent seat engine round-trips; illegal engine rejected at parse/validate", async () => {
@@ -157,8 +170,8 @@ test("persistent seat engine round-trips; illegal engine rejected at parse/valid
       },
       { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
     );
-    // Validate accepts legal names against package materials.
-    validatePublicCliConfigEngines(reloaded, packageRoot, assertLegalEngineName);
+    // Validate accepts legal names against package materials (single authority).
+    validatePublicCliConfigEngines(reloaded, packageRoot);
 
     // Legacy config without engine still loads.
     await savePublicCliConfig(
@@ -194,7 +207,7 @@ test("persistent seat engine round-trips; illegal engine rejected at parse/valid
     );
     const bad = await loadPublicCliConfig(home);
     assert.throws(
-      () => validatePublicCliConfigEngines(bad, packageRoot, assertLegalEngineName),
+      () => validatePublicCliConfigEngines(bad, packageRoot),
       /config seat judge engine is unknown: not-a-real-engine/,
     );
   });
@@ -234,46 +247,68 @@ test("engine priority: invocation > persistent > unconfigured", () => {
   assert.equal(bare.engineSource, "unconfigured");
 });
 
-// --- default-path byte oracle (baseline 3aec6621 shape) ----------------------
+// --- default-path byte oracle (frozen baseline 3aec6621 golden) --------------
 
-test("default path byte oracle: no-engine activation argv + transport prompt stable", () => {
-  const judge = judgeAdmitted();
-  const judgePrompt = buildJudgeTransportPrompt(judge);
-  assert.equal(judgePrompt, "Decide the matter.");
-  const judgeArgs = buildJudgeActivationExtraArgs(judge, {});
-  assert.deepEqual(judgeArgs, [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    judge.sessionFile,
-    "--session-dir",
-    judge.sessionDirectory,
-    "--ak-role",
-    "judge",
-    "--mode",
-    "json",
-    "Decide the matter.",
-  ]);
+test("default path byte oracle: no-engine activation argv + transport prompt match frozen baseline", () => {
+  const golden = loadBaselineGolden();
+  assert.equal(golden.provenance.baseline, "3aec6621");
 
-  const coder = coderAdmitted();
-  const coderPrompt = buildCoderTransportPrompt(coder);
-  assert.equal(coderPrompt, "Implement the slice.");
-  const coderArgs = buildCoderActivationExtraArgs(coder, { packageRoot });
-  // Prompt tail must remain the bare instruction (no engine section).
-  assert.equal(coderArgs.at(-1), "Implement the slice.");
-  assert.equal(coderArgs.includes("--provider"), false);
+  const { judge, coder, collector, packageRoot: frozenPackageRoot } = golden.inputs;
 
-  const collector = collectorAdmitted();
-  const collectorPrompt = buildCollectorTransportPrompt(collector);
-  assert.equal(collectorPrompt, COLLECTOR_FIXED_KICKOFF);
-  const collectorArgs = buildCollectorActivationExtraArgs(collector, {});
-  assert.equal(collectorArgs.at(-1), COLLECTOR_FIXED_KICKOFF);
+  // Construction-head builders under the same frozen inputs must match golden bytes.
+  assertBytesEqual(
+    buildJudgeTransportPrompt(judge),
+    golden.outputs.judge.transportPrompt,
+    "judge transport prompt",
+  );
+  assertBytesEqual(
+    buildJudgeActivationExtraArgs(judge, {}),
+    golden.outputs.judge.activationArgv,
+    "judge activation argv",
+  );
+
+  assertBytesEqual(
+    buildCoderTransportPrompt(coder),
+    golden.outputs.coder.transportPrompt,
+    "coder transport prompt",
+  );
+  assertBytesEqual(
+    buildCoderActivationExtraArgs(coder, { packageRoot: frozenPackageRoot }),
+    golden.outputs.coder.activationArgv,
+    "coder activation argv",
+  );
+
+  assertBytesEqual(
+    buildCollectorTransportPrompt(collector),
+    golden.outputs.collector.transportPrompt,
+    "collector transport prompt",
+  );
+  assertBytesEqual(
+    buildCollectorActivationExtraArgs(collector, {}),
+    golden.outputs.collector.activationArgv,
+    "collector activation argv",
+  );
+  assertBytesEqual(
+    COLLECTOR_FIXED_KICKOFF,
+    golden.outputs.collector.fixedKickoff,
+    "collector fixed kickoff constant",
+  );
 });
 
-test("engine material delivery changes prompt stably; argv gains no engine flags", () => {
-  const judge = judgeAdmitted();
+test("engine material delivery: typed coordinates in prompt; argv gains no engine flags", () => {
+  const judge: AdmittedJudgeInvocation = {
+    role: "judge",
+    runId: "run-engine-oracle",
+    bookKey: "book",
+    projectRoot: "/project",
+    instruction: "Decide the matter.",
+    instructionEmpty: false,
+    attachments: [],
+    runDirectory: "/runs/r",
+    sessionDirectory: "/runs/r/session",
+    sessionFile: "/runs/r/session/session.jsonl",
+    admittedRequestPath: "/runs/r/admitted-request.json",
+  };
   const without = buildJudgeActivationExtraArgs(judge, { packageRoot });
   const withEngine = buildJudgeActivationExtraArgs(judge, {
     packageRoot,
@@ -282,11 +317,8 @@ test("engine material delivery changes prompt stably; argv gains no engine flags
   assert.notEqual(without.at(-1), withEngine.at(-1));
   const prompt = withEngine.at(-1)!;
   const materialPath = resolveEngineMaterialPath(packageRoot, "kimi");
-  assert.match(prompt, /Engine method material/);
-  assert.match(prompt, /- engine: kimi/);
-  assert.equal(prompt.includes(materialPath), true);
-  // No new pi / ak-engine flag surface.
-  assert.equal(withEngine.some((a) => a === "--engine" || a.startsWith("--ak-engine")), false);
+  assertEngineCoordinatesInPrompt(prompt, "kimi", materialPath);
+  assertNoEngineFlagsInArgv(withEngine);
   // Model argv path unchanged when model omitted.
   assert.equal(withEngine.includes("--provider"), false);
 });
@@ -326,7 +358,7 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
 
     // Persistent engine alone.
     {
-      let capturedPrompt: string | undefined;
+      let capturedArgs: string[] | undefined;
       const { io, stderr } = captureIo();
       const result = await runAkRole(
         ["judge", "--project", project, "engine persistent path"],
@@ -338,7 +370,7 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
           credentials,
           io,
           piRunner: async (args) => {
-            capturedPrompt = String(args.at(-1) ?? "");
+            capturedArgs = [...args];
             return {
               code: 1,
               stderr: "stop after capture",
@@ -354,17 +386,18 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
         `structural reject: ${stderr.join("")}`,
       );
       assert.equal(
-        typeof capturedPrompt,
-        "string",
+        Array.isArray(capturedArgs),
+        true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      assert.equal(capturedPrompt!.includes("- engine: cursor"), true);
-      assert.equal(capturedPrompt!.includes(materialCursor), true);
+      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
+      assertEngineCoordinatesInPrompt(capturedPrompt, "cursor", materialCursor);
+      assertNoEngineFlagsInArgv(capturedArgs!);
     }
 
     // Invocation --engine overrides persistent.
     {
-      let capturedPrompt: string | undefined;
+      let capturedArgs: string[] | undefined;
       const { io, stderr } = captureIo();
       const result = await runAkRole(
         [
@@ -383,7 +416,7 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
           credentials,
           io,
           piRunner: async (args) => {
-            capturedPrompt = String(args.at(-1) ?? "");
+            capturedArgs = [...args];
             return {
               code: 1,
               stderr: "stop after capture",
@@ -394,9 +427,11 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
         },
       );
       assert.notEqual(result.exitCode, 2, stderr.join(""));
-      assert.equal(capturedPrompt!.includes("- engine: kimi"), true);
-      assert.equal(capturedPrompt!.includes(materialKimi), true);
-      assert.equal(capturedPrompt!.includes("- engine: cursor"), false);
+      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
+      assertEngineCoordinatesInPrompt(capturedPrompt, "kimi", materialKimi);
+      // Override must not keep the persistent engine material path.
+      assert.equal(capturedPrompt.includes(materialCursor), false);
+      assertNoEngineFlagsInArgv(capturedArgs!);
     }
 
     // Illegal --engine → structural reject (exit 2), not role submission.
@@ -474,9 +509,11 @@ test("unset-engine clears persistent engine; no-engine path keeps collector kick
     assert.equal(after.seats.collector?.engine, undefined);
 
     // Transport oracle: collector without engine remains exact fixed kickoff.
-    assert.equal(
-      buildCollectorTransportPrompt(collectorAdmitted()),
-      COLLECTOR_FIXED_KICKOFF,
+    const golden = loadBaselineGolden();
+    assertBytesEqual(
+      buildCollectorTransportPrompt(golden.inputs.collector),
+      golden.outputs.collector.transportPrompt,
+      "collector transport after unset-engine path",
     );
   });
 });
