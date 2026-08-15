@@ -1,8 +1,10 @@
 /**
  * #342 — typed option-definition true source drives help / README / parsers.
- * Acceptance: structured contracts drive the real parser; rejected spellings
- * stay private; README generated regions zero-diff; shortest real installed-bin
- * tracer checks public command/option identities only (no presentation freeze).
+ * Acceptance (owner 2026-08-15 option 2): option identity + structured semantics
+ * land on typed true source and structured projection seams
+ * (helpDocumentForCommand / projectOwnerOptions); help screen free text is a
+ * human surface, not a machine contract. README generated regions zero-diff;
+ * real installed-bin entry is loud smoke only (non-empty, no content freeze).
  */
 import assert from "node:assert/strict";
 import { readFile, mkdtemp, rm, chmod } from "node:fs/promises";
@@ -15,7 +17,8 @@ import { promisify } from "node:util";
 
 import {
   PUBLIC_ROLE_ARGV,
-  runAkRole,
+  helpDocument,
+  helpDocumentForCommand,
 } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -33,6 +36,7 @@ import {
   type OptionOwner,
   type PublicOptionDefinition,
   type PublicRoleOptionOwner,
+  type StructuredOptionProjection,
   type TaishiMode,
 } from "../../src/public-cli/option-definitions.ts";
 import {
@@ -49,20 +53,26 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const execFileAsync = promisify(execFile);
 
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
+/** Identity + structured-semantics fields of one projected option (no prose). */
+function structuredOptionContract(opt: StructuredOptionProjection) {
   return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
+    id: opt.id,
+    owner: opt.owner,
+    canonical: opt.canonical,
+    aliases: [...opt.aliases],
+    valueMetavar: opt.valueMetavar,
+    required: opt.required,
+    repeatable: opt.repeatable,
+    defaultValue: opt.defaultValue,
+    form: opt.form,
+    phases: opt.phases === undefined ? undefined : [...opt.phases],
+    modes: opt.modes === undefined ? undefined : [...opt.modes],
+    requiredInModes:
+      opt.requiredInModes === undefined ? undefined : [...opt.requiredInModes],
+    exclusiveWith:
+      opt.exclusiveWith === undefined ? undefined : [...opt.exclusiveWith],
+    maxCountByMode: opt.maxCountByMode,
+    selectsMode: opt.selectsMode,
   };
 }
 
@@ -101,6 +111,82 @@ test("PUBLIC_ROLE_ARGV rows expose the sole option table (no parallel spelling o
       (o) => o.canonical === "--help" && o.aliases.includes("-h"),
     ),
   );
+});
+
+test("helpDocumentForCommand table-drive: option identity + structured semantics ≡ typed table", () => {
+  const owners: OptionOwner[] = ["global", ...PUBLIC_ROLE_OPTION_OWNERS];
+
+  // Bare help document carries the same global option projection.
+  const bare = helpDocument();
+  assert.equal(bare.executable, "ak-role");
+  assert.deepEqual(
+    bare.globalOptions.map(structuredOptionContract),
+    projectOwnerOptions("global").map(structuredOptionContract),
+  );
+
+  for (const owner of owners) {
+    const doc = helpDocumentForCommand(owner);
+    assert.ok(doc, `helpDocumentForCommand(${owner}) must resolve`);
+    assert.equal(doc.command, owner);
+    if (owner === "global") {
+      assert.equal(doc.kind, "global");
+    } else if (owner === "taishi") {
+      assert.equal(doc.kind, "deterministic");
+    } else {
+      assert.equal(doc.kind, "role");
+    }
+
+    const fromTable = projectOwnerOptions(owner);
+    assert.deepEqual(
+      doc.options.map(structuredOptionContract),
+      fromTable.map(structuredOptionContract),
+      `${owner}: helpDocumentForCommand options must equal projectOwnerOptions`,
+    );
+    // projectOwnerOptions is the sole projection of optionsForOwner (identity fields).
+    assert.deepEqual(
+      fromTable.map(structuredOptionContract),
+      optionsForOwner(owner).map((def) =>
+        structuredOptionContract({
+          id: def.id,
+          owner: def.owner,
+          canonical: def.canonical,
+          aliases: def.aliases,
+          valueMetavar: def.valueMetavar,
+          required: def.required,
+          repeatable: def.repeatable,
+          ...(def.defaultValue === undefined
+            ? {}
+            : { defaultValue: def.defaultValue }),
+          form: def.form,
+          ...(def.phases === undefined ? {} : { phases: def.phases }),
+          ...(def.modes === undefined ? {} : { modes: def.modes }),
+          ...(def.requiredInModes === undefined
+            ? {}
+            : { requiredInModes: def.requiredInModes }),
+          ...(def.exclusiveWith === undefined
+            ? {}
+            : { exclusiveWith: def.exclusiveWith }),
+          ...(def.maxCountByMode === undefined
+            ? {}
+            : { maxCountByMode: def.maxCountByMode }),
+          ...(def.selectsMode === undefined
+            ? {}
+            : { selectsMode: def.selectsMode }),
+          description: def.description,
+        }),
+      ),
+      `${owner}: projectOwnerOptions must mirror typed table identity/semantics`,
+    );
+    assert.ok(fromTable.length > 0, `${owner} must expose at least one option`);
+    for (const opt of fromTable) {
+      assert.equal(typeof opt.canonical, "string");
+      assert.ok(opt.canonical.length > 0, `${owner}/${opt.id} canonical empty`);
+      assert.ok(Array.isArray(opt.aliases));
+    }
+  }
+
+  assert.equal(helpDocumentForCommand("navigator"), undefined);
+  assert.equal(helpDocumentForCommand("not-a-command"), undefined);
 });
 
 test("shared typed consumer: phase from table aliases/default; repeatable:false rejects duplicates", () => {
@@ -246,98 +332,48 @@ test("shared typed consumer: phase from table aliases/default; repeatable:false 
   );
 });
 
-test("real help surfaces public option identities from the sole table", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-opt-help-"));
-  try {
-    const bare = captureIo();
-    const bareResult = await runAkRole(["--help"], {
-      packageRoot,
-      home,
-      io: bare.io,
-    });
-    assert.equal(bareResult.exitCode, 0);
-    const bareText = bare.stdout.join("");
-    for (const opt of optionsForOwner("global")) {
-      assert.equal(
-        bareText.includes(opt.canonical),
-        true,
-        `bare help missing global identity ${opt.canonical}`,
-      );
-      for (const alias of opt.aliases) {
-        assert.equal(
-          bareText.includes(alias),
-          true,
-          `bare help missing global alias ${alias}`,
-        );
-      }
-    }
-
-    for (const owner of PUBLIC_ROLE_OPTION_OWNERS) {
-      const cap = captureIo();
-      const result = await runAkRole(["help", owner], {
-        packageRoot,
-        home,
-        io: cap.io,
-      });
-      assert.equal(result.exitCode, 0, owner);
-      const text = cap.stdout.join("");
-      for (const opt of optionsForOwner(owner)) {
-        assert.equal(
-          text.includes(opt.canonical),
-          true,
-          `help ${owner} missing identity ${opt.canonical}`,
-        );
-      }
-    }
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
-test("rejected spellings never appear in public help or README projections", async () => {
+test("rejected spellings never appear in structured projections or README", () => {
   const rejected = allRejectedSpellingTokens();
   assert.ok(rejected.includes("--burden"));
   assert.ok(rejected.includes("--ak-merger-input"));
 
-  const home = await mkdtemp(join(tmpdir(), "ak-opt-reject-"));
-  try {
-    const surfaces: string[] = [];
-    const bare = captureIo();
-    await runAkRole(["--help"], { packageRoot, home, io: bare.io });
-    surfaces.push(bare.stdout.join(""));
-
-    for (const owner of PUBLIC_ROLE_OPTION_OWNERS) {
-      const cap = captureIo();
-      await runAkRole(["help", owner], { packageRoot, home, io: cap.io });
-      surfaces.push(cap.stdout.join(""));
-    }
-
-    surfaces.push(renderReadmeOptionsMarkdown("en"));
-    surfaces.push(renderReadmeOptionsMarkdown("zh"));
-
-    for (const text of surfaces) {
-      for (const spelling of rejected) {
+  // Public documentation surfaces that are machine-checkable: typed table,
+  // helpDocumentForCommand projection, and README generators — not help free text.
+  const owners: OptionOwner[] = ["global", ...PUBLIC_ROLE_OPTION_OWNERS];
+  for (const owner of owners) {
+    const doc = helpDocumentForCommand(owner);
+    assert.ok(doc, owner);
+    for (const opt of doc.options) {
+      for (const spelling of [opt.canonical, ...opt.aliases]) {
         assert.equal(
-          text.includes(spelling),
+          rejected.includes(spelling),
           false,
-          `rejected spelling leaked: ${spelling}`,
+          `helpDocumentForCommand(${owner}) leaked rejected ${spelling}`,
         );
       }
     }
-
-    for (const owner of Object.keys(PUBLIC_OPTION_TABLE) as OptionOwner[]) {
-      for (const opt of optionsForOwner(owner)) {
-        for (const spelling of [opt.canonical, ...opt.aliases]) {
-          assert.equal(
-            rejected.includes(spelling),
-            false,
-            `public table must not contain rejected ${spelling}`,
-          );
-        }
+    for (const opt of optionsForOwner(owner)) {
+      for (const spelling of [opt.canonical, ...opt.aliases]) {
+        assert.equal(
+          rejected.includes(spelling),
+          false,
+          `public table must not contain rejected ${spelling}`,
+        );
       }
     }
-  } finally {
-    await rm(home, { recursive: true, force: true });
+  }
+
+  for (const spelling of rejected) {
+    assert.equal(
+      renderReadmeOptionsMarkdown("en").includes(spelling),
+      false,
+      `README EN leaked rejected ${spelling}`,
+    );
+    assert.equal(
+      renderReadmeOptionsMarkdown("zh").includes(spelling),
+      false,
+      `README ZH leaked rejected ${spelling}`,
+    );
   }
 });
 
@@ -788,7 +824,7 @@ test("README EN/ZH generated regions are regeneration-clean", async () => {
   }
 });
 
-test("installed package bin tracer: real executable surfaces command and option identities", async () => {
+test("installed package bin tracer: bare --help and help <role> smoke (non-empty)", async () => {
   const { buildPublicAkRoleBin } = (await import(
     pathToFileURL(resolve(packageRoot, "scripts/build-package.mjs")).href
   )) as { buildPublicAkRoleBin: (outfile?: string) => Promise<void> };
@@ -808,6 +844,8 @@ test("installed package bin tracer: real executable surfaces command and option 
     }
     await chmod(binPath, 0o755);
 
+    // Loud smoke only: build/exec failures must throw (no catch→runAkRole).
+    // Help free text is a human surface — do not assert option/command content.
     const run = async (args: string[]): Promise<string> => {
       const { stdout } = await execFileAsync(process.execPath, [binPath, ...args], {
         cwd: packageRoot,
@@ -818,35 +856,14 @@ test("installed package bin tracer: real executable surfaces command and option 
     };
 
     const bare = await run(["--help"]);
-    for (const name of [
-      "roles",
-      "config",
-      "help",
-      "resume",
-      ...PUBLIC_ROLE_OPTION_OWNERS,
-    ]) {
-      assert.equal(bare.includes(name), true, `bare help lists ${name}`);
-    }
-    for (const opt of optionsForOwner("global")) {
-      assert.equal(
-        bare.includes(opt.canonical),
-        true,
-        `bare help lists ${opt.canonical}`,
-      );
-      for (const alias of opt.aliases) {
-        assert.equal(bare.includes(alias), true, `bare help lists ${alias}`);
-      }
-    }
+    assert.ok(bare.trim().length > 0, "bare --help must produce non-empty stdout");
 
     for (const owner of PUBLIC_ROLE_OPTION_OWNERS) {
       const text = await run(["help", owner]);
-      for (const opt of optionsForOwner(owner)) {
-        assert.equal(
-          text.includes(opt.canonical),
-          true,
-          `help ${owner} must list ${opt.canonical}`,
-        );
-      }
+      assert.ok(
+        text.trim().length > 0,
+        `help ${owner} must produce non-empty stdout`,
+      );
     }
   } finally {
     await rm(binDir, { recursive: true, force: true });
