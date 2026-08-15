@@ -218,6 +218,15 @@ test("malformed model specs keep the pre-#346 typed rejection surface", () => {
     () => parseModelSpec("/missing-provider"),
     /model specification must be provider\/model\[:thinking\]/,
   );
+  // Colon present but suffix empty/unknown: typed format reject (not swallowed into model).
+  assert.throws(
+    () => parseModelSpec("openai-codex/gpt-5.6-luna:bogus"),
+    /model specification must be provider\/model\[:thinking\]/,
+  );
+  assert.throws(
+    () => parseModelSpec("openai-codex/gpt-5.6-luna:"),
+    /model specification must be provider\/model\[:thinking\]/,
+  );
   // Unknown provider/model is syntactically legal — resolution is not this parser's job.
   assert.deepEqual(parseModelSpec("no-such-provider/no-such-model"), {
     provider: "no-such-provider",

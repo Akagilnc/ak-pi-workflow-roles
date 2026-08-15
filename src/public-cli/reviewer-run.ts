@@ -22,7 +22,6 @@ import {
 } from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
-  recordEffectiveInvocationModel,
   admitReviewerInvocation,
   buildReviewerTransportPrompt,
   type AdmittedReviewerInvocation,
@@ -297,10 +296,7 @@ async function dispatchAdmittedReviewer(input: {
         io,
       );
     }
-    if (env.model !== undefined) {
-      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
-    }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     await clearReviewerDispatchRejection(admitted.runDirectory);
 

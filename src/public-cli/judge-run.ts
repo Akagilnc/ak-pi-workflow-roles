@@ -14,7 +14,6 @@ import {
 } from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
-  recordEffectiveInvocationModel,
   admitJudgeInvocation,
   buildJudgeTransportPrompt,
   type AdmittedJudgeInvocation,
@@ -267,10 +266,7 @@ async function dispatchAdmittedJudge(input: {
         io,
       );
     }
-    if (env.model !== undefined) {
-      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
-    }
-    await markRunRunning(admitted.runDirectory);
+    await markRunRunning(admitted.runDirectory, env.model);
     // Attempt-scoped observation: drop any prior dispatch's 429 evidence so only
     // the current initial/resume attempt can qualify v1 resume.
     await clearTypedProviderHttpObservation(admitted.runDirectory);

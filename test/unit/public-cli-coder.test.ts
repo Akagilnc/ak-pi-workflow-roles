@@ -778,3 +778,57 @@ test("syntactically valid unknown provider/model is not rejected at thinking par
     assert.notEqual(result.exitCode, 0);
   });
 });
+
+// #346: colon present with empty/illegal thinking stays a typed format reject at the real entry.
+test("malformed --model thinking suffix is rejected at public entry without dispatch", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    for (const badSpec of [
+      "openai-codex/gpt-5.6-luna:bogus",
+      "openai-codex/gpt-5.6-luna:",
+    ] as const) {
+      const { io, stderr } = captureIo();
+      let dispatched = false;
+      const result = await runAkRole(
+        [
+          "--model",
+          badSpec,
+          "coder",
+          "plan",
+          "--project",
+          project,
+          "Malformed thinking must not dispatch.",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => `run-cli-coder-bad-thinking-${badSpec.endsWith(":") ? "trail" : "bogus"}`,
+          io,
+          piRunner: async (args) => {
+            dispatched = true;
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.equal(dispatched, false, `${badSpec} must not reach pi dispatch`);
+      assert.notEqual(result.exitCode, 0, `${badSpec} must be rejected`);
+      assert.match(
+        stderr.join(""),
+        /model specification must be provider\/model\[:thinking\]/,
+        `${badSpec} must keep typed format rejection; got: ${stderr.join("")}`,
+      );
+      // Must not wash into the persistent-config "thinking required" channel.
+      assert.equal(stderr.join("").includes("requires a thinking level"), false);
+    }
+  });
+});
