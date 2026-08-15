@@ -3,7 +3,7 @@
  *   1) isolated BoardSnapshot → HTML (no network)
  *   2) snapshot adapter against injectable transport (no network)
  *
- * Live GitHub edge contract lives in test/integration/ticket-snapshot-live.test.ts.
+ * #78 family edge contract lives in test/integration/ticket-snapshot-family-edges.test.ts (fixture-backed).
  * Assertions read machine data-* keys only (anchoring constitution).
  */
 import assert from "node:assert/strict";
