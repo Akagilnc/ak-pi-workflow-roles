@@ -288,11 +288,15 @@ async function readInvocation(runDir: string): Promise<InvocationInfo | undefine
     const info: InvocationInfo = {};
     if (typeof parsed.role === "string" && parsed.role.trim()) info.role = parsed.role.trim();
     if (typeof parsed.thinking === "string" && parsed.thinking.trim()) info.thinking = parsed.thinking.trim();
+    if (typeof parsed.provider === "string" && parsed.provider.trim()) {
+      info.provider = parsed.provider.trim();
+    }
     if (typeof parsed.model === "string" && parsed.model.trim()) {
       const rawModel = parsed.model.trim();
       if (rawModel.includes("/")) {
         const slash = rawModel.indexOf("/");
-        info.provider = rawModel.slice(0, slash);
+        // Combined provider/model form (legacy pages).
+        if (info.provider === undefined) info.provider = rawModel.slice(0, slash);
         info.model = rawModel.slice(slash + 1);
       } else {
         info.model = rawModel;

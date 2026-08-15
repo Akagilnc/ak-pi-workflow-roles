@@ -657,6 +657,9 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
           "utf8",
         ),
       ) as Record<string, unknown>;
+      // invocation evidence records the effective provider/model; thinking stays absent for bare model.
+      assert.equal(invocation.provider, "kimi-coding");
+      assert.equal(invocation.model, "k3-256k");
       assert.equal("thinking" in invocation, false);
       assert.equal(
         result.terminal?.roleOutcome.kind === "accepted"
@@ -703,7 +706,26 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
       assert.equal(captured![captured!.indexOf("--model") + 1], "gpt-5.6-luna");
       assert.equal(captured!.includes("--thinking"), true);
       assert.equal(captured![captured!.indexOf("--thinking") + 1], "high");
-      // Failure after dispatch is fine — we only assert the thinking pass-through.
+      // invocation evidence records provider/model and the supplied thinking level.
+      const bookKey = resolveBookKeyFromGit(project);
+      const invocation = JSON.parse(
+        await readFile(
+          join(
+            home,
+            ".ak-roles",
+            "books",
+            bookKey,
+            "runs",
+            "run-cli-coder-thinking-suffix@coder",
+            "invocation.json",
+          ),
+          "utf8",
+        ),
+      ) as Record<string, unknown>;
+      assert.equal(invocation.provider, "openai-codex");
+      assert.equal(invocation.model, "gpt-5.6-luna");
+      assert.equal(invocation.thinking, "high");
+      // Failure after dispatch is fine — we only assert model/thinking pass-through.
       assert.notEqual(result.exitCode, 2);
     }
   });

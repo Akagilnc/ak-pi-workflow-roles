@@ -22,11 +22,13 @@ import {
 } from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
+  recordEffectiveInvocationModel,
   admitReviewerInvocation,
   buildReviewerTransportPrompt,
   type AdmittedReviewerInvocation,
 } from "./invocation.ts";
 import {
+  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -88,17 +90,6 @@ export type ReviewerRunEnv = {
   timeoutMs?: number;
 };
 
-function buildModelArgs(model: SeatModelConfig | undefined): string[] {
-  if (model === undefined) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    // #346: bare provider/model omits --thinking; pi/model default applies.
-    ...(model.thinking === undefined ? [] : ["--thinking", model.thinking]),
-  ];
-}
 
 /** Encode admitted ticketNumber as CLI argv for activation/resume (no defaults). */
 function buildReviewerTicketNumberArgs(
@@ -152,7 +143,7 @@ export function buildReviewerActivationExtraArgs(
     ...ticketNumberArgs,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     prompt,
   ];
 }
@@ -198,7 +189,7 @@ export function buildReviewerResumeActivationExtraArgs(
     ...ticketNumberArgs,
     "--mode",
     "json",
-    ...buildModelArgs(options.model),
+    ...buildSeatModelCliArgs(options.model),
     RESUME_TRANSPORT_ENVELOPE,
   ];
 }
@@ -305,6 +296,9 @@ async function dispatchAdmittedReviewer(input: {
         missingCredential,
         io,
       );
+    }
+    if (env.model !== undefined) {
+      await recordEffectiveInvocationModel(admitted.runDirectory, env.model);
     }
     await markRunRunning(admitted.runDirectory);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -463,6 +457,7 @@ export async function runPublicReviewer(
       authorityRefs: parsed.authorityRefs,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
