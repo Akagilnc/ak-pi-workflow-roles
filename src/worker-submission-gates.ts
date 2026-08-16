@@ -1,6 +1,6 @@
 /** #242/#369 worker gates ①② at submission seam. Durability: ADR 0065 createRecordSession only. */
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -83,12 +83,11 @@ function tryGet(file: string, key: string): string | undefined {
   }
 }
 
+/** True only when the file exists and carries the historical package marker.
+ *  Read failures propagate — never disguised as "not owned". */
 function ownedHook(path: string): boolean {
-  try {
-    return existsSync(path) && readFileSync(path, "utf8").includes(HOOK_MARKER);
-  } catch {
-    return false;
-  }
+  if (!existsSync(path)) return false;
+  return readFileSync(path, "utf8").includes(HOOK_MARKER);
 }
 
 function ownedDir(dir: string): boolean {
@@ -106,23 +105,19 @@ function unsetOwnedHooksPath(file: string): string | undefined {
   return value;
 }
 
+/** Delete only the package-owned hook file; remove the directory solely when empty. */
 function rmOwnedDir(dir: string): void {
-  if (!ownedDir(dir)) return;
-  try {
-    rmSync(dir, { recursive: true, force: true });
-  } catch {
-    /* best-effort */
-  }
+  const hookPath = resolve(dir, HOOK_FILE);
+  if (!ownedHook(hookPath)) return;
+  rmSync(hookPath, { force: true });
+  if (!existsSync(dir)) return;
+  if (readdirSync(dir).length === 0) rmdirSync(dir);
 }
 
 function rmOwnedLegacyHook(commonDir: string): void {
   const path = resolve(commonDir, "hooks", HOOK_FILE);
   if (!ownedHook(path)) return;
-  try {
-    rmSync(path, { force: true });
-  } catch {
-    /* best-effort */
-  }
+  rmSync(path, { force: true });
 }
 
 function linkedGitDirs(commonDir: string): string[] {
@@ -131,11 +126,8 @@ function linkedGitDirs(commonDir: string): string[] {
   const out: string[] = [];
   for (const name of readdirSync(root)) {
     const dir = resolve(root, name);
-    try {
-      if (statSync(dir).isDirectory()) out.push(dir);
-    } catch {
-      /* raced */
-    }
+    // Enumeration/stat failures propagate — never skip a linked admin dir silently.
+    if (statSync(dir).isDirectory()) out.push(dir);
   }
   return out;
 }
