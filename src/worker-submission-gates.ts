@@ -1,12 +1,6 @@
-/** #242 worker gates ①②④. ① durability: ADR 0065/#216 createRecordSession only — no appendCustomEntry bypass / parallel ledger. */
+/** #242/#369 worker gates ①② at submission seam. Durability: ADR 0065 createRecordSession only. */
 import { execFileSync } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -16,39 +10,41 @@ import {
   WORKER_SUBMISSION_GATE_KIND,
 } from "./sitian-record-entry.ts";
 
-export const WORKER_COMMIT_SUBJECT_PREFIX = "ak-roles:";
-/** Sitian kind for gate ① durable baseline / bounce records (single path segment, not a destination). */
 export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
 export const WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE = "commit-reminder-bounce";
+export const WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE = "prefix-reminder-bounce";
 
 const DONE = new Set(["completed", "partially_completed"]);
-/** Marker: own-package hooks are reloadable across HOOK body changes; foreign hooks refuse. */
+/** Historical package hook ownership marker — uninstall criterion only. */
 const HOOK_MARKER = "ak-roles: worker-submission-gates reference-transaction";
+const HOOKS_DIR = "ak-roles-hooks";
+const HOOK_FILE = "reference-transaction";
+/** Open platform-prefix domain (constitution #10) — not a closed singleton. */
+const PLATFORM_PREFIX = /^[A-Za-z][A-Za-z0-9_-]*:/;
+const UNFINISHED_REASON_BOUNCE_LIMIT = 2;
 
 export class WorkerCommitReminderError extends Error {
   readonly code = "worker_commit_reminder" as const;
-  constructor() { super("未观察到 commit"); this.name = "WorkerCommitReminderError"; }
+  constructor() {
+    super("未观察到 commit");
+    this.name = "WorkerCommitReminderError";
+  }
 }
 
-/** #292 unfinished reason solicitation — same bounce shape as gate ①; in-session only. */
+export class WorkerPrefixReminderError extends Error {
+  readonly code = "worker_prefix_reminder" as const;
+  constructor() {
+    super("观察到缺前缀 commit，请重写后再交");
+    this.name = "WorkerPrefixReminderError";
+  }
+}
+
 export class WorkerUnfinishedReasonReminderError extends Error {
   readonly code = "worker_unfinished_reason_reminder" as const;
   constructor() {
     super("补理由（前置缺失/违宪之一）或继续施工");
     this.name = "WorkerUnfinishedReasonReminderError";
-  }
-}
-
-const UNFINISHED_REASON_BOUNCE_LIMIT = 2;
-
-function unfinishedReasonPresent(details?: unknown): boolean {
-  if (typeof details !== "object" || details === null) return false;
-  try {
-    const reason = (details as { reason?: unknown }).reason;
-    return typeof reason === "string" && reason.trim().length > 0;
-  } catch {
-    return false;
   }
 }
 
@@ -68,125 +64,127 @@ function gitFile(file: string, args: string[]): string {
   }).trim();
 }
 
-// ② each newly-created commit (incl. empty subject); ④ ban non-fast-forward.
-// Scoped by install: worktree-local core.hooksPath → only the armed tree.
-const HOOK = `#!/bin/sh
-# ${HOOK_MARKER}
-[ "$1" = prepared ] || exit 0
-prefix=${WORKER_COMMIT_SUBJECT_PREFIX}
-while read -r old new ref; do
-  case $ref in refs/heads/*|HEAD) ;; *) continue ;; esac
-  [ -n "$new" ] && [ -n "$(printf %s "$new" | tr -d 0)" ] || continue
-  if [ -n "$old" ] && [ -n "$(printf %s "$old" | tr -d 0)" ]; then
-    git merge-base --is-ancestor "$old" "$new" 2>/dev/null || { echo "ak-roles: rejected non-fast-forward update of $ref (no amend/rebase/reset)" >&2; exit 1; }
-  fi
-  for commit in $(git rev-list "$new" --not --all 2>/dev/null); do
-    subj=$(git log -1 --format=%s "$commit")
-    case $subj in "$prefix"*) ;; *) echo "ak-roles: commit subject must start with $prefix (got: $subj)" >&2; exit 1 ;; esac
-  done
-done
-`;
+function statusOf(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "status" in error
+    ? (error as { status: unknown }).status
+    : undefined;
+}
+
+function tryGetAll(file: string, key: string): string[] {
+  if (!existsSync(file)) return [];
+  try {
+    const out = gitFile(file, ["--get-all", key]);
+    return out.length === 0 ? [] : out.split("\n");
+  } catch (error) {
+    // --get-all exit 1 = absent; other failures stay loud.
+    if (statusOf(error) !== 1) throw error;
+    return [];
+  }
+}
+
+/** True only when the file exists and carries the historical package marker.
+ *  Read failures propagate — never disguised as "not owned". */
+function ownedHook(path: string): boolean {
+  if (!existsSync(path)) return false;
+  return readFileSync(path, "utf8").includes(HOOK_MARKER);
+}
+
+/** Escape a hooksPath value for git config --unset value-pattern (POSIX ERE). */
+function escapeGitConfigValueRegex(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
 
 /**
- * Bind ②④ to this worktree only — private hooksPath + worktree config.
- * Never leave shared common config in a state that bricks sibling/main trees
- * (git requires core.bare/core.worktree moved out of common when worktreeConfig is on).
+ * Remove only package-owned core.hooksPath values; keep every foreign value.
+ * --unset without a value-pattern exits 5 for both "absent" and "multi-value",
+ * so multi-valued keys must be addressed per matching value.
  */
-export function installWorkerGitHooks(cwd: string): void {
-  // Fail closed before any shared-config write: bare host / non-work-tree is not armable.
+function unsetOwnedHooksPath(file: string): string[] {
+  const owned: string[] = [];
+  for (const value of tryGetAll(file, "core.hooksPath")) {
+    if (!ownedHook(resolve(value, HOOK_FILE))) continue;
+    try {
+      // --unset-all + exact value-pattern drops every duplicate owned copy; foreign stays.
+      gitFile(file, [
+        "--unset-all",
+        "core.hooksPath",
+        `^${escapeGitConfigValueRegex(value)}$`,
+      ]);
+    } catch (error) {
+      // 5 = this specific value already absent (not multi-value ambiguity).
+      if (statusOf(error) !== 5) throw error;
+    }
+    owned.push(value);
+  }
+  return owned;
+}
+
+/** Delete only the package-owned hook file; rmdir solely when empty. */
+function rmOwnedDir(dir: string): void {
+  const hookPath = resolve(dir, HOOK_FILE);
+  if (!ownedHook(hookPath)) return;
+  rmSync(hookPath, { force: true });
+  if (existsSync(dir) && readdirSync(dir).length === 0) rmdirSync(dir);
+}
+
+function linkedGitDirs(commonDir: string): string[] {
+  const root = resolve(commonDir, "worktrees");
+  if (!existsSync(root)) return [];
+  // Enumeration/lstat failures propagate — never skip a linked admin dir silently.
+  // lstat does not follow: symlink entries are not directories and stay out of range.
+  return readdirSync(root)
+    .map((name) => resolve(root, name))
+    .filter((dir) => lstatSync(dir).isDirectory());
+}
+
+/**
+ * ADR 0070 §4 — private one-shot uninstall on arm.
+ * Range: current repo + enumerable worktree admin dirs. Owned hooksPath/files only.
+ * Never rolls back extensions.worktreeConfig / migrated bare|worktree / foreign hooksPath.
+ */
+function uninstallPackageWorkerHooks(cwd: string): void {
   let inside: string;
   try {
     inside = git(cwd, ["rev-parse", "--is-inside-work-tree"]);
-  } catch (error) {
-    throw new Error(
-      `ak-roles: refusing worker hooks install outside a git work tree: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+  } catch {
+    return;
   }
-  if (inside !== "true") {
-    throw new Error("ak-roles: refusing worker hooks install outside a git work tree");
-  }
+  if (inside !== "true") return;
 
   const commonDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  const commonConfig = resolve(commonDir, "config");
-  const mainWorktreeConfig = resolve(commonDir, "config.worktree");
-
-  // Snapshot worktree-only keys still sitting in common config (git docs: must move on enable).
-  let bareInCommon = false;
-  let worktreeInCommon: string | undefined;
-  try { bareInCommon = gitFile(commonConfig, ["--get", "core.bare"]) === "true"; } catch { /* unset */ }
-  try { worktreeInCommon = gitFile(commonConfig, ["--get", "core.worktree"]); } catch { /* unset */ }
-
-  // Skip shared write when already enabled in *this* repo — concurrent sibling activations
-  // otherwise race on .git/config.lock (#267). Scope must be --local (common config): a
-  // global/system true must not skip the repo's first enable. Value must use Git bool
-  // semantics (true/yes/on/1), not a literal "true" compare. First enable still writes;
-  // real write failures still throw. Only --get exit 1 means unset; other failures stay loud.
-  let worktreeConfigEnabled = false;
-  try {
-    worktreeConfigEnabled =
-      git(cwd, ["config", "--local", "--bool", "--get", "extensions.worktreeConfig"]) === "true";
-  } catch (error) {
-    const status =
-      typeof error === "object" && error !== null && "status" in error
-        ? (error as { status: unknown }).status
-        : undefined;
-    if (status !== 1) throw error;
+  // Unset owned hooksPath before deleting the marker file (ownership check needs it).
+  const clear = (configFile: string): void => {
+    for (const hooks of unsetOwnedHooksPath(configFile)) rmOwnedDir(hooks);
+  };
+  clear(resolve(commonDir, "config"));
+  clear(resolve(commonDir, "config.worktree"));
+  rmOwnedDir(resolve(commonDir, HOOKS_DIR));
+  const legacy = resolve(commonDir, "hooks", HOOK_FILE);
+  if (ownedHook(legacy)) rmSync(legacy, { force: true });
+  for (const gitDir of linkedGitDirs(commonDir)) {
+    clear(resolve(gitDir, "config.worktree"));
+    rmOwnedDir(resolve(gitDir, HOOKS_DIR));
   }
-  if (!worktreeConfigEnabled) {
-    git(cwd, ["config", "extensions.worktreeConfig", "true"]);
-  }
-
-  // Migrate immediately so sibling trees never observe bare-in-common under worktreeConfig.
-  if (bareInCommon) {
-    try { gitFile(commonConfig, ["--unset", "core.bare"]); } catch { /* raced */ }
-    gitFile(mainWorktreeConfig, ["core.bare", "true"]);
-  }
-  if (worktreeInCommon !== undefined) {
-    try { gitFile(commonConfig, ["--unset", "core.worktree"]); } catch { /* raced */ }
-    gitFile(mainWorktreeConfig, ["core.worktree", worktreeInCommon]);
-  }
-
-  const gitDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-dir"]);
-  const dir = resolve(gitDir, "ak-roles-hooks");
-  const path = resolve(dir, "reference-transaction");
-  if (existsSync(path)) {
-    const existing = readFileSync(path, "utf8");
-    // Own-package marker → reload OK (HOOK body may change across versions).
-    // Foreign same-name hook → fail closed, never overwrite.
-    if (!existing.includes(HOOK_MARKER)) {
-      throw new Error("ak-roles: refusing to overwrite existing reference-transaction hook");
-    }
-  }
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path, HOOK, "utf8");
-  chmodSync(path, 0o755);
-  git(cwd, ["config", "--worktree", "core.hooksPath", dir]);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * Open gate ① record via sitian entry only — resume/lifecycle live in createRecordSession.
- * Gate consumes the returned session; no nest scan, unlink, or peer reopen.
- */
-function openGateRecord(cwd: string, parent?: WorkerSubmissionGateParent): SessionManager {
-  return createRecordSession({
-    cwd,
-    kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
-    ...(parent === undefined ? {} : { parent }),
-  });
+function unfinishedReasonPresent(details?: unknown): boolean {
+  if (typeof details !== "object" || details === null) return false;
+  const reason = (details as { reason?: unknown }).reason;
+  return typeof reason === "string" && reason.trim().length > 0;
 }
 
 function readGateState(session: SessionManager): {
   baseline: string | null | undefined;
   reminded: boolean;
+  prefixReminded: boolean;
 } {
   let baseline: string | null | undefined;
   let reminded = false;
+  let prefixReminded = false;
   for (const entry of session.getEntries()) {
     if (entry.type !== "custom") continue;
     if (entry.customType === WORKER_COMMIT_BASELINE_ENTRY_TYPE) {
@@ -196,9 +194,44 @@ function readGateState(session: SessionManager): {
       }
     } else if (entry.customType === WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE) {
       reminded = true;
+    } else if (entry.customType === WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE) {
+      prefixReminded = true;
     }
   }
-  return { baseline, reminded };
+  return { baseline, reminded, prefixReminded };
+}
+
+function isAncestor(cwd: string, ancestor: string, descendant: string): boolean {
+  try {
+    git(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]);
+    return true;
+  } catch (error) {
+    if (statusOf(error) === 1) return false;
+    throw error;
+  }
+}
+
+/**
+ * Reliable window (ADR 0070). null = unreliable tip-SHA baseline; [] = empty.
+ * Structured git-log fields only — never parse a shell command string.
+ */
+function reliableWindow(
+  cwd: string,
+  baseline: string | null,
+  head: string,
+): ReadonlyArray<{ subject: string; merge: boolean }> | null {
+  if (baseline !== null && !isAncestor(cwd, baseline, head)) return null;
+  const range = baseline === null ? head : `${baseline}..${head}`;
+  const raw = git(cwd, ["log", "--format=%P%x1e%s", range]);
+  if (raw.length === 0) return [];
+  return raw.split("\n").flatMap((line) => {
+    const sep = line.indexOf("\x1e");
+    if (sep < 0) return [];
+    return [{
+      subject: line.slice(sep + 1),
+      merge: line.slice(0, sep).trim().includes(" "),
+    }];
+  });
 }
 
 export function createWorkerSubmissionGate(): {
@@ -208,37 +241,42 @@ export function createWorkerSubmissionGate(): {
   let baseline: string | null | undefined;
   let root: string | undefined;
   let reminded = false;
+  let prefixReminded = false;
   let unfinishedReasonBounces = 0;
   let record: SessionManager | undefined;
-  // null = unborn HEAD only; any other git failure throws (no swallow).
   const head = (cwd: string): string | null => {
-    try { return git(cwd, ["rev-parse", "HEAD"]); }
-    catch {
-      git(cwd, ["rev-parse", "--git-dir"]); // surface real git/repo failures
+    try {
+      return git(cwd, ["rev-parse", "HEAD"]);
+    } catch {
+      git(cwd, ["rev-parse", "--git-dir"]); // surface real git failures
       return null;
     }
   };
   return {
     arm(cwd, parent) {
+      uninstallPackageWorkerHooks(cwd);
       root = cwd;
-      record = openGateRecord(cwd, parent);
+      record = createRecordSession({
+        cwd,
+        kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
+        ...(parent === undefined ? {} : { parent }),
+      });
       const prior = readGateState(record);
       if (prior.baseline !== undefined) {
-        // Cross-resume: keep first-arm baseline and any prior bounce (no second false bounce).
         baseline = prior.baseline;
         reminded = prior.reminded;
+        prefixReminded = prior.prefixReminded;
         return;
       }
       baseline = head(cwd);
       reminded = false;
-      // First arm writes baseline through the sitian-created session (auditor pattern).
+      prefixReminded = false;
       record.appendCustomEntry(WORKER_COMMIT_BASELINE_ENTRY_TYPE, {
         version: 1,
         head: baseline,
       });
     },
     assertAcceptable(status, details) {
-      // #292: unfinished without a non-blank reason → in-session bounce (max 2), then accept.
       if (status === "unfinished" && !unfinishedReasonPresent(details)) {
         if (unfinishedReasonBounces < UNFINISHED_REASON_BOUNCE_LIMIT) {
           unfinishedReasonBounces += 1;
@@ -247,14 +285,29 @@ export function createWorkerSubmissionGate(): {
       }
       if (baseline === undefined || root === undefined || !DONE.has(status)) return;
       const now = head(root);
-      if ((now !== null && (baseline === null || now !== baseline)) || reminded) {
+      const headMoved = now !== null && (baseline === null || now !== baseline);
+
+      // Gate ① — forgetfulness reminder (ADR 0066; behavior unchanged).
+      if (!headMoved && !reminded) {
         reminded = true;
-        return;
+        record?.appendCustomEntry(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
+        throw new WorkerCommitReminderError();
       }
       reminded = true;
-      // Durable bounce once per run — resume must not re-fire the same reminder.
-      record?.appendCustomEntry(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
-      throw new WorkerCommitReminderError();
+
+      // Gate ② — open platform-prefix soft reminder (ADR 0070).
+      if (prefixReminded || now === null) return;
+      const window = reliableWindow(root, baseline, now);
+      if (
+        window === null ||
+        window.length === 0 ||
+        !window.some((c) => !c.merge && !PLATFORM_PREFIX.test(c.subject))
+      ) {
+        return;
+      }
+      prefixReminded = true;
+      record?.appendCustomEntry(WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
+      throw new WorkerPrefixReminderError();
     },
   };
 }
