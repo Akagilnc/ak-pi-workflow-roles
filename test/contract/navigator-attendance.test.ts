@@ -1319,18 +1319,18 @@ test("status-specific route candidates outrank generics regardless of declaratio
     reason: "finish the open class",
   }).candidates[0]!;
   const settlement = { kind: "accepted" as const, role: "fixer", phase: "apply" as const, status: "unfinished" };
-  assert.equal(selectNavigatorCandidate([generic, unfinishedSpecific], settlement)?.id, "unfinished-specific");
-  assert.equal(selectNavigatorCandidate([unfinishedSpecific, generic], settlement)?.id, "unfinished-specific");
-  assert.equal(selectNavigatorCandidate([generic, unfinishedSpecific], { kind: "accepted", role: "fixer", phase: "apply", status: "completed" })?.id, "generic");
-  assert.equal(selectNavigatorCandidate([unfinishedSpecific, generic], { kind: "accepted", role: "fixer", phase: "apply", status: "completed" })?.id, "generic");
+  assert.equal(selectNavigatorCandidate([generic, unfinishedSpecific], settlement)?.candidate.id, "unfinished-specific");
+  assert.equal(selectNavigatorCandidate([unfinishedSpecific, generic], settlement)?.candidate.id, "unfinished-specific");
+  assert.equal(selectNavigatorCandidate([generic, unfinishedSpecific], { kind: "accepted", role: "fixer", phase: "apply", status: "completed" })?.candidate.id, "generic");
+  assert.equal(selectNavigatorCandidate([unfinishedSpecific, generic], { kind: "accepted", role: "fixer", phase: "apply", status: "completed" })?.candidate.id, "generic");
   // Statuses list membership (absorbed from model-settings carrier).
   const reviewerStatuses = candidate({
     matches: { role: "reviewer", phase: null, kind: "accepted", statuses: ["completed", "refused"] },
     route: [{ role: "judge", phase: null }],
     next: { role: "judge", phase: null },
   }).candidates;
-  assert.equal(selectNavigatorCandidate(reviewerStatuses, { kind: "accepted", role: "reviewer", phase: null, status: "completed" })?.id, reviewerStatuses[0]!.id);
-  assert.equal(selectNavigatorCandidate(reviewerStatuses, { kind: "accepted", role: "reviewer", phase: null, status: "refused" })?.id, reviewerStatuses[0]!.id);
+  assert.equal(selectNavigatorCandidate(reviewerStatuses, { kind: "accepted", role: "reviewer", phase: null, status: "completed" })?.candidate.id, reviewerStatuses[0]!.id);
+  assert.equal(selectNavigatorCandidate(reviewerStatuses, { kind: "accepted", role: "reviewer", phase: null, status: "refused" })?.candidate.id, reviewerStatuses[0]!.id);
 });
 
 test("resumed setModel and thinking failures preserve typed source and cause", async () => {

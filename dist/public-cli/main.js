@@ -21005,29 +21005,37 @@ function parseNavigatorAttendanceDetails(details) {
   };
 }
 function extractNavigatorFact(entries) {
-  const binding = bindCurrentDurableTerminalToMarker(entries);
-  if (binding.kind === "absent") {
+  const terminal = findLatestDurablePackagedRoleTerminal(entries);
+  if (terminal === void 0) {
     return {
       disposition: "unavailable",
       source: "unknown",
       reason: "Navigator attendance has no durable packaged role terminal"
     };
   }
-  if (binding.kind === "ambiguous") {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance is ambiguous across multiple durable role terminals"
-    };
+  let markerIndex = -1;
+  for (let i = terminal.index - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY) {
+      markerIndex = i;
+      break;
+    }
   }
-  if (binding.kind === "unbound") {
+  if (markerIndex < 0) {
     return {
       disposition: "unavailable",
       source: "unknown",
       reason: "Navigator attendance is uncorrelated with session invocation facts"
     };
   }
-  const { terminal, marker } = binding;
+  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
+  if (marker === void 0) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts"
+    };
+  }
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
