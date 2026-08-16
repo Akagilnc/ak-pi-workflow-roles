@@ -480,62 +480,190 @@ exit 1
   }
 });
 
-test("#355 migrate fails loud on worktree list / per-worktree rev-parse errors", async () => {
-  // Failure-honesty: silent return/continue would hollow the stale-entry purge guarantee.
+test("#355 migrate preserves unmarked similarly named hooks dir (foreign ownership)", async () => {
+  // Real entry: migrateWorkerGitHookScope. Name substring alone is not ownership —
+  // unmarked custom-ak-roles-hooks/pre-commit must survive (and stay bound if configured).
   const root = await tempGitRepo();
-  const bin = await mkdtemp(join(tmpdir(), "ak-git-shim-migrate-"));
+  try {
+    const wt = join(root, "wt-foreign");
+    git(root, ["worktree", "add", wt, "HEAD"]);
+    const commonDir = git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const commonConfig = join(commonDir, "config");
+
+    const foreignDir = join(commonDir, "custom-ak-roles-hooks");
+    mkdirSync(foreignDir, { recursive: true });
+    const foreignPreCommit = join(foreignDir, "pre-commit");
+    writeFileSync(foreignPreCommit, "#!/bin/sh\necho foreign\n", "utf8");
+    chmodSync(foreignPreCommit, 0o755);
+    // Also a same-name dir under common with no reference-transaction at all.
+    const bareNamed = join(commonDir, "ak-roles-hooks");
+    mkdirSync(bareNamed, { recursive: true });
+    writeFileSync(join(bareNamed, "pre-commit"), "#!/bin/sh\necho bare\n", "utf8");
+
+    execFileSync("git", ["config", "--file", commonConfig, "core.hooksPath", foreignDir], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    migrateWorkerGitHookScope(wt);
+
+    // Externally visible: unmarked dirs intact; foreign binding not stripped by substring.
+    assert.equal(existsSync(foreignPreCommit), true, "unmarked custom-ak-roles-hooks/pre-commit must survive");
+    assert.equal(existsSync(join(bareNamed, "pre-commit")), true, "unmarked ak-roles-hooks without marker must survive");
+    assert.equal(
+      execFileSync("git", ["config", "--file", commonConfig, "--get", "core.hooksPath"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      }).trim(),
+      foreignDir,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("#355 migrate propagates config --unset failures (no success wash)", async () => {
+  // Real entry: migrateWorkerGitHookScope. Lock/nonzero --unset must throw before deletion.
+  const root = await tempGitRepo();
+  const bin = await mkdtemp(join(tmpdir(), "ak-git-shim-unset-"));
   const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
   const previousPath = process.env.PATH;
   try {
-    const wt = join(root, "wt-fail-loud");
+    const wt = join(root, "wt-unset-fail");
     git(root, ["worktree", "add", wt, "HEAD"]);
+    const commonDir = git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const commonConfig = join(commonDir, "config");
+    const poisonDir = join(commonDir, "ak-roles-hooks");
+    mkdirSync(poisonDir, { recursive: true });
+    const poisonHook = join(poisonDir, "reference-transaction");
+    writeFileSync(
+      poisonHook,
+      `#!/bin/sh\n# ak-roles: worker-submission-gates reference-transaction\nexit 1\n`,
+      "utf8",
+    );
+    execFileSync("git", ["config", "--file", commonConfig, "core.hooksPath", poisonDir], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    });
 
-    // worktree list failure must throw (not silent return).
     writeFileSync(
       join(bin, "git"),
       `#!/bin/sh
-if [ "$1" = worktree ] && [ "$2" = list ]; then
-  echo "fatal: forced worktree list failure" >&2
-  exit 128
+# Fail only config --file <f> --unset core.hooksPath; all else real.
+if [ "$1" = config ] && [ "$2" = --file ] && [ "$4" = --unset ] && [ "$5" = core.hooksPath ]; then
+  echo "error: could not lock config file $3: File exists" >&2
+  exit 255
 fi
 exec "${realGit}" "$@"
 `,
     );
     chmodSync(join(bin, "git"), 0o755);
     process.env.PATH = `${bin}${previousPath === undefined ? "" : `:${previousPath}`}`;
-    assert.throws(
-      () => migrateWorkerGitHookScope(wt),
-      /cannot list worktrees/,
-    );
 
-    // per-worktree rev-parse failure must throw (not silent continue).
-    writeFileSync(
-      join(bin, "git"),
-      `#!/bin/sh
-if [ "$1" = rev-parse ] && printf '%s\n' "$*" | grep -q -- '--git-dir'; then
-  # Allow the early inside-work-tree / common-dir probes; fail only git-dir of linked trees.
-  case "$*" in
-    *"--is-inside-work-tree"*|*".git"*|*"--git-common-dir"*) exec "${realGit}" "$@" ;;
-  esac
-  # Fail when cwd is a linked worktree path (not the main repo root).
-  if [ "$(pwd)" != "${root}" ]; then
-    echo "fatal: forced git-dir failure" >&2
-    exit 128
-  fi
-fi
-exec "${realGit}" "$@"
-`,
-    );
-    chmodSync(join(bin, "git"), 0o755);
-    assert.throws(
-      () => migrateWorkerGitHookScope(wt),
-      /cannot resolve worktree git-dir/,
+    assert.throws(() => migrateWorkerGitHookScope(wt), /could not lock config file|status 255|Command failed/);
+
+    // Externally visible: owned hook dir must still exist — failure did not wash into delete.
+    assert.equal(existsSync(poisonHook), true, "unset failure must not proceed to deletion");
+    assert.equal(
+      execFileSync("git", ["config", "--file", commonConfig, "--get", "core.hooksPath"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      }).trim(),
+      poisonDir,
     );
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
     await rm(root, { recursive: true, force: true });
     await rm(bin, { recursive: true, force: true });
+  }
+});
+
+test("#355 migrate clears owned legacy commonDir/hooks/reference-transaction only", async () => {
+  // Real entry: migrateWorkerGitHookScope. Prior installer wrote the marked file into the
+  // shared default hooks dir; unmasking hooksPath can reactivate it. Remove only that file.
+  const root = await tempGitRepo();
+  try {
+    const wt = join(root, "wt-legacy-hook");
+    git(root, ["worktree", "add", wt, "HEAD"]);
+    const commonDir = git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const hooksDir = join(commonDir, "hooks");
+    mkdirSync(hooksDir, { recursive: true });
+    const legacy = join(hooksDir, "reference-transaction");
+    writeFileSync(
+      legacy,
+      `#!/bin/sh\n# ak-roles: worker-submission-gates reference-transaction\nexit 1\n`,
+      "utf8",
+    );
+    chmodSync(legacy, 0o755);
+    const userHook = join(hooksDir, "pre-commit");
+    writeFileSync(userHook, "#!/bin/sh\necho user\n", "utf8");
+    chmodSync(userHook, 0o755);
+
+    // Masking private hooksPath that will be cleared first (reactivation seam).
+    const maskDir = join(commonDir, "ak-roles-hooks");
+    mkdirSync(maskDir, { recursive: true });
+    writeFileSync(
+      join(maskDir, "reference-transaction"),
+      `#!/bin/sh\n# ak-roles: worker-submission-gates reference-transaction\nexit 0\n`,
+      "utf8",
+    );
+    git(root, ["config", "extensions.worktreeConfig", "true"]);
+    git(root, ["config", "--worktree", "core.hooksPath", maskDir]);
+
+    migrateWorkerGitHookScope(wt);
+
+    assert.equal(existsSync(legacy), false, "owned legacy default hook file must be removed");
+    assert.equal(existsSync(userHook), true, "shared hooks dir user hooks must survive");
+    assert.equal(existsSync(hooksDir), true, "shared hooks directory must not be recursively deleted");
+    assert.equal(existsSync(maskDir), false, "owned private mask dir removed");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("#355 migrate cleans prunable linked-worktree config.worktree via metadata", async () => {
+  // Real entry: migrateWorkerGitHookScope. Deleted linked worktree cwd must not block
+  // cleanup of its administrative config.worktree (ENOENT on rev-parse was the bug).
+  const root = await tempGitRepo();
+  try {
+    const live = join(root, "wt-live");
+    const doomed = join(root, "wt-doomed");
+    git(root, ["worktree", "add", live, "HEAD"]);
+    git(root, ["worktree", "add", doomed, "HEAD"]);
+    const commonDir = git(live, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const doomedGitDir = git(doomed, ["rev-parse", "--path-format=absolute", "--git-dir"]);
+    const doomedPoison = join(doomedGitDir, "ak-roles-hooks");
+    mkdirSync(doomedPoison, { recursive: true });
+    writeFileSync(
+      join(doomedPoison, "reference-transaction"),
+      `#!/bin/sh\n# ak-roles: worker-submission-gates reference-transaction\nexit 1\n`,
+      "utf8",
+    );
+    git(doomed, ["config", "extensions.worktreeConfig", "true"]);
+    git(doomed, ["config", "--worktree", "core.hooksPath", doomedPoison]);
+    const doomedWtConfig = join(doomedGitDir, "config.worktree");
+    assert.equal(existsSync(doomedWtConfig), true);
+
+    // Delete the worktree cwd only — leave admin dir (prunable shape).
+    await rm(doomed, { recursive: true, force: true });
+    assert.match(
+      execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      }),
+      /prunable/,
+    );
+
+    migrateWorkerGitHookScope(live);
+
+    // Externally visible: stale config.worktree no longer carries hooksPath; owned dir gone.
+    try {
+      execFileSync("git", ["config", "--file", doomedWtConfig, "--get", "core.hooksPath"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+      assert.fail("prunable worktree config.worktree hooksPath must be unset");
+    } catch (error) {
+      assert.equal((error as { status?: number }).status, 1);
+    }
+    assert.equal(existsSync(doomedPoison), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

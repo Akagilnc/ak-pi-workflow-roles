@@ -7,16 +7,19 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
 
 /** Marker: own-package hooks are reloadable across HOOK body changes; foreign hooks refuse. */
 const HOOK_MARKER = "ak-roles: worker-submission-gates reference-transaction";
-/** Path segment / value needle for our private hooksPath dirs (scope-leak migration). */
+/** Path segment for our private hooksPath dirs (install + known-location migrate). */
 const HOOKS_DIR_NAME = "ak-roles-hooks";
+const HOOK_FILE_NAME = "reference-transaction";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
@@ -32,55 +35,72 @@ function gitFile(file: string, args: string[]): string {
   }).trim();
 }
 
+function execStatus(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "status" in error
+    ? (error as { status: unknown }).status
+    : undefined;
+}
+
 function tryGitFileGet(file: string, key: string): string | undefined {
   if (!existsSync(file)) return undefined;
   try {
     return gitFile(file, ["--get", key]);
   } catch (error) {
     // Only --get exit 1 means unset; other failures stay loud (same shape as install).
-    const status =
-      typeof error === "object" && error !== null && "status" in error
-        ? (error as { status: unknown }).status
-        : undefined;
-    if (status !== 1) throw error;
+    if (execStatus(error) !== 1) throw error;
     return undefined;
   }
 }
 
-function isAkRolesHooksPath(value: string): boolean {
-  return value.includes(HOOKS_DIR_NAME);
+/** Sole ownership criterion: package HOOK_MARKER inside reference-transaction. */
+function isOwnedHookFile(hookPath: string): boolean {
+  if (!existsSync(hookPath)) return false;
+  try {
+    return readFileSync(hookPath, "utf8").includes(HOOK_MARKER);
+  } catch {
+    return false;
+  }
 }
 
-/** Unset core.hooksPath in a config file when it points at our private hooks dir. Returns prior value. */
+function isOwnedHooksDir(dir: string): boolean {
+  return isOwnedHookFile(resolve(dir, HOOK_FILE_NAME));
+}
+
+/**
+ * Unset core.hooksPath only when it points at a package-owned hooks dir.
+ * Returns prior value after a successful unset (or verified already-unset).
+ * Lock/permission/malformed failures propagate — never wash into success.
+ */
 function unsetAkRolesHooksPathInFile(file: string): string | undefined {
   const value = tryGitFileGet(file, "core.hooksPath");
-  if (value === undefined || !isAkRolesHooksPath(value)) return undefined;
+  if (value === undefined || !isOwnedHooksDir(value)) return undefined;
   try {
     gitFile(file, ["--unset", "core.hooksPath"]);
-  } catch {
-    /* raced / already unset */
+  } catch (error) {
+    // git config --unset exits 5 when the key is already absent.
+    if (execStatus(error) !== 5) throw error;
   }
   return value;
 }
 
+/** Remove a private hooks dir only when it carries our marker file. */
 function removeOurHookDir(dir: string): void {
-  const hookPath = resolve(dir, "reference-transaction");
-  if (!existsSync(hookPath)) {
-    if (existsSync(dir)) {
-      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
-    }
-    return;
-  }
-  try {
-    const body = readFileSync(hookPath, "utf8");
-    if (!body.includes(HOOK_MARKER)) return; // foreign hook — leave alone
-  } catch {
-    return;
-  }
+  if (!isOwnedHooksDir(dir)) return;
   try {
     rmSync(dir, { recursive: true, force: true });
   } catch {
-    /* best-effort */
+    /* best-effort residue */
+  }
+}
+
+/** Legacy default-hooks location: delete only the owned file, never the shared hooks dir. */
+function removeOwnedLegacyDefaultHook(commonDir: string): void {
+  const hookPath = resolve(commonDir, "hooks", HOOK_FILE_NAME);
+  if (!isOwnedHookFile(hookPath)) return;
+  try {
+    rmSync(hookPath, { force: true });
+  } catch {
+    /* best-effort residue */
   }
 }
 
@@ -92,9 +112,26 @@ function worktreePathsFromPorcelain(porcelain: string): string[] {
   return paths;
 }
 
+/** Linked-worktree admin dirs under commonDir/worktrees/* (live and prunable). */
+function linkedWorktreeGitDirs(commonDir: string): string[] {
+  const root = resolve(commonDir, "worktrees");
+  if (!existsSync(root)) return [];
+  const out: string[] = [];
+  for (const name of readdirSync(root)) {
+    const gitDir = resolve(root, name);
+    try {
+      if (statSync(gitDir).isDirectory()) out.push(gitDir);
+    } catch {
+      /* vanished between readdir and stat */
+    }
+  }
+  return out;
+}
+
 /**
  * Migration path (ticket #355 验收③): strip common-config and stale worktree
- * hooksPath entries that point at ak-roles-hooks, and remove our hook dirs.
+ * hooksPath entries that point at package-owned hooks, remove owned hook dirs,
+ * and clear the legacy commonDir/hooks/reference-transaction file when marked.
  * Does not arm a worktree — next envelope coder/fixer install re-binds locally.
  *
  * Diagnostic (#355): installer history never wrote common hooksPath in-tree
@@ -129,29 +166,11 @@ export function migrateWorkerGitHookScope(cwd: string): void {
   if (mainHooks !== undefined) removeOurHookDir(mainHooks);
   removeOurHookDir(resolve(commonDir, HOOKS_DIR_NAME));
 
-  let porcelain: string;
-  try {
-    porcelain = git(cwd, ["worktree", "list", "--porcelain"]);
-  } catch (error) {
-    throw new Error(
-      `ak-roles: migrateWorkerGitHookScope cannot list worktrees: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  for (const wtPath of worktreePathsFromPorcelain(porcelain)) {
-    let gitDir: string;
-    try {
-      gitDir = git(wtPath, ["rev-parse", "--path-format=absolute", "--git-dir"]);
-    } catch (error) {
-      throw new Error(
-        `ak-roles: migrateWorkerGitHookScope cannot resolve worktree git-dir (${wtPath}): ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-    // Skip main — already handled via commonDir paths.
-    if (gitDir === commonDir) continue;
+  // Pre-private-hooksPath installer wrote into the shared default hooks dir.
+  removeOwnedLegacyDefaultHook(commonDir);
+
+  // One metadata route for live + prunable linked worktrees (no cwd rev-parse).
+  for (const gitDir of linkedWorktreeGitDirs(commonDir)) {
     const wtConfig = resolve(gitDir, "config.worktree");
     const hooks = unsetAkRolesHooksPathInFile(wtConfig);
     if (hooks !== undefined) removeOurHookDir(hooks);

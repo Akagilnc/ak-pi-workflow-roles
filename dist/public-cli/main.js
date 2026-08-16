@@ -26961,8 +26961,10 @@ import {
   chmodSync,
   existsSync as existsSync3,
   mkdirSync as mkdirSync3,
+  readdirSync as readdirSync2,
   readFileSync,
   rmSync as rmSync2,
+  statSync as statSync2,
   writeFileSync as writeFileSync2
 } from "node:fs";
 import { resolve as resolve9 } from "node:path";
@@ -26981,56 +26983,66 @@ function gitFile(file, args) {
     env: { ...process.env, GIT_DIR: void 0, GIT_WORK_TREE: void 0, GIT_COMMON_DIR: void 0 }
   }).trim();
 }
+function execStatus(error) {
+  return typeof error === "object" && error !== null && "status" in error ? error.status : void 0;
+}
 function tryGitFileGet(file, key) {
   if (!existsSync3(file)) return void 0;
   try {
     return gitFile(file, ["--get", key]);
   } catch (error) {
-    const status = typeof error === "object" && error !== null && "status" in error ? error.status : void 0;
-    if (status !== 1) throw error;
+    if (execStatus(error) !== 1) throw error;
     return void 0;
   }
 }
-function isAkRolesHooksPath(value) {
-  return value.includes(HOOKS_DIR_NAME);
+function isOwnedHookFile(hookPath) {
+  if (!existsSync3(hookPath)) return false;
+  try {
+    return readFileSync(hookPath, "utf8").includes(HOOK_MARKER);
+  } catch {
+    return false;
+  }
+}
+function isOwnedHooksDir(dir) {
+  return isOwnedHookFile(resolve9(dir, HOOK_FILE_NAME));
 }
 function unsetAkRolesHooksPathInFile(file) {
   const value = tryGitFileGet(file, "core.hooksPath");
-  if (value === void 0 || !isAkRolesHooksPath(value)) return void 0;
+  if (value === void 0 || !isOwnedHooksDir(value)) return void 0;
   try {
     gitFile(file, ["--unset", "core.hooksPath"]);
-  } catch {
+  } catch (error) {
+    if (execStatus(error) !== 5) throw error;
   }
   return value;
 }
 function removeOurHookDir(dir) {
-  const hookPath = resolve9(dir, "reference-transaction");
-  if (!existsSync3(hookPath)) {
-    if (existsSync3(dir)) {
-      try {
-        rmSync2(dir, { recursive: true, force: true });
-      } catch {
-      }
-    }
-    return;
-  }
-  try {
-    const body = readFileSync(hookPath, "utf8");
-    if (!body.includes(HOOK_MARKER)) return;
-  } catch {
-    return;
-  }
+  if (!isOwnedHooksDir(dir)) return;
   try {
     rmSync2(dir, { recursive: true, force: true });
   } catch {
   }
 }
-function worktreePathsFromPorcelain(porcelain) {
-  const paths = [];
-  for (const line2 of porcelain.split("\n")) {
-    if (line2.startsWith("worktree ")) paths.push(line2.slice("worktree ".length));
+function removeOwnedLegacyDefaultHook(commonDir) {
+  const hookPath = resolve9(commonDir, "hooks", HOOK_FILE_NAME);
+  if (!isOwnedHookFile(hookPath)) return;
+  try {
+    rmSync2(hookPath, { force: true });
+  } catch {
   }
-  return paths;
+}
+function linkedWorktreeGitDirs(commonDir) {
+  const root = resolve9(commonDir, "worktrees");
+  if (!existsSync3(root)) return [];
+  const out = [];
+  for (const name of readdirSync2(root)) {
+    const gitDir = resolve9(root, name);
+    try {
+      if (statSync2(gitDir).isDirectory()) out.push(gitDir);
+    } catch {
+    }
+  }
+  return out;
 }
 function migrateWorkerGitHookScope(cwd) {
   let inside;
@@ -27052,36 +27064,21 @@ function migrateWorkerGitHookScope(cwd) {
   const mainHooks = unsetAkRolesHooksPathInFile(mainWtConfig);
   if (mainHooks !== void 0) removeOurHookDir(mainHooks);
   removeOurHookDir(resolve9(commonDir, HOOKS_DIR_NAME));
-  let porcelain;
-  try {
-    porcelain = git2(cwd, ["worktree", "list", "--porcelain"]);
-  } catch (error) {
-    throw new Error(
-      `ak-roles: migrateWorkerGitHookScope cannot list worktrees: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-  for (const wtPath of worktreePathsFromPorcelain(porcelain)) {
-    let gitDir;
-    try {
-      gitDir = git2(wtPath, ["rev-parse", "--path-format=absolute", "--git-dir"]);
-    } catch (error) {
-      throw new Error(
-        `ak-roles: migrateWorkerGitHookScope cannot resolve worktree git-dir (${wtPath}): ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-    if (gitDir === commonDir) continue;
+  removeOwnedLegacyDefaultHook(commonDir);
+  for (const gitDir of linkedWorktreeGitDirs(commonDir)) {
     const wtConfig = resolve9(gitDir, "config.worktree");
     const hooks = unsetAkRolesHooksPathInFile(wtConfig);
     if (hooks !== void 0) removeOurHookDir(hooks);
     removeOurHookDir(resolve9(gitDir, HOOKS_DIR_NAME));
   }
 }
-var HOOK_MARKER, HOOKS_DIR_NAME, HOOK;
+var HOOK_MARKER, HOOKS_DIR_NAME, HOOK_FILE_NAME, HOOK;
 var init_worker_git_hook_scope = __esm({
   "src/worker-git-hook-scope.ts"() {
     "use strict";
     HOOK_MARKER = "ak-roles: worker-submission-gates reference-transaction";
     HOOKS_DIR_NAME = "ak-roles-hooks";
+    HOOK_FILE_NAME = "reference-transaction";
     HOOK = `#!/bin/sh
 # ${HOOK_MARKER}
 [ "$1" = prepared ] || exit 0
