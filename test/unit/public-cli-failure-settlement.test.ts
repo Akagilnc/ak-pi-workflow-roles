@@ -1580,9 +1580,8 @@ test("audit escalation requires the retained seat-bound response across all audi
 
 /**
  * #373 public-CLI acceptance tracer (ADR 0052 sole external entrance).
- * Shared multi-turn fixture covers three-seat escalate; the two named real
- * rejection cases are single shortest tracers (not a 3×2 product) whose session
- * shapes carry the ticket facts — not id/comment/violations-code alone.
+ * One shared multi-turn fixture flow drives three-seat escalate and the two
+ * named revise scenes — only scene data differs (not a 3×2 product).
  */
 test("public CLI multi-turn audit escalate covers three seats; named revises stay rejected", async () => {
   const seats = {
@@ -1686,29 +1685,34 @@ test("public CLI multi-turn audit escalate covers three seats; named revises sta
     return { errorPath: errorRef!.path, evidencePath: evidenceRef!.path };
   }
 
-  // (a) Three-seat multi-turn escalate via real public CLI.
-  for (const role of AUDITOR_SOUL_ROLES) {
-    const seat = seats[role];
-
-    await withTempHome(async (home) => {
-      const project = join(home, `proj-${role}-escalate`);
+  /** One shared withTempHome/project/run/piRunner/session write for all scenes. */
+  async function runMultiTurnPublicCliScene<
+    T,
+  >(scene: {
+    label: string;
+    role: (typeof AUDITOR_SOUL_ROLES)[number];
+    argv: (project: string) => string[];
+    roleCallArguments: unknown;
+    auditArguments: unknown;
+    toolResult: { isError: boolean; details: unknown };
+    trailingSessionEntries?: readonly unknown[];
+  }, observe: (ctx: {
+    result: { exitCode: number; terminal?: TerminalResult };
+    stdout: string[];
+    stderr: string[];
+  }) => Promise<T>): Promise<T> {
+    return withTempHome(async (home) => {
+      const project = join(home, `proj-${scene.label}`);
       await mkdir(project, { recursive: true });
       seedGitProject(project);
-      if (role === "doctor") {
+      if (scene.role === "doctor") {
         await seedDoctorIssueRuns(home, resolveBookKeyFromGit(project), 373);
       }
-      const runId = `run-${role}-multiturn-escalate`;
-      const roleCallId = `${role}-role-call`;
-      const projected = JSON.parse(JSON.stringify(buildAuditEscalationResult(
-        {
-          status: "escalate",
-          conflicts: auditCandidate.conflicts,
-          decisionGate: auditCandidate.decisionGate,
-        },
-        { role },
-      )));
+      const runId = `run-${scene.label}`;
+      const roleCallId = `${scene.label}-call`;
+      const seat = seats[scene.role];
       const { io, stdout, stderr } = captureIo();
-      const result = await runAkRole(seat.argv(project), {
+      const result = await runAkRole(scene.argv(project), {
         packageRoot,
         home,
         cwd: project,
@@ -1727,7 +1731,7 @@ test("public CLI multi-turn audit escalate covers three seats; named revises sta
                   type: "toolCall",
                   id: roleCallId,
                   name: seat.output,
-                  arguments: { role },
+                  arguments: scene.roleCallArguments,
                 }],
               },
             },
@@ -1741,7 +1745,7 @@ test("public CLI multi-turn audit escalate covers three seats; named revises sta
                   content: [{
                     type: "toolCall",
                     name: seat.audit,
-                    arguments: auditCandidate,
+                    arguments: scene.auditArguments,
                   }],
                 },
               },
@@ -1752,10 +1756,11 @@ test("public CLI multi-turn audit escalate covers three seats; named revises sta
                 role: "toolResult",
                 toolCallId: roleCallId,
                 toolName: seat.output,
-                isError: false,
-                details: projected,
+                isError: scene.toolResult.isError,
+                details: scene.toolResult.details,
               },
             },
+            ...(scene.trailingSessionEntries ?? []),
           ];
           await writeFile(
             sessionFile,
@@ -1765,7 +1770,29 @@ test("public CLI multi-turn audit escalate covers three seats; named revises sta
           return { code: 0, stderr: "", timedOut: false, args: [...args] };
         },
       });
+      return observe({ result, stdout, stderr });
+    });
+  }
 
+  // (a) Three-seat multi-turn escalate via real public CLI.
+  for (const role of AUDITOR_SOUL_ROLES) {
+    const seat = seats[role];
+    const projected = JSON.parse(JSON.stringify(buildAuditEscalationResult(
+      {
+        status: "escalate",
+        conflicts: auditCandidate.conflicts,
+        decisionGate: auditCandidate.decisionGate,
+      },
+      { role },
+    )));
+    await runMultiTurnPublicCliScene({
+      label: `${role}-escalate`,
+      role,
+      argv: seat.argv,
+      roleCallArguments: { role },
+      auditArguments: auditCandidate,
+      toolResult: { isError: false, details: projected },
+    }, async ({ result, stdout, stderr }) => {
       assert.equal(result.exitCode, 0, `${role}: ${stderr.join("") || stdout.join("") || "nonzero"}`);
       assert.ok(result.terminal, `${role}: public CLI must settle a Terminal`);
       const escalateOutcome = result.terminal!.roleOutcome;
@@ -1816,97 +1843,35 @@ test("public CLI multi-turn audit escalate covers three seats; named revises sta
   const authority517 = "https://github.com/Akagilnc/ming-salvage-sim/issues/517";
   const pr1210 = "https://github.com/Akagilnc/ming-salvage-sim/pull/1210";
 
-  await withTempHome(async (home) => {
-    const label = "wrong-authority-source";
-    const project = join(home, `proj-${label}`);
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = `run-${label}`;
-    const roleCallId = `${label}-call`;
-    const { io, stdout, stderr } = captureIo();
-    // Admission binds #516; the Spec-leg candidate below adjudicates #517.
-    const result = await runAkRole(
-      [
-        "reviewer",
-        "--project",
-        project,
-        "--base",
-        "HEAD",
-        "--authority-ref",
-        authority516,
-        "--authority-ref",
-        pr1210,
-        "named rejection wrong authority source",
-      ],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => runId,
-        io,
-        credentials: { "openai-codex": true, xai: true },
-        piRunner: async (args) => {
-          const sessionFile = args[args.indexOf("--session") + 1]!;
-          await mkdir(dirname(sessionFile), { recursive: true });
-          const entries = [
-            {
-              type: "message",
-              message: {
-                role: "assistant",
-                content: [{
-                  type: "toolCall",
-                  id: roleCallId,
-                  name: REVIEWER_OUTPUT_TOOL_NAME,
-                  // Spec leg took #517 as the authority source (ticket sample).
-                  arguments: {
-                    status: "completed",
-                    specFetchedMaterial: {
-                      issueRef: authority517,
-                      ticketNumber: 517,
-                      adopted: { source: "commit-message", ticketNumber: 517 },
-                    },
-                    authorityRefs: [authority517],
-                  },
-                }],
-              },
-            },
-            ...multiTurnIntermediateRetained(runId),
-            {
-              type: "custom",
-              customType: "ak_compliance_response",
-              data: {
-                version: 1,
-                response: {
-                  content: [{
-                    type: "toolCall",
-                    name: REVIEWER_AUDIT_TOOL_NAME,
-                    // Deterministic revise — case identity is the 516/517 scene above.
-                    arguments: { status: "revise", violations: ["wrong-authority-source"] },
-                  }],
-                },
-              },
-            },
-            {
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolCallId: roleCallId,
-                toolName: REVIEWER_OUTPUT_TOOL_NAME,
-                isError: true,
-                details: { status: "errored" },
-              },
-            },
-          ];
-          await writeFile(
-            sessionFile,
-            `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-            "utf8",
-          );
-          return { code: 0, stderr: "", timedOut: false, args: [...args] };
-        },
+  // Admission binds #516; Spec-leg candidate adjudicates #517.
+  await runMultiTurnPublicCliScene({
+    label: "wrong-authority-source",
+    role: "reviewer",
+    argv: (project) => [
+      "reviewer",
+      "--project",
+      project,
+      "--base",
+      "HEAD",
+      "--authority-ref",
+      authority516,
+      "--authority-ref",
+      pr1210,
+      "named rejection wrong authority source",
+    ],
+    roleCallArguments: {
+      status: "completed",
+      specFetchedMaterial: {
+        issueRef: authority517,
+        ticketNumber: 517,
+        adopted: { source: "commit-message", ticketNumber: 517 },
       },
-    );
-
+      authorityRefs: [authority517],
+    },
+    auditArguments: { status: "revise", violations: ["wrong-authority-source"] },
+    toolResult: { isError: true, details: { status: "errored" } },
+  }, async ({ result, stdout, stderr }) => {
+    const label = "wrong-authority-source";
     const { evidencePath } = await assertRejectedReviseTerminal({
       label,
       role: "reviewer",
@@ -1956,92 +1921,27 @@ test("public CLI multi-turn audit escalate covers three seats; named revises sta
     assert.deepEqual(specArgs.authorityRefs, [authority517], label);
   });
 
-  await withTempHome(async (home) => {
+  await runMultiTurnPublicCliScene({
+    label: "empty-assistant-no-report",
+    role: "reviewer",
+    argv: (project) => [
+      "reviewer",
+      "--project",
+      project,
+      "--base",
+      "HEAD",
+      "named rejection empty assistant no report",
+    ],
+    roleCallArguments: { status: "completed" },
+    auditArguments: { status: "revise", violations: ["empty-assistant-no-report"] },
+    toolResult: { isError: true, details: { status: "errored" } },
+    // Main session ends on an empty assistant message with no report.
+    trailingSessionEntries: [{
+      type: "message",
+      message: { role: "assistant", content: [] },
+    }],
+  }, async ({ result, stdout, stderr }) => {
     const label = "empty-assistant-no-report";
-    const project = join(home, `proj-${label}`);
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = `run-${label}`;
-    const roleCallId = `${label}-call`;
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      [
-        "reviewer",
-        "--project",
-        project,
-        "--base",
-        "HEAD",
-        "named rejection empty assistant no report",
-      ],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => runId,
-        io,
-        credentials: { "openai-codex": true, xai: true },
-        piRunner: async (args) => {
-          const sessionFile = args[args.indexOf("--session") + 1]!;
-          await mkdir(dirname(sessionFile), { recursive: true });
-          const entries = [
-            {
-              type: "message",
-              message: {
-                role: "assistant",
-                content: [{
-                  type: "toolCall",
-                  id: roleCallId,
-                  name: REVIEWER_OUTPUT_TOOL_NAME,
-                  // Submission carries no report body.
-                  arguments: { status: "completed" },
-                }],
-              },
-            },
-            ...multiTurnIntermediateRetained(runId),
-            {
-              type: "custom",
-              customType: "ak_compliance_response",
-              data: {
-                version: 1,
-                response: {
-                  content: [{
-                    type: "toolCall",
-                    name: REVIEWER_AUDIT_TOOL_NAME,
-                    // Deterministic revise — case identity is the empty ending below.
-                    arguments: { status: "revise", violations: ["empty-assistant-no-report"] },
-                  }],
-                },
-              },
-            },
-            {
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolCallId: roleCallId,
-                toolName: REVIEWER_OUTPUT_TOOL_NAME,
-                isError: true,
-                details: { status: "errored" },
-              },
-            },
-            // Main session ends on an empty assistant message with no report.
-            {
-              type: "message",
-              message: {
-                role: "assistant",
-                content: [],
-              },
-            },
-          ];
-          await writeFile(
-            sessionFile,
-            `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-            "utf8",
-          );
-          return { code: 0, stderr: "", timedOut: false, args: [...args] };
-        },
-      },
-    );
-
     const { evidencePath } = await assertRejectedReviseTerminal({
       label,
       role: "reviewer",
