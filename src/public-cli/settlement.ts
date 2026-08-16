@@ -1696,13 +1696,11 @@ function boundRetainedAuditResponse(
   auditToolName: string,
 ): BoundRetainedAuditResponse | undefined {
   const matches: BoundRetainedAuditResponse[] = [];
-  let retainedResponseCount = 0;
   for (let index = callIndex + 1; index < resultIndex; index += 1) {
     const entry = entries[index];
     if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
       continue;
     }
-    retainedResponseCount += 1;
     if (!isRecord(entry.data) || !isRecord(entry.data.response)) continue;
     const response = entry.data.response;
     if (!Array.isArray(response.content)) continue;
@@ -1713,7 +1711,9 @@ function boundRetainedAuditResponse(
     if (calls.length !== 1 || calls[0]?.name !== auditToolName) continue;
     matches.push({ candidate: calls[0]?.arguments });
   }
-  return retainedResponseCount === 1 && matches.length === 1 ? matches[0] : undefined;
+  // Unique seat-bound match binds even when multi-turn investigation retained
+  // intermediate non-decision responses in the same call/result interval.
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export function extractComplianceAuditIncompleteRoleOutcome(
