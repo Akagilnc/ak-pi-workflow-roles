@@ -280,6 +280,19 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
     assert.ok(existsSync(foreignHook), "unmarked same-named dir must survive");
     assert.equal(hooksPathOf(root), foreignDir);
     git(root, ["config", "--worktree", "--unset", "core.hooksPath"]);
+    await rm(foreignDir, { recursive: true, force: true });
+
+    // Mixed dir: owned hook + unmarked sibling → clear hooksPath, drop owned file only;
+    // foreign sibling and the non-empty directory must survive (ownership boundary).
+    const mixed = plantOwnedHooks(root);
+    const sibling = join(mixed.hooksDir, "user-extra-hook");
+    writeFileSync(sibling, "#!/bin/sh\n# not package-owned\nexit 0\n", "utf8");
+    createWorkerSubmissionGate().arm(root);
+    assert.equal(hooksPathOf(root), undefined);
+    assert.equal(existsSync(mixed.hookPath), false, "owned hook file must be removed");
+    assert.ok(existsSync(sibling), "unmarked sibling file must survive");
+    assert.ok(existsSync(mixed.hooksDir), "non-empty hooks dir must survive");
+    await rm(mixed.hooksDir, { recursive: true, force: true });
 
     // Migrated core.bare / core.worktree stay (real path — fake path bricks git).
     const commonDir = git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
@@ -305,6 +318,42 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
     createWorkerSubmissionGate().arm(root);
     assert.equal(hooksPathOf(stranger), plantedStranger.hooksDir);
     assert.ok(existsSync(plantedStranger.hookPath));
+
+    // Failure honesty: unreadable owned hook must not be washed into "not owned".
+    const unreadable = plantOwnedHooks(root);
+    chmodSync(unreadable.hookPath, 0o000);
+    try {
+      assert.throws(() => createWorkerSubmissionGate().arm(root), /EACCES|permission denied/i);
+      assert.equal(
+        hooksPathOf(root),
+        unreadable.hooksDir,
+        "failed uninstall must not clear hooksPath after disguising ownership",
+      );
+    } finally {
+      chmodSync(unreadable.hookPath, 0o755);
+      chmodSync(unreadable.hooksDir, 0o755);
+      await rm(unreadable.hooksDir, { recursive: true, force: true });
+      try {
+        git(root, ["config", "--worktree", "--unset", "core.hooksPath"]);
+      } catch {
+        /* already clear */
+      }
+    }
+
+    // Failure honesty: delete failure must surface; arm must not continue as success.
+    const undeletable = plantOwnedHooks(root);
+    chmodSync(undeletable.hooksDir, 0o555);
+    try {
+      assert.throws(() => createWorkerSubmissionGate().arm(root), /EACCES|permission denied/i);
+    } finally {
+      chmodSync(undeletable.hooksDir, 0o755);
+      await rm(undeletable.hooksDir, { recursive: true, force: true });
+      try {
+        git(root, ["config", "--worktree", "--unset", "core.hooksPath"]);
+      } catch {
+        /* already clear */
+      }
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(stranger, { recursive: true, force: true });
