@@ -52,17 +52,14 @@ export type WorkerSubmissionGateParent = RecordSessionParent;
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_COMMON_DIR: undefined },
   }).trim();
 }
 
 function gitFile(file: string, args: string[]): string {
   return execFileSync("git", ["config", "--file", file, ...args], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_COMMON_DIR: undefined },
   }).trim();
 }
@@ -90,13 +87,9 @@ function ownedHook(path: string): boolean {
   return readFileSync(path, "utf8").includes(HOOK_MARKER);
 }
 
-function ownedDir(dir: string): boolean {
-  return ownedHook(resolve(dir, HOOK_FILE));
-}
-
 function unsetOwnedHooksPath(file: string): string | undefined {
   const value = tryGet(file, "core.hooksPath");
-  if (value === undefined || !ownedDir(value)) return undefined;
+  if (value === undefined || !ownedHook(resolve(value, HOOK_FILE))) return undefined;
   try {
     gitFile(file, ["--unset", "core.hooksPath"]);
   } catch (error) {
@@ -105,31 +98,21 @@ function unsetOwnedHooksPath(file: string): string | undefined {
   return value;
 }
 
-/** Delete only the package-owned hook file; remove the directory solely when empty. */
+/** Delete only the package-owned hook file; rmdir solely when empty. */
 function rmOwnedDir(dir: string): void {
   const hookPath = resolve(dir, HOOK_FILE);
   if (!ownedHook(hookPath)) return;
   rmSync(hookPath, { force: true });
-  if (!existsSync(dir)) return;
-  if (readdirSync(dir).length === 0) rmdirSync(dir);
-}
-
-function rmOwnedLegacyHook(commonDir: string): void {
-  const path = resolve(commonDir, "hooks", HOOK_FILE);
-  if (!ownedHook(path)) return;
-  rmSync(path, { force: true });
+  if (existsSync(dir) && readdirSync(dir).length === 0) rmdirSync(dir);
 }
 
 function linkedGitDirs(commonDir: string): string[] {
   const root = resolve(commonDir, "worktrees");
   if (!existsSync(root)) return [];
-  const out: string[] = [];
-  for (const name of readdirSync(root)) {
-    const dir = resolve(root, name);
-    // Enumeration/stat failures propagate — never skip a linked admin dir silently.
-    if (statSync(dir).isDirectory()) out.push(dir);
-  }
-  return out;
+  // Enumeration/stat failures propagate — never skip a linked admin dir silently.
+  return readdirSync(root)
+    .map((name) => resolve(root, name))
+    .filter((dir) => statSync(dir).isDirectory());
 }
 
 /**
@@ -147,8 +130,7 @@ function uninstallPackageWorkerHooks(cwd: string): void {
   if (inside !== "true") return;
 
   const commonDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  // Unset every owned hooksPath first, then remove dirs — never delete the marker
-  // file while a config entry still points at it (ownership check would then fail).
+  // Unset owned hooksPath before deleting the marker file (ownership check needs it).
   const clear = (configFile: string): void => {
     const hooks = unsetOwnedHooksPath(configFile);
     if (hooks !== undefined) rmOwnedDir(hooks);
@@ -156,7 +138,8 @@ function uninstallPackageWorkerHooks(cwd: string): void {
   clear(resolve(commonDir, "config"));
   clear(resolve(commonDir, "config.worktree"));
   rmOwnedDir(resolve(commonDir, HOOKS_DIR));
-  rmOwnedLegacyHook(commonDir);
+  const legacy = resolve(commonDir, "hooks", HOOK_FILE);
+  if (ownedHook(legacy)) rmSync(legacy, { force: true });
   for (const gitDir of linkedGitDirs(commonDir)) {
     clear(resolve(gitDir, "config.worktree"));
     rmOwnedDir(resolve(gitDir, HOOKS_DIR));
@@ -169,20 +152,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function unfinishedReasonPresent(details?: unknown): boolean {
   if (typeof details !== "object" || details === null) return false;
-  try {
-    const reason = (details as { reason?: unknown }).reason;
-    return typeof reason === "string" && reason.trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
-function openGateRecord(cwd: string, parent?: WorkerSubmissionGateParent): SessionManager {
-  return createRecordSession({
-    cwd,
-    kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
-    ...(parent === undefined ? {} : { parent }),
-  });
+  const reason = (details as { reason?: unknown }).reason;
+  return typeof reason === "string" && reason.trim().length > 0;
 }
 
 function readGateState(session: SessionManager): {
@@ -235,15 +206,11 @@ function reliableWindow(
   return raw.split("\n").flatMap((line) => {
     const sep = line.indexOf("\x1e");
     if (sep < 0) return [];
-    const parents = line.slice(0, sep).trim();
-    return [{ subject: line.slice(sep + 1), merge: parents.includes(" ") }];
+    return [{
+      subject: line.slice(sep + 1),
+      merge: line.slice(0, sep).trim().includes(" "),
+    }];
   });
-}
-
-function hasMissingPrefix(
-  commits: ReadonlyArray<{ subject: string; merge: boolean }>,
-): boolean {
-  return commits.some((c) => !c.merge && !PLATFORM_PREFIX.test(c.subject));
 }
 
 export function createWorkerSubmissionGate(): {
@@ -268,7 +235,11 @@ export function createWorkerSubmissionGate(): {
     arm(cwd, parent) {
       uninstallPackageWorkerHooks(cwd);
       root = cwd;
-      record = openGateRecord(cwd, parent);
+      record = createRecordSession({
+        cwd,
+        kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
+        ...(parent === undefined ? {} : { parent }),
+      });
       const prior = readGateState(record);
       if (prior.baseline !== undefined) {
         baseline = prior.baseline;
@@ -306,7 +277,13 @@ export function createWorkerSubmissionGate(): {
       // Gate ② — open platform-prefix soft reminder (ADR 0070).
       if (prefixReminded || now === null) return;
       const window = reliableWindow(root, baseline, now);
-      if (window === null || window.length === 0 || !hasMissingPrefix(window)) return;
+      if (
+        window === null ||
+        window.length === 0 ||
+        !window.some((c) => !c.merge && !PLATFORM_PREFIX.test(c.subject))
+      ) {
+        return;
+      }
       prefixReminded = true;
       record?.appendCustomEntry(WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
       throw new WorkerPrefixReminderError();
