@@ -21,9 +21,11 @@ import {
   writeToolExecutionObservationRecord,
   type ToolExecutionObservationWriter,
 } from "./tool-execution-observation.ts";
+import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 import { installWorkerGitHooks } from "./worker-submission-gates.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
+import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -283,6 +285,7 @@ export {
   type JudgeVerdict,
   type SoulAuditResult,
 } from "./judge-role.ts";
+export { ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV } from "./engine-detour.ts";
 export {
   AGENT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
@@ -506,6 +509,12 @@ export type RoleRuntimeDependencies = {
   /** Monotonic ms clock for update throttling; defaults to performance.now (not Date.now). */
   toolExecutionObservationMonoNow?(): number;
   toolExecutionObservationWriter?: ToolExecutionObservationWriter;
+  /**
+   * #351 OAuth keepalive: providers/interval/scheduler.
+   * Production extension root reads oauth-keepalive.json and passes providers here
+   * (default ["kimi-coding"] when the setting file is absent). Tests may inject.
+   */
+  oauthKeepalive?: OAuthKeepaliveOptions;
 };
 
 function abortContext(ctx: ExtensionContext): void {
@@ -577,10 +586,14 @@ export function createRoleRuntimeExtension(
     let reviewerOriginalRequest: string | undefined;
     let reviewerExpansionCaptured = false;
     let navigatorAttendance: NavigatorAttendanceDependency | undefined;
+    // #351: session-lifecycle owner for periodic OAuth refresh (orthogonal to role admission).
+    const oauthKeepalive = createOAuthKeepalive(dependencies.oauthKeepalive);
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     const pendingInfrastructureToolCallIds = new Set<string>();
+    // #357 T2: engine detour once-latch + registration (Judge+engine only).
+    let engineDetourRegistration: ReturnType<typeof registerEngineDetourTool> | undefined;
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
@@ -809,6 +822,8 @@ export function createRoleRuntimeExtension(
       }, { triggerTurn: false });
     });
     pi.on("session_shutdown", async () => {
+      // #351: stop OAuth keepalive first so shutdown yields zero further ticks.
+      oauthKeepalive.stop();
       // Flush any still-pending affirmative attendance before teardown. Accepted
       // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
@@ -1042,7 +1057,11 @@ export function createRoleRuntimeExtension(
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
+      engineDetourRegistration?.resetLatch();
       navigatorWorkContext = undefined;
+      // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
+      // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
+      oauthKeepalive.start(ctx);
       const rawRole = pi.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = PACKAGED_ROLE_REGISTRY.find(({ role }) => role === rawRole);
@@ -1150,6 +1169,14 @@ export function createRoleRuntimeExtension(
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
+        // #357 T2: Judge+engine activation registers the package detour tool once.
+        // Gate is env presence only — no per-engine execute branch; no judge-role spawn.
+        if (entry.role === "judge" && engineDetourRegistration === undefined) {
+          engineDetourRegistration = registerEngineDetourTool(pi, hostActions);
+          if (!engineDetourRegistration.registered) {
+            engineDetourRegistration = undefined;
+          }
+        }
         // Worker gates ②④ + ① baseline: envelope arms the worktree after role install.
         // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.
         if (entry.role === "coder" || entry.role === "fixer") {

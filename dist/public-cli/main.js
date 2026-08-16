@@ -15,6 +15,72 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// src/package-resources/engine-material.ts
+import { existsSync as existsSync2, readdirSync } from "node:fs";
+import { join as join2 } from "node:path";
+function isEngineNameSyntax(name) {
+  if (typeof name !== "string") return false;
+  if (name.length === 0 || name.trim() !== name) return false;
+  if (name === "." || name === "..") return false;
+  if (name.includes("/") || name.includes("\\") || name.includes("\0")) return false;
+  if (name.includes("..")) return false;
+  return true;
+}
+function resolveEngineMaterialDirectory(packageRoot2) {
+  return join2(packageRoot2, ENGINE_MATERIAL_RELATIVE_ROOT);
+}
+function listEngineMaterialNames(packageRoot2) {
+  const dir = resolveEngineMaterialDirectory(packageRoot2);
+  if (!existsSync2(dir)) return Object.freeze([]);
+  const names = readdirSync(dir).filter((entry) => entry.endsWith(".md")).map((entry) => entry.slice(0, -".md".length)).filter((stem) => isEngineNameSyntax(stem)).sort();
+  return Object.freeze([...names]);
+}
+function resolveEngineMaterialPath(packageRoot2, name) {
+  const legal = assertLegalEngineName(packageRoot2, name);
+  return join2(resolveEngineMaterialDirectory(packageRoot2), `${legal}.md`);
+}
+function assertLegalEngineName(packageRoot2, name) {
+  if (!isEngineNameSyntax(name)) {
+    throw new Error(`illegal engine name: ${name}`);
+  }
+  const legal = listEngineMaterialNames(packageRoot2);
+  if (!legal.includes(name)) {
+    throw new Error(
+      `unknown engine: ${name} (known: ${legal.length === 0 ? "(none)" : legal.join(", ")})`
+    );
+  }
+  return name;
+}
+function engineSessionMaterialFromOptions(options) {
+  if (options.engine === void 0) return void 0;
+  if (options.packageRoot === void 0 || options.packageRoot.trim() === "") {
+    throw new Error("packageRoot is required when engine is configured");
+  }
+  const name = assertLegalEngineName(options.packageRoot, options.engine);
+  return Object.freeze({
+    name,
+    materialPath: resolveEngineMaterialPath(options.packageRoot, name)
+  });
+}
+function appendEngineSessionMaterial(lines, engineMaterial) {
+  if (engineMaterial === void 0) {
+    return [...lines];
+  }
+  const out = [...lines];
+  out.push("");
+  out.push("Engine method material (read these bytes and follow them):");
+  out.push(`- engine: ${engineMaterial.name}`);
+  out.push(`- ${engineMaterial.materialPath}`);
+  return out;
+}
+var ENGINE_MATERIAL_RELATIVE_ROOT;
+var init_engine_material = __esm({
+  "src/package-resources/engine-material.ts"() {
+    "use strict";
+    ENGINE_MATERIAL_RELATIVE_ROOT = "resources/engines";
+  }
+});
+
 // src/package-contracts/collector-output.ts
 function safeGet(value, key) {
   if (typeof value !== "object" && typeof value !== "function" || value === null) return void 0;
@@ -14348,9 +14414,9 @@ var init_registry2 = __esm({
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname as dirname2, join as join2 } from "node:path";
+import { dirname as dirname2, join as join3 } from "node:path";
 function publicCliConfigPath(home = homedir()) {
-  return join2(home, ".ak-roles", "public-cli.json");
+  return join3(home, ".ak-roles", "public-cli.json");
 }
 async function loadPublicCliConfig(home = homedir()) {
   const path = publicCliConfigPath(home);
@@ -14372,12 +14438,65 @@ async function savePublicCliConfig(config, home = homedir()) {
 `, "utf8");
 }
 function setPersistentSeatConfig(config, seat, selection) {
+  const previous = config.seats[seat];
   return {
     seats: {
       ...config.seats,
-      [seat]: { ...selection }
+      [seat]: {
+        ...selection,
+        // Model rewrite preserves a previously configured engine axis.
+        ...previous?.engine === void 0 ? {} : { engine: previous.engine }
+      }
     }
   };
+}
+function setPersistentSeatEngine(config, seat, engine) {
+  if (seat !== "judge") {
+    throw new Error(`engine axis is judge-only; refused seat ${seat}`);
+  }
+  const previous = config.seats[seat];
+  if (previous === void 0) {
+    throw new Error(
+      `config seat ${seat} has no persistent model; set provider/model:thinking before engine`
+    );
+  }
+  if (engine === void 0) {
+    const { engine: _dropped, ...modelOnly } = previous;
+    return {
+      seats: {
+        ...config.seats,
+        [seat]: modelOnly
+      }
+    };
+  }
+  return {
+    seats: {
+      ...config.seats,
+      [seat]: { ...previous, engine }
+    }
+  };
+}
+function seatModelOnly(seat) {
+  return seat.thinking === void 0 ? { provider: seat.provider, model: seat.model } : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
+}
+function validatePublicCliConfigEngines(config, packageRoot2) {
+  for (const seat of Object.keys(config.seats)) {
+    const row = config.seats[seat];
+    if (row?.engine === void 0) continue;
+    if (seat !== "judge") {
+      throw new Error(
+        `config seat ${seat} engine is not allowed; engine axis is judge-only`
+      );
+    }
+    try {
+      assertLegalEngineName(packageRoot2, row.engine);
+    } catch (error) {
+      throw new Error(
+        `config seat ${seat} engine is unknown: ${row.engine}`,
+        { cause: error }
+      );
+    }
+  }
 }
 function parseModelSpec(spec, fallbackThinking) {
   const trimmed = spec.trim();
@@ -14470,11 +14589,18 @@ function parseSeatModelConfig(value, seat) {
   if (typeof raw.thinking !== "string" || !THINKING_LEVELS.has(raw.thinking)) {
     throw new Error(`config seat ${seat} requires a valid thinking level`);
   }
-  return {
+  const parsed = {
     provider: raw.provider,
     model: raw.model,
     thinking: raw.thinking
   };
+  if (raw.engine !== void 0) {
+    if (typeof raw.engine !== "string") {
+      throw new Error(`config seat ${seat} engine must be a string`);
+    }
+    parsed.engine = raw.engine;
+  }
+  return parsed;
 }
 function providerConfigured(credentials, provider) {
   if (provider === "openai-codex") return credentials["openai-codex"] === true;
@@ -14493,6 +14619,33 @@ function pickStartupCandidate(seat, credentials) {
   }
   return void 0;
 }
+function attachEngineAxis(seat, config, invocation) {
+  if (seat.seat !== "judge") {
+    return {
+      ...seat,
+      engineSource: "unconfigured"
+    };
+  }
+  const persistentEngine = config.seats.judge?.engine;
+  if (invocation?.engine !== void 0) {
+    return {
+      ...seat,
+      engine: invocation.engine,
+      engineSource: "invocation"
+    };
+  }
+  if (persistentEngine !== void 0) {
+    return {
+      ...seat,
+      engine: persistentEngine,
+      engineSource: "persistent"
+    };
+  }
+  return {
+    ...seat,
+    engineSource: "unconfigured"
+  };
+}
 function resolveBaseSeat(config, seat, credentials) {
   const automatic = seat === AUTOMATIC_NAVIGATOR_SEAT;
   const persistent = config.seats[seat];
@@ -14501,7 +14654,8 @@ function resolveBaseSeat(config, seat, credentials) {
       seat,
       automatic,
       source: "persistent",
-      selection: { ...persistent }
+      selection: seatModelOnly(persistent),
+      engineSource: "unconfigured"
     };
   }
   const startup = pickStartupCandidate(seat, credentials);
@@ -14510,36 +14664,47 @@ function resolveBaseSeat(config, seat, credentials) {
       seat,
       automatic,
       source: "startup",
-      selection: startup
+      selection: startup,
+      engineSource: "unconfigured"
     };
   }
-  return { seat, automatic, source: "unconfigured" };
+  return { seat, automatic, source: "unconfigured", engineSource: "unconfigured" };
 }
 function resolveEffectiveSeat(config, seat, credentials, invocation) {
   const automatic = seat === AUTOMATIC_NAVIGATOR_SEAT;
-  const hasInvocation = invocation !== void 0 && (invocation.model !== void 0 || invocation.thinking !== void 0);
-  if (!hasInvocation || invocation === void 0) {
-    return resolveBaseSeat(config, seat, credentials);
-  }
-  if (invocation.model !== void 0) {
+  const hasModelInvocation = invocation !== void 0 && (invocation.model !== void 0 || invocation.thinking !== void 0);
+  let modelSeat;
+  if (!hasModelInvocation || invocation === void 0) {
+    modelSeat = resolveBaseSeat(config, seat, credentials);
+  } else if (invocation.model !== void 0) {
     const spec = invocation.model.includes(":") || invocation.thinking === void 0 ? invocation.model : `${invocation.model}:${invocation.thinking}`;
-    return {
+    modelSeat = {
       seat,
       automatic,
       source: "invocation",
-      selection: parseModelSpec(spec)
+      selection: parseModelSpec(spec),
+      engineSource: "unconfigured"
     };
+  } else {
+    const base = resolveBaseSeat(config, seat, credentials);
+    if (base.selection === void 0 || invocation.thinking === void 0) {
+      modelSeat = {
+        seat,
+        automatic,
+        source: "unconfigured",
+        engineSource: "unconfigured"
+      };
+    } else {
+      modelSeat = {
+        seat,
+        automatic,
+        source: "invocation",
+        selection: { ...base.selection, thinking: invocation.thinking },
+        engineSource: "unconfigured"
+      };
+    }
   }
-  const base = resolveBaseSeat(config, seat, credentials);
-  if (base.selection === void 0 || invocation.thinking === void 0) {
-    return { seat, automatic, source: "unconfigured" };
-  }
-  return {
-    seat,
-    automatic,
-    source: "invocation",
-    selection: { ...base.selection, thinking: invocation.thinking }
-  };
+  return attachEngineAxis(modelSeat, config, invocation);
 }
 function effectiveSeatConfigurations(config, credentials, invocation) {
   return PUBLIC_CONFIGURABLE_SEATS.map(
@@ -14558,7 +14723,7 @@ function credentialProvidersFromAuthData(data) {
 }
 async function loadCredentialProviders(agentDir) {
   try {
-    const raw = await readFile(join2(agentDir, "auth.json"), "utf8");
+    const raw = await readFile(join3(agentDir, "auth.json"), "utf8");
     return credentialProvidersFromAuthData(JSON.parse(raw));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
@@ -14571,6 +14736,7 @@ var THINKING_LEVELS;
 var init_config2 = __esm({
   "src/public-cli/config.ts"() {
     "use strict";
+    init_engine_material();
     init_registry2();
     THINKING_LEVELS = /* @__PURE__ */ new Set([
       "off",
@@ -14610,7 +14776,7 @@ import {
   statSync
 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { basename, dirname as dirname3, isAbsolute, join as join3, relative, resolve, sep } from "node:path";
+import { basename, dirname as dirname3, isAbsolute, join as join4, relative, resolve, sep } from "node:path";
 function resolveActivationLedgerHome(home = homedir2) {
   const processHome = home();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
@@ -14621,7 +14787,7 @@ function resolveActivationLedgerHome(home = homedir2) {
   return resolve(processHome, ".ak-roles");
 }
 function activationBookDirectory(ledgerHome, bookKey) {
-  return join3(ledgerHome, "books", bookKey);
+  return join4(ledgerHome, "books", bookKey);
 }
 function pathContainedIn(root, candidate) {
   const rel = relative(root, candidate);
@@ -14634,7 +14800,7 @@ function physicalPathIdentity(path) {
   while (true) {
     try {
       const real = realpathSync2(cursor);
-      return missing.length === 0 ? real : join3(real, ...missing);
+      return missing.length === 0 ? real : join4(real, ...missing);
     } catch (error) {
       if (errnoCode(error) !== "ENOENT") {
         return absolute;
@@ -14734,7 +14900,7 @@ function ensureRealDirectoryTree(root, targetDir) {
     if (part === "..") {
       throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
     }
-    lexicalCursor = join3(lexicalCursor, part);
+    lexicalCursor = join4(lexicalCursor, part);
     let st;
     try {
       st = lstatSync2(lexicalCursor);
@@ -14906,24 +15072,24 @@ var init_activation_ledger_git = __esm({
 });
 
 // src/sitian-role-run-coordinates.ts
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 function roleRunSessionCoordinates(options) {
   const ledgerHome = resolveActivationLedgerHome(
     options.home === void 0 ? void 0 : () => options.home
   );
   const bookKey = resolveBookKeyFromGit(options.cwd);
-  const runDirectory = join4(
+  const runDirectory = join5(
     activationBookDirectory(ledgerHome, bookKey),
     "runs",
     `${options.runId}@${options.role}`
   );
-  const sessionDirectory = join4(runDirectory, "session");
+  const sessionDirectory = join5(runDirectory, "session");
   return {
     ledgerHome,
     bookKey,
     runDirectory,
     sessionDirectory,
-    sessionFile: join4(sessionDirectory, "session.jsonl")
+    sessionFile: join5(sessionDirectory, "session.jsonl")
   };
 }
 var init_sitian_role_run_coordinates = __esm({
@@ -15444,6 +15610,738 @@ var init_uuidv7 = __esm({
   }
 });
 
+// src/public-cli/option-definitions.ts
+function resolveTaishiMode(presentOptionIds) {
+  const selected = /* @__PURE__ */ new Set();
+  for (const def of optionsForOwner("taishi")) {
+    if (def.selectsMode === void 0) continue;
+    if (presentOptionIds.has(def.id)) selected.add(def.selectsMode);
+  }
+  if (selected.size === 0) return TAISHI_DEFAULT_MODE;
+  if (selected.has("cohort")) return "cohort";
+  if (selected.has("model-groups")) return "model-groups";
+  if (selected.has("sweep")) return "sweep";
+  if (selected.has("issue")) return "issue";
+  return TAISHI_DEFAULT_MODE;
+}
+function evaluateTaishiModeOptionContract(mode, counts) {
+  const definitions = optionsForOwner("taishi");
+  const byId = new Map(definitions.map((def) => [def.id, def]));
+  for (const def of definitions) {
+    const count2 = counts.get(def.id) ?? 0;
+    if (count2 === 0 || def.exclusiveWith === void 0) continue;
+    for (const otherId of def.exclusiveWith) {
+      if ((counts.get(otherId) ?? 0) === 0) continue;
+      const other = byId.get(otherId);
+      return {
+        ok: false,
+        message: `taishi accepts only one of ${def.canonical} / ${other?.canonical ?? otherId}`
+      };
+    }
+  }
+  for (const def of definitions) {
+    const count2 = counts.get(def.id) ?? 0;
+    if (count2 === 0) continue;
+    if (def.modes !== void 0 && !def.modes.includes(mode)) {
+      if (mode === "sweep") {
+        return {
+          ok: false,
+          message: `taishi sweep --attach cannot combine with ${def.canonical}`
+        };
+      }
+      return {
+        ok: false,
+        message: `taishi ${mode} does not accept ${def.canonical}`
+      };
+    }
+    const max = def.maxCountByMode?.[mode];
+    if (max !== void 0 && count2 > max) {
+      return {
+        ok: false,
+        message: max === 1 ? `taishi ${mode} accepts at most one ${def.canonical}` : `taishi ${mode} accepts at most ${max} ${def.canonical}`
+      };
+    }
+  }
+  const missingRequired = [];
+  for (const def of definitions) {
+    if (def.requiredInModes === void 0) continue;
+    if (!def.requiredInModes.includes(mode)) continue;
+    if ((counts.get(def.id) ?? 0) === 0) missingRequired.push(def);
+  }
+  if (missingRequired.length > 0) {
+    if (mode === "cohort") {
+      return {
+        ok: false,
+        message: "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]"
+      };
+    }
+    if (mode === "model-groups") {
+      return {
+        ok: false,
+        message: "usage: ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]"
+      };
+    }
+    return {
+      ok: false,
+      message: `usage: ak-role taishi ${mode} requires ${missingRequired.map((def) => def.canonical).join(" ")}`
+    };
+  }
+  for (const rule of TAISHI_REQUIRE_ANY_OF) {
+    if (rule.mode !== mode) continue;
+    const hit = rule.optionIds.some((id) => (counts.get(id) ?? 0) > 0);
+    if (hit) continue;
+    if (mode === "issue") {
+      return {
+        ok: false,
+        message: "usage: ak-role taishi ((--ticket <N> | --project-root <P>) | [sweep] --attach <sweep.json> | --cohort ... | --model-groups ...)"
+      };
+    }
+    const flags = rule.optionIds.map((id) => byId.get(id)?.canonical ?? id).join(" | ");
+    return {
+      ok: false,
+      message: `usage: ak-role taishi ${mode} requires one of ${flags}`
+    };
+  }
+  return { ok: true };
+}
+function bindOwner(owner, semantics) {
+  return { ...semantics, owner };
+}
+function optionsForOwner(owner) {
+  return PUBLIC_OPTION_TABLE[owner];
+}
+function dashedSpellings(def) {
+  if (def.form !== "option") return [];
+  return [def.canonical, ...def.aliases];
+}
+function matchDashedOption(token, definitions) {
+  if (!token.startsWith("-") || token === "-") return void 0;
+  for (const def of definitions) {
+    if (def.form !== "option") continue;
+    for (const spelling of dashedSpellings(def)) {
+      if (token === spelling) {
+        return { def };
+      }
+      if (def.valueMetavar !== null && token.startsWith(`${spelling}=`)) {
+        return { def, inlineValue: token.slice(spelling.length + 1) };
+      }
+    }
+  }
+  return void 0;
+}
+function takeDashedOption(tokens, definitions) {
+  const token = tokens[0];
+  if (token === void 0) return void 0;
+  const matched = matchDashedOption(token, definitions);
+  if (matched === void 0) return void 0;
+  tokens.shift();
+  if (matched.def.valueMetavar === null) {
+    return { def: matched.def, value: void 0 };
+  }
+  if (matched.inlineValue !== void 0) {
+    return { def: matched.def, value: matched.inlineValue };
+  }
+  return { def: matched.def, value: tokens.shift() };
+}
+function matchPositionalOption(token, definitions) {
+  for (const def of definitions) {
+    if (def.form !== "positional") continue;
+    if (def.canonical === token || def.aliases.includes(token)) {
+      return def;
+    }
+  }
+  return void 0;
+}
+function createTypedOptionConsumer(definitions) {
+  const counts = /* @__PURE__ */ new Map();
+  const note = (def) => {
+    const next = (counts.get(def.id) ?? 0) + 1;
+    counts.set(def.id, next);
+    if (next > 1 && !def.repeatable) {
+      throw new CliUsageError(`${def.canonical} cannot be repeated`);
+    }
+  };
+  return {
+    takeDashed(tokens) {
+      const taken = takeDashedOption(tokens, definitions);
+      if (taken === void 0) return void 0;
+      note(taken.def);
+      return taken;
+    },
+    takePositional(token) {
+      const def = matchPositionalOption(token, definitions);
+      if (def === void 0) return void 0;
+      note(def);
+      return def;
+    },
+    consumeLeadingPhase(positional) {
+      const phaseDef = definitions.find(
+        (def) => def.id === "phase" && def.form === "positional"
+      );
+      const defaultPhase = phaseDef?.defaultValue === "plan" || phaseDef?.defaultValue === "apply" ? phaseDef.defaultValue : "apply";
+      if (phaseDef === void 0 || positional.length === 0) {
+        return defaultPhase;
+      }
+      const token = positional[0];
+      if (!phaseDef.aliases.includes(token) && phaseDef.canonical !== token) {
+        return defaultPhase;
+      }
+      positional.shift();
+      note(phaseDef);
+      if (token !== "plan" && token !== "apply") {
+        throw new CliUsageError(`invalid phase token: ${token}`);
+      }
+      return token;
+    },
+    count(id) {
+      return counts.get(id) ?? 0;
+    },
+    assertRequired() {
+      for (const def of definitions) {
+        if (!def.required) continue;
+        if ((counts.get(def.id) ?? 0) > 0) continue;
+        const suffix = def.valueMetavar === null ? "" : ` <${def.valueMetavar}>`;
+        throw new CliUsageError(
+          `${def.owner} requires ${def.canonical}${suffix}`
+        );
+      }
+    }
+  };
+}
+function projectOwnerOptions(owner) {
+  return optionsForOwner(owner).map((def) => ({
+    id: def.id,
+    owner: def.owner,
+    canonical: def.canonical,
+    aliases: def.aliases,
+    valueMetavar: def.valueMetavar,
+    required: def.required,
+    repeatable: def.repeatable,
+    ...def.defaultValue === void 0 ? {} : { defaultValue: def.defaultValue },
+    form: def.form,
+    ...def.phases === void 0 ? {} : { phases: def.phases },
+    ...def.modes === void 0 ? {} : { modes: def.modes },
+    ...def.requiredInModes === void 0 ? {} : { requiredInModes: def.requiredInModes },
+    ...def.exclusiveWith === void 0 ? {} : { exclusiveWith: def.exclusiveWith },
+    ...def.maxCountByMode === void 0 ? {} : { maxCountByMode: def.maxCountByMode },
+    ...def.selectsMode === void 0 ? {} : { selectsMode: def.selectsMode },
+    description: def.description
+  }));
+}
+function renderOwnerOptionHelpLines(owner, locale2 = "en") {
+  const lines = [];
+  for (const opt of projectOwnerOptions(owner)) {
+    const aliasText = opt.aliases.length === 0 ? "-" : opt.aliases.join(",");
+    const metavar = opt.valueMetavar ?? "-";
+    const required = opt.required ? "required" : "optional";
+    const repeatable = opt.repeatable ? "repeatable" : "single";
+    const form = opt.form;
+    const phases = opt.phases === void 0 ? "-" : opt.phases.join("|");
+    const modes = opt.modes === void 0 ? "-" : opt.modes.join("|");
+    const requiredInModes = opt.requiredInModes === void 0 ? "-" : opt.requiredInModes.join("|");
+    const exclusiveWith = opt.exclusiveWith === void 0 ? "-" : opt.exclusiveWith.join("|");
+    const maxCount = opt.maxCountByMode === void 0 ? "-" : Object.entries(opt.maxCountByMode).map(([mode, n]) => `${mode}:${n}`).join(",");
+    const defaultValue = opt.defaultValue ?? "-";
+    const desc = locale2 === "zh" ? opt.description.zh : opt.description.en;
+    lines.push(
+      [
+        "option",
+        opt.id,
+        opt.canonical,
+        `aliases=${aliasText}`,
+        `metavar=${metavar}`,
+        required,
+        repeatable,
+        `form=${form}`,
+        `phases=${phases}`,
+        `modes=${modes}`,
+        `requiredInModes=${requiredInModes}`,
+        `exclusiveWith=${exclusiveWith}`,
+        `maxCountByMode=${maxCount}`,
+        `default=${defaultValue}`,
+        desc
+      ].join("	")
+    );
+  }
+  return lines;
+}
+var TAISHI_REQUIRE_ANY_OF, TAISHI_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, SHARED_PROJECT_SEMANTICS, SHARED_ATTACH_SEMANTICS, JUDGE_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, MERGER_OPTIONS, TAISHI_OPTIONS, PUBLIC_OPTION_TABLE;
+var init_option_definitions = __esm({
+  "src/public-cli/option-definitions.ts"() {
+    "use strict";
+    init_cli_errors();
+    TAISHI_REQUIRE_ANY_OF = [
+      { mode: "issue", optionIds: ["ticket", "project-root"] }
+    ];
+    TAISHI_DEFAULT_MODE = "issue";
+    REJECTED_PUBLIC_SPELLINGS = [
+      {
+        owner: "judge",
+        spellings: ["--burden", "--ak-judge-burden", "--judge-burden"],
+        reason: {
+          en: "Judge infers its own burden; no public burden selector.",
+          zh: "\u5927\u7406\u5BFA\u81EA\u884C\u63A8\u65AD\u4E3E\u8BC1\u8D23\u4EFB\uFF0C\u4E0D\u63A5\u53D7\u516C\u5F00 burden \u65D7\u6807\u3002"
+        }
+      },
+      {
+        owner: "merger",
+        spellings: ["--ak-merger-input"],
+        reason: {
+          en: "Merger input packet is assembled internally; not a public flag.",
+          zh: "\u6821\u4E66\u90CE input packet \u7531\u5185\u90E8\u88C5\u914D\uFF0C\u4E0D\u662F\u516C\u5F00\u65D7\u6807\u3002"
+        }
+      }
+    ];
+    GLOBAL_OPTIONS = [
+      {
+        id: "model",
+        owner: "global",
+        canonical: "--model",
+        aliases: [],
+        valueMetavar: "provider/model",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Override the effective seat model for this invocation (before or after the command).",
+          zh: "\u8986\u76D6\u672C\u8C03\u7528\u6709\u6548\u5E2D\u4F4D\u6A21\u578B\uFF08\u53EF\u7F6E\u4E8E\u5B50\u547D\u4EE4\u524D\u6216\u540E\uFF09\u3002"
+        }
+      },
+      {
+        id: "thinking",
+        owner: "global",
+        canonical: "--thinking",
+        aliases: [],
+        valueMetavar: "level",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Override thinking level: off|minimal|low|medium|high|xhigh|max.",
+          zh: "\u8986\u76D6 thinking \u6863\u4F4D\uFF1Aoff|minimal|low|medium|high|xhigh|max\u3002"
+        }
+      },
+      {
+        id: "engine",
+        owner: "global",
+        canonical: "--engine",
+        aliases: [],
+        valueMetavar: "name",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Optional Judge labor engine for this invocation (name must exist in packaged engine materials; judge-only).",
+          zh: "\u672C\u8C03\u7528\u53EF\u9009 Judge \u52B3\u52A8\u5F15\u64CE\uFF08\u540D\u5B57\u987B\u5B58\u5728\u4E8E\u5305\u5185\u5F15\u64CE\u8C03\u6CD5\u6750\u6599\uFF1B\u4EC5 Judge\uFF09\u3002"
+        }
+      },
+      {
+        id: "help",
+        owner: "global",
+        canonical: "--help",
+        aliases: ["-h"],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Show public CLI help and exit.",
+          zh: "\u663E\u793A\u516C\u5F00 CLI \u5E2E\u52A9\u5E76\u9000\u51FA\u3002"
+        }
+      }
+    ];
+    SHARED_PROJECT_SEMANTICS = {
+      id: "project",
+      canonical: "--project",
+      aliases: [],
+      valueMetavar: "path",
+      required: false,
+      repeatable: false,
+      form: "option",
+      description: {
+        en: "Project root for ledger identity (defaults to process cwd).",
+        zh: "\u5377\u5B97\u8EAB\u4EFD\u7528\u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4\u8FDB\u7A0B cwd\uFF09\u3002"
+      }
+    };
+    SHARED_ATTACH_SEMANTICS = {
+      id: "attach",
+      canonical: "--attach",
+      aliases: [],
+      valueMetavar: "path",
+      required: false,
+      repeatable: true,
+      form: "option",
+      description: {
+        en: "Attach a regular file; frozen at admission (repeatable).",
+        zh: "\u9644\u52A0\u666E\u901A\u6587\u4EF6\uFF1B\u53D7\u7406\u5373\u51BB\u7ED3\uFF08\u53EF\u91CD\u590D\uFF09\u3002"
+      }
+    };
+    JUDGE_OPTIONS = [
+      bindOwner("judge", SHARED_PROJECT_SEMANTICS),
+      bindOwner("judge", SHARED_ATTACH_SEMANTICS)
+    ];
+    CODER_OPTIONS = [
+      {
+        id: "phase",
+        owner: "coder",
+        canonical: "plan|apply",
+        aliases: ["plan", "apply"],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        defaultValue: "apply",
+        form: "positional",
+        phases: ["plan", "apply"],
+        description: {
+          en: "Optional phase token before the instruction; defaults to apply.",
+          zh: "\u6307\u4EE4\u524D\u53EF\u9009 phase \u8BCD\u5143\uFF1B\u9ED8\u8BA4 apply\u3002"
+        }
+      },
+      bindOwner("coder", SHARED_PROJECT_SEMANTICS),
+      bindOwner("coder", SHARED_ATTACH_SEMANTICS)
+    ];
+    FIXER_OPTIONS = [
+      {
+        id: "phase",
+        owner: "fixer",
+        canonical: "plan|apply",
+        aliases: ["plan", "apply"],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        defaultValue: "apply",
+        form: "positional",
+        phases: ["plan", "apply"],
+        description: {
+          en: "Optional phase token before the instruction; defaults to apply.",
+          zh: "\u6307\u4EE4\u524D\u53EF\u9009 phase \u8BCD\u5143\uFF1B\u9ED8\u8BA4 apply\u3002"
+        }
+      },
+      bindOwner("fixer", SHARED_PROJECT_SEMANTICS),
+      bindOwner("fixer", SHARED_ATTACH_SEMANTICS),
+      {
+        id: "prerequisites",
+        owner: "fixer",
+        canonical: "--prerequisites",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "JSON array of {id, requirement} prerequisite objects.",
+          zh: "{id, requirement} \u524D\u7F6E\u6761\u4EF6 JSON \u6570\u7EC4\u8DEF\u5F84\u3002"
+        }
+      }
+    ];
+    REVIEWER_OPTIONS = [
+      bindOwner("reviewer", SHARED_PROJECT_SEMANTICS),
+      // Reviewer deliberately has no --attach face (gathers its own evidence).
+      {
+        id: "base",
+        owner: "reviewer",
+        canonical: "--base",
+        aliases: [],
+        valueMetavar: "revision",
+        required: true,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Required fixed-point revision for the pinned review target.",
+          zh: "\u5FC5\u586B\uFF1B\u9489\u4F4F\u5BA1\u67E5\u76EE\u6807\u7684 fixed-point revision\u3002"
+        }
+      },
+      {
+        id: "authority-ref",
+        owner: "reviewer",
+        canonical: "--authority-ref",
+        aliases: [],
+        valueMetavar: "ref",
+        required: false,
+        repeatable: true,
+        form: "option",
+        description: {
+          en: "Durable authority reference/URL (repeatable; refs only, not inline prose).",
+          zh: "\u6301\u4E45 authority \u5F15\u7528/URL\uFF08\u53EF\u91CD\u590D\uFF1B\u4EC5 ref\uFF0C\u975E\u5185\u8054\u6563\u6587\uFF09\u3002"
+        }
+      }
+    ];
+    COLLECTOR_OPTIONS = [
+      bindOwner("collector", SHARED_PROJECT_SEMANTICS),
+      bindOwner("collector", SHARED_ATTACH_SEMANTICS),
+      {
+        id: "pr",
+        owner: "collector",
+        canonical: "--pr",
+        aliases: [],
+        valueMetavar: "number",
+        required: true,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Required positive GitHub pull request number.",
+          zh: "\u5FC5\u586B\uFF1B\u6B63\u6574\u6570 GitHub PR \u53F7\u3002"
+        }
+      },
+      {
+        id: "repo",
+        owner: "collector",
+        canonical: "--repo",
+        aliases: [],
+        valueMetavar: "owner/repo",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "GitHub owner/repo override (defaults from origin when github.com).",
+          zh: "GitHub owner/repo \u8986\u76D6\uFF08\u9ED8\u8BA4\u53D6 github.com origin\uFF09\u3002"
+        }
+      },
+      {
+        id: "request-manifest",
+        owner: "collector",
+        canonical: "--request-manifest",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Optional request manifest JSON path ({requests:[{id,body}]}).",
+          zh: "\u53EF\u9009 request manifest JSON \u8DEF\u5F84\uFF08{requests:[{id,body}]}\uFF09\u3002"
+        }
+      }
+    ];
+    DOCTOR_OPTIONS = [
+      bindOwner("doctor", SHARED_PROJECT_SEMANTICS),
+      bindOwner("doctor", SHARED_ATTACH_SEMANTICS),
+      {
+        id: "issue",
+        owner: "doctor",
+        canonical: "--issue",
+        aliases: [],
+        valueMetavar: "number",
+        required: true,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Required positive issue number for the retained case.",
+          zh: "\u5FC5\u586B\uFF1B\u7559\u5B58\u75C5\u4F8B\u7684\u6B63\u6574\u6570 issue \u53F7\u3002"
+        }
+      },
+      {
+        id: "runs",
+        owner: "doctor",
+        canonical: "--runs",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Optional project-relative .ak-roles/books/<book>/issues/<n>/runs override matching --issue.",
+          zh: "\u53EF\u9009\u9879\u76EE\u76F8\u5BF9 .ak-roles/books/<book>/issues/<n>/runs \u8986\u76D6\uFF0C\u4E14\u987B\u5339\u914D --issue\u3002"
+        }
+      }
+    ];
+    MERGER_OPTIONS = [
+      // Merger project face differs: requires an in-progress ordinary merge root.
+      {
+        id: "project",
+        owner: "merger",
+        canonical: "--project",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Project root with one ordinary in-progress merge (defaults to cwd).",
+          zh: "\u5DF2\u6709\u8FDB\u884C\u4E2D ordinary merge \u7684\u9879\u76EE\u6839\uFF08\u9ED8\u8BA4 cwd\uFF09\u3002"
+        }
+      },
+      bindOwner("merger", SHARED_ATTACH_SEMANTICS)
+    ];
+    TAISHI_OPTIONS = [
+      {
+        id: "sweep",
+        owner: "taishi",
+        canonical: "sweep",
+        aliases: [],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        form: "positional",
+        modes: ["sweep"],
+        selectsMode: "sweep",
+        description: {
+          en: "Optional sweep mode token (at most once; no other positionals).",
+          zh: "\u53EF\u9009 sweep \u6A21\u5F0F\u8BCD\u5143\uFF08\u81F3\u591A\u4E00\u6B21\uFF1B\u4E0D\u5F97\u5939\u5E26\u5176\u4ED6 positional\uFF09\u3002"
+        }
+      },
+      {
+        id: "project-root",
+        owner: "taishi",
+        canonical: "--project-root",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: true,
+        form: "option",
+        modes: ["issue", "model-groups"],
+        requiredInModes: ["model-groups"],
+        maxCountByMode: { issue: 1 },
+        description: {
+          en: "Project-root scope key. Issue: at most one (with --ticket at least one of the two). Model-groups: one or more required.",
+          zh: "projectRoot \u8303\u56F4\u952E\u3002issue\uFF1A\u81F3\u591A\u4E00\u4E2A\uFF08\u4E0E --ticket \u81F3\u5C11\u5C45\u5176\u4E00\uFF09\u3002model-groups\uFF1A\u4E00\u4E2A\u6216\u591A\u4E2A\u4E14\u5FC5\u586B\u3002"
+        }
+      },
+      {
+        id: "ticket",
+        owner: "taishi",
+        canonical: "--ticket",
+        aliases: [],
+        valueMetavar: "number",
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["issue"],
+        description: {
+          en: "Ticket/issue number for issue mode (with --project-root at least one of the two).",
+          zh: "issue \u6A21\u5F0F\u7684\u7968\u53F7\uFF08\u4E0E --project-root \u81F3\u5C11\u5C45\u5176\u4E00\uFF09\u3002"
+        }
+      },
+      {
+        id: "attach",
+        owner: "taishi",
+        canonical: "--attach",
+        aliases: [],
+        valueMetavar: "path",
+        required: false,
+        repeatable: true,
+        form: "option",
+        modes: ["sweep"],
+        selectsMode: "sweep",
+        requiredInModes: ["sweep"],
+        maxCountByMode: { sweep: 1 },
+        description: {
+          en: "Sweep-mode attachment path; required exactly once in sweep; payload is the attachment body.",
+          zh: "sweep \u6A21\u5F0F\u9644\u4EF6\u8DEF\u5F84\uFF1Bsweep \u5FC5\u586B\u4E14\u6070\u4E00\u6B21\uFF1B\u8F7D\u8377\u4E3A\u9644\u4EF6\u6B63\u6587\u3002"
+        }
+      },
+      {
+        id: "cohort",
+        owner: "taishi",
+        canonical: "--cohort",
+        aliases: [],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["cohort"],
+        exclusiveWith: ["model-groups"],
+        selectsMode: "cohort",
+        description: {
+          en: "Select cohort mode (mutually exclusive with --model-groups).",
+          zh: "\u9009\u62E9 cohort \u6A21\u5F0F\uFF08\u4E0E --model-groups \u4E92\u65A5\uFF09\u3002"
+        }
+      },
+      {
+        id: "model-groups",
+        owner: "taishi",
+        canonical: "--model-groups",
+        aliases: [],
+        valueMetavar: null,
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["model-groups"],
+        exclusiveWith: ["cohort"],
+        selectsMode: "model-groups",
+        description: {
+          en: "Select model-groups mode (mutually exclusive with --cohort).",
+          zh: "\u9009\u62E9 model-groups \u6A21\u5F0F\uFF08\u4E0E --cohort \u4E92\u65A5\uFF09\u3002"
+        }
+      },
+      {
+        id: "group-a-label",
+        owner: "taishi",
+        canonical: "--group-a-label",
+        aliases: [],
+        valueMetavar: "label",
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["cohort"],
+        requiredInModes: ["cohort"],
+        description: {
+          en: "Cohort group A label (required in cohort mode).",
+          zh: "cohort A \u7EC4\u6807\u7B7E\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
+        }
+      },
+      {
+        id: "group-a-issues",
+        owner: "taishi",
+        canonical: "--group-a-issues",
+        aliases: [],
+        valueMetavar: "N[,N...]",
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["cohort"],
+        requiredInModes: ["cohort"],
+        description: {
+          en: "Cohort group A comma-separated positive issue numbers (required in cohort mode).",
+          zh: "cohort A \u7EC4\u9017\u53F7\u5206\u9694\u6B63\u6574\u6570 issue \u5217\u8868\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
+        }
+      },
+      {
+        id: "group-b-label",
+        owner: "taishi",
+        canonical: "--group-b-label",
+        aliases: [],
+        valueMetavar: "label",
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["cohort"],
+        requiredInModes: ["cohort"],
+        description: {
+          en: "Cohort group B label (required in cohort mode).",
+          zh: "cohort B \u7EC4\u6807\u7B7E\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
+        }
+      },
+      {
+        id: "group-b-issues",
+        owner: "taishi",
+        canonical: "--group-b-issues",
+        aliases: [],
+        valueMetavar: "N[,N...]",
+        required: false,
+        repeatable: false,
+        form: "option",
+        modes: ["cohort"],
+        requiredInModes: ["cohort"],
+        description: {
+          en: "Cohort group B comma-separated positive issue numbers (required in cohort mode).",
+          zh: "cohort B \u7EC4\u9017\u53F7\u5206\u9694\u6B63\u6574\u6570 issue \u5217\u8868\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
+        }
+      }
+    ];
+    PUBLIC_OPTION_TABLE = {
+      global: GLOBAL_OPTIONS,
+      judge: JUDGE_OPTIONS,
+      coder: CODER_OPTIONS,
+      fixer: FIXER_OPTIONS,
+      reviewer: REVIEWER_OPTIONS,
+      collector: COLLECTOR_OPTIONS,
+      doctor: DOCTOR_OPTIONS,
+      merger: MERGER_OPTIONS,
+      taishi: TAISHI_OPTIONS
+    };
+  }
+});
+
 // src/public-cli/invocation.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import {
@@ -15453,7 +16351,7 @@ import {
   realpath as realpath2,
   writeFile as writeFile2
 } from "node:fs/promises";
-import { basename as basename3, isAbsolute as isAbsolute3, join as join5, resolve as resolve4, sep as sep3 } from "node:path";
+import { basename as basename3, isAbsolute as isAbsolute3, join as join6, resolve as resolve4, sep as sep3 } from "node:path";
 function effectiveModelLedgerFields(model) {
   if (model === void 0) return {};
   return {
@@ -15476,24 +16374,27 @@ async function writeRoleInvocationLedger(source, role, effectiveModel) {
     ...effectiveModelLedgerFields(effectiveModel)
   };
   await writeFile2(
-    join5(source.runDirectory, "invocation.json"),
+    join6(source.runDirectory, "invocation.json"),
     `${JSON.stringify(identity, null, 2)}
 `,
     "utf8"
   );
 }
-async function recordEffectiveInvocationModel(runDirectory, model) {
-  const ledgerPath = join5(runDirectory, "invocation.json");
+async function recordEffectiveInvocationModel(runDirectory, model, engine) {
+  const ledgerPath = join6(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile4(ledgerPath, "utf8"));
-  const next = {
-    ...current,
-    provider: model.provider,
-    model: model.model
-  };
-  if (model.thinking === void 0) {
-    delete next.thinking;
-  } else {
-    next.thinking = model.thinking;
+  const next = { ...current };
+  if (model !== void 0) {
+    next.provider = model.provider;
+    next.model = model.model;
+    if (model.thinking === void 0) {
+      delete next.thinking;
+    } else {
+      next.thinking = model.thinking;
+    }
+  }
+  if (engine !== void 0) {
+    next.engine = engine;
   }
   await writeFile2(
     ledgerPath,
@@ -15503,7 +16404,7 @@ async function recordEffectiveInvocationModel(runDirectory, model) {
   );
 }
 async function mergeInvocationIdentityPage(runDirectory, fields) {
-  const ledgerPath = join5(runDirectory, "invocation.json");
+  const ledgerPath = join6(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile4(ledgerPath, "utf8"));
   await writeFile2(
     ledgerPath,
@@ -15524,7 +16425,7 @@ async function recordLaunchedPiIdentity(runDirectory, identity) {
 async function observeLaunchedRolePackageIdentity(packageRoot2, selectedRoleEntry) {
   const rolePackageRoot = packageRoot2;
   const raw = JSON.parse(
-    await readFile4(join5(rolePackageRoot, "package.json"), "utf8")
+    await readFile4(join6(rolePackageRoot, "package.json"), "utf8")
   );
   if (typeof raw.version !== "string" || raw.version.trim() === "") {
     throw new Error(
@@ -15554,6 +16455,18 @@ function requireOptionPath(flag, value) {
   }
   return value;
 }
+function isRejectedPublicSpelling(owner, token) {
+  for (const entry of REJECTED_PUBLIC_SPELLINGS) {
+    if (entry.owner !== owner) continue;
+    for (const spelling of entry.spellings) {
+      if (token === spelling || token.startsWith(`${spelling}=`)) return true;
+    }
+  }
+  return false;
+}
+function roleOptions(owner) {
+  return optionsForOwner(owner);
+}
 function requireAuthorityRef(value) {
   if (value === void 0 || value.trim() === "") {
     throw new CliUsageError("--authority-ref requires a nonempty durable reference");
@@ -15570,31 +16483,28 @@ function parseJudgeArgv(args) {
   let project;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("judge");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
+    const taken = options.takeDashed(tokens);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown judge option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
-    if (token === "--burden" || token.startsWith("--burden=") || token === "--ak-judge-burden" || token.startsWith("--ak-judge-burden=") || token === "--judge-burden" || token.startsWith("--judge-burden=")) {
+    const token = tokens.shift();
+    if (isRejectedPublicSpelling("judge", token)) {
       throw new CliUsageError(
         "judge does not accept a public burden selector; Judge infers its own burden"
       );
@@ -15604,6 +16514,7 @@ function parseJudgeArgv(args) {
     }
     positional.push(token);
   }
+  options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
@@ -15615,39 +16526,34 @@ function parseCoderArgv(args) {
   let project;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("coder");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
+    const taken = options.takeDashed(tokens);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown coder option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
+    const token = tokens.shift();
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown coder option: ${token}`);
     }
     positional.push(token);
   }
-  let phase = "apply";
-  if (positional[0] === "plan" || positional[0] === "apply") {
-    phase = positional.shift();
-  }
+  const phase = options.consumeLeadingPhase(positional);
+  options.assertRequired();
   return {
     phase,
     instruction: positional.join(" "),
@@ -15661,50 +16567,38 @@ function parseFixerArgv(args) {
   let prerequisitesPath;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("fixer");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
+    const taken = options.takeDashed(tokens);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      if (taken.def.id === "prerequisites") {
+        prerequisitesPath = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown fixer option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
-    if (token === "--prerequisites") {
-      prerequisitesPath = requireOptionPath("--prerequisites", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--prerequisites=")) {
-      prerequisitesPath = requireOptionPath(
-        "--prerequisites",
-        token.slice("--prerequisites=".length)
-      );
-      continue;
-    }
+    const token = tokens.shift();
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown fixer option: ${token}`);
     }
     positional.push(token);
   }
-  let phase = "apply";
-  if (positional[0] === "plan" || positional[0] === "apply") {
-    phase = positional.shift();
-  }
+  const phase = options.consumeLeadingPhase(positional);
+  options.assertRequired();
   return {
     phase,
     instruction: positional.join(" "),
@@ -15731,7 +16625,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
   }
   const bytes = await readFile4(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename3(absolute)}`;
-  const frozenPath = join5(destinationDir, name);
+  const frozenPath = join6(destinationDir, name);
   await writeFile2(frozenPath, bytes);
   return {
     attachment: {
@@ -15772,7 +16666,7 @@ async function admitJudgeInvocation(options) {
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -15801,7 +16695,7 @@ async function admitJudgeInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role, options.model);
@@ -15820,7 +16714,7 @@ async function admitJudgeInvocation(options) {
     ...ticketFields
   };
 }
-function buildJudgeTransportPrompt(admitted) {
+function buildJudgeTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
@@ -15829,10 +16723,10 @@ function buildJudgeTransportPrompt(admitted) {
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return lines.join("\n");
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 async function ensureRunArtifactsDir(runDirectory) {
-  const dir = join5(runDirectory, "artifacts");
+  const dir = join6(runDirectory, "artifacts");
   await mkdir2(dir, { recursive: true });
   return dir;
 }
@@ -15852,7 +16746,7 @@ async function admitCoderInvocation(options) {
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -15860,7 +16754,7 @@ async function admitCoderInvocation(options) {
     attachmentsDirectory
   );
   const ticketFields = ticketAdmissionFields(ticketNumber);
-  const taskPath = join5(runDirectory, "task.md");
+  const taskPath = join6(runDirectory, "task.md");
   await writeFile2(taskPath, instruction, "utf8");
   const admitted = {
     role: "coder",
@@ -15883,7 +16777,7 @@ async function admitCoderInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role, options.model);
@@ -15952,7 +16846,7 @@ async function admitFixerInvocation(options) {
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -15962,7 +16856,7 @@ async function admitFixerInvocation(options) {
   const ticketFields = ticketAdmissionFields(ticketNumber);
   let prerequisitesPath;
   if (prerequisitesSource !== void 0) {
-    prerequisitesPath = join5(runDirectory, "prerequisites.json");
+    prerequisitesPath = join6(runDirectory, "prerequisites.json");
     await writeFile2(
       prerequisitesPath,
       `${JSON.stringify(prerequisites, null, 2)}
@@ -15970,7 +16864,7 @@ async function admitFixerInvocation(options) {
       "utf8"
     );
   }
-  const packetPath = join5(runDirectory, "fix-packet.md");
+  const packetPath = join6(runDirectory, "fix-packet.md");
   await writeFile2(packetPath, instruction, "utf8");
   const admitted = {
     role: "fixer",
@@ -15998,7 +16892,7 @@ async function admitFixerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role, options.model);
@@ -16052,57 +16946,53 @@ function parseCollectorArgv(args) {
   let requestManifestPath;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("collector");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
+    const taken = options.takeDashed(tokens);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      if (taken.def.id === "pr") {
+        prNumber = parsePositivePrOption(taken.value);
+        continue;
+      }
+      if (taken.def.id === "repo") {
+        repo = parseRepoOption(taken.value);
+        continue;
+      }
+      if (taken.def.id === "request-manifest") {
+        requestManifestPath = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown collector option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(requireOptionPath("--attach", token.slice(9)));
-      continue;
+    const token = tokens.shift();
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown collector option: ${token}`);
     }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice(10));
-      continue;
-    }
-    if (token === "--pr") {
-      prNumber = parsePositivePrOption(tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--pr=")) {
-      prNumber = parsePositivePrOption(token.slice(5));
-      continue;
-    }
-    if (token === "--repo") {
-      repo = parseRepoOption(tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--repo=")) {
-      repo = parseRepoOption(token.slice(7));
-      continue;
-    }
-    if (token === "--request-manifest") {
-      requestManifestPath = requireOptionPath("--request-manifest", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--request-manifest=")) {
-      requestManifestPath = requireOptionPath("--request-manifest", token.slice(19));
-      continue;
-    }
-    if (token.startsWith("-") && token !== "-") throw new CliUsageError(`unknown collector option: ${token}`);
     positional.push(token);
   }
-  if (prNumber === void 0) throw new CliUsageError("collector requires --pr <positive-integer>");
-  return { prNumber, instruction: positional.join(" "), attachmentPaths, ...project === void 0 ? {} : { project }, ...repo === void 0 ? {} : { repo }, ...requestManifestPath === void 0 ? {} : { requestManifestPath } };
+  options.assertRequired();
+  return {
+    prNumber,
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...project === void 0 ? {} : { project },
+    ...repo === void 0 ? {} : { repo },
+    ...requestManifestPath === void 0 ? {} : { requestManifestPath }
+  };
 }
 function resolveGitHubRemoteRepository(projectRoot) {
   let remoteUrl;
@@ -16199,7 +17089,7 @@ async function admitCollectorInvocation(options) {
   const manifestDigest = manifest.digest;
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -16209,7 +17099,7 @@ async function admitCollectorInvocation(options) {
   const ticketFields = ticketAdmissionFields(ticketNumber);
   let requestManifestPath;
   if (manifestCanonicalJson !== void 0) {
-    requestManifestPath = join5(runDirectory, "request-manifest.json");
+    requestManifestPath = join6(runDirectory, "request-manifest.json");
     await writeFile2(requestManifestPath, manifestCanonicalJson, "utf8");
   }
   const instruction = options.instruction ?? "";
@@ -16238,7 +17128,7 @@ async function admitCollectorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -16284,69 +17174,47 @@ function parseDoctorArgv(args) {
   let runs;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("doctor");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--issue") {
-      const value = tokens.shift();
-      if (value === void 0 || value.trim() === "") {
-        throw new CliUsageError("doctor --issue requires a positive integer");
+    const taken = options.takeDashed(tokens);
+    if (taken !== void 0) {
+      if (taken.def.id === "issue") {
+        if (taken.value === void 0 || taken.value.trim() === "") {
+          throw new CliUsageError("doctor --issue requires a positive integer");
+        }
+        issueRaw = taken.value;
+        continue;
       }
-      issueRaw = value;
-      continue;
-    }
-    if (token.startsWith("--issue=")) {
-      issueRaw = token.slice("--issue=".length);
-      if (issueRaw.trim() === "") {
-        throw new CliUsageError("doctor --issue requires a positive integer");
+      if (taken.def.id === "runs") {
+        if (taken.value === void 0 || taken.value.trim() === "") {
+          throw new CliUsageError("doctor --runs requires a path");
+        }
+        runs = taken.value;
+        continue;
       }
-      continue;
-    }
-    if (token === "--runs") {
-      const value = tokens.shift();
-      if (value === void 0 || value.trim() === "") {
-        throw new CliUsageError("doctor --runs requires a path");
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
       }
-      runs = value;
-      continue;
-    }
-    if (token.startsWith("--runs=")) {
-      const value = token.slice("--runs=".length);
-      if (value.trim() === "") {
-        throw new CliUsageError("doctor --runs requires a path");
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
       }
-      runs = value;
-      continue;
+      throw new CliUsageError(`unknown doctor option: ${taken.def.canonical}`);
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
+    const token = tokens.shift();
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown doctor option: ${token}`);
     }
     positional.push(token);
   }
-  if (issueRaw === void 0) {
-    throw new CliUsageError("doctor requires --issue <positive-integer>");
-  }
+  options.assertRequired();
   const issueNumber = parseDoctorIssueNumber(issueRaw);
   if (runs !== void 0 && runs.trim() === "") {
     throw new CliUsageError("doctor --runs requires a path");
@@ -16361,7 +17229,7 @@ function parseDoctorArgv(args) {
 }
 async function resolveDoctorCaseRunsPath(options) {
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
-  const defaultRuns = join5(
+  const defaultRuns = join6(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",
     String(options.issueNumber),
@@ -16456,7 +17324,7 @@ async function admitDoctorInvocation(options) {
       { cause: error }
     );
   }
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -16488,7 +17356,7 @@ async function admitDoctorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -16532,44 +17400,37 @@ function parseReviewerArgv(args) {
   let baseRevision;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("reviewer");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
+    const taken = options.takeDashed(tokens);
+    if (taken !== void 0) {
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      if (taken.def.id === "base") {
+        baseRevision = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      if (taken.def.id === "authority-ref") {
+        authorityRefs.push(requireAuthorityRef(taken.value));
+        continue;
+      }
+      throw new CliUsageError(`unknown reviewer option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
-    if (token === "--base") {
-      baseRevision = requireOptionPath("--base", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--base=")) {
-      baseRevision = requireOptionPath("--base", token.slice("--base=".length));
-      continue;
-    }
-    if (token === "--authority-ref") {
-      authorityRefs.push(requireAuthorityRef(tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--authority-ref=")) {
-      authorityRefs.push(requireAuthorityRef(token.slice("--authority-ref=".length)));
-      continue;
-    }
+    const token = tokens.shift();
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown reviewer option: ${token}`);
     }
     positional.push(token);
   }
-  if (baseRevision === void 0) {
-    throw new CliUsageError("reviewer requires --base <revision>; canonical code-review requires the caller to select a fixed point");
-  }
+  options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
@@ -16591,7 +17452,7 @@ async function admitReviewerInvocation(options) {
   const projectRoot = resolve4(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -16622,7 +17483,7 @@ async function admitReviewerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -16658,31 +17519,28 @@ function parseMergerArgv(args) {
   let project;
   const positional = [];
   const tokens = [...args];
+  const definitions = roleOptions("merger");
+  const options = createTypedOptionConsumer(definitions);
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       positional.push(...tokens);
       break;
     }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
+    const taken = options.takeDashed(tokens);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown merger option: ${taken.def.canonical}`);
     }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
-    if (token === "--project") {
-      project = requireOptionPath("--project", tokens.shift());
-      continue;
-    }
-    if (token.startsWith("--project=")) {
-      project = requireOptionPath("--project", token.slice("--project=".length));
-      continue;
-    }
-    if (token === "--ak-merger-input" || token.startsWith("--ak-merger-input=") || token === "--targetObjectId" || token.startsWith("--targetObjectId=") || token === "--sourceObjectId" || token.startsWith("--sourceObjectId=") || token === "--expectedConflictPaths" || token.startsWith("--expectedConflictPaths=") || token === "--resolutionScope" || token.startsWith("--resolutionScope=")) {
+    const token = tokens.shift();
+    if (isRejectedPublicSpelling("merger", token) || token === "--targetObjectId" || token.startsWith("--targetObjectId=") || token === "--sourceObjectId" || token.startsWith("--sourceObjectId=") || token === "--expectedConflictPaths" || token.startsWith("--expectedConflictPaths=") || token === "--resolutionScope" || token.startsWith("--resolutionScope=")) {
       throw new CliUsageError(
         "merger does not accept public packet fields; the adapter derives the active-merge envelope"
       );
@@ -16692,6 +17550,7 @@ function parseMergerArgv(args) {
     }
     positional.push(token);
   }
+  options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
@@ -16743,7 +17602,7 @@ async function admitMergerInvocation(options) {
   );
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const attachmentsDirectory = join5(runDirectory, "attachments");
+  const attachmentsDirectory = join6(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -16775,7 +17634,7 @@ async function admitMergerInvocation(options) {
     // Authorized checks remain available on the assignment; default none.
     authorizedChecks: []
   });
-  const mergerInputPath = join5(runDirectory, "merger-input.json");
+  const mergerInputPath = join6(runDirectory, "merger-input.json");
   await writeFile2(
     mergerInputPath,
     `${JSON.stringify(mergerInput, null, 2)}
@@ -16809,7 +17668,7 @@ async function admitMergerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join5(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join6(runDirectory, "admitted-request.json");
   await writeFile2(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
@@ -16880,159 +17739,96 @@ function requireOptionValue(flag, value, what) {
   return value;
 }
 function parseTaishiArgv(args) {
-  let query = "issue";
-  let ticketRaw;
-  const projectRoots = [];
-  let groupALabel;
-  let groupAIssuesRaw;
-  let groupBLabel;
-  let groupBIssuesRaw;
-  let sweepToken = false;
-  const attachmentPaths = [];
+  const valueLists = /* @__PURE__ */ new Map();
   const tokens = [...args];
+  const definitions = roleOptions("taishi");
+  const options = createTypedOptionConsumer(definitions);
+  const pushValue = (id, value) => {
+    const existing = valueLists.get(id);
+    if (existing === void 0) valueLists.set(id, [value]);
+    else existing.push(value);
+  };
   while (tokens.length > 0) {
-    const token = tokens.shift();
-    if (token === "--") {
+    if (tokens[0] === "--") {
+      tokens.shift();
       if (tokens.length > 0) {
         throw new CliUsageError(`unexpected taishi argument: ${tokens[0]}`);
       }
       break;
     }
-    if (token === "--cohort") {
-      if (query !== "issue") {
-        throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+    const taken = options.takeDashed(tokens);
+    if (taken !== void 0) {
+      if (taken.def.valueMetavar === null) {
+        pushValue(taken.def.id, "");
+        continue;
       }
-      query = "cohort";
-      continue;
-    }
-    if (token === "--model-groups") {
-      if (query !== "issue") {
-        throw new CliUsageError("taishi accepts only one of --cohort / --model-groups");
+      if (taken.def.id === "ticket") {
+        if (taken.value === void 0 || taken.value.trim() === "") {
+          throw new CliUsageError("taishi --ticket requires a positive integer");
+        }
+        pushValue("ticket", taken.value);
+        continue;
       }
-      query = "model-groups";
-      continue;
-    }
-    if (token === "--ticket") {
-      const value = tokens.shift();
-      if (value === void 0 || value.trim() === "") {
-        throw new CliUsageError("taishi --ticket requires a positive integer");
+      if (taken.def.id === "project-root") {
+        pushValue(
+          "project-root",
+          requireOptionPath(taken.def.canonical, taken.value)
+        );
+        continue;
       }
-      ticketRaw = value;
-      continue;
-    }
-    if (token.startsWith("--ticket=")) {
-      ticketRaw = token.slice("--ticket=".length);
-      if (ticketRaw.trim() === "") {
-        throw new CliUsageError("taishi --ticket requires a positive integer");
+      if (taken.def.id === "attach") {
+        pushValue(
+          "attach",
+          requireOptionPath(taken.def.canonical, taken.value)
+        );
+        continue;
       }
-      continue;
+      if (taken.def.id === "group-a-label" || taken.def.id === "group-b-label") {
+        pushValue(
+          taken.def.id,
+          requireOptionValue(taken.def.canonical, taken.value, "a label")
+        );
+        continue;
+      }
+      if (taken.def.id === "group-a-issues" || taken.def.id === "group-b-issues") {
+        pushValue(
+          taken.def.id,
+          requireOptionValue(
+            taken.def.canonical,
+            taken.value,
+            "a comma-separated positive integer list"
+          )
+        );
+        continue;
+      }
+      throw new CliUsageError(`unknown taishi option: ${taken.def.canonical}`);
     }
-    if (token === "--project-root") {
-      projectRoots.push(requireOptionPath("--project-root", tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--project-root=")) {
-      projectRoots.push(
-        requireOptionPath("--project-root", token.slice("--project-root=".length))
-      );
-      continue;
-    }
-    if (token === "--group-a-label") {
-      groupALabel = requireOptionValue("--group-a-label", tokens.shift(), "a label");
-      continue;
-    }
-    if (token.startsWith("--group-a-label=")) {
-      groupALabel = requireOptionValue(
-        "--group-a-label",
-        token.slice("--group-a-label=".length),
-        "a label"
-      );
-      continue;
-    }
-    if (token === "--group-a-issues") {
-      groupAIssuesRaw = requireOptionValue(
-        "--group-a-issues",
-        tokens.shift(),
-        "a comma-separated positive integer list"
-      );
-      continue;
-    }
-    if (token.startsWith("--group-a-issues=")) {
-      groupAIssuesRaw = requireOptionValue(
-        "--group-a-issues",
-        token.slice("--group-a-issues=".length),
-        "a comma-separated positive integer list"
-      );
-      continue;
-    }
-    if (token === "--group-b-label") {
-      groupBLabel = requireOptionValue("--group-b-label", tokens.shift(), "a label");
-      continue;
-    }
-    if (token.startsWith("--group-b-label=")) {
-      groupBLabel = requireOptionValue(
-        "--group-b-label",
-        token.slice("--group-b-label=".length),
-        "a label"
-      );
-      continue;
-    }
-    if (token === "--group-b-issues") {
-      groupBIssuesRaw = requireOptionValue(
-        "--group-b-issues",
-        tokens.shift(),
-        "a comma-separated positive integer list"
-      );
-      continue;
-    }
-    if (token.startsWith("--group-b-issues=")) {
-      groupBIssuesRaw = requireOptionValue(
-        "--group-b-issues",
-        token.slice("--group-b-issues=".length),
-        "a comma-separated positive integer list"
-      );
-      continue;
-    }
-    if (token === "--attach") {
-      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
-      continue;
-    }
-    if (token.startsWith("--attach=")) {
-      attachmentPaths.push(
-        requireOptionPath("--attach", token.slice("--attach=".length))
-      );
-      continue;
-    }
+    const token = tokens.shift();
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown taishi option: ${token}`);
     }
-    if (token === "sweep") {
-      if (sweepToken) {
-        throw new CliUsageError("unexpected taishi argument: sweep");
-      }
-      sweepToken = true;
+    const positional = options.takePositional(token);
+    if (positional !== void 0) {
+      pushValue(positional.id, "");
       continue;
     }
     throw new CliUsageError(`unexpected taishi argument: ${token}`);
   }
-  const hasSweepFace = sweepToken || attachmentPaths.length > 0;
-  const hasCohortFlags = groupALabel !== void 0 || groupAIssuesRaw !== void 0 || groupBLabel !== void 0 || groupBIssuesRaw !== void 0;
-  if (query === "cohort") {
-    if (groupALabel === void 0 || groupAIssuesRaw === void 0 || groupBLabel === void 0 || groupBIssuesRaw === void 0) {
-      throw new CliUsageError(
-        "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>"
-      );
-    }
-    if (ticketRaw !== void 0 || projectRoots.length > 0) {
-      throw new CliUsageError(
-        "taishi --cohort does not accept --ticket or --project-root"
-      );
-    }
-    if (hasSweepFace) {
-      throw new CliUsageError(
-        "taishi --cohort does not accept sweep --attach"
-      );
-    }
+  const counts = /* @__PURE__ */ new Map();
+  for (const [id, values] of valueLists) {
+    counts.set(id, values.length);
+  }
+  options.assertRequired();
+  const mode = resolveTaishiMode(new Set(counts.keys()));
+  const verdict = evaluateTaishiModeOptionContract(mode, counts);
+  if (!verdict.ok) {
+    throw new CliUsageError(verdict.message);
+  }
+  if (mode === "cohort") {
+    const groupALabel = valueLists.get("group-a-label")[0];
+    const groupAIssuesRaw = valueLists.get("group-a-issues")[0];
+    const groupBLabel = valueLists.get("group-b-label")[0];
+    const groupBIssuesRaw = valueLists.get("group-b-issues")[0];
     return {
       query: "cohort",
       groups: [
@@ -17047,53 +17843,20 @@ function parseTaishiArgv(args) {
       ]
     };
   }
-  if (query === "model-groups") {
-    if (projectRoots.length === 0) {
-      throw new CliUsageError(
-        "usage: ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]"
-      );
-    }
-    if (ticketRaw !== void 0) {
-      throw new CliUsageError("taishi --model-groups does not accept --ticket");
-    }
-    if (hasCohortFlags) {
-      throw new CliUsageError("taishi --model-groups does not accept cohort group flags");
-    }
-    if (hasSweepFace) {
-      throw new CliUsageError(
-        "taishi --model-groups does not accept sweep --attach"
-      );
-    }
+  if (mode === "model-groups") {
     return {
       query: "model-groups",
-      projectRoots
+      projectRoots: valueLists.get("project-root") ?? []
     };
   }
-  if (hasCohortFlags) {
-    throw new CliUsageError("taishi issue query does not accept cohort group flags");
-  }
-  if (hasSweepFace) {
-    if (ticketRaw !== void 0 || projectRoots.length > 0) {
-      throw new CliUsageError(
-        "taishi sweep --attach cannot combine with --ticket or --project-root"
-      );
-    }
+  if (mode === "sweep") {
     return {
       query: "sweep",
-      attachmentPaths
+      attachmentPaths: valueLists.get("attach") ?? []
     };
   }
-  if (projectRoots.length > 1) {
-    throw new CliUsageError(
-      "taishi issue query accepts at most one --project-root (use --model-groups for many)"
-    );
-  }
-  const projectRoot = projectRoots[0];
-  if (ticketRaw === void 0 && projectRoot === void 0) {
-    throw new CliUsageError(
-      "usage: ak-role taishi ((--ticket <N> | --project-root <P>) | [sweep] --attach <sweep.json> | --cohort ... | --model-groups ...)"
-    );
-  }
+  const ticketRaw = valueLists.get("ticket")?.[0];
+  const projectRoot = valueLists.get("project-root")?.[0];
   return {
     query: "issue",
     ...ticketRaw === void 0 ? {} : { ticket: parseTaishiTicketNumber(ticketRaw) },
@@ -17115,7 +17878,9 @@ var init_invocation = __esm({
     init_merger_contracts();
     init_sha256();
     init_uuidv7();
+    init_engine_material();
     init_cli_errors();
+    init_option_definitions();
     MergerEnvelopeDerivationError = class extends Error {
       code = "merger-envelope-derivation";
       /** Typed cause for #107 classifyPostAdmissionFailure (isTypedActivationError). */
@@ -17256,14 +18021,14 @@ var init_upstream_error_testimony = __esm({
 import { execFile as execFile3, spawn } from "node:child_process";
 import { constants, writeFileSync } from "node:fs";
 import { access, readFile as readFile5, realpath as realpath3, unlink } from "node:fs/promises";
-import { delimiter as delimiter2, isAbsolute as isAbsolute4, join as join6, resolve as resolve5 } from "node:path";
+import { delimiter as delimiter2, isAbsolute as isAbsolute4, join as join7, resolve as resolve5 } from "node:path";
 import { platform } from "node:process";
 import { promisify as promisify3 } from "node:util";
 function isReviewerPreflightViolation(value) {
   return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
 }
 function reviewerDispatchRejectionPath(runDirectory) {
-  return join6(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
+  return join7(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
 }
 async function clearReviewerDispatchRejection(runDirectory) {
   try {
@@ -17305,7 +18070,7 @@ async function readReviewerDispatchRejection(runDirectory) {
   };
 }
 function resolveInternalRoleEntrypoint(packageRoot2) {
-  return join6(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
+  return join7(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
 }
 function buildExplicitInternalActivationArgs(selectedRoleEntry, extraArgs = []) {
   return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
@@ -17463,7 +18228,7 @@ var init_explicit_internal = __esm({
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
 import { readFile as readFile6, realpath as realpath4 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
   const header = Buffer.from(`blob ${body.byteLength}\0`, "utf8");
@@ -17480,10 +18245,10 @@ function packagedMethodSkillRelativeDirectory(name) {
   return `${METHOD_SKILL_RELATIVE_ROOT}/${name}`;
 }
 function resolvePackagedMethodSkillRoot(packageRoot2, name) {
-  return join7(packageRoot2, packagedMethodSkillRelativeDirectory(name));
+  return join8(packageRoot2, packagedMethodSkillRelativeDirectory(name));
 }
 function resolvePackagedMethodSkillPath(packageRoot2, name) {
-  return join7(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
+  return join8(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
 }
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -17577,8 +18342,8 @@ function parseProvenance(raw, expectedName) {
 }
 async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const rootDirectory = resolvePackagedMethodSkillRoot(packageRoot2, name);
-  const skillPathConfigured = join7(rootDirectory, "SKILL.md");
-  const provenancePath = join7(rootDirectory, "provenance.json");
+  const skillPathConfigured = join8(rootDirectory, "SKILL.md");
+  const provenancePath = join8(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
     provenanceRaw = await readFile6(provenancePath, "utf8");
@@ -17595,7 +18360,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   }
   const provenance = parseProvenance(provenanceJson, name);
   for (const [rel, expected] of Object.entries(provenance.files)) {
-    const absolute = join7(rootDirectory, rel);
+    const absolute = join8(rootDirectory, rel);
     let bytes;
     try {
       bytes = await readFile6(absolute);
@@ -17730,9 +18495,9 @@ var init_public_run_credentials = __esm({
 
 // src/typed-provider-http.ts
 import { readFile as readFile7, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 function typedProviderHttpPath(runDirectory) {
-  return join8(runDirectory, TYPED_HTTP_FILE);
+  return join9(runDirectory, TYPED_HTTP_FILE);
 }
 async function clearTypedProviderHttpObservation(runDirectory) {
   try {
@@ -17777,7 +18542,7 @@ var init_typed_provider_http = __esm({
 
 // src/public-cli/run-lifecycle.ts
 import { lstat as lstat2, open, readdir as readdir2, readFile as readFile8, unlink as unlink3, writeFile as writeFile4 } from "node:fs/promises";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
 }
@@ -17798,7 +18563,7 @@ function renderResumeCommand(runId) {
 async function writeRoleRunState(runDirectory, record4) {
   const payload = { ...record4, runDirectory };
   await writeFile4(
-    join9(runDirectory, RUN_STATE_FILE),
+    join10(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
 `,
     "utf8"
@@ -17807,7 +18572,7 @@ async function writeRoleRunState(runDirectory, record4) {
 async function readRoleRunState(runDirectory) {
   let raw;
   try {
-    raw = JSON.parse(await readFile8(join9(runDirectory, RUN_STATE_FILE), "utf8"));
+    raw = JSON.parse(await readFile8(join10(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
@@ -17829,7 +18594,7 @@ async function readRoleRunState(runDirectory) {
   if (typeof record4.sessionDirectory !== "string") return void 0;
   if (typeof record4.admittedRequestPath !== "string") return void 0;
   const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
-  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join9(record4.sessionDirectory, "session.jsonl");
+  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join10(record4.sessionDirectory, "session.jsonl");
   let resumable;
   if (record4.resumable !== void 0 && record4.resumable !== null) {
     if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
@@ -17867,9 +18632,13 @@ async function markRunAdmitted(admitted) {
     ...admitted.role === "coder" || admitted.role === "fixer" ? { phase: admitted.phase } : {}
   });
 }
-async function markRunRunning(runDirectory, effectiveModel) {
-  if (effectiveModel !== void 0) {
-    await recordEffectiveInvocationModel(runDirectory, effectiveModel);
+async function markRunRunning(runDirectory, effectiveModel, effectiveEngine) {
+  if (effectiveModel !== void 0 || effectiveEngine !== void 0) {
+    await recordEffectiveInvocationModel(
+      runDirectory,
+      effectiveModel,
+      effectiveEngine
+    );
   }
   const current = await readRoleRunState(runDirectory);
   if (current === void 0) {
@@ -17925,7 +18694,7 @@ async function isSessionPrincipalAvailable(sessionFile) {
   }
 }
 async function acquireRunWriterLease(runDirectory) {
-  const lockPath = join9(runDirectory, WRITER_LOCK_FILE);
+  const lockPath = join10(runDirectory, WRITER_LOCK_FILE);
   try {
     const handle = await open(lockPath, "wx");
     try {
@@ -17956,7 +18725,7 @@ async function acquireRunWriterLease(runDirectory) {
 async function findRunDirectoryById(home, runId) {
   if (runId.trim() === "") return void 0;
   const ledgerHome = resolveActivationLedgerHome(() => home);
-  const booksRoot = join9(ledgerHome, "books");
+  const booksRoot = join10(ledgerHome, "books");
   let bookKeys;
   try {
     bookKeys = await readdir2(booksRoot);
@@ -17964,7 +18733,7 @@ async function findRunDirectoryById(home, runId) {
     return void 0;
   }
   for (const bookKey of bookKeys) {
-    const runsDir = join9(activationBookDirectory(ledgerHome, bookKey), "runs");
+    const runsDir = join10(activationBookDirectory(ledgerHome, bookKey), "runs");
     let entries;
     try {
       entries = await readdir2(runsDir);
@@ -17973,7 +18742,7 @@ async function findRunDirectoryById(home, runId) {
     }
     for (const entry of entries) {
       if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join9(runsDir, entry);
+        return join10(runsDir, entry);
       }
     }
   }
@@ -18101,7 +18870,7 @@ async function loadResumableRunRecord(home, runId) {
   if (correlationId === void 0 || ticketNumber === void 0) {
     try {
       const invocationRaw = JSON.parse(
-        await readFile8(join9(run.runDirectory, "invocation.json"), "utf8")
+        await readFile8(join10(run.runDirectory, "invocation.json"), "utf8")
       );
       if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
         const fromInvocation = parsePersistedTicketIdentity(
@@ -18448,11 +19217,14 @@ var init_tool_execution_observation = __esm({
 });
 
 // src/package-owned-tool-idle.ts
+import { AsyncLocalStorage } from "node:async_hooks";
+var packageOwnedToolIdleScope;
 var init_package_owned_tool_idle = __esm({
   "src/package-owned-tool-idle.ts"() {
     "use strict";
     init_stream_idle_guard();
     init_tool_execution_observation();
+    packageOwnedToolIdleScope = new AsyncLocalStorage();
   }
 });
 
@@ -18524,6 +19296,7 @@ var init_compliance_transport = __esm({
     init_build();
     init_evidence_child_executor();
     init_auditor_dossier_tool();
+    init_package_owned_tool_idle();
     nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
     decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
     complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
@@ -18641,6 +19414,16 @@ var init_collector_ledger = __esm({
     COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
     COLLECTOR_REQUEST_TOOL = "ak_collector_request";
     COLLECTOR_WAIT_TOOL = "ak_collector_wait";
+  }
+});
+
+// src/engine-detour.ts
+var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
+var init_engine_detour = __esm({
+  "src/engine-detour.ts"() {
+    "use strict";
+    ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
+    AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
   }
 });
 
@@ -19017,7 +19800,7 @@ var init_terminal = __esm({
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
 import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
-import { dirname as dirname6, join as join10 } from "node:path";
+import { dirname as dirname6, join as join11 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
   if (line2.startsWith("event:")) return true;
@@ -19290,7 +20073,7 @@ async function readSessionProviderStop(sessionFile) {
   }
 }
 async function readBoundEvidenceChildKnownFailure(sessionFile) {
-  const childDirectory = join10(dirname6(sessionFile), "evidence-children");
+  const childDirectory = join11(dirname6(sessionFile), "evidence-children");
   let names;
   try {
     names = await readdir3(childDirectory);
@@ -19301,7 +20084,7 @@ async function readBoundEvidenceChildKnownFailure(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join10(childDirectory, file));
+      entries = await readBoundSessionEntries(join11(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered evidence-child session");
     }
@@ -19337,7 +20120,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
       break;
     }
   }
-  const childDirectory = join10(dirname6(sessionFile), "auditor-roles");
+  const childDirectory = join11(dirname6(sessionFile), "auditor-roles");
   let names;
   try {
     names = await readdir3(childDirectory);
@@ -19348,7 +20131,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join10(childDirectory, file));
+      entries = await readBoundSessionEntries(join11(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
@@ -19797,33 +20580,45 @@ function boundErroredToolCandidate(entries, resultIndex, message, toolName) {
   const diagnostic = toolResultText(message);
   return bound === void 0 || diagnostic === "" ? void 0 : { candidate: bound.candidate, diagnostic, callIndex: bound.callIndex };
 }
-function extractCollectorInfrastructureFailure(entries) {
+function extractInfrastructureToolFailure(entries, spec) {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.isError !== true) continue;
-    if (typeof message.toolName !== "string" || !COLLECTOR_INFRASTRUCTURE_TOOLS.has(message.toolName)) {
+    if (typeof message.toolName !== "string" || !spec.matchTool(message.toolName)) {
       continue;
     }
     const diagnostic = toolResultText(message);
     if (diagnostic.length === 0) continue;
     return {
-      cause: "activation",
+      cause: spec.cause,
       diagnostic,
-      identity: { name: "CollectorInfrastructureError" }
+      identity: { name: spec.identityName }
     };
   }
   return void 0;
 }
-async function readCollectorInfrastructureFailure(sessionFile) {
+async function readInfrastructureToolFailure(sessionFile, spec) {
   try {
     const entries = await readBoundSessionEntries(sessionFile);
-    return extractCollectorInfrastructureFailure(entries);
+    return extractInfrastructureToolFailure(entries, spec);
   } catch {
     return void 0;
   }
+}
+async function readCollectorInfrastructureFailure(sessionFile) {
+  return readInfrastructureToolFailure(
+    sessionFile,
+    COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC
+  );
+}
+async function readEngineDetourInfrastructureFailure(sessionFile) {
+  return readInfrastructureToolFailure(
+    sessionFile,
+    ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC
+  );
 }
 function assertCollectorReceiptMatchesAdmitted(receipt, admitted) {
   if (receipt.repository !== admitted.repository.canonical) {
@@ -20054,7 +20849,7 @@ function auditArtifactPublicationError(message, code) {
   return error;
 }
 async function ensureAuditEvidenceDirectory(runDirectory) {
-  const artifactsDir = join10(runDirectory, "artifacts");
+  const artifactsDir = join11(runDirectory, "artifacts");
   const runStat = await lstat3(runDirectory);
   if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
     throw auditArtifactPublicationError(
@@ -20091,7 +20886,7 @@ async function ensureAuditEvidenceDirectory(runDirectory) {
 }
 async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
   const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
-  const evidencePath = join10(artifactsDir, "audit-incomplete.json");
+  const evidencePath = join11(artifactsDir, "audit-incomplete.json");
   try {
     const existing = await lstat3(evidencePath);
     throw auditArtifactPublicationError(
@@ -20113,7 +20908,7 @@ async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
 }
 function auditPublicationFailureTerminal(admitted, entries, outcome, error) {
   const attempt = publicationAttemptFromError(
-    join10(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
+    join11(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
     error
   );
   const diagnostic = `audit-incomplete evidence publication failed: ${attempt.diagnostic}`;
@@ -20407,8 +21202,8 @@ async function extractNavigatorFactFromAdmittedSession(admitted) {
 }
 async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join10(artifactsDir, "report.json");
-  const evidencePath = join10(artifactsDir, "evidence.json");
+  const reportPath = join11(artifactsDir, "report.json");
+  const evidencePath = join11(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -20451,8 +21246,8 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
 }
 async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join10(artifactsDir, "report.json");
-  const evidencePath = join10(artifactsDir, "evidence.json");
+  const reportPath = join11(artifactsDir, "report.json");
+  const evidencePath = join11(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -20626,8 +21421,8 @@ function extractFixerMethodInvocations(entries, options) {
 }
 async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join10(artifactsDir, "report.json");
-  const evidencePath = join10(artifactsDir, "evidence.json");
+  const reportPath = join11(artifactsDir, "report.json");
+  const evidencePath = join11(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -20740,8 +21535,8 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
 }
 async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join10(artifactsDir, "report.json");
-  const evidencePath = join10(artifactsDir, "evidence.json");
+  const reportPath = join11(artifactsDir, "report.json");
+  const evidencePath = join11(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -20862,8 +21657,8 @@ async function trySettleCollectorTerminalResult(admitted) {
 }
 async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join10(artifactsDir, "report.json");
-  const evidencePath = join10(artifactsDir, "evidence.json");
+  const reportPath = join11(artifactsDir, "report.json");
+  const evidencePath = join11(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -21031,8 +21826,8 @@ function extractReviewerMethodInvocations(entries, options) {
 }
 async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join10(artifactsDir, "report.json");
-  const evidencePath = join10(artifactsDir, "evidence.json");
+  const reportPath = join11(artifactsDir, "report.json");
+  const evidencePath = join11(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -21201,8 +21996,8 @@ function extractMergerMethodInvocations(entries, options) {
 }
 async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join10(artifactsDir, "report.json");
-  const evidencePath = join10(artifactsDir, "evidence.json");
+  const reportPath = join11(artifactsDir, "report.json");
+  const evidencePath = join11(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -21373,7 +22168,7 @@ function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   return dirs;
 }
 async function resolveFailureArtifactsBase(runDirectory) {
-  const artifactsDir = join10(runDirectory, "artifacts");
+  const artifactsDir = join11(runDirectory, "artifacts");
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -21389,7 +22184,7 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   const candidates = [
     ...preferredCandidates,
     // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join10(dir, `${stem}.${randomUUID()}.json`))
+    ...uniqueFallbackDirs.map((dir) => join11(dir, `${stem}.${randomUUID()}.json`))
   ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
@@ -21424,26 +22219,26 @@ async function publishFailureArtifacts(admitted, failure) {
     admitted.runDirectory
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
-  const underArtifacts = baseDir === join10(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === join11(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir
   );
   const errorCandidates = underArtifacts ? [
-    join10(baseDir, "error.json"),
-    join10(baseDir, "error.settlement.json"),
-    join10(admitted.runDirectory, "error.settlement.json")
+    join11(baseDir, "error.json"),
+    join11(baseDir, "error.settlement.json"),
+    join11(admitted.runDirectory, "error.settlement.json")
   ] : [
-    join10(baseDir, "error.settlement.json"),
-    join10(baseDir, "error.json")
+    join11(baseDir, "error.settlement.json"),
+    join11(baseDir, "error.json")
   ];
   const evidenceCandidates = underArtifacts ? [
-    join10(baseDir, "evidence.json"),
-    join10(baseDir, "evidence.settlement.json"),
-    join10(admitted.runDirectory, "evidence.settlement.json")
+    join11(baseDir, "evidence.json"),
+    join11(baseDir, "evidence.settlement.json"),
+    join11(admitted.runDirectory, "evidence.settlement.json")
   ] : [
-    join10(baseDir, "evidence.settlement.json"),
-    join10(baseDir, "evidence.json")
+    join11(baseDir, "evidence.settlement.json"),
+    join11(baseDir, "evidence.json")
   ];
   const errorPayloadBase = {
     kind: "error",
@@ -21620,7 +22415,7 @@ function presentFailureTerminal(terminal, io) {
     }));
   }
 }
-var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS;
+var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS, COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC, ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC;
 var init_settlement = __esm({
   "src/public-cli/settlement.ts"() {
     "use strict";
@@ -21633,6 +22428,7 @@ var init_settlement = __esm({
     init_run_lifecycle();
     init_compliance_transport();
     init_collector_ledger();
+    init_engine_detour();
     init_judge_output();
     init_collector_output();
     init_worker_output();
@@ -21653,12 +22449,22 @@ var init_settlement = __esm({
       COLLECTOR_REQUEST_TOOL,
       COLLECTOR_WAIT_TOOL
     ]);
+    COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC = {
+      matchTool: (toolName) => COLLECTOR_INFRASTRUCTURE_TOOLS.has(toolName),
+      cause: "activation",
+      identityName: "CollectorInfrastructureError"
+    };
+    ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC = {
+      matchTool: (toolName) => toolName === ENGINE_DETOUR_TOOL_NAME,
+      cause: "output",
+      identityName: "EngineDetourInfrastructureError"
+    };
   }
 });
 
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 function buildCoderActivationExtraArgs(admitted, options) {
   const prompt = buildCoderTransportPrompt(admitted);
   const skillArgs = admitted.phase === "apply" ? [
@@ -21816,7 +22622,7 @@ async function dispatchAdmittedCoder(input) {
     }
     try {
       await writeFile6(
-        join11(admitted.runDirectory, "stderr.log"),
+        join12(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -22038,7 +22844,7 @@ var init_coder_run = __esm({
 
 // src/public-cli/collector-run.ts
 import { writeFile as writeFile7 } from "node:fs/promises";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 function buildCollectorActivationExtraArgs(admitted, options = {}) {
   const prompt = buildCollectorTransportPrompt(admitted);
   return [
@@ -22139,7 +22945,7 @@ async function dispatchAdmittedCollector(input) {
     }
     try {
       await writeFile7(
-        join12(admitted.runDirectory, "stderr.log"),
+        join13(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -22265,7 +23071,7 @@ var init_collector_run = __esm({
 
 // src/public-cli/doctor-run.ts
 import { writeFile as writeFile8 } from "node:fs/promises";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 function buildDoctorActivationExtraArgs(admitted, options = {}) {
   const prompt = buildDoctorTransportPrompt(admitted);
   return [
@@ -22359,7 +23165,7 @@ async function dispatchAdmittedDoctor(input) {
     }
     try {
       await writeFile8(
-        join13(admitted.runDirectory, "stderr.log"),
+        join14(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -22488,7 +23294,7 @@ var init_doctor_run = __esm({
 
 // src/public-cli/fixer-run.ts
 import { writeFile as writeFile9 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 function buildFixerActivationExtraArgs(admitted, options) {
   const prompt = buildFixerTransportPrompt(admitted);
   const diagnosisSkillPath = resolvePackagedMethodSkillPath(
@@ -22655,7 +23461,7 @@ async function dispatchAdmittedFixer(input) {
     }
     try {
       await writeFile9(
-        join14(admitted.runDirectory, "stderr.log"),
+        join15(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -22886,9 +23692,12 @@ var init_fixer_run = __esm({
 
 // src/public-cli/judge-run.ts
 import { writeFile as writeFile10 } from "node:fs/promises";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 function buildJudgeActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildJudgeTransportPrompt(admitted);
+  const prompt = buildJudgeTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options)
+  );
   return [
     "--no-skills",
     "--no-prompt-templates",
@@ -22973,7 +23782,7 @@ async function presentControlledFailure6(admitted, failureInput, io) {
   };
 }
 async function dispatchAdmittedJudge(input) {
-  const { admitted, env, io, extraArgs, lease } = input;
+  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -22986,7 +23795,11 @@ async function dispatchAdmittedJudge(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(
+      admitted.runDirectory,
+      env.model,
+      effectiveEngine
+    );
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22996,6 +23809,12 @@ async function dispatchAdmittedJudge(input) {
       // and role-runtime can record typed provider HTTP observations.
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
+    delete childEnv[AK_ROLE_ENGINE_ENV];
+    if (env.engine !== void 0 && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
+    }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -23026,7 +23845,7 @@ async function dispatchAdmittedJudge(input) {
     }
     try {
       await writeFile10(
-        join15(admitted.runDirectory, "stderr.log"),
+        join16(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -23070,13 +23889,20 @@ async function dispatchAdmittedJudge(input) {
         terminal: auditIncomplete
       };
     }
+    const infrastructureFailure = await readEngineDetourInfrastructureFailure(
+      admitted.sessionFile
+    );
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
       env.model,
       env.credentials
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result2.knownFailure,
+      runner: result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
+        cause: infrastructureFailure.cause,
+        diagnostic: infrastructureFailure.diagnostic,
+        ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
+      }),
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
@@ -23127,7 +23953,9 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     throw error;
   }
   const extraArgs = buildJudgeActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
   return await dispatchAdmittedJudge({
@@ -23138,7 +23966,9 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     },
     io,
     extraArgs,
-    lease
+    lease,
+    // #358: only initial Judge dispatch records mechanical engine provenance.
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 async function runPublicResume(argv, env, io) {
@@ -23196,6 +24026,8 @@ async function runPublicResume(argv, env, io) {
 var init_judge_run = __esm({
   "src/public-cli/judge-run.ts"() {
     "use strict";
+    init_engine_detour();
+    init_engine_material();
     init_explicit_internal();
     init_cli_errors();
     init_invocation();
@@ -23208,7 +24040,7 @@ var init_judge_run = __esm({
 
 // src/public-cli/merger-run.ts
 import { mkdir as mkdir4, writeFile as writeFile11 } from "node:fs/promises";
-import { join as join16, resolve as resolve7 } from "node:path";
+import { join as join17, resolve as resolve7 } from "node:path";
 function buildMergerActivationExtraArgs(admitted, options) {
   const prompt = buildMergerTransportPrompt(admitted);
   const skillPath = resolvePackagedMethodSkillPath(
@@ -23364,7 +24196,7 @@ async function dispatchAdmittedMerger(input) {
     }
     try {
       await writeFile11(
-        join16(admitted.runDirectory, "stderr.log"),
+        join17(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -23445,8 +24277,8 @@ async function admitMergerShellForActivationFailure(options) {
     expectedConflictPaths: [],
     resolutionScope: []
   };
-  const admittedRequestPath = join16(runDirectory, "admitted-request.json");
-  const mergerInputPath = join16(runDirectory, "merger-input.json");
+  const admittedRequestPath = join17(runDirectory, "admitted-request.json");
+  const mergerInputPath = join17(runDirectory, "merger-input.json");
   await writeFile11(
     admittedRequestPath,
     `${JSON.stringify(
@@ -23669,7 +24501,7 @@ var init_merger_run = __esm({
 
 // src/public-cli/reviewer-run.ts
 import { writeFile as writeFile12 } from "node:fs/promises";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 function buildReviewerTicketNumberArgs(ticketNumber) {
   return ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(ticketNumber)];
 }
@@ -23834,7 +24666,7 @@ async function dispatchAdmittedReviewer(input) {
     }
     try {
       await writeFile12(
-        join17(admitted.runDirectory, "stderr.log"),
+        join18(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -24066,10 +24898,10 @@ var init_reviewer_run = __esm({
 // src/atomic-write.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { rename, rm, writeFile as writeFile13 } from "node:fs/promises";
-import { dirname as dirname7, join as join18 } from "node:path";
+import { dirname as dirname7, join as join19 } from "node:path";
 async function writeFileAtomically(destination, contents) {
   const parent = dirname7(destination);
-  const temporary = join18(parent, `.atomic-write-${randomUUID2()}.tmp`);
+  const temporary = join19(parent, `.atomic-write-${randomUUID2()}.tmp`);
   try {
     await writeFile13(temporary, contents);
     await rename(temporary, destination);
@@ -24086,7 +24918,7 @@ var init_atomic_write = __esm({
 
 // src/taishi-index.ts
 import { open as open3, readFile as readFile10, unlink as unlink4 } from "node:fs/promises";
-import { dirname as dirname8, join as join19 } from "node:path";
+import { dirname as dirname8, join as join20 } from "node:path";
 function sleep(ms) {
   return new Promise((resolve9) => {
     setTimeout(resolve9, ms);
@@ -24095,7 +24927,7 @@ function sleep(ms) {
 async function withTaishiLibraryIndexLock(ledgerHome, fn) {
   const indexPath = taishiLibraryIndexPath(ledgerHome);
   ensureRealDirectoryTree(ledgerHome, dirname8(indexPath));
-  const lockPath = join19(dirname8(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  const lockPath = join20(dirname8(indexPath), LIBRARY_INDEX_LOCK_NAME);
   assertLedgerFileInsideHome(lockPath, ledgerHome);
   const startedAt = Date.now();
   while (true) {
@@ -24122,7 +24954,7 @@ async function withTaishiLibraryIndexLock(ledgerHome, fn) {
   }
 }
 function taishiLibraryIndexPath(ledgerHome) {
-  return join19(ledgerHome, "taishi", "library-index.json");
+  return join20(ledgerHome, "taishi", "library-index.json");
 }
 function rowFromIssueMetricsPage(page) {
   return {
@@ -24512,7 +25344,7 @@ var init_ledger_session_read = __esm({
 
 // src/run-terminal-artifacts.ts
 import { readdir as readdir4, readFile as readFile12 } from "node:fs/promises";
-import { basename as basename4, dirname as dirname9, join as join20 } from "node:path";
+import { basename as basename4, dirname as dirname9, join as join21 } from "node:path";
 function isMissingPathError3(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -24587,7 +25419,7 @@ async function listUniqueErrorFallbackPaths(directories) {
     }
     for (const name of names.sort((a, b) => a.localeCompare(b))) {
       if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
-      found.push(join20(dir, name));
+      found.push(join21(dir, name));
     }
   }
   return found;
@@ -24603,14 +25435,14 @@ function presentUniqueFallbackBoundToRun(body, expectedRunId) {
   return typeof body.runId === "string" && body.runId === expectedRunId;
 }
 async function readRunTerminalArtifact(runDirectory) {
-  const artifactsDir = join20(runDirectory, "artifacts");
+  const artifactsDir = join21(runDirectory, "artifacts");
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    const path = join20(artifactsDir, file);
+    const path = join21(artifactsDir, file);
     const read3 = await readTerminalArtifactAtPath(path, file);
     if (read3 !== void 0) return read3;
   }
   for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    const path = join20(runDirectory, relative3);
+    const path = join21(runDirectory, relative3);
     const read3 = await readTerminalArtifactAtPath(path, "error.json");
     if (read3 !== void 0) return read3;
   }
@@ -24648,7 +25480,7 @@ var init_run_terminal_artifacts = __esm({
 
 // src/taishi-ledger.ts
 import { readdir as readdir5, readFile as readFile13 } from "node:fs/promises";
-import { join as join21 } from "node:path";
+import { join as join22 } from "node:path";
 function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -24661,7 +25493,7 @@ function isRecord8(value) {
 async function readExistingRunLifecycleState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile13(join21(runDirectory, "run-state.json"), "utf8")
+      await readFile13(join22(runDirectory, "run-state.json"), "utf8")
     );
     if (!isRecord8(raw) || typeof raw.state !== "string") return void 0;
     return raw.state;
@@ -24677,7 +25509,7 @@ function parseRunDirectoryName(name) {
 async function readInvocationScopeFields(runDirectory) {
   let raw;
   try {
-    raw = await readFile13(join21(runDirectory, "invocation.json"), "utf8");
+    raw = await readFile13(join22(runDirectory, "invocation.json"), "utf8");
   } catch (error) {
     if (isMissingPathError4(error)) return void 0;
     throw error;
@@ -24705,7 +25537,7 @@ function decideIssueScope(input) {
 }
 async function resolveSessionFile(runDirectory) {
   try {
-    const raw = await readFile13(join21(runDirectory, "invocation.json"), "utf8");
+    const raw = await readFile13(join22(runDirectory, "invocation.json"), "utf8");
     const parsed = JSON.parse(raw);
     if (isRecord8(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
       return parsed.sessionFile;
@@ -24713,7 +25545,7 @@ async function resolveSessionFile(runDirectory) {
   } catch (error) {
     if (!isMissingPathError4(error)) throw error;
   }
-  return join21(runDirectory, "session", "session.jsonl");
+  return join22(runDirectory, "session", "session.jsonl");
 }
 async function classifyScopedRun(input) {
   const missingSources = [];
@@ -24838,7 +25670,7 @@ async function scanTaishiIssueRuns(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const scopeIdentity = physicalPathIdentity(input.projectRoot);
   const scopeTicketNumber = input.ticketNumber;
-  const booksRoot = join21(ledgerHome, "books");
+  const booksRoot = join22(ledgerHome, "books");
   let bookNames;
   try {
     const entries = await readdir5(booksRoot, { withFileTypes: true });
@@ -24853,7 +25685,7 @@ async function scanTaishiIssueRuns(input) {
   const unreadable = [];
   const scopeConflicts = [];
   for (const book of bookNames) {
-    const runsDir = join21(booksRoot, book, "runs");
+    const runsDir = join22(booksRoot, book, "runs");
     let runNames;
     try {
       const entries = await readdir5(runsDir, { withFileTypes: true });
@@ -24865,7 +25697,7 @@ async function scanTaishiIssueRuns(input) {
     for (const runName of runNames) {
       const parsed = parseRunDirectoryName(runName);
       if (parsed === void 0) continue;
-      const runDirectory = join21(runsDir, runName);
+      const runDirectory = join22(runsDir, runName);
       let scopeFields;
       try {
         scopeFields = await readInvocationScopeFields(runDirectory);
@@ -25644,13 +26476,13 @@ var init_taishi_metric_family = __esm({
 
 // src/taishi-page.ts
 import { createHash as createHash4 } from "node:crypto";
-import { dirname as dirname10, join as join22 } from "node:path";
+import { dirname as dirname10, join as join23 } from "node:path";
 function taishiIssuePageKey(projectRoot) {
   const identity = physicalPathIdentity(projectRoot);
   return createHash4("sha256").update(identity).digest("hex").slice(0, 32);
 }
 function taishiIssuePagePath(ledgerHome, projectRoot) {
-  return join22(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(projectRoot)}.json`);
+  return join23(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(projectRoot)}.json`);
 }
 function sortLegs(legs) {
   return [...legs].sort((a, b) => {
@@ -26125,47 +26957,44 @@ var init_taishi_run = __esm({
 var cli_exports = {};
 __export(cli_exports, {
   CliUsageError: () => CliUsageError,
+  PUBLIC_GLOBAL_OPTIONS: () => PUBLIC_GLOBAL_OPTIONS,
   PUBLIC_ROLE_ARGV: () => PUBLIC_ROLE_ARGV,
   buildExplicitInternalActivationArgs: () => buildExplicitInternalActivationArgs,
   helpDocument: () => helpDocument,
+  helpDocumentForCommand: () => helpDocumentForCommand,
   resolveInternalRoleEntrypoint: () => resolveInternalRoleEntrypoint,
   runAkRole: () => runAkRole
 });
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { join as join23 } from "node:path";
-function takePublicGlobalFlag(argv, index) {
-  const token = argv[index];
-  if (token === void 0) return void 0;
-  if (token === "--help" || token === "-h") {
-    return { flag: "help", consume: 1 };
+import { join as join24 } from "node:path";
+function takePublicGlobalFlag(argv, index, options) {
+  const tokens = argv.slice(index);
+  const taken = options.takeDashed(tokens);
+  if (taken === void 0) return void 0;
+  const consumed = argv.length - index - tokens.length;
+  if (taken.def.id === "help") {
+    return { flag: "help", consume: consumed };
   }
-  if (token === "--model") {
-    const value = argv[index + 1];
-    if (value === void 0) {
-      return { flag: "model", consume: 1, value: void 0 };
-    }
-    return { flag: "model", consume: 2, value };
-  }
-  if (token.startsWith("--model=")) {
+  if (taken.def.id === "model") {
     return {
       flag: "model",
-      consume: 1,
-      value: token.slice("--model=".length)
+      consume: consumed,
+      value: taken.value
     };
   }
-  if (token === "--thinking") {
-    const raw = argv[index + 1];
-    if (raw === void 0) {
-      return { flag: "thinking", consume: 1, raw: void 0 };
-    }
-    return { flag: "thinking", consume: 2, raw };
-  }
-  if (token.startsWith("--thinking=")) {
+  if (taken.def.id === "thinking") {
     return {
       flag: "thinking",
-      consume: 1,
-      raw: token.slice("--thinking=".length)
+      consume: consumed,
+      raw: taken.value
+    };
+  }
+  if (taken.def.id === "engine") {
+    return {
+      flag: "engine",
+      consume: consumed,
+      value: taken.value
     };
   }
   return void 0;
@@ -26184,7 +27013,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join23(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join24(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -26196,15 +27025,17 @@ function parseArgv(argv) {
   const args = [...argv];
   let model;
   let thinking;
+  let engine;
   let help = false;
   const positional = [];
+  const globalOptions = createTypedOptionConsumer(PUBLIC_GLOBAL_OPTIONS);
   while (args.length > 0) {
     if (args[0] === "--") {
       args.shift();
       positional.push(...args);
       break;
     }
-    const taken = takePublicGlobalFlag(args, 0);
+    const taken = takePublicGlobalFlag(args, 0, globalOptions);
     if (taken !== void 0) {
       if (taken.flag === "help") {
         help = true;
@@ -26219,12 +27050,23 @@ function parseArgv(argv) {
         args.splice(0, taken.consume);
         continue;
       }
-      if (taken.raw === void 0) {
-        throw new CliUsageError("--thinking requires a value");
+      if (taken.flag === "thinking") {
+        if (taken.raw === void 0) {
+          throw new CliUsageError("--thinking requires a value");
+        }
+        thinking = parseThinking(taken.raw);
+        args.splice(0, taken.consume);
+        continue;
       }
-      thinking = parseThinking(taken.raw);
-      args.splice(0, taken.consume);
-      continue;
+      if (taken.flag === "engine") {
+        if (taken.value === void 0) {
+          throw new CliUsageError("--engine requires a value");
+        }
+        engine = taken.value;
+        args.splice(0, taken.consume);
+        continue;
+      }
+      throw new CliUsageError(`unhandled global option: ${String(taken.flag)}`);
     }
     positional.push(args.shift());
   }
@@ -26234,22 +27076,69 @@ function parseArgv(argv) {
     args: rest,
     ...model === void 0 ? {} : { model },
     ...thinking === void 0 ? {} : { thinking },
+    ...engine === void 0 ? {} : { engine },
     help
   };
 }
 function invocationFromParsed(parsed) {
-  if (parsed.model === void 0 && parsed.thinking === void 0) return void 0;
+  if (parsed.model === void 0 && parsed.thinking === void 0 && parsed.engine === void 0) {
+    return void 0;
+  }
   return {
     ...parsed.model === void 0 ? {} : { model: parsed.model },
-    ...parsed.thinking === void 0 ? {} : { thinking: parsed.thinking }
+    ...parsed.thinking === void 0 ? {} : { thinking: parsed.thinking },
+    ...parsed.engine === void 0 ? {} : { engine: parsed.engine }
   };
+}
+function requireLegalEngineName(packageRoot2, name) {
+  try {
+    return assertLegalEngineName(packageRoot2, name);
+  } catch (error) {
+    throw new CliUsageError(
+      error instanceof Error ? error.message : String(error),
+      { cause: error }
+    );
+  }
+}
+function loadAndValidateConfig(home, packageRoot2) {
+  return loadPublicCliConfig(home).then((config) => {
+    try {
+      validatePublicCliConfigEngines(config, packageRoot2);
+    } catch (error) {
+      throw new CliUsageError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error }
+      );
+    }
+    return config;
+  });
 }
 function helpDocument() {
   return {
     executable: "ak-role",
     capabilities: listHelpCapabilities(),
-    internalEntrypoint: INTERNAL_ROLE_ENTRYPOINT_RELATIVE
+    internalEntrypoint: INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
+    /** #342 structured global options from the sole option table. */
+    globalOptions: projectOwnerOptions("global")
   };
+}
+function helpDocumentForCommand(command) {
+  if (command === "global") {
+    return {
+      command: "global",
+      kind: "global",
+      options: projectOwnerOptions("global")
+    };
+  }
+  if (command in PUBLIC_ROLE_ARGV) {
+    const owner = command;
+    return {
+      command: owner,
+      kind: owner === "taishi" ? "deterministic" : "role",
+      options: projectOwnerOptions(owner)
+    };
+  }
+  return void 0;
 }
 function renderHelp() {
   const doc = helpDocument();
@@ -26276,12 +27165,39 @@ function renderHelp() {
       lines.push(`  ${cap.name}`);
     }
   }
+  lines.push("", "Global options:");
+  lines.push(...renderOwnerOptionHelpLines("global"));
   lines.push(
     "",
-    "Global options: --model provider/model --thinking level",
+    "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model:thinking>",
+    "Persistent engine (judge only): ak-role config set-engine judge <name> | unset-engine judge",
     "Effective seats: ak-role roles"
   );
+  return `${lines.join("\n")}
+`;
+}
+function renderCommandHelp(command) {
+  const caps = listHelpCapabilities();
+  const match = caps.find((cap) => cap.name === command);
+  if (match === void 0) return void 0;
+  const lines = [];
+  if (match.kind === "support") {
+    lines.push(`command	${match.name}	kind	support`);
+  } else if (match.kind === "deterministic") {
+    lines.push(`command	${match.name}	kind	deterministic`);
+  } else {
+    lines.push(
+      `command	${match.name}	kind	role	phases	${match.phases.map((p) => p === null ? "none" : p).join(",")}	default	${match.defaultPhase ?? "none"}`
+    );
+  }
+  if (command in PUBLIC_ROLE_ARGV) {
+    lines.push(
+      ...renderOwnerOptionHelpLines(
+        command
+      )
+    );
+  }
   return `${lines.join("\n")}
 `;
 }
@@ -26296,7 +27212,7 @@ function renderRoles(seats) {
 `;
 }
 function renderConfig(config) {
-  const lines = ["seat	model"];
+  const lines = ["seat	model	engine"];
   const keys = Object.keys(config.seats);
   if (keys.length === 0) {
     lines.push("(empty)");
@@ -26304,15 +27220,16 @@ function renderConfig(config) {
     for (const seat of keys.sort()) {
       const selection = config.seats[seat];
       if (selection === void 0) continue;
-      lines.push(`${seat}	${formatModelSpec(selection)}`);
+      const engine = selection.engine === void 0 ? "-" : selection.engine;
+      lines.push(`${seat}	${formatModelSpec(selection)}	${engine}`);
     }
   }
   return `${lines.join("\n")}
 `;
 }
-async function runConfigCommand(args, home, io) {
+async function runConfigCommand(args, home, packageRoot2, io) {
   if (args.length === 0 || args[0] === "get" || args[0] === "list" || args[0] === "show") {
-    const config = await loadPublicCliConfig(home);
+    const config = await loadAndValidateConfig(home, packageRoot2);
     if (args[0] === "get" && args[1] !== void 0) {
       if (!isPublicConfigurableSeat(args[1])) {
         throw new CliUsageError(`unknown configurable seat: ${args[1]}`);
@@ -26322,7 +27239,8 @@ async function runConfigCommand(args, home, io) {
         io.stdout(`${args[1]}	(unconfigured)
 `);
       } else {
-        io.stdout(`${args[1]}	${formatModelSpec(selection)}
+        const engine = selection.engine === void 0 ? "-" : selection.engine;
+        io.stdout(`${args[1]}	${formatModelSpec(selection)}	${engine}
 `);
       }
       return 0;
@@ -26342,7 +27260,7 @@ async function runConfigCommand(args, home, io) {
         "config set requires seat/spec pairs: ak-role config set <seat> <spec> [<seat> <spec> ...]"
       );
     }
-    let config = await loadPublicCliConfig(home);
+    let config = await loadAndValidateConfig(home, packageRoot2);
     for (let i = 0; i < pairs.length; i += 2) {
       const seat = pairs[i];
       const spec = pairs[i + 1];
@@ -26350,6 +27268,64 @@ async function runConfigCommand(args, home, io) {
         throw new CliUsageError(`unknown configurable seat: ${seat}`);
       }
       config = setPersistentSeatConfig(config, seat, parsePersistentModelSpec(spec));
+    }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
+  if (args[0] === "set-engine") {
+    if (args.length !== 3) {
+      throw new CliUsageError(
+        "usage: ak-role config set-engine judge <name>"
+      );
+    }
+    const seat = args[1];
+    const name = args[2];
+    if (!isPublicConfigurableSeat(seat)) {
+      throw new CliUsageError(`unknown configurable seat: ${seat}`);
+    }
+    if (seat !== "judge") {
+      throw new CliUsageError(
+        `engine axis is judge-only; refused seat ${seat}`
+      );
+    }
+    requireLegalEngineName(packageRoot2, name);
+    let config = await loadAndValidateConfig(home, packageRoot2);
+    try {
+      config = setPersistentSeatEngine(config, seat, name);
+    } catch (error) {
+      throw new CliUsageError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error }
+      );
+    }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
+  if (args[0] === "unset-engine") {
+    if (args.length !== 2) {
+      throw new CliUsageError(
+        "usage: ak-role config unset-engine judge"
+      );
+    }
+    const seat = args[1];
+    if (!isPublicConfigurableSeat(seat)) {
+      throw new CliUsageError(`unknown configurable seat: ${seat}`);
+    }
+    if (seat !== "judge") {
+      throw new CliUsageError(
+        `engine axis is judge-only; refused seat ${seat}`
+      );
+    }
+    let config = await loadAndValidateConfig(home, packageRoot2);
+    try {
+      config = setPersistentSeatEngine(config, seat, void 0);
+    } catch (error) {
+      throw new CliUsageError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error }
+      );
     }
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));
@@ -26363,26 +27339,22 @@ async function runAkRole(argv, env) {
   try {
     env = { ...env, packageRoot: await realpath5(env.packageRoot) };
     const parsed = parseArgv(argv);
+    if (parsed.engine !== void 0) {
+      requireLegalEngineName(env.packageRoot, parsed.engine);
+      if (!parsed.help && parsed.command !== void 0 && parsed.command !== "help" && parsed.command !== "judge") {
+        throw new CliUsageError(
+          `engine axis is judge-only; refused command ${parsed.command}`
+        );
+      }
+    }
     if (parsed.help || parsed.command === void 0 || parsed.command === "help") {
       if (parsed.command === "help" && parsed.args[0] !== void 0) {
         const topic = parsed.args[0];
-        const caps = listHelpCapabilities();
-        const match = caps.find((cap) => cap.name === topic);
-        if (match === void 0) {
+        const rendered = renderCommandHelp(topic);
+        if (rendered === void 0) {
           throw new CliUsageError(`unknown help topic: ${topic}`);
         }
-        if (match.kind === "support") {
-          io.stdout(`command	${match.name}	kind	support
-`);
-        } else if (match.kind === "deterministic") {
-          io.stdout(`command	${match.name}	kind	deterministic
-`);
-        } else {
-          io.stdout(
-            `command	${match.name}	kind	role	phases	${match.phases.map((p) => p === null ? "none" : p).join(",")}	default	${match.defaultPhase ?? "none"}
-`
-          );
-        }
+        io.stdout(rendered);
         return { exitCode: 0 };
       }
       io.stdout(renderHelp());
@@ -26392,7 +27364,7 @@ async function runAkRole(argv, env) {
       if (parsed.args.length > 0) {
         throw new CliUsageError("roles takes no arguments");
       }
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials = env.credentials ?? await loadCredentialProviders(resolveAgentDir(env, home));
       const seats = effectiveSeatConfigurations(
         config,
@@ -26403,12 +27375,14 @@ async function runAkRole(argv, env) {
       return { exitCode: 0 };
     }
     if (parsed.command === "config") {
-      return { exitCode: await runConfigCommand(parsed.args, home, io) };
+      return {
+        exitCode: await runConfigCommand(parsed.args, home, env.packageRoot, io)
+      };
     }
     if (parsed.command === "resume") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
       const resumeRunId = parsed.args[0];
       const resumeRole = resumeRunId === void 0 || resumeRunId.trim() === "" ? void 0 : await peekRoleRunRole(home, resumeRunId);
@@ -26544,7 +27518,7 @@ async function runAkRole(argv, env) {
     if (parsed.command === "judge") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
       const seat = resolveEffectiveSeat(
         config,
@@ -26563,6 +27537,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...seat.engine === void 0 ? {} : { engine: seat.engine },
           ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
           ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
@@ -26578,7 +27553,7 @@ async function runAkRole(argv, env) {
     if (parsed.command === "coder") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
       const seat = resolveEffectiveSeat(
         config,
@@ -26612,7 +27587,7 @@ async function runAkRole(argv, env) {
     if (parsed.command === "fixer") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
       const seat = resolveEffectiveSeat(
         config,
@@ -26646,7 +27621,7 @@ async function runAkRole(argv, env) {
     if (parsed.command === "collector") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
       const seat = resolveEffectiveSeat(
         config,
@@ -26680,7 +27655,7 @@ async function runAkRole(argv, env) {
     if (parsed.command === "reviewer") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
       const seat = resolveEffectiveSeat(
         config,
@@ -26714,7 +27689,7 @@ async function runAkRole(argv, env) {
     if (parsed.command === "doctor") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
       const seat = resolveEffectiveSeat(
         config,
@@ -26748,7 +27723,7 @@ async function runAkRole(argv, env) {
     if (parsed.command === "merger") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
-      const config = await loadPublicCliConfig(home);
+      const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
       const seat = resolveEffectiveSeat(
         config,
@@ -26803,14 +27778,16 @@ async function runAkRole(argv, env) {
     return { exitCode: 1 };
   }
 }
-var PUBLIC_ROLE_ARGV, THINKING_LEVELS2;
+var PUBLIC_ROLE_ARGV, PUBLIC_GLOBAL_OPTIONS, THINKING_LEVELS2;
 var init_cli = __esm({
   "src/public-cli/cli.ts"() {
     "use strict";
+    init_engine_material();
     init_config2();
     init_cli_errors();
     init_explicit_internal();
     init_invocation();
+    init_option_definitions();
     init_coder_run();
     init_collector_run();
     init_doctor_run();
@@ -26825,16 +27802,17 @@ var init_cli = __esm({
     init_explicit_internal();
     init_cli_errors();
     PUBLIC_ROLE_ARGV = {
-      judge: { parse: parseJudgeArgv },
-      coder: { parse: parseCoderArgv },
-      fixer: { parse: parseFixerArgv },
-      collector: { parse: parseCollectorArgv },
-      doctor: { parse: parseDoctorArgv },
-      merger: { parse: parseMergerArgv },
-      reviewer: { parse: parseReviewerArgv },
+      judge: { parse: parseJudgeArgv, options: optionsForOwner("judge") },
+      coder: { parse: parseCoderArgv, options: optionsForOwner("coder") },
+      fixer: { parse: parseFixerArgv, options: optionsForOwner("fixer") },
+      collector: { parse: parseCollectorArgv, options: optionsForOwner("collector") },
+      doctor: { parse: parseDoctorArgv, options: optionsForOwner("doctor") },
+      merger: { parse: parseMergerArgv, options: optionsForOwner("merger") },
+      reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
       /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
-      taishi: { parse: parseTaishiArgv }
+      taishi: { parse: parseTaishiArgv, options: optionsForOwner("taishi") }
     };
+    PUBLIC_GLOBAL_OPTIONS = optionsForOwner("global");
     THINKING_LEVELS2 = /* @__PURE__ */ new Set([
       "off",
       "minimal",
@@ -26848,8 +27826,8 @@ var init_cli = __esm({
 });
 
 // src/public-cli/main.ts
-import { existsSync as existsSync2 } from "node:fs";
-import { dirname as dirname11, join as join24 } from "node:path";
+import { existsSync as existsSync3 } from "node:fs";
+import { dirname as dirname11, join as join25 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -26938,8 +27916,8 @@ function linkPackage(packageRoot2, name, targetDir) {
 // src/public-cli/main.ts
 var here = dirname11(fileURLToPath2(import.meta.url));
 function resolvePackageRoot(binDir) {
-  const canonical = join24(binDir, "..", "..");
-  if (existsSync2(join24(canonical, "package.json"))) {
+  const canonical = join25(binDir, "..", "..");
+  if (existsSync3(join25(canonical, "package.json"))) {
     return canonical;
   }
   return binDir;

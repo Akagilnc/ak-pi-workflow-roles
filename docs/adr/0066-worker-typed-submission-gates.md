@@ -13,7 +13,7 @@ Status: accepted（陛下 2026-08-10 grill 链 + r14 票面收敛；decision key
 | `gate-power` | `bounce-not-reject-not-fail-role` | 「这个是用来代替fixer 审刑院的……审刑院的工作原理一直是打回」「打回重写不等于拒收」 |
 | `gate-1` | `forgetfulness-reminder-once` | 「Coder 完成不以 commit 为前提……要防的是。做完了，忘了提交」；「拒绝也要求有commit吗？」「机器不管啊」 |
 | `gate-1-status-matrix` | `completed\|partially_completed require; planned\|refused\|unfinished free` | 同上 + ADR 0015 partially_completed 归施工完成侧 |
-| `gate-2-domain` | `closed-singleton-{ak-roles:}` | 「怎么会是pi。应该是 ak-roles」；CLAUDE.md「Commit 前缀法」 |
+| `gate-2-domain` | `open-platform-prefix; factory-name-ak-roles; direct-claude-kept; merge-exempt` | L3780 二元集 `{pi:,claude:}` 内改名→工厂 worker 前缀 `ak-roles:`（L3784「怎么会是pi。应该是 ak-roles」）；L3484「缺平台前缀→打回」开放集（循宪法 #10）；直改通道 `claude:` 保留；GitHub merge commit 豁免。判词 run `01a008d8-e397-7919-a544-644b0b38594a` 更正既记 `closed-singleton-{ak-roles:}` 越权记法（原话无一字删 `claude:` 或单值化；CLAUDE.md 单值化行不得作法源） |
 | `gate-2-4-enforcement` | `reference-transaction-before-history` | 「就没有别的办法吗？在commit实际成真之前就打回让他重写？」「可以。」 |
 | `gate-3` | `not-built` | 「去掉这个闸门……不同技术栈也不一样的」 |
 | `gate-5` | `not-built` | 「1234就够了」 |

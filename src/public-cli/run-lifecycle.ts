@@ -230,15 +230,23 @@ export async function markRunAdmitted(
 
 /**
  * Shared dispatch execution seam: record the effective launch model (initial or
- * resume override) onto invocation.json when known, then transition to running.
+ * resume override) and optional initial effective engine onto invocation.json
+ * when known, then transition to running.
  * Role runners must not coordinate lifecycle ledger writes themselves.
+ * Engine is write-if-present only — callers that omit it (resume / non-Judge)
+ * never touch the engine key.
  */
 export async function markRunRunning(
   runDirectory: string,
   effectiveModel?: InvocationEffectiveModel,
+  effectiveEngine?: string,
 ): Promise<void> {
-  if (effectiveModel !== undefined) {
-    await recordEffectiveInvocationModel(runDirectory, effectiveModel);
+  if (effectiveModel !== undefined || effectiveEngine !== undefined) {
+    await recordEffectiveInvocationModel(
+      runDirectory,
+      effectiveModel,
+      effectiveEngine,
+    );
   }
   const current = await readRoleRunState(runDirectory);
   if (current === undefined) {

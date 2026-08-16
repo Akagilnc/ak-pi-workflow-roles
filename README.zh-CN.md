@@ -37,7 +37,7 @@ ak-role config set navigator openai-codex/gpt-5.6-luna:medium
 
 ## 调用百官
 
-多数角色支持 `--attach <文件>`（可重复，受理即冻结），但御史台不接受该旗标。御史台必须用 `--base <revision>` 选定 fixed point，审查材料由包内 bundle 机制取得，而非由调用者附加。所有角色都支持 `--project <路径>`。指令对大理寺、门下省、太医署可省略，对将作监、修内司、御史台、校书郎必须非空。
+公开 option 身份、别名、必填性与 mode 面以生成区 [公开 CLI 选项（生成）](#公开-cli-选项生成) 与 `ak-role help <command>` 为准——二者同源。下例只是用法速写，不是第二份旗标合同。指令对大理寺、门下省、太医署可省略，对将作监、修内司、御史台、校书郎必须非空。
 
 ```bash
 # 大理寺——审断所供材料；自行推断举证责任，无 burden 旗标
@@ -131,3 +131,91 @@ pi --no-extensions \
 - `stderr.log` 与 `invocation.json` 落在同次 `runs/` 目录，如上例。
 
 Codex fast 档：开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：`echo "fast_mode = off" > ~/.pi-codex-fast`（或删文件）。修改后无需重启，下一个请求即生效。Fast 档价格高于默认档。
+
+<!-- BEGIN GENERATED: public-cli-options -->
+## 公开 CLI 选项（生成）
+
+本表由 `src/public-cli/option-definitions.ts` 生成；以 `ak-role help <command>` 为准。勿手改本区。
+
+### `global`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--model` | — | `provider/model` | 否 | 否 | option | — | 覆盖本调用有效席位模型（可置于子命令前或后）。 |
+| `--thinking` | — | `level` | 否 | 否 | option | — | 覆盖 thinking 档位：off\|minimal\|low\|medium\|high\|xhigh\|max。 |
+| `--engine` | — | `name` | 否 | 否 | option | — | 本调用可选 Judge 劳动引擎（名字须存在于包内引擎调法材料；仅 Judge）。 |
+| `--help` | `-h` | — | 否 | 否 | option | — | 显示公开 CLI 帮助并退出。 |
+
+### `judge`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+
+### `coder`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `plan\|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan\|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+
+### `fixer`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `plan\|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan\|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+| `--prerequisites` | — | `path` | 否 | 否 | option | — | {id, requirement} 前置条件 JSON 数组路径。 |
+
+### `reviewer`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--base` | — | `revision` | 是 | 否 | option | — | 必填；钉住审查目标的 fixed-point revision。 |
+| `--authority-ref` | — | `ref` | 否 | 是 | option | — | 持久 authority 引用/URL（可重复；仅 ref，非内联散文）。 |
+
+### `collector`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+| `--pr` | — | `number` | 是 | 否 | option | — | 必填；正整数 GitHub PR 号。 |
+| `--repo` | — | `owner/repo` | 否 | 否 | option | — | GitHub owner/repo 覆盖（默认取 github.com origin）。 |
+| `--request-manifest` | — | `path` | 否 | 否 | option | — | 可选 request manifest JSON 路径（{requests:[{id,body}]}）。 |
+
+### `doctor`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+| `--issue` | — | `number` | 是 | 否 | option | — | 必填；留存病例的正整数 issue 号。 |
+| `--runs` | — | `path` | 否 | 否 | option | — | 可选项目相对 .ak-roles/books/<book>/issues/<n>/runs 覆盖，且须匹配 --issue。 |
+
+### `merger`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 已有进行中 ordinary merge 的项目根（默认 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+
+### `taishi`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sweep` | — | — | 否 | 否 | positional | modes=sweep | 可选 sweep 模式词元（至多一次；不得夹带其他 positional）。 |
+| `--project-root` | — | `path` | 条件:model-groups | 是 | option | modes=issue\|model-groups; max=issue:1 | projectRoot 范围键。issue：至多一个（与 --ticket 至少居其一）。model-groups：一个或多个且必填。 |
+| `--ticket` | — | `number` | 否 | 否 | option | modes=issue | issue 模式的票号（与 --project-root 至少居其一）。 |
+| `--attach` | — | `path` | 条件:sweep | 是 | option | modes=sweep; max=sweep:1 | sweep 模式附件路径；sweep 必填且恰一次；载荷为附件正文。 |
+| `--cohort` | — | — | 否 | 否 | option | modes=cohort; xor=model-groups | 选择 cohort 模式（与 --model-groups 互斥）。 |
+| `--model-groups` | — | — | 否 | 否 | option | modes=model-groups; xor=cohort | 选择 model-groups 模式（与 --cohort 互斥）。 |
+| `--group-a-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort A 组标签（cohort 模式必填）。 |
+| `--group-a-issues` | — | `N[,N...]` | 条件:cohort | 否 | option | modes=cohort | cohort A 组逗号分隔正整数 issue 列表（cohort 模式必填）。 |
+| `--group-b-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort B 组标签（cohort 模式必填）。 |
+| `--group-b-issues` | — | `N[,N...]` | 条件:cohort | 否 | option | modes=cohort | cohort B 组逗号分隔正整数 issue 列表（cohort 模式必填）。 |
+<!-- END GENERATED: public-cli-options -->
