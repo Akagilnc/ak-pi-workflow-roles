@@ -25,6 +25,7 @@ import {
 } from "./test-subprocess.ts";
 
 import {
+  type CredentialStore,
   type FauxProviderHandle,
   InMemoryCredentialStore,
   type Model,
@@ -52,6 +53,27 @@ const execFileAsync = promisify(execFile);
 
 export async function flushEventLoopTurns(times = 20): Promise<void> {
   for (let i = 0; i < times; i += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+/**
+ * Drain setImmediate turns until `ready()` is true. Uses wall-clock Date.now
+ * (not mocked when only setTimeout is mocked) so mock-timer tests can wait for
+ * real async entry (compliance child stream, tool execute) without fixed turn guesses.
+ */
+export async function waitForEventLoopCondition(
+  ready: () => boolean,
+  options: { label: string; timeoutMs?: number } = { label: "condition" },
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 5_000;
+  const started = Date.now();
+  while (!ready()) {
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(
+        `waitForEventLoopCondition timed out after ${timeoutMs}ms waiting for ${options.label}`,
+      );
+    }
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
 }
@@ -677,18 +699,36 @@ export async function withHermeticHome<T>(
   scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
 ): Promise<T> {
   return await withProcessGlobalLock(async () => {
+    // Prefer /tmp over os.tmpdir(): Linux CI tmpdir is /tmp already; macOS
+    // os.tmpdir() is deeper under /var/folders and can hide shallow-path
+    // footguns (host-pi-runtime / taishi bundle layout). Same pin as those tests.
     const home = await mkdtemp(
-      resolve(tmpdir(), options.prefix ?? "ak-pi-test-"),
+      resolve("/tmp", options.prefix ?? "ak-pi-test-"),
     );
     const agentDir = resolve(home, ".pi-agent");
     await mkdir(agentDir, { recursive: true });
     const previousHome = process.env.HOME;
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousOffline = process.env.PI_OFFLINE;
+    const previousRunDir = process.env.AK_ROLE_RUN_DIR;
     process.env.HOME = home;
+    // Pin host-Pi surfaces so in-process children do not inherit machine agent
+    // dir, ambient run bindings, or online catalog refresh (CI strips these via
+    // isolatedTestProcessEnv; local shells often leak PI_CODING_AGENT_DIR/auth).
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.PI_OFFLINE = "1";
+    delete process.env.AK_ROLE_RUN_DIR;
     try {
       return await scenario({ home, agentDir });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      if (previousOffline === undefined) delete process.env.PI_OFFLINE;
+      else process.env.PI_OFFLINE = previousOffline;
+      if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = previousRunDir;
       await rm(home, { recursive: true, force: true });
     }
   });
@@ -916,6 +956,11 @@ export interface InProcessPiOptions {
    * durable-session persistence. cwd/Navigator subject semantics stay fixture-owned.
    */
   activationLedgerSession?: boolean;
+  /**
+   * Optional credential store for OAuth/auth fixtures (#351 keepalive E2E).
+   * Defaults to a fresh InMemoryCredentialStore when omitted.
+   */
+  credentials?: CredentialStore;
 }
 
 export interface InProcessPiFixture {
@@ -951,12 +996,15 @@ export async function withInProcessPi<T>(
     },
   };
   const modelRuntime = await ModelRuntime.create({
-    credentials: new InMemoryCredentialStore(),
+    credentials: options.credentials ?? new InMemoryCredentialStore(),
     modelsPath: options.modelsPath === undefined
       ? resolve(options.agentDir, "models.json")
       : options.modelsPath,
   });
   modelRuntime.registerNativeProvider(provider);
+  // Same seal as createInheritedRuntime: do not race void background refresh
+  // before session.prompt (mock timers freeze any setTimeout inside refresh).
+  await modelRuntime.refresh({ allowNetwork: false });
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: false },
     retry: { enabled: false },

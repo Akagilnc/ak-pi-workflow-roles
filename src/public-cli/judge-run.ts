@@ -6,6 +6,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { AK_ROLE_ENGINE_ENV } from "../engine-detour.ts";
+import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   runExplicitInternalActivation,
   type ExplicitInternalKnownFailure,
@@ -57,6 +59,7 @@ import {
   resolveControlledFailureResumeObservation,
   controlledFailureInputFromResolution,
   explicitInternalKnownFailureClassificationInput,
+  readEngineDetourInfrastructureFailure,
   settleJudgeFailureTerminalResult,
   trySettleJudgeTerminalResult,
   trySettleComplianceAuditIncompleteTerminalResult,
@@ -76,6 +79,8 @@ export type JudgeRunEnv = {
   piRunner?: ExplicitInternalPiRunner;
   /** Effective judge seat model (persistent/startup/invocation). */
   model?: SeatModelConfig;
+  /** Optional labor engine name (config→activation; session material only). */
+  engine?: string;
   /**
    * Credential presence for public providers (auth.json shape).
    * Used as the production-owned typed channel when a selected public provider
@@ -100,10 +105,15 @@ export function buildJudgeActivationExtraArgs(
   admitted: AdmittedJudgeInvocation,
   options: {
     model?: SeatModelConfig;
+    engine?: string;
+    packageRoot?: string;
     extraPiArgs?: readonly string[];
   } = {},
 ): string[] {
-  const prompt = buildJudgeTransportPrompt(admitted);
+  const prompt = buildJudgeTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options),
+  );
   return [
     "--no-skills",
     "--no-prompt-templates",
@@ -246,12 +256,17 @@ async function dispatchAdmittedJudge(input: {
   io: CliIo;
   extraArgs: string[];
   lease: RunWriterLease;
+  /**
+   * Mechanical engine provenance for initial Judge dispatch only.
+   * Explicit — never read from env.engine here, so resume cannot rewrite it.
+   */
+  effectiveEngine?: string;
 }): Promise<{
   exitCode: number;
   admitted: AdmittedJudgeInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease } = input;
+  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
   try {
     // Fail closed at the public credential seam before model dispatch: missing
     // selected-provider auth must not be washed by ambient keys or zero-exit runs.
@@ -266,7 +281,11 @@ async function dispatchAdmittedJudge(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(
+      admitted.runDirectory,
+      env.model,
+      effectiveEngine,
+    );
     // Attempt-scoped observation: drop any prior dispatch's 429 evidence so only
     // the current initial/resume attempt can qualify v1 resume.
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -279,6 +298,14 @@ async function dispatchAdmittedJudge(input: {
       // and role-runtime can record typed provider HTTP observations.
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
+    // Engine presence/name signal: registration gate + label only (no per-engine branch).
+    // Delete ambient inheritance first; own-key undefined mask survives process.env re-merge.
+    delete childEnv[AK_ROLE_ENGINE_ENV];
+    if (env.engine !== undefined && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = undefined;
+    }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== undefined && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -360,6 +387,11 @@ async function dispatchAdmittedJudge(input: {
       };
     }
 
+    // Prefer engine-detour infrastructure failure already on the session principal
+    // over a later secondary provider-stop after abort (#357 T2 / collector-isomorphic).
+    const infrastructureFailure = await readEngineDetourInfrastructureFailure(
+      admitted.sessionFile,
+    );
     // Production-owned typed cause channel — never inferred from stderr wording.
     const credentialFailure = postRunMissingCredentialFailure(
       result,
@@ -367,7 +399,17 @@ async function dispatchAdmittedJudge(input: {
       env.credentials,
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result.knownFailure,
+      runner:
+        result.knownFailure ??
+        (infrastructureFailure === undefined
+          ? undefined
+          : {
+              cause: infrastructureFailure.cause,
+              diagnostic: infrastructureFailure.diagnostic,
+              ...(infrastructureFailure.identity === undefined
+                ? {}
+                : { identity: infrastructureFailure.identity }),
+            }),
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
@@ -436,7 +478,9 @@ export async function runPublicJudge(
   }
 
   const extraArgs = buildJudgeActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
@@ -449,6 +493,8 @@ export async function runPublicJudge(
     io,
     extraArgs,
     lease,
+    // #358: only initial Judge dispatch records mechanical engine provenance.
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 

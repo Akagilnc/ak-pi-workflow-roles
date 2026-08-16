@@ -33,6 +33,7 @@ import {
 import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { loadPackagedCanonicalSkillBinding } from "../src/package-resources/method-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
+import { readOAuthKeepaliveProviders } from "../src/oauth-keepalive.ts";
 import {
   createProductionMergerGitState,
   createRoleRuntimeExtension,
@@ -244,7 +245,11 @@ export default function roleRuntime(pi: ExtensionAPI): void {
   const reviewerAgent = createReviewerAgentRunner();
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
+  // #351: static provider list from extension setting (default ["kimi-coding"]).
+  // Production root is the sole reader; keepalive never auto-detects providers.
+  const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
   createRoleRuntimeExtension({
+    oauthKeepalive: { providers: oauthKeepaliveProviders },
     loadJudgeSoul: () => readFile(judgeSoulPath, "utf8"),
     loadFixerSoul: () => readFile(fixerSoulPath, "utf8"),
     loadFixPacket: (path) => readFile(path, "utf8"),
