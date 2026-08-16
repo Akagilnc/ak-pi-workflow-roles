@@ -197,33 +197,6 @@ export type NavigatorContextProjection = {
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
 
-/**
- * Shared terminal-internal consistency for Navigator advice vs the just-accepted
- * settlement (family #224/#226/#227). One table for all seats — not per-role guards.
- *
- * Merger closes delivery. It is only consistent immediately after judge converged.
- * Fresh accepted work from any other seat must not skip to merger.
- *
- * Unfinished is an open handoff (ADR 0050): recommending judge would send half-done
- * work to audit. Machine criterion anchors only status=unfinished — refused and
- * partially_completed remain settled terminals whose judge path stays lawful.
- * Positive continuation is free-form via rebind + status-matched candidates
- * (ADR 0010/0061); this only suppresses self-contradictory typed emission.
- */
-export function navigatorAdviceConsistentWithSettlement(
-  next: NavigatorRouteTarget,
-  settlement: NavigatorSettlement,
-): boolean {
-  if (settlement.kind !== "accepted") return true;
-  // #227: open unfinished handoff must not be typed as next=judge.
-  if (settlement.status === "unfinished" && next.role === "judge") return false;
-  // #265: completed Fixer apply must not be sent back to repeat the same work.
-  if (settlement.role === "fixer" && settlement.phase === "apply" && settlement.status === "completed"
-    && next.role === "fixer" && next.phase === "apply") return false;
-  if (next.role !== "merger") return true;
-  return settlement.role === "judge" && settlement.status === "converged";
-}
-
 // Provider admission is ADR 0060 object root only. Nested advisory shape
 // (candidates/next/route/matches/reason/command) is never a gate — every object
 // root reaches the unique execute/normalize path exactly once.
@@ -499,6 +472,24 @@ export function selectNavigatorCandidate(candidates: readonly NavigatorCandidate
   return usable.find((candidate) => candidate.matches === undefined);
 }
 
+/**
+ * True when the selected candidate was keyed to this accepted settlement via matches.
+ * Structural only — never inspects next.role for routing legality. Used solely to
+ * decide whether speculative prepare already bound itself to this terminal (no rebind)
+ * or may be stale prior-history advice (one settlement-bound rebind).
+ */
+function candidateMatchedToSettlement(
+  candidate: NavigatorCandidate,
+  settlement: NavigatorSettlement,
+): boolean {
+  if (settlement.kind !== "accepted") return false;
+  const matches = candidate.matches;
+  if (matches === undefined) return false;
+  if (matches.role !== settlement.role || matches.phase !== settlement.phase) return false;
+  if (settlement.status === undefined || matches.statuses === undefined) return true;
+  return matches.statuses.includes(settlement.status);
+}
+
 export function formatNavigatorReport(report: NavigatorReport): string {
   const playbookFailure = report.routePlaybookReadFailure === undefined
     ? []
@@ -631,6 +622,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     // pi.appendEntry at lifecycle start — not optional sessionManager probing.
     const boundSettlement = prepareBoundSettlement;
     prepareBoundSettlement = undefined;
+    // Each prepare owns the no-receipt flag; a later settlement-bound rebind must
+    // not inherit a speculative no-receipt outcome.
+    preparationNoReceipt = false;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
@@ -958,23 +952,16 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           let prepared = await preparation;
           session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
           let selected = selectNavigatorCandidate(prepared, settlement);
-          // Family #224/#226/#227 shared seam: speculative prepare runs before the
-          // current terminal exists and may treat prior history as decisive. When
-          // selected next contradicts this accepted settlement, discard it and
-          // re-prepare once bound to the settlement (single shared mechanism).
-          if (
-            selected?.next !== undefined
-            && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)
-          ) {
+          // Speculative prepare runs before this terminal exists and may treat prior
+          // history as decisive. When the selected candidate was not keyed to this
+          // settlement via matches, rebind once with currentSettlement. This is
+          // stale-context repair only — rebind is reachable without any next.role
+          // legality table. After selection (speculative or rebound), advice is
+          // passed through as-is (ADR 0010 / ADR 0061: caller may ignore).
+          if (selected?.next !== undefined && !candidateMatchedToSettlement(selected, settlement)) {
             prepareBoundSettlement = settlement;
             prepared = await prepare();
             selected = selectNavigatorCandidate(prepared, settlement);
-            if (
-              selected?.next !== undefined
-              && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)
-            ) {
-              throw new Error("Navigator advice contradicts the accepted settlement");
-            }
           }
           // Budget exhaustion is affirmative typed no-advice; malformed submitted
           // advice remains the existing unavailable path.

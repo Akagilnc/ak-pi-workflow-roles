@@ -77,17 +77,10 @@ import {
   classifyPackagedRoleTerminalResult,
   isAcceptedPackagedRoleTerminalResult,
   isReceiptSettlementBindingClear,
-  markerMatchesExpectedIdentity,
-  type ExpectedInvocationIdentity,
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, parseNoReceiptLifecycleFacts, type NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
-import { packagedRoleMetadata } from "../packaged-role-registry.ts";
-import {
-  workSubjectKeyFromProjectRoot,
-  workSubjectKeysEqual,
-} from "../work-subject-identity.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
@@ -491,12 +484,6 @@ type SessionEntry = {
   cwd?: string;
   /** Parent session principal on durable child session headers. */
   parentSession?: string;
-};
-
-/** Optional independent identity from admitted/shared lifecycle (not attendance self-fields). */
-export type NavigatorAttendanceIdentity = {
-  readonly phase?: NavigatorPhase;
-  readonly subjectKey?: string;
 };
 
 function isMissingPathError(error: unknown): boolean {
@@ -2001,91 +1988,20 @@ function navigatorPhaseValue(value: unknown): NavigatorPhase {
   return null;
 }
 
-function attendanceIdentityFromAdmitted(
-  admitted: AdmittedRoleInvocation,
-): NavigatorAttendanceIdentity {
-  // Public CLI sessions live under the machine ledger; Navigator derives subject from
-  // the project/cwd work identity, not the per-run session directory spelling.
-  const subjectKey = workSubjectKeyFromProjectRoot(admitted.projectRoot);
-  if (admitted.role === "coder" || admitted.role === "fixer") {
-    return { phase: admitted.phase, subjectKey };
-  }
-  return { phase: null, subjectKey };
-}
-
 /**
- * Independent expected role/phase/subject for marker correlation.
- * Role comes from the durable packaged terminal tool; phase/subject from admitted
- * lifecycle, Developer session cwd, or registry — never attendance self-fields.
- */
-function independentExpectedIdentity(
-  entries: readonly SessionEntry[],
-  terminalRole: string,
-  supplied?: NavigatorAttendanceIdentity,
-): ExpectedInvocationIdentity {
-  let subjectKey: string | undefined;
-  for (const entry of entries) {
-    if (entry?.type !== "session") continue;
-    if (typeof entry.cwd === "string" && entry.cwd.trim() !== "") {
-      subjectKey = workSubjectKeyFromProjectRoot(entry.cwd);
-    }
-    break;
-  }
-  if (typeof supplied?.subjectKey === "string") {
-    subjectKey = supplied.subjectKey;
-  }
-
-  let phase: NavigatorPhase | undefined;
-  let allowedPhases: readonly NavigatorPhase[] | undefined;
-  // null is a real phase fact (Judge/Reviewer/…); only omit when not independently known.
-  if (supplied !== undefined && Object.hasOwn(supplied, "phase")) {
-    phase = supplied.phase ?? null;
-  } else {
-    const meta = packagedRoleMetadata(terminalRole);
-    if (meta !== undefined) {
-      if (meta.phases.length === 1) {
-        phase = meta.phases[0] as NavigatorPhase;
-      } else {
-        allowedPhases = meta.phases as readonly NavigatorPhase[];
-      }
-    }
-  }
-
-  return {
-    role: terminalRole,
-    ...(phase !== undefined ? { phase } : {}),
-    ...(allowedPhases !== undefined ? { allowedPhases } : {}),
-    ...(subjectKey !== undefined ? { subjectKey } : {}),
-  };
-}
-
-/**
- * Attendance must match the bound marker identity and current durable terminal role.
- * Self-shape of attendance fields is not correlation. Marker already matched the
- * independent expected identity before this check runs.
+ * Minimal attendance provenance against the bound marker (ADR 0043).
+ * Keep only invocationId + post-terminal ordering. Runtime-self-produced
+ * role/phase/subject/version are not re-reconciled here (ADR 0042).
  */
 function navigatorAttendanceCorrelatedWithBoundMarker(
   details: Record<string, unknown>,
   attendanceIndex: number,
-  terminal: { index: number; role: string },
+  terminalIndex: number,
   marker: InvocationMarkerIdentity,
 ): boolean {
-  if (attendanceIndex <= terminal.index) return false;
-  if (details.version !== 1) return false;
-
-  // Role comes from the packaged terminal tool — compare, do not self-validate.
-  if (details.role !== terminal.role) return false;
-  // Marker role must already equal terminal role (checked by caller); attendance follows marker.
-  if (details.role !== marker.role) return false;
-
+  if (attendanceIndex <= terminalIndex) return false;
   // Exact current invocation token is the bound marker principal.
   if (details.invocationId !== marker.invocationId) return false;
-
-  // Phase and subject ride the same marker identity truth table.
-  if (details.phase !== marker.phase) return false;
-  if (typeof details.subjectKey !== "string") return false;
-  if (!workSubjectKeysEqual(details.subjectKey, marker.subjectKey)) return false;
-
   return true;
 }
 
@@ -2157,10 +2073,9 @@ function parseNavigatorAttendanceDetails(
 
 export function extractNavigatorFact(
   entries: readonly SessionEntry[],
-  identity?: NavigatorAttendanceIdentity,
 ): TerminalNavigatorFact {
   // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
-  // One truth table: durable classifier + singleton marker binding + marker identity match.
+  // Minimal provenance: durable terminal + singleton marker binding + invocationId + post-terminal order.
   const binding = bindCurrentDurableTerminalToMarker(entries);
   if (binding.kind === "absent") {
     return {
@@ -2185,23 +2100,6 @@ export function extractNavigatorFact(
   }
 
   const { terminal, marker } = binding;
-  // Marker role must match the durable terminal tool's role.
-  if (marker.role !== terminal.role) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance is uncorrelated with session invocation facts",
-    };
-  }
-  // Marker phase/subject (and role) must match independently admitted expected identity.
-  const expected = independentExpectedIdentity(entries, terminal.role, identity);
-  if (!markerMatchesExpectedIdentity(marker, expected)) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance is uncorrelated with session invocation facts",
-    };
-  }
 
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
@@ -2218,7 +2116,7 @@ export function extractNavigatorFact(
         !navigatorAttendanceCorrelatedWithBoundMarker(
           details,
           i,
-          { index: terminal.index, role: terminal.role },
+          terminal.index,
           marker,
         )
       ) {
@@ -2249,7 +2147,7 @@ async function extractNavigatorFactFromAdmittedSession(
 ): Promise<TerminalNavigatorFact> {
   try {
     const entries = await readBoundSessionEntries(admitted.sessionFile);
-    return extractNavigatorFact(entries, attendanceIdentityFromAdmitted(admitted));
+    return extractNavigatorFact(entries);
   } catch (error) {
     if (isMissingPathError(error)) {
       return {
@@ -2483,10 +2381,7 @@ async function settleLawfulJudgeTerminalResult(
   if (roleOutcome === undefined) {
     return undefined;
   }
-  const navigator = extractNavigatorFact(
-    entries,
-    attendanceIdentityFromAdmitted(admitted),
-  );
+  const navigator = extractNavigatorFact(entries);
   // Lawful outcome exists — artifact publication keeps original errno/name.
   const artifacts = await publishJudgeArtifacts(
     admitted,
@@ -2539,10 +2434,7 @@ async function settleLawfulCoderTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractCoderRoleOutcome(entries);
   if (extracted === undefined) return undefined;
-  const navigator = extractNavigatorFact(
-    entries,
-    attendanceIdentityFromAdmitted(admitted),
-  );
+  const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCoderArtifacts(
     admitted,
     extracted.outcome,
@@ -2745,10 +2637,7 @@ async function settleLawfulFixerTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractFixerRoleOutcome(entries);
   if (extracted === undefined) return undefined;
-  const navigator = extractNavigatorFact(
-    entries,
-    attendanceIdentityFromAdmitted(admitted),
-  );
+  const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractFixerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -2915,10 +2804,7 @@ async function settleLawfulCollectorTerminalResult(
     return undefined;
   }
   assertCollectorReceiptMatchesAdmitted(extracted.receipt, admitted);
-  const navigator = extractNavigatorFact(
-    entries,
-    attendanceIdentityFromAdmitted(admitted),
-  );
+  const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCollectorArtifacts(
     admitted,
     extracted.outcome,
@@ -3095,10 +2981,7 @@ async function settleLawfulDoctorTerminalResult(
       throw error;
     }
   }
-  const navigator = extractNavigatorFact(
-    entries,
-    attendanceIdentityFromAdmitted(admitted),
-  );
+  const navigator = extractNavigatorFact(entries);
   const artifacts = await publishDoctorArtifacts(
     admitted,
     extracted.outcome,
@@ -3353,10 +3236,7 @@ async function settleLawfulReviewerTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractReviewerRoleOutcome(entries);
   if (extracted === undefined) return undefined;
-  const navigator = extractNavigatorFact(
-    entries,
-    attendanceIdentityFromAdmitted(admitted),
-  );
+  const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractReviewerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -3623,10 +3503,7 @@ async function settleLawfulMergerTerminalResult(
   });
   // Every invocation must expand the merge-only method before conflict work.
   if (methodInvocations.length === 0) return undefined;
-  const navigator = extractNavigatorFact(
-    entries,
-    attendanceIdentityFromAdmitted(admitted),
-  );
+  const navigator = extractNavigatorFact(entries);
   const artifacts = await publishMergerArtifacts(
     admitted,
     extracted.outcome,

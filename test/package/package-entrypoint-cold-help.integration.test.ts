@@ -126,8 +126,11 @@ test("cold-installed live help follows the loaded extension and changes on the n
         const session = {
           async prompt(request: string) {
             prepareRequests.push(request);
+            // matches keys advice to this settlement so live-help dual-call is not
+            // confounded by settlement-bound rebind (stale-context path).
             await prepareTool.execute("cold-help-prepare", {
               candidates: [{
+                matches: { role: "coder", phase: "apply", kind: "accepted", statuses: ["completed"] },
                 next: { role: "judge", phase: null },
                 reason: "typed cold-installed direction",
               }],
