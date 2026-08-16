@@ -29,6 +29,7 @@ import {
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
+  WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "./worker-submission-gates.ts";
 
@@ -189,6 +190,7 @@ function assertAcceptableThroughHost(
   } catch (error) {
     if (
       error instanceof WorkerCommitReminderError ||
+      error instanceof WorkerPrefixReminderError ||
       error instanceof WorkerUnfinishedReasonReminderError
     ) {
       throw error;

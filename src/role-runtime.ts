@@ -23,7 +23,6 @@ import {
 } from "./tool-execution-observation.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
-import { installWorkerGitHooks } from "./worker-submission-gates.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
 
@@ -1177,10 +1176,9 @@ export function createRoleRuntimeExtension(
             engineDetourRegistration = undefined;
           }
         }
-        // Worker gates ②④ + ① baseline: envelope arms the worktree after role install.
+        // Worker gates ①②: arm records baseline and runs private one-shot hook uninstall (ADR 0070).
         // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.
         if (entry.role === "coder" || entry.role === "fixer") {
-          installWorkerGitHooks(ctx.cwd);
           if (entry.role === "coder") coder.armSubmissionGate(ctx.cwd, ctx.sessionManager);
           else fixer.armSubmissionGate(ctx.cwd, ctx.sessionManager);
         }
