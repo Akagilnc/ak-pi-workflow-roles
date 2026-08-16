@@ -1,6 +1,6 @@
 /** #242/#369 worker gates ①② at submission seam. Durability: ADR 0065 createRecordSession only. */
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -70,13 +70,15 @@ function statusOf(error: unknown): unknown {
     : undefined;
 }
 
-function tryGet(file: string, key: string): string | undefined {
-  if (!existsSync(file)) return undefined;
+function tryGetAll(file: string, key: string): string[] {
+  if (!existsSync(file)) return [];
   try {
-    return gitFile(file, ["--get", key]);
+    const out = gitFile(file, ["--get-all", key]);
+    return out.length === 0 ? [] : out.split("\n");
   } catch (error) {
+    // --get-all exit 1 = absent; other failures stay loud.
     if (statusOf(error) !== 1) throw error;
-    return undefined;
+    return [];
   }
 }
 
@@ -87,15 +89,34 @@ function ownedHook(path: string): boolean {
   return readFileSync(path, "utf8").includes(HOOK_MARKER);
 }
 
-function unsetOwnedHooksPath(file: string): string | undefined {
-  const value = tryGet(file, "core.hooksPath");
-  if (value === undefined || !ownedHook(resolve(value, HOOK_FILE))) return undefined;
-  try {
-    gitFile(file, ["--unset", "core.hooksPath"]);
-  } catch (error) {
-    if (statusOf(error) !== 5) throw error; // 5 = already absent
+/** Escape a hooksPath value for git config --unset value-pattern (POSIX ERE). */
+function escapeGitConfigValueRegex(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+/**
+ * Remove only package-owned core.hooksPath values; keep every foreign value.
+ * --unset without a value-pattern exits 5 for both "absent" and "multi-value",
+ * so multi-valued keys must be addressed per matching value.
+ */
+function unsetOwnedHooksPath(file: string): string[] {
+  const owned: string[] = [];
+  for (const value of tryGetAll(file, "core.hooksPath")) {
+    if (!ownedHook(resolve(value, HOOK_FILE))) continue;
+    try {
+      // --unset-all + exact value-pattern drops every duplicate owned copy; foreign stays.
+      gitFile(file, [
+        "--unset-all",
+        "core.hooksPath",
+        `^${escapeGitConfigValueRegex(value)}$`,
+      ]);
+    } catch (error) {
+      // 5 = this specific value already absent (not multi-value ambiguity).
+      if (statusOf(error) !== 5) throw error;
+    }
+    owned.push(value);
   }
-  return value;
+  return owned;
 }
 
 /** Delete only the package-owned hook file; rmdir solely when empty. */
@@ -109,10 +130,11 @@ function rmOwnedDir(dir: string): void {
 function linkedGitDirs(commonDir: string): string[] {
   const root = resolve(commonDir, "worktrees");
   if (!existsSync(root)) return [];
-  // Enumeration/stat failures propagate — never skip a linked admin dir silently.
+  // Enumeration/lstat failures propagate — never skip a linked admin dir silently.
+  // lstat does not follow: symlink entries are not directories and stay out of range.
   return readdirSync(root)
     .map((name) => resolve(root, name))
-    .filter((dir) => statSync(dir).isDirectory());
+    .filter((dir) => lstatSync(dir).isDirectory());
 }
 
 /**
@@ -132,8 +154,7 @@ function uninstallPackageWorkerHooks(cwd: string): void {
   const commonDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   // Unset owned hooksPath before deleting the marker file (ownership check needs it).
   const clear = (configFile: string): void => {
-    const hooks = unsetOwnedHooksPath(configFile);
-    if (hooks !== undefined) rmOwnedDir(hooks);
+    for (const hooks of unsetOwnedHooksPath(configFile)) rmOwnedDir(hooks);
   };
   clear(resolve(commonDir, "config"));
   clear(resolve(commonDir, "config.worktree"));
