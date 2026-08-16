@@ -1,7 +1,7 @@
 /** #242 shortest real tracers — one bar per granted gate, positive+negative same bar. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -23,13 +23,16 @@ import { createRecordSession } from "../../src/sitian-record-entry.ts";
 import {
   createWorkerSubmissionGate,
   installWorkerGitHooks,
+  migrateWorkerGitHookScope,
   WorkerCommitReminderError,
   WorkerUnfinishedReasonReminderError,
   WORKER_COMMIT_BASELINE_ENTRY_TYPE,
   WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
-  WORKER_COMMIT_SUBJECT_PREFIX,
   WORKER_SUBMISSION_GATE_RECORD_KIND,
 } from "../../src/worker-submission-gates.ts";
+
+/** Factory naming discipline sample — open-set gate accepts any platform prefix. */
+const FACTORY_PREFIX = "ak-roles:";
 import {
   machineLedgerHome,
   packageRoot,
@@ -100,10 +103,10 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
     const gate2 = createWorkerSubmissionGate();
     gate2.arm(root);
     assert.throws(() => gate2.assertAcceptable("partially_completed"), WorkerCommitReminderError);
-    git(root, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} work`]);
+    git(root, ["commit", "--allow-empty", "-m", `${FACTORY_PREFIX} work`]);
     const gate3 = createWorkerSubmissionGate();
     gate3.arm(root);
-    git(root, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} more`]);
+    git(root, ["commit", "--allow-empty", "-m", `${FACTORY_PREFIX} more`]);
     assert.doesNotThrow(() => gate3.assertAcceptable("completed"));
 
     // Real git failure must not be mislabeled as「未观察到 commit」.
@@ -128,7 +131,7 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
   }
 });
 
-test("②④ bad title/empty subject/amend rejected; fixed title, new commit, pre-existing history pass; armed tree only", async () => {
+test("②④ open prefix/empty subject/amend; scope worktree-only; main multi-wt refused; merge exempt", async () => {
   const root = await tempGitRepo();
   try {
     // Production shape: linked worktrees exist first; install arms one tree only.
@@ -136,12 +139,36 @@ test("②④ bad title/empty subject/amend rejected; fixed title, new commit, pr
     const sibling = join(root, "wt-sibling");
     git(root, ["worktree", "add", wt, "HEAD"]);
     git(root, ["worktree", "add", sibling, "HEAD"]);
+
+    // Main of a multi-worktree repo is not an envelope worker tree — refuse.
+    assert.throws(
+      () => installWorkerGitHooks(root),
+      /main worktree of a multi-worktree repo/,
+    );
+
     installWorkerGitHooks(wt);
+
+    // Real git config observation: common has no hooksPath; only armed worktree carries it.
+    const commonDir = git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const commonConfig = join(commonDir, "config");
+    // git config --get exits 1 when unset.
+    try {
+      execFileSync("git", ["config", "--file", commonConfig, "--get", "core.hooksPath"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+      assert.fail("common core.hooksPath must be unset");
+    } catch (error) {
+      assert.equal((error as { status?: number }).status, 1);
+    }
+    const hooksDir = git(wt, ["config", "--worktree", "--get", "core.hooksPath"]);
+    assert.match(hooksDir, /ak-roles-hooks/);
+    const wtGitDir = git(wt, ["rev-parse", "--path-format=absolute", "--git-dir"]);
+    assert.equal(hooksDir, join(wtGitDir, "ak-roles-hooks"));
 
     const headBeforeBad = git(wt, ["rev-parse", "HEAD"]);
     assert.throws(
       () => git(wt, ["commit", "--allow-empty", "-m", "missing prefix"]),
-      /ak-roles: commit subject must start with ak-roles:/,
+      /missing platform prefix/,
     );
     assert.equal(git(wt, ["rev-parse", "HEAD"]), headBeforeBad);
     // Empty subject is illegal on newly-created commits (not pre-existing history).
@@ -152,36 +179,41 @@ test("②④ bad title/empty subject/amend rejected; fixed title, new commit, pr
     }).trim();
     assert.throws(
       () => git(wt, ["update-ref", "HEAD", emptyCommit]),
-      /ak-roles: commit subject must start with ak-roles:/,
+      /missing platform prefix/,
     );
     assert.equal(git(wt, ["rev-parse", "HEAD"]), headBeforeBad);
-    git(wt, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} lawful`]);
+    // Open set: any platform prefix is lawful (not closed to ak-roles:).
+    git(wt, ["commit", "--allow-empty", "-m", "claude: docs lawful"]);
+    git(wt, ["commit", "--allow-empty", "-m", "codex: fix lawful"]);
+    git(wt, ["commit", "--allow-empty", "-m", `${FACTORY_PREFIX} lawful`]);
     const afterGood = git(wt, ["rev-parse", "HEAD"]);
     assert.throws(
-      () => git(wt, ["commit", "--allow-empty", "--amend", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} amended`]),
+      () => git(wt, ["commit", "--allow-empty", "--amend", "-m", `${FACTORY_PREFIX} amended`]),
       /non-fast-forward|amend/i,
     );
     assert.equal(git(wt, ["rev-parse", "HEAD"]), afterGood);
-    git(wt, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} forward`]);
+    git(wt, ["commit", "--allow-empty", "-m", `${FACTORY_PREFIX} forward`]);
     assert.notEqual(git(wt, ["rev-parse", "HEAD"]), afterGood);
     await writeFile(join(wt, "dirt.txt"), "dirty\n");
-    git(wt, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} still ok dirty`]);
+    git(wt, ["commit", "--allow-empty", "-m", `${FACTORY_PREFIX} still ok dirty`]);
 
     // Unarmed main + sibling unconstrained (hook bound to armed worktree only).
     git(root, ["commit", "--allow-empty", "-m", "main unprefixed ok"]);
     git(sibling, ["commit", "--allow-empty", "-m", "sibling unprefixed ok"]);
+    // Commander-style platform prefix on unarmed main must also pass (no hook).
+    git(root, ["commit", "--allow-empty", "-m", "claude: commander on main"]);
 
     // Pre-existing unprefixed history must not be re-checked on ref creation.
     const seed = git(wt, ["rev-list", "--max-parents=0", "HEAD"]);
     git(wt, ["branch", "seed-alias", seed]);
     git(wt, ["checkout", "-b", "topic"]);
-    git(wt, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} topic tip`]);
+    git(wt, ["commit", "--allow-empty", "-m", `${FACTORY_PREFIX} topic tip`]);
     git(wt, ["checkout", "-b", "integration", "seed-alias"]);
-    git(wt, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} integration base`]);
-    git(wt, ["merge", "--no-ff", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} merge topic`, "topic"]);
+    git(wt, ["commit", "--allow-empty", "-m", `${FACTORY_PREFIX} integration base`]);
+    // Merge commits exempt from platform-prefix check (GitHub merge shape).
+    git(wt, ["merge", "--no-ff", "-m", "Merge pull request #1 from topic", "topic"]);
 
     // Own-package prior hook body (marker present, content differs) must reload.
-    const hooksDir = git(wt, ["config", "--get", "core.hooksPath"]);
     const hookPath = join(hooksDir, "reference-transaction");
     const priorOwn = `#!/bin/sh
 # ak-roles: worker-submission-gates reference-transaction
@@ -192,6 +224,15 @@ exit 0
     chmodSync(hookPath, 0o755);
     assert.doesNotThrow(() => installWorkerGitHooks(wt));
     assert.match(await import("node:fs/promises").then((fs) => fs.readFile(hookPath, "utf8")), /rev-list/);
+    // Reload must keep common clean.
+    try {
+      execFileSync("git", ["config", "--file", commonConfig, "--get", "core.hooksPath"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+      assert.fail("common core.hooksPath must stay unset after reload");
+    } catch (error) {
+      assert.equal((error as { status?: number }).status, 1);
+    }
 
     // Foreign reference-transaction hook → fails closed, no silent overwrite.
     await writeFile(hookPath, "#!/bin/sh\nexit 0\n", "utf8");
@@ -231,15 +272,117 @@ exit 0
       // Armed + never-armed sibling both remain usable work trees.
       assert.equal(git(wtA, ["status", "--porcelain"]), "");
       assert.equal(git(wtB, ["status", "--porcelain"]), "");
+      const bareCommon = git(wtA, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+      try {
+        execFileSync("git", ["config", "--file", join(bareCommon, "config"), "--get", "core.hooksPath"], {
+          encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+        });
+        assert.fail("bare-host common core.hooksPath must be unset");
+      } catch (error) {
+        assert.equal((error as { status?: number }).status, 1);
+      }
       assert.throws(
         () => git(wtA, ["commit", "--allow-empty", "-m", "no prefix"]),
-        /ak-roles: commit subject must start with ak-roles:/,
+        /missing platform prefix/,
       );
       // Sibling never armed — unconstrained.
       git(wtB, ["commit", "--allow-empty", "-m", "sibling unprefixed ok on bare host"]);
-      git(wtA, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} bare-host armed ok`]);
+      git(wtA, ["commit", "--allow-empty", "-m", `${FACTORY_PREFIX} bare-host armed ok`]);
+      git(wtA, ["commit", "--allow-empty", "-m", "claude: open prefix on bare-host armed"]);
     } finally {
       await rm(probe, { recursive: true, force: true });
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("#355 migrate + install heal common hooksPath leak; single-clone main armable", async () => {
+  // Real entry: migrateWorkerGitHookScope / installWorkerGitHooks.
+  // Poison common core.hooksPath (live failure shape) → migrate clears → commander free;
+  // install on linked tree keeps common clean; dedicated single-clone main may arm.
+  const root = await tempGitRepo();
+  try {
+    const wt = join(root, "wt-355");
+    git(root, ["worktree", "add", wt, "HEAD"]);
+    const commonDir = git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const commonConfig = join(commonDir, "config");
+    const poisonDir = join(commonDir, "ak-roles-hooks");
+    mkdirSync(poisonDir, { recursive: true });
+    const poisonHook = join(poisonDir, "reference-transaction");
+    writeFileSync(
+      poisonHook,
+      `#!/bin/sh
+# ak-roles: worker-submission-gates reference-transaction
+exit 1
+`,
+      "utf8",
+    );
+    chmodSync(poisonHook, 0o755);
+    execFileSync("git", ["config", "--file", commonConfig, "core.hooksPath", poisonDir], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    });
+    // Main config.worktree also poisoned (live shape).
+    git(root, ["config", "extensions.worktreeConfig", "true"]);
+    git(root, ["config", "--worktree", "core.hooksPath", poisonDir]);
+
+    // Common leak blocks even unprefixed commits on main (observed #355 damage).
+    assert.throws(
+      () => git(root, ["commit", "--allow-empty", "-m", "blocked by common leak"]),
+      /./, // hook exit 1
+    );
+
+    migrateWorkerGitHookScope(wt);
+
+    // Real observation: common hooksPath gone; poison dir removed; main free.
+    try {
+      execFileSync("git", ["config", "--file", commonConfig, "--get", "core.hooksPath"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+      assert.fail("migrate must unset common core.hooksPath");
+    } catch (error) {
+      assert.equal((error as { status?: number }).status, 1);
+    }
+    assert.equal(existsSync(poisonDir), false);
+    git(root, ["commit", "--allow-empty", "-m", "claude: commander free after migrate"]);
+
+    // Install arms linked tree only; common stays clean.
+    installWorkerGitHooks(wt);
+    try {
+      execFileSync("git", ["config", "--file", commonConfig, "--get", "core.hooksPath"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+      assert.fail("install must not write common core.hooksPath");
+    } catch (error) {
+      assert.equal((error as { status?: number }).status, 1);
+    }
+    git(wt, ["commit", "--allow-empty", "-m", "claude: open ok after arm"]);
+    git(root, ["commit", "--allow-empty", "-m", "still free on main"]);
+
+    // Dedicated single-worktree clone: main is the worker workspace — armable.
+    const solo = await tempGitRepo();
+    try {
+      installWorkerGitHooks(solo);
+      const soloCommon = git(solo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+      try {
+        execFileSync("git", ["config", "--file", join(soloCommon, "config"), "--get", "core.hooksPath"], {
+          encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+        });
+        assert.fail("solo common core.hooksPath must be unset");
+      } catch (error) {
+        assert.equal((error as { status?: number }).status, 1);
+      }
+      assert.equal(
+        git(solo, ["config", "--worktree", "--get", "core.hooksPath"]),
+        join(soloCommon, "ak-roles-hooks"),
+      );
+      git(solo, ["commit", "--allow-empty", "-m", `${FACTORY_PREFIX} solo armed`]);
+      assert.throws(
+        () => git(solo, ["commit", "--allow-empty", "-m", "no prefix on solo"]),
+        /missing platform prefix/,
+      );
+    } finally {
+      await rm(solo, { recursive: true, force: true });
     }
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -391,7 +534,7 @@ test("① durability: baseline+bounce via real createRecordSession survive resum
     assert.match(body, new RegExp(baselineHead));
 
     // Advance HEAD after bounce — baseline must stay the first-arm tip across resume.
-    git(project, ["commit", "--allow-empty", "-m", `${WORKER_COMMIT_SUBJECT_PREFIX} after bounce`]);
+    git(project, ["commit", "--allow-empty", "-m", `${FACTORY_PREFIX} after bounce`]);
 
     // (a) same-nest second open on the live resume path: file identity + bytes unchanged.
     const bytesBefore = readFileSync(gatePath);

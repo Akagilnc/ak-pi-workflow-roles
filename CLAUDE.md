@@ -21,9 +21,9 @@
 
 各 ADR 已落定的具体决策，在本仓优先于宪法的通用条文；其中违反宪法者，须绑陛下原话与 decision key。
 
-## Commit 前缀法（2026-08-10 陛下拍定）
+## Commit 前缀法
 
-提交标题一律冠 `ak-roles:` 在最前。
+工厂 worker 提交标题一律冠 `ak-roles:`（2026-08-10 陛下就工厂前缀拍定，L3784），置于 conventional-commit 前缀之前。交卷闸只裁 worker 域提交：缺平台前缀→打回（开放集，循宿主宪法 #10）；直改通道与人工提交不经此闸；GitHub 生成的 merge commit 豁免。
 
 ## Soul 内容纪律
 

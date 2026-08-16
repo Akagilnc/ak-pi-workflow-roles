@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
@@ -16,7 +17,6 @@ import {
   WORKER_SUBMISSION_GATE_KIND,
 } from "./sitian-record-entry.ts";
 
-export const WORKER_COMMIT_SUBJECT_PREFIX = "ak-roles:";
 /** Sitian kind for gate ① durable baseline / bounce records (single path segment, not a destination). */
 export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
@@ -25,6 +25,8 @@ export const WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE = "commit-reminder-bounce"
 const DONE = new Set(["completed", "partially_completed"]);
 /** Marker: own-package hooks are reloadable across HOOK body changes; foreign hooks refuse. */
 const HOOK_MARKER = "ak-roles: worker-submission-gates reference-transaction";
+/** Path segment / value needle for our private hooksPath dirs (scope-leak migration). */
+const HOOKS_DIR_NAME = "ak-roles-hooks";
 
 export class WorkerCommitReminderError extends Error {
   readonly code = "worker_commit_reminder" as const;
@@ -68,12 +70,125 @@ function gitFile(file: string, args: string[]): string {
   }).trim();
 }
 
-// ② each newly-created commit (incl. empty subject); ④ ban non-fast-forward.
-// Scoped by install: worktree-local core.hooksPath → only the armed tree.
+function tryGitFileGet(file: string, key: string): string | undefined {
+  if (!existsSync(file)) return undefined;
+  try {
+    return gitFile(file, ["--get", key]);
+  } catch {
+    return undefined;
+  }
+}
+
+function isAkRolesHooksPath(value: string): boolean {
+  return value.includes(HOOKS_DIR_NAME);
+}
+
+/** Unset core.hooksPath in a config file when it points at our private hooks dir. Returns prior value. */
+function unsetAkRolesHooksPathInFile(file: string): string | undefined {
+  const value = tryGitFileGet(file, "core.hooksPath");
+  if (value === undefined || !isAkRolesHooksPath(value)) return undefined;
+  try {
+    gitFile(file, ["--unset", "core.hooksPath"]);
+  } catch {
+    /* raced / already unset */
+  }
+  return value;
+}
+
+function removeOurHookDir(dir: string): void {
+  const hookPath = resolve(dir, "reference-transaction");
+  if (!existsSync(hookPath)) {
+    if (existsSync(dir)) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+    return;
+  }
+  try {
+    const body = readFileSync(hookPath, "utf8");
+    if (!body.includes(HOOK_MARKER)) return; // foreign hook — leave alone
+  } catch {
+    return;
+  }
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    /* best-effort */
+  }
+}
+
+function worktreePathsFromPorcelain(porcelain: string): string[] {
+  const paths: string[] = [];
+  for (const line of porcelain.split("\n")) {
+    if (line.startsWith("worktree ")) paths.push(line.slice("worktree ".length));
+  }
+  return paths;
+}
+
+/**
+ * Migration path (ticket #355 验收③): strip common-config and stale worktree
+ * hooksPath entries that point at ak-roles-hooks, and remove our hook dirs.
+ * Does not arm a worktree — next envelope coder/fixer install re-binds locally.
+ *
+ * Diagnostic (#355): installer history never wrote common hooksPath in-tree
+ * (b10de7ec wrote the hook *file* into the shared default hooks dir; 5194e08d
+ * introduced `--worktree` hooksPath). Live common pollution is residual outside
+ * that write path; install now purges + asserts so the seam cannot re-leak.
+ */
+export function migrateWorkerGitHookScope(cwd: string): void {
+  let inside: string;
+  try {
+    inside = git(cwd, ["rev-parse", "--is-inside-work-tree"]);
+  } catch (error) {
+    throw new Error(
+      `ak-roles: migrateWorkerGitHookScope requires a git work tree: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (inside !== "true") {
+    throw new Error("ak-roles: migrateWorkerGitHookScope requires a git work tree");
+  }
+
+  const commonDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const commonConfig = resolve(commonDir, "config");
+
+  const commonHooks = unsetAkRolesHooksPathInFile(commonConfig);
+  if (commonHooks !== undefined) removeOurHookDir(commonHooks);
+
+  // Main worktree config lives at commonDir/config.worktree.
+  const mainWtConfig = resolve(commonDir, "config.worktree");
+  const mainHooks = unsetAkRolesHooksPathInFile(mainWtConfig);
+  if (mainHooks !== undefined) removeOurHookDir(mainHooks);
+  removeOurHookDir(resolve(commonDir, HOOKS_DIR_NAME));
+
+  let porcelain: string;
+  try {
+    porcelain = git(cwd, ["worktree", "list", "--porcelain"]);
+  } catch {
+    return;
+  }
+  for (const wtPath of worktreePathsFromPorcelain(porcelain)) {
+    let gitDir: string;
+    try {
+      gitDir = git(wtPath, ["rev-parse", "--path-format=absolute", "--git-dir"]);
+    } catch {
+      continue;
+    }
+    // Skip main — already handled via commonDir paths.
+    if (gitDir === commonDir) continue;
+    const wtConfig = resolve(gitDir, "config.worktree");
+    const hooks = unsetAkRolesHooksPathInFile(wtConfig);
+    if (hooks !== undefined) removeOurHookDir(hooks);
+    removeOurHookDir(resolve(gitDir, HOOKS_DIR_NAME));
+  }
+}
+
+// ② each newly-created commit (incl. empty subject): missing platform prefix → bounce (open set).
+// ④ ban non-fast-forward. Merge commits (2+ parents) exempt from ②.
+// Scoped by install: worktree-local core.hooksPath → only the armed tree; common must stay clean.
 const HOOK = `#!/bin/sh
 # ${HOOK_MARKER}
 [ "$1" = prepared ] || exit 0
-prefix=${WORKER_COMMIT_SUBJECT_PREFIX}
 while read -r old new ref; do
   case $ref in refs/heads/*|HEAD) ;; *) continue ;; esac
   [ -n "$new" ] && [ -n "$(printf %s "$new" | tr -d 0)" ] || continue
@@ -81,16 +196,61 @@ while read -r old new ref; do
     git merge-base --is-ancestor "$old" "$new" 2>/dev/null || { echo "ak-roles: rejected non-fast-forward update of $ref (no amend/rebase/reset)" >&2; exit 1; }
   fi
   for commit in $(git rev-list "$new" --not --all 2>/dev/null); do
+    # GitHub / ordinary merge commits (2+ parents) exempt from platform-prefix check.
+    if git rev-parse --verify -q "\${commit}^2" >/dev/null 2>&1; then continue; fi
     subj=$(git log -1 --format=%s "$commit")
-    case $subj in "$prefix"*) ;; *) echo "ak-roles: commit subject must start with $prefix (got: $subj)" >&2; exit 1 ;; esac
+    # Open set: any leading platform ident: (constitution #10); not closed to ak-roles:.
+    case $subj in
+      [A-Za-z][A-Za-z0-9_-]*:*) ;;
+      *) echo "ak-roles: commit subject missing platform prefix (got: $subj)" >&2; exit 1 ;;
+    esac
   done
 done
 `;
 
+function assertHooksScopeClean(cwd: string, commonConfig: string, expectedDir: string): void {
+  const commonHooks = tryGitFileGet(commonConfig, "core.hooksPath");
+  if (commonHooks !== undefined) {
+    throw new Error(
+      `ak-roles: hooks install must not leave common core.hooksPath set (got: ${commonHooks})`,
+    );
+  }
+  let wtHooks: string;
+  try {
+    wtHooks = git(cwd, ["config", "--worktree", "--get", "core.hooksPath"]);
+  } catch {
+    throw new Error("ak-roles: hooks install failed to bind worktree-local core.hooksPath");
+  }
+  if (wtHooks !== expectedDir) {
+    throw new Error(
+      `ak-roles: worktree core.hooksPath mismatch (got: ${wtHooks}, want: ${expectedDir})`,
+    );
+  }
+}
+
+function rollbackHookInstall(cwd: string, hooksDir: string, hookPath: string): void {
+  try {
+    git(cwd, ["config", "--worktree", "--unset", "core.hooksPath"]);
+  } catch {
+    /* unset or missing */
+  }
+  try {
+    if (existsSync(hookPath)) {
+      const body = readFileSync(hookPath, "utf8");
+      if (body.includes(HOOK_MARKER)) {
+        rmSync(hooksDir, { recursive: true, force: true });
+      }
+    }
+  } catch {
+    /* best-effort residue cleanup */
+  }
+}
+
 /**
  * Bind ②④ to this worktree only — private hooksPath + worktree config.
- * Never leave shared common config in a state that bricks sibling/main trees
- * (git requires core.bare/core.worktree moved out of common when worktreeConfig is on).
+ * Envelope coder/fixer arm only (call site). Refuses main worktree of a
+ * multi-worktree repo so commander/human trees stay free. Never leaves shared
+ * common config with hooksPath; post-write assert fails closed and rolls back.
  */
 export function installWorkerGitHooks(cwd: string): void {
   // Fail closed before any shared-config write: bare host / non-work-tree is not armable.
@@ -109,8 +269,33 @@ export function installWorkerGitHooks(cwd: string): void {
   }
 
   const commonDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const gitDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-dir"]);
   const commonConfig = resolve(commonDir, "config");
   const mainWorktreeConfig = resolve(commonDir, "config.worktree");
+
+  // Only envelope-linked worker trees, or a dedicated single-worktree clone.
+  // Main of a multi-worktree repo is commander/human territory — do not arm.
+  if (gitDir === commonDir) {
+    let porcelain: string;
+    try {
+      porcelain = git(cwd, ["worktree", "list", "--porcelain"]);
+    } catch (error) {
+      throw new Error(
+        `ak-roles: refusing worker hooks install; cannot list worktrees: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    if (worktreePathsFromPorcelain(porcelain).length > 1) {
+      throw new Error(
+        "ak-roles: refusing worker hooks install on main worktree of a multi-worktree repo (envelope coder/fixer linked worktree only)",
+      );
+    }
+  }
+
+  // Heal any prior common-scope leak before arming (same seam as migrate).
+  const leaked = unsetAkRolesHooksPathInFile(commonConfig);
+  if (leaked !== undefined) removeOurHookDir(leaked);
 
   // Snapshot worktree-only keys still sitting in common config (git docs: must move on enable).
   let bareInCommon = false;
@@ -148,8 +333,7 @@ export function installWorkerGitHooks(cwd: string): void {
     gitFile(mainWorktreeConfig, ["core.worktree", worktreeInCommon]);
   }
 
-  const gitDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-dir"]);
-  const dir = resolve(gitDir, "ak-roles-hooks");
+  const dir = resolve(gitDir, HOOKS_DIR_NAME);
   const path = resolve(dir, "reference-transaction");
   if (existsSync(path)) {
     const existing = readFileSync(path, "utf8");
@@ -163,6 +347,17 @@ export function installWorkerGitHooks(cwd: string): void {
   writeFileSync(path, HOOK, "utf8");
   chmodSync(path, 0o755);
   git(cwd, ["config", "--worktree", "core.hooksPath", dir]);
+
+  // Fail closed: common clean + only this worktree carries hooksPath. Residue rolled back.
+  try {
+    assertHooksScopeClean(cwd, commonConfig, dir);
+  } catch (error) {
+    rollbackHookInstall(cwd, dir, path);
+    // Re-purge common in case the failed path polluted it.
+    const again = unsetAkRolesHooksPathInFile(commonConfig);
+    if (again !== undefined) removeOurHookDir(again);
+    throw error;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
