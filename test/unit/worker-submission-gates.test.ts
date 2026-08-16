@@ -7,6 +7,8 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -90,6 +92,15 @@ function hooksPathOf(cwd: string): string | undefined {
     return git(cwd, ["config", "--get", "core.hooksPath"]);
   } catch {
     return undefined;
+  }
+}
+
+function hooksPathsOf(cwd: string): string[] {
+  try {
+    const out = git(cwd, ["config", "--get-all", "core.hooksPath"]);
+    return out.length === 0 ? [] : out.split("\n");
+  } catch {
+    return [];
   }
 }
 
@@ -299,6 +310,31 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       assert.ok(existsSync(mixed.hooksDir), "non-empty hooks dir must survive");
       await rm(mixed.hooksDir, { recursive: true, force: true });
 
+      // Multi-valued core.hooksPath: drop only owned matching values; keep all foreign.
+      // Plain --unset exit 5 is multi-value OR absent — must not leave stale owned config.
+      const multiOwned = plantOwnedHooks(root);
+      const foreignMultiDir = join(gitDir, "foreign-hooks-multi");
+      const foreignMultiHook = join(foreignMultiDir, "reference-transaction");
+      mkdirSync(foreignMultiDir, { recursive: true });
+      writeFileSync(foreignMultiHook, "#!/bin/sh\n# foreign multi value\nexit 0\n", "utf8");
+      git(root, ["config", "--worktree", "--add", "core.hooksPath", foreignMultiDir]);
+      assert.deepEqual(
+        new Set(hooksPathsOf(root)),
+        new Set([multiOwned.hooksDir, foreignMultiDir]),
+        "precondition: owned + foreign multi-value hooksPath",
+      );
+      createWorkerSubmissionGate().arm(root);
+      assert.deepEqual(
+        hooksPathsOf(root),
+        [foreignMultiDir],
+        "only foreign hooksPath value(s) must remain",
+      );
+      assert.equal(existsSync(multiOwned.hookPath), false, "owned hook file must be removed");
+      assert.ok(existsSync(foreignMultiHook), "foreign multi-value target must survive");
+      git(root, ["config", "--worktree", "--unset-all", "core.hooksPath"]);
+      await rm(foreignMultiDir, { recursive: true, force: true });
+      if (existsSync(multiOwned.hooksDir)) await rm(multiOwned.hooksDir, { recursive: true, force: true });
+
       // Migrated core.bare / core.worktree stay (real path — fake path bricks git).
       const commonDir = git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
       const mainWtConfig = join(commonDir, "config.worktree");
@@ -318,8 +354,29 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       assert.equal(hooksPathOf(wt), undefined);
       assert.equal(existsSync(plantedWt.hooksDir), false);
 
-      // Unrelated repo out of discoverable range.
+      // Symlinked worktree admin entry must not be followed — external target stays intact.
       const plantedStranger = plantOwnedHooks(stranger);
+      const strangerGitDir = git(stranger, ["rev-parse", "--path-format=absolute", "--git-dir"]);
+      const worktreesRoot = join(commonDir, "worktrees");
+      mkdirSync(worktreesRoot, { recursive: true });
+      const escapeLink = join(worktreesRoot, "symlink-escape");
+      symlinkSync(strangerGitDir, escapeLink);
+      try {
+        createWorkerSubmissionGate().arm(root);
+        assert.equal(
+          hooksPathOf(stranger),
+          plantedStranger.hooksDir,
+          "symlink worktree entry must not clear external hooksPath",
+        );
+        assert.ok(
+          existsSync(plantedStranger.hookPath),
+          "symlink worktree entry must not delete external owned hook",
+        );
+      } finally {
+        unlinkSync(escapeLink);
+      }
+
+      // Unrelated repo out of discoverable range (no symlink entry).
       createWorkerSubmissionGate().arm(root);
       assert.equal(hooksPathOf(stranger), plantedStranger.hooksDir);
       assert.ok(existsSync(plantedStranger.hookPath));
