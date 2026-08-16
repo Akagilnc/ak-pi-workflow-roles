@@ -1580,8 +1580,9 @@ test("audit escalation requires the retained seat-bound response across all audi
 
 /**
  * #373 public-CLI acceptance tracer (ADR 0052 sole external entrance).
- * One shared multi-turn fixture covers judge/reviewer/doctor escalate plus the
- * two named real rejection cases — no forked fixture family.
+ * Shared multi-turn fixture covers three-seat escalate; the two named real
+ * rejection cases are single shortest tracers (not a 3×2 product) whose session
+ * shapes carry the ticket facts — not id/comment/violations-code alone.
  */
 test("public CLI multi-turn audit escalate covers three seats; named revises stay rejected", async () => {
   const seats = {
@@ -1616,27 +1617,76 @@ test("public CLI multi-turn audit escalate covers three seats; named revises sta
     },
   } as const;
 
-  // Deterministic audit decisions for the two named real rejection cases
-  // (ticket sample). Status+code only — never pin free-text diagnostics.
-  const namedRejections = [
-    {
-      id: "wrong-authority-source",
-      // Spec leg took issue #517 as #516's authority source.
-      decision: { status: "revise" as const, violations: ["wrong-authority-source"] },
-    },
-    {
-      id: "empty-assistant-no-report",
-      // Main session ended on an empty assistant message with no report.
-      decision: { status: "revise" as const, violations: ["empty-assistant-no-report"] },
-    },
-  ] as const;
-
   const auditCandidate = {
     status: "escalate" as const,
     conflicts: ["authority conflict"],
     decisionGate: { question: "Who decides?", options: ["owner", "caller"] },
   };
 
+  /** Typed external negative suite for a rejected revise — never pin free text. */
+  async function assertRejectedReviseTerminal(input: {
+    label: string;
+    role: (typeof AUDITOR_SOUL_ROLES)[number];
+    result: { exitCode: number; terminal?: TerminalResult };
+    stdout: string[];
+    stderr: string[];
+  }): Promise<{ errorPath: string; evidencePath: string }> {
+    const { label, role, result, stdout, stderr } = input;
+    assert.equal(result.exitCode, 1, `${label}: ${stdout.join("")}`);
+    assert.ok(result.terminal, `${label}: must settle typed Terminal`);
+    const outcome = result.terminal!.roleOutcome;
+    assert.equal(outcome.kind, "failure", label);
+    assert.equal(outcome.role, role, label);
+    assert.notEqual(outcome.kind, "accepted", `${label}: not accepted`);
+    assert.notEqual(outcome.kind, "audit_escalation", label);
+    assert.equal(
+      (outcome as { status?: unknown }).status,
+      undefined,
+      `${label}: rejected candidate has no completed/refused status`,
+    );
+    assert.notEqual((outcome as { status?: unknown }).status, "completed", label);
+    assert.notEqual((outcome as { status?: unknown }).status, "refused", label);
+    assert.equal(
+      (outcome as { acceptedReceipt?: unknown }).acceptedReceipt,
+      undefined,
+      `${label}: acceptedReceipt must not flip true`,
+    );
+    assert.equal(
+      (outcome.decisiveFacts as { acceptedReceipt?: unknown }).acceptedReceipt,
+      undefined,
+      `${label}: decisiveFacts.acceptedReceipt must not be true`,
+    );
+    assert.equal(isLawfulTypedTerminalOutcome(outcome), false, label);
+    assert.equal(
+      result.terminal!.artifacts.some((a) => a.kind === "report"),
+      false,
+      `${label}: no accepted report artifact`,
+    );
+    const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
+    const evidenceRef = result.terminal!.artifacts.find((a) => a.kind === "evidence");
+    assert.ok(errorRef, `${label}: error artifact only`);
+    assert.ok(evidenceRef, `${label}: evidence artifact`);
+    const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
+      kind?: string;
+      role?: string;
+      cause?: string;
+      receipt?: { status?: string };
+      outcome?: { kind?: string; status?: string; acceptedReceipt?: unknown };
+    };
+    assert.equal(errorBody.kind, "error", label);
+    assert.equal(errorBody.role, role, label);
+    assert.notEqual(errorBody.cause, undefined, label);
+    assert.notEqual(errorBody.receipt?.status, "completed", label);
+    assert.notEqual(errorBody.receipt?.status, "refused", label);
+    assert.notEqual(errorBody.outcome?.kind, "accepted", label);
+    assert.notEqual(errorBody.outcome?.status, "completed", label);
+    assert.notEqual(errorBody.outcome?.status, "refused", label);
+    assert.notEqual(errorBody.outcome?.acceptedReceipt, true, label);
+    assert.equal(stderr.length, 1, `${label}: one stderr line`);
+    return { errorPath: errorRef!.path, evidencePath: evidenceRef!.path };
+  }
+
+  // (a) Three-seat multi-turn escalate via real public CLI.
   for (const role of AUDITOR_SOUL_ROLES) {
     const seat = seats[role];
 
@@ -1757,144 +1807,272 @@ test("public CLI multi-turn audit escalate covers three seats; named revises sta
       assert.notEqual(reportBody.receipt?.status, "completed", role);
       assert.notEqual(reportBody.receipt?.status, "refused", role);
     });
+  }
 
-    for (const named of namedRejections) {
-      await withTempHome(async (home) => {
-        const project = join(home, `proj-${role}-${named.id}`);
-        await mkdir(project, { recursive: true });
-        seedGitProject(project);
-        if (role === "doctor") {
-          await seedDoctorIssueRuns(home, resolveBookKeyFromGit(project), 373);
-        }
-        const runId = `run-${role}-${named.id}`;
-        const roleCallId = `${role}-${named.id}-call`;
-        const { io, stdout, stderr } = captureIo();
-        const result = await runAkRole(seat.argv(project), {
-          packageRoot,
-          home,
-          cwd: project,
-          createRunId: () => runId,
-          io,
-          credentials: { "openai-codex": true, xai: true },
-          piRunner: async (args) => {
-            const sessionFile = args[args.indexOf("--session") + 1]!;
-            await mkdir(dirname(sessionFile), { recursive: true });
-            const entries = [
-              {
-                type: "message",
-                message: {
-                  role: "assistant",
+  // (d) Two named real rejection cases — once each on reviewer (authorityRefs seat).
+  // Scene facts live in admitted-request + session shape; deterministic revise only
+  // seals the audit decision. Never 3×2 against the escalate seats above.
+  const authority516 = "https://github.com/Akagilnc/ming-salvage-sim/issues/516";
+  const authority517 = "https://github.com/Akagilnc/ming-salvage-sim/issues/517";
+  const pr1210 = "https://github.com/Akagilnc/ming-salvage-sim/pull/1210";
+
+  await withTempHome(async (home) => {
+    const label = "wrong-authority-source";
+    const project = join(home, `proj-${label}`);
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = `run-${label}`;
+    const roleCallId = `${label}-call`;
+    const { io, stdout, stderr } = captureIo();
+    // Admission binds #516; the Spec-leg candidate below adjudicates #517.
+    const result = await runAkRole(
+      [
+        "reviewer",
+        "--project",
+        project,
+        "--base",
+        "HEAD",
+        "--authority-ref",
+        authority516,
+        "--authority-ref",
+        pr1210,
+        "named rejection wrong authority source",
+      ],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => runId,
+        io,
+        credentials: { "openai-codex": true, xai: true },
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await mkdir(dirname(sessionFile), { recursive: true });
+          const entries = [
+            {
+              type: "message",
+              message: {
+                role: "assistant",
+                content: [{
+                  type: "toolCall",
+                  id: roleCallId,
+                  name: REVIEWER_OUTPUT_TOOL_NAME,
+                  // Spec leg took #517 as the authority source (ticket sample).
+                  arguments: {
+                    status: "completed",
+                    specFetchedMaterial: {
+                      issueRef: authority517,
+                      ticketNumber: 517,
+                      adopted: { source: "commit-message", ticketNumber: 517 },
+                    },
+                    authorityRefs: [authority517],
+                  },
+                }],
+              },
+            },
+            ...multiTurnIntermediateRetained(runId),
+            {
+              type: "custom",
+              customType: "ak_compliance_response",
+              data: {
+                version: 1,
+                response: {
                   content: [{
                     type: "toolCall",
-                    id: roleCallId,
-                    name: seat.output,
-                    arguments: { role },
+                    name: REVIEWER_AUDIT_TOOL_NAME,
+                    // Deterministic revise — case identity is the 516/517 scene above.
+                    arguments: { status: "revise", violations: ["wrong-authority-source"] },
                   }],
                 },
               },
-              ...multiTurnIntermediateRetained(runId),
-              {
-                type: "custom",
-                customType: "ak_compliance_response",
-                data: {
-                  version: 1,
-                  response: {
-                    content: [{
-                      type: "toolCall",
-                      name: seat.audit,
-                      arguments: named.decision,
-                    }],
-                  },
-                },
+            },
+            {
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolCallId: roleCallId,
+                toolName: REVIEWER_OUTPUT_TOOL_NAME,
+                isError: true,
+                details: { status: "errored" },
               },
-              {
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolCallId: roleCallId,
-                  toolName: seat.output,
-                  isError: true,
-                  details: {
-                    status: "errored",
-                    violations: named.decision.violations,
-                  },
-                },
-              },
-            ];
-            await writeFile(
-              sessionFile,
-              `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-              "utf8",
-            );
-            return { code: 0, stderr: "", timedOut: false, args: [...args] };
-          },
-        });
+            },
+          ];
+          await writeFile(
+            sessionFile,
+            `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+            "utf8",
+          );
+          return { code: 0, stderr: "", timedOut: false, args: [...args] };
+        },
+      },
+    );
 
-        // Typed external result: rejected revise is not a lawful terminal.
-        assert.equal(result.exitCode, 1, `${role}/${named.id}: ${stdout.join("")}`);
-        assert.ok(result.terminal, `${role}/${named.id}: must settle typed Terminal`);
-        const outcome = result.terminal!.roleOutcome;
-        assert.equal(outcome.kind, "failure", `${role}/${named.id}`);
-        assert.equal(outcome.role, role, `${role}/${named.id}`);
-        // Full negative suite from public CLI typed result (judge item ⑥).
-        assert.notEqual(outcome.kind, "accepted", `${role}/${named.id}: not accepted`);
-        assert.notEqual(outcome.kind, "audit_escalation", `${role}/${named.id}`);
-        assert.equal(
-          (outcome as { status?: unknown }).status,
-          undefined,
-          `${role}/${named.id}: rejected candidate has no completed/refused status`,
-        );
-        assert.notEqual(
-          (outcome as { status?: unknown }).status,
-          "completed",
-          `${role}/${named.id}`,
-        );
-        assert.notEqual(
-          (outcome as { status?: unknown }).status,
-          "refused",
-          `${role}/${named.id}`,
-        );
-        assert.equal(
-          (outcome as { acceptedReceipt?: unknown }).acceptedReceipt,
-          undefined,
-          `${role}/${named.id}: acceptedReceipt must not flip true`,
-        );
-        assert.equal(
-          (outcome.decisiveFacts as { acceptedReceipt?: unknown }).acceptedReceipt,
-          undefined,
-          `${role}/${named.id}: decisiveFacts.acceptedReceipt must not be true`,
-        );
-        assert.equal(isLawfulTypedTerminalOutcome(outcome), false, `${role}/${named.id}`);
-        // Rejected revise is not published as accepted report/receipt.
-        assert.equal(
-          result.terminal!.artifacts.some((a) => a.kind === "report"),
-          false,
-          `${role}/${named.id}: no accepted report artifact`,
-        );
-        const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
-        assert.ok(errorRef, `${role}/${named.id}: error artifact only`);
-        const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-          kind?: string;
+    const { evidencePath } = await assertRejectedReviseTerminal({
+      label,
+      role: "reviewer",
+      result,
+      stdout,
+      stderr,
+    });
+    const evidence = JSON.parse(await readFile(evidencePath, "utf8")) as {
+      admittedRequestPath?: string;
+      sessionFile?: string;
+    };
+    assert.equal(typeof evidence.admittedRequestPath, "string", label);
+    assert.equal(typeof evidence.sessionFile, "string", label);
+    const admitted = JSON.parse(await readFile(evidence.admittedRequestPath!, "utf8")) as {
+      authorityRefs?: unknown;
+    };
+    // Scene proof: admission bound #516 / PR #1210 — not the Spec leg's #517.
+    assert.deepEqual(admitted.authorityRefs, [authority516, pr1210], label);
+    const sessionEntries = (await readFile(evidence.sessionFile!, "utf8"))
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as {
+        type?: string;
+        message?: {
           role?: string;
-          cause?: string;
-          receipt?: { status?: string };
-          outcome?: { kind?: string; status?: string; acceptedReceipt?: unknown };
+          content?: Array<{ type?: string; name?: string; arguments?: {
+            specFetchedMaterial?: { ticketNumber?: unknown; issueRef?: unknown };
+            authorityRefs?: unknown;
+          } }>;
         };
-        assert.equal(errorBody.kind, "error", `${role}/${named.id}`);
-        assert.equal(errorBody.role, role, `${role}/${named.id}`);
-        assert.notEqual(errorBody.cause, undefined, `${role}/${named.id}`);
-        assert.notEqual(errorBody.receipt?.status, "completed", `${role}/${named.id}`);
-        assert.notEqual(errorBody.receipt?.status, "refused", `${role}/${named.id}`);
-        assert.notEqual(errorBody.outcome?.kind, "accepted", `${role}/${named.id}`);
-        assert.notEqual(errorBody.outcome?.status, "completed", `${role}/${named.id}`);
-        assert.notEqual(errorBody.outcome?.status, "refused", `${role}/${named.id}`);
-        assert.notEqual(errorBody.outcome?.acceptedReceipt, true, `${role}/${named.id}`);
-        // Keep stderr shape asserted without pinning free-text diagnostics.
-        assert.equal(stderr.length, 1, `${role}/${named.id}: one stderr line`);
-        assert.equal(typeof outcome.kind === "string" && outcome.kind === "failure", true);
       });
-    }
-  }
+    const roleCall = sessionEntries.find((entry) =>
+      entry.type === "message"
+      && entry.message?.role === "assistant"
+      && Array.isArray(entry.message.content)
+      && entry.message.content.some((part) =>
+        part.type === "toolCall" && part.name === REVIEWER_OUTPUT_TOOL_NAME
+      )
+    );
+    assert.ok(roleCall, `${label}: session must carry the role output call`);
+    const specArgs = roleCall!.message!.content!.find(
+      (part) => part.type === "toolCall" && part.name === REVIEWER_OUTPUT_TOOL_NAME,
+    )!.arguments!;
+    // Scene proof: report/candidate adjudicated against #517 while admission is #516.
+    assert.equal(specArgs.specFetchedMaterial?.ticketNumber, 517, label);
+    assert.equal(specArgs.specFetchedMaterial?.issueRef, authority517, label);
+    assert.deepEqual(specArgs.authorityRefs, [authority517], label);
+  });
+
+  await withTempHome(async (home) => {
+    const label = "empty-assistant-no-report";
+    const project = join(home, `proj-${label}`);
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = `run-${label}`;
+    const roleCallId = `${label}-call`;
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      [
+        "reviewer",
+        "--project",
+        project,
+        "--base",
+        "HEAD",
+        "named rejection empty assistant no report",
+      ],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => runId,
+        io,
+        credentials: { "openai-codex": true, xai: true },
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await mkdir(dirname(sessionFile), { recursive: true });
+          const entries = [
+            {
+              type: "message",
+              message: {
+                role: "assistant",
+                content: [{
+                  type: "toolCall",
+                  id: roleCallId,
+                  name: REVIEWER_OUTPUT_TOOL_NAME,
+                  // Submission carries no report body.
+                  arguments: { status: "completed" },
+                }],
+              },
+            },
+            ...multiTurnIntermediateRetained(runId),
+            {
+              type: "custom",
+              customType: "ak_compliance_response",
+              data: {
+                version: 1,
+                response: {
+                  content: [{
+                    type: "toolCall",
+                    name: REVIEWER_AUDIT_TOOL_NAME,
+                    // Deterministic revise — case identity is the empty ending below.
+                    arguments: { status: "revise", violations: ["empty-assistant-no-report"] },
+                  }],
+                },
+              },
+            },
+            {
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolCallId: roleCallId,
+                toolName: REVIEWER_OUTPUT_TOOL_NAME,
+                isError: true,
+                details: { status: "errored" },
+              },
+            },
+            // Main session ends on an empty assistant message with no report.
+            {
+              type: "message",
+              message: {
+                role: "assistant",
+                content: [],
+              },
+            },
+          ];
+          await writeFile(
+            sessionFile,
+            `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+            "utf8",
+          );
+          return { code: 0, stderr: "", timedOut: false, args: [...args] };
+        },
+      },
+    );
+
+    const { evidencePath } = await assertRejectedReviseTerminal({
+      label,
+      role: "reviewer",
+      result,
+      stdout,
+      stderr,
+    });
+    const evidence = JSON.parse(await readFile(evidencePath, "utf8")) as {
+      sessionFile?: string;
+    };
+    assert.equal(typeof evidence.sessionFile, "string", label);
+    const sessionEntries = (await readFile(evidence.sessionFile!, "utf8"))
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as {
+        type?: string;
+        message?: { role?: string; content?: unknown };
+      });
+    const assistants = sessionEntries.filter(
+      (entry) => entry.type === "message" && entry.message?.role === "assistant",
+    );
+    assert.ok(assistants.length >= 1, `${label}: session must retain assistant faces`);
+    const closing = assistants[assistants.length - 1]!;
+    // Scene proof: session closes on empty assistant content — not a toolCall face.
+    assert.deepEqual(closing.message?.content, [], label);
+    assert.equal(
+      result.terminal!.artifacts.some((a) => a.kind === "report"),
+      false,
+      `${label}: no report published`,
+    );
+  });
 });
 
 test("public audit evidence collision returns a typed nonzero Terminal with residual", async () => {
