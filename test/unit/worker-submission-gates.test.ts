@@ -389,6 +389,156 @@ exit 1
   }
 });
 
+test("#355 CLI migrate-worker-hooks is the operable entry; real git config observation", async () => {
+  // Public entry only — not envelope arming. Poison common + sibling worktree hooksPath,
+  // invoke ak-role migrate-worker-hooks, observe real git config clear.
+  const root = await tempGitRepo();
+  try {
+    const wt = join(root, "wt-cli-migrate");
+    const sibling = join(root, "wt-cli-sibling");
+    git(root, ["worktree", "add", wt, "HEAD"]);
+    git(root, ["worktree", "add", sibling, "HEAD"]);
+    const commonDir = git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const commonConfig = join(commonDir, "config");
+    const poisonDir = join(commonDir, "ak-roles-hooks");
+    mkdirSync(poisonDir, { recursive: true });
+    writeFileSync(
+      join(poisonDir, "reference-transaction"),
+      `#!/bin/sh
+# ak-roles: worker-submission-gates reference-transaction
+exit 1
+`,
+      "utf8",
+    );
+    chmodSync(join(poisonDir, "reference-transaction"), 0o755);
+    execFileSync("git", ["config", "--file", commonConfig, "core.hooksPath", poisonDir], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    });
+    // Sibling worktree-local binding (only migrate clears; install self-heal does not).
+    git(sibling, ["config", "extensions.worktreeConfig", "true"]);
+    const siblingGitDir = git(sibling, ["rev-parse", "--path-format=absolute", "--git-dir"]);
+    const siblingPoison = join(siblingGitDir, "ak-roles-hooks");
+    mkdirSync(siblingPoison, { recursive: true });
+    writeFileSync(
+      join(siblingPoison, "reference-transaction"),
+      `#!/bin/sh
+# ak-roles: worker-submission-gates reference-transaction
+exit 1
+`,
+      "utf8",
+    );
+    chmodSync(join(siblingPoison, "reference-transaction"), 0o755);
+    git(sibling, ["config", "--worktree", "core.hooksPath", siblingPoison]);
+
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const result = await runAkRole(["migrate-worker-hooks", root], {
+      packageRoot,
+      home: process.env.HOME ?? "/tmp",
+      io: {
+        stdout: (t) => { stdout.push(t); },
+        stderr: (t) => { stderr.push(t); },
+      },
+    });
+    assert.equal(result.exitCode, 0, stderr.join("") || stdout.join(""));
+    assert.match(stdout.join(""), /migrated worker git hook scope/);
+
+    // Real git config observation: common + sibling worktree bindings cleared.
+    try {
+      execFileSync("git", ["config", "--file", commonConfig, "--get", "core.hooksPath"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+      assert.fail("CLI migrate must unset common core.hooksPath");
+    } catch (error) {
+      assert.equal((error as { status?: number }).status, 1);
+    }
+    try {
+      git(sibling, ["config", "--worktree", "--get", "core.hooksPath"]);
+      assert.fail("CLI migrate must unset sibling worktree core.hooksPath");
+    } catch (error) {
+      assert.equal((error as { status?: number }).status, 1);
+    }
+    assert.equal(existsSync(poisonDir), false);
+    assert.equal(existsSync(siblingPoison), false);
+    git(root, ["commit", "--allow-empty", "-m", "claude: free after CLI migrate"]);
+    git(sibling, ["commit", "--allow-empty", "-m", "claude: sibling free after CLI migrate"]);
+
+    // Discoverable via help registry.
+    const helpOut: string[] = [];
+    const help = await runAkRole(["help", "migrate-worker-hooks"], {
+      packageRoot,
+      home: process.env.HOME ?? "/tmp",
+      io: {
+        stdout: (t) => { helpOut.push(t); },
+        stderr: () => undefined,
+      },
+    });
+    assert.equal(help.exitCode, 0);
+    assert.match(helpOut.join(""), /migrate-worker-hooks/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("#355 migrate fails loud on worktree list / per-worktree rev-parse errors", async () => {
+  // Failure-honesty: silent return/continue would hollow the stale-entry purge guarantee.
+  const root = await tempGitRepo();
+  const bin = await mkdtemp(join(tmpdir(), "ak-git-shim-migrate-"));
+  const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const previousPath = process.env.PATH;
+  try {
+    const wt = join(root, "wt-fail-loud");
+    git(root, ["worktree", "add", wt, "HEAD"]);
+
+    // worktree list failure must throw (not silent return).
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh
+if [ "$1" = worktree ] && [ "$2" = list ]; then
+  echo "fatal: forced worktree list failure" >&2
+  exit 128
+fi
+exec "${realGit}" "$@"
+`,
+    );
+    chmodSync(join(bin, "git"), 0o755);
+    process.env.PATH = `${bin}${previousPath === undefined ? "" : `:${previousPath}`}`;
+    assert.throws(
+      () => migrateWorkerGitHookScope(wt),
+      /cannot list worktrees/,
+    );
+
+    // per-worktree rev-parse failure must throw (not silent continue).
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh
+if [ "$1" = rev-parse ] && printf '%s\n' "$*" | grep -q -- '--git-dir'; then
+  # Allow the early inside-work-tree / common-dir probes; fail only git-dir of linked trees.
+  case "$*" in
+    *"--is-inside-work-tree"*|*".git"*|*"--git-common-dir"*) exec "${realGit}" "$@" ;;
+  esac
+  # Fail when cwd is a linked worktree path (not the main repo root).
+  if [ "$(pwd)" != "${root}" ]; then
+    echo "fatal: forced git-dir failure" >&2
+    exit 128
+  fi
+fi
+exec "${realGit}" "$@"
+`,
+    );
+    chmodSync(join(bin, "git"), 0o755);
+    assert.throws(
+      () => migrateWorkerGitHookScope(wt),
+      /cannot resolve worktree git-dir/,
+    );
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await rm(root, { recursive: true, force: true });
+    await rm(bin, { recursive: true, force: true });
+  }
+});
+
 test("#267 worktreeConfig enable is local-bool only: global true still enables; common yes skips shared write", async () => {
   // Real entry: installWorkerGitHooks. Two failure shapes, one bar:
   // (1) global true must not skip the repo's first enable;

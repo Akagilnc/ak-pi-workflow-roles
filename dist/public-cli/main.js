@@ -14371,7 +14371,9 @@ var init_registry2 = __esm({
       "roles",
       "config",
       "help",
-      "resume"
+      "resume",
+      /** #355: strip stale/common ak-roles hooksPath on already-installed machines. */
+      "migrate-worker-hooks"
     ];
     STARTUP_CANDIDATES = {
       judge: [
@@ -15319,8 +15321,8 @@ async function stableRunsIdentity(root) {
   let cursor = root;
   while (true) {
     try {
-      const git2 = await stat(resolve3(cursor, ".git"));
-      if (git2.isDirectory() || git2.isFile()) return relative2(cursor, root).split(sep2).join("/");
+      const git3 = await stat(resolve3(cursor, ".git"));
+      if (git3.isDirectory() || git3.isFile()) return relative2(cursor, root).split(sep2).join("/");
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
     }
@@ -24920,8 +24922,8 @@ var init_atomic_write = __esm({
 import { open as open3, readFile as readFile10, unlink as unlink4 } from "node:fs/promises";
 import { dirname as dirname8, join as join20 } from "node:path";
 function sleep(ms) {
-  return new Promise((resolve9) => {
-    setTimeout(resolve9, ms);
+  return new Promise((resolve10) => {
+    setTimeout(resolve10, ms);
   });
 }
 async function withTaishiLibraryIndexLock(ledgerHome, fn) {
@@ -26953,6 +26955,157 @@ var init_taishi_run = __esm({
   }
 });
 
+// src/worker-git-hook-scope.ts
+import { execFileSync as execFileSync3 } from "node:child_process";
+import {
+  chmodSync,
+  existsSync as existsSync3,
+  mkdirSync as mkdirSync3,
+  readFileSync,
+  rmSync as rmSync2,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { resolve as resolve9 } from "node:path";
+function git2(cwd, args) {
+  return execFileSync3("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_DIR: void 0, GIT_WORK_TREE: void 0, GIT_COMMON_DIR: void 0 }
+  }).trim();
+}
+function gitFile(file, args) {
+  return execFileSync3("git", ["config", "--file", file, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_DIR: void 0, GIT_WORK_TREE: void 0, GIT_COMMON_DIR: void 0 }
+  }).trim();
+}
+function tryGitFileGet(file, key) {
+  if (!existsSync3(file)) return void 0;
+  try {
+    return gitFile(file, ["--get", key]);
+  } catch (error) {
+    const status = typeof error === "object" && error !== null && "status" in error ? error.status : void 0;
+    if (status !== 1) throw error;
+    return void 0;
+  }
+}
+function isAkRolesHooksPath(value) {
+  return value.includes(HOOKS_DIR_NAME);
+}
+function unsetAkRolesHooksPathInFile(file) {
+  const value = tryGitFileGet(file, "core.hooksPath");
+  if (value === void 0 || !isAkRolesHooksPath(value)) return void 0;
+  try {
+    gitFile(file, ["--unset", "core.hooksPath"]);
+  } catch {
+  }
+  return value;
+}
+function removeOurHookDir(dir) {
+  const hookPath = resolve9(dir, "reference-transaction");
+  if (!existsSync3(hookPath)) {
+    if (existsSync3(dir)) {
+      try {
+        rmSync2(dir, { recursive: true, force: true });
+      } catch {
+      }
+    }
+    return;
+  }
+  try {
+    const body = readFileSync(hookPath, "utf8");
+    if (!body.includes(HOOK_MARKER)) return;
+  } catch {
+    return;
+  }
+  try {
+    rmSync2(dir, { recursive: true, force: true });
+  } catch {
+  }
+}
+function worktreePathsFromPorcelain(porcelain) {
+  const paths = [];
+  for (const line2 of porcelain.split("\n")) {
+    if (line2.startsWith("worktree ")) paths.push(line2.slice("worktree ".length));
+  }
+  return paths;
+}
+function migrateWorkerGitHookScope(cwd) {
+  let inside;
+  try {
+    inside = git2(cwd, ["rev-parse", "--is-inside-work-tree"]);
+  } catch (error) {
+    throw new Error(
+      `ak-roles: migrateWorkerGitHookScope requires a git work tree: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  if (inside !== "true") {
+    throw new Error("ak-roles: migrateWorkerGitHookScope requires a git work tree");
+  }
+  const commonDir = git2(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const commonConfig = resolve9(commonDir, "config");
+  const commonHooks = unsetAkRolesHooksPathInFile(commonConfig);
+  if (commonHooks !== void 0) removeOurHookDir(commonHooks);
+  const mainWtConfig = resolve9(commonDir, "config.worktree");
+  const mainHooks = unsetAkRolesHooksPathInFile(mainWtConfig);
+  if (mainHooks !== void 0) removeOurHookDir(mainHooks);
+  removeOurHookDir(resolve9(commonDir, HOOKS_DIR_NAME));
+  let porcelain;
+  try {
+    porcelain = git2(cwd, ["worktree", "list", "--porcelain"]);
+  } catch (error) {
+    throw new Error(
+      `ak-roles: migrateWorkerGitHookScope cannot list worktrees: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  for (const wtPath of worktreePathsFromPorcelain(porcelain)) {
+    let gitDir;
+    try {
+      gitDir = git2(wtPath, ["rev-parse", "--path-format=absolute", "--git-dir"]);
+    } catch (error) {
+      throw new Error(
+        `ak-roles: migrateWorkerGitHookScope cannot resolve worktree git-dir (${wtPath}): ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    if (gitDir === commonDir) continue;
+    const wtConfig = resolve9(gitDir, "config.worktree");
+    const hooks = unsetAkRolesHooksPathInFile(wtConfig);
+    if (hooks !== void 0) removeOurHookDir(hooks);
+    removeOurHookDir(resolve9(gitDir, HOOKS_DIR_NAME));
+  }
+}
+var HOOK_MARKER, HOOKS_DIR_NAME, HOOK;
+var init_worker_git_hook_scope = __esm({
+  "src/worker-git-hook-scope.ts"() {
+    "use strict";
+    HOOK_MARKER = "ak-roles: worker-submission-gates reference-transaction";
+    HOOKS_DIR_NAME = "ak-roles-hooks";
+    HOOK = `#!/bin/sh
+# ${HOOK_MARKER}
+[ "$1" = prepared ] || exit 0
+while read -r old new ref; do
+  case $ref in refs/heads/*|HEAD) ;; *) continue ;; esac
+  [ -n "$new" ] && [ -n "$(printf %s "$new" | tr -d 0)" ] || continue
+  if [ -n "$old" ] && [ -n "$(printf %s "$old" | tr -d 0)" ]; then
+    git merge-base --is-ancestor "$old" "$new" 2>/dev/null || { echo "ak-roles: rejected non-fast-forward update of $ref (no amend/rebase/reset)" >&2; exit 1; }
+  fi
+  for commit in $(git rev-list "$new" --not --all 2>/dev/null); do
+    # GitHub / ordinary merge commits (2+ parents) exempt from platform-prefix check.
+    if git rev-parse --verify -q "\${commit}^2" >/dev/null 2>&1; then continue; fi
+    subj=$(git log -1 --format=%s "$commit")
+    # Open set: any leading platform ident: (constitution #10); not closed to ak-roles:.
+    case $subj in
+      [A-Za-z][A-Za-z0-9_-]*:*) ;;
+      *) echo "ak-roles: commit subject missing platform prefix (got: $subj)" >&2; exit 1 ;;
+    esac
+  done
+done
+`;
+  }
+});
+
 // src/public-cli/cli.ts
 var cli_exports = {};
 __export(cli_exports, {
@@ -27184,6 +27337,12 @@ function renderCommandHelp(command) {
   const lines = [];
   if (match.kind === "support") {
     lines.push(`command	${match.name}	kind	support`);
+    if (match.name === "migrate-worker-hooks") {
+      lines.push(
+        "usage	ak-role migrate-worker-hooks [path]",
+        "effect	strip common + stale worktree core.hooksPath entries pointing at ak-roles-hooks"
+      );
+    }
   } else if (match.kind === "deterministic") {
     lines.push(`command	${match.name}	kind	deterministic`);
   } else {
@@ -27378,6 +27537,17 @@ async function runAkRole(argv, env) {
       return {
         exitCode: await runConfigCommand(parsed.args, home, env.packageRoot, io)
       };
+    }
+    if (parsed.command === "migrate-worker-hooks") {
+      if (parsed.args.length > 1) {
+        throw new CliUsageError(
+          "migrate-worker-hooks takes at most one path argument"
+        );
+      }
+      const target = parsed.args[0] ?? env.cwd ?? process.cwd();
+      migrateWorkerGitHookScope(target);
+      io.stdout("migrated worker git hook scope\n");
+      return { exitCode: 0 };
     }
     if (parsed.command === "resume") {
       const agentDir = resolveAgentDir(env, home);
@@ -27799,6 +27969,7 @@ var init_cli = __esm({
     init_run_lifecycle();
     init_registry2();
     init_settlement();
+    init_worker_git_hook_scope();
     init_explicit_internal();
     init_cli_errors();
     PUBLIC_ROLE_ARGV = {
@@ -27826,7 +27997,7 @@ var init_cli = __esm({
 });
 
 // src/public-cli/main.ts
-import { existsSync as existsSync3 } from "node:fs";
+import { existsSync as existsSync4 } from "node:fs";
 import { dirname as dirname11, join as join25 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
@@ -27917,7 +28088,7 @@ function linkPackage(packageRoot2, name, targetDir) {
 var here = dirname11(fileURLToPath2(import.meta.url));
 function resolvePackageRoot(binDir) {
   const canonical = join25(binDir, "..", "..");
-  if (existsSync3(join25(canonical, "package.json"))) {
+  if (existsSync4(join25(canonical, "package.json"))) {
     return canonical;
   }
   return binDir;

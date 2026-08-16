@@ -33,6 +33,8 @@ export const PUBLIC_CLI_SUPPORT_COMMANDS = [
   "config",
   "help",
   "resume",
+  /** #355: strip stale/common ak-roles hooksPath on already-installed machines. */
+  "migrate-worker-hooks",
 ] as const;
 
 export type PublicCliSupportCommand = (typeof PUBLIC_CLI_SUPPORT_COMMANDS)[number];

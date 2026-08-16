@@ -11,7 +11,7 @@ pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ```
 
-Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat defaults with `ak-role config set judge openai-codex/gpt-5.6-sol:high`.
+Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat defaults with `ak-role config set judge openai-codex/gpt-5.6-sol:high`. If an older install left `core.hooksPath` on the shared git config (or stale worktree entries), run `ak-role migrate-worker-hooks` once from the repo — it only clears ak-roles hook bindings; the next coder/fixer envelope re-arms the linked worktree.
 
 ## Reading results
 

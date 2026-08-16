@@ -68,6 +68,7 @@ import {
   presentStructuralRejection,
 } from "./settlement.ts";
 import type { TerminalResult } from "./terminal.ts";
+import { migrateWorkerGitHookScope } from "../worker-git-hook-scope.ts";
 
 export {
   buildExplicitInternalActivationArgs,
@@ -431,6 +432,13 @@ function renderCommandHelp(command: string): string | undefined {
   const lines: string[] = [];
   if (match.kind === "support") {
     lines.push(`command\t${match.name}\tkind\tsupport`);
+    if (match.name === "migrate-worker-hooks") {
+      // Operator migration path (#355 验收③): strip stale/common ak-roles hooksPath.
+      lines.push(
+        "usage\tak-role migrate-worker-hooks [path]",
+        "effect\tstrip common + stale worktree core.hooksPath entries pointing at ak-roles-hooks",
+      );
+    }
   } else if (match.kind === "deterministic") {
     lines.push(`command\t${match.name}\tkind\tdeterministic`);
   } else {
@@ -661,6 +669,20 @@ export async function runAkRole(
       return {
         exitCode: await runConfigCommand(parsed.args, home, env.packageRoot, io),
       };
+    }
+
+    // #355: operator migration for stale/common hooksPath pollution.
+    // Not on the envelope arming path — concurrent workers must not purge each other.
+    if (parsed.command === "migrate-worker-hooks") {
+      if (parsed.args.length > 1) {
+        throw new CliUsageError(
+          "migrate-worker-hooks takes at most one path argument",
+        );
+      }
+      const target = parsed.args[0] ?? env.cwd ?? process.cwd();
+      migrateWorkerGitHookScope(target);
+      io.stdout("migrated worker git hook scope\n");
+      return { exitCode: 0 };
     }
 
     // Resume reopens an exact Role run after a typed HTTP 429 (#108/#109).
