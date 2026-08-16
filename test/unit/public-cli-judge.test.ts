@@ -487,7 +487,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   assert.equal(badDisposition.disposition, "unavailable");
 });
 
-test("extractNavigatorFact correlates attendance to exact independent invocation/phase/subject identity", async () => {
+test("extractNavigatorFact keeps minimal invocationId provenance and post-terminal order", async () => {
   const sessionId = "019f-session-current";
   const cwd = "/repo";
   const subjectKey = "/repo/.ak/work";
@@ -518,13 +518,10 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
   const attendance = (details: Record<string, unknown>) => ({
     type: "custom_message",
     customType: "ak-navigator-attendance",
-    message: { details: { version: 1, disposition: "no-advice", ...details } },
+    message: { details: { disposition: "no-advice", ...details } },
   });
   const matched = {
     invocationId: currentInvocationId,
-    role: "judge",
-    phase: null,
-    subjectKey,
   };
 
   // Attendance before the current role terminal is an old-round/stale fact.
@@ -536,14 +533,21 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
   ]);
   assert.equal(beforeTerminal.disposition, "unavailable");
 
-  // Well-shaped attendance for a different role is unrelated.
-  const wrongRole = extractNavigatorFact([
+  // Runtime-self-produced role/phase/subject/version are not re-reconciled (ADR 0042).
+  // Divergent self-fields still admit when invocationId + post-terminal order hold.
+  const mismatchedSelfFields = extractNavigatorFact([
     sessionHeader,
     invocation(currentInvocationId),
     currentTerminal,
-    attendance({ ...matched, role: "fixer", phase: "apply" }),
+    attendance({
+      ...matched,
+      version: 99,
+      role: "fixer",
+      phase: "apply",
+      subjectKey: "/other/work",
+    }),
   ]);
-  assert.equal(wrongRole.disposition, "unavailable");
+  assert.equal(mismatchedSelfFields.disposition, "no-advice");
 
   // Old attendance token (and old marker left behind a newer principal) rejected.
   const oldAttendance = extractNavigatorFact([
@@ -551,14 +555,14 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     invocation(oldInvocationId),
     invocation(currentInvocationId),
     currentTerminal,
-    attendance({ ...matched, invocationId: oldInvocationId }),
+    attendance({ invocationId: oldInvocationId }),
   ]);
   assert.equal(oldAttendance.disposition, "unavailable");
   // Old attendance event before the current terminal is stale, even with matching old marker.
   const oldAttendanceEvent = extractNavigatorFact([
     sessionHeader,
     invocation(oldInvocationId),
-    attendance({ ...matched, invocationId: oldInvocationId }),
+    attendance({ invocationId: oldInvocationId }),
     invocation(currentInvocationId),
     currentTerminal,
   ]);
@@ -570,7 +574,7 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     invocation(currentInvocationId),
     currentTerminal,
     invocation(futureInvocationId),
-    attendance({ ...matched, invocationId: futureInvocationId }),
+    attendance({ invocationId: futureInvocationId }),
   ]);
   assert.equal(futureMarker.disposition, "unavailable");
   // Attendance carrying future token while current marker is before terminal.
@@ -578,7 +582,7 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     sessionHeader,
     invocation(currentInvocationId),
     currentTerminal,
-    attendance({ ...matched, invocationId: futureInvocationId }),
+    attendance({ invocationId: futureInvocationId }),
   ]);
   assert.equal(futureAttendance.disposition, "unavailable");
 
@@ -588,7 +592,7 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     invocation(oldInvocationId),
     { type: "custom", customType: "ak-navigator-invocation", data: { invocationId: "" } },
     currentTerminal,
-    attendance({ ...matched, invocationId: oldInvocationId }),
+    attendance({ invocationId: oldInvocationId }),
   ]);
   assert.equal(malformedNearest.disposition, "unavailable");
   const malformedData = extractNavigatorFact([
@@ -600,7 +604,7 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
   ]);
   assert.equal(malformedData.disposition, "unavailable");
 
-  // Missing independent invocation principal → unavailable even with phase/subject.
+  // Missing independent invocation principal → unavailable.
   const noInvocationPrincipal = extractNavigatorFact([
     sessionHeader,
     currentTerminal,
@@ -620,38 +624,15 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     sessionHeader,
     invocation(currentInvocationId),
     currentTerminal,
-    attendance({ ...matched, invocationId: "019f8c2a-aaaa-7bbb-8ccc-ddddeeeeffff" }),
+    attendance({ invocationId: "019f8c2a-aaaa-7bbb-8ccc-ddddeeeeffff" }),
   ]);
   assert.equal(wrongInvocation.disposition, "unavailable");
-
-  // Judge has independent phase=null; well-shaped apply is still uncorrelated.
-  const wrongPhase = extractNavigatorFact([
-    sessionHeader,
-    invocation(currentInvocationId),
-    currentTerminal,
-    attendance({ ...matched, phase: "apply" }),
-  ]);
-  assert.equal(wrongPhase.disposition, "unavailable");
-
-  // Subject must match the independent session-derived work identity.
-  const wrongSubject = extractNavigatorFact([
-    sessionHeader,
-    invocation(currentInvocationId),
-    currentTerminal,
-    attendance({ ...matched, subjectKey: "/other/work" }),
-  ]);
-  assert.equal(wrongSubject.disposition, "unavailable");
 
   // Exact current token (nearest before terminal) correlates; older rounds stay ignored.
   const current = extractNavigatorFact([
     sessionHeader,
     invocation(oldInvocationId),
-    attendance({
-      invocationId: oldInvocationId,
-      role: "judge",
-      phase: null,
-      subjectKey,
-    }),
+    attendance({ invocationId: oldInvocationId }),
     invocation(currentInvocationId),
     currentTerminal,
     attendance(matched),
@@ -682,12 +663,7 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     sessionHeader,
     invocation(oldInvocationId),
     priorTerminal,
-    attendance({
-      invocationId: oldInvocationId,
-      role: "judge",
-      phase: null,
-      subjectKey,
-    }),
+    attendance({ invocationId: oldInvocationId }),
     invocation(currentInvocationId),
     currentTerminal,
     attendance(matched),
@@ -697,57 +673,29 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     sessionHeader,
     invocation(oldInvocationId),
     priorTerminal,
-    attendance({
-      invocationId: oldInvocationId,
-      role: "judge",
-      phase: null,
-      subjectKey,
-    }),
+    attendance({ invocationId: oldInvocationId }),
     invocation(currentInvocationId),
     currentTerminal,
-    attendance({ ...matched, invocationId: oldInvocationId }),
+    attendance({ invocationId: oldInvocationId }),
   ]);
   assert.equal(sameSessionStaleAttendance.disposition, "unavailable");
 
-  // Physical aliases are one work subject. Build a real alias instead of assuming
-  // macOS-only /var ↔ /private/var topology on every CI operating system.
-  await withPhysicalAliasFixture(async ({ physicalRoot, aliasRoot }) => {
-    const physicalSubject = join(physicalRoot, "repo", ".ak", "work");
-    const aliasSubject = join(aliasRoot, "repo", ".ak", "work");
-    const physicalAlias = extractNavigatorFact([
-      { type: "session", id: sessionId, cwd: join(physicalRoot, "repo") },
-      invocation(currentInvocationId, { subjectKey: physicalSubject }),
-      currentTerminal,
-      attendance({ ...matched, subjectKey: aliasSubject }),
-    ]);
-    assert.equal(physicalAlias.disposition, "no-advice");
-  });
+  // Marker self role/phase/subject are not re-reconciled against the terminal or admitted identity.
+  const mismatchedMarkerFields = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId, { role: "coder", phase: "apply", subjectKey: "/other/work" }),
+    currentTerminal,
+    attendance({
+      invocationId: currentInvocationId,
+      role: "coder",
+      phase: "apply",
+      subjectKey: "/other/work",
+    }),
+  ]);
+  assert.equal(mismatchedMarkerFields.disposition, "no-advice");
 
-  // Judge A: contradictory marker role/phase/subject vs current durable terminal → unavailable.
-  const wrongMarkerRole = extractNavigatorFact([
-    sessionHeader,
-    invocation(currentInvocationId, { role: "coder", phase: "apply" }),
-    currentTerminal,
-    attendance({ ...matched, role: "coder", phase: "apply" }),
-  ]);
-  assert.equal(wrongMarkerRole.disposition, "unavailable");
-  const wrongMarkerPhase = extractNavigatorFact([
-    sessionHeader,
-    invocation(currentInvocationId, { phase: "apply" }),
-    currentTerminal,
-    attendance({ ...matched, phase: "apply" }),
-  ]);
-  assert.equal(wrongMarkerPhase.disposition, "unavailable");
-  const wrongMarkerSubject = extractNavigatorFact([
-    sessionHeader,
-    invocation(currentInvocationId, { subjectKey: "/other/work" }),
-    currentTerminal,
-    attendance({ ...matched, subjectKey: "/other/work" }),
-  ]);
-  assert.equal(wrongMarkerSubject.disposition, "unavailable");
-
-  // Judge B: two durable terminals after the same marker → ambiguous / unavailable.
-  // Attendance correlation failure must not be required to fail closed here.
+  // Attendance extraction does not re-litigate marker↔terminal cardinality (receipt settlement owns that).
+  // Latest durable terminal + invocationId + post-terminal order still admits affirmative attendance.
   const twoDurable = extractNavigatorFact([
     sessionHeader,
     invocation(currentInvocationId),
@@ -763,66 +711,36 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     },
     attendance(matched),
   ]);
-  assert.equal(twoDurable.disposition, "unavailable");
-  if (twoDurable.disposition === "unavailable") {
-    assert.match(twoDurable.reason, /ambiguous/i);
-  }
+  assert.equal(twoDurable.disposition, "no-advice");
 
-  // Coder/fixer exact phase comes from admitted lifecycle identity, not self-enum.
-  const coderTerminal = {
-    type: "message",
-    message: {
-      role: "toolResult",
-      toolName: "ak_coder_output",
-      isError: false,
-      details: { status: "completed" },
+  // Real entry → external result: divergent recommendation (next differs from settlement role) appears as-is.
+  const divergentRecommendation = extractNavigatorFact([
+    sessionHeader,
+    invocation(currentInvocationId),
+    currentTerminal,
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: {
+        details: {
+          disposition: "recommendation",
+          invocationId: currentInvocationId,
+          role: "judge",
+          phase: null,
+          subjectKey,
+          next: { role: "merger", phase: null },
+          reason: "游奕使建议直接合并（与判词无关，原样交调用者）",
+          command: "ak-role merger",
+        },
+      },
     },
-  };
-  const coderSession = {
-    type: "session",
-    id: "coder-session",
-    cwd,
-  };
-  const coderInvocation = {
-    type: "custom",
-    customType: "ak-navigator-invocation",
-    data: {
-      invocationId: "019f8c2a-2222-7222-8222-222222222222",
-      role: "coder",
-      phase: "plan",
-      subjectKey,
-    },
-  };
-  const wrongCoderPhase = extractNavigatorFact(
-    [
-      coderSession,
-      coderInvocation,
-      coderTerminal,
-      attendance({
-        invocationId: "019f8c2a-2222-7222-8222-222222222222",
-        role: "coder",
-        phase: "apply",
-        subjectKey,
-      }),
-    ],
-    { phase: "plan", subjectKey },
-  );
-  assert.equal(wrongCoderPhase.disposition, "unavailable");
-  const coderMatched = extractNavigatorFact(
-    [
-      coderSession,
-      coderInvocation,
-      coderTerminal,
-      attendance({
-        invocationId: "019f8c2a-2222-7222-8222-222222222222",
-        role: "coder",
-        phase: "plan",
-        subjectKey,
-      }),
-    ],
-    { phase: "plan", subjectKey },
-  );
-  assert.equal(coderMatched.disposition, "no-advice");
+  ]);
+  assert.equal(divergentRecommendation.disposition, "recommendation");
+  if (divergentRecommendation.disposition === "recommendation") {
+    assert.deepEqual(divergentRecommendation.next, { role: "merger", phase: null });
+    assert.equal(divergentRecommendation.reason, "游奕使建议直接合并（与判词无关，原样交调用者）");
+    assert.equal(divergentRecommendation.command, "ak-role merger");
+  }
 });
 
 test("withPhysicalAliasFixture cleans alias and root when body rejects", async () => {
