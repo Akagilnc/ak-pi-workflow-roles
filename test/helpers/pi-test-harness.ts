@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import {
   copyFile,
   cp,
@@ -415,17 +415,50 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
   return sharedPackMemo;
 }
 
+/** file:/registry peers the cold consumer must resolve when importing installed sources. */
+const COLD_INSTALL_FILE_PEERS = [
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-coding-agent",
+] as const;
+
+function coldInstallPeerFileSpec(name: string): string {
+  // realpath so pnpm store targets are absolute and not dead checkout-relative links.
+  return `file:${realpathSync(resolve(packageRoot, "node_modules", name))}`;
+}
+
 function coldInstallDependencySpec(tarball: string): Record<string, string> {
   return {
     "@akagilnc/pi-workflow-roles": `file:${tarball}`,
-    "@earendil-works/pi-ai": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-ai")}`,
-    "@earendil-works/pi-coding-agent": `file:${
-      resolve(packageRoot, "node_modules/@earendil-works/pi-coding-agent")
-    }`,
+    "@earendil-works/pi-ai": coldInstallPeerFileSpec("@earendil-works/pi-ai"),
+    "@earendil-works/pi-coding-agent": coldInstallPeerFileSpec(
+      "@earendil-works/pi-coding-agent",
+    ),
     // Exercise the optional peer exactly as an isolated consumer would: npm
     // materializes its own copy instead of preserving a link into this checkout.
     typebox: "1.3.8",
   };
+}
+
+function coldInstallPeerPathResolvable(peerPath: string): boolean {
+  if (!existsSync(peerPath)) return false;
+  try {
+    realpathSync(peerPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function coldInstallPeersResolvable(fixtureRoot: string): boolean {
+  if (!coldInstallPeerPathResolvable(resolve(fixtureRoot, "node_modules/typebox"))) {
+    return false;
+  }
+  for (const rel of COLD_INSTALL_FILE_PEERS) {
+    if (!coldInstallPeerPathResolvable(resolve(fixtureRoot, "node_modules", rel))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -438,7 +471,8 @@ export async function getSharedColdInstalledPackage(): Promise<SharedColdInstall
     const cacheDir = resolve(
       FIXTURE_CACHE_ROOT,
       pack.provenance.fingerprint,
-      "cold-install-v2",
+      // v3: materialize optional peers on clone; reject caches with broken peer links.
+      "cold-install-v3",
     );
     const readyPath = resolve(cacheDir, "ready.json");
     const lockDir = resolve(cacheDir, ".lock");
@@ -452,6 +486,8 @@ export async function getSharedColdInstalledPackage(): Promise<SharedColdInstall
 
     const loadReady = async (): Promise<SharedColdInstallFixture | undefined> => {
       if (!existsSync(readyPath) || !existsSync(installedRoot)) return undefined;
+      // Stale cross-worktree caches may retain npm file: peer symlinks to dead paths.
+      if (!coldInstallPeersResolvable(fixture)) return undefined;
       const ready = JSON.parse(await readFile(readyPath, "utf8")) as {
         provenance: ConstructionProvenance;
       };
@@ -540,8 +576,8 @@ export async function cloneSharedColdInstall(
   await rm(dest, { recursive: true, force: true });
   await mkdir(dirname(dest), { recursive: true });
   await cp(shared.fixture, dest, { recursive: true, force: true });
-  // The optional peer is registry-installed in the shared fixture; copy its
-  // bytes rather than relocating npm's checkout-bound symlink.
+  // typebox is registry-installed in the shared fixture; copy bytes rather than
+  // relocating npm's checkout-bound symlink.
   const typeboxPath = resolve(dest, "node_modules/typebox");
   await rm(typeboxPath, { recursive: true, force: true });
   await cp(resolve(shared.fixture, "node_modules/typebox"), typeboxPath, {
@@ -549,6 +585,18 @@ export async function cloneSharedColdInstall(
     force: true,
     dereference: true,
   });
+  // file: peers live in the pnpm virtual store with sibling deps (chalk, …).
+  // Do not byte-copy the package alone — that drops the sibling graph. Retarget
+  // clone links to this checkout's realpath so resolution stays inside the store.
+  for (const rel of COLD_INSTALL_FILE_PEERS) {
+    const destPath = resolve(dest, "node_modules", rel);
+    await rm(destPath, { recursive: true, force: true });
+    await mkdir(dirname(destPath), { recursive: true });
+    await symlink(
+      await realpath(resolve(packageRoot, "node_modules", rel)),
+      destPath,
+    );
+  }
   const installedRoot = resolve(dest, "node_modules/@akagilnc/pi-workflow-roles");
   const installed = (relativePath: string) =>
     import(pathToFileURL(resolve(installedRoot, relativePath)).href);

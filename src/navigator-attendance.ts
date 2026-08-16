@@ -197,33 +197,6 @@ export type NavigatorContextProjection = {
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
 
-/**
- * Shared terminal-internal consistency for Navigator advice vs the just-accepted
- * settlement (family #224/#226/#227). One table for all seats — not per-role guards.
- *
- * Merger closes delivery. It is only consistent immediately after judge converged.
- * Fresh accepted work from any other seat must not skip to merger.
- *
- * Unfinished is an open handoff (ADR 0050): recommending judge would send half-done
- * work to audit. Machine criterion anchors only status=unfinished — refused and
- * partially_completed remain settled terminals whose judge path stays lawful.
- * Positive continuation is free-form via rebind + status-matched candidates
- * (ADR 0010/0061); this only suppresses self-contradictory typed emission.
- */
-export function navigatorAdviceConsistentWithSettlement(
-  next: NavigatorRouteTarget,
-  settlement: NavigatorSettlement,
-): boolean {
-  if (settlement.kind !== "accepted") return true;
-  // #227: open unfinished handoff must not be typed as next=judge.
-  if (settlement.status === "unfinished" && next.role === "judge") return false;
-  // #265: completed Fixer apply must not be sent back to repeat the same work.
-  if (settlement.role === "fixer" && settlement.phase === "apply" && settlement.status === "completed"
-    && next.role === "fixer" && next.phase === "apply") return false;
-  if (next.role !== "merger") return true;
-  return settlement.role === "judge" && settlement.status === "converged";
-}
-
 // Provider admission is ADR 0060 object root only. Nested advisory shape
 // (candidates/next/route/matches/reason/command) is never a gate — every object
 // root reaches the unique execute/normalize path exactly once.
@@ -478,25 +451,52 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
   });
 }
 
-export function selectNavigatorCandidate(candidates: readonly NavigatorCandidate[], settlement: NavigatorSettlement): NavigatorCandidate | undefined {
+/**
+ * Candidate pick plus whether matches keyed it to this settlement.
+ * Single owner for role/phase/status match truth (selection ranking + stale-context rebind).
+ * Structural only — never inspects next.role for routing legality.
+ */
+export type NavigatorCandidateSelection = {
+  readonly candidate: NavigatorCandidate;
+  /** True when matches keyed this candidate to the settlement (no stale-context rebind). */
+  readonly matchedToSettlement: boolean;
+};
+
+export function selectNavigatorCandidate(
+  candidates: readonly NavigatorCandidate[],
+  settlement: NavigatorSettlement,
+): NavigatorCandidateSelection | undefined {
   if (settlement.kind !== "accepted") return undefined;
   const usable = candidates.filter((candidate) => candidate.next !== undefined);
   if (usable.length === 0) return undefined;
-  const matched = usable.filter((candidate) =>
+  const rolePhaseMatched = usable.filter((candidate) =>
     candidate.matches !== undefined
     && candidate.matches.role === settlement.role
     && candidate.matches.phase === settlement.phase,
   );
   // Status-specific candidates outrank role/phase generics regardless of declaration order.
-  if (matched.length > 0) {
+  if (rolePhaseMatched.length > 0) {
     if (settlement.status !== undefined) {
-      const statusSpecific = matched.find((candidate) => candidate.matches?.statuses?.includes(settlement.status!) === true);
-      if (statusSpecific !== undefined) return statusSpecific;
+      const statusSpecific = rolePhaseMatched.find(
+        (candidate) => candidate.matches?.statuses?.includes(settlement.status!) === true,
+      );
+      if (statusSpecific !== undefined) {
+        return { candidate: statusSpecific, matchedToSettlement: true };
+      }
     }
-    return matched.find((candidate) => candidate.matches?.statuses === undefined);
+    const rolePhaseGeneric = rolePhaseMatched.find(
+      (candidate) => candidate.matches?.statuses === undefined,
+    );
+    if (rolePhaseGeneric !== undefined) {
+      return { candidate: rolePhaseGeneric, matchedToSettlement: true };
+    }
+    return undefined;
   }
   // v1 direction-only / broken matches: absent match metadata must not drop a usable next.
-  return usable.find((candidate) => candidate.matches === undefined);
+  // Not settlement-keyed → caller may run one stale-context rebind.
+  const unbound = usable.find((candidate) => candidate.matches === undefined);
+  if (unbound === undefined) return undefined;
+  return { candidate: unbound, matchedToSettlement: false };
 }
 
 export function formatNavigatorReport(report: NavigatorReport): string {
@@ -631,6 +631,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     // pi.appendEntry at lifecycle start — not optional sessionManager probing.
     const boundSettlement = prepareBoundSettlement;
     prepareBoundSettlement = undefined;
+    // Each prepare owns the no-receipt flag; a later settlement-bound rebind must
+    // not inherit a speculative no-receipt outcome.
+    preparationNoReceipt = false;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
@@ -958,40 +961,34 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           let prepared = await preparation;
           session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
           let selected = selectNavigatorCandidate(prepared, settlement);
-          // Family #224/#226/#227 shared seam: speculative prepare runs before the
-          // current terminal exists and may treat prior history as decisive. When
-          // selected next contradicts this accepted settlement, discard it and
-          // re-prepare once bound to the settlement (single shared mechanism).
-          if (
-            selected?.next !== undefined
-            && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)
-          ) {
+          // Speculative prepare runs before this terminal exists and may treat prior
+          // history as decisive. When selection provenance says matches did not key
+          // this candidate to the settlement, rebind once with currentSettlement.
+          // Stale-context repair only — reachable without any next.role legality
+          // table. After selection (speculative or rebound), advice is passed
+          // through as-is (ADR 0010 / ADR 0061: caller may ignore).
+          if (selected?.candidate.next !== undefined && !selected.matchedToSettlement) {
             prepareBoundSettlement = settlement;
             prepared = await prepare();
             selected = selectNavigatorCandidate(prepared, settlement);
-            if (
-              selected?.next !== undefined
-              && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)
-            ) {
-              throw new Error("Navigator advice contradicts the accepted settlement");
-            }
           }
           // Budget exhaustion is affirmative typed no-advice; malformed submitted
           // advice remains the existing unavailable path.
-          if (selected?.next === undefined && preparationNoReceipt) {
+          const selectedCandidate = selected?.candidate;
+          if (selectedCandidate?.next === undefined && preparationNoReceipt) {
             report = { disposition: "no-advice" };
-          } else if (selected?.next === undefined) {
+          } else if (selectedCandidate?.next === undefined) {
             throw new Error("Navigator prepared no machine-usable next direction");
           } else {
-          const selectedRoute = selected.route;
+          const selectedRoute = selectedCandidate.route;
           const routeChanged = selectedRoute !== undefined && !routeEqual(previousRoute, selectedRoute);
           // Single owner: public registry renderer (ADR 0052). Model command prose is never authority.
-          const command = renderPublicAkRoleCommand(selected.next);
+          const command = renderPublicAkRoleCommand(selectedCandidate.next);
           report = {
             disposition: "recommendation",
             ...(routeChanged ? { route: selectedRoute } : {}),
-            next: selected.next,
-            ...(selected.reason === undefined ? {} : { reason: oneLine(selected.reason) }),
+            next: selectedCandidate.next,
+            ...(selectedCandidate.reason === undefined ? {} : { reason: oneLine(selectedCandidate.reason) }),
             ...(command === undefined ? {} : { command }),
           };
           if (selectedRoute !== undefined) {

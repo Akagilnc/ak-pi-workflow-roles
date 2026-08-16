@@ -90,13 +90,6 @@ function navigatorUnavailableError(source, error, cause = source) {
   const message = error instanceof Error ? error.message : String(error);
   return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
 }
-function navigatorAdviceConsistentWithSettlement(next, settlement) {
-  if (settlement.kind !== "accepted") return true;
-  if (settlement.status === "unfinished" && next.role === "judge") return false;
-  if (settlement.role === "fixer" && settlement.phase === "apply" && settlement.status === "completed" && next.role === "fixer" && next.phase === "apply") return false;
-  if (next.role !== "merger") return true;
-  return settlement.role === "judge" && settlement.status === "converged";
-}
 const prepareSchema = Type.Object({}, { additionalProperties: true });
 const ROUTE_ENTRY = "ak-navigator-route";
 const CONTEXT_ENTRY = "ak-navigator-context";
@@ -269,17 +262,29 @@ function selectNavigatorCandidate(candidates, settlement) {
   if (settlement.kind !== "accepted") return void 0;
   const usable = candidates.filter((candidate) => candidate.next !== void 0);
   if (usable.length === 0) return void 0;
-  const matched = usable.filter(
+  const rolePhaseMatched = usable.filter(
     (candidate) => candidate.matches !== void 0 && candidate.matches.role === settlement.role && candidate.matches.phase === settlement.phase
   );
-  if (matched.length > 0) {
+  if (rolePhaseMatched.length > 0) {
     if (settlement.status !== void 0) {
-      const statusSpecific = matched.find((candidate) => candidate.matches?.statuses?.includes(settlement.status) === true);
-      if (statusSpecific !== void 0) return statusSpecific;
+      const statusSpecific = rolePhaseMatched.find(
+        (candidate) => candidate.matches?.statuses?.includes(settlement.status) === true
+      );
+      if (statusSpecific !== void 0) {
+        return { candidate: statusSpecific, matchedToSettlement: true };
+      }
     }
-    return matched.find((candidate) => candidate.matches?.statuses === void 0);
+    const rolePhaseGeneric = rolePhaseMatched.find(
+      (candidate) => candidate.matches?.statuses === void 0
+    );
+    if (rolePhaseGeneric !== void 0) {
+      return { candidate: rolePhaseGeneric, matchedToSettlement: true };
+    }
+    return void 0;
   }
-  return usable.find((candidate) => candidate.matches === void 0);
+  const unbound = usable.find((candidate) => candidate.matches === void 0);
+  if (unbound === void 0) return void 0;
+  return { candidate: unbound, matchedToSettlement: false };
 }
 function formatNavigatorReport(report) {
   const playbookFailure = report.routePlaybookReadFailure === void 0 ? [] : [`\u8DEF\u4E66\u8BFB\u53D6\u5931\u8D25\uFF1A${oneLine(report.routePlaybookReadFailure)}`];
@@ -375,6 +380,7 @@ function createNavigatorAttendance(options) {
   const prepare = async () => {
     const boundSettlement = prepareBoundSettlement;
     prepareBoundSettlement = void 0;
+    preparationNoReceipt = false;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
     if (contextError !== void 0) throw navigatorUnavailableError("context", contextError);
@@ -704,27 +710,25 @@ ${helpContext}
         let prepared = await preparation;
         session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
         let selected = selectNavigatorCandidate(prepared, settlement);
-        if (selected?.next !== void 0 && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)) {
+        if (selected?.candidate.next !== void 0 && !selected.matchedToSettlement) {
           prepareBoundSettlement = settlement;
           prepared = await prepare();
           selected = selectNavigatorCandidate(prepared, settlement);
-          if (selected?.next !== void 0 && !navigatorAdviceConsistentWithSettlement(selected.next, settlement)) {
-            throw new Error("Navigator advice contradicts the accepted settlement");
-          }
         }
-        if (selected?.next === void 0 && preparationNoReceipt) {
+        const selectedCandidate = selected?.candidate;
+        if (selectedCandidate?.next === void 0 && preparationNoReceipt) {
           report = { disposition: "no-advice" };
-        } else if (selected?.next === void 0) {
+        } else if (selectedCandidate?.next === void 0) {
           throw new Error("Navigator prepared no machine-usable next direction");
         } else {
-          const selectedRoute = selected.route;
+          const selectedRoute = selectedCandidate.route;
           const routeChanged = selectedRoute !== void 0 && !routeEqual(previousRoute, selectedRoute);
-          const command = renderPublicAkRoleCommand(selected.next);
+          const command = renderPublicAkRoleCommand(selectedCandidate.next);
           report = {
             disposition: "recommendation",
             ...routeChanged ? { route: selectedRoute } : {},
-            next: selected.next,
-            ...selected.reason === void 0 ? {} : { reason: oneLine(selected.reason) },
+            next: selectedCandidate.next,
+            ...selectedCandidate.reason === void 0 ? {} : { reason: oneLine(selectedCandidate.reason) },
             ...command === void 0 ? {} : { command }
           };
           if (selectedRoute !== void 0) {
@@ -1056,7 +1060,6 @@ export {
   createNavigatorPrepareTool,
   decorateSettlementWithNavigation,
   formatNavigatorReport,
-  navigatorAdviceConsistentWithSettlement,
   navigatorModelSettingPath,
   navigatorProviderFailure,
   navigatorProviderFailureFromError,
