@@ -20720,13 +20720,11 @@ function auditIncompleteFromCandidate(candidate) {
 }
 function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolName) {
   const matches = [];
-  let retainedResponseCount = 0;
   for (let index = callIndex + 1; index < resultIndex; index += 1) {
     const entry = entries[index];
     if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
       continue;
     }
-    retainedResponseCount += 1;
     if (!isRecord5(entry.data) || !isRecord5(entry.data.response)) continue;
     const response = entry.data.response;
     if (!Array.isArray(response.content)) continue;
@@ -20736,7 +20734,7 @@ function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolNa
     if (calls.length !== 1 || calls[0]?.name !== auditToolName) continue;
     matches.push({ candidate: calls[0]?.arguments });
   }
-  return retainedResponseCount === 1 && matches.length === 1 ? matches[0] : void 0;
+  return matches.length === 1 ? matches[0] : void 0;
 }
 function extractComplianceAuditIncompleteRoleOutcome(entries, role, outputToolName) {
   if (outputToolName !== outputToolNameForAuditedRole(role)) return void 0;

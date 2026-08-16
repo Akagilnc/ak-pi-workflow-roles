@@ -838,6 +838,34 @@ test("audit_escalation is a lawful typed terminal result exiting zero without be
                   }],
                 },
               },
+              // Multi-turn auditor retain: intermediate non-decision responses
+              // plus one unique seat-bound escalate (#373).
+              {
+                type: "custom",
+                customType: "ak_compliance_response",
+                data: {
+                  version: 1,
+                  response: {
+                    content: [
+                      { type: "toolCall", name: "ak_get_run_dossier", arguments: { runId: "run-escalation-001" } },
+                      { type: "text", text: "dossier" },
+                    ],
+                  },
+                },
+              },
+              {
+                type: "custom",
+                customType: "ak_compliance_response",
+                data: {
+                  version: 1,
+                  response: {
+                    content: [
+                      { type: "toolCall", name: "read", arguments: { path: "CONTEXT.md" } },
+                      { type: "toolCall", name: "bash", arguments: { command: "git status" } },
+                    ],
+                  },
+                },
+              },
               {
                 type: "custom",
                 customType: "ak_compliance_response",
@@ -1436,6 +1464,92 @@ test("audit escalation requires the retained seat-bound response across all audi
     const entries = [roleCall, retained, result];
     const extracted = extract(role, entries);
     assert.equal(outcomeKind(extracted), "audit_escalation", role);
+
+    // Multi-turn auditor investigation retains intermediate non-decision
+    // responses (dossier/read/bash) before the unique seat-bound escalate.
+    // Binding keys on unique match, not global retained-response uniqueness.
+    const intermediateRetained = [
+      {
+        type: "custom",
+        customType: "ak_compliance_response",
+        data: {
+          version: 1,
+          response: {
+            content: [
+              { type: "toolCall", name: "ak_get_run_dossier", arguments: { runId: `${role}-run` } },
+              { type: "text", text: "dossier" },
+            ],
+          },
+        },
+      },
+      {
+        type: "custom",
+        customType: "ak_compliance_response",
+        data: {
+          version: 1,
+          response: {
+            content: [
+              { type: "toolCall", name: "read", arguments: { path: "CONTEXT.md" } },
+              { type: "toolCall", name: "bash", arguments: { command: "git status" } },
+            ],
+          },
+        },
+      },
+      {
+        type: "custom",
+        customType: "ak_compliance_response",
+        data: {
+          version: 1,
+          response: { content: [{ type: "toolCall", name: "bash", arguments: { command: "rg seat" } }] },
+        },
+      },
+    ] as const;
+    const multiTurnEntries = [roleCall, ...intermediateRetained, retained, result];
+    const multiTurnExtracted = extract(role, multiTurnEntries);
+    assert.equal(
+      outcomeKind(multiTurnExtracted),
+      "audit_escalation",
+      `${role}: multi-turn retained (>1) with unique escalate match must settle`,
+    );
+    assert.notEqual(
+      outcomeKind(multiTurnExtracted),
+      "accepted",
+      `${role}: multi-turn escalate must not project as accepted receipt`,
+    );
+
+    // Two seat-bound audit decisions in the same interval remain ambiguous.
+    assert.equal(
+      outcomeKind(extract(role, [roleCall, ...intermediateRetained, retained, retained, result])),
+      undefined,
+      `${role}: duplicate seat-bound matches still fail closed`,
+    );
+
+    // Deterministic revise rejection (isError terminal) is not an accepted or
+    // escalation face — multi-turn retain must not smuggle it through.
+    const reviseCandidate = { status: "revise", violations: ["missing method proof"] };
+    const reviseRetained = {
+      type: "custom",
+      customType: "ak_compliance_response",
+      data: {
+        version: 1,
+        response: { content: [{ type: "toolCall", name: seat.audit, arguments: reviseCandidate }] },
+      },
+    };
+    const rejectedResult = {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: roleCallId,
+        toolName: seat.output,
+        isError: true,
+        details: { status: "errored", violations: reviseCandidate.violations },
+      },
+    };
+    assert.equal(
+      outcomeKind(extract(role, [roleCall, ...intermediateRetained, reviseRetained, rejectedResult])),
+      undefined,
+      `${role}: deterministic revise rejection must not settle as typed terminal`,
+    );
 
     // One real-extractor, four-seat negative table covers both retained and
     // public audit-owned accessors. Raw toolResult evidence remains in entries,
