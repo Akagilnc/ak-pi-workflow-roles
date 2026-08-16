@@ -1,6 +1,6 @@
 # 0070 — 闸②在交卷处打回重写，包不再往被服务仓库装 git 钩子
 
-Status: proposed（陛下 2026-08-16 裁定；决策键绑原话见下）
+Status: accepted（陛下 2026-08-16 裁定；本地大理寺 r1 escalate→r4 收敛、线上闸 r2 收敛，PR #366 已并 main；决策键绑原话见下）
 
 [ADR 0066](0066-worker-typed-submission-gates.md) 把闸②（缺平台前缀）④（非前进式改写）前移到 git `reference-transaction` 钩子。代价是包必须往**被服务仓库**主 `.git/config` 写 `extensions.worktreeConfig=true`（不可安全回滚），并按 git 规定把用户原有的 `core.bare` / `core.worktree` 搬进 `config.worktree`——与 [ADR 0048](0048-ledger-one-home-many-books-dirname-key-git-only.md) / CONTEXT「消费者仓零侵入」相抵。
 
