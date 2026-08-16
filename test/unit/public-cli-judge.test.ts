@@ -694,7 +694,8 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
   ]);
   assert.equal(mismatchedMarkerFields.disposition, "no-advice");
 
-  // Singleton marker↔terminal cardinality remains: two durable terminals after the same marker → ambiguous.
+  // Attendance extraction does not re-litigate marker↔terminal cardinality (receipt settlement owns that).
+  // Latest durable terminal + invocationId + post-terminal order still admits affirmative attendance.
   const twoDurable = extractNavigatorFact([
     sessionHeader,
     invocation(currentInvocationId),
@@ -710,10 +711,7 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
     },
     attendance(matched),
   ]);
-  assert.equal(twoDurable.disposition, "unavailable");
-  if (twoDurable.disposition === "unavailable") {
-    assert.match(twoDurable.reason, /ambiguous/i);
-  }
+  assert.equal(twoDurable.disposition, "no-advice");
 
   // Real entry → external result: divergent recommendation (next differs from settlement role) appears as-is.
   const divergentRecommendation = extractNavigatorFact([

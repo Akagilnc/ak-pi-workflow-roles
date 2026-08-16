@@ -73,10 +73,12 @@ import {
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
 import {
-  bindCurrentDurableTerminalToMarker,
   classifyPackagedRoleTerminalResult,
+  findLatestDurablePackagedRoleTerminal,
   isAcceptedPackagedRoleTerminalResult,
   isReceiptSettlementBindingClear,
+  NAVIGATOR_INVOCATION_ENTRY,
+  parseInvocationMarkerIdentity,
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
@@ -2075,31 +2077,41 @@ export function extractNavigatorFact(
   entries: readonly SessionEntry[],
 ): TerminalNavigatorFact {
   // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
-  // Minimal provenance: durable terminal + singleton marker binding + invocationId + post-terminal order.
-  const binding = bindCurrentDurableTerminalToMarker(entries);
-  if (binding.kind === "absent") {
+  // Minimal provenance: latest durable terminal + nearest preceding marker +
+  // invocationId + post-terminal order. Marker↔terminal cardinality belongs to
+  // receipt settlement (isReceiptSettlementBindingClear), not attendance extraction.
+  const terminal = findLatestDurablePackagedRoleTerminal(entries);
+  if (terminal === undefined) {
     return {
       disposition: "unavailable",
       source: "unknown",
       reason: "Navigator attendance has no durable packaged role terminal",
     };
   }
-  if (binding.kind === "ambiguous") {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance is ambiguous across multiple durable role terminals",
-    };
+
+  let markerIndex = -1;
+  for (let i = terminal.index - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY) {
+      markerIndex = i;
+      break;
+    }
   }
-  if (binding.kind === "unbound") {
+  if (markerIndex < 0) {
     return {
       disposition: "unavailable",
       source: "unknown",
       reason: "Navigator attendance is uncorrelated with session invocation facts",
     };
   }
-
-  const { terminal, marker } = binding;
+  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
+  if (marker === undefined) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Navigator attendance is uncorrelated with session invocation facts",
+    };
+  }
 
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];

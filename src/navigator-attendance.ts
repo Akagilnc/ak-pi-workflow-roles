@@ -451,43 +451,52 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
   });
 }
 
-export function selectNavigatorCandidate(candidates: readonly NavigatorCandidate[], settlement: NavigatorSettlement): NavigatorCandidate | undefined {
+/**
+ * Candidate pick plus whether matches keyed it to this settlement.
+ * Single owner for role/phase/status match truth (selection ranking + stale-context rebind).
+ * Structural only — never inspects next.role for routing legality.
+ */
+export type NavigatorCandidateSelection = {
+  readonly candidate: NavigatorCandidate;
+  /** True when matches keyed this candidate to the settlement (no stale-context rebind). */
+  readonly matchedToSettlement: boolean;
+};
+
+export function selectNavigatorCandidate(
+  candidates: readonly NavigatorCandidate[],
+  settlement: NavigatorSettlement,
+): NavigatorCandidateSelection | undefined {
   if (settlement.kind !== "accepted") return undefined;
   const usable = candidates.filter((candidate) => candidate.next !== undefined);
   if (usable.length === 0) return undefined;
-  const matched = usable.filter((candidate) =>
+  const rolePhaseMatched = usable.filter((candidate) =>
     candidate.matches !== undefined
     && candidate.matches.role === settlement.role
     && candidate.matches.phase === settlement.phase,
   );
   // Status-specific candidates outrank role/phase generics regardless of declaration order.
-  if (matched.length > 0) {
+  if (rolePhaseMatched.length > 0) {
     if (settlement.status !== undefined) {
-      const statusSpecific = matched.find((candidate) => candidate.matches?.statuses?.includes(settlement.status!) === true);
-      if (statusSpecific !== undefined) return statusSpecific;
+      const statusSpecific = rolePhaseMatched.find(
+        (candidate) => candidate.matches?.statuses?.includes(settlement.status!) === true,
+      );
+      if (statusSpecific !== undefined) {
+        return { candidate: statusSpecific, matchedToSettlement: true };
+      }
     }
-    return matched.find((candidate) => candidate.matches?.statuses === undefined);
+    const rolePhaseGeneric = rolePhaseMatched.find(
+      (candidate) => candidate.matches?.statuses === undefined,
+    );
+    if (rolePhaseGeneric !== undefined) {
+      return { candidate: rolePhaseGeneric, matchedToSettlement: true };
+    }
+    return undefined;
   }
   // v1 direction-only / broken matches: absent match metadata must not drop a usable next.
-  return usable.find((candidate) => candidate.matches === undefined);
-}
-
-/**
- * True when the selected candidate was keyed to this accepted settlement via matches.
- * Structural only — never inspects next.role for routing legality. Used solely to
- * decide whether speculative prepare already bound itself to this terminal (no rebind)
- * or may be stale prior-history advice (one settlement-bound rebind).
- */
-function candidateMatchedToSettlement(
-  candidate: NavigatorCandidate,
-  settlement: NavigatorSettlement,
-): boolean {
-  if (settlement.kind !== "accepted") return false;
-  const matches = candidate.matches;
-  if (matches === undefined) return false;
-  if (matches.role !== settlement.role || matches.phase !== settlement.phase) return false;
-  if (settlement.status === undefined || matches.statuses === undefined) return true;
-  return matches.statuses.includes(settlement.status);
+  // Not settlement-keyed → caller may run one stale-context rebind.
+  const unbound = usable.find((candidate) => candidate.matches === undefined);
+  if (unbound === undefined) return undefined;
+  return { candidate: unbound, matchedToSettlement: false };
 }
 
 export function formatNavigatorReport(report: NavigatorReport): string {
@@ -953,32 +962,33 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
           let selected = selectNavigatorCandidate(prepared, settlement);
           // Speculative prepare runs before this terminal exists and may treat prior
-          // history as decisive. When the selected candidate was not keyed to this
-          // settlement via matches, rebind once with currentSettlement. This is
-          // stale-context repair only — rebind is reachable without any next.role
-          // legality table. After selection (speculative or rebound), advice is
-          // passed through as-is (ADR 0010 / ADR 0061: caller may ignore).
-          if (selected?.next !== undefined && !candidateMatchedToSettlement(selected, settlement)) {
+          // history as decisive. When selection provenance says matches did not key
+          // this candidate to the settlement, rebind once with currentSettlement.
+          // Stale-context repair only — reachable without any next.role legality
+          // table. After selection (speculative or rebound), advice is passed
+          // through as-is (ADR 0010 / ADR 0061: caller may ignore).
+          if (selected?.candidate.next !== undefined && !selected.matchedToSettlement) {
             prepareBoundSettlement = settlement;
             prepared = await prepare();
             selected = selectNavigatorCandidate(prepared, settlement);
           }
           // Budget exhaustion is affirmative typed no-advice; malformed submitted
           // advice remains the existing unavailable path.
-          if (selected?.next === undefined && preparationNoReceipt) {
+          const selectedCandidate = selected?.candidate;
+          if (selectedCandidate?.next === undefined && preparationNoReceipt) {
             report = { disposition: "no-advice" };
-          } else if (selected?.next === undefined) {
+          } else if (selectedCandidate?.next === undefined) {
             throw new Error("Navigator prepared no machine-usable next direction");
           } else {
-          const selectedRoute = selected.route;
+          const selectedRoute = selectedCandidate.route;
           const routeChanged = selectedRoute !== undefined && !routeEqual(previousRoute, selectedRoute);
           // Single owner: public registry renderer (ADR 0052). Model command prose is never authority.
-          const command = renderPublicAkRoleCommand(selected.next);
+          const command = renderPublicAkRoleCommand(selectedCandidate.next);
           report = {
             disposition: "recommendation",
             ...(routeChanged ? { route: selectedRoute } : {}),
-            next: selected.next,
-            ...(selected.reason === undefined ? {} : { reason: oneLine(selected.reason) }),
+            next: selectedCandidate.next,
+            ...(selectedCandidate.reason === undefined ? {} : { reason: oneLine(selectedCandidate.reason) }),
             ...(command === undefined ? {} : { command }),
           };
           if (selectedRoute !== undefined) {
