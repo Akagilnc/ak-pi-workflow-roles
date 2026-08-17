@@ -18,12 +18,15 @@ export function buildEngineLaborFallbackField(input) {
 export function createEngineLaborFallbackLatch() {
     return { field: undefined };
 }
-/** Record first detour failure for this latch (first wins; parallel legs share one field). */
+/**
+ * Record first detour failure for this latch (first wins; parallel legs share one field).
+ * Always returns the latched first-wins value so tool details and receipt projection match.
+ */
 export function recordEngineLaborFallback(latch, input) {
     const field = buildEngineLaborFallbackField(input);
     if (latch.field === undefined)
         latch.field = field;
-    return field;
+    return latch.field;
 }
 export function readEngineLaborFallbackField(latch) {
     return latch?.field;
@@ -31,11 +34,17 @@ export function readEngineLaborFallbackField(latch) {
 /**
  * Merge sole-built field into typed receipt details.
  * Spread only — must not construct the field key again (S1).
+ * Without a mechanical latch, strip any model-injected reserved key (no forged declaration).
  */
 export function withEngineLaborFallbackField(receipt, field) {
-    if (field === undefined)
+    if (field !== undefined) {
+        return { ...receipt, ...field };
+    }
+    if (!Object.prototype.hasOwnProperty.call(receipt, "engineLaborFallback")) {
         return receipt;
-    return { ...receipt, ...field };
+    }
+    const { engineLaborFallback: _forged, ...rest } = receipt;
+    return rest;
 }
 /** Install the activation-scoped latch (Judge/Reviewer session_start). */
 export function installActivationEngineLaborFallbackLatch(latch) {
@@ -80,4 +89,33 @@ export function readEngineLaborFallbackFieldFrom(source) {
         engine: rec.engine,
         failure: rec.failure,
     });
+}
+/**
+ * Restore activation latch from durable session tool results (#380 resume).
+ * Scans existing same-session detour tool results only — no sidecar / new entry type.
+ * Replays through recordEngineLaborFallback so first-wins + sole producer stay intact.
+ */
+export function restoreEngineLaborFallbackFromSessionEntries(latch, entries, toolName) {
+    for (const entry of entries) {
+        if (typeof entry !== "object" || entry === null)
+            continue;
+        const row = entry;
+        if (row.type !== "message")
+            continue;
+        const message = row.message;
+        if (typeof message !== "object" || message === null)
+            continue;
+        const msg = message;
+        if (msg.role !== "toolResult")
+            continue;
+        if (msg.toolName !== toolName)
+            continue;
+        const field = readEngineLaborFallbackFieldFrom(msg.details);
+        if (field === undefined)
+            continue;
+        recordEngineLaborFallback(latch, {
+            engine: field.engineLaborFallback.engine,
+            failure: field.engineLaborFallback.failure,
+        });
+    }
 }

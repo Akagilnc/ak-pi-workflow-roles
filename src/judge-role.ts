@@ -156,7 +156,8 @@ export function createJudgeRoleRuntime(
                 escalate: (result) => result,
                 auditIncomplete: (result) => result,
               },
-              verdict,
+              // #380: escalate deliveredOutput must carry the same mechanical projection.
+              acceptedDetails,
             );
           },
         });
