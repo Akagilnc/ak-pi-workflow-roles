@@ -11,14 +11,15 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  appendEngineSessionMaterial,
   assertLegalEngineName,
   engineSessionMaterialFromOptions,
   listEngineMaterialNames,
 } from "../../src/package-resources/engine-material.ts";
 
-test("assertLegalEngineName rejects syntax-illegal names at the I/O seam", () => {
-  // Path traversal / empty / separators are syntax-only rejects.
-  // Well-formed names are never rejected for missing packaged notes (#376).
+test("assertLegalEngineName rejects only real path hazards; consecutive dots pass", () => {
+  // Real hazards: traversal parents, separators, NUL, exact "." / "..".
+  // Well-formed names (incl. company..opus) are never rejected for missing notes (#376).
   assert.throws(
     () => assertLegalEngineName("../escape"),
     /illegal engine name/,
@@ -28,11 +29,44 @@ test("assertLegalEngineName rejects syntax-illegal names at the I/O seam", () =>
     /illegal engine name/,
   );
   assert.throws(
+    () => assertLegalEngineName("has\\slash"),
+    /illegal engine name/,
+  );
+  assert.throws(
+    () => assertLegalEngineName("has\0nul"),
+    /illegal engine name/,
+  );
+  assert.throws(() => assertLegalEngineName("."), /illegal engine name/);
+  assert.throws(() => assertLegalEngineName(".."), /illegal engine name/);
+  assert.throws(
     () => assertLegalEngineName(""),
     /illegal engine name/,
   );
   assert.equal(assertLegalEngineName("nope-engine"), "nope-engine");
   assert.equal(assertLegalEngineName("opus"), "opus");
+  assert.equal(assertLegalEngineName("company..opus"), "company..opus");
+});
+
+test("appendEngineSessionMaterial: name-only omits read-these-bytes; notes keep it", () => {
+  const nameOnly = appendEngineSessionMaterial(["base"], { name: "company..opus" });
+  const nameOnlyText = nameOnly.join("\n");
+  assert.equal(nameOnlyText.includes("company..opus"), true);
+  assert.equal(
+    nameOnlyText.includes("Engine method material (read these bytes"),
+    false,
+    "name-only path must not claim packaged bytes to read",
+  );
+
+  const withNotes = appendEngineSessionMaterial(["base"], {
+    name: "cursor",
+    materialPath: "/abs/resources/engines/cursor.md",
+  });
+  const withNotesText = withNotes.join("\n");
+  assert.equal(
+    withNotesText.includes("Engine method material (read these bytes"),
+    true,
+  );
+  assert.equal(withNotesText.includes("/abs/resources/engines/cursor.md"), true);
 });
 
 test("packaged notes directory is discovery-only; missing notes is not an error", async () => {

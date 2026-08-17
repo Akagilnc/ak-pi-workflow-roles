@@ -23,7 +23,6 @@ function isEngineNameSyntax(name) {
   if (name.length === 0 || name.trim() !== name) return false;
   if (name === "." || name === "..") return false;
   if (name.includes("/") || name.includes("\\") || name.includes("\0")) return false;
-  if (name.includes("..")) return false;
   return true;
 }
 function resolveEngineMaterialDirectory(packageRoot2) {
@@ -57,10 +56,12 @@ function appendEngineSessionMaterial(lines, engineMaterial) {
   }
   const out = [...lines];
   out.push("");
-  out.push("Engine method material (read these bytes and follow them):");
-  out.push(`- engine: ${engineMaterial.name}`);
   if (engineMaterial.materialPath !== void 0) {
+    out.push("Engine method material (read these bytes and follow them):");
+    out.push(`- engine: ${engineMaterial.name}`);
     out.push(`- ${engineMaterial.materialPath}`);
+  } else {
+    out.push(`- engine: ${engineMaterial.name}`);
   }
   return out;
 }

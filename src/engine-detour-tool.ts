@@ -24,7 +24,7 @@ const engineDetourArgsSchema = Type.Object(
     argv: Type.Array(Type.String({ minLength: 1 }), {
       minItems: 1,
       description:
-        "Executable argv for one engine subprocess. First element is the command (PATH lookup); remaining elements are arguments. Assemble from engine method material — do not invent package flags.",
+        "Executable argv for one engine subprocess. First element is the command (PATH lookup); remaining elements are arguments. Build argv from the host CLI actual interface for the configured engine name; when optional packaged notes are present in the session prompt, follow those bytes. Do not invent package flags.",
     }),
   },
   { additionalProperties: false },
@@ -70,11 +70,11 @@ export function registerEngineDetourTool(
     name: ENGINE_DETOUR_TOOL_NAME,
     label: "Engine Detour",
     description:
-      `Run one labor-engine subprocess (engine=${engineName}) and return its stdout to this session. Call at most once per activation. Assemble argv from the engine method material path delivered in the session prompt.`,
+      `Run one labor-engine subprocess (engine=${engineName}) and return its stdout to this session. Call at most once per activation. Build argv from the host CLI actual interface for this engine name; when optional packaged notes are present in the session prompt, follow those bytes too.`,
     promptSnippet: "Run the configured labor engine once and return its stdout",
     promptGuidelines: [
-      `Use ${ENGINE_DETOUR_TOOL_NAME} exactly once when engine method material is present.`,
-      "Pass argv assembled from the material and the host CLI — first element is the executable name on PATH.",
+      `Use ${ENGINE_DETOUR_TOOL_NAME} exactly once for the configured engine (${engineName}). Optional packaged notes are guidance when present; a bare engine name alone is also a valid call path.`,
+      "Pass argv for the host CLI of this engine name — first element is the executable name on PATH. Follow optional packaged notes when delivered; otherwise act from the engine name and the host CLI actual interface. Do not invent package flags.",
       "On success, use the returned stdout as labor content for the existing typed submission tool.",
     ],
     parameters: engineDetourArgsSchema,

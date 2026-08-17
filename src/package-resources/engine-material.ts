@@ -15,13 +15,13 @@ export type EngineSessionMaterial = Readonly<{
   materialPath?: string;
 }>;
 
-/** Non-empty, trimmed, no path separators or traversal. */
+/** Non-empty, trimmed; reject only real path hazards at the I/O seam. */
 export function isEngineNameSyntax(name: string): boolean {
   if (typeof name !== "string") return false;
   if (name.length === 0 || name.trim() !== name) return false;
+  // Exact "." / ".." are directory aliases; consecutive dots inside a label are not.
   if (name === "." || name === "..") return false;
   if (name.includes("/") || name.includes("\\") || name.includes("\0")) return false;
-  if (name.includes("..")) return false;
   return true;
 }
 
@@ -97,8 +97,8 @@ export function engineSessionMaterialFromOptions(options: {
 /**
  * Append engine method-material delivery to session initial material lines.
  * No engine → identity copy (byte-stable when joined the same way).
- * With notes → engine name + absolute material path.
- * Name only → engine name, no path line, no warning.
+ * With notes → read-these-bytes header + engine name + absolute material path.
+ * Name only → engine name coordinate only (no read-these-bytes header, no path, no warning).
  * Never delivers material body.
  */
 export function appendEngineSessionMaterial(
@@ -110,10 +110,13 @@ export function appendEngineSessionMaterial(
   }
   const out = [...lines];
   out.push("");
-  out.push("Engine method material (read these bytes and follow them):");
-  out.push(`- engine: ${engineMaterial.name}`);
   if (engineMaterial.materialPath !== undefined) {
+    out.push("Engine method material (read these bytes and follow them):");
+    out.push(`- engine: ${engineMaterial.name}`);
     out.push(`- ${engineMaterial.materialPath}`);
+  } else {
+    // Name-only pass-through: no packaged bytes to read.
+    out.push(`- engine: ${engineMaterial.name}`);
   }
   return out;
 }

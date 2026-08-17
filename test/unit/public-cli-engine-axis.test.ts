@@ -108,7 +108,7 @@ function assertEngineCoordinatesWithMaterial(
   );
 }
 
-/** Name-only coordinates: name present, no material path, no warning spam. */
+/** Name-only coordinates: name present, no material path, no read-bytes header, no warning. */
 function assertEngineCoordinatesNameOnly(
   prompt: string,
   engineName: string,
@@ -123,6 +123,11 @@ function assertEngineCoordinatesNameOnly(
       `name-only path must not carry material path: ${absentMaterialPath}`,
     );
   }
+  assert.equal(
+    prompt.includes("Engine method material (read these bytes"),
+    false,
+    "name-only path must not emit read-these-bytes material header",
+  );
   assert.equal(
     /warn/i.test(stderrText),
     false,
@@ -608,6 +613,64 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       assert.equal(invocation.engine, "nope-engine");
     }
 
+    // Consecutive dots inside a label (company..opus) are path-safe and pass as-is.
+    {
+      const setDots = captureIo();
+      const setDotsResult = await runAkRole(
+        ["config", "set-engine", "judge", "company..opus"],
+        { packageRoot, home, io: setDots.io },
+      );
+      assert.equal(setDotsResult.exitCode, 0, setDots.stderr.join(""));
+      const persistedDots = await loadPublicCliConfig(home);
+      assert.equal(persistedDots.seats.judge?.engine, "company..opus");
+
+      let capturedArgs: string[] | undefined;
+      let capturedEnv: NodeJS.ProcessEnv | undefined;
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        ["judge", "--engine", "company..opus", "--project", project, "x"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "engine-company-dots-001",
+          credentials,
+          io,
+          piRunner: async (args, options) => {
+            capturedArgs = [...args];
+            capturedEnv = options.env;
+            return {
+              code: 1,
+              stderr: "stop after capture",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.notEqual(
+        result.exitCode,
+        2,
+        `company..opus must pass path-safety: ${stderr.join("")}`,
+      );
+      assert.equal(
+        Array.isArray(capturedArgs),
+        true,
+        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+      );
+      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
+      const absentPath = resolveEngineMaterialPath(packageRoot, "company..opus");
+      assertEngineCoordinatesNameOnly(
+        capturedPrompt,
+        "company..opus",
+        absentPath,
+        stderr.join(""),
+      );
+      assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "company..opus");
+      const invocation = readJudgeInvocation(home, bookKey, "engine-company-dots-001");
+      assert.equal(invocation.engine, "company..opus");
+    }
+
     // Syntax-illegal --engine → structural reject (exit 2), not role submission.
     {
       const { io, stderr } = captureIo();
@@ -617,6 +680,33 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       );
       assert.equal(result.exitCode, 2);
       assert.match(stderr.join(""), /illegal engine name/);
+    }
+
+    // Backslash separator and parent traversal still reject at the public entry.
+    {
+      const slash = captureIo();
+      const slashResult = await runAkRole(
+        ["judge", "--engine", "has\\slash", "--project", project, "x"],
+        { packageRoot, home, cwd: project, credentials, io: slash.io },
+      );
+      assert.equal(slashResult.exitCode, 2);
+      assert.match(slash.stderr.join(""), /illegal engine name/);
+
+      const escape = captureIo();
+      const escapeResult = await runAkRole(
+        ["judge", "--engine", "../escape", "--project", project, "x"],
+        { packageRoot, home, cwd: project, credentials, io: escape.io },
+      );
+      assert.equal(escapeResult.exitCode, 2);
+      assert.match(escape.stderr.join(""), /illegal engine name/);
+
+      const setEscape = captureIo();
+      const setEscapeResult = await runAkRole(
+        ["config", "set-engine", "judge", "../escape"],
+        { packageRoot, home, io: setEscape.io },
+      );
+      assert.equal(setEscapeResult.exitCode, 2);
+      assert.match(setEscape.stderr.join(""), /illegal engine name/);
     }
 
     // Non-judge command with --engine → structural reject (MVP judge-only).
