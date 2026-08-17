@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC, ENGINE_DETOUR_TOOL_NAME, engineDetourFailureDiagnostic, engineNameFromEnv, isEngineDetourFailure, runEngineDetourOnce, } from "./engine-detour.js";
 import { activationEngineLaborFallbackLatch, recordEngineLaborFallback, } from "./engine-labor-fallback.js";
-import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
+import { isPackageOwnedToolIdleTimeoutError, wrapPackageOwnedToolDefinition, } from "./package-owned-tool-idle.js";
 const engineDetourArgsSchema = Type.Object({
     argv: Type.Array(Type.String({ minLength: 1 }), {
         minItems: 1,
@@ -23,11 +23,29 @@ function seatFallbackToolResult(field, failure) {
         },
     };
 }
+/** Caller/upper-layer cancel must propagate; idle backstop is seat-fallback, not cancel. */
+function isCallerCancellation(error, signal) {
+    if (isPackageOwnedToolIdleTimeoutError(error))
+        return false;
+    if (signal !== undefined &&
+        isPackageOwnedToolIdleTimeoutError(signal.reason)) {
+        return false;
+    }
+    if (signal?.aborted === true)
+        return true;
+    if (typeof error === "object" &&
+        error !== null &&
+        error.name === "AbortError") {
+        return true;
+    }
+    return false;
+}
 /**
  * Build one once-latch detour tool definition for a configured engine name.
  * `latch` is shared so parent registration can reset between activations.
  * `fail` owns host abort (parent) vs throw (evidence child) for tool misuse only.
- * Engine process failure (nonzero/empty/spawn/timeout) soft-returns seat fallback (#380).
+ * Engine process failure (nonzero/empty/spawn/idle-timeout) soft-returns seat fallback (#380).
+ * Caller AbortSignal cancel propagates without writing fallback.
  */
 export function createEngineDetourToolDefinition(input) {
     const latch = input.latch ?? { used: false };
@@ -72,7 +90,10 @@ export function createEngineDetourToolDefinition(input) {
                 });
             }
             catch (error) {
-                // spawn failure / signal abort / timeout → seat main-road fallback (#380).
+                // Caller cancel: propagate. Idle backstop + spawn/engine failure: seat fallback.
+                if (isCallerCancellation(error, signal)) {
+                    throw error;
+                }
                 const failure = error instanceof Error ? error.message : String(error);
                 return softFail(failure.trim() === "" ? "engine detour spawn failed" : failure);
             }

@@ -21,10 +21,12 @@ import {
   writeToolExecutionObservationRecord,
   type ToolExecutionObservationWriter,
 } from "./tool-execution-observation.ts";
+import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import {
   createEngineLaborFallbackLatch,
   installActivationEngineLaborFallbackLatch,
+  restoreEngineLaborFallbackFromSessionEntries,
 } from "./engine-labor-fallback.ts";
 import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
@@ -1062,6 +1064,16 @@ export function createRoleRuntimeExtension(
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
       engineLaborFallbackLatch = createEngineLaborFallbackLatch();
+      // #380 resume: restore sole-built fallback from durable same-session detour results.
+      const sessionEntries =
+        typeof ctx.sessionManager?.getEntries === "function"
+          ? ctx.sessionManager.getEntries()
+          : [];
+      restoreEngineLaborFallbackFromSessionEntries(
+        engineLaborFallbackLatch,
+        sessionEntries,
+        ENGINE_DETOUR_TOOL_NAME,
+      );
       installActivationEngineLaborFallbackLatch(engineLaborFallbackLatch);
       engineDetourRegistration?.resetLatch();
       navigatorWorkContext = undefined;

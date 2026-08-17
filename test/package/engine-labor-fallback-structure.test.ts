@@ -37,38 +37,115 @@ function stripComments(sourceText: string): string {
     .replace(/(^|[^:])\/\/.*$/gm, "$1");
 }
 
+/** Advance past a brace-balanced `{...}` starting at `openIndex` (must be '{'). */
+function skipBalancedBrace(text: string, openIndex: number): number {
+  let depth = 0;
+  for (let i = openIndex; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return text.length;
+}
+
 /**
- * Drop `type` / `interface` declaration bodies so type-only property names
- * are not counted as runtime producers.
+ * Drop `type` / `interface` declarations (including nested braces and
+ * `type X = Readonly<{...}>`) so type-only property names are not producers.
  */
 function stripTypeDeclarations(sourceText: string): string {
-  // type Foo = ...;  without braces
-  let text = sourceText.replace(
-    /\btype\s+[A-Za-z0-9_$.]+\s*(?:<[^>]*>)?\s*=\s*[^;{]+;/g,
-    " ",
+  const startRe =
+    /\b(?:type|interface)\s+[A-Za-z0-9_$.]+\s*(?:<[^>]*>)?/g;
+  let result = "";
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = startRe.exec(sourceText)) !== null) {
+    result += sourceText.slice(lastIndex, match.index);
+    let i = match.index + match[0].length;
+    // optional extends clause for interface
+    const extendsMatch = sourceText.slice(i).match(/^\s+extends\s+[^{;=]+/);
+    if (extendsMatch) i += extendsMatch[0].length;
+    // optional `=` for type alias
+    const eqMatch = sourceText.slice(i).match(/^\s*=\s*/);
+    if (eqMatch) i += eqMatch[0].length;
+    // consume alias/body until semicolon at brace depth 0
+    let depth = 0;
+    for (; i < sourceText.length; i++) {
+      const ch = sourceText[i]!;
+      if (ch === "{") depth++;
+      else if (ch === "}") depth = Math.max(0, depth - 1);
+      else if (ch === ";" && depth === 0) {
+        i++;
+        break;
+      }
+    }
+    result += " ";
+    lastIndex = i;
+    startRe.lastIndex = i;
+  }
+  result += sourceText.slice(lastIndex);
+  // Drop type assertions `as Foo & { ... }` which are not runtime producers.
+  return result.replace(
+    /\bas\s+[A-Za-z0-9_$.]+(?:\s*[|&]\s*[A-Za-z0-9_$.]+)*(?:\s*&\s*)?/g,
+    (prefix, offset, full: string) => {
+      let i = offset + prefix.length;
+      if (full[i] === "{") {
+        i = skipBalancedBrace(full, i);
+        return " ".repeat(Math.max(1, i - offset));
+      }
+      return " ";
+    },
   );
-  // type/interface with brace body (single- or multi-line)
-  text = text.replace(
-    /\b(?:type|interface)\s+[A-Za-z0-9_$.]+\s*(?:<[^>]*>)?(?:\s+extends\s+[^{]+)?\s*=?\s*\{[^}]*\}\s*;?/g,
-    " ",
-  );
-  return text;
+}
+
+/**
+ * Drop `const|let|var { ... } =` destructuring bindings only.
+ * Must not touch `Object.freeze({ ... })` or other call arguments.
+ */
+function stripDestructuringBindings(sourceText: string): string {
+  const startRe = /\b(?:const|let|var)\s*\{/g;
+  let result = "";
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = startRe.exec(sourceText)) !== null) {
+    const openBrace = match.index + match[0].length - 1;
+    const afterBrace = skipBalancedBrace(sourceText, openBrace);
+    const eqMatch = sourceText.slice(afterBrace).match(/^\s*=/);
+    if (!eqMatch) {
+      // not a destructuring assignment — keep scanning inside
+      startRe.lastIndex = openBrace + 1;
+      continue;
+    }
+    result += sourceText.slice(lastIndex, match.index);
+    result += " ";
+    lastIndex = afterBrace + eqMatch[0].length;
+    startRe.lastIndex = lastIndex;
+  }
+  result += sourceText.slice(lastIndex);
+  return result;
 }
 
 /**
  * Count value-level construction/assignment points of `engineLaborFallback`.
  * - object property: engineLaborFallback: / "engineLaborFallback":
+ * - object shorthand: { engineLaborFallback, } / { engineLaborFallback }
  * - assignment: .engineLaborFallback = / ["engineLaborFallback"] =
- * Ordinary reads, string compares, imports, and type-only positions are excluded.
+ * Ordinary reads, string compares, imports, destructuring, and type-only positions are excluded.
  */
 export function countEngineLaborFallbackConstructions(sourceText: string): number {
-  const text = stripTypeDeclarations(stripComments(sourceText));
+  const text = stripDestructuringBindings(
+    stripTypeDeclarations(stripComments(sourceText)),
+  );
   const patterns = [
     // Object property construction (identifier or quoted key).
     new RegExp(
       `(?:^|[\\s,{])(?:${FIELD}|"${FIELD}"|'${FIELD}')\\s*:`,
       "g",
     ),
+    // Object shorthand construction: { engineLaborFallback, } or { engineLaborFallback }
+    new RegExp(`(?:^|[\\s,{])${FIELD}\\s*[,}]`, "g"),
     // Property assignment.
     new RegExp(`\\.${FIELD}\\s*=`, "g"),
     // Element assignment with string key.
@@ -150,14 +227,31 @@ test("S1 negative: zero / cross-module / same-module split all fail the cardinal
   // Zero producers.
   assert.equal(countEngineLaborFallbackConstructions("export const x = 1;\n"), 0);
 
-  // Ordinary import / read / string compare must not count.
+  // Ordinary import / read / string compare / destructure must not count.
   assert.equal(
     countEngineLaborFallbackConstructions(`
       import { readEngineLaborFallbackFieldFrom } from "./engine-labor-fallback.ts";
       const v = source.engineLaborFallback;
       if (key === "engineLaborFallback") return;
       safelyRead(obj, "engineLaborFallback");
+      const { engineLaborFallback } = source;
+      const { engineLaborFallback: renamed } = source;
       type T = { engineLaborFallback: string };
+    `),
+    0,
+  );
+
+  // Nested type/interface property must not count (brace-balanced strip).
+  assert.equal(
+    countEngineLaborFallbackConstructions(`
+      type Outer = {
+        inner: {
+          engineLaborFallback: string;
+        };
+      };
+      interface Bag {
+        nested: { engineLaborFallback: string };
+      }
     `),
     0,
   );
@@ -168,6 +262,15 @@ test("S1 negative: zero / cross-module / same-module split all fail the cardinal
       export function build() {
         return { engineLaborFallback: { engine: "kimi", failure: "x", laborBy: "seat" } };
       }
+    `),
+    1,
+  );
+
+  // Object shorthand is a real producer.
+  assert.equal(
+    countEngineLaborFallbackConstructions(`
+      const engineLaborFallback = { engine: "kimi", failure: "x", laborBy: "seat" };
+      return { engineLaborFallback, other: 1 };
     `),
     1,
   );
@@ -224,8 +327,9 @@ test("S2: judge and reviewer chains both reach the sole producer module", async 
     true,
     "S2 failure: detour failure path cannot reach sole producer",
   );
+  // Direct requirement — detourReachable is independent; no tautological OR.
   assert.equal(
-    evidenceReachable.has(producer) || detourReachable.has(producer),
+    evidenceReachable.has(producer),
     true,
     "S2 failure: evidence-child detour path cannot reach sole producer",
   );

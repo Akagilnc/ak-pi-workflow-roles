@@ -40,14 +40,17 @@ export function createEngineLaborFallbackLatch(): EngineLaborFallbackLatch {
   return { field: undefined };
 }
 
-/** Record first detour failure for this latch (first wins; parallel legs share one field). */
+/**
+ * Record first detour failure for this latch (first wins; parallel legs share one field).
+ * Always returns the latched first-wins value so tool details and receipt projection match.
+ */
 export function recordEngineLaborFallback(
   latch: EngineLaborFallbackLatch,
   input: { readonly engine: string; readonly failure: string },
 ): EngineLaborFallbackField {
   const field = buildEngineLaborFallbackField(input);
   if (latch.field === undefined) latch.field = field;
-  return field;
+  return latch.field;
 }
 
 export function readEngineLaborFallbackField(
@@ -59,13 +62,24 @@ export function readEngineLaborFallbackField(
 /**
  * Merge sole-built field into typed receipt details.
  * Spread only — must not construct the field key again (S1).
+ * Without a mechanical latch, strip any model-injected reserved key (no forged declaration).
  */
 export function withEngineLaborFallbackField<T extends object>(
   receipt: T,
   field: EngineLaborFallbackField | undefined,
 ): T {
-  if (field === undefined) return receipt;
-  return { ...receipt, ...field };
+  if (field !== undefined) {
+    return { ...receipt, ...field };
+  }
+  if (
+    !Object.prototype.hasOwnProperty.call(receipt, "engineLaborFallback")
+  ) {
+    return receipt;
+  }
+  const { engineLaborFallback: _forged, ...rest } = receipt as T & {
+    engineLaborFallback?: unknown;
+  };
+  return rest as T;
 }
 
 /** Install the activation-scoped latch (Judge/Reviewer session_start). */
@@ -123,4 +137,36 @@ export function readEngineLaborFallbackFieldFrom(
     engine: rec.engine,
     failure: rec.failure,
   });
+}
+
+/**
+ * Restore activation latch from durable session tool results (#380 resume).
+ * Scans existing same-session detour tool results only — no sidecar / new entry type.
+ * Replays through recordEngineLaborFallback so first-wins + sole producer stay intact.
+ */
+export function restoreEngineLaborFallbackFromSessionEntries(
+  latch: EngineLaborFallbackLatch,
+  entries: readonly unknown[],
+  toolName: string,
+): void {
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const row = entry as { type?: unknown; message?: unknown };
+    if (row.type !== "message") continue;
+    const message = row.message;
+    if (typeof message !== "object" || message === null) continue;
+    const msg = message as {
+      role?: unknown;
+      toolName?: unknown;
+      details?: unknown;
+    };
+    if (msg.role !== "toolResult") continue;
+    if (msg.toolName !== toolName) continue;
+    const field = readEngineLaborFallbackFieldFrom(msg.details);
+    if (field === undefined) continue;
+    recordEngineLaborFallback(latch, {
+      engine: field.engineLaborFallback.engine,
+      failure: field.engineLaborFallback.failure,
+    });
+  }
 }
