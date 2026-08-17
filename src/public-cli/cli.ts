@@ -324,9 +324,9 @@ function invocationFromParsed(parsed: ParsedGlobal): InvocationModelOverride | u
   };
 }
 
-function requireLegalEngineName(packageRoot: string, name: string): string {
+function requireLegalEngineName(name: string): string {
   try {
-    return assertLegalEngineName(packageRoot, name);
+    return assertLegalEngineName(name);
   } catch (error) {
     throw new CliUsageError(
       error instanceof Error ? error.message : String(error),
@@ -546,7 +546,7 @@ async function runConfigCommand(
         `engine axis is judge-only; refused seat ${seat}`,
       );
     }
-    requireLegalEngineName(packageRoot, name);
+    requireLegalEngineName(name);
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
       config = setPersistentSeatEngine(config, seat, name);
@@ -608,7 +608,7 @@ export async function runAkRole(
     // Invocation --engine rejects at the call-request seam (not role submission).
     // #356 MVP: engine axis is Judge-only (not resume / non-Judge seats).
     if (parsed.engine !== undefined) {
-      requireLegalEngineName(env.packageRoot, parsed.engine);
+      requireLegalEngineName(parsed.engine);
       if (
         !parsed.help &&
         parsed.command !== undefined &&

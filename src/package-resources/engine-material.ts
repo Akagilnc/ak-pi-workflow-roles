@@ -1,7 +1,8 @@
 /**
- * Packaged engine method-material seam (#356 T1 / ADR 0069).
- * Legal engine names = directory stems under resources/engines/ — no code whitelist.
- * Material body is data for the LLM, not a code contract.
+ * Packaged engine method-material seam (#356 T1 / ADR 0069 / #376).
+ * Engine names are owner pool-directive labels — not a closed material catalog.
+ * Material body is optional data for the LLM, not a code contract.
+ * Only path-safety syntax is checked at real I/O seams.
  */
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -10,16 +11,17 @@ const ENGINE_MATERIAL_RELATIVE_ROOT = "resources/engines" as const;
 
 export type EngineSessionMaterial = Readonly<{
   name: string;
-  materialPath: string;
+  /** Present only when a packaged notes file exists for this name. */
+  materialPath?: string;
 }>;
 
-/** Non-empty, trimmed, no path separators or traversal. */
+/** Non-empty, trimmed; reject only real path hazards at the I/O seam. */
 export function isEngineNameSyntax(name: string): boolean {
   if (typeof name !== "string") return false;
   if (name.length === 0 || name.trim() !== name) return false;
+  // Exact "." / ".." are directory aliases; consecutive dots inside a label are not.
   if (name === "." || name === "..") return false;
   if (name.includes("/") || name.includes("\\") || name.includes("\0")) return false;
-  if (name.includes("..")) return false;
   return true;
 }
 
@@ -32,8 +34,8 @@ export function resolveEngineMaterialDirectory(packageRoot: string): string {
 }
 
 /**
- * Enumerate legal engine names from packaged material files.
- * Only `*.md` stems that pass name syntax are legal.
+ * Enumerate packaged engine notes stems (discovery only — not a legal-name gate).
+ * Only `*.md` stems that pass name syntax are listed.
  */
 export function listEngineMaterialNames(packageRoot: string): readonly string[] {
   const dir = resolveEngineMaterialDirectory(packageRoot);
@@ -46,27 +48,26 @@ export function listEngineMaterialNames(packageRoot: string): readonly string[] 
   return Object.freeze([...names]);
 }
 
+/**
+ * Build the packaged notes path for a syntax-legal engine name.
+ * Does not require the file to exist (material is optional data).
+ */
 export function resolveEngineMaterialPath(
   packageRoot: string,
   name: string,
 ): string {
-  const legal = assertLegalEngineName(packageRoot, name);
+  const legal = assertLegalEngineName(name);
   return join(resolveEngineMaterialDirectory(packageRoot), `${legal}.md`);
 }
 
 /**
- * Assert `name` is a legal engine material stem under packageRoot.
- * Returns the canonical name on success; throws Error on illegal.
+ * Path-safety syntax gate for engine labels at real I/O seams.
+ * Returns the canonical name on success; throws Error on illegal syntax.
+ * Does not consult any material catalog (ADR 0069 pool-directive axis).
  */
-export function assertLegalEngineName(packageRoot: string, name: string): string {
+export function assertLegalEngineName(name: string): string {
   if (!isEngineNameSyntax(name)) {
     throw new Error(`illegal engine name: ${name}`);
-  }
-  const legal = listEngineMaterialNames(packageRoot);
-  if (!legal.includes(name)) {
-    throw new Error(
-      `unknown engine: ${name} (known: ${legal.length === 0 ? "(none)" : legal.join(", ")})`,
-    );
   }
   return name;
 }
@@ -74,6 +75,8 @@ export function assertLegalEngineName(packageRoot: string, name: string): string
 /**
  * Resolve optional engine options into session material coordinates.
  * No engine → undefined (caller keeps default prompt bytes).
+ * Engine with packaged notes → name + absolute material path.
+ * Engine without notes → name only (pass-through; no warning).
  */
 export function engineSessionMaterialFromOptions(options: {
   engine?: string;
@@ -83,17 +86,20 @@ export function engineSessionMaterialFromOptions(options: {
   if (options.packageRoot === undefined || options.packageRoot.trim() === "") {
     throw new Error("packageRoot is required when engine is configured");
   }
-  const name = assertLegalEngineName(options.packageRoot, options.engine);
-  return Object.freeze({
-    name,
-    materialPath: resolveEngineMaterialPath(options.packageRoot, name),
-  });
+  const name = assertLegalEngineName(options.engine);
+  const materialPath = resolveEngineMaterialPath(options.packageRoot, name);
+  if (existsSync(materialPath)) {
+    return Object.freeze({ name, materialPath });
+  }
+  return Object.freeze({ name });
 }
 
 /**
- * Append engine method-material path delivery to session initial material lines.
- * No material → identity copy (byte-stable when joined the same way).
- * Delivers engine name + absolute material path only — never material body.
+ * Append engine method-material delivery to session initial material lines.
+ * No engine → identity copy (byte-stable when joined the same way).
+ * With notes → read-these-bytes header + engine name + absolute material path.
+ * Name only → engine name coordinate only (no read-these-bytes header, no path, no warning).
+ * Never delivers material body.
  */
 export function appendEngineSessionMaterial(
   lines: readonly string[],
@@ -104,8 +110,13 @@ export function appendEngineSessionMaterial(
   }
   const out = [...lines];
   out.push("");
-  out.push("Engine method material (read these bytes and follow them):");
-  out.push(`- engine: ${engineMaterial.name}`);
-  out.push(`- ${engineMaterial.materialPath}`);
+  if (engineMaterial.materialPath !== undefined) {
+    out.push("Engine method material (read these bytes and follow them):");
+    out.push(`- engine: ${engineMaterial.name}`);
+    out.push(`- ${engineMaterial.materialPath}`);
+  } else {
+    // Name-only pass-through: no packaged bytes to read.
+    out.push(`- engine: ${engineMaterial.name}`);
+  }
   return out;
 }

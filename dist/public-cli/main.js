@@ -23,31 +23,18 @@ function isEngineNameSyntax(name) {
   if (name.length === 0 || name.trim() !== name) return false;
   if (name === "." || name === "..") return false;
   if (name.includes("/") || name.includes("\\") || name.includes("\0")) return false;
-  if (name.includes("..")) return false;
   return true;
 }
 function resolveEngineMaterialDirectory(packageRoot2) {
   return join2(packageRoot2, ENGINE_MATERIAL_RELATIVE_ROOT);
 }
-function listEngineMaterialNames(packageRoot2) {
-  const dir = resolveEngineMaterialDirectory(packageRoot2);
-  if (!existsSync2(dir)) return Object.freeze([]);
-  const names = readdirSync(dir).filter((entry) => entry.endsWith(".md")).map((entry) => entry.slice(0, -".md".length)).filter((stem) => isEngineNameSyntax(stem)).sort();
-  return Object.freeze([...names]);
-}
 function resolveEngineMaterialPath(packageRoot2, name) {
-  const legal = assertLegalEngineName(packageRoot2, name);
+  const legal = assertLegalEngineName(name);
   return join2(resolveEngineMaterialDirectory(packageRoot2), `${legal}.md`);
 }
-function assertLegalEngineName(packageRoot2, name) {
+function assertLegalEngineName(name) {
   if (!isEngineNameSyntax(name)) {
     throw new Error(`illegal engine name: ${name}`);
-  }
-  const legal = listEngineMaterialNames(packageRoot2);
-  if (!legal.includes(name)) {
-    throw new Error(
-      `unknown engine: ${name} (known: ${legal.length === 0 ? "(none)" : legal.join(", ")})`
-    );
   }
   return name;
 }
@@ -56,11 +43,12 @@ function engineSessionMaterialFromOptions(options) {
   if (options.packageRoot === void 0 || options.packageRoot.trim() === "") {
     throw new Error("packageRoot is required when engine is configured");
   }
-  const name = assertLegalEngineName(options.packageRoot, options.engine);
-  return Object.freeze({
-    name,
-    materialPath: resolveEngineMaterialPath(options.packageRoot, name)
-  });
+  const name = assertLegalEngineName(options.engine);
+  const materialPath = resolveEngineMaterialPath(options.packageRoot, name);
+  if (existsSync2(materialPath)) {
+    return Object.freeze({ name, materialPath });
+  }
+  return Object.freeze({ name });
 }
 function appendEngineSessionMaterial(lines, engineMaterial) {
   if (engineMaterial === void 0) {
@@ -68,9 +56,13 @@ function appendEngineSessionMaterial(lines, engineMaterial) {
   }
   const out = [...lines];
   out.push("");
-  out.push("Engine method material (read these bytes and follow them):");
-  out.push(`- engine: ${engineMaterial.name}`);
-  out.push(`- ${engineMaterial.materialPath}`);
+  if (engineMaterial.materialPath !== void 0) {
+    out.push("Engine method material (read these bytes and follow them):");
+    out.push(`- engine: ${engineMaterial.name}`);
+    out.push(`- ${engineMaterial.materialPath}`);
+  } else {
+    out.push(`- engine: ${engineMaterial.name}`);
+  }
   return out;
 }
 var ENGINE_MATERIAL_RELATIVE_ROOT;
@@ -14476,7 +14468,7 @@ function setPersistentSeatEngine(config, seat, engine) {
 function seatModelOnly(seat) {
   return seat.thinking === void 0 ? { provider: seat.provider, model: seat.model } : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
 }
-function validatePublicCliConfigEngines(config, packageRoot2) {
+function validatePublicCliConfigEngines(config, _packageRoot) {
   for (const seat of Object.keys(config.seats)) {
     const row = config.seats[seat];
     if (row?.engine === void 0) continue;
@@ -14486,10 +14478,10 @@ function validatePublicCliConfigEngines(config, packageRoot2) {
       );
     }
     try {
-      assertLegalEngineName(packageRoot2, row.engine);
+      assertLegalEngineName(row.engine);
     } catch (error) {
       throw new Error(
-        `config seat ${seat} engine is unknown: ${row.engine}`,
+        `config seat ${seat} engine is illegal: ${row.engine}`,
         { cause: error }
       );
     }
@@ -15925,8 +15917,8 @@ var init_option_definitions = __esm({
         repeatable: false,
         form: "option",
         description: {
-          en: "Optional Judge labor engine for this invocation (name must exist in packaged engine materials; judge-only).",
-          zh: "\u672C\u8C03\u7528\u53EF\u9009 Judge \u52B3\u52A8\u5F15\u64CE\uFF08\u540D\u5B57\u987B\u5B58\u5728\u4E8E\u5305\u5185\u5F15\u64CE\u8C03\u6CD5\u6750\u6599\uFF1B\u4EC5 Judge\uFF09\u3002"
+          en: "Optional Judge labor engine for this invocation (owner pool-directive name; packaged notes attached when present; judge-only).",
+          zh: "\u672C\u8C03\u7528\u53EF\u9009 Judge \u52B3\u52A8\u5F15\u64CE\uFF08\u6C60\u4EE4\u540D\u5B57\uFF1B\u6709\u5305\u5185\u8C03\u6CD5\u7B14\u8BB0\u5219\u9644\u5377\uFF1B\u4EC5 Judge\uFF09\u3002"
         }
       },
       {
@@ -26952,9 +26944,9 @@ function invocationFromParsed(parsed) {
     ...parsed.engine === void 0 ? {} : { engine: parsed.engine }
   };
 }
-function requireLegalEngineName(packageRoot2, name) {
+function requireLegalEngineName(name) {
   try {
-    return assertLegalEngineName(packageRoot2, name);
+    return assertLegalEngineName(name);
   } catch (error) {
     throw new CliUsageError(
       error instanceof Error ? error.message : String(error),
@@ -27151,7 +27143,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
         `engine axis is judge-only; refused seat ${seat}`
       );
     }
-    requireLegalEngineName(packageRoot2, name);
+    requireLegalEngineName(name);
     let config = await loadAndValidateConfig(home, packageRoot2);
     try {
       config = setPersistentSeatEngine(config, seat, name);
@@ -27202,7 +27194,7 @@ async function runAkRole(argv, env) {
     env = { ...env, packageRoot: await realpath5(env.packageRoot) };
     const parsed = parseArgv(argv);
     if (parsed.engine !== void 0) {
-      requireLegalEngineName(env.packageRoot, parsed.engine);
+      requireLegalEngineName(parsed.engine);
       if (!parsed.help && parsed.command !== void 0 && parsed.command !== "help" && parsed.command !== "judge") {
         throw new CliUsageError(
           `engine axis is judge-only; refused command ${parsed.command}`
