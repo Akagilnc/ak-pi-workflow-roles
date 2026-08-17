@@ -14449,7 +14449,7 @@ function setPersistentSeatEngine(config, seat, engine) {
   const previous = config.seats[seat];
   if (previous === void 0) {
     throw new Error(
-      `config seat ${seat} has no persistent model; set provider/model:thinking before engine`
+      `config seat ${seat} has no persistent model; set provider/model[:thinking] before engine`
     );
   }
   if (engine === void 0) {
@@ -14518,19 +14518,6 @@ function parseModelSpec(spec, fallbackThinking) {
   const model = modelPart.slice(slash + 1);
   return thinking === void 0 ? { provider, model } : { provider, model, thinking };
 }
-function parsePersistentModelSpec(spec) {
-  const parsed = parseModelSpec(spec);
-  if (parsed.thinking === void 0) {
-    throw new Error(
-      `model specification requires a thinking level (provider/model:thinking), got ${spec}`
-    );
-  }
-  return {
-    provider: parsed.provider,
-    model: parsed.model,
-    thinking: parsed.thinking
-  };
-}
 function formatModelSpec(selection) {
   const base = `${selection.provider}/${selection.model}`;
   return selection.thinking === void 0 ? base : `${base}:${selection.thinking}`;
@@ -14578,13 +14565,15 @@ function parseSeatModelConfig(value, seat) {
   if (typeof raw.model !== "string" || raw.model.trim() === "") {
     throw new Error(`config seat ${seat} requires model`);
   }
-  if (typeof raw.thinking !== "string" || !THINKING_LEVELS.has(raw.thinking)) {
-    throw new Error(`config seat ${seat} requires a valid thinking level`);
+  if (raw.thinking !== void 0) {
+    if (typeof raw.thinking !== "string" || !THINKING_LEVELS.has(raw.thinking)) {
+      throw new Error(`config seat ${seat} requires a valid thinking level`);
+    }
   }
   const parsed = {
     provider: raw.provider,
     model: raw.model,
-    thinking: raw.thinking
+    ...raw.thinking === void 0 ? {} : { thinking: raw.thinking }
   };
   if (raw.engine !== void 0) {
     if (typeof raw.engine !== "string") {
@@ -27117,7 +27106,7 @@ function renderHelp() {
   lines.push(
     "",
     "Role options: ak-role help <command>",
-    "Persistent config: ak-role config set <seat> <provider/model:thinking>",
+    "Persistent config: ak-role config set <seat> <provider/model[:thinking]>",
     "Persistent engine (judge|reviewer): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Effective seats: ak-role roles"
   );
@@ -27198,7 +27187,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
   if (args[0] === "set") {
     if (args.length < 3) {
       throw new CliUsageError(
-        "usage: ak-role config set <seat> <provider/model:thinking>"
+        "usage: ak-role config set <seat> <provider/model[:thinking]>"
       );
     }
     const pairs = args.slice(1);
@@ -27214,7 +27203,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
       if (!isPublicConfigurableSeat(seat)) {
         throw new CliUsageError(`unknown configurable seat: ${seat}`);
       }
-      config = setPersistentSeatConfig(config, seat, parsePersistentModelSpec(spec));
+      config = setPersistentSeatConfig(config, seat, parseModelSpec(spec));
     }
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));

@@ -295,25 +295,41 @@ test("roles accepts bare --model provider/model and records it without invented 
   });
 });
 
-test("config set still requires provider/model:thinking three-part syntax", async () => {
+// #384: persistent config set no longer forces :thinking (owner 2026-08-17).
+test("config set accepts bare provider/model and keeps :thinking suffix", async () => {
   await withTempHome(async (home) => {
     const bare = captureIo();
     const bareResult = await runAkRole(
       ["config", "set", "coder", "kimi-coding/k3-256k"],
       { packageRoot, home, io: bare.io },
     );
-    assert.notEqual(bareResult.exitCode, 0);
-    assert.match(
-      bare.stderr.join(""),
-      /model specification requires a thinking level \(provider\/model:thinking\)/,
-    );
+    assert.equal(bareResult.exitCode, 0, bare.stderr.join("") || "config set bare failed");
+    assert.match(bare.stdout.join(""), /^coder\tkimi-coding\/k3-256k\t-$/m);
 
-    const ok = captureIo();
-    const okResult = await runAkRole(
-      ["config", "set", "coder", "kimi-coding/k3-256k:high"],
-      { packageRoot, home, io: ok.io },
+    const roles = captureIo();
+    const rolesResult = await runAkRole(["roles"], {
+      packageRoot,
+      home,
+      credentials: { "openai-codex": true, xai: false },
+      io: roles.io,
+    });
+    assert.equal(rolesResult.exitCode, 0, roles.stderr.join("") || "roles after bare set failed");
+    assert.match(
+      roles.stdout.join(""),
+      /^coder\tcallable\tpersistent\tkimi-coding\/k3-256k$/m,
     );
-    assert.equal(okResult.exitCode, 0, ok.stderr.join("") || "config set three-part failed");
-    assert.match(ok.stdout.join(""), /^coder\tkimi-coding\/k3-256k:high\t-$/m);
+    assert.equal(roles.stdout.join("").includes("kimi-coding/k3-256k:"), false);
+
+    const withThinking = captureIo();
+    const withThinkingResult = await runAkRole(
+      ["config", "set", "coder", "kimi-coding/k3-256k:high"],
+      { packageRoot, home, io: withThinking.io },
+    );
+    assert.equal(
+      withThinkingResult.exitCode,
+      0,
+      withThinking.stderr.join("") || "config set with thinking failed",
+    );
+    assert.match(withThinking.stdout.join(""), /^coder\tkimi-coding\/k3-256k:high\t-$/m);
   });
 });

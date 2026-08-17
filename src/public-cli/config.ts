@@ -23,7 +23,7 @@ export type CredentialProviders = {
 
 export type SeatModelConfig = ModelRef;
 
-/** Persistent seat row: required model triple + optional engine axis (#356). */
+/** Persistent seat row: provider/model[:thinking] + optional engine axis (#356/#384). */
 export type PersistentSeatConfig = SeatModelConfig & {
   engine?: string;
 };
@@ -123,7 +123,7 @@ export function isEngineAxisSeat(seat: string): seat is "judge" | "reviewer" {
 
 /**
  * Set or clear persistent engine on Judge or Reviewer (#356 / #378).
- * Engine-only seats are rejected — model triple remains required.
+ * Engine-only seats are rejected — provider/model[:thinking] remains required first.
  */
 export function setPersistentSeatEngine(
   config: PublicCliConfig,
@@ -136,7 +136,7 @@ export function setPersistentSeatEngine(
   const previous = config.seats[seat];
   if (previous === undefined) {
     throw new Error(
-      `config seat ${seat} has no persistent model; set provider/model:thinking before engine`,
+      `config seat ${seat} has no persistent model; set provider/model[:thinking] before engine`,
     );
   }
   if (engine === undefined) {
@@ -226,28 +226,10 @@ export function parseModelSpec(
   }
   const provider = modelPart.slice(0, slash);
   const model = modelPart.slice(slash + 1);
-  // #346: bare provider/model is legal on invocation — do not invent thinking.
-  // Persistent config set still requires thinking via parsePersistentModelSpec.
+  // #346/#384: bare provider/model is legal — do not invent thinking.
   return thinking === undefined
     ? { provider, model }
     : { provider, model, thinking };
-}
-
-/** Persistent seat config keeps the three-part provider/model:thinking grammar. */
-export function parsePersistentModelSpec(spec: string): SeatModelConfig & {
-  thinking: PublicThinkingLevel;
-} {
-  const parsed = parseModelSpec(spec);
-  if (parsed.thinking === undefined) {
-    throw new Error(
-      `model specification requires a thinking level (provider/model:thinking), got ${spec}`,
-    );
-  }
-  return {
-    provider: parsed.provider,
-    model: parsed.model,
-    thinking: parsed.thinking,
-  };
 }
 
 export function formatModelSpec(selection: SeatModelConfig): string {
@@ -308,16 +290,21 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
   if (typeof raw.model !== "string" || raw.model.trim() === "") {
     throw new Error(`config seat ${seat} requires model`);
   }
-  if (
-    typeof raw.thinking !== "string" ||
-    !THINKING_LEVELS.has(raw.thinking as PublicThinkingLevel)
-  ) {
-    throw new Error(`config seat ${seat} requires a valid thinking level`);
+  // #384: thinking is optional on persistent seats; when present it must be typed.
+  if (raw.thinking !== undefined) {
+    if (
+      typeof raw.thinking !== "string" ||
+      !THINKING_LEVELS.has(raw.thinking as PublicThinkingLevel)
+    ) {
+      throw new Error(`config seat ${seat} requires a valid thinking level`);
+    }
   }
   const parsed: PersistentSeatConfig = {
     provider: raw.provider,
     model: raw.model,
-    thinking: raw.thinking as PublicThinkingLevel,
+    ...(raw.thinking === undefined
+      ? {}
+      : { thinking: raw.thinking as PublicThinkingLevel }),
   };
   if (raw.engine !== undefined) {
     // Shape only: engine must be a string field. Path-safety syntax is deferred to
