@@ -39,8 +39,12 @@ activity while the engine works. Take the labor body from
 kimi -p "YOUR_LABOR_PROMPT" --output-format stream-json
 ```
 
-Text mode when stream events are not needed (stdout also carries thinking
-bullets and a trailing resume hint — strip those before typed submission):
+Text / default mode when stream events are not needed. Measured on this host
+with separate fd redirects (`1>` / `2>`): stdout is the labor answer body;
+stderr carries the version line, thinking bullets, and the trailing
+`To resume this session:` hint. Collect the labor body from stdout only — do
+not treat resume lines as same-stream noise to strip from stdout (they are not
+on that stream; stripping bullet-shaped lines risks deleting answer content):
 
 ```bash
 kimi -p "YOUR_LABOR_PROMPT" --output-format text
