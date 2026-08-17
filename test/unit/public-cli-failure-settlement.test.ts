@@ -39,6 +39,7 @@ import {
 } from "../../src/package-contracts/worker-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
+import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   ExplicitInternalActivationError,
@@ -3298,6 +3299,113 @@ test("public Reviewer no-task dispatch retains evidence-child provider identity"
     assert.equal(errorBody.cause, "unrecognized");
     assert.equal(errorBody.diagnostic, "Codex error: The usage limit has been reached");
     assert.equal(errorBody.details?.errorMessage, "Codex error: The usage limit has been reached");
+  });
+});
+
+test("#378: Reviewer durable engine-detour failure outranks later knownFailure", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const detourDiagnostic = "ENGINE_DETOUR_FAIL_UNIQUE_378_PRECEDENCE";
+    const secondaryDiagnostic = "SECONDARY_KNOWN_FAILURE_MUST_NOT_WIN_378";
+    const result = await runAkRole(
+      [
+        "--model",
+        "openai-codex/gpt-5.6-sol:medium",
+        "reviewer",
+        "--project",
+        project,
+        "--base",
+        "HEAD",
+        "--engine",
+        "kimi",
+      ],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-reviewer-detour-precedence-001",
+        io,
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await writeFile(
+            sessionFile,
+            [
+              JSON.stringify({ type: "session", id: "parent-session" }),
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "assistant",
+                  content: [
+                    {
+                      type: "toolCall",
+                      id: "engine-detour-parent",
+                      name: ENGINE_DETOUR_TOOL_NAME,
+                      arguments: { argv: ["kimi"] },
+                    },
+                  ],
+                  stopReason: "toolUse",
+                },
+              }),
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "engine-detour-parent",
+                  toolName: ENGINE_DETOUR_TOOL_NAME,
+                  isError: true,
+                  content: [{ type: "text", text: detourDiagnostic }],
+                },
+              }),
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "assistant",
+                  stopReason: "error",
+                  errorMessage: secondaryDiagnostic,
+                  provider: "openai-codex",
+                  model: "gpt-5.6-sol",
+                },
+              }),
+            ].join("\n") + "\n",
+            "utf8",
+          );
+          return {
+            code: 1,
+            stderr: `Extension error: ${secondaryDiagnostic}\n`,
+            timedOut: false,
+            args: [...args],
+            // Later secondary knownFailure must lose to durable detour infra fact.
+            knownFailure: {
+              cause: "provider",
+              diagnostic: secondaryDiagnostic,
+              identity: { name: "SecondaryProviderStop" },
+            },
+          };
+        },
+      },
+    );
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "output",
+      diagnosticEquals: detourDiagnostic,
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "output");
+      assert.equal(terminal.roleOutcome.diagnostic, detourDiagnostic);
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      diagnostic: string;
+    };
+    assert.equal(errorBody.cause, "output");
+    assert.equal(errorBody.diagnostic, detourDiagnostic);
   });
 });
 

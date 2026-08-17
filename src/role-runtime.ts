@@ -591,7 +591,7 @@ export function createRoleRuntimeExtension(
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     const pendingInfrastructureToolCallIds = new Set<string>();
-    // #357 T2: engine detour once-latch + registration (Judge+engine only).
+    // #357 T2 / #378: engine detour once-latch + registration (Judge|Reviewer+engine).
     let engineDetourRegistration: ReturnType<typeof registerEngineDetourTool> | undefined;
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
@@ -1168,9 +1168,12 @@ export function createRoleRuntimeExtension(
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
-        // #357 T2: Judge+engine activation registers the package detour tool once.
-        // Gate is env presence only — no per-engine execute branch; no judge-role spawn.
-        if (entry.role === "judge" && engineDetourRegistration === undefined) {
+        // #357 T2 / #378: Judge|Reviewer+engine activation registers the package detour tool once.
+        // Gate is env presence only — no per-engine execute branch; no role-module spawn.
+        if (
+          (entry.role === "judge" || entry.role === "reviewer") &&
+          engineDetourRegistration === undefined
+        ) {
           engineDetourRegistration = registerEngineDetourTool(pi, hostActions);
           if (!engineDetourRegistration.registered) {
             engineDetourRegistration = undefined;
