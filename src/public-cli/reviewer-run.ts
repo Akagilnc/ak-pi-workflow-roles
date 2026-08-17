@@ -416,7 +416,7 @@ async function dispatchAdmittedReviewer(input: {
     }
 
     // Prefer engine-detour infrastructure failure already on the session principal
-    // over a later secondary provider-stop after abort (#357 T2 / #378).
+    // over a later secondary knownFailure / provider-stop after abort (#357 T2 / #378).
     const infrastructureFailure = await readEngineDetourInfrastructureFailure(
       admitted.sessionFile,
     );
@@ -427,16 +427,15 @@ async function dispatchAdmittedReviewer(input: {
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
       runner:
-        result.knownFailure ??
-        (infrastructureFailure === undefined
-          ? undefined
+        infrastructureFailure === undefined
+          ? result.knownFailure
           : {
               cause: infrastructureFailure.cause,
               diagnostic: infrastructureFailure.diagnostic,
               ...(infrastructureFailure.identity === undefined
                 ? {}
                 : { identity: infrastructureFailure.identity }),
-            }),
+            },
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
