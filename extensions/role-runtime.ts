@@ -242,7 +242,7 @@ export async function loadNavigatorWorkContext(
 }
 
 export default function roleRuntime(pi: ExtensionAPI): void {
-  const reviewerAgent = createReviewerAgentRunner();
+  const reviewerAgent = createReviewerAgentRunner({ packageRoot });
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   // #351: static provider list from extension setting (default ["kimi-coding"]).

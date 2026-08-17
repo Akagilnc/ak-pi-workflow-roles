@@ -29,6 +29,13 @@ import {
   prepareComplianceDispatch,
   type AuditorParentAttemptBinding,
 } from "./compliance-transport.ts";
+import { createEngineDetourToolDefinition } from "./engine-detour-tool.ts";
+import { engineNameFromEnv } from "./engine-detour.ts";
+import {
+  appendEngineSessionMaterial,
+  engineSessionMaterialFromOptions,
+  type EngineSessionMaterial,
+} from "./package-resources/engine-material.ts";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.ts";
@@ -41,13 +48,16 @@ import {
 } from "./upstream-error-testimony.ts";
 
 /** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
-function buildEvidenceChildSystemPrompt(): string {
-  return [
+function buildEvidenceChildSystemPrompt(
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  const lines = [
     "Work only in the supplied workspace.",
     "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
     REVIEWER_VERIFICATION_BOUNDARY,
     "Return one substantive non-blank report.",
-  ].join("\n");
+  ];
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 // ── shared constants / types ──────────────────────────────────────────────
@@ -540,6 +550,11 @@ export type EvidenceChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
   /** Parent directory for credential/config scratch. Defaults to os.tmpdir(). */
   credentialScratchParent?: string;
+  /**
+   * Package root for optional engine method-material resolution (#378).
+   * Required only when AK_ROLE_ENGINE is set and packaged notes should attach.
+   */
+  packageRoot?: string;
 }>;
 
 export async function executeEvidenceChild(
@@ -568,6 +583,32 @@ export async function executeEvidenceChild(
       } catch (error) {
         throw classifiedError(error, "provider");
       }
+      // #378: when labor engine is configured, legs get the same detour tool + material
+      // dual-path as the parent seat (ADR 0069 detour-rejoins-main-road).
+      const engineName = engineNameFromEnv();
+      const engineMaterial =
+        engineName === undefined
+          ? undefined
+          : options.packageRoot === undefined || options.packageRoot.trim() === ""
+            // Name-only when package root is unavailable (still a valid #376 path).
+            ? Object.freeze({ name: engineName })
+            : engineSessionMaterialFromOptions({
+                engine: engineName,
+                packageRoot: options.packageRoot,
+              });
+      // #378: detour failure is durable for this leg — later assistant reports cannot wash it.
+      let engineDetourFailure: Error | undefined;
+      const engineDetourTool =
+        engineName === undefined
+          ? undefined
+          : createEngineDetourToolDefinition({
+              engineName,
+              fail(error) {
+                const failure = error instanceof Error ? error : new Error(String(error));
+                engineDetourFailure = failure;
+                throw failure;
+              },
+            });
       // No tools allowlist — Pi defaults + unrestricted evidence surface (ADR 0064).
       // Single createAgentSession owner: in-process-session.ts.
       const { session, dispose } = await openInProcessAgentSession({
@@ -576,7 +617,10 @@ export async function executeEvidenceChild(
         model: inherited.model,
         thinkingLevel: context.thinkingLevel ?? "off",
         modelRuntime: inherited.runtime,
-        systemPrompt: buildEvidenceChildSystemPrompt(),
+        systemPrompt: buildEvidenceChildSystemPrompt(engineMaterial),
+        ...(engineDetourTool === undefined
+          ? {}
+          : { customTools: [engineDetourTool] }),
         sessionManager: createRecordSession({
           cwd: workspace,
           kind: "evidence-children",
@@ -598,7 +642,17 @@ export async function executeEvidenceChild(
         try {
           await session.prompt(delivered);
         } catch (error) {
+          // Engine detour fail becomes isError toolResult and must outrank a later
+          // provider-shaped throw from the same prompt turn (#378).
+          if (engineDetourFailure !== undefined) {
+            throw classifiedError(engineDetourFailure, "child");
+          }
           throw classifiedError(error, "provider");
+        }
+        // Launched-leg detour non-zero / empty stdout / spawn failure is infrastructure:
+        // reject the leg even when the model still emits a non-blank report afterward.
+        if (engineDetourFailure !== undefined) {
+          throw classifiedError(engineDetourFailure, "child");
         }
         if (signal?.aborted) throw new Error("Evidence child was cancelled");
         const lastAssistant = [...session.messages]
