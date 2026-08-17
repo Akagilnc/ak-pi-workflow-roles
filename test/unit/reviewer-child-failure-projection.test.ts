@@ -13,6 +13,12 @@ import {
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { AK_ROLE_ENGINE_ENV, ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
+import {
+  clearActivationEngineLaborFallbackLatch,
+  createEngineLaborFallbackLatch,
+  installActivationEngineLaborFallbackLatch,
+  readActivationEngineLaborFallbackField,
+} from "../../src/engine-labor-fallback.ts";
 import { executeReviewerChild, projectSharedChildFailure } from "../../src/reviewer-child-executor.ts";
 
 test("shared evidence-child classifications project to reviewerFailure without inventing provider", () => {
@@ -120,12 +126,14 @@ test("#307 SP1: aborted without testimony projects as unknown, not child", async
   }
 });
 
-test("#378: launched-leg detour failure cannot be washed by later assistant report", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-detour-wash-"));
-  const binDir = await mkdtemp(join(tmpdir(), "ak-detour-wash-bin-"));
+test("#380: launched-leg detour failure → seat labor report + engineLaborFallback declaration", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-detour-fallback-"));
+  const binDir = await mkdtemp(join(tmpdir(), "ak-detour-fallback-bin-"));
   const previousEngine = process.env[AK_ROLE_ENGINE_ENV];
   const previousPath = process.env.PATH;
-  const failMarker = "DETOUR_FAIL_UNIQUE_378_WASH";
+  const failMarker = "DETOUR_FAIL_UNIQUE_380_SEAT";
+  const latch = createEngineLaborFallbackLatch();
+  installActivationEngineLaborFallbackLatch(latch);
   try {
     process.env[AK_ROLE_ENGINE_ENV] = "kimi";
     process.env.PATH = `${binDir}${previousPath ? `:${previousPath}` : ""}`;
@@ -138,7 +146,7 @@ test("#378: launched-leg detour failure cannot be washed by later assistant repo
     await chmod(enginePath, 0o755);
 
     let detourIssued = false;
-    const faux = fauxProvider({ provider: "detour-wash-378" });
+    const faux = fauxProvider({ provider: "detour-fallback-380" });
     const response = (context: Context) => {
       const names = context.tools?.map((tool) => tool.name) ?? [];
       if (names.includes(ENGINE_DETOUR_TOOL_NAME) && !detourIssued) {
@@ -146,15 +154,15 @@ test("#378: launched-leg detour failure cannot be washed by later assistant repo
         return fauxAssistantMessage(
           fauxToolCall(
             ENGINE_DETOUR_TOOL_NAME,
-            { argv: ["kimi", "--fixture-wash"] },
-            { id: "engine-detour-wash" },
+            { argv: ["kimi", "--fixture-fallback"] },
+            { id: "engine-detour-fallback" },
           ),
           { stopReason: "toolUse" },
         );
       }
-      // Non-blank report after detour isError must still reject the leg.
+      // Seat main road: non-blank report after soft detour failure is accepted (#380).
       return fauxAssistantMessage(
-        "Standards finding count: 0. washed report after failed engine detour.",
+        "Standards finding count: 0. seat labor after failed engine detour.",
       );
     };
     faux.setResponses([
@@ -166,30 +174,24 @@ test("#378: launched-leg detour failure cannot be washed by later assistant repo
       response,
     ]);
 
-    await assert.rejects(
-      () => executeReviewerChild(
-        cwd,
-        { axis: "standards", prompt: "investigate standards axis with engine labor" },
-        evidenceChildContext(cwd, faux),
-      ),
-      (error: unknown) => {
-        assert.ok(error instanceof Error, String(error));
-        const classified = error as Error & {
-          evidenceChildFailure?: string;
-          reviewerFailure?: string;
-        };
-        assert.equal(classified.evidenceChildFailure, "child");
-        assert.equal(classified.reviewerFailure, "child");
-        assert.equal(
-          classified.message.includes(failMarker),
-          true,
-          `expected detour stderr marker in failure: ${classified.message}`,
-        );
-        assert.equal(detourIssued, true, "detour tool must have been called");
-        return true;
-      },
+    const result = await executeReviewerChild(
+      cwd,
+      { axis: "standards", prompt: "investigate standards axis with engine labor" },
+      evidenceChildContext(cwd, faux),
+    );
+    assert.equal(detourIssued, true, "detour tool must have been called");
+    assert.match(result.report, /seat labor after failed engine detour/);
+    const field = readActivationEngineLaborFallbackField();
+    assert.ok(field, "activation latch must hold engineLaborFallback");
+    assert.equal(field.engineLaborFallback.engine, "kimi");
+    assert.equal(field.engineLaborFallback.laborBy, "seat");
+    assert.equal(
+      field.engineLaborFallback.failure.includes(failMarker),
+      true,
+      `failure must carry engine stderr: ${field.engineLaborFallback.failure}`,
     );
   } finally {
+    clearActivationEngineLaborFallbackLatch();
     if (previousEngine === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
     else process.env[AK_ROLE_ENGINE_ENV] = previousEngine;
     if (previousPath === undefined) delete process.env.PATH;

@@ -4,11 +4,16 @@
  * Fixed 183000ms silence clock on package-owned tool execute only.
  * Real producing onUpdate resets; final resolve/reject clears; timeout throws so
  * Pi settles the current call as an LLM-visible isError tool result. No retry,
- * role failure, process termination, signal abort, config, or Pi built-in coverage.
+ * role failure, process termination, config, or Pi built-in coverage.
  *
  * #339: do not name-exempt whole terminating tools. Outer idle stays armed for
  * pre/post-audit work. Only the real compliance-audit await suspends this single
  * layer (ADR 0059 owns that interval); resume re-arms the same outer backstop.
+ *
+ * #380: on idle, abort a derived tool signal (not the caller signal) so detour
+ * spawn cleanup and softFail can run through the existing AbortSignal path.
+ * Cooperative soft-settle may win; non-listeners still hard-reject after a
+ * microtask drain (no second timer).
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -28,6 +33,8 @@ const WRAPPED = Symbol.for("ak.packageOwnedToolIdleWrapped");
 type PackageOwnedToolIdleSuspension = {
   suspend(): void;
   resume(): void;
+  /** Reset the silence window (byte/activity signal from the active execute). */
+  poke(): void;
 };
 
 /**
@@ -44,6 +51,20 @@ export class PackageOwnedToolIdleTimeoutError extends Error {
     super(`package-owned tool idle timeout after ${PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS}ms`);
     this.name = "PackageOwnedToolIdleTimeoutError";
   }
+}
+
+export function isPackageOwnedToolIdleTimeoutError(
+  value: unknown,
+): value is PackageOwnedToolIdleTimeoutError {
+  return (
+    value instanceof PackageOwnedToolIdleTimeoutError ||
+    (
+      typeof value === "object" &&
+      value !== null &&
+      (value as { name?: unknown }).name === "PackageOwnedToolIdleTimeoutError" &&
+      (value as { code?: unknown }).code === PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_CODE
+    )
+  );
 }
 
 /** Minimal executable tool shape accepted by the shared idle wrapper. */
@@ -88,6 +109,15 @@ export async function withPackageOwnedToolIdleSuspended<T>(
 }
 
 /**
+ * Touch the active package-owned execute idle clock (reuse stream-idle-guard poke).
+ * No-op outside a wrapped package-owned execute or while that layer is suspended.
+ * Used by long-running tools (engine detour) that see real subprocess output bytes.
+ */
+export function pokePackageOwnedToolIdle(): void {
+  packageOwnedToolIdleScope.getStore()?.poke();
+}
+
+/**
  * Single shared execute wrapper for package-owned tool definitions.
  * Idempotent: wrapping twice returns the same protected definition.
  */
@@ -103,7 +133,7 @@ export function wrapPackageOwnedToolDefinition<T extends PackageOwnedToolLike>(t
   const wrappedExecute = function packageOwnedToolIdleExecute(
     ...args: unknown[]
   ): Promise<unknown> {
-    const signal = args[2] as AbortSignal | undefined;
+    const parentSignal = args[2] as AbortSignal | undefined;
     const onUpdate = args[3] as ((partialResult: unknown) => void) | undefined;
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -112,15 +142,46 @@ export function wrapPackageOwnedToolDefinition<T extends PackageOwnedToolLike>(t
         idleTimeoutMs: PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
       });
 
+      // Derived tool signal: caller cancel forwards; idle aborts this only (not parent).
+      const toolController = new AbortController();
+      const onParentAbort = (): void => {
+        if (toolController.signal.aborted) return;
+        toolController.abort(parentSignal?.reason);
+      };
+      if (parentSignal !== undefined) {
+        if (parentSignal.aborted) {
+          toolController.abort(parentSignal.reason);
+        } else {
+          parentSignal.addEventListener("abort", onParentAbort);
+        }
+      }
+
+      const cleanup = (): void => {
+        idle.signal.removeEventListener("abort", onIdle);
+        idle.dispose();
+        parentSignal?.removeEventListener("abort", onParentAbort);
+      };
+
       const settle = (deliver: () => void): void => {
         if (settled) return;
         settled = true;
-        idle.signal.removeEventListener("abort", onIdle);
-        idle.dispose();
+        cleanup();
         deliver();
       };
       const onIdle = (): void => {
-        settle(() => reject(new PackageOwnedToolIdleTimeoutError()));
+        const idleError = new PackageOwnedToolIdleTimeoutError();
+        if (!toolController.signal.aborted) {
+          toolController.abort(idleError);
+        }
+        // Cooperative tools (detour) soft-settle via the aborted signal in the
+        // next microtasks. Non-listeners still hard-reject after a short drain
+        // of those microtasks — no second wall-clock timer.
+        void Promise.resolve()
+          .then(() => {})
+          .then(() => {})
+          .then(() => {
+            settle(() => reject(idleError));
+          });
       };
       idle.signal.addEventListener("abort", onIdle, { once: true });
 
@@ -141,6 +202,10 @@ export function wrapPackageOwnedToolDefinition<T extends PackageOwnedToolLike>(t
           });
           idle.signal.addEventListener("abort", onIdle, { once: true });
         },
+        poke(): void {
+          if (settled || suspended) return;
+          idle.poke();
+        },
       };
 
       const guardedOnUpdate = onUpdate === undefined
@@ -152,8 +217,9 @@ export function wrapPackageOwnedToolDefinition<T extends PackageOwnedToolLike>(t
           };
 
       const callArgs = args.slice();
-      // Preserve the original signal at args[2]; timeout must not abort it.
-      callArgs[2] = signal;
+      // Pass derived signal so idle/cancel can clean up subprocesses without
+      // aborting the caller/parent agent signal identity.
+      callArgs[2] = toolController.signal;
       callArgs[3] = guardedOnUpdate;
 
       void packageOwnedToolIdleScope.run(suspension, async () => {

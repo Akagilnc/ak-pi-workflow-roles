@@ -22,9 +22,14 @@ import {
 } from "../helpers/pi-test-harness.ts";
 
 const CANNED_LABOR = "canned-reviewer-engine-labor-378";
+const FAIL_MARKER = "ENGINE_FAIL_REVIEWER_380_UNIQUE";
 const providerPath = resolve(
   packageRoot,
   "test/fixtures/reviewer-engine-detour-provider.ts",
+);
+const fallbackProviderPath = resolve(
+  packageRoot,
+  "test/fixtures/reviewer-engine-fallback-provider.ts",
 );
 
 function seedGitProject(root: string): string {
@@ -92,17 +97,21 @@ async function runReviewerWithEngine(input: {
   runId: string;
   base: string;
   engine: string;
+  providerPath?: string;
+  modelId?: string;
 }): Promise<{
   exitCode: number;
   terminal: Awaited<ReturnType<typeof runAkRole>>["terminal"];
   stdout: string[];
   stderr: string[];
 }> {
+  const modelId = input.modelId ?? "ak-reviewer-engine-detour/faux-1";
+  const extensionPath = input.providerPath ?? providerPath;
   const agentDir = join(input.home, ".pi", "agent");
   await mkdir(agentDir, { recursive: true });
   await writeFile(
     join(agentDir, "navigator-model.json"),
-    `${JSON.stringify({ model: "ak-reviewer-engine-detour/faux-1" })}\n`,
+    `${JSON.stringify({ model: modelId })}\n`,
   );
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -111,7 +120,7 @@ async function runReviewerWithEngine(input: {
     "--engine",
     input.engine,
     "--model",
-    "ak-reviewer-engine-detour/faux-1",
+    modelId,
     "--thinking",
     "off",
     "--project",
@@ -126,7 +135,7 @@ async function runReviewerWithEngine(input: {
     cwd: input.project,
     createRunId: () => input.runId,
     credentials: { "openai-codex": true, xai: true },
-    reviewerExtraPiArgs: ["-e", providerPath],
+    reviewerExtraPiArgs: ["-e", extensionPath],
     reviewerTimeoutMs: 120_000,
     io: {
       stdout: (text) => stdout.push(text),
@@ -356,6 +365,87 @@ test(
         ),
       ) as Record<string, unknown>;
       assert.equal(invocation.engine, "cursor");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "B2 detour failure → seat labor + engineLaborFallback on accepted reviewer receipt",
+  { timeout: 180_000 },
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "ak-reviewer-engine-fallback-"));
+    try {
+      const project = join(home, "work");
+      const binDir = join(home, "bin");
+      await mkdir(project, { recursive: true });
+      await mkdir(binDir, { recursive: true });
+      const base = seedGitProject(project);
+      await writeExecutable(
+        join(binDir, "kimi"),
+        `#!/bin/sh\nprintf '%s' '${FAIL_MARKER}' >&2\nexit 1\n`,
+      );
+
+      const result = await runReviewerWithEngine({
+        home,
+        project,
+        binDir,
+        runId: "run-reviewer-engine-fallback-001",
+        base,
+        engine: "kimi",
+        providerPath: fallbackProviderPath,
+        modelId: "ak-reviewer-engine-fallback/faux-1",
+      });
+
+      assert.equal(result.exitCode, 0, result.stderr.join(""));
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      if (result.terminal?.roleOutcome.kind !== "accepted") {
+        assert.fail("expected accepted reviewer receipt");
+      }
+      const fallback = (result.terminal.roleOutcome.decisiveFacts as {
+        engineLaborFallback?: {
+          engine?: string;
+          failure?: string;
+          laborBy?: string;
+        };
+      }).engineLaborFallback;
+      assert.ok(fallback, "accepted receipt must declare engineLaborFallback");
+      assert.equal(fallback.engine, "kimi");
+      assert.equal(fallback.laborBy, "seat");
+      assert.ok(
+        typeof fallback.failure === "string" &&
+          fallback.failure.includes(FAIL_MARKER),
+        `failure must carry engine stderr: ${fallback.failure}`,
+      );
+
+      const bookKey = resolveBookKeyFromGit(project);
+      const sessionFile = join(
+        home,
+        ".ak-roles",
+        "books",
+        bookKey,
+        "runs",
+        "run-reviewer-engine-fallback-001@reviewer",
+        "session",
+        "session.jsonl",
+      );
+      const rows = (await readFile(sessionFile, "utf8"))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as any);
+      const accepted = rows.find(
+        (row) =>
+          row.type === "message" &&
+          row.message?.role === "toolResult" &&
+          row.message?.toolName === "ak_reviewer_output" &&
+          row.message?.isError !== true,
+      );
+      assert.ok(accepted, "typed reviewer receipt must be accepted");
+      const detailsFallback = accepted.message.details?.engineLaborFallback;
+      assert.equal(detailsFallback?.engine, "kimi");
+      assert.equal(detailsFallback?.laborBy, "seat");
+      assert.ok(String(detailsFallback?.failure ?? "").includes(FAIL_MARKER));
     } finally {
       await rm(home, { recursive: true, force: true });
     }

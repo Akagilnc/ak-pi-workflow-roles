@@ -7,6 +7,10 @@ export type { CanonicalSkillBinding };
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { appendActiveSessionCustomEntry } from "./compliance-transport.ts";
+import {
+  readActivationEngineLaborFallbackField,
+  withEngineLaborFallbackField,
+} from "./engine-labor-fallback.ts";
 import { REVIEWER_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";
 import { type ReviewerSpecDisposition } from "./reviewer-construction.ts";
 import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerIssueFetcher, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
@@ -145,11 +149,15 @@ export function createReviewerRoleRuntime(
             const output = validateReviewerIntent(parameters);
             let record: ReviewerExecutionRecord;
             try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx, id); throw error; }
-            const candidate = assembleRuntimeReviewerReceipt({
-              intent: output,
-              record,
-              canonicalSkillText: binding.snapshot.raw,
-            });
+            const candidate = withEngineLaborFallbackField(
+              assembleRuntimeReviewerReceipt({
+                intent: output,
+                record,
+                canonicalSkillText: binding.snapshot.raw,
+              }),
+              // #380: sole-built declaration when any leg detour fell back to seat labor.
+              readActivationEngineLaborFallbackField(),
+            );
             // First-record-then-audit: candidate lands on the parent session books
             // before the auditor is spawned (zero hand-delivery).
             try {

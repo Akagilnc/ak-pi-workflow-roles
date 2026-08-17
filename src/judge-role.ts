@@ -8,6 +8,10 @@ import { Type, type Static } from "typebox";
 
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
+import {
+  readActivationEngineLaborFallbackField,
+  withEngineLaborFallbackField,
+} from "./engine-labor-fallback.ts";
 
 import {
   JUDGE_OUTPUT_TOOL_NAME,
@@ -126,18 +130,21 @@ export function createJudgeRoleRuntime(
             } catch (error) {
               hostActions.failInfrastructure(error, ctx, toolCallId);
             }
+            // #380: attach sole-built engineLaborFallback when detour fell back to seat labor.
+            const laborFallback = readActivationEngineLaborFallbackField();
+            const acceptedDetails = withEngineLaborFallbackField(verdict, laborFallback);
             return disposeComplianceDecision<AgentToolResult<unknown>>(
               audit,
               {
                 pass: (usage) => ({
                   content: [{ type: "text" as const, text: "Judge verdict accepted" }],
-                  details: verdict,
+                  details: acceptedDetails,
                   terminate: true as const,
                   ...(usage === undefined ? {} : { usage }),
                 }),
                 noReceipt: (auditNoReceipt, usageProjection) => ({
                   content: [{ type: "text" as const, text: "Judge verdict accepted; compliance audit produced no receipt" }],
-                  details: { ...verdict, auditNoReceipt },
+                  details: { ...acceptedDetails, auditNoReceipt },
                   terminate: true as const,
                   ...usageProjection,
                 }),
@@ -149,7 +156,8 @@ export function createJudgeRoleRuntime(
                 escalate: (result) => result,
                 auditIncomplete: (result) => result,
               },
-              verdict,
+              // #380: escalate deliveredOutput must carry the same mechanical projection.
+              acceptedDetails,
             );
           },
         });
