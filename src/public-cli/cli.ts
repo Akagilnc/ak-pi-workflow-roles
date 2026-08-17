@@ -16,6 +16,7 @@ import {
   parsePersistentModelSpec,
   resolveEffectiveSeat,
   savePublicCliConfig,
+  isEngineAxisSeat,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
   validatePublicCliConfigEngines,
@@ -418,7 +419,7 @@ function renderHelp(): string {
     "",
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model:thinking>",
-    "Persistent engine (judge only): ak-role config set-engine judge <name> | unset-engine judge",
+    "Persistent engine (judge|reviewer): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Effective seats: ak-role roles",
   );
   return `${lines.join("\n")}\n`;
@@ -533,7 +534,7 @@ async function runConfigCommand(
   if (args[0] === "set-engine") {
     if (args.length !== 3) {
       throw new CliUsageError(
-        "usage: ak-role config set-engine judge <name>",
+        "usage: ak-role config set-engine <judge|reviewer> <name>",
       );
     }
     const seat = args[1]!;
@@ -541,9 +542,9 @@ async function runConfigCommand(
     if (!isPublicConfigurableSeat(seat)) {
       throw new CliUsageError(`unknown configurable seat: ${seat}`);
     }
-    if (seat !== "judge") {
+    if (!isEngineAxisSeat(seat)) {
       throw new CliUsageError(
-        `engine axis is judge-only; refused seat ${seat}`,
+        `engine axis is judge+reviewer only; refused seat ${seat}`,
       );
     }
     requireLegalEngineName(name);
@@ -564,16 +565,16 @@ async function runConfigCommand(
   if (args[0] === "unset-engine") {
     if (args.length !== 2) {
       throw new CliUsageError(
-        "usage: ak-role config unset-engine judge",
+        "usage: ak-role config unset-engine <judge|reviewer>",
       );
     }
     const seat = args[1]!;
     if (!isPublicConfigurableSeat(seat)) {
       throw new CliUsageError(`unknown configurable seat: ${seat}`);
     }
-    if (seat !== "judge") {
+    if (!isEngineAxisSeat(seat)) {
       throw new CliUsageError(
-        `engine axis is judge-only; refused seat ${seat}`,
+        `engine axis is judge+reviewer only; refused seat ${seat}`,
       );
     }
     let config = await loadAndValidateConfig(home, packageRoot);
@@ -606,17 +607,17 @@ export async function runAkRole(
     env = { ...env, packageRoot: await realpath(env.packageRoot) };
     const parsed = parseArgv(argv);
     // Invocation --engine rejects at the call-request seam (not role submission).
-    // #356 MVP: engine axis is Judge-only (not resume / non-Judge seats).
+    // #356 / #378: engine axis is Judge+Reviewer (not resume / other seats).
     if (parsed.engine !== undefined) {
       requireLegalEngineName(parsed.engine);
       if (
         !parsed.help &&
         parsed.command !== undefined &&
         parsed.command !== "help" &&
-        parsed.command !== "judge"
+        !isEngineAxisSeat(parsed.command)
       ) {
         throw new CliUsageError(
-          `engine axis is judge-only; refused command ${parsed.command}`,
+          `engine axis is judge+reviewer only; refused command ${parsed.command}`,
         );
       }
     }
@@ -1046,6 +1047,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.reviewerExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.reviewerExtraPiArgs }),

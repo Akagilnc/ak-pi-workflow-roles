@@ -8,19 +8,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAssistantMessageEventStream, InMemoryCredentialStore, } from "@earendil-works/pi-ai";
 import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch, } from "./compliance-transport.js";
+import { createEngineDetourToolDefinition } from "./engine-detour-tool.js";
+import { engineNameFromEnv } from "./engine-detour.js";
+import { appendEngineSessionMaterial, engineSessionMaterialFromOptions, } from "./package-resources/engine-material.js";
 import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
 import { hasUpstreamErrorTestimony, isNonSuccessHttpStatus, projectConfirmedRemotePayload, } from "./upstream-error-testimony.js";
 /** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
-function buildEvidenceChildSystemPrompt() {
-    return [
+function buildEvidenceChildSystemPrompt(engineMaterial) {
+    const lines = [
         "Work only in the supplied workspace.",
         "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
         REVIEWER_VERIFICATION_BOUNDARY,
         "Return one substantive non-blank report.",
-    ].join("\n");
+    ];
+    return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 // ── shared constants / types ──────────────────────────────────────────────
 export const AUDITOR_TURN_LIMIT = 32;
@@ -456,6 +460,26 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
         catch (error) {
             throw classifiedError(error, "provider");
         }
+        // #378: when labor engine is configured, legs get the same detour tool + material
+        // dual-path as the parent seat (ADR 0069 detour-rejoins-main-road).
+        const engineName = engineNameFromEnv();
+        const engineMaterial = engineName === undefined
+            ? undefined
+            : options.packageRoot === undefined || options.packageRoot.trim() === ""
+                // Name-only when package root is unavailable (still a valid #376 path).
+                ? Object.freeze({ name: engineName })
+                : engineSessionMaterialFromOptions({
+                    engine: engineName,
+                    packageRoot: options.packageRoot,
+                });
+        const engineDetourTool = engineName === undefined
+            ? undefined
+            : createEngineDetourToolDefinition({
+                engineName,
+                fail(error) {
+                    throw error;
+                },
+            });
         // No tools allowlist — Pi defaults + unrestricted evidence surface (ADR 0064).
         // Single createAgentSession owner: in-process-session.ts.
         const { session, dispose } = await openInProcessAgentSession({
@@ -464,7 +488,10 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
             model: inherited.model,
             thinkingLevel: context.thinkingLevel ?? "off",
             modelRuntime: inherited.runtime,
-            systemPrompt: buildEvidenceChildSystemPrompt(),
+            systemPrompt: buildEvidenceChildSystemPrompt(engineMaterial),
+            ...(engineDetourTool === undefined
+                ? {}
+                : { customTools: [engineDetourTool] }),
             sessionManager: createRecordSession({
                 cwd: workspace,
                 kind: "evidence-children",

@@ -35,6 +35,8 @@ type Dependencies = Readonly<{
   fault?(operation: ReviewerAgentFaultPoint): void;
   /** When set, child credential/config scratch is created under this parent so cleanup proofs stay process-local. */
   credentialScratchParent?: string;
+  /** Package root for optional engine method-material on legs (#378). */
+  packageRoot?: string;
 }>;
 function classify(error: unknown, signal?: AbortSignal): ReviewerFailureClassification { if (signal?.aborted) return "cancelled"; if (typeof error === "object" && error !== null && "reviewerFailure" in error) return (error as { reviewerFailure: ReviewerFailureClassification }).reviewerFailure; return "unknown"; }
 function failed(error: unknown, target: ReviewerTargetSnapshot, prompt: ReviewerPromptText, signal?: AbortSignal, retained?: string): ReviewerFailedLegRunResult {
@@ -76,6 +78,9 @@ export function createReviewerAgentRunner(dependencies: Dependencies = {}): Revi
             ...(dependencies.credentialScratchParent === undefined
               ? {}
               : { credentialScratchParent: dependencies.credentialScratchParent }),
+            ...(dependencies.packageRoot === undefined
+              ? {}
+              : { packageRoot: dependencies.packageRoot }),
           });
           const disposition = await workspaceOwner.dispose(workspace);
           return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target: batch.target, prompt: child.prompt, workspaceDisposition: disposition })] as const;

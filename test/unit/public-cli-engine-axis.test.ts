@@ -1,11 +1,11 @@
 /**
- * #356 T1 / #376 — Judge-only engine axis on config → activation material seams.
+ * #356 T1 / #376 / #378 — Judge+Reviewer engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
- * Two delivery paths: with packaged notes (cursor) / name-only without notes (opus when
- * notes absent from a root, or any free name). No closed material catalog.
+ * Two delivery paths: with packaged notes (cursor) / name-only without notes (any free name).
+ * No closed material catalog. Reviewer inherits the same dual-path contract (#378).
  * Zero assertions on engine material body CLI invocation text.
  * Zero assertions on free-prose delivery wording / layout.
- * Non-Judge seats deliberately have no engine selection/passthrough/material.
+ * Non-engine seats deliberately have no engine selection/passthrough/material.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -34,8 +34,13 @@ import {
   buildJudgeActivationExtraArgs,
 } from "../../src/public-cli/judge-run.ts";
 import {
+  buildReviewerActivationExtraArgs,
+} from "../../src/public-cli/reviewer-run.ts";
+import {
   buildJudgeTransportPrompt,
+  buildReviewerTransportPrompt,
   type AdmittedJudgeInvocation,
+  type AdmittedReviewerInvocation,
 } from "../../src/public-cli/invocation.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -214,7 +219,26 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     assert.equal(legacy.seats.coder?.engine, undefined);
     assert.equal("engine" in (legacy.seats.coder ?? {}), false);
 
-    // Non-judge engine field is refused at validate seam (MVP judge-only).
+    // Reviewer engine field is accepted at validate seam (#378).
+    await writeFile(
+      join(home, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({
+        seats: {
+          reviewer: {
+            provider: "xai",
+            model: "grok-4.5",
+            thinking: "medium",
+            engine: "cursor",
+          },
+        },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    const reviewerCfg = await loadPublicCliConfig(home);
+    validatePublicCliConfigEngines(reviewerCfg, packageRoot);
+    assert.equal(reviewerCfg.seats.reviewer?.engine, "cursor");
+
+    // Non-engine seat field is refused at validate seam (judge+reviewer only).
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
       `${JSON.stringify({
@@ -232,7 +256,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     const nonJudge = await loadPublicCliConfig(home);
     assert.throws(
       () => validatePublicCliConfigEngines(nonJudge, packageRoot),
-      /config seat coder engine is not allowed; engine axis is judge-only/,
+      /config seat coder engine is not allowed; engine axis is judge\+reviewer only/,
     );
 
     // Syntax-illegal engine name in on-disk judge config is rejected at validate seam.
@@ -310,7 +334,26 @@ test("engine priority: invocation > persistent > unconfigured (judge only)", () 
   assert.equal(bare.engine, undefined);
   assert.equal(bare.engineSource, "unconfigured");
 
-  // Non-judge seats never attach engine even if invocation carries one.
+  // Reviewer seat attaches engine the same way (#378).
+  const reviewerConfig = setPersistentSeatEngine(
+    setPersistentSeatConfig(
+      { seats: {} },
+      "reviewer",
+      { provider: "xai", model: "grok-4.5", thinking: "high" },
+    ),
+    "reviewer",
+    "cursor",
+  );
+  const reviewerPersistent = resolveEffectiveSeat(reviewerConfig, "reviewer", credentials);
+  assert.equal(reviewerPersistent.engine, "cursor");
+  assert.equal(reviewerPersistent.engineSource, "persistent");
+  const reviewerInvocation = resolveEffectiveSeat(reviewerConfig, "reviewer", credentials, {
+    engine: "opus",
+  });
+  assert.equal(reviewerInvocation.engine, "opus");
+  assert.equal(reviewerInvocation.engineSource, "invocation");
+
+  // Non-engine seats never attach engine even if invocation carries one.
   const fixer = resolveEffectiveSeat({ seats: {} }, "fixer", credentials, {
     engine: "opus",
   });
@@ -393,6 +436,66 @@ test("engine name-only delivery: free name without notes carries name, no path",
   assert.equal(existsSync(absentPath), false, "fixture assumes no notes for free name");
   assertEngineCoordinatesNameOnly(prompt, freeName, absentPath, "");
   assertNoEngineFlagsInArgv(withEngine);
+});
+
+function sampleReviewer(): AdmittedReviewerInvocation {
+  return {
+    role: "reviewer",
+    runId: "run-reviewer-engine",
+    bookKey: "book",
+    projectRoot: "/project",
+    instruction: "",
+    instructionEmpty: true,
+    attachments: [],
+    runDirectory: "/runs/r",
+    sessionDirectory: "/runs/r/session",
+    sessionFile: "/runs/r/session/session.jsonl",
+    admittedRequestPath: "/runs/r/admitted-request.json",
+    baseRevision: "abc123",
+    authorityRefs: [],
+  };
+}
+
+test("reviewer engine material delivery: cursor with-notes + free name-only (#378)", () => {
+  const reviewer = sampleReviewer();
+  const without = buildReviewerActivationExtraArgs(reviewer, { packageRoot });
+  const withNotes = buildReviewerActivationExtraArgs(reviewer, {
+    packageRoot,
+    engine: "cursor",
+  });
+  assert.notEqual(without.at(-1), withNotes.at(-1));
+  const notesPrompt = withNotes.at(-1)!;
+  const materialPath = resolveEngineMaterialPath(packageRoot, "cursor");
+  assert.equal(existsSync(materialPath), true, "cursor notes must be packaged");
+  assertEngineCoordinatesWithMaterial(notesPrompt, "cursor", materialPath);
+  assertNoEngineFlagsInArgv(withNotes);
+
+  const freeName = "nope-engine";
+  const nameOnly = buildReviewerActivationExtraArgs(reviewer, {
+    packageRoot,
+    engine: freeName,
+  });
+  const nameOnlyPrompt = nameOnly.at(-1)!;
+  const absentPath = resolveEngineMaterialPath(packageRoot, freeName);
+  assert.equal(existsSync(absentPath), false, "fixture assumes no notes for free name");
+  assertEngineCoordinatesNameOnly(nameOnlyPrompt, freeName, absentPath, "");
+  assertNoEngineFlagsInArgv(nameOnly);
+
+  // Transport helper keeps the same dual-path coordinates without activation argv.
+  assertEngineCoordinatesWithMaterial(
+    buildReviewerTransportPrompt(reviewer, {
+      name: "cursor",
+      materialPath,
+    }),
+    "cursor",
+    materialPath,
+  );
+  assertEngineCoordinatesNameOnly(
+    buildReviewerTransportPrompt(reviewer, { name: freeName }),
+    freeName,
+    absentPath,
+    "",
+  );
 });
 
 // --- public CLI tracer -------------------------------------------------------
@@ -709,7 +812,57 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       assert.match(setEscape.stderr.join(""), /illegal engine name/);
     }
 
-    // Non-judge command with --engine → structural reject (MVP judge-only).
+    // Reviewer command with --engine is admitted at the call-request seam (#378).
+    {
+      let capturedArgs: string[] | undefined;
+      let capturedEnv: NodeJS.ProcessEnv | undefined;
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        [
+          "reviewer",
+          "--engine",
+          "cursor",
+          "--project",
+          project,
+          "--base",
+          "HEAD",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "engine-reviewer-cursor-001",
+          credentials,
+          io,
+          piRunner: async (args, options) => {
+            capturedArgs = [...args];
+            capturedEnv = options.env;
+            return {
+              code: 1,
+              stderr: "stop after capture",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.notEqual(
+        result.exitCode,
+        2,
+        `reviewer --engine must not structural-reject: ${stderr.join("")}`,
+      );
+      assert.equal(
+        Array.isArray(capturedArgs),
+        true,
+        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+      );
+      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
+      assertEngineCoordinatesWithMaterial(capturedPrompt, "cursor", materialCursor);
+      assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "cursor");
+      assertNoEngineFlagsInArgv(capturedArgs!);
+    }
+
+    // Non-engine command with --engine → structural reject (judge+reviewer only).
     {
       const { io, stderr } = captureIo();
       const result = await runAkRole(
@@ -717,7 +870,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /engine axis is judge-only; refused command coder/);
+      assert.match(stderr.join(""), /engine axis is judge\+reviewer only; refused command coder/);
     }
 
     // Syntax-illegal persistent engine on load → structural reject.
@@ -785,7 +938,23 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       assert.equal(after.seats.judge?.engine, before.seats.judge?.engine);
     }
 
-    // set-engine on non-judge seat rejects.
+    // set-engine on reviewer seat persists (#378).
+    {
+      await runAkRole(
+        ["config", "set", "reviewer", "openai-codex/gpt-5.6-sol:high"],
+        { packageRoot, home, io: captureIo().io },
+      );
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        ["config", "set-engine", "reviewer", "cursor"],
+        { packageRoot, home, io },
+      );
+      assert.equal(result.exitCode, 0, stderr.join(""));
+      const after = await loadPublicCliConfig(home);
+      assert.equal(after.seats.reviewer?.engine, "cursor");
+    }
+
+    // set-engine on non-engine seat rejects.
     {
       await runAkRole(
         ["config", "set", "coder", "openai-codex/gpt-5.6-sol:high"],
@@ -797,7 +966,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         { packageRoot, home, io },
       );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /engine axis is judge-only; refused seat coder/);
+      assert.match(stderr.join(""), /engine axis is judge\+reviewer only; refused seat coder/);
     }
   });
 });

@@ -14439,9 +14439,12 @@ function setPersistentSeatConfig(config, seat, selection) {
     }
   };
 }
+function isEngineAxisSeat(seat) {
+  return seat === "judge" || seat === "reviewer";
+}
 function setPersistentSeatEngine(config, seat, engine) {
-  if (seat !== "judge") {
-    throw new Error(`engine axis is judge-only; refused seat ${seat}`);
+  if (!isEngineAxisSeat(seat)) {
+    throw new Error(`engine axis is judge+reviewer only; refused seat ${seat}`);
   }
   const previous = config.seats[seat];
   if (previous === void 0) {
@@ -14472,9 +14475,9 @@ function validatePublicCliConfigEngines(config, _packageRoot) {
   for (const seat of Object.keys(config.seats)) {
     const row = config.seats[seat];
     if (row?.engine === void 0) continue;
-    if (seat !== "judge") {
+    if (!isEngineAxisSeat(seat)) {
       throw new Error(
-        `config seat ${seat} engine is not allowed; engine axis is judge-only`
+        `config seat ${seat} engine is not allowed; engine axis is judge+reviewer only`
       );
     }
     try {
@@ -14609,13 +14612,13 @@ function pickStartupCandidate(seat, credentials) {
   return void 0;
 }
 function attachEngineAxis(seat, config, invocation) {
-  if (seat.seat !== "judge") {
+  if (!isEngineAxisSeat(seat.seat)) {
     return {
       ...seat,
       engineSource: "unconfigured"
     };
   }
-  const persistentEngine = config.seats.judge?.engine;
+  const persistentEngine = config.seats[seat.seat]?.engine;
   if (invocation?.engine !== void 0) {
     return {
       ...seat,
@@ -15917,8 +15920,8 @@ var init_option_definitions = __esm({
         repeatable: false,
         form: "option",
         description: {
-          en: "Optional Judge labor engine for this invocation (owner pool-directive name; packaged notes attached when present; judge-only).",
-          zh: "\u672C\u8C03\u7528\u53EF\u9009 Judge \u52B3\u52A8\u5F15\u64CE\uFF08\u6C60\u4EE4\u540D\u5B57\uFF1B\u6709\u5305\u5185\u8C03\u6CD5\u7B14\u8BB0\u5219\u9644\u5377\uFF1B\u4EC5 Judge\uFF09\u3002"
+          en: "Optional Judge/Reviewer labor engine for this invocation (owner pool-directive name; packaged notes attached when present; judge+reviewer only).",
+          zh: "\u672C\u8C03\u7528\u53EF\u9009 Judge/Reviewer \u52B3\u52A8\u5F15\u64CE\uFF08\u6C60\u4EE4\u540D\u5B57\uFF1B\u6709\u5305\u5185\u8C03\u6CD5\u7B14\u8BB0\u5219\u9644\u5377\uFF1B\u4EC5 Judge+Reviewer\uFF09\u3002"
         }
       },
       {
@@ -17494,11 +17497,12 @@ async function admitReviewerInvocation(options) {
     ...ticketFields
   };
 }
-function buildReviewerTransportPrompt(admitted) {
-  return [
+function buildReviewerTransportPrompt(admitted, engineMaterial) {
+  const lines = [
     `Base revision for the fixed review target: ${admitted.baseRevision}`,
     "Use this exact revision as the fixed review point."
-  ].join("\n");
+  ];
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 function parseMergerArgv(args) {
   const attachmentPaths = [];
@@ -19156,6 +19160,16 @@ var init_auditor_dossier_tool = __esm({
   }
 });
 
+// src/engine-detour.ts
+var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
+var init_engine_detour = __esm({
+  "src/engine-detour.ts"() {
+    "use strict";
+    ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
+    AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
+  }
+});
+
 // src/stream-idle-guard.ts
 var init_stream_idle_guard = __esm({
   "src/stream-idle-guard.ts"() {
@@ -19214,6 +19228,26 @@ var init_package_owned_tool_idle = __esm({
   }
 });
 
+// src/engine-detour-tool.ts
+var engineDetourArgsSchema;
+var init_engine_detour_tool = __esm({
+  "src/engine-detour-tool.ts"() {
+    "use strict";
+    init_build();
+    init_engine_detour();
+    init_package_owned_tool_idle();
+    engineDetourArgsSchema = typebox_exports.Object(
+      {
+        argv: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), {
+          minItems: 1,
+          description: "Executable argv for one engine subprocess. First element is the command (PATH lookup); remaining elements are arguments. Build argv from the host CLI actual interface for the configured engine name; when optional packaged notes are present in the session prompt, follow those bytes. Do not invent package flags."
+        })
+      },
+      { additionalProperties: false }
+    );
+  }
+});
+
 // src/receipt-delivery-policy.ts
 function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -19249,6 +19283,9 @@ var init_evidence_child_executor = __esm({
   "src/evidence-child-executor.ts"() {
     "use strict";
     init_compliance_transport();
+    init_engine_detour_tool();
+    init_engine_detour();
+    init_engine_material();
     init_package_owned_tool_idle();
     init_receipt_delivery_policy();
     init_reviewer_construction();
@@ -19400,16 +19437,6 @@ var init_collector_ledger = __esm({
     COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
     COLLECTOR_REQUEST_TOOL = "ak_collector_request";
     COLLECTOR_WAIT_TOOL = "ak_collector_wait";
-  }
-});
-
-// src/engine-detour.ts
-var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
-var init_engine_detour = __esm({
-  "src/engine-detour.ts"() {
-    "use strict";
-    ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
-    AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
   }
 });
 
@@ -24360,7 +24387,10 @@ function buildReviewerTicketNumberArgs(ticketNumber) {
   return ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(ticketNumber)];
 }
 function buildReviewerActivationExtraArgs(admitted, options) {
-  const prompt = buildReviewerTransportPrompt(admitted);
+  const prompt = buildReviewerTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options)
+  );
   const skillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "code-review"
@@ -24468,7 +24498,7 @@ async function presentControlledFailure8(admitted, failureInput, io) {
   };
 }
 async function dispatchAdmittedReviewer(input) {
-  const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
+  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -24481,7 +24511,7 @@ async function dispatchAdmittedReviewer(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     await clearReviewerDispatchRejection(admitted.runDirectory);
     const childEnv = {
@@ -24490,6 +24520,12 @@ async function dispatchAdmittedReviewer(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
+    delete childEnv[AK_ROLE_ENGINE_ENV];
+    if (env.engine !== void 0 && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
+    }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -24571,13 +24607,20 @@ async function dispatchAdmittedReviewer(input) {
         terminal: auditIncomplete
       };
     }
+    const infrastructureFailure = await readEngineDetourInfrastructureFailure(
+      admitted.sessionFile
+    );
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
       env.model,
       env.credentials
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result2.knownFailure,
+      runner: result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
+        cause: infrastructureFailure.cause,
+        diagnostic: infrastructureFailure.diagnostic,
+        ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
+      }),
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
@@ -24651,6 +24694,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
   const extraArgs = buildReviewerActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
   return await dispatchAdmittedReviewer({
@@ -24662,7 +24706,9 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
     io,
     extraArgs,
     lease,
-    methodMaterial
+    methodMaterial,
+    // #378: only initial Reviewer dispatch records mechanical engine provenance.
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 async function runPublicReviewerResume(argv, env, io) {
@@ -24738,6 +24784,8 @@ async function runPublicReviewerResume(argv, env, io) {
 var init_reviewer_run = __esm({
   "src/public-cli/reviewer-run.ts"() {
     "use strict";
+    init_engine_detour();
+    init_engine_material();
     init_method_skill();
     init_explicit_internal();
     init_cli_errors();
@@ -27025,7 +27073,7 @@ function renderHelp() {
     "",
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model:thinking>",
-    "Persistent engine (judge only): ak-role config set-engine judge <name> | unset-engine judge",
+    "Persistent engine (judge|reviewer): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Effective seats: ak-role roles"
   );
   return `${lines.join("\n")}
@@ -27130,7 +27178,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
   if (args[0] === "set-engine") {
     if (args.length !== 3) {
       throw new CliUsageError(
-        "usage: ak-role config set-engine judge <name>"
+        "usage: ak-role config set-engine <judge|reviewer> <name>"
       );
     }
     const seat = args[1];
@@ -27138,9 +27186,9 @@ async function runConfigCommand(args, home, packageRoot2, io) {
     if (!isPublicConfigurableSeat(seat)) {
       throw new CliUsageError(`unknown configurable seat: ${seat}`);
     }
-    if (seat !== "judge") {
+    if (!isEngineAxisSeat(seat)) {
       throw new CliUsageError(
-        `engine axis is judge-only; refused seat ${seat}`
+        `engine axis is judge+reviewer only; refused seat ${seat}`
       );
     }
     requireLegalEngineName(name);
@@ -27160,16 +27208,16 @@ async function runConfigCommand(args, home, packageRoot2, io) {
   if (args[0] === "unset-engine") {
     if (args.length !== 2) {
       throw new CliUsageError(
-        "usage: ak-role config unset-engine judge"
+        "usage: ak-role config unset-engine <judge|reviewer>"
       );
     }
     const seat = args[1];
     if (!isPublicConfigurableSeat(seat)) {
       throw new CliUsageError(`unknown configurable seat: ${seat}`);
     }
-    if (seat !== "judge") {
+    if (!isEngineAxisSeat(seat)) {
       throw new CliUsageError(
-        `engine axis is judge-only; refused seat ${seat}`
+        `engine axis is judge+reviewer only; refused seat ${seat}`
       );
     }
     let config = await loadAndValidateConfig(home, packageRoot2);
@@ -27195,9 +27243,9 @@ async function runAkRole(argv, env) {
     const parsed = parseArgv(argv);
     if (parsed.engine !== void 0) {
       requireLegalEngineName(parsed.engine);
-      if (!parsed.help && parsed.command !== void 0 && parsed.command !== "help" && parsed.command !== "judge") {
+      if (!parsed.help && parsed.command !== void 0 && parsed.command !== "help" && !isEngineAxisSeat(parsed.command)) {
         throw new CliUsageError(
-          `engine axis is judge-only; refused command ${parsed.command}`
+          `engine axis is judge+reviewer only; refused command ${parsed.command}`
         );
       }
     }
@@ -27528,6 +27576,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...seat.engine === void 0 ? {} : { engine: seat.engine },
           ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
           ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
