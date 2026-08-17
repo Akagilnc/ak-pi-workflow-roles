@@ -1,13 +1,15 @@
 /**
- * #356 T1 — Judge-only engine axis on config → activation material seams.
- * Covers: priority, illegal rejection, public CLI tracer, default-path byte oracle.
+ * #356 T1 / #376 — Judge-only engine axis on config → activation material seams.
+ * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
+ * Two delivery paths: with packaged notes (cursor) / name-only without notes (opus when
+ * notes absent from a root, or any free name). No closed material catalog.
  * Zero assertions on engine material body CLI invocation text.
  * Zero assertions on free-prose delivery wording / layout.
  * Non-Judge seats deliberately have no engine selection/passthrough/material.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -92,8 +94,8 @@ function assertBytesEqual(actual: unknown, expected: unknown, label: string): vo
   );
 }
 
-/** Typed coordinates only — no prose/layout pins. */
-function assertEngineCoordinatesInPrompt(
+/** With-notes coordinates: name + absolute material path. No prose/layout pins. */
+function assertEngineCoordinatesWithMaterial(
   prompt: string,
   engineName: string,
   materialPath: string,
@@ -103,6 +105,28 @@ function assertEngineCoordinatesInPrompt(
     prompt.includes(materialPath),
     true,
     `material absolute path missing: ${materialPath}`,
+  );
+}
+
+/** Name-only coordinates: name present, no material path, no warning spam. */
+function assertEngineCoordinatesNameOnly(
+  prompt: string,
+  engineName: string,
+  absentMaterialPath: string | undefined,
+  stderrText: string,
+): void {
+  assert.equal(prompt.includes(engineName), true, `engine name missing: ${engineName}`);
+  if (absentMaterialPath !== undefined) {
+    assert.equal(
+      prompt.includes(absentMaterialPath),
+      false,
+      `name-only path must not carry material path: ${absentMaterialPath}`,
+    );
+  }
+  assert.equal(
+    /warn/i.test(stderrText),
+    false,
+    `name-only path must not warn-bomb: ${stderrText}`,
   );
 }
 
@@ -144,7 +168,7 @@ const credentials = { "openai-codex": true, xai: true } as const;
 
 // --- config parse + priority -------------------------------------------------
 
-test("persistent judge engine round-trips; illegal engine rejected at parse/validate", async () => {
+test("persistent judge engine round-trips; syntax-illegal engine rejected at parse/validate", async () => {
   await withTempHome(async (home) => {
     let config: PublicCliConfig = { seats: {} };
     config = setPersistentSeatConfig(config, "judge", {
@@ -152,11 +176,11 @@ test("persistent judge engine round-trips; illegal engine rejected at parse/vali
       model: "gpt-5.6-sol",
       thinking: "high",
     });
-    config = setPersistentSeatEngine(config, "judge", "kimi");
+    config = setPersistentSeatEngine(config, "judge", "opus");
     await savePublicCliConfig(config, home);
 
     const reloaded = await loadPublicCliConfig(home);
-    assert.equal(reloaded.seats.judge?.engine, "kimi");
+    assert.equal(reloaded.seats.judge?.engine, "opus");
     assert.deepEqual(
       {
         provider: reloaded.seats.judge?.provider,
@@ -165,7 +189,7 @@ test("persistent judge engine round-trips; illegal engine rejected at parse/vali
       },
       { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
     );
-    // Validate accepts legal names against package materials (single authority).
+    // Validate accepts any path-safe name (no closed material catalog).
     validatePublicCliConfigEngines(reloaded, packageRoot);
 
     // Legacy config without engine still loads.
@@ -194,7 +218,7 @@ test("persistent judge engine round-trips; illegal engine rejected at parse/vali
             provider: "xai",
             model: "grok-4.5",
             thinking: "medium",
-            engine: "kimi",
+            engine: "opus",
           },
         },
       }, null, 2)}\n`,
@@ -206,7 +230,7 @@ test("persistent judge engine round-trips; illegal engine rejected at parse/vali
       /config seat coder engine is not allowed; engine axis is judge-only/,
     );
 
-    // Illegal engine name in on-disk judge config is rejected at validate seam.
+    // Syntax-illegal engine name in on-disk judge config is rejected at validate seam.
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
       `${JSON.stringify({
@@ -215,7 +239,7 @@ test("persistent judge engine round-trips; illegal engine rejected at parse/vali
             provider: "openai-codex",
             model: "gpt-5.6-sol",
             thinking: "high",
-            engine: "not-a-real-engine",
+            engine: "has/slash",
           },
         },
       }, null, 2)}\n`,
@@ -224,8 +248,27 @@ test("persistent judge engine round-trips; illegal engine rejected at parse/vali
     const bad = await loadPublicCliConfig(home);
     assert.throws(
       () => validatePublicCliConfigEngines(bad, packageRoot),
-      /config seat judge engine is unknown: not-a-real-engine/,
+      /config seat judge engine is illegal: has\/slash/,
     );
+
+    // Well-formed name without packaged notes is accepted at validate seam.
+    await writeFile(
+      join(home, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({
+        seats: {
+          judge: {
+            provider: "openai-codex",
+            model: "gpt-5.6-sol",
+            thinking: "high",
+            engine: "ghost-engine",
+          },
+        },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    const freeName = await loadPublicCliConfig(home);
+    validatePublicCliConfigEngines(freeName, packageRoot);
+    assert.equal(freeName.seats.judge?.engine, "ghost-engine");
   });
 });
 
@@ -246,9 +289,9 @@ test("engine priority: invocation > persistent > unconfigured (judge only)", () 
   assert.equal(fromPersistent.source, "persistent");
 
   const fromInvocation = resolveEffectiveSeat(config, "judge", credentials, {
-    engine: "kimi",
+    engine: "opus",
   });
-  assert.equal(fromInvocation.engine, "kimi");
+  assert.equal(fromInvocation.engine, "opus");
   assert.equal(fromInvocation.engineSource, "invocation");
   // Model still from persistent when only engine is overridden.
   assert.equal(fromInvocation.source, "persistent");
@@ -264,7 +307,7 @@ test("engine priority: invocation > persistent > unconfigured (judge only)", () 
 
   // Non-judge seats never attach engine even if invocation carries one.
   const fixer = resolveEffectiveSeat({ seats: {} }, "fixer", credentials, {
-    engine: "kimi",
+    engine: "opus",
   });
   assert.equal(fixer.engine, undefined);
   assert.equal(fixer.engineSource, "unconfigured");
@@ -291,7 +334,7 @@ test("default path byte oracle: no-engine judge activation argv + transport prom
   );
 });
 
-test("engine material delivery: typed coordinates in prompt; argv gains no engine flags", () => {
+test("engine material delivery: cursor with-notes coordinates; argv gains no engine flags", () => {
   const judge: AdmittedJudgeInvocation = {
     role: "judge",
     runId: "run-engine-oracle",
@@ -308,20 +351,48 @@ test("engine material delivery: typed coordinates in prompt; argv gains no engin
   const without = buildJudgeActivationExtraArgs(judge, { packageRoot });
   const withEngine = buildJudgeActivationExtraArgs(judge, {
     packageRoot,
-    engine: "kimi",
+    engine: "cursor",
   });
   assert.notEqual(without.at(-1), withEngine.at(-1));
   const prompt = withEngine.at(-1)!;
-  const materialPath = resolveEngineMaterialPath(packageRoot, "kimi");
-  assertEngineCoordinatesInPrompt(prompt, "kimi", materialPath);
+  const materialPath = resolveEngineMaterialPath(packageRoot, "cursor");
+  assert.equal(existsSync(materialPath), true, "cursor notes must be packaged");
+  assertEngineCoordinatesWithMaterial(prompt, "cursor", materialPath);
   assertNoEngineFlagsInArgv(withEngine);
   // Model argv path unchanged when model omitted.
   assert.equal(withEngine.includes("--provider"), false);
 });
 
+test("engine name-only delivery: free name without notes carries name, no path", () => {
+  const judge: AdmittedJudgeInvocation = {
+    role: "judge",
+    runId: "run-engine-name-only",
+    bookKey: "book",
+    projectRoot: "/project",
+    instruction: "Decide the matter.",
+    instructionEmpty: false,
+    attachments: [],
+    runDirectory: "/runs/r",
+    sessionDirectory: "/runs/r/session",
+    sessionFile: "/runs/r/session/session.jsonl",
+    admittedRequestPath: "/runs/r/admitted-request.json",
+  };
+  // Use a well-formed name that has no packaged notes file.
+  const freeName = "nope-engine";
+  const withEngine = buildJudgeActivationExtraArgs(judge, {
+    packageRoot,
+    engine: freeName,
+  });
+  const prompt = withEngine.at(-1)!;
+  const absentPath = resolveEngineMaterialPath(packageRoot, freeName);
+  assert.equal(existsSync(absentPath), false, "fixture assumes no notes for free name");
+  assertEngineCoordinatesNameOnly(prompt, freeName, absentPath, "");
+  assertNoEngineFlagsInArgv(withEngine);
+});
+
 // --- public CLI tracer -------------------------------------------------------
 
-test("public CLI --engine and config set-engine both deliver material; flag wins; illegal rejects", async () => {
+test("public CLI --engine and config set-engine: cursor notes / free name; flag wins; syntax rejects", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -348,12 +419,10 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
     assert.equal(persisted.seats.judge?.engine, "cursor");
 
     const materialCursor = resolveEngineMaterialPath(packageRoot, "cursor");
-    const materialKimi = resolveEngineMaterialPath(packageRoot, "kimi");
     await access(materialCursor);
-    await access(materialKimi);
     const bookKey = resolveBookKeyFromGit(project);
 
-    // Persistent engine alone.
+    // Persistent engine alone (cursor = with packaged notes).
     {
       let capturedArgs: string[] | undefined;
       const { io, stderr } = captureIo();
@@ -388,21 +457,21 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
       const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
-      assertEngineCoordinatesInPrompt(capturedPrompt, "cursor", materialCursor);
+      assertEngineCoordinatesWithMaterial(capturedPrompt, "cursor", materialCursor);
       assertNoEngineFlagsInArgv(capturedArgs!);
       // #358 mechanical provenance: selected engine lands on the identity page.
       const invocation = readJudgeInvocation(home, bookKey, "engine-persist-001");
       assert.equal(invocation.engine, "cursor");
     }
 
-    // Invocation --engine overrides persistent.
+    // Invocation --engine overrides persistent (opus notes when packaged).
     {
       let capturedArgs: string[] | undefined;
       const { io, stderr } = captureIo();
       const result = await runAkRole(
         [
           "--engine",
-          "kimi",
+          "opus",
           "judge",
           "--project",
           project,
@@ -428,13 +497,23 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
       );
       assert.notEqual(result.exitCode, 2, stderr.join(""));
       const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
-      assertEngineCoordinatesInPrompt(capturedPrompt, "kimi", materialKimi);
+      const materialOpus = resolveEngineMaterialPath(packageRoot, "opus");
+      if (existsSync(materialOpus)) {
+        assertEngineCoordinatesWithMaterial(capturedPrompt, "opus", materialOpus);
+      } else {
+        assertEngineCoordinatesNameOnly(
+          capturedPrompt,
+          "opus",
+          materialOpus,
+          stderr.join(""),
+        );
+      }
       // Override must not keep the persistent engine material path.
       assert.equal(capturedPrompt.includes(materialCursor), false);
       assertNoEngineFlagsInArgv(capturedArgs!);
       // #358 mechanical provenance: override engine is the recorded identity.
       const invocation = readJudgeInvocation(home, bookKey, "engine-invoke-001");
-      assert.equal(invocation.engine, "kimi");
+      assert.equal(invocation.engine, "opus");
     }
 
     // No engine selected → identity page keeps engine key absent (shape unchanged).
@@ -479,29 +558,79 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
       assert.equal(invocation.runId, "engine-none-001");
     }
 
-    // Illegal --engine → structural reject (exit 2), not role submission.
+    // Free name without notes → normal pass (exit≠2), name present, no path, zero warnings.
     {
+      let capturedArgs: string[] | undefined;
+      let capturedEnv: NodeJS.ProcessEnv | undefined;
       const { io, stderr } = captureIo();
       const result = await runAkRole(
         ["judge", "--engine", "nope-engine", "--project", project, "x"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "engine-free-name-001",
+          credentials,
+          io,
+          piRunner: async (args, options) => {
+            capturedArgs = [...args];
+            capturedEnv = options.env;
+            return {
+              code: 1,
+              stderr: "stop after capture",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.notEqual(
+        result.exitCode,
+        2,
+        `free name must not structural-reject: ${stderr.join("")}`,
+      );
+      assert.equal(
+        Array.isArray(capturedArgs),
+        true,
+        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+      );
+      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
+      const absentPath = resolveEngineMaterialPath(packageRoot, "nope-engine");
+      assertEngineCoordinatesNameOnly(
+        capturedPrompt,
+        "nope-engine",
+        absentPath,
+        stderr.join(""),
+      );
+      assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "nope-engine");
+      assertNoEngineFlagsInArgv(capturedArgs!);
+      const invocation = readJudgeInvocation(home, bookKey, "engine-free-name-001");
+      assert.equal(invocation.engine, "nope-engine");
+    }
+
+    // Syntax-illegal --engine → structural reject (exit 2), not role submission.
+    {
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        ["judge", "--engine", "has/slash", "--project", project, "x"],
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /unknown engine: nope-engine/);
+      assert.match(stderr.join(""), /illegal engine name/);
     }
 
     // Non-judge command with --engine → structural reject (MVP judge-only).
     {
       const { io, stderr } = captureIo();
       const result = await runAkRole(
-        ["coder", "--engine", "kimi", "--project", project, "x"],
+        ["coder", "--engine", "opus", "--project", project, "x"],
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
       assert.match(stderr.join(""), /engine axis is judge-only; refused command coder/);
     }
 
-    // Illegal persistent engine on load → structural reject.
+    // Syntax-illegal persistent engine on load → structural reject.
     {
       await writeFile(
         join(home, ".ak-roles", "public-cli.json"),
@@ -511,7 +640,7 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
               provider: "openai-codex",
               model: "gpt-5.6-sol",
               thinking: "high",
-              engine: "ghost-engine",
+              engine: "../escape",
             },
           },
         }, null, 2)}\n`,
@@ -523,23 +652,47 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /config seat judge engine is unknown: ghost-engine/);
+      assert.match(stderr.join(""), /config seat judge engine is illegal/);
     }
 
-    // set-engine with unknown name rejects without writing.
+    // set-engine with free name (no notes) writes successfully.
     {
-      // restore legal config first
-      await runAkRole(
-        ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
-        { packageRoot, home, io: captureIo().io },
+      // Restore a syntax-legal on-disk config (previous case left ../escape).
+      await writeFile(
+        join(home, ".ak-roles", "public-cli.json"),
+        `${JSON.stringify({
+          seats: {
+            judge: {
+              provider: "openai-codex",
+              model: "gpt-5.6-sol",
+              thinking: "high",
+            },
+          },
+        }, null, 2)}\n`,
+        "utf8",
       );
       const { io, stderr } = captureIo();
       const result = await runAkRole(
         ["config", "set-engine", "judge", "still-fake"],
         { packageRoot, home, io },
       );
+      assert.equal(result.exitCode, 0, stderr.join(""));
+      const after = await loadPublicCliConfig(home);
+      assert.equal(after.seats.judge?.engine, "still-fake");
+    }
+
+    // set-engine with syntax-illegal name rejects without writing.
+    {
+      const before = await loadPublicCliConfig(home);
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        ["config", "set-engine", "judge", "bad/name"],
+        { packageRoot, home, io },
+      );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /unknown engine: still-fake/);
+      assert.match(stderr.join(""), /illegal engine name/);
+      const after = await loadPublicCliConfig(home);
+      assert.equal(after.seats.judge?.engine, before.seats.judge?.engine);
     }
 
     // set-engine on non-judge seat rejects.
@@ -550,7 +703,7 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
       );
       const { io, stderr } = captureIo();
       const result = await runAkRole(
-        ["config", "set-engine", "coder", "kimi"],
+        ["config", "set-engine", "coder", "opus"],
         { packageRoot, home, io },
       );
       assert.equal(result.exitCode, 2);
@@ -561,7 +714,7 @@ test("public CLI --engine and config set-engine both deliver material; flag wins
 
 test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free judge run", async () => {
   const previous = process.env[AK_ROLE_ENGINE_ENV];
-  process.env[AK_ROLE_ENGINE_ENV] = "kimi";
+  process.env[AK_ROLE_ENGINE_ENV] = "opus";
   try {
     await withTempHome(async (home) => {
       const project = join(home, "project");
@@ -624,9 +777,9 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
         `ambient AK_ROLE_ENGINE leaked into child env: ${String(ambient)}`,
       );
       assertNoEngineFlagsInArgv(capturedArgs!);
-      const materialKimi = resolveEngineMaterialPath(packageRoot, "kimi");
+      const materialOpus = resolveEngineMaterialPath(packageRoot, "opus");
       assert.equal(
-        String(capturedArgs!.at(-1) ?? "").includes(materialKimi),
+        String(capturedArgs!.at(-1) ?? "").includes(materialOpus),
         false,
         "engine-free run must not deliver ambient engine material",
       );
@@ -644,10 +797,10 @@ test("unset-engine clears persistent judge engine; no-engine path keeps default-
       { packageRoot, home, io: captureIo().io },
     );
     await runAkRole(
-      ["config", "set-engine", "judge", "codex"],
+      ["config", "set-engine", "judge", "cursor"],
       { packageRoot, home, io: captureIo().io },
     );
-    assert.equal((await loadPublicCliConfig(home)).seats.judge?.engine, "codex");
+    assert.equal((await loadPublicCliConfig(home)).seats.judge?.engine, "cursor");
 
     const unset = await runAkRole(
       ["config", "unset-engine", "judge"],
