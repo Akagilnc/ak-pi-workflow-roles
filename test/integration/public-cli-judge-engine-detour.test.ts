@@ -196,7 +196,7 @@ test(
 );
 
 test(
-  "AC2 failure A: nonzero engine exit → no Receipt + Error Artifact diagnostic",
+  "B1 nonzero engine exit → seat fallback + engineLaborFallback on accepted receipt",
   { timeout: 120_000 },
   async () => {
     const home = await mkdtemp(join(tmpdir(), "ak-engine-detour-fail-a-"));
@@ -219,27 +219,20 @@ test(
         engine: "kimi",
       });
 
-      assert.notEqual(result.exitCode, 0, result.stderr.join(""));
-      assert.equal(result.terminal?.roleOutcome.kind, "failure");
-      if (result.terminal?.roleOutcome.kind !== "failure") assert.fail("expected failure");
-      assert.equal(result.terminal.roleOutcome.cause, "output");
+      // #380: detour failure rejoins main road — seat submits typed receipt.
+      assert.equal(result.exitCode, 0, result.stderr.join(""));
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted");
+      const fallback = (result.terminal.roleOutcome.decisiveFacts as {
+        engineLaborFallback?: { engine?: string; failure?: string; laborBy?: string };
+      }).engineLaborFallback;
+      assert.ok(fallback, "accepted receipt must declare engineLaborFallback");
+      assert.equal(fallback.engine, "kimi");
+      assert.equal(fallback.laborBy, "seat");
       assert.ok(
-        result.terminal.roleOutcome.diagnostic.includes("ENGINE_FAIL_A_UNIQUE_STDERR_357_LIVE"),
-        `diagnostic missing engine stderr: ${result.terminal.roleOutcome.diagnostic}`,
-      );
-      // No accepted typed Receipt.
-      assert.equal(
-        result.terminal.artifacts.some((a) => a.kind === "report"),
-        false,
-      );
-      const errorRef = result.terminal.artifacts.find((a) => a.kind === "error");
-      assert.ok(errorRef, "must publish Error Artifact");
-      const durable = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-        diagnostic: string;
-      };
-      assert.ok(
-        durable.diagnostic.includes("ENGINE_FAIL_A_UNIQUE_STDERR_357_LIVE"),
-        `artifact diagnostic missing marker: ${durable.diagnostic}`,
+        typeof fallback.failure === "string" &&
+          fallback.failure.includes("ENGINE_FAIL_A_UNIQUE_STDERR_357_LIVE"),
+        `failure must carry engine stderr: ${fallback.failure}`,
       );
 
       const bookKey = resolveBookKeyFromGit(project);
@@ -257,14 +250,20 @@ test(
         .split("\n")
         .filter(Boolean)
         .map((line) => JSON.parse(line) as any);
-      const acceptedJudge = rows.some(
+      const acceptedJudge = rows.find(
         (row) =>
           row.type === "message" &&
           row.message?.role === "toolResult" &&
           row.message?.toolName === "ak_judge_output" &&
           row.message?.isError !== true,
       );
-      assert.equal(acceptedJudge, false, "no accepted typed Receipt");
+      assert.ok(acceptedJudge, "typed judge receipt must be accepted");
+      const detailsFallback = acceptedJudge.message.details?.engineLaborFallback;
+      assert.equal(detailsFallback?.engine, "kimi");
+      assert.equal(detailsFallback?.laborBy, "seat");
+      assert.ok(
+        String(detailsFallback?.failure ?? "").includes("ENGINE_FAIL_A_UNIQUE_STDERR_357_LIVE"),
+      );
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -272,7 +271,7 @@ test(
 );
 
 test(
-  "AC3 failure B: trim-empty stdout → same loud failure path",
+  "B1 trim-empty stdout → seat fallback + engineLaborFallback on accepted receipt",
   { timeout: 120_000 },
   async () => {
     const home = await mkdtemp(join(tmpdir(), "ak-engine-detour-fail-b-"));
@@ -295,20 +294,16 @@ test(
         engine: "kimi",
       });
 
-      assert.notEqual(result.exitCode, 0, result.stderr.join(""));
-      assert.equal(result.terminal?.roleOutcome.kind, "failure");
-      if (result.terminal?.roleOutcome.kind !== "failure") assert.fail("expected failure");
-      assert.equal(result.terminal.roleOutcome.cause, "output");
-      assert.equal(
-        result.terminal.roleOutcome.diagnostic,
-        ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC,
-      );
-      const errorRef = result.terminal.artifacts.find((a) => a.kind === "error");
-      assert.ok(errorRef);
-      const durable = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-        diagnostic: string;
-      };
-      assert.equal(durable.diagnostic, ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC);
+      assert.equal(result.exitCode, 0, result.stderr.join(""));
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted");
+      const fallback = (result.terminal.roleOutcome.decisiveFacts as {
+        engineLaborFallback?: { engine?: string; failure?: string; laborBy?: string };
+      }).engineLaborFallback;
+      assert.ok(fallback, "accepted receipt must declare engineLaborFallback");
+      assert.equal(fallback.engine, "kimi");
+      assert.equal(fallback.laborBy, "seat");
+      assert.equal(fallback.failure, ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -316,7 +311,7 @@ test(
 );
 
 test(
-  "failure boundary: whitespace-only stderr → stable fallback diagnostic",
+  "whitespace-only stderr + nonzero exit → seat fallback with empty-stdout diagnostic",
   { timeout: 120_000 },
   async () => {
     const home = await mkdtemp(join(tmpdir(), "ak-engine-detour-ws-stderr-"));
@@ -340,20 +335,16 @@ test(
         engine: "kimi",
       });
 
-      assert.notEqual(result.exitCode, 0, result.stderr.join(""));
-      assert.equal(result.terminal?.roleOutcome.kind, "failure");
-      if (result.terminal?.roleOutcome.kind !== "failure") assert.fail("expected failure");
-      assert.equal(result.terminal.roleOutcome.cause, "output");
-      assert.equal(
-        result.terminal.roleOutcome.diagnostic,
-        ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC,
-      );
-      const errorRef = result.terminal.artifacts.find((a) => a.kind === "error");
-      assert.ok(errorRef, "must publish Error Artifact");
-      const durable = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-        diagnostic: string;
-      };
-      assert.equal(durable.diagnostic, ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC);
+      assert.equal(result.exitCode, 0, result.stderr.join(""));
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted");
+      const fallback = (result.terminal.roleOutcome.decisiveFacts as {
+        engineLaborFallback?: { engine?: string; failure?: string; laborBy?: string };
+      }).engineLaborFallback;
+      assert.ok(fallback, "accepted receipt must declare engineLaborFallback");
+      assert.equal(fallback.engine, "kimi");
+      assert.equal(fallback.laborBy, "seat");
+      assert.equal(fallback.failure, ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC);
     } finally {
       await rm(home, { recursive: true, force: true });
     }

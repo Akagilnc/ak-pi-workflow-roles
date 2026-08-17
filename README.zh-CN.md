@@ -11,7 +11,7 @@ pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ```
 
-更新用 `pi update npm:@akagilnc/pi-workflow-roles`——勿另起全局 `npm install -g`。查看能力：`ak-role roles`、`ak-role help <role>`；设席位默认：`ak-role config set judge openai-codex/gpt-5.6-sol:high`。
+更新用 `pi update npm:@akagilnc/pi-workflow-roles`——勿另起全局 `npm install -g`。查看能力：`ak-role roles`、`ak-role help <role>`；设席位模型默认：`ak-role config set judge openai-codex/gpt-5.6-sol:high`；设或清持久劳务引擎（仅 judge|reviewer）：`ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`。
 
 ## 读结果
 
@@ -31,9 +31,16 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 ```bash
 ak-role config set navigator openai-codex/gpt-5.6-luna:medium
+# 持久劳务引擎（仅 judge|reviewer）；一次性覆盖仍用 --engine
+ak-role config set-engine judge opus
+ak-role config unset-engine judge
 ```
 
+`config set` 存席位模型默认；`config set-engine` / `unset-engine` 在 judge|reviewer 上写入或清除持久劳务引擎名（与 `--engine` 同轴）。用法与拒绝文案以公开 CLI 的 `ak-role config` 为准。
+
 回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
+
+当 Judge/Reviewer 劳务引擎绕行失败、座席回到主路继续劳务时，typed 回执可带机械字段 `engineLaborFallback`：`{ engine, failure, laborBy: "seat" }`。仅在真实绕行失败并座席顶班后出现（含 detour 工具命中 package-owned idle 超时）——成功绕行或调用方 cancel 不出现。同一次 activation 内先到先得；无包内 latch 时剥离模型伪造的 `engineLaborFallback` 键。唯一构造点：`src/engine-labor-fallback.ts`；决策记录：[ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)。本文只投影该契约。
 
 ## 调用百官
 

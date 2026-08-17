@@ -1,7 +1,10 @@
 /**
- * Package-owned engine detour tool (#357 T2 / #378).
+ * Package-owned engine detour tool (#357 T2 / #378 / #380).
  * Registered by shared role-runtime when Judge|Reviewer + engine activation signal is present.
  * Evidence-child legs install the same definition via customTools (no spawn in role modules).
+ * #380: engine process failure soft-returns so the seat rejoins the main road; declaration
+ * is recorded once via engine-labor-fallback (no fail-closed reject-leg).
+ * Caller AbortSignal cancel propagates without fallback; package-owned idle abort soft-fails.
  */
 import type {
   AgentToolResult,
@@ -19,7 +22,16 @@ import {
   isEngineDetourFailure,
   runEngineDetourOnce,
 } from "./engine-detour.ts";
-import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
+import {
+  activationEngineLaborFallbackLatch,
+  recordEngineLaborFallback,
+  type EngineLaborFallbackField,
+} from "./engine-labor-fallback.ts";
+import {
+  isPackageOwnedToolIdleTimeoutError,
+  pokePackageOwnedToolIdle,
+  wrapPackageOwnedToolDefinition,
+} from "./package-owned-tool-idle.ts";
 
 const engineDetourArgsSchema = Type.Object(
   {
@@ -49,10 +61,55 @@ export type EngineDetourToolRegistration = {
 
 type EngineDetourLatch = { used: boolean };
 
+function seatFallbackToolResult(
+  field: EngineLaborFallbackField,
+  failure: string,
+): AgentToolResult<unknown> {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text:
+          `Engine detour failed: ${failure}. Perform the labor in this session (seat main road) and submit via the existing typed path. A mechanical fallback declaration will attach to the typed receipt.`,
+      },
+    ],
+    details: {
+      tool: ENGINE_DETOUR_TOOL_NAME,
+      detourFailed: true,
+      ...field,
+    },
+  };
+}
+
+/** Caller/upper-layer cancel must propagate; idle backstop is seat-fallback, not cancel. */
+function isCallerCancellation(
+  error: unknown,
+  signal: AbortSignal | undefined,
+): boolean {
+  if (isPackageOwnedToolIdleTimeoutError(error)) return false;
+  if (
+    signal !== undefined &&
+    isPackageOwnedToolIdleTimeoutError(signal.reason)
+  ) {
+    return false;
+  }
+  if (signal?.aborted === true) return true;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: unknown }).name === "AbortError"
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Build one once-latch detour tool definition for a configured engine name.
  * `latch` is shared so parent registration can reset between activations.
- * `fail` owns host abort (parent) vs throw (evidence child).
+ * `fail` owns host abort (parent) vs throw (evidence child) for tool misuse only.
+ * Engine process failure (nonzero/empty/spawn/idle-timeout) soft-returns seat fallback (#380).
+ * Caller AbortSignal cancel propagates without writing fallback.
  */
 export function createEngineDetourToolDefinition(input: {
   engineName: string;
@@ -71,6 +128,7 @@ export function createEngineDetourToolDefinition(input: {
       `Use ${ENGINE_DETOUR_TOOL_NAME} exactly once for the configured engine (${engineName}). Optional packaged notes are guidance when present; a bare engine name alone is also a valid call path.`,
       "Pass argv for the host CLI of this engine name — first element is the executable name on PATH. Follow optional packaged notes when delivered; otherwise act from the engine name and the host CLI actual interface. Do not invent package flags.",
       "On success, use the returned stdout as labor content for the existing typed submission / report path.",
+      "On engine failure the tool returns a soft failure: continue labor in this session and submit via the existing typed path. Do not treat engine failure as a reason to withhold the typed receipt.",
     ],
     parameters: engineDetourArgsSchema,
     async execute(
@@ -99,27 +157,39 @@ export function createEngineDetourToolDefinition(input: {
         );
       }
 
+      const softFail = (failure: string): AgentToolResult<unknown> => {
+        // Activation-scoped latch is the sole shared recorder (parent seat + legs).
+        const fallbackLatch =
+          activationEngineLaborFallbackLatch() ?? { field: undefined };
+        const field = recordEngineLaborFallback(fallbackLatch, {
+          engine: engineName,
+          failure,
+        });
+        return seatFallbackToolResult(field, failure);
+      };
+
       let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
       try {
+        // Byte activity on stdout/stderr touches the outer package-owned idle clock
+        // (183s silence law unchanged). True hangs still die; slow streaming engines live.
         result = await runEngineDetourOnce({
           argv,
           cwd: ctx.cwd,
           ...(signal === undefined ? {} : { signal }),
+          onOutputActivity: pokePackageOwnedToolIdle,
         });
       } catch (error) {
-        input.fail(
-          error instanceof Error ? error : new Error(String(error)),
-          toolCallId,
-          ctx,
-        );
+        // Caller cancel: propagate. Idle backstop + spawn/engine failure: seat fallback.
+        if (isCallerCancellation(error, signal)) {
+          throw error;
+        }
+        const failure =
+          error instanceof Error ? error.message : String(error);
+        return softFail(failure.trim() === "" ? "engine detour spawn failed" : failure);
       }
 
       if (isEngineDetourFailure(result)) {
-        input.fail(
-          new Error(engineDetourFailureDiagnostic(result)),
-          toolCallId,
-          ctx,
-        );
+        return softFail(engineDetourFailureDiagnostic(result));
       }
 
       return {

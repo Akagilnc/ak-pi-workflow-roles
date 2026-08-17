@@ -34,6 +34,7 @@ import {
   COLLECTOR_WAIT_TOOL,
 } from "../collector-ledger.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../engine-detour.ts";
+import { readEngineLaborFallbackFieldFrom } from "../engine-labor-fallback.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
@@ -1060,7 +1061,12 @@ function judgeDecisiveFacts(
   verdict: object,
   judgeStatus: JudgeVerdict["judgeStatus"],
 ): Record<string, unknown> {
-  const facts: Record<string, unknown> = { judgeStatus, ...auditNoReceiptDecisiveFact(verdict) };
+  const facts: Record<string, unknown> = {
+    judgeStatus,
+    ...auditNoReceiptDecisiveFact(verdict),
+    // #380: spread sole-built field; do not re-key here (S1).
+    ...readEngineLaborFallbackFieldFrom(verdict),
+  };
   if (judgeStatus === "continue") {
     const fix = safelyRead(verdict, "fix");
     if (fix.readable && isRecord(fix.value)) {
@@ -1260,6 +1266,8 @@ function reviewerDecisiveFacts(
     reportAxes,
     acceptedBatchPresent: acceptedBatch.readable && acceptedBatch.value !== undefined,
     ...auditNoReceiptDecisiveFact(candidate),
+    // #380: spread sole-built field; do not re-key here (S1).
+    ...readEngineLaborFallbackFieldFrom(candidate),
   };
   if (status.readable && typeof status.value === "string") facts.reviewerStatus = status.value;
   if (
