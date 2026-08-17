@@ -472,12 +472,16 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
                     engine: engineName,
                     packageRoot: options.packageRoot,
                 });
+        // #378: detour failure is durable for this leg — later assistant reports cannot wash it.
+        let engineDetourFailure;
         const engineDetourTool = engineName === undefined
             ? undefined
             : createEngineDetourToolDefinition({
                 engineName,
                 fail(error) {
-                    throw error;
+                    const failure = error instanceof Error ? error : new Error(String(error));
+                    engineDetourFailure = failure;
+                    throw failure;
                 },
             });
         // No tools allowlist — Pi defaults + unrestricted evidence surface (ADR 0064).
@@ -516,7 +520,17 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
                 await session.prompt(delivered);
             }
             catch (error) {
+                // Engine detour fail becomes isError toolResult and must outrank a later
+                // provider-shaped throw from the same prompt turn (#378).
+                if (engineDetourFailure !== undefined) {
+                    throw classifiedError(engineDetourFailure, "child");
+                }
                 throw classifiedError(error, "provider");
+            }
+            // Launched-leg detour non-zero / empty stdout / spawn failure is infrastructure:
+            // reject the leg even when the model still emits a non-blank report afterward.
+            if (engineDetourFailure !== undefined) {
+                throw classifiedError(engineDetourFailure, "child");
             }
             if (signal?.aborted)
                 throw new Error("Evidence child was cancelled");

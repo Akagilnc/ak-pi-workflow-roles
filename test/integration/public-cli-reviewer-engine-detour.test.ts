@@ -37,9 +37,15 @@ function seedGitProject(root: string): string {
   execFileSync("git", ["branch", "review-base"], { cwd: root });
   execFileSync("git", ["checkout", "-b", "feature-login"], { cwd: root });
   // Non-empty diff is required for accepted Reviewer dispatch.
+  // Local Spec material launches the Spec leg so both axes prove engine labor (#378).
   execFileSync("bash", ["-lc", "printf 'reviewed\n' > consumer.txt"], { cwd: root });
-  execFileSync("git", ["add", "consumer.txt"], { cwd: root });
-  execFileSync("git", ["commit", "-m", "reviewed change"], { cwd: root });
+  execFileSync("bash", ["-lc", "mkdir -p docs && printf '%s\n' '# Feature login' 'Must authenticate users.' > docs/feature-login.md"], {
+    cwd: root,
+  });
+  execFileSync("git", ["add", "consumer.txt", "docs/feature-login.md"], { cwd: root });
+  execFileSync("git", ["commit", "-m", "reviewed change with local spec material"], {
+    cwd: root,
+  });
   return "review-base";
 }
 
@@ -136,8 +142,6 @@ async function runReviewerWithEngine(input: {
           ...options.env,
           PATH: `${input.binDir}:${dirname(piCli)}:${options.env.PATH ?? ""}`,
           PI_OFFLINE: "1",
-          // Standards-only keeps the fixture deterministic under one-axis labor.
-          AK_REVIEW_EXPECT_AXES: "standards",
         },
         timeoutMs: options.timeoutMs ?? 120_000,
       });
@@ -177,11 +181,30 @@ async function assertDetourLaborOnCase(
     (row) =>
       row.type === "message" &&
       row.message?.role === "toolResult" &&
-      row.message?.toolName === ENGINE_DETOUR_TOOL_NAME,
+      row.message?.toolName === ENGINE_DETOUR_TOOL_NAME &&
+      row.message?.isError !== true,
   );
+  // Both launched legs must each complete one successful engine detour (#378).
   assert.ok(
-    detourResults.length >= 1,
-    `expected at least one engine detour toolResult under ${runRoot}`,
+    detourResults.length >= 2,
+    `expected standards+spec engine detour toolResults under ${runRoot}, got ${detourResults.length}`,
+  );
+  const detourByAxis = new Set<string>();
+  for (const row of rows) {
+    if (row.type !== "message" || row.message?.role !== "assistant") continue;
+    const content = row.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part?.type !== "toolCall" || part.name !== ENGINE_DETOUR_TOOL_NAME) continue;
+      const id = typeof part.id === "string" ? part.id : "";
+      if (id === "engine-detour-standards") detourByAxis.add("standards");
+      if (id === "engine-detour-spec") detourByAxis.add("spec");
+    }
+  }
+  assert.deepEqual(
+    [...detourByAxis].sort(),
+    ["spec", "standards"],
+    `expected per-axis engine detour calls, got ${[...detourByAxis].join(",") || "none"}`,
   );
   const detourText = detourResults
     .map((row) => {
@@ -197,6 +220,29 @@ async function assertDetourLaborOnCase(
     detourText.includes(CANNED_LABOR),
     true,
     `detour stdout missing canned labor: ${detourText}`,
+  );
+  // Labor must rejoin the axis reports (detour-rejoins-main-road).
+  const axisReports = rows
+    .filter(
+      (row) =>
+        row.type === "message" &&
+        row.message?.role === "assistant" &&
+        typeof row.message?.stopReason === "string" &&
+        row.message.stopReason !== "toolUse",
+    )
+    .map((row) => {
+      const content = row.message?.content;
+      if (typeof content === "string") return content;
+      if (!Array.isArray(content)) return String(content ?? "");
+      return content
+        .map((part: any) => (part.type === "text" ? part.text : ""))
+        .join("");
+    })
+    .join("\n");
+  assert.equal(
+    axisReports.includes(CANNED_LABOR),
+    true,
+    `axis reports missing rejoined engine labor: ${axisReports}`,
   );
 
   const invocation = JSON.parse(

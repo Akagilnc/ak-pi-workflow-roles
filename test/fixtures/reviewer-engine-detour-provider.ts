@@ -115,8 +115,11 @@ export default function reviewerEngineDetourProvider(pi: ExtensionAPI): void {
     }
 
     if (names.includes(REVIEWER_OUTPUT_TOOL_NAME)) {
-      if (axisSeen.size === 0) {
-        throw new Error("parent output before any evidence-child axis report");
+      // #378: both fixed axes must complete engine labor before typed parent output.
+      if (!axisSeen.has("standards") || !axisSeen.has("spec")) {
+        throw new Error(
+          `parent output before both evidence-child axes; seen=${[...axisSeen].join(",") || "none"}`,
+        );
       }
       return fauxAssistantMessage(
         fauxToolCall(

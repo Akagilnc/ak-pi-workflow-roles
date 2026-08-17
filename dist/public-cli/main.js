@@ -24616,11 +24616,11 @@ async function dispatchAdmittedReviewer(input) {
       env.credentials
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
+      runner: infrastructureFailure === void 0 ? result2.knownFailure : {
         cause: infrastructureFailure.cause,
         diagnostic: infrastructureFailure.diagnostic,
         ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
-      }),
+      },
       sessionFile: admitted.sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
