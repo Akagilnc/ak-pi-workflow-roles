@@ -5,6 +5,8 @@ import type { AcceptedReviewerLeg } from "./reviewer-dispatch.ts";
 export type ReviewerChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
   credentialScratchParent?: string;
+  /** Package root for optional engine method-material on legs (#378). */
+  packageRoot?: string;
 }>;
 
 /**

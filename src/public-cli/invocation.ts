@@ -1898,14 +1898,17 @@ export async function admitReviewerInvocation(
 /**
  * Build the Pi prompt transport for an admitted Reviewer request.
  * Semantic input is fixed base only — caller instruction stays provenance on disk.
+ * Optional engine material follows the same dual-path coordinates as Judge (#376/#378).
  */
 export function buildReviewerTransportPrompt(
   admitted: AdmittedReviewerInvocation,
+  engineMaterial?: EngineSessionMaterial,
 ): string {
-  return [
+  const lines = [
     `Base revision for the fixed review target: ${admitted.baseRevision}`,
     "Use this exact revision as the fixed review point.",
-  ].join("\n");
+  ];
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 /**
