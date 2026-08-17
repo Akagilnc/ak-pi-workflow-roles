@@ -28,6 +28,11 @@ export type EngineDetourRunInput = Readonly<{
   cwd: string;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  /**
+   * Called when the child emits at least one byte on stdout or stderr.
+   * Host wires this to the package-owned idle clock (activity = touch); no timer here.
+   */
+  onOutputActivity?: () => void;
 }>;
 
 function abortReasonError(signal: AbortSignal): Error {
@@ -66,11 +71,17 @@ export async function runEngineDetourOnce(
     });
     let stdout = "";
     let stderr = "";
+    const noteActivity = (chunk: string): void => {
+      if (chunk.length === 0) return;
+      input.onOutputActivity?.();
+    };
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
       stdout += chunk;
+      noteActivity(chunk);
     });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
       stderr += chunk;
+      noteActivity(chunk);
     });
     const fail = (error: unknown): void => {
       if (settled) return;

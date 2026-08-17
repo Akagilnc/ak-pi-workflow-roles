@@ -14,14 +14,18 @@ The machine entrypoint is `claude`. Run from the role project root. Non-interact
 print mode (`-p` / `--print`) is verified available on this host:
 
 ```bash
-claude -p "YOUR_LABOR_PROMPT"
+claude -p --output-format=stream-json "YOUR_LABOR_PROMPT"
 ```
 
 Pin the Opus model explicitly (`--model opus` verified accepted on this host):
 
 ```bash
-claude -p --model opus "YOUR_LABOR_PROMPT"
+claude -p --model opus --output-format=stream-json "YOUR_LABOR_PROMPT"
 ```
+
+Use `--output-format=stream-json` (verified present on this host) so the package
+idle clock can see subprocess activity while the engine works; take the labor body
+from the final `result` event, not from intermediate stream rows.
 
 Prefer `claude --help` on the host over any remembered flag set. Do not wrap this
 engine behind `ak-role` flags.

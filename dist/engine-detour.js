@@ -44,11 +44,18 @@ export async function runEngineDetourOnce(input) {
         });
         let stdout = "";
         let stderr = "";
+        const noteActivity = (chunk) => {
+            if (chunk.length === 0)
+                return;
+            input.onOutputActivity?.();
+        };
         child.stdout.setEncoding("utf8").on("data", (chunk) => {
             stdout += chunk;
+            noteActivity(chunk);
         });
         child.stderr.setEncoding("utf8").on("data", (chunk) => {
             stderr += chunk;
+            noteActivity(chunk);
         });
         const fail = (error) => {
             if (settled)

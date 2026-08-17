@@ -81,6 +81,14 @@ export async function withPackageOwnedToolIdleSuspended(run) {
     }
 }
 /**
+ * Touch the active package-owned execute idle clock (reuse stream-idle-guard poke).
+ * No-op outside a wrapped package-owned execute or while that layer is suspended.
+ * Used by long-running tools (engine detour) that see real subprocess output bytes.
+ */
+export function pokePackageOwnedToolIdle() {
+    packageOwnedToolIdleScope.getStore()?.poke();
+}
+/**
  * Single shared execute wrapper for package-owned tool definitions.
  * Idempotent: wrapping twice returns the same protected definition.
  */
@@ -160,6 +168,11 @@ export function wrapPackageOwnedToolDefinition(tool) {
                         idleTimeoutMs: PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
                     });
                     idle.signal.addEventListener("abort", onIdle, { once: true });
+                },
+                poke() {
+                    if (settled || suspended)
+                        return;
+                    idle.poke();
                 },
             };
             const guardedOnUpdate = onUpdate === undefined
