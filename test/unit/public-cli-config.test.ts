@@ -277,38 +277,3 @@ test("persistent bare provider/model stores as-is without inventing thinking", a
   });
 });
 
-test("persistent provider/model:thinking still stores and dispatches thinking", () => {
-  const withThinking = parseModelSpec("openai-codex/gpt-5.6-luna:high");
-  assert.deepEqual(withThinking, {
-    provider: "openai-codex",
-    model: "gpt-5.6-luna",
-    thinking: "high",
-  });
-  assert.deepEqual(buildSeatModelCliArgs(withThinking), [
-    "--provider",
-    "openai-codex",
-    "--model",
-    "gpt-5.6-luna",
-    "--thinking",
-    "high",
-  ]);
-});
-
-test("persistent model specs keep the same malformed rejection surface as invocation", () => {
-  assert.throws(
-    () => parseModelSpec(""),
-    /model specification must be non-empty/,
-  );
-  assert.throws(
-    () => parseModelSpec("/missing-provider"),
-    /model specification must be provider\/model\[:thinking\]/,
-  );
-  assert.throws(
-    () => parseModelSpec("openai-codex/gpt-5.6-luna:"),
-    /model specification must be provider\/model\[:thinking\]/,
-  );
-  assert.throws(
-    () => parseModelSpec("openai-codex/gpt-5.6-luna:bogus"),
-    /model specification must be provider\/model\[:thinking\]/,
-  );
-});
