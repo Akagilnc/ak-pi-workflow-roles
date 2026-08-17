@@ -19170,6 +19170,42 @@ var init_engine_detour = __esm({
   }
 });
 
+// src/engine-labor-fallback.ts
+function buildEngineLaborFallbackField(input) {
+  return Object.freeze({
+    engineLaborFallback: Object.freeze({
+      engine: input.engine,
+      failure: input.failure,
+      laborBy: "seat"
+    })
+  });
+}
+function readEngineLaborFallbackFieldFrom(source) {
+  if (typeof source !== "object" || source === null || Array.isArray(source)) {
+    return void 0;
+  }
+  let raw;
+  try {
+    raw = source.engineLaborFallback;
+  } catch {
+    return void 0;
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return void 0;
+  const rec = raw;
+  if (typeof rec.engine !== "string" || typeof rec.failure !== "string" || rec.laborBy !== "seat") {
+    return void 0;
+  }
+  return buildEngineLaborFallbackField({
+    engine: rec.engine,
+    failure: rec.failure
+  });
+}
+var init_engine_labor_fallback = __esm({
+  "src/engine-labor-fallback.ts"() {
+    "use strict";
+  }
+});
+
 // src/stream-idle-guard.ts
 var init_stream_idle_guard = __esm({
   "src/stream-idle-guard.ts"() {
@@ -19235,6 +19271,7 @@ var init_engine_detour_tool = __esm({
     "use strict";
     init_build();
     init_engine_detour();
+    init_engine_labor_fallback();
     init_package_owned_tool_idle();
     engineDetourArgsSchema = typebox_exports.Object(
       {
@@ -20318,7 +20355,12 @@ function auditNoReceiptDecisiveFact(candidate) {
   }
 }
 function judgeDecisiveFacts(verdict, judgeStatus) {
-  const facts = { judgeStatus, ...auditNoReceiptDecisiveFact(verdict) };
+  const facts = {
+    judgeStatus,
+    ...auditNoReceiptDecisiveFact(verdict),
+    // #380: spread sole-built field; do not re-key here (S1).
+    ...readEngineLaborFallbackFieldFrom(verdict)
+  };
   if (judgeStatus === "continue") {
     const fix = safelyRead(verdict, "fix");
     if (fix.readable && isRecord5(fix.value)) {
@@ -20504,7 +20546,9 @@ function reviewerDecisiveFacts(output) {
     axes,
     reportAxes,
     acceptedBatchPresent: acceptedBatch.readable && acceptedBatch.value !== void 0,
-    ...auditNoReceiptDecisiveFact(candidate)
+    ...auditNoReceiptDecisiveFact(candidate),
+    // #380: spread sole-built field; do not re-key here (S1).
+    ...readEngineLaborFallbackFieldFrom(candidate)
   };
   if (status.readable && typeof status.value === "string") facts.reviewerStatus = status.value;
   if (specDisposition.readable && (specDisposition.value === "launched" || specDisposition.value === "skipped-missing")) {
@@ -22312,6 +22356,7 @@ var init_settlement = __esm({
     init_compliance_transport();
     init_collector_ledger();
     init_engine_detour();
+    init_engine_labor_fallback();
     init_judge_output();
     init_collector_output();
     init_worker_output();

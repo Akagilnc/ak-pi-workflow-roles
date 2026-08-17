@@ -26,6 +26,9 @@ claude -p --model opus "YOUR_LABOR_PROMPT"
 Prefer `claude --help` on the host over any remembered flag set. Do not wrap this
 engine behind `ak-role` flags.
 
-When the package detour tool is available, start exactly one subprocess through
-it with argv assembled from this material and the local CLI; return the stdout
-labor content to the same session for the existing typed submission path.
+When the package detour tool is available, start exactly one subprocess per
+labor invocation through it with argv assembled from this material and the
+local CLI; return the stdout labor content to the same session for the existing
+typed submission path. One labor turn = one process (not one process for the
+whole role run). If the detour fails, continue labor in-session on the seat main
+road and still submit via the existing typed path.
