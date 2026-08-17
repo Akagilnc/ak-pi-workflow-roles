@@ -143,7 +143,7 @@ Codex fast 档：开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--model` | — | `provider/model` | 否 | 否 | option | — | 覆盖本调用有效席位模型（可置于子命令前或后）。 |
 | `--thinking` | — | `level` | 否 | 否 | option | — | 覆盖 thinking 档位：off\|minimal\|low\|medium\|high\|xhigh\|max。 |
-| `--engine` | — | `name` | 否 | 否 | option | — | 本调用可选 Judge 劳动引擎（名字须存在于包内引擎调法材料；仅 Judge）。 |
+| `--engine` | — | `name` | 否 | 否 | option | — | 本调用可选 Judge 劳动引擎（池令名字；有包内调法笔记则附卷；仅 Judge）。 |
 | `--help` | `-h` | — | 否 | 否 | option | — | 显示公开 CLI 帮助并退出。 |
 
 ### `judge`
