@@ -123,7 +123,7 @@ export function isEngineAxisSeat(seat: string): seat is "judge" | "reviewer" {
 
 /**
  * Set or clear persistent engine on Judge or Reviewer (#356 / #378).
- * Engine-only seats are rejected — model triple remains required.
+ * Engine-only seats are rejected — provider/model[:thinking] remains required first.
  */
 export function setPersistentSeatEngine(
   config: PublicCliConfig,
@@ -136,7 +136,7 @@ export function setPersistentSeatEngine(
   const previous = config.seats[seat];
   if (previous === undefined) {
     throw new Error(
-      `config seat ${seat} has no persistent model; set provider/model:thinking before engine`,
+      `config seat ${seat} has no persistent model; set provider/model[:thinking] before engine`,
     );
   }
   if (engine === undefined) {
