@@ -33,6 +33,8 @@ const WRAPPED = Symbol.for("ak.packageOwnedToolIdleWrapped");
 type PackageOwnedToolIdleSuspension = {
   suspend(): void;
   resume(): void;
+  /** Reset the silence window (byte/activity signal from the active execute). */
+  poke(): void;
 };
 
 /**
@@ -104,6 +106,15 @@ export async function withPackageOwnedToolIdleSuspended<T>(
   } finally {
     scope.resume();
   }
+}
+
+/**
+ * Touch the active package-owned execute idle clock (reuse stream-idle-guard poke).
+ * No-op outside a wrapped package-owned execute or while that layer is suspended.
+ * Used by long-running tools (engine detour) that see real subprocess output bytes.
+ */
+export function pokePackageOwnedToolIdle(): void {
+  packageOwnedToolIdleScope.getStore()?.poke();
 }
 
 /**
@@ -190,6 +201,10 @@ export function wrapPackageOwnedToolDefinition<T extends PackageOwnedToolLike>(t
             idleTimeoutMs: PACKAGE_OWNED_TOOL_IDLE_TIMEOUT_MS,
           });
           idle.signal.addEventListener("abort", onIdle, { once: true });
+        },
+        poke(): void {
+          if (settled || suspended) return;
+          idle.poke();
         },
       };
 

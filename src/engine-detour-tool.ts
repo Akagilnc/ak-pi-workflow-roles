@@ -29,6 +29,7 @@ import {
 } from "./engine-labor-fallback.ts";
 import {
   isPackageOwnedToolIdleTimeoutError,
+  pokePackageOwnedToolIdle,
   wrapPackageOwnedToolDefinition,
 } from "./package-owned-tool-idle.ts";
 
@@ -169,10 +170,13 @@ export function createEngineDetourToolDefinition(input: {
 
       let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
       try {
+        // Byte activity on stdout/stderr touches the outer package-owned idle clock
+        // (183s silence law unchanged). True hangs still die; slow streaming engines live.
         result = await runEngineDetourOnce({
           argv,
           cwd: ctx.cwd,
           ...(signal === undefined ? {} : { signal }),
+          onOutputActivity: pokePackageOwnedToolIdle,
         });
       } catch (error) {
         // Caller cancel: propagate. Idle backstop + spawn/engine failure: seat fallback.

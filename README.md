@@ -11,7 +11,7 @@ pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ```
 
-Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat defaults with `ak-role config set judge openai-codex/gpt-5.6-sol:high`.
+Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat model defaults with `ak-role config set judge openai-codex/gpt-5.6-sol:high`; set or clear a persistent labor engine (judge|reviewer) with `ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`.
 
 ## Reading results
 
@@ -31,9 +31,16 @@ Every run also prepares Navigator advice in the same Terminal. Configure it like
 
 ```bash
 ak-role config set navigator openai-codex/gpt-5.6-luna:medium
+# persistent labor engine (judge|reviewer only); one-shot override remains --engine
+ak-role config set-engine judge opus
+ak-role config unset-engine judge
 ```
 
+`config set` stores the seat model default; `config set-engine` / `unset-engine` store or clear the persistent labor-engine name on judge|reviewer only (same seats as `--engine`). Usage and refusal text are owned by `ak-role config` in the public CLI.
+
 Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned. Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
+
+When a Judge/Reviewer labor-engine detour fails and the seat continues the labor on the main road, the typed receipt may carry a mechanical `engineLaborFallback` field: `{ engine, failure, laborBy: "seat" }`. It appears only after a real detour failure that fell back to seat labor (including package-owned idle timeout on the detour tool)—not on detour success or caller cancel. First failure wins for the activation; model-forged `engineLaborFallback` keys are stripped unless the package latch recorded one. Sole producer: `src/engine-labor-fallback.ts`; decision record: [ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md). This README only projects that contract.
 
 ## Call the roles
 

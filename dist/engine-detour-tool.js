@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC, ENGINE_DETOUR_TOOL_NAME, engineDetourFailureDiagnostic, engineNameFromEnv, isEngineDetourFailure, runEngineDetourOnce, } from "./engine-detour.js";
 import { activationEngineLaborFallbackLatch, recordEngineLaborFallback, } from "./engine-labor-fallback.js";
-import { isPackageOwnedToolIdleTimeoutError, wrapPackageOwnedToolDefinition, } from "./package-owned-tool-idle.js";
+import { isPackageOwnedToolIdleTimeoutError, pokePackageOwnedToolIdle, wrapPackageOwnedToolDefinition, } from "./package-owned-tool-idle.js";
 const engineDetourArgsSchema = Type.Object({
     argv: Type.Array(Type.String({ minLength: 1 }), {
         minItems: 1,
@@ -83,10 +83,13 @@ export function createEngineDetourToolDefinition(input) {
             };
             let result;
             try {
+                // Byte activity on stdout/stderr touches the outer package-owned idle clock
+                // (183s silence law unchanged). True hangs still die; slow streaming engines live.
                 result = await runEngineDetourOnce({
                     argv,
                     cwd: ctx.cwd,
                     ...(signal === undefined ? {} : { signal }),
+                    onOutputActivity: pokePackageOwnedToolIdle,
                 });
             }
             catch (error) {
