@@ -14449,7 +14449,7 @@ function setPersistentSeatEngine(config, seat, engine) {
   const previous = config.seats[seat];
   if (previous === void 0) {
     throw new Error(
-      `config seat ${seat} has no persistent model; set provider/model:thinking before engine`
+      `config seat ${seat} has no persistent model; set provider/model[:thinking] before engine`
     );
   }
   if (engine === void 0) {
