@@ -5,10 +5,12 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  buildSeatModelCliArgs,
   effectiveSeatConfigurations,
   formatModelSpec,
   loadPublicCliConfig,
   parseModelSpec,
+  parsePersistentModelSpec,
   publicCliConfigPath,
   resolveEffectiveSeat,
   savePublicCliConfig,
@@ -232,4 +234,82 @@ test("malformed model specs keep the pre-#346 typed rejection surface", () => {
     provider: "no-such-provider",
     model: "no-such-model",
   });
+});
+
+// #384: persistent config set must not force :thinking (same grammar as invocation).
+test("persistent bare provider/model stores as-is without inventing thinking", async () => {
+  const bare = parsePersistentModelSpec("kimi-coding/k3-256k");
+  assert.deepEqual(bare, {
+    provider: "kimi-coding",
+    model: "k3-256k",
+  });
+  assert.equal("thinking" in bare, false);
+  assert.deepEqual(buildSeatModelCliArgs(bare), [
+    "--provider",
+    "kimi-coding",
+    "--model",
+    "k3-256k",
+  ]);
+
+  await withTempHome(async (home) => {
+    const config = setPersistentSeatConfig({ seats: {} }, "judge", bare);
+    await savePublicCliConfig(config, home);
+    const reloaded = await loadPublicCliConfig(home);
+    assert.deepEqual(reloaded.seats.judge, {
+      provider: "kimi-coding",
+      model: "k3-256k",
+    });
+    assert.equal(reloaded.seats.judge !== undefined && "thinking" in reloaded.seats.judge, false);
+
+    const effective = resolveEffectiveSeat(reloaded, "judge", {
+      "openai-codex": true,
+      xai: false,
+    });
+    assert.equal(effective.source, "persistent");
+    assert.deepEqual(effective.selection, {
+      provider: "kimi-coding",
+      model: "k3-256k",
+    });
+    assert.equal(
+      effective.selection !== undefined && "thinking" in effective.selection,
+      false,
+    );
+    assert.equal(formatModelSpec(effective.selection!), "kimi-coding/k3-256k");
+  });
+});
+
+test("persistent provider/model:thinking still stores and dispatches thinking", () => {
+  const withThinking = parsePersistentModelSpec("openai-codex/gpt-5.6-luna:high");
+  assert.deepEqual(withThinking, {
+    provider: "openai-codex",
+    model: "gpt-5.6-luna",
+    thinking: "high",
+  });
+  assert.deepEqual(buildSeatModelCliArgs(withThinking), [
+    "--provider",
+    "openai-codex",
+    "--model",
+    "gpt-5.6-luna",
+    "--thinking",
+    "high",
+  ]);
+});
+
+test("persistent model specs keep the same malformed rejection surface as invocation", () => {
+  assert.throws(
+    () => parsePersistentModelSpec(""),
+    /model specification must be non-empty/,
+  );
+  assert.throws(
+    () => parsePersistentModelSpec("/missing-provider"),
+    /model specification must be provider\/model\[:thinking\]/,
+  );
+  assert.throws(
+    () => parsePersistentModelSpec("openai-codex/gpt-5.6-luna:"),
+    /model specification must be provider\/model\[:thinking\]/,
+  );
+  assert.throws(
+    () => parsePersistentModelSpec("openai-codex/gpt-5.6-luna:bogus"),
+    /model specification must be provider\/model\[:thinking\]/,
+  );
 });
