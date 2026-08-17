@@ -143,7 +143,7 @@ export function setPersistentSeatEngine(
       },
     };
   }
-  // Engine-name legality is owned solely by assertLegalEngineName
+  // Engine-name path-safety syntax is owned solely by assertLegalEngineName
   // (call-request + config-parse seams). Setter is pure seat mutation.
   return {
     seats: {
@@ -161,13 +161,14 @@ export function seatModelOnly(seat: PersistentSeatConfig): SeatModelConfig {
 }
 
 /**
- * Config-parse seam: engine axis is Judge-only; Judge engine names must exist
- * in package materials. Call with packageRoot after load / before dispatch (#356).
- * Legality authority = assertLegalEngineName (no injected duplicate).
+ * Config-parse seam: engine axis is Judge-only; Judge engine names need only
+ * path-safety syntax (no closed material catalog; #376 / ADR 0069).
+ * Call with packageRoot after load / before dispatch (#356).
+ * Syntax authority = assertLegalEngineName (no injected duplicate).
  */
 export function validatePublicCliConfigEngines(
   config: PublicCliConfig,
-  packageRoot: string,
+  _packageRoot: string,
 ): void {
   for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
     const row = config.seats[seat];
@@ -178,10 +179,10 @@ export function validatePublicCliConfigEngines(
       );
     }
     try {
-      assertLegalEngineName(packageRoot, row.engine);
+      assertLegalEngineName(row.engine);
     } catch (error) {
       throw new Error(
-        `config seat ${seat} engine is unknown: ${row.engine}`,
+        `config seat ${seat} engine is illegal: ${row.engine}`,
         { cause: error },
       );
     }
@@ -314,7 +315,7 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
     thinking: raw.thinking as PublicThinkingLevel,
   };
   if (raw.engine !== undefined) {
-    // Shape only: engine must be a string field. Name legality is deferred to
+    // Shape only: engine must be a string field. Path-safety syntax is deferred to
     // validatePublicCliConfigEngines → assertLegalEngineName (single authority).
     if (typeof raw.engine !== "string") {
       throw new Error(`config seat ${seat} engine must be a string`);
