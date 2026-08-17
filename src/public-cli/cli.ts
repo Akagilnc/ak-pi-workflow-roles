@@ -13,7 +13,7 @@ import {
   formatModelSpec,
   loadCredentialProviders,
   loadPublicCliConfig,
-  parsePersistentModelSpec,
+  parseModelSpec,
   resolveEffectiveSeat,
   savePublicCliConfig,
   isEngineAxisSeat,
@@ -418,7 +418,7 @@ function renderHelp(): string {
   lines.push(
     "",
     "Role options: ak-role help <command>",
-    "Persistent config: ak-role config set <seat> <provider/model:thinking>",
+    "Persistent config: ak-role config set <seat> <provider/model[:thinking]>",
     "Persistent engine (judge|reviewer): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Effective seats: ak-role roles",
   );
@@ -507,7 +507,7 @@ async function runConfigCommand(
   if (args[0] === "set") {
     if (args.length < 3) {
       throw new CliUsageError(
-        "usage: ak-role config set <seat> <provider/model:thinking>",
+        "usage: ak-role config set <seat> <provider/model[:thinking]>",
       );
     }
     // Bulk: repeated seat spec pairs after `set`
@@ -524,7 +524,9 @@ async function runConfigCommand(
       if (!isPublicConfigurableSeat(seat)) {
         throw new CliUsageError(`unknown configurable seat: ${seat}`);
       }
-      config = setPersistentSeatConfig(config, seat, parsePersistentModelSpec(spec));
+      // #384: persistent seat config shares the invocation model grammar.
+      // Bare provider/model stores as-is; :thinking suffix still required only when colon present.
+      config = setPersistentSeatConfig(config, seat, parseModelSpec(spec));
     }
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));

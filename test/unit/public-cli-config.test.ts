@@ -10,7 +10,6 @@ import {
   formatModelSpec,
   loadPublicCliConfig,
   parseModelSpec,
-  parsePersistentModelSpec,
   publicCliConfigPath,
   resolveEffectiveSeat,
   savePublicCliConfig,
@@ -238,7 +237,7 @@ test("malformed model specs keep the pre-#346 typed rejection surface", () => {
 
 // #384: persistent config set must not force :thinking (same grammar as invocation).
 test("persistent bare provider/model stores as-is without inventing thinking", async () => {
-  const bare = parsePersistentModelSpec("kimi-coding/k3-256k");
+  const bare = parseModelSpec("kimi-coding/k3-256k");
   assert.deepEqual(bare, {
     provider: "kimi-coding",
     model: "k3-256k",
@@ -279,7 +278,7 @@ test("persistent bare provider/model stores as-is without inventing thinking", a
 });
 
 test("persistent provider/model:thinking still stores and dispatches thinking", () => {
-  const withThinking = parsePersistentModelSpec("openai-codex/gpt-5.6-luna:high");
+  const withThinking = parseModelSpec("openai-codex/gpt-5.6-luna:high");
   assert.deepEqual(withThinking, {
     provider: "openai-codex",
     model: "gpt-5.6-luna",
@@ -297,19 +296,19 @@ test("persistent provider/model:thinking still stores and dispatches thinking", 
 
 test("persistent model specs keep the same malformed rejection surface as invocation", () => {
   assert.throws(
-    () => parsePersistentModelSpec(""),
+    () => parseModelSpec(""),
     /model specification must be non-empty/,
   );
   assert.throws(
-    () => parsePersistentModelSpec("/missing-provider"),
+    () => parseModelSpec("/missing-provider"),
     /model specification must be provider\/model\[:thinking\]/,
   );
   assert.throws(
-    () => parsePersistentModelSpec("openai-codex/gpt-5.6-luna:"),
+    () => parseModelSpec("openai-codex/gpt-5.6-luna:"),
     /model specification must be provider\/model\[:thinking\]/,
   );
   assert.throws(
-    () => parsePersistentModelSpec("openai-codex/gpt-5.6-luna:bogus"),
+    () => parseModelSpec("openai-codex/gpt-5.6-luna:bogus"),
     /model specification must be provider\/model\[:thinking\]/,
   );
 });

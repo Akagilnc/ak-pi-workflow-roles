@@ -14518,9 +14518,6 @@ function parseModelSpec(spec, fallbackThinking) {
   const model = modelPart.slice(slash + 1);
   return thinking === void 0 ? { provider, model } : { provider, model, thinking };
 }
-function parsePersistentModelSpec(spec) {
-  return parseModelSpec(spec);
-}
 function formatModelSpec(selection) {
   const base = `${selection.provider}/${selection.model}`;
   return selection.thinking === void 0 ? base : `${base}:${selection.thinking}`;
@@ -27109,7 +27106,7 @@ function renderHelp() {
   lines.push(
     "",
     "Role options: ak-role help <command>",
-    "Persistent config: ak-role config set <seat> <provider/model:thinking>",
+    "Persistent config: ak-role config set <seat> <provider/model[:thinking]>",
     "Persistent engine (judge|reviewer): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Effective seats: ak-role roles"
   );
@@ -27190,7 +27187,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
   if (args[0] === "set") {
     if (args.length < 3) {
       throw new CliUsageError(
-        "usage: ak-role config set <seat> <provider/model:thinking>"
+        "usage: ak-role config set <seat> <provider/model[:thinking]>"
       );
     }
     const pairs = args.slice(1);
@@ -27206,7 +27203,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
       if (!isPublicConfigurableSeat(seat)) {
         throw new CliUsageError(`unknown configurable seat: ${seat}`);
       }
-      config = setPersistentSeatConfig(config, seat, parsePersistentModelSpec(spec));
+      config = setPersistentSeatConfig(config, seat, parseModelSpec(spec));
     }
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));
