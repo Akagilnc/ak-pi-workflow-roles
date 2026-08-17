@@ -14519,17 +14519,7 @@ function parseModelSpec(spec, fallbackThinking) {
   return thinking === void 0 ? { provider, model } : { provider, model, thinking };
 }
 function parsePersistentModelSpec(spec) {
-  const parsed = parseModelSpec(spec);
-  if (parsed.thinking === void 0) {
-    throw new Error(
-      `model specification requires a thinking level (provider/model:thinking), got ${spec}`
-    );
-  }
-  return {
-    provider: parsed.provider,
-    model: parsed.model,
-    thinking: parsed.thinking
-  };
+  return parseModelSpec(spec);
 }
 function formatModelSpec(selection) {
   const base = `${selection.provider}/${selection.model}`;
@@ -14578,13 +14568,15 @@ function parseSeatModelConfig(value, seat) {
   if (typeof raw.model !== "string" || raw.model.trim() === "") {
     throw new Error(`config seat ${seat} requires model`);
   }
-  if (typeof raw.thinking !== "string" || !THINKING_LEVELS.has(raw.thinking)) {
-    throw new Error(`config seat ${seat} requires a valid thinking level`);
+  if (raw.thinking !== void 0) {
+    if (typeof raw.thinking !== "string" || !THINKING_LEVELS.has(raw.thinking)) {
+      throw new Error(`config seat ${seat} requires a valid thinking level`);
+    }
   }
   const parsed = {
     provider: raw.provider,
     model: raw.model,
-    thinking: raw.thinking
+    ...raw.thinking === void 0 ? {} : { thinking: raw.thinking }
   };
   if (raw.engine !== void 0) {
     if (typeof raw.engine !== "string") {
