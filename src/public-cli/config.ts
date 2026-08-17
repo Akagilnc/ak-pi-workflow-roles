@@ -232,14 +232,6 @@ export function parseModelSpec(
     : { provider, model, thinking };
 }
 
-/**
- * Persistent seat config shares the invocation model grammar (#384).
- * Bare provider/model stores as-is; :thinking suffix still required only when colon present.
- */
-export function parsePersistentModelSpec(spec: string): SeatModelConfig {
-  return parseModelSpec(spec);
-}
-
 export function formatModelSpec(selection: SeatModelConfig): string {
   const base = `${selection.provider}/${selection.model}`;
   return selection.thinking === undefined ? base : `${base}:${selection.thinking}`;
