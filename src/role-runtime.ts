@@ -22,6 +22,10 @@ import {
   type ToolExecutionObservationWriter,
 } from "./tool-execution-observation.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
+import {
+  createEngineLaborFallbackLatch,
+  installActivationEngineLaborFallbackLatch,
+} from "./engine-labor-fallback.ts";
 import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
@@ -591,8 +595,9 @@ export function createRoleRuntimeExtension(
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     const pendingInfrastructureToolCallIds = new Set<string>();
-    // #357 T2 / #378: engine detour once-latch + registration (Judge|Reviewer+engine).
+    // #357 T2 / #378 / #380: engine detour once-latch + seat-fallback latch (Judge|Reviewer+engine).
     let engineDetourRegistration: ReturnType<typeof registerEngineDetourTool> | undefined;
+    let engineLaborFallbackLatch = createEngineLaborFallbackLatch();
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
@@ -1056,6 +1061,8 @@ export function createRoleRuntimeExtension(
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
+      engineLaborFallbackLatch = createEngineLaborFallbackLatch();
+      installActivationEngineLaborFallbackLatch(engineLaborFallbackLatch);
       engineDetourRegistration?.resetLatch();
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
@@ -1168,8 +1175,9 @@ export function createRoleRuntimeExtension(
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
-        // #357 T2 / #378: Judge|Reviewer+engine activation registers the package detour tool once.
+        // #357 T2 / #378 / #380: Judge|Reviewer+engine activation registers the package detour tool once.
         // Gate is env presence only — no per-engine execute branch; no role-module spawn.
+        // Seat-fallback latch is activation-scoped (installed at session_start) so legs share it.
         if (
           (entry.role === "judge" || entry.role === "reviewer") &&
           engineDetourRegistration === undefined

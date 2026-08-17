@@ -3302,14 +3302,14 @@ test("public Reviewer no-task dispatch retains evidence-child provider identity"
   });
 });
 
-test("#378: Reviewer durable engine-detour failure outranks later knownFailure", async () => {
+test("#380: soft engine-detour failure is not infrastructure and does not outrank knownFailure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
-    const detourDiagnostic = "ENGINE_DETOUR_FAIL_UNIQUE_378_PRECEDENCE";
-    const secondaryDiagnostic = "SECONDARY_KNOWN_FAILURE_MUST_NOT_WIN_378";
+    const detourDiagnostic = "ENGINE_DETOUR_SOFT_FAIL_380_NOT_INFRA";
+    const secondaryDiagnostic = "SECONDARY_KNOWN_FAILURE_WINS_WHEN_DETOUR_SOFT_380";
     const result = await runAkRole(
       [
         "--model",
@@ -3327,7 +3327,7 @@ test("#378: Reviewer durable engine-detour failure outranks later knownFailure",
         home,
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
-        createRunId: () => "run-reviewer-detour-precedence-001",
+        createRunId: () => "run-reviewer-detour-soft-380-001",
         io,
         piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
@@ -3350,14 +3350,19 @@ test("#378: Reviewer durable engine-detour failure outranks later knownFailure",
                   stopReason: "toolUse",
                 },
               }),
+              // #380 soft-fail shape: detourFailed details, isError false — not infrastructure.
               JSON.stringify({
                 type: "message",
                 message: {
                   role: "toolResult",
                   toolCallId: "engine-detour-parent",
                   toolName: ENGINE_DETOUR_TOOL_NAME,
-                  isError: true,
-                  content: [{ type: "text", text: detourDiagnostic }],
+                  isError: false,
+                  content: [{ type: "text", text: `Engine detour failed: ${detourDiagnostic}` }],
+                  details: {
+                    tool: ENGINE_DETOUR_TOOL_NAME,
+                    detourFailed: true,
+                  },
                 },
               }),
               JSON.stringify({
@@ -3378,7 +3383,6 @@ test("#378: Reviewer durable engine-detour failure outranks later knownFailure",
             stderr: `Extension error: ${secondaryDiagnostic}\n`,
             timedOut: false,
             args: [...args],
-            // Later secondary knownFailure must lose to durable detour infra fact.
             knownFailure: {
               cause: "provider",
               diagnostic: secondaryDiagnostic,
@@ -3388,24 +3392,25 @@ test("#378: Reviewer durable engine-detour failure outranks later knownFailure",
         },
       },
     );
+    // Soft detour is not infra; later knownFailure remains the settlement principal.
     const { terminal, errorRef } = await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
-      expectedCause: "output",
-      diagnosticEquals: detourDiagnostic,
+      expectedCause: "provider",
+      diagnosticEquals: secondaryDiagnostic,
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "output");
-      assert.equal(terminal.roleOutcome.diagnostic, detourDiagnostic);
+      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(terminal.roleOutcome.diagnostic, secondaryDiagnostic);
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
       diagnostic: string;
     };
-    assert.equal(errorBody.cause, "output");
-    assert.equal(errorBody.diagnostic, detourDiagnostic);
+    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.diagnostic, secondaryDiagnostic);
   });
 });
 
