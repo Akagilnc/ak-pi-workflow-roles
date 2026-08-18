@@ -365,11 +365,7 @@ test("#391 E4 structure: registerEngineDetourTool call sites = 1; AK_ROLE_ENGINE
       const rel = relative(packageRoot, file);
 
       const registerMatches = text.match(registerCallRe) ?? [];
-      // Definition `export function registerEngineDetourTool(` must not count as a call.
-      const defOnly = /export\s+function\s+registerEngineDetourTool\s*\(/.test(text)
-        ? 1
-        : 0;
-      detourRegisterCalls += Math.max(0, registerMatches.length - defOnly);
+      detourRegisterCalls += registerMatches.length;
 
       if (engineWriteRe.test(text)) {
         engineWriteModules.add(rel);
@@ -410,8 +406,7 @@ test("#391 E4 structure: registerEngineDetourTool call sites = 1; AK_ROLE_ENGINE
       const raw = await readFile(file, "utf8");
       const text = stripTypeDeclarations(stripComments(raw));
       const matches = text.match(applyCallRe) ?? [];
-      const defOnly = /export\s+function\s+applyEngineChildEnv\s*\(/.test(text) ? 1 : 0;
-      applyCalls += Math.max(0, matches.length - defOnly);
+      applyCalls += matches.length;
     }
     assert.equal(
       applyCalls,
