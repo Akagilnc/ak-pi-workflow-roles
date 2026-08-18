@@ -597,7 +597,7 @@ export function createRoleRuntimeExtension(
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     const pendingInfrastructureToolCallIds = new Set<string>();
-    // #357 T2 / #378 / #380: engine detour once-latch + seat-fallback latch (Judge|Reviewer+engine).
+    // #357 T2 / #378 / #380 / #391: engine detour once-latch + seat-fallback latch (any role+engine).
     let engineDetourRegistration: ReturnType<typeof registerEngineDetourTool> | undefined;
     let engineLaborFallbackLatch = createEngineLaborFallbackLatch();
     // #288 primary-session thin adapter. The policy is the sole budget owner;
@@ -1187,13 +1187,10 @@ export function createRoleRuntimeExtension(
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
-        // #357 T2 / #378 / #380: Judge|Reviewer+engine activation registers the package detour tool once.
+        // #357 T2 / #378 / #380 / #391: any role+engine activation registers the package detour tool once.
         // Gate is env presence only — no per-engine execute branch; no role-module spawn.
         // Seat-fallback latch is activation-scoped (installed at session_start) so legs share it.
-        if (
-          (entry.role === "judge" || entry.role === "reviewer") &&
-          engineDetourRegistration === undefined
-        ) {
+        if (engineDetourRegistration === undefined) {
           engineDetourRegistration = registerEngineDetourTool(pi, hostActions);
           if (!engineDetourRegistration.registered) {
             engineDetourRegistration = undefined;

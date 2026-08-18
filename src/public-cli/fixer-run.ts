@@ -7,6 +7,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { applyEngineChildEnv } from "../engine-detour.ts";
+import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -82,6 +84,8 @@ export type FixerRunEnv = {
   correlationId?: string;
   piRunner?: ExplicitInternalPiRunner;
   model?: SeatModelConfig;
+  /** Optional labor engine name (config→activation; session material + env signal). */
+  engine?: string;
   credentials?: CredentialProviders;
   createRunId?: () => string;
   extraPiArgs?: readonly string[];
@@ -99,10 +103,14 @@ export function buildFixerActivationExtraArgs(
   options: {
     packageRoot: string;
     model?: SeatModelConfig;
+    engine?: string;
     extraPiArgs?: readonly string[];
   },
 ): string[] {
-  const prompt = buildFixerTransportPrompt(admitted);
+  const prompt = buildFixerTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options),
+  );
   const diagnosisSkillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "diagnosing-bugs",
@@ -275,12 +283,14 @@ async function dispatchAdmittedFixer(input: {
   extraArgs: string[];
   lease: RunWriterLease;
   methodMaterial: PackagedMethodSkillMaterial;
+  /** Mechanical engine provenance for initial Fixer dispatch only. */
+  effectiveEngine?: string;
 }): Promise<{
   exitCode: number;
   admitted: AdmittedFixerInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
+  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -293,7 +303,7 @@ async function dispatchAdmittedFixer(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
@@ -302,6 +312,7 @@ async function dispatchAdmittedFixer(input: {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
+    applyEngineChildEnv(childEnv, env.engine);
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== undefined && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -494,6 +505,7 @@ export async function runPublicFixer(
   const extraArgs = buildFixerActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
@@ -507,6 +519,8 @@ export async function runPublicFixer(
     extraArgs,
     lease,
     methodMaterial,
+    // #391: only initial Fixer dispatch records mechanical engine provenance.
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 

@@ -6,6 +6,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { applyEngineChildEnv } from "../engine-detour.ts";
+import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   runExplicitInternalActivation,
   type ExplicitInternalKnownFailure,
@@ -64,6 +66,8 @@ export type CollectorRunEnv = {
   correlationId?: string;
   piRunner?: ExplicitInternalPiRunner;
   model?: SeatModelConfig;
+  /** Optional labor engine name (config→activation; session material + env signal). */
+  engine?: string;
   credentials?: CredentialProviders;
   createRunId?: () => string;
   extraPiArgs?: readonly string[];
@@ -79,10 +83,15 @@ export function buildCollectorActivationExtraArgs(
   admitted: AdmittedCollectorInvocation,
   options: {
     model?: SeatModelConfig;
+    engine?: string;
+    packageRoot?: string;
     extraPiArgs?: readonly string[];
   } = {},
 ): string[] {
-  const prompt = buildCollectorTransportPrompt(admitted);
+  const prompt = buildCollectorTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options),
+  );
   return [
     "--no-skills",
     "--no-prompt-templates",
@@ -174,12 +183,13 @@ async function dispatchAdmittedCollector(input: {
   io: CliIo;
   extraArgs: string[];
   lease: RunWriterLease;
+  effectiveEngine?: string;
 }): Promise<{
   exitCode: number;
   admitted: AdmittedCollectorInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease } = input;
+  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -192,7 +202,7 @@ async function dispatchAdmittedCollector(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
@@ -201,6 +211,7 @@ async function dispatchAdmittedCollector(input: {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
+    applyEngineChildEnv(childEnv, env.engine);
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== undefined && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -354,7 +365,9 @@ export async function runPublicCollector(
   }
 
   const extraArgs = buildCollectorActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
@@ -367,5 +380,6 @@ export async function runPublicCollector(
     io,
     extraArgs,
     lease,
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

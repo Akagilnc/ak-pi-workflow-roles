@@ -1,11 +1,10 @@
 /**
- * #356 T1 / #376 / #378 — Judge+Reviewer engine axis on config → activation material seams.
+ * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
  * Two delivery paths: with packaged notes (cursor) / name-only without notes (any free name).
- * No closed material catalog. Reviewer inherits the same dual-path contract (#378).
+ * No closed material catalog. All seats inherit the same dual-path contract (#378/#391).
  * Zero assertions on engine material body CLI invocation text.
  * Zero assertions on free-prose delivery wording / layout.
- * Non-engine seats deliberately have no engine selection/passthrough/material.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -22,6 +21,7 @@ import {
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
+  isEngineAxisSeat,
   loadPublicCliConfig,
   resolveEffectiveSeat,
   savePublicCliConfig,
@@ -30,6 +30,10 @@ import {
   validatePublicCliConfigEngines,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
+import {
+  PUBLIC_CALLABLE_ROLES,
+  type PublicCallableRole,
+} from "../../src/public-cli/registry.ts";
 import {
   buildJudgeActivationExtraArgs,
 } from "../../src/public-cli/judge-run.ts";
@@ -44,18 +48,28 @@ import {
 } from "../../src/public-cli/invocation.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
+/** Read the durable invocation identity page for a public role run (#358/#391). */
+function readRoleInvocation(
+  home: string,
+  bookKey: string,
+  runId: string,
+  role: string,
+): Record<string, unknown> {
+  return JSON.parse(
+    readFileSync(
+      join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@${role}`, "invocation.json"),
+      "utf8",
+    ),
+  ) as Record<string, unknown>;
+}
+
 /** Read the durable invocation identity page for a public Judge run (#358). */
 function readJudgeInvocation(
   home: string,
   bookKey: string,
   runId: string,
 ): Record<string, unknown> {
-  return JSON.parse(
-    readFileSync(
-      join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`, "invocation.json"),
-      "utf8",
-    ),
-  ) as Record<string, unknown>;
+  return readRoleInvocation(home, bookKey, runId, "judge");
 }
 
 /** Frozen baseline golden: Judge activation argv + session initial material @ 3aec6621. */
@@ -238,7 +252,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     validatePublicCliConfigEngines(reviewerCfg, packageRoot);
     assert.equal(reviewerCfg.seats.reviewer?.engine, "cursor");
 
-    // Non-engine seat field is refused at validate seam (judge+reviewer only).
+    // Non-judge seat engine field is accepted at validate seam (#391 all roles).
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
       `${JSON.stringify({
@@ -253,11 +267,9 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
       }, null, 2)}\n`,
       "utf8",
     );
-    const nonJudge = await loadPublicCliConfig(home);
-    assert.throws(
-      () => validatePublicCliConfigEngines(nonJudge, packageRoot),
-      /config seat coder engine is not allowed; engine axis is judge\+reviewer only/,
-    );
+    const coderCfg = await loadPublicCliConfig(home);
+    validatePublicCliConfigEngines(coderCfg, packageRoot);
+    assert.equal(coderCfg.seats.coder?.engine, "opus");
 
     // Syntax-illegal engine name in on-disk judge config is rejected at validate seam.
     await writeFile(
@@ -353,12 +365,12 @@ test("engine priority: invocation > persistent > unconfigured (judge only)", () 
   assert.equal(reviewerInvocation.engine, "opus");
   assert.equal(reviewerInvocation.engineSource, "invocation");
 
-  // Non-engine seats never attach engine even if invocation carries one.
+  // Fixer seat attaches engine the same way (#391).
   const fixer = resolveEffectiveSeat({ seats: {} }, "fixer", credentials, {
     engine: "opus",
   });
-  assert.equal(fixer.engine, undefined);
-  assert.equal(fixer.engineSource, "unconfigured");
+  assert.equal(fixer.engine, "opus");
+  assert.equal(fixer.engineSource, "invocation");
 });
 
 // --- default-path byte oracle (frozen baseline 3aec6621 golden) --------------
@@ -862,15 +874,15 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       assertNoEngineFlagsInArgv(capturedArgs!);
     }
 
-    // Non-engine command with --engine → structural reject (judge+reviewer only).
+    // Non-role command with --engine → structural reject (roles only; resume stays off-axis).
     {
       const { io, stderr } = captureIo();
       const result = await runAkRole(
-        ["coder", "--engine", "opus", "--project", project, "x"],
+        ["resume", "--engine", "opus", "run-not-real"],
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /engine axis is judge\+reviewer only; refused command coder/);
+      assert.match(stderr.join(""), /engine axis is role commands only; refused command resume/);
     }
 
     // Syntax-illegal persistent engine on load → structural reject.
@@ -954,7 +966,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       assert.equal(after.seats.reviewer?.engine, "cursor");
     }
 
-    // set-engine on non-engine seat rejects.
+    // set-engine on coder seat persists (#391 all roles).
     {
       await runAkRole(
         ["config", "set", "coder", "openai-codex/gpt-5.6-sol:high"],
@@ -965,8 +977,135 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         ["config", "set-engine", "coder", "opus"],
         { packageRoot, home, io },
       );
-      assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /engine axis is judge\+reviewer only; refused seat coder/);
+      assert.equal(result.exitCode, 0, stderr.join(""));
+      const after = await loadPublicCliConfig(home);
+      assert.equal(after.seats.coder?.engine, "opus");
+    }
+  });
+});
+
+test("#391 fixer --engine and set-engine: env signal + material coordinates; free name ok", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: project });
+    execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: project });
+    execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+
+    await runAkRole(
+      ["config", "set", "fixer", "openai-codex/gpt-5.6-sol:high"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    {
+      const { io, stderr } = captureIo();
+      const setEngine = await runAkRole(
+        ["config", "set-engine", "fixer", "cursor"],
+        { packageRoot, home, io },
+      );
+      assert.equal(setEngine.exitCode, 0, stderr.join(""));
+      const persisted = await loadPublicCliConfig(home);
+      assert.equal(persisted.seats.fixer?.engine, "cursor");
+    }
+
+    const materialCursor = resolveEngineMaterialPath(packageRoot, "cursor");
+    await access(materialCursor);
+
+    // Persistent engine alone reaches pi with env + material coordinates.
+    {
+      let capturedArgs: string[] | undefined;
+      let capturedEnv: NodeJS.ProcessEnv | undefined;
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        ["fixer", "--project", project, "fixer engine persistent path"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "engine-fixer-persist-001",
+          credentials,
+          io,
+          piRunner: async (args, options) => {
+            capturedArgs = [...args];
+            capturedEnv = options.env;
+            return {
+              code: 1,
+              stderr: "stop after capture",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.notEqual(
+        result.exitCode,
+        2,
+        `fixer set-engine path must not structural-reject: ${stderr.join("")}`,
+      );
+      assert.equal(
+        Array.isArray(capturedArgs),
+        true,
+        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+      );
+      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
+      assertEngineCoordinatesWithMaterial(capturedPrompt, "cursor", materialCursor);
+      assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "cursor");
+      assertNoEngineFlagsInArgv(capturedArgs!);
+    }
+
+    // Invocation --engine overrides persistent and still wires env.
+    {
+      let capturedArgs: string[] | undefined;
+      let capturedEnv: NodeJS.ProcessEnv | undefined;
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        [
+          "fixer",
+          "--engine",
+          "nope-engine",
+          "--project",
+          project,
+          "fixer engine invocation wins",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "engine-fixer-invoke-001",
+          credentials,
+          io,
+          piRunner: async (args, options) => {
+            capturedArgs = [...args];
+            capturedEnv = options.env;
+            return {
+              code: 1,
+              stderr: "stop after capture",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.notEqual(
+        result.exitCode,
+        2,
+        `fixer --engine must not structural-reject: ${stderr.join("")}`,
+      );
+      assert.equal(
+        Array.isArray(capturedArgs),
+        true,
+        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+      );
+      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
+      assertEngineCoordinatesNameOnly(
+        capturedPrompt,
+        "nope-engine",
+        resolveEngineMaterialPath(packageRoot, "nope-engine"),
+        stderr.join(""),
+      );
+      assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "nope-engine");
+      assert.equal(capturedPrompt.includes(materialCursor), false);
+      assertNoEngineFlagsInArgv(capturedArgs!);
     }
   });
 });
@@ -1078,3 +1217,351 @@ test("unset-engine clears persistent judge engine; no-engine path keeps default-
     );
   });
 });
+
+// --- #391 E4: table-driven full PUBLIC_CALLABLE_ROLES + negative table ------------
+
+function seedGitProject(root: string): void {
+  execFileSync("git", ["init", "-b", "main"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: root });
+  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
+}
+
+async function materializeConflictedRepo(root: string): Promise<void> {
+  seedGitProject(root);
+  await writeFile(join(root, "same.txt"), "base\n", "utf8");
+  execFileSync("git", ["add", "."], { cwd: root });
+  execFileSync("git", ["commit", "-m", "base"], { cwd: root });
+  execFileSync("git", ["checkout", "-b", "source"], { cwd: root });
+  await writeFile(join(root, "same.txt"), "source\n", "utf8");
+  execFileSync("git", ["commit", "-am", "source"], { cwd: root });
+  execFileSync("git", ["checkout", "main"], { cwd: root });
+  await writeFile(join(root, "same.txt"), "target\n", "utf8");
+  execFileSync("git", ["commit", "-am", "target"], { cwd: root });
+  try {
+    execFileSync("git", ["merge", "--no-edit", "source"], { cwd: root });
+    throw new Error("expected conflicting merge");
+  } catch (error) {
+    if (error instanceof Error && error.message === "expected conflicting merge") throw error;
+    // conflicted
+  }
+}
+
+/** Minimal argv per callable role so the run reaches piRunner (shared fixture). */
+function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[] {
+  switch (role) {
+    case "judge":
+    case "fixer":
+    case "coder":
+    case "merger":
+      return [role, "--project", project, "engine axis probe"];
+    case "reviewer":
+      return [role, "--project", project, "--base", "main", "engine axis probe"];
+    case "collector":
+      return [role, "--pr", "1", "--repo", "acme/widgets", "--project", project];
+    case "doctor":
+      return [role, "--issue", "1", "--project", project, "engine axis probe"];
+    default: {
+      const _exhaustive: never = role;
+      throw new Error(`unexpected role: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → childEnv + invocation.engine",
+  async () => {
+    assert.equal(PUBLIC_CALLABLE_ROLES.length, 7);
+    await withTempHome(async (home) => {
+      const baseProject = join(home, "project");
+      await mkdir(baseProject, { recursive: true });
+      seedGitProject(baseProject);
+
+      const mergerProject = join(home, "merger-project");
+      await mkdir(mergerProject, { recursive: true });
+      await materializeConflictedRepo(mergerProject);
+
+      for (const role of PUBLIC_CALLABLE_ROLES) {
+        assert.equal(isEngineAxisSeat(role), true, `${role} must be engine-axis seat`);
+        const project = role === "merger" ? mergerProject : baseProject;
+        const bookKey = resolveBookKeyFromGit(project);
+
+        // Seed model so set-engine is legal.
+        const seed = captureIo();
+        const setModel = await runAkRole(
+          ["config", "set", role, "openai-codex/gpt-5.6-sol:high"],
+          { packageRoot, home, io: seed.io },
+        );
+        assert.equal(setModel.exitCode, 0, `${role} model seed: ${seed.stderr.join("")}`);
+
+        // --- invocation --engine path ---
+        {
+          let capturedEnv: NodeJS.ProcessEnv | undefined;
+          const runId = `engine-table-invoke-${role}`;
+          const { io, stderr } = captureIo();
+          const result = await runAkRole(
+            ["--engine", "table-engine", ...roleEngineProbeArgv(role, project)],
+            {
+              packageRoot,
+              home,
+              cwd: project,
+              createRunId: () => runId,
+              credentials,
+              io,
+              piRunner: async (_args, options) => {
+                capturedEnv = options.env;
+                return {
+                  code: 1,
+                  stderr: "stop after capture",
+                  timedOut: false,
+                  args: [..._args],
+                };
+              },
+            },
+          );
+          assert.notEqual(
+            result.exitCode,
+            2,
+            `${role} --engine structural reject: ${stderr.join("")}`,
+          );
+          assert.equal(
+            capturedEnv !== undefined,
+            true,
+            `${role} --engine piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+          );
+          assert.equal(
+            capturedEnv?.[AK_ROLE_ENGINE_ENV],
+            "table-engine",
+            `${role} --engine childEnv[AK_ROLE_ENGINE]`,
+          );
+          const invocation = readRoleInvocation(home, bookKey, runId, role);
+          assert.equal(
+            invocation.engine,
+            "table-engine",
+            `${role} --engine invocation.engine`,
+          );
+        }
+
+        // --- persistent set-engine path ---
+        {
+          const setIo = captureIo();
+          const setEngine = await runAkRole(
+            ["config", "set-engine", role, "persist-engine"],
+            { packageRoot, home, io: setIo.io },
+          );
+          assert.equal(
+            setEngine.exitCode,
+            0,
+            `${role} set-engine: ${setIo.stderr.join("")}`,
+          );
+          assert.equal(
+            (await loadPublicCliConfig(home)).seats[role]?.engine,
+            "persist-engine",
+          );
+
+          let capturedEnv: NodeJS.ProcessEnv | undefined;
+          const runId = `engine-table-persist-${role}`;
+          const { io, stderr } = captureIo();
+          const result = await runAkRole(roleEngineProbeArgv(role, project), {
+            packageRoot,
+            home,
+            cwd: project,
+            createRunId: () => runId,
+            credentials,
+            io,
+            piRunner: async (_args, options) => {
+              capturedEnv = options.env;
+              return {
+                code: 1,
+                stderr: "stop after capture",
+                timedOut: false,
+                args: [..._args],
+              };
+            },
+          });
+          assert.notEqual(
+            result.exitCode,
+            2,
+            `${role} set-engine path structural reject: ${stderr.join("")}`,
+          );
+          assert.equal(
+            capturedEnv !== undefined,
+            true,
+            `${role} set-engine piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+          );
+          assert.equal(
+            capturedEnv?.[AK_ROLE_ENGINE_ENV],
+            "persist-engine",
+            `${role} set-engine childEnv[AK_ROLE_ENGINE]`,
+          );
+          const invocation = readRoleInvocation(home, bookKey, runId, role);
+          assert.equal(
+            invocation.engine,
+            "persist-engine",
+            `${role} set-engine invocation.engine`,
+          );
+
+          // Clear so the next role's home config stays tidy.
+          await runAkRole(["config", "unset-engine", role], {
+            packageRoot,
+            home,
+            io: captureIo().io,
+          });
+        }
+      }
+    });
+  },
+);
+
+test("#391 E4 negative table: navigator / taishi / resume / illegal / model-before-engine / disk navigator",
+  async () => {
+    await withTempHome(async (home) => {
+      // navigator set-engine refused with independent-activation reason.
+      {
+        await runAkRole(
+          ["config", "set", "navigator", "openai-codex/gpt-5.6-luna:medium"],
+          { packageRoot, home, io: captureIo().io },
+        );
+        const { io, stderr } = captureIo();
+        const result = await runAkRole(
+          ["config", "set-engine", "navigator", "opus"],
+          { packageRoot, home, io },
+        );
+        assert.notEqual(result.exitCode, 0);
+        assert.match(
+          stderr.join(""),
+          /no independent activation/i,
+          `navigator set-engine stderr must state reason: ${stderr.join("")}`,
+        );
+        assert.equal(
+          (await loadPublicCliConfig(home)).seats.navigator?.engine,
+          undefined,
+        );
+      }
+
+      // navigator unset-engine also refused (same gate).
+      {
+        const { io, stderr } = captureIo();
+        const result = await runAkRole(
+          ["config", "unset-engine", "navigator"],
+          { packageRoot, home, io },
+        );
+        assert.notEqual(result.exitCode, 0);
+        assert.match(stderr.join(""), /no independent activation/i);
+      }
+
+      // navigator model config remains legal (not part of engine refusal).
+      {
+        const { io, stderr } = captureIo();
+        const result = await runAkRole(
+          ["config", "set", "navigator", "openai-codex/gpt-5.6-luna:high"],
+          { packageRoot, home, io },
+        );
+        assert.equal(result.exitCode, 0, stderr.join(""));
+      }
+
+      // Disk-handwritten seats.navigator.engine rejected at validate seam.
+      {
+        await writeFile(
+          join(home, ".ak-roles", "public-cli.json"),
+          `${JSON.stringify({
+            seats: {
+              navigator: {
+                provider: "openai-codex",
+                model: "gpt-5.6-luna",
+                thinking: "medium",
+                engine: "smuggled",
+              },
+            },
+          }, null, 2)}\n`,
+          "utf8",
+        );
+        const loaded = await loadPublicCliConfig(home);
+        assert.throws(
+          () => validatePublicCliConfigEngines(loaded, packageRoot),
+          /no independent activation/,
+        );
+        // CLI load path surfaces the same refusal.
+        const { io, stderr } = captureIo();
+        const result = await runAkRole(["config", "get"], {
+          packageRoot,
+          home,
+          io,
+        });
+        assert.notEqual(result.exitCode, 0);
+        assert.match(stderr.join(""), /no independent activation/);
+      }
+
+      // Restore a clean config for subsequent cases.
+      await writeFile(
+        join(home, ".ak-roles", "public-cli.json"),
+        `${JSON.stringify({ seats: {} }, null, 2)}\n`,
+        "utf8",
+      );
+
+      // taishi --engine structural refuse.
+      {
+        const { io, stderr } = captureIo();
+        const result = await runAkRole(
+          ["taishi", "--engine", "opus", "--issue", "1"],
+          { packageRoot, home, io },
+        );
+        assert.equal(result.exitCode, 2);
+        assert.match(
+          stderr.join(""),
+          /engine axis is role commands only; refused command taishi/,
+        );
+      }
+
+      // resume --engine structural refuse (provenance must not rewrite).
+      {
+        const { io, stderr } = captureIo();
+        const result = await runAkRole(
+          ["resume", "--engine", "opus", "run-not-real"],
+          { packageRoot, home, io },
+        );
+        assert.equal(result.exitCode, 2);
+        assert.match(
+          stderr.join(""),
+          /engine axis is role commands only; refused command resume/,
+        );
+      }
+
+      // Illegal engine name on set-engine.
+      {
+        await runAkRole(
+          ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
+          { packageRoot, home, io: captureIo().io },
+        );
+        const { io, stderr } = captureIo();
+        const result = await runAkRole(
+          ["config", "set-engine", "judge", "bad/name"],
+          { packageRoot, home, io },
+        );
+        assert.equal(result.exitCode, 2);
+        assert.match(stderr.join(""), /illegal engine name/);
+      }
+
+      // set-engine before persistent model.
+      {
+        const { io, stderr } = captureIo();
+        const result = await runAkRole(
+          ["config", "set-engine", "coder", "opus"],
+          { packageRoot, home, io },
+        );
+        assert.notEqual(result.exitCode, 0);
+        assert.match(stderr.join(""), /no persistent model/);
+      }
+
+      // Unknown seat on set-engine.
+      {
+        const { io, stderr } = captureIo();
+        const result = await runAkRole(
+          ["config", "set-engine", "not-a-seat", "opus"],
+          { packageRoot, home, io },
+        );
+        assert.notEqual(result.exitCode, 0);
+        assert.match(stderr.join(""), /unknown engine-axis seat/);
+      }
+    });
+  },
+);

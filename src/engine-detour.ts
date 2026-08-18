@@ -8,8 +8,24 @@ import { spawn } from "node:child_process";
 /** Package-owned detour tool name (settlement whitelist + session principal). */
 export const ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour" as const;
 
-/** Env presence/name signal injected by public Judge run (registration gate only). */
+/** Env presence/name signal injected by public role runs (registration gate only). */
 export const AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE" as const;
+
+/**
+ * Sole AK_ROLE_ENGINE write seam for public role child env (#391 E2).
+ * Delete ambient inheritance first; own-key undefined mask survives process.env re-merge.
+ */
+export function applyEngineChildEnv(
+  childEnv: NodeJS.ProcessEnv,
+  engine?: string,
+): void {
+  delete childEnv[AK_ROLE_ENGINE_ENV];
+  if (engine !== undefined && engine.trim() !== "") {
+    childEnv[AK_ROLE_ENGINE_ENV] = engine.trim();
+  } else {
+    childEnv[AK_ROLE_ENGINE_ENV] = undefined;
+  }
+}
 
 export const ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC =
   "engine detour produced empty stdout" as const;

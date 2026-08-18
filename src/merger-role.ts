@@ -1,4 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  readActivationEngineLaborFallbackField,
+  withEngineLaborFallbackField,
+} from "./engine-labor-fallback.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, mergerOutputSchema, validateMergerInput, validateMergerOutput, type MergerInput } from "./merger-contracts.ts";
 import type { MergerGitState } from "./merger-git-state.ts";
 import { exactUtf8 } from "./exact-utf8.ts";
@@ -47,7 +51,11 @@ export function createMergerRoleRuntime(pi: ExtensionAPI, dependencies: MergerRo
             if (state.mergeCommitId !== output.mergeCommitId || !same(state.parentObjectIds, [activation.input.targetObjectId, activation.input.sourceObjectId]) || state.unmergedPaths.length !== 0 || !state.worktreeClean || state.resolutionChangedPaths.some(path => !scope.has(path))) host.failInfrastructure(new Error("Merger completed-state verification failed"), ctx, id);
           }
           accepted = true;
-          return { content: [{ type: "text" as const, text: MERGER_ACCEPTED_TEXT }], details: output, terminate: true as const };
+          const acceptedDetails = withEngineLaborFallbackField(
+            output,
+            readActivationEngineLaborFallbackField(),
+          );
+          return { content: [{ type: "text" as const, text: MERGER_ACCEPTED_TEXT }], details: acceptedDetails, terminate: true as const };
         } });
       pi.on("before_agent_start", event => { if (!activation) throw new Error("Merger is not activated"); const admitted = { attemptId: activation.input.attemptId, targetObjectId: activation.input.targetObjectId, sourceObjectId: activation.input.sourceObjectId, task: materialText(activation.input, "task"), authority: materialText(activation.input, "authority"), targetIntent: materialText(activation.input, "targetIntent"), sourceIntent: materialText(activation.input, "sourceIntent"), expectedConflictPaths: activation.input.expectedConflictPaths, resolutionScope: activation.input.resolutionScope, authorizedChecks: activation.input.authorizedChecks }; return { systemPrompt: `${event.systemPrompt}\n\n<merger_soul>\n${activation.soul}\n</merger_soul>\n\n<merger_assignment>\n${JSON.stringify(admitted)}\n</merger_assignment>` }; });
     }

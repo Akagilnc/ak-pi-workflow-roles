@@ -8,6 +8,8 @@ import { join, resolve } from "node:path";
 
 import { ensureRealDirectoryTree } from "../activation-ledger-topology.ts";
 import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
+import { applyEngineChildEnv } from "../engine-detour.ts";
+import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -83,6 +85,8 @@ export type MergerRunEnv = {
   correlationId?: string;
   piRunner?: ExplicitInternalPiRunner;
   model?: SeatModelConfig;
+  /** Optional labor engine name (config→activation; session material + env signal). */
+  engine?: string;
   credentials?: CredentialProviders;
   createRunId?: () => string;
   extraPiArgs?: readonly string[];
@@ -100,10 +104,14 @@ export function buildMergerActivationExtraArgs(
   options: {
     packageRoot: string;
     model?: SeatModelConfig;
+    engine?: string;
     extraPiArgs?: readonly string[];
   },
 ): string[] {
-  const prompt = buildMergerTransportPrompt(admitted);
+  const prompt = buildMergerTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options),
+  );
   const skillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "resolving-merge-conflicts",
@@ -271,12 +279,13 @@ async function dispatchAdmittedMerger(input: {
   extraArgs: string[];
   lease: RunWriterLease;
   methodMaterial: PackagedMethodSkillMaterial;
+  effectiveEngine?: string;
 }): Promise<{
   exitCode: number;
   admitted: AdmittedMergerInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
+  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -289,7 +298,7 @@ async function dispatchAdmittedMerger(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
@@ -298,6 +307,7 @@ async function dispatchAdmittedMerger(input: {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
+    applyEngineChildEnv(childEnv, env.engine);
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== undefined && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -576,6 +586,7 @@ export async function runPublicMerger(
   const extraArgs = buildMergerActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
@@ -589,6 +600,7 @@ export async function runPublicMerger(
     extraArgs,
     lease,
     methodMaterial,
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 
