@@ -1,7 +1,7 @@
 /**
- * #380 S1/S2 — package structure oracle for sole engineLaborFallback producer.
+ * #380 S1/S2 / #391 — package structure oracle for sole engineLaborFallback producer.
  * S1: exactly one src module with exactly one construction/assignment of the field.
- * S2: judge + reviewer failure/accept chains both reach that sole producer via imports.
+ * S2: all role accept chains + detour paths reach that sole producer via imports.
  */
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
@@ -304,24 +304,28 @@ test("S1 negative: zero / cross-module / same-module split all fail the cardinal
   );
 });
 
-test("S2: judge and reviewer chains both reach the sole producer module", async () => {
+test("S2: all role chains reach the sole producer module", async () => {
   const producer = "src/engine-labor-fallback.ts";
-  const judgeReachable = await collectReachableImports("src/judge-role.ts");
-  const reviewerReachable = await collectReachableImports("src/reviewer-role.ts");
+  const roleEntryPoints = [
+    "src/judge-role.ts",
+    "src/reviewer-role.ts",
+    "src/worker-role.ts",
+    "src/doctor-role.ts",
+    "src/collector-role.ts",
+    "src/merger-role.ts",
+  ] as const;
+  for (const entry of roleEntryPoints) {
+    const reachable = await collectReachableImports(entry);
+    assert.equal(
+      reachable.has(producer),
+      true,
+      `S2 failure: ${entry} accept chain cannot reach sole producer`,
+    );
+  }
   const detourReachable = await collectReachableImports("src/engine-detour-tool.ts");
   const evidenceReachable = await collectReachableImports("src/evidence-child-executor.ts");
   const runtimeReachable = await collectReachableImports("src/role-runtime.ts");
 
-  assert.equal(
-    judgeReachable.has(producer),
-    true,
-    "S2 failure: judge accept chain cannot reach sole producer",
-  );
-  assert.equal(
-    reviewerReachable.has(producer),
-    true,
-    "S2 failure: reviewer accept chain cannot reach sole producer",
-  );
   assert.equal(
     detourReachable.has(producer),
     true,

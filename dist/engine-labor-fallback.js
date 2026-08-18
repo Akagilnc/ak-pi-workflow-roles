@@ -46,7 +46,7 @@ export function withEngineLaborFallbackField(receipt, field) {
     const { engineLaborFallback: _forged, ...rest } = receipt;
     return rest;
 }
-/** Install the activation-scoped latch (Judge/Reviewer session_start). */
+/** Install the activation-scoped latch (any role session_start with engine). */
 export function installActivationEngineLaborFallbackLatch(latch) {
     activationLatch = latch;
 }

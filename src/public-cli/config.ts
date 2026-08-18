@@ -10,6 +10,7 @@ import {
   AUTOMATIC_NAVIGATOR_SEAT,
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
+  isPublicConfigurableSeat,
   type ModelRef,
   type PublicConfigurableSeat,
   type PublicThinkingLevel,
@@ -116,13 +117,13 @@ export function setPersistentSeatConfig(
   };
 }
 
-/** Seats that own the labor-engine axis (#356 Judge; #378 Reviewer). */
-export function isEngineAxisSeat(seat: string): seat is "judge" | "reviewer" {
-  return seat === "judge" || seat === "reviewer";
+/** Seats that own the labor-engine axis (#356/#378/#391: all configurable seats). */
+export function isEngineAxisSeat(seat: string): seat is PublicConfigurableSeat {
+  return isPublicConfigurableSeat(seat);
 }
 
 /**
- * Set or clear persistent engine on Judge or Reviewer (#356 / #378).
+ * Set or clear persistent engine on any configurable seat (#356 / #378 / #391).
  * Engine-only seats are rejected — provider/model[:thinking] remains required first.
  */
 export function setPersistentSeatEngine(
@@ -130,9 +131,6 @@ export function setPersistentSeatEngine(
   seat: PublicConfigurableSeat,
   engine: string | undefined,
 ): PublicCliConfig {
-  if (!isEngineAxisSeat(seat)) {
-    throw new Error(`engine axis is judge+reviewer only; refused seat ${seat}`);
-  }
   const previous = config.seats[seat];
   if (previous === undefined) {
     throw new Error(
@@ -166,8 +164,8 @@ export function seatModelOnly(seat: PersistentSeatConfig): SeatModelConfig {
 }
 
 /**
- * Config-parse seam: engine axis is Judge+Reviewer; engine names need only
- * path-safety syntax (no closed material catalog; #376 / #378 / ADR 0069).
+ * Config-parse seam: engine axis is all configurable seats; engine names need only
+ * path-safety syntax (no closed material catalog; #376 / #378 / #391 / ADR 0069).
  * Call with packageRoot after load / before dispatch (#356).
  * Syntax authority = assertLegalEngineName (no injected duplicate).
  */
@@ -178,11 +176,6 @@ export function validatePublicCliConfigEngines(
   for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
     const row = config.seats[seat];
     if (row?.engine === undefined) continue;
-    if (!isEngineAxisSeat(seat)) {
-      throw new Error(
-        `config seat ${seat} engine is not allowed; engine axis is judge+reviewer only`,
-      );
-    }
     try {
       assertLegalEngineName(row.engine);
     } catch (error) {
@@ -356,13 +349,7 @@ function attachEngineAxis(
   config: PublicCliConfig,
   invocation?: InvocationModelOverride,
 ): EffectiveSeat {
-  // #356 / #378: engine axis is Judge+Reviewer. Other seats stay unconfigured.
-  if (!isEngineAxisSeat(seat.seat)) {
-    return {
-      ...seat,
-      engineSource: "unconfigured",
-    };
-  }
+  // #356 / #378 / #391: engine axis is every configurable seat.
   const persistentEngine = config.seats[seat.seat]?.engine;
   if (invocation?.engine !== undefined) {
     return {

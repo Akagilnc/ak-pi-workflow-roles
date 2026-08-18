@@ -1,11 +1,10 @@
 /**
- * #356 T1 / #376 / #378 — Judge+Reviewer engine axis on config → activation material seams.
+ * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
  * Two delivery paths: with packaged notes (cursor) / name-only without notes (any free name).
- * No closed material catalog. Reviewer inherits the same dual-path contract (#378).
+ * No closed material catalog. All seats inherit the same dual-path contract (#378/#391).
  * Zero assertions on engine material body CLI invocation text.
  * Zero assertions on free-prose delivery wording / layout.
- * Non-engine seats deliberately have no engine selection/passthrough/material.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -238,7 +237,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     validatePublicCliConfigEngines(reviewerCfg, packageRoot);
     assert.equal(reviewerCfg.seats.reviewer?.engine, "cursor");
 
-    // Non-engine seat field is refused at validate seam (judge+reviewer only).
+    // Non-judge seat engine field is accepted at validate seam (#391 all roles).
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
       `${JSON.stringify({
@@ -253,11 +252,9 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
       }, null, 2)}\n`,
       "utf8",
     );
-    const nonJudge = await loadPublicCliConfig(home);
-    assert.throws(
-      () => validatePublicCliConfigEngines(nonJudge, packageRoot),
-      /config seat coder engine is not allowed; engine axis is judge\+reviewer only/,
-    );
+    const coderCfg = await loadPublicCliConfig(home);
+    validatePublicCliConfigEngines(coderCfg, packageRoot);
+    assert.equal(coderCfg.seats.coder?.engine, "opus");
 
     // Syntax-illegal engine name in on-disk judge config is rejected at validate seam.
     await writeFile(
@@ -353,12 +350,12 @@ test("engine priority: invocation > persistent > unconfigured (judge only)", () 
   assert.equal(reviewerInvocation.engine, "opus");
   assert.equal(reviewerInvocation.engineSource, "invocation");
 
-  // Non-engine seats never attach engine even if invocation carries one.
+  // Fixer seat attaches engine the same way (#391).
   const fixer = resolveEffectiveSeat({ seats: {} }, "fixer", credentials, {
     engine: "opus",
   });
-  assert.equal(fixer.engine, undefined);
-  assert.equal(fixer.engineSource, "unconfigured");
+  assert.equal(fixer.engine, "opus");
+  assert.equal(fixer.engineSource, "invocation");
 });
 
 // --- default-path byte oracle (frozen baseline 3aec6621 golden) --------------
@@ -862,15 +859,15 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       assertNoEngineFlagsInArgv(capturedArgs!);
     }
 
-    // Non-engine command with --engine → structural reject (judge+reviewer only).
+    // Non-role command with --engine → structural reject (roles only; resume stays off-axis).
     {
       const { io, stderr } = captureIo();
       const result = await runAkRole(
-        ["coder", "--engine", "opus", "--project", project, "x"],
+        ["resume", "--engine", "opus", "run-not-real"],
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /engine axis is judge\+reviewer only; refused command coder/);
+      assert.match(stderr.join(""), /engine axis is role commands only; refused command resume/);
     }
 
     // Syntax-illegal persistent engine on load → structural reject.
@@ -954,7 +951,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       assert.equal(after.seats.reviewer?.engine, "cursor");
     }
 
-    // set-engine on non-engine seat rejects.
+    // set-engine on coder seat persists (#391 all roles).
     {
       await runAkRole(
         ["config", "set", "coder", "openai-codex/gpt-5.6-sol:high"],
@@ -965,8 +962,135 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         ["config", "set-engine", "coder", "opus"],
         { packageRoot, home, io },
       );
-      assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /engine axis is judge\+reviewer only; refused seat coder/);
+      assert.equal(result.exitCode, 0, stderr.join(""));
+      const after = await loadPublicCliConfig(home);
+      assert.equal(after.seats.coder?.engine, "opus");
+    }
+  });
+});
+
+test("#391 fixer --engine and set-engine: env signal + material coordinates; free name ok", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: project });
+    execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: project });
+    execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+
+    await runAkRole(
+      ["config", "set", "fixer", "openai-codex/gpt-5.6-sol:high"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    {
+      const { io, stderr } = captureIo();
+      const setEngine = await runAkRole(
+        ["config", "set-engine", "fixer", "cursor"],
+        { packageRoot, home, io },
+      );
+      assert.equal(setEngine.exitCode, 0, stderr.join(""));
+      const persisted = await loadPublicCliConfig(home);
+      assert.equal(persisted.seats.fixer?.engine, "cursor");
+    }
+
+    const materialCursor = resolveEngineMaterialPath(packageRoot, "cursor");
+    await access(materialCursor);
+
+    // Persistent engine alone reaches pi with env + material coordinates.
+    {
+      let capturedArgs: string[] | undefined;
+      let capturedEnv: NodeJS.ProcessEnv | undefined;
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        ["fixer", "--project", project, "fixer engine persistent path"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "engine-fixer-persist-001",
+          credentials,
+          io,
+          piRunner: async (args, options) => {
+            capturedArgs = [...args];
+            capturedEnv = options.env;
+            return {
+              code: 1,
+              stderr: "stop after capture",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.notEqual(
+        result.exitCode,
+        2,
+        `fixer set-engine path must not structural-reject: ${stderr.join("")}`,
+      );
+      assert.equal(
+        Array.isArray(capturedArgs),
+        true,
+        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+      );
+      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
+      assertEngineCoordinatesWithMaterial(capturedPrompt, "cursor", materialCursor);
+      assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "cursor");
+      assertNoEngineFlagsInArgv(capturedArgs!);
+    }
+
+    // Invocation --engine overrides persistent and still wires env.
+    {
+      let capturedArgs: string[] | undefined;
+      let capturedEnv: NodeJS.ProcessEnv | undefined;
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        [
+          "fixer",
+          "--engine",
+          "nope-engine",
+          "--project",
+          project,
+          "fixer engine invocation wins",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "engine-fixer-invoke-001",
+          credentials,
+          io,
+          piRunner: async (args, options) => {
+            capturedArgs = [...args];
+            capturedEnv = options.env;
+            return {
+              code: 1,
+              stderr: "stop after capture",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.notEqual(
+        result.exitCode,
+        2,
+        `fixer --engine must not structural-reject: ${stderr.join("")}`,
+      );
+      assert.equal(
+        Array.isArray(capturedArgs),
+        true,
+        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+      );
+      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
+      assertEngineCoordinatesNameOnly(
+        capturedPrompt,
+        "nope-engine",
+        resolveEngineMaterialPath(packageRoot, "nope-engine"),
+        stderr.join(""),
+      );
+      assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "nope-engine");
+      assert.equal(capturedPrompt.includes(materialCursor), false);
+      assertNoEngineFlagsInArgv(capturedArgs!);
     }
   });
 });

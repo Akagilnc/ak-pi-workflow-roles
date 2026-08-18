@@ -6,6 +6,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { AK_ROLE_ENGINE_ENV } from "../engine-detour.ts";
+import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   runExplicitInternalActivation,
   type ExplicitInternalKnownFailure,
@@ -65,6 +67,8 @@ export type DoctorRunEnv = {
   correlationId?: string;
   piRunner?: ExplicitInternalPiRunner;
   model?: SeatModelConfig;
+  /** Optional labor engine name (config→activation; session material + env signal). */
+  engine?: string;
   credentials?: CredentialProviders;
   createRunId?: () => string;
   extraPiArgs?: readonly string[];
@@ -81,10 +85,15 @@ export function buildDoctorActivationExtraArgs(
   admitted: AdmittedDoctorInvocation,
   options: {
     model?: SeatModelConfig;
+    engine?: string;
+    packageRoot?: string;
     extraPiArgs?: readonly string[];
   } = {},
 ): string[] {
-  const prompt = buildDoctorTransportPrompt(admitted);
+  const prompt = buildDoctorTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options),
+  );
   return [
     "--no-skills",
     "--no-prompt-templates",
@@ -155,12 +164,13 @@ async function dispatchAdmittedDoctor(input: {
   io: CliIo;
   extraArgs: string[];
   lease: RunWriterLease;
+  effectiveEngine?: string;
 }): Promise<{
   exitCode: number;
   admitted: AdmittedDoctorInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease } = input;
+  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -173,7 +183,7 @@ async function dispatchAdmittedDoctor(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
@@ -182,6 +192,12 @@ async function dispatchAdmittedDoctor(input: {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
+    delete childEnv[AK_ROLE_ENGINE_ENV];
+    if (env.engine !== undefined && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = undefined;
+    }
     if (env.correlationId !== undefined && env.correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = env.correlationId;
     }
@@ -333,7 +349,9 @@ export async function runPublicDoctor(
   }
 
   const extraArgs = buildDoctorActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
@@ -343,5 +361,6 @@ export async function runPublicDoctor(
     io,
     extraArgs,
     lease,
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

@@ -6,6 +6,10 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
+import {
+  readActivationEngineLaborFallbackField,
+  withEngineLaborFallbackField,
+} from "./engine-labor-fallback.ts";
 
 import type {
   AnyCanonicalSkillBinding,
@@ -288,9 +292,14 @@ export function createFixerRoleRuntime(
               ctx,
               toolCallId,
             );
+            // #391: attach sole-built engineLaborFallback when detour fell back to seat labor.
+            const acceptedDetails = withEngineLaborFallbackField(
+              output,
+              readActivationEngineLaborFallbackField(),
+            );
             return {
               content: [{ type: "text" as const, text: "Fixer report accepted" }],
-              details: output,
+              details: acceptedDetails,
               terminate: true as const,
             };
           },
@@ -427,9 +436,14 @@ export function createCoderRoleRuntime(
               ctx,
               toolCallId,
             );
+            // #391: attach sole-built engineLaborFallback when detour fell back to seat labor.
+            const acceptedDetails = withEngineLaborFallbackField(
+              output,
+              readActivationEngineLaborFallbackField(),
+            );
             return {
               content: [{ type: "text" as const, text: "Coder report accepted" }],
-              details: output,
+              details: acceptedDetails,
               terminate: true as const,
             };
           },

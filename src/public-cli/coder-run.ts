@@ -6,6 +6,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { AK_ROLE_ENGINE_ENV } from "../engine-detour.ts";
+import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -79,6 +81,8 @@ export type CoderRunEnv = {
   correlationId?: string;
   piRunner?: ExplicitInternalPiRunner;
   model?: SeatModelConfig;
+  /** Optional labor engine name (config→activation; session material + env signal). */
+  engine?: string;
   credentials?: CredentialProviders;
   createRunId?: () => string;
   extraPiArgs?: readonly string[];
@@ -96,10 +100,14 @@ export function buildCoderActivationExtraArgs(
   options: {
     packageRoot: string;
     model?: SeatModelConfig;
+    engine?: string;
     extraPiArgs?: readonly string[];
   },
 ): string[] {
-  const prompt = buildCoderTransportPrompt(admitted);
+  const prompt = buildCoderTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options),
+  );
   const skillArgs =
     admitted.phase === "apply"
       ? [
@@ -276,12 +284,14 @@ async function dispatchAdmittedCoder(input: {
   extraArgs: string[];
   lease: RunWriterLease;
   methodProvenance?: PackagedMethodSkillProvenance;
+  /** Mechanical engine provenance for initial Coder dispatch only. */
+  effectiveEngine?: string;
 }): Promise<{
   exitCode: number;
   admitted: AdmittedCoderInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease, methodProvenance } = input;
+  const { admitted, env, io, extraArgs, lease, methodProvenance, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -294,7 +304,7 @@ async function dispatchAdmittedCoder(input: {
         io,
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
@@ -303,6 +313,12 @@ async function dispatchAdmittedCoder(input: {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
+    delete childEnv[AK_ROLE_ENGINE_ENV];
+    if (env.engine !== undefined && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = undefined;
+    }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== undefined && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -474,6 +490,7 @@ export async function runPublicCoder(
   const extraArgs = buildCoderActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
@@ -487,6 +504,7 @@ export async function runPublicCoder(
     extraArgs,
     lease,
     ...(methodProvenance === undefined ? {} : { methodProvenance }),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 

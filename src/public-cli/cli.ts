@@ -16,7 +16,6 @@ import {
   parseModelSpec,
   resolveEffectiveSeat,
   savePublicCliConfig,
-  isEngineAxisSeat,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
   validatePublicCliConfigEngines,
@@ -59,6 +58,7 @@ import { runPublicTaishi } from "./taishi-run.ts";
 import { peekRoleRunRole } from "./run-lifecycle.ts";
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
+  isPublicCallableRole,
   isPublicCliSupportCommand,
   isPublicConfigurableSeat,
   listHelpCapabilities,
@@ -419,7 +419,7 @@ function renderHelp(): string {
     "",
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]>",
-    "Persistent engine (judge|reviewer): ak-role config set-engine <seat> <name> | unset-engine <seat>",
+    "Persistent engine (any seat): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Effective seats: ak-role roles",
   );
   return `${lines.join("\n")}\n`;
@@ -536,18 +536,13 @@ async function runConfigCommand(
   if (args[0] === "set-engine") {
     if (args.length !== 3) {
       throw new CliUsageError(
-        "usage: ak-role config set-engine <judge|reviewer> <name>",
+        "usage: ak-role config set-engine <seat> <name>",
       );
     }
     const seat = args[1]!;
     const name = args[2]!;
     if (!isPublicConfigurableSeat(seat)) {
       throw new CliUsageError(`unknown configurable seat: ${seat}`);
-    }
-    if (!isEngineAxisSeat(seat)) {
-      throw new CliUsageError(
-        `engine axis is judge+reviewer only; refused seat ${seat}`,
-      );
     }
     requireLegalEngineName(name);
     let config = await loadAndValidateConfig(home, packageRoot);
@@ -567,17 +562,12 @@ async function runConfigCommand(
   if (args[0] === "unset-engine") {
     if (args.length !== 2) {
       throw new CliUsageError(
-        "usage: ak-role config unset-engine <judge|reviewer>",
+        "usage: ak-role config unset-engine <seat>",
       );
     }
     const seat = args[1]!;
     if (!isPublicConfigurableSeat(seat)) {
       throw new CliUsageError(`unknown configurable seat: ${seat}`);
-    }
-    if (!isEngineAxisSeat(seat)) {
-      throw new CliUsageError(
-        `engine axis is judge+reviewer only; refused seat ${seat}`,
-      );
     }
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
@@ -609,17 +599,17 @@ export async function runAkRole(
     env = { ...env, packageRoot: await realpath(env.packageRoot) };
     const parsed = parseArgv(argv);
     // Invocation --engine rejects at the call-request seam (not role submission).
-    // #356 / #378: engine axis is Judge+Reviewer (not resume / other seats).
+    // #356 / #378 / #391: engine axis is every callable role (not resume / support).
     if (parsed.engine !== undefined) {
       requireLegalEngineName(parsed.engine);
       if (
         !parsed.help &&
         parsed.command !== undefined &&
         parsed.command !== "help" &&
-        !isEngineAxisSeat(parsed.command)
+        !isPublicCallableRole(parsed.command)
       ) {
         throw new CliUsageError(
-          `engine axis is judge+reviewer only; refused command ${parsed.command}`,
+          `engine axis is role commands only; refused command ${parsed.command}`,
         );
       }
     }
@@ -920,6 +910,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.coderExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.coderExtraPiArgs }),
@@ -963,6 +954,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.fixerExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.fixerExtraPiArgs }),
@@ -1006,6 +998,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.collectorExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.collectorExtraPiArgs }),
@@ -1093,6 +1086,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.doctorExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.doctorExtraPiArgs }),
@@ -1136,6 +1130,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
           ...(env.mergerExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.mergerExtraPiArgs }),
