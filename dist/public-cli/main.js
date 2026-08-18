@@ -14336,6 +14336,9 @@ function listHelpCapabilities() {
   );
   return [...support, ...roles, ...deterministic];
 }
+function isPublicCallableRole(value) {
+  return PUBLIC_CALLABLE_ROLES.includes(value);
+}
 function isPublicConfigurableSeat(value) {
   return PUBLIC_CONFIGURABLE_SEATS.includes(value);
 }
@@ -14439,13 +14442,7 @@ function setPersistentSeatConfig(config, seat, selection) {
     }
   };
 }
-function isEngineAxisSeat(seat) {
-  return seat === "judge" || seat === "reviewer";
-}
 function setPersistentSeatEngine(config, seat, engine) {
-  if (!isEngineAxisSeat(seat)) {
-    throw new Error(`engine axis is judge+reviewer only; refused seat ${seat}`);
-  }
   const previous = config.seats[seat];
   if (previous === void 0) {
     throw new Error(
@@ -14475,11 +14472,6 @@ function validatePublicCliConfigEngines(config, _packageRoot) {
   for (const seat of Object.keys(config.seats)) {
     const row = config.seats[seat];
     if (row?.engine === void 0) continue;
-    if (!isEngineAxisSeat(seat)) {
-      throw new Error(
-        `config seat ${seat} engine is not allowed; engine axis is judge+reviewer only`
-      );
-    }
     try {
       assertLegalEngineName(row.engine);
     } catch (error) {
@@ -14601,12 +14593,6 @@ function pickStartupCandidate(seat, credentials) {
   return void 0;
 }
 function attachEngineAxis(seat, config, invocation) {
-  if (!isEngineAxisSeat(seat.seat)) {
-    return {
-      ...seat,
-      engineSource: "unconfigured"
-    };
-  }
   const persistentEngine = config.seats[seat.seat]?.engine;
   if (invocation?.engine !== void 0) {
     return {
@@ -15909,8 +15895,8 @@ var init_option_definitions = __esm({
         repeatable: false,
         form: "option",
         description: {
-          en: "Optional Judge/Reviewer labor engine for this invocation (owner pool-directive name; packaged notes attached when present; judge+reviewer only).",
-          zh: "\u672C\u8C03\u7528\u53EF\u9009 Judge/Reviewer \u52B3\u52A8\u5F15\u64CE\uFF08\u6C60\u4EE4\u540D\u5B57\uFF1B\u6709\u5305\u5185\u8C03\u6CD5\u7B14\u8BB0\u5219\u9644\u5377\uFF1B\u4EC5 Judge+Reviewer\uFF09\u3002"
+          en: "Optional labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role).",
+          zh: "\u672C\u8C03\u7528\u53EF\u9009\u52B3\u52A8\u5F15\u64CE\uFF08\u6C60\u4EE4\u540D\u5B57\uFF1B\u6709\u5305\u5185\u8C03\u6CD5\u7B14\u8BB0\u5219\u9644\u5377\uFF1B\u5168\u90E8\u89D2\u8272\u53EF\u7528\uFF09\u3002"
         }
       },
       {
@@ -16776,7 +16762,7 @@ async function admitCoderInvocation(options) {
     ...ticketFields
   };
 }
-function buildCoderTransportPrompt(admitted) {
+function buildCoderTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
@@ -16785,7 +16771,7 @@ function buildCoderTransportPrompt(admitted) {
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return lines.join("\n");
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 async function admitFixerInvocation(options) {
   if (options.project !== void 0) {
@@ -16893,7 +16879,7 @@ async function admitFixerInvocation(options) {
     ...ticketFields
   };
 }
-function buildFixerTransportPrompt(admitted) {
+function buildFixerTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
@@ -16902,7 +16888,7 @@ function buildFixerTransportPrompt(admitted) {
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return lines.join("\n");
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 function parsePositivePrOption(raw) {
   if (raw === void 0 || raw.trim() === "") throw new CliUsageError("--pr requires a positive pull request number");
@@ -17133,8 +17119,8 @@ async function admitCollectorInvocation(options) {
     ...ticketFields
   };
 }
-function buildCollectorTransportPrompt(_admitted) {
-  return COLLECTOR_FIXED_KICKOFF;
+function buildCollectorTransportPrompt(_admitted, engineMaterial) {
+  return appendEngineSessionMaterial([COLLECTOR_FIXED_KICKOFF], engineMaterial).join("\n");
 }
 function parseDoctorIssueNumber(raw) {
   const trimmed = raw.trim();
@@ -17360,7 +17346,7 @@ async function admitDoctorInvocation(options) {
     ...ticketFields
   };
 }
-function buildDoctorTransportPrompt(admitted) {
+function buildDoctorTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
@@ -17369,7 +17355,7 @@ function buildDoctorTransportPrompt(admitted) {
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return lines.join("\n");
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 function parseReviewerArgv(args) {
   const attachmentPaths = [];
@@ -17672,7 +17658,7 @@ async function admitMergerInvocation(options) {
     ...ticketFields
   };
 }
-function buildMergerTransportPrompt(admitted) {
+function buildMergerTransportPrompt(admitted, engineMaterial) {
   const lines = [
     `/skill:resolving-merge-conflicts ${admitted.instruction}`
   ];
@@ -17683,7 +17669,7 @@ function buildMergerTransportPrompt(admitted) {
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return lines.join("\n");
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 function parseTaishiTicketNumber(raw, flag = "--ticket") {
   const trimmed = raw.trim();
@@ -18201,6 +18187,16 @@ var init_explicit_internal = __esm({
         });
       });
     };
+  }
+});
+
+// src/engine-detour.ts
+var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
+var init_engine_detour = __esm({
+  "src/engine-detour.ts"() {
+    "use strict";
+    ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
+    AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
   }
 });
 
@@ -19146,16 +19142,6 @@ var init_auditor_dossier_tool = __esm({
   "src/auditor-dossier-tool.ts"() {
     "use strict";
     init_build();
-  }
-});
-
-// src/engine-detour.ts
-var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
-var init_engine_detour = __esm({
-  "src/engine-detour.ts"() {
-    "use strict";
-    ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
-    AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
   }
 });
 
@@ -22381,7 +22367,10 @@ var init_settlement = __esm({
 import { writeFile as writeFile6 } from "node:fs/promises";
 import { join as join12 } from "node:path";
 function buildCoderActivationExtraArgs(admitted, options) {
-  const prompt = buildCoderTransportPrompt(admitted);
+  const prompt = buildCoderTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options)
+  );
   const skillArgs = admitted.phase === "apply" ? [
     "--skill",
     resolvePackagedMethodSkillPath(options.packageRoot, "tdd")
@@ -22486,7 +22475,7 @@ async function presentControlledFailure2(admitted, failureInput, io) {
   };
 }
 async function dispatchAdmittedCoder(input) {
-  const { admitted, env, io, extraArgs, lease, methodProvenance } = input;
+  const { admitted, env, io, extraArgs, lease, methodProvenance, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -22499,7 +22488,7 @@ async function dispatchAdmittedCoder(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22507,6 +22496,12 @@ async function dispatchAdmittedCoder(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
+    delete childEnv[AK_ROLE_ENGINE_ENV];
+    if (env.engine !== void 0 && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
+    }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -22652,6 +22647,7 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
   const extraArgs = buildCoderActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
   return await dispatchAdmittedCoder({
@@ -22663,7 +22659,8 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
     io,
     extraArgs,
     lease,
-    ...methodProvenance === void 0 ? {} : { methodProvenance }
+    ...methodProvenance === void 0 ? {} : { methodProvenance },
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 async function runPublicCoderResume(argv, env, io) {
@@ -22746,6 +22743,8 @@ async function runPublicCoderResume(argv, env, io) {
 var init_coder_run = __esm({
   "src/public-cli/coder-run.ts"() {
     "use strict";
+    init_engine_detour();
+    init_engine_material();
     init_method_skill();
     init_explicit_internal();
     init_cli_errors();
@@ -22761,7 +22760,10 @@ var init_coder_run = __esm({
 import { writeFile as writeFile7 } from "node:fs/promises";
 import { join as join13 } from "node:path";
 function buildCollectorActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildCollectorTransportPrompt(admitted);
+  const prompt = buildCollectorTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options)
+  );
   return [
     "--no-skills",
     "--no-prompt-templates",
@@ -22809,7 +22811,7 @@ async function presentControlledFailure3(admitted, failureInput, io) {
   };
 }
 async function dispatchAdmittedCollector(input) {
-  const { admitted, env, io, extraArgs, lease } = input;
+  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -22822,7 +22824,7 @@ async function dispatchAdmittedCollector(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -22830,6 +22832,12 @@ async function dispatchAdmittedCollector(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
+    delete childEnv[AK_ROLE_ENGINE_ENV];
+    if (env.engine !== void 0 && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
+    }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -22957,7 +22965,9 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
     throw error;
   }
   const extraArgs = buildCollectorActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
   return await dispatchAdmittedCollector({
@@ -22968,12 +22978,15 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
     },
     io,
     extraArgs,
-    lease
+    lease,
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 var init_collector_run = __esm({
   "src/public-cli/collector-run.ts"() {
     "use strict";
+    init_engine_detour();
+    init_engine_material();
     init_explicit_internal();
     init_cli_errors();
     init_invocation();
@@ -22988,7 +23001,10 @@ var init_collector_run = __esm({
 import { writeFile as writeFile8 } from "node:fs/promises";
 import { join as join14 } from "node:path";
 function buildDoctorActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildDoctorTransportPrompt(admitted);
+  const prompt = buildDoctorTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options)
+  );
   return [
     "--no-skills",
     "--no-prompt-templates",
@@ -23030,7 +23046,7 @@ async function presentControlledFailure4(admitted, failureInput, io) {
   };
 }
 async function dispatchAdmittedDoctor(input) {
-  const { admitted, env, io, extraArgs, lease } = input;
+  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -23043,7 +23059,7 @@ async function dispatchAdmittedDoctor(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -23051,6 +23067,12 @@ async function dispatchAdmittedDoctor(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
+    delete childEnv[AK_ROLE_ENGINE_ENV];
+    if (env.engine !== void 0 && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
+    }
     if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = env.correlationId;
     }
@@ -23183,7 +23205,9 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
     throw error;
   }
   const extraArgs = buildDoctorActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
   return await dispatchAdmittedDoctor({
@@ -23191,12 +23215,15 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
     env,
     io,
     extraArgs,
-    lease
+    lease,
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 var init_doctor_run = __esm({
   "src/public-cli/doctor-run.ts"() {
     "use strict";
+    init_engine_detour();
+    init_engine_material();
     init_explicit_internal();
     init_cli_errors();
     init_invocation();
@@ -23211,7 +23238,10 @@ var init_doctor_run = __esm({
 import { writeFile as writeFile9 } from "node:fs/promises";
 import { join as join15 } from "node:path";
 function buildFixerActivationExtraArgs(admitted, options) {
-  const prompt = buildFixerTransportPrompt(admitted);
+  const prompt = buildFixerTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options)
+  );
   const diagnosisSkillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "diagnosing-bugs"
@@ -23325,7 +23355,7 @@ async function presentControlledFailure5(admitted, failureInput, io) {
   };
 }
 async function dispatchAdmittedFixer(input) {
-  const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
+  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -23338,7 +23368,7 @@ async function dispatchAdmittedFixer(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -23346,6 +23376,12 @@ async function dispatchAdmittedFixer(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
+    delete childEnv[AK_ROLE_ENGINE_ENV];
+    if (env.engine !== void 0 && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
+    }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -23507,6 +23543,7 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
   const extraArgs = buildFixerActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
   return await dispatchAdmittedFixer({
@@ -23518,7 +23555,9 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
     io,
     extraArgs,
     lease,
-    methodMaterial
+    methodMaterial,
+    // #391: only initial Fixer dispatch records mechanical engine provenance.
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 async function runPublicFixerResume(argv, env, io) {
@@ -23594,6 +23633,8 @@ async function runPublicFixerResume(argv, env, io) {
 var init_fixer_run = __esm({
   "src/public-cli/fixer-run.ts"() {
     "use strict";
+    init_engine_detour();
+    init_engine_material();
     init_method_skill();
     init_explicit_internal();
     init_cli_errors();
@@ -23957,7 +23998,10 @@ var init_judge_run = __esm({
 import { mkdir as mkdir4, writeFile as writeFile11 } from "node:fs/promises";
 import { join as join17, resolve as resolve6 } from "node:path";
 function buildMergerActivationExtraArgs(admitted, options) {
-  const prompt = buildMergerTransportPrompt(admitted);
+  const prompt = buildMergerTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options)
+  );
   const skillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "resolving-merge-conflicts"
@@ -24060,7 +24104,7 @@ async function presentControlledFailure7(admitted, failureInput, io) {
   };
 }
 async function dispatchAdmittedMerger(input) {
-  const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
+  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -24073,7 +24117,7 @@ async function dispatchAdmittedMerger(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
@@ -24081,6 +24125,12 @@ async function dispatchAdmittedMerger(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
+    delete childEnv[AK_ROLE_ENGINE_ENV];
+    if (env.engine !== void 0 && env.engine.trim() !== "") {
+      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
+    } else {
+      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
+    }
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -24312,6 +24362,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
   const extraArgs = buildMergerActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
   return await dispatchAdmittedMerger({
@@ -24323,7 +24374,8 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
     io,
     extraArgs,
     lease,
-    methodMaterial
+    methodMaterial,
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 async function runPublicMergerResume(argv, env, io) {
@@ -24402,6 +24454,8 @@ var init_merger_run = __esm({
     "use strict";
     init_activation_ledger_topology();
     init_sitian_role_run_coordinates();
+    init_engine_detour();
+    init_engine_material();
     init_method_skill();
     init_uuidv7();
     init_explicit_internal();
@@ -27107,7 +27161,7 @@ function renderHelp() {
     "",
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]>",
-    "Persistent engine (judge|reviewer): ak-role config set-engine <seat> <name> | unset-engine <seat>",
+    "Persistent engine (any seat): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Effective seats: ak-role roles"
   );
   return `${lines.join("\n")}
@@ -27212,18 +27266,13 @@ async function runConfigCommand(args, home, packageRoot2, io) {
   if (args[0] === "set-engine") {
     if (args.length !== 3) {
       throw new CliUsageError(
-        "usage: ak-role config set-engine <judge|reviewer> <name>"
+        "usage: ak-role config set-engine <seat> <name>"
       );
     }
     const seat = args[1];
     const name = args[2];
     if (!isPublicConfigurableSeat(seat)) {
       throw new CliUsageError(`unknown configurable seat: ${seat}`);
-    }
-    if (!isEngineAxisSeat(seat)) {
-      throw new CliUsageError(
-        `engine axis is judge+reviewer only; refused seat ${seat}`
-      );
     }
     requireLegalEngineName(name);
     let config = await loadAndValidateConfig(home, packageRoot2);
@@ -27242,17 +27291,12 @@ async function runConfigCommand(args, home, packageRoot2, io) {
   if (args[0] === "unset-engine") {
     if (args.length !== 2) {
       throw new CliUsageError(
-        "usage: ak-role config unset-engine <judge|reviewer>"
+        "usage: ak-role config unset-engine <seat>"
       );
     }
     const seat = args[1];
     if (!isPublicConfigurableSeat(seat)) {
       throw new CliUsageError(`unknown configurable seat: ${seat}`);
-    }
-    if (!isEngineAxisSeat(seat)) {
-      throw new CliUsageError(
-        `engine axis is judge+reviewer only; refused seat ${seat}`
-      );
     }
     let config = await loadAndValidateConfig(home, packageRoot2);
     try {
@@ -27277,9 +27321,9 @@ async function runAkRole(argv, env) {
     const parsed = parseArgv(argv);
     if (parsed.engine !== void 0) {
       requireLegalEngineName(parsed.engine);
-      if (!parsed.help && parsed.command !== void 0 && parsed.command !== "help" && !isEngineAxisSeat(parsed.command)) {
+      if (!parsed.help && parsed.command !== void 0 && parsed.command !== "help" && !isPublicCallableRole(parsed.command)) {
         throw new CliUsageError(
-          `engine axis is judge+reviewer only; refused command ${parsed.command}`
+          `engine axis is role commands only; refused command ${parsed.command}`
         );
       }
     }
@@ -27508,6 +27552,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...seat.engine === void 0 ? {} : { engine: seat.engine },
           ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
           ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
@@ -27542,6 +27587,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...seat.engine === void 0 ? {} : { engine: seat.engine },
           ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
           ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
@@ -27576,6 +27622,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...seat.engine === void 0 ? {} : { engine: seat.engine },
           ...env.collectorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.collectorExtraPiArgs },
           ...env.collectorTimeoutMs === void 0 ? {} : { timeoutMs: env.collectorTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
@@ -27645,6 +27692,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...seat.engine === void 0 ? {} : { engine: seat.engine },
           ...env.doctorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.doctorExtraPiArgs },
           ...env.doctorTimeoutMs === void 0 ? {} : { timeoutMs: env.doctorTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
@@ -27679,6 +27727,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...seat.engine === void 0 ? {} : { engine: seat.engine },
           ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
           ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }

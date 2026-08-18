@@ -1,6 +1,6 @@
 /**
  * Package-owned engine detour tool (#357 T2 / #378 / #380).
- * Registered by shared role-runtime when Judge|Reviewer + engine activation signal is present.
+ * Registered by shared role-runtime when any role + engine activation signal is present.
  * Evidence-child legs install the same definition via customTools (no spawn in role modules).
  * #380: engine process failure soft-returns so the seat rejoins the main road; declaration
  * is recorded once via engine-labor-fallback (no fail-closed reject-leg).
@@ -204,7 +204,7 @@ export function createEngineDetourToolDefinition(input: {
 }
 
 /**
- * Register the engine-generic detour tool once for this process when Judge/Reviewer has
+ * Register the engine-generic detour tool once for this process when any role has
  * an engine activation signal. Returns whether registration occurred.
  * Once-latch is activation-scoped via the returned reset handle.
  */
