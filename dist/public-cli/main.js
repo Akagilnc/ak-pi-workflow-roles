@@ -14442,6 +14442,9 @@ function setPersistentSeatConfig(config, seat, selection) {
     }
   };
 }
+function isEngineAxisSeat(seat) {
+  return isPublicCallableRole(seat);
+}
 function setPersistentSeatEngine(config, seat, engine) {
   const previous = config.seats[seat];
   if (previous === void 0) {
@@ -14472,6 +14475,11 @@ function validatePublicCliConfigEngines(config, _packageRoot) {
   for (const seat of Object.keys(config.seats)) {
     const row = config.seats[seat];
     if (row?.engine === void 0) continue;
+    if (!isEngineAxisSeat(seat)) {
+      throw new Error(
+        `config seat ${seat} cannot persist engine: no independent activation path; storing would be silently ineffective`
+      );
+    }
     try {
       assertLegalEngineName(row.engine);
     } catch (error) {
@@ -14593,6 +14601,12 @@ function pickStartupCandidate(seat, credentials) {
   return void 0;
 }
 function attachEngineAxis(seat, config, invocation) {
+  if (!isEngineAxisSeat(seat.seat)) {
+    return {
+      ...seat,
+      engineSource: "unconfigured"
+    };
+  }
   const persistentEngine = config.seats[seat.seat]?.engine;
   if (invocation?.engine !== void 0) {
     return {
@@ -18191,6 +18205,14 @@ var init_explicit_internal = __esm({
 });
 
 // src/engine-detour.ts
+function applyEngineChildEnv(childEnv, engine) {
+  delete childEnv[AK_ROLE_ENGINE_ENV];
+  if (engine !== void 0 && engine.trim() !== "") {
+    childEnv[AK_ROLE_ENGINE_ENV] = engine.trim();
+  } else {
+    childEnv[AK_ROLE_ENGINE_ENV] = void 0;
+  }
+}
 var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
 var init_engine_detour = __esm({
   "src/engine-detour.ts"() {
@@ -22496,12 +22518,7 @@ async function dispatchAdmittedCoder(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    delete childEnv[AK_ROLE_ENGINE_ENV];
-    if (env.engine !== void 0 && env.engine.trim() !== "") {
-      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
-    } else {
-      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
-    }
+    applyEngineChildEnv(childEnv, env.engine);
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -22832,12 +22849,7 @@ async function dispatchAdmittedCollector(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    delete childEnv[AK_ROLE_ENGINE_ENV];
-    if (env.engine !== void 0 && env.engine.trim() !== "") {
-      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
-    } else {
-      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
-    }
+    applyEngineChildEnv(childEnv, env.engine);
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -23067,12 +23079,7 @@ async function dispatchAdmittedDoctor(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    delete childEnv[AK_ROLE_ENGINE_ENV];
-    if (env.engine !== void 0 && env.engine.trim() !== "") {
-      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
-    } else {
-      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
-    }
+    applyEngineChildEnv(childEnv, env.engine);
     if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = env.correlationId;
     }
@@ -23376,12 +23383,7 @@ async function dispatchAdmittedFixer(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    delete childEnv[AK_ROLE_ENGINE_ENV];
-    if (env.engine !== void 0 && env.engine.trim() !== "") {
-      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
-    } else {
-      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
-    }
+    applyEngineChildEnv(childEnv, env.engine);
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -23765,12 +23767,7 @@ async function dispatchAdmittedJudge(input) {
       // and role-runtime can record typed provider HTTP observations.
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    delete childEnv[AK_ROLE_ENGINE_ENV];
-    if (env.engine !== void 0 && env.engine.trim() !== "") {
-      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
-    } else {
-      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
-    }
+    applyEngineChildEnv(childEnv, env.engine);
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -24125,12 +24122,7 @@ async function dispatchAdmittedMerger(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    delete childEnv[AK_ROLE_ENGINE_ENV];
-    if (env.engine !== void 0 && env.engine.trim() !== "") {
-      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
-    } else {
-      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
-    }
+    applyEngineChildEnv(childEnv, env.engine);
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -24608,12 +24600,7 @@ async function dispatchAdmittedReviewer(input) {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory
     };
-    delete childEnv[AK_ROLE_ENGINE_ENV];
-    if (env.engine !== void 0 && env.engine.trim() !== "") {
-      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
-    } else {
-      childEnv[AK_ROLE_ENGINE_ENV] = void 0;
-    }
+    applyEngineChildEnv(childEnv, env.engine);
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== void 0 && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
@@ -27090,6 +27077,19 @@ function requireLegalEngineName(name) {
     );
   }
 }
+function requireEngineAxisSeat(seat, verb) {
+  if (seat === AUTOMATIC_NAVIGATOR_SEAT) {
+    throw new CliUsageError(
+      `config ${verb} refuses navigator: no independent activation path; storing would be silently ineffective`
+    );
+  }
+  if (!isEngineAxisSeat(seat)) {
+    throw new CliUsageError(`unknown engine-axis seat: ${seat}`);
+  }
+}
+function projectSeatEngine(seat) {
+  return seat.engine === void 0 ? {} : { engine: seat.engine };
+}
 function loadAndValidateConfig(home, packageRoot2) {
   return loadPublicCliConfig(home).then((config) => {
     try {
@@ -27161,7 +27161,7 @@ function renderHelp() {
     "",
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]>",
-    "Persistent engine (any seat): ak-role config set-engine <seat> <name> | unset-engine <seat>",
+    "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Effective seats: ak-role roles"
   );
   return `${lines.join("\n")}
@@ -27271,9 +27271,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
     }
     const seat = args[1];
     const name = args[2];
-    if (!isPublicConfigurableSeat(seat)) {
-      throw new CliUsageError(`unknown configurable seat: ${seat}`);
-    }
+    requireEngineAxisSeat(seat, "set-engine");
     requireLegalEngineName(name);
     let config = await loadAndValidateConfig(home, packageRoot2);
     try {
@@ -27295,9 +27293,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
       );
     }
     const seat = args[1];
-    if (!isPublicConfigurableSeat(seat)) {
-      throw new CliUsageError(`unknown configurable seat: ${seat}`);
-    }
+    requireEngineAxisSeat(seat, "unset-engine");
     let config = await loadAndValidateConfig(home, packageRoot2);
     try {
       config = setPersistentSeatEngine(config, seat, void 0);
@@ -27517,7 +27513,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...seat.engine === void 0 ? {} : { engine: seat.engine },
+          ...projectSeatEngine(seat),
           ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
           ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
@@ -27552,7 +27548,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...seat.engine === void 0 ? {} : { engine: seat.engine },
+          ...projectSeatEngine(seat),
           ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
           ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
@@ -27587,7 +27583,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...seat.engine === void 0 ? {} : { engine: seat.engine },
+          ...projectSeatEngine(seat),
           ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
           ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
@@ -27622,7 +27618,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...seat.engine === void 0 ? {} : { engine: seat.engine },
+          ...projectSeatEngine(seat),
           ...env.collectorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.collectorExtraPiArgs },
           ...env.collectorTimeoutMs === void 0 ? {} : { timeoutMs: env.collectorTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
@@ -27657,7 +27653,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...seat.engine === void 0 ? {} : { engine: seat.engine },
+          ...projectSeatEngine(seat),
           ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
           ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
@@ -27692,7 +27688,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...seat.engine === void 0 ? {} : { engine: seat.engine },
+          ...projectSeatEngine(seat),
           ...env.doctorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.doctorExtraPiArgs },
           ...env.doctorTimeoutMs === void 0 ? {} : { timeoutMs: env.doctorTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
@@ -27727,7 +27723,7 @@ async function runAkRole(argv, env) {
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...seat.engine === void 0 ? {} : { engine: seat.engine },
+          ...projectSeatEngine(seat),
           ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
           ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
