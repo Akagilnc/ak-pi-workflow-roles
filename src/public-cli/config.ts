@@ -10,8 +10,10 @@ import {
   AUTOMATIC_NAVIGATOR_SEAT,
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
+  isPublicCallableRole,
   isPublicConfigurableSeat,
   type ModelRef,
+  type PublicCallableRole,
   type PublicConfigurableSeat,
   type PublicThinkingLevel,
   publicStartupCandidates,
@@ -117,18 +119,22 @@ export function setPersistentSeatConfig(
   };
 }
 
-/** Seats that own the labor-engine axis (#356/#378/#391: all configurable seats). */
-export function isEngineAxisSeat(seat: string): seat is PublicConfigurableSeat {
-  return isPublicConfigurableSeat(seat);
+/**
+ * Seats that own the labor-engine axis (#391: PUBLIC_CALLABLE_ROLES only).
+ * Navigator is configurable for model but has no independent activation path.
+ */
+export function isEngineAxisSeat(seat: string): seat is PublicCallableRole {
+  return isPublicCallableRole(seat);
 }
 
 /**
- * Set or clear persistent engine on any configurable seat (#356 / #378 / #391).
+ * Set or clear persistent engine on a callable role seat (#356 / #378 / #391).
  * Engine-only seats are rejected — provider/model[:thinking] remains required first.
+ * Seat type is PublicCallableRole (navigator excluded at the type boundary).
  */
 export function setPersistentSeatEngine(
   config: PublicCliConfig,
-  seat: PublicConfigurableSeat,
+  seat: PublicCallableRole,
   engine: string | undefined,
 ): PublicCliConfig {
   const previous = config.seats[seat];
@@ -164,9 +170,10 @@ export function seatModelOnly(seat: PersistentSeatConfig): SeatModelConfig {
 }
 
 /**
- * Config-parse seam: engine axis is all configurable seats; engine names need only
+ * Config-parse seam: engine axis is PUBLIC_CALLABLE_ROLES; engine names need only
  * path-safety syntax (no closed material catalog; #376 / #378 / #391 / ADR 0069).
- * Call with packageRoot after load / before dispatch (#356).
+ * Disk-handwritten navigator.engine is rejected (no independent activation → silent
+ * ineffective would violate failure honesty). Call after load / before dispatch (#356).
  * Syntax authority = assertLegalEngineName (no injected duplicate).
  */
 export function validatePublicCliConfigEngines(
@@ -176,6 +183,11 @@ export function validatePublicCliConfigEngines(
   for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
     const row = config.seats[seat];
     if (row?.engine === undefined) continue;
+    if (!isEngineAxisSeat(seat)) {
+      throw new Error(
+        `config seat ${seat} cannot persist engine: no independent activation path; storing would be silently ineffective`,
+      );
+    }
     try {
       assertLegalEngineName(row.engine);
     } catch (error) {
@@ -349,7 +361,13 @@ function attachEngineAxis(
   config: PublicCliConfig,
   invocation?: InvocationModelOverride,
 ): EffectiveSeat {
-  // #356 / #378 / #391: engine axis is every configurable seat.
+  // #391: engine axis is PUBLIC_CALLABLE_ROLES only (single isEngineAxisSeat predicate).
+  if (!isEngineAxisSeat(seat.seat)) {
+    return {
+      ...seat,
+      engineSource: "unconfigured",
+    };
+  }
   const persistentEngine = config.seats[seat.seat]?.engine;
   if (invocation?.engine !== undefined) {
     return {

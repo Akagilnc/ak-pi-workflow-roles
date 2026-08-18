@@ -6,7 +6,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { AK_ROLE_ENGINE_ENV } from "../engine-detour.ts";
+import { applyEngineChildEnv } from "../engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   runExplicitInternalActivation,
@@ -192,12 +192,7 @@ async function dispatchAdmittedDoctor(input: {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
-    delete childEnv[AK_ROLE_ENGINE_ENV];
-    if (env.engine !== undefined && env.engine.trim() !== "") {
-      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
-    } else {
-      childEnv[AK_ROLE_ENGINE_ENV] = undefined;
-    }
+    applyEngineChildEnv(childEnv, env.engine);
     if (env.correlationId !== undefined && env.correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = env.correlationId;
     }

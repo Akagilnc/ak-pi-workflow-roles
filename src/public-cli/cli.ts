@@ -11,6 +11,7 @@ import {
 import {
   effectiveSeatConfigurations,
   formatModelSpec,
+  isEngineAxisSeat,
   loadCredentialProviders,
   loadPublicCliConfig,
   parseModelSpec,
@@ -57,11 +58,13 @@ import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
 import { runPublicTaishi } from "./taishi-run.ts";
 import { peekRoleRunRole } from "./run-lifecycle.ts";
 import {
+  AUTOMATIC_NAVIGATOR_SEAT,
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   isPublicCallableRole,
   isPublicCliSupportCommand,
   isPublicConfigurableSeat,
   listHelpCapabilities,
+  type PublicCallableRole,
   type PublicThinkingLevel,
 } from "./registry.ts";
 import {
@@ -336,6 +339,31 @@ function requireLegalEngineName(name: string): string {
   }
 }
 
+/**
+ * Persistent engine axis gate (#391 E1): PUBLIC_CALLABLE_ROLES only.
+ * Navigator is a configurable model seat but has no independent activation path.
+ */
+function requireEngineAxisSeat(
+  seat: string,
+  verb: "set-engine" | "unset-engine",
+): asserts seat is PublicCallableRole {
+  if (seat === AUTOMATIC_NAVIGATOR_SEAT) {
+    throw new CliUsageError(
+      `config ${verb} refuses navigator: no independent activation path; storing would be silently ineffective`,
+    );
+  }
+  if (!isEngineAxisSeat(seat)) {
+    throw new CliUsageError(`unknown engine-axis seat: ${seat}`);
+  }
+}
+
+/** Single seat.engine → run-options projection (#391 E2). */
+function projectSeatEngine(
+  seat: Readonly<{ engine?: string }>,
+): { engine: string } | Record<PropertyKey, never> {
+  return seat.engine === undefined ? {} : { engine: seat.engine };
+}
+
 function loadAndValidateConfig(
   home: string,
   packageRoot: string,
@@ -419,7 +447,7 @@ function renderHelp(): string {
     "",
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]>",
-    "Persistent engine (any seat): ak-role config set-engine <seat> <name> | unset-engine <seat>",
+    "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Effective seats: ak-role roles",
   );
   return `${lines.join("\n")}\n`;
@@ -541,9 +569,7 @@ async function runConfigCommand(
     }
     const seat = args[1]!;
     const name = args[2]!;
-    if (!isPublicConfigurableSeat(seat)) {
-      throw new CliUsageError(`unknown configurable seat: ${seat}`);
-    }
+    requireEngineAxisSeat(seat, "set-engine");
     requireLegalEngineName(name);
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
@@ -566,9 +592,7 @@ async function runConfigCommand(
       );
     }
     const seat = args[1]!;
-    if (!isPublicConfigurableSeat(seat)) {
-      throw new CliUsageError(`unknown configurable seat: ${seat}`);
-    }
+    requireEngineAxisSeat(seat, "unset-engine");
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
       config = setPersistentSeatEngine(config, seat, undefined);
@@ -866,7 +890,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
+          ...projectSeatEngine(seat),
           ...(env.judgeExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.judgeExtraPiArgs }),
@@ -910,7 +934,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
+          ...projectSeatEngine(seat),
           ...(env.coderExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.coderExtraPiArgs }),
@@ -954,7 +978,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
+          ...projectSeatEngine(seat),
           ...(env.fixerExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.fixerExtraPiArgs }),
@@ -998,7 +1022,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
+          ...projectSeatEngine(seat),
           ...(env.collectorExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.collectorExtraPiArgs }),
@@ -1042,7 +1066,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
+          ...projectSeatEngine(seat),
           ...(env.reviewerExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.reviewerExtraPiArgs }),
@@ -1086,7 +1110,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
+          ...projectSeatEngine(seat),
           ...(env.doctorExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.doctorExtraPiArgs }),
@@ -1130,7 +1154,7 @@ export async function runAkRole(
             : { correlationId: env.correlationId }),
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(seat.engine === undefined ? {} : { engine: seat.engine }),
+          ...projectSeatEngine(seat),
           ...(env.mergerExtraPiArgs === undefined
             ? {}
             : { extraPiArgs: env.mergerExtraPiArgs }),

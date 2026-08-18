@@ -11,7 +11,7 @@ pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ```
 
-Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat model defaults with `ak-role config set judge openai-codex/gpt-5.6-sol:high`; set or clear a persistent labor engine (any seat) with `ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`.
+Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat model defaults with `ak-role config set judge openai-codex/gpt-5.6-sol:high`; set or clear a persistent labor engine (callable roles) with `ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`.
 
 ## Reading results
 
@@ -31,12 +31,12 @@ Every run also prepares Navigator advice in the same Terminal. Configure it like
 
 ```bash
 ak-role config set navigator openai-codex/gpt-5.6-luna:medium
-# persistent labor engine (any seat); one-shot override remains --engine
+# persistent labor engine (callable roles; not navigator); one-shot override remains --engine
 ak-role config set-engine judge opus
 ak-role config unset-engine judge
 ```
 
-`config set` stores the seat model default; `config set-engine` / `unset-engine` store or clear the persistent labor-engine name on any configurable seat (same seats as `--engine`). Usage and refusal text are owned by `ak-role config` in the public CLI.
+`config set` stores the seat model default; `config set-engine` / `unset-engine` store or clear the persistent labor-engine name on callable roles (same seats as `--engine`; navigator refused — no independent activation). Usage and refusal text are owned by `ak-role config` in the public CLI.
 
 Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned. Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
 

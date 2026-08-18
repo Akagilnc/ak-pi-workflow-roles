@@ -11,7 +11,7 @@ pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ```
 
-更新用 `pi update npm:@akagilnc/pi-workflow-roles`——勿另起全局 `npm install -g`。查看能力：`ak-role roles`、`ak-role help <role>`；设席位模型默认：`ak-role config set judge openai-codex/gpt-5.6-sol:high`；设或清持久劳务引擎（任一席位）：`ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`。
+更新用 `pi update npm:@akagilnc/pi-workflow-roles`——勿另起全局 `npm install -g`。查看能力：`ak-role roles`、`ak-role help <role>`；设席位模型默认：`ak-role config set judge openai-codex/gpt-5.6-sol:high`；设或清持久劳务引擎（可调用角色）：`ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`。
 
 ## 读结果
 
@@ -31,12 +31,12 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 ```bash
 ak-role config set navigator openai-codex/gpt-5.6-luna:medium
-# 持久劳务引擎（任一席位）；一次性覆盖仍用 --engine
+# 持久劳务引擎（可调用角色；不含 navigator）；一次性覆盖仍用 --engine
 ak-role config set-engine judge opus
 ak-role config unset-engine judge
 ```
 
-`config set` 存席位模型默认；`config set-engine` / `unset-engine` 在任一可配置席位上写入或清除持久劳务引擎名（与 `--engine` 同轴）。用法与拒绝文案以公开 CLI 的 `ak-role config` 为准。
+`config set` 存席位模型默认；`config set-engine` / `unset-engine` 在可调用角色上写入或清除持久劳务引擎名（与 `--engine` 同轴；拒收 navigator——无独立 activation）。用法与拒绝文案以公开 CLI 的 `ak-role config` 为准。
 
 回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
 

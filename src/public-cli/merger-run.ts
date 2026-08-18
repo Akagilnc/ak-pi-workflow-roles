@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 
 import { ensureRealDirectoryTree } from "../activation-ledger-topology.ts";
 import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
-import { AK_ROLE_ENGINE_ENV } from "../engine-detour.ts";
+import { applyEngineChildEnv } from "../engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -307,12 +307,7 @@ async function dispatchAdmittedMerger(input: {
       PI_CODING_AGENT_DIR: env.agentDir,
       AK_ROLE_RUN_DIR: admitted.runDirectory,
     };
-    delete childEnv[AK_ROLE_ENGINE_ENV];
-    if (env.engine !== undefined && env.engine.trim() !== "") {
-      childEnv[AK_ROLE_ENGINE_ENV] = env.engine.trim();
-    } else {
-      childEnv[AK_ROLE_ENGINE_ENV] = undefined;
-    }
+    applyEngineChildEnv(childEnv, env.engine);
     const correlationId = admitted.correlationId ?? env.correlationId;
     if (correlationId !== undefined && correlationId.trim() !== "") {
       childEnv.AK_CORRELATION_ID = correlationId;
