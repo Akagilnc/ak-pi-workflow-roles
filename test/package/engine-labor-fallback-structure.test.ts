@@ -343,3 +343,80 @@ test("S2: all role chains reach the sole producer module", async () => {
     "S2 failure: role-runtime activation path cannot reach sole producer",
   );
 });
+
+test("#391 E4 structure: registerEngineDetourTool call sites = 1; AK_ROLE_ENGINE write seam = 1",
+  async () => {
+    const files = await listTsFiles(SRC_ROOT);
+    let detourRegisterCalls = 0;
+    /** Modules that assign childEnv/env[AK_ROLE_ENGINE_ENV] (symbol-anchored write sites). */
+    const engineWriteModules = new Set<string>();
+    let applyEngineChildEnvDefs = 0;
+
+    // Call-site: registerEngineDetourTool( — exclude the export function definition.
+    const registerCallRe = /(?<!function\s)registerEngineDetourTool\s*\(/g;
+    // Write-site: assignment to AK_ROLE_ENGINE_ENV keyed slot (not reads / deletes).
+    const engineWriteRe =
+      /(?:childEnv|env|process\.env)\s*\[\s*AK_ROLE_ENGINE_ENV\s*\]\s*=/g;
+    const applyDefRe = /export\s+function\s+applyEngineChildEnv\s*\(/g;
+
+    for (const file of files) {
+      const raw = await readFile(file, "utf8");
+      const text = stripTypeDeclarations(stripComments(raw));
+      const rel = relative(packageRoot, file);
+
+      const registerMatches = text.match(registerCallRe) ?? [];
+      // Definition `export function registerEngineDetourTool(` must not count as a call.
+      const defOnly = /export\s+function\s+registerEngineDetourTool\s*\(/.test(text)
+        ? 1
+        : 0;
+      detourRegisterCalls += Math.max(0, registerMatches.length - defOnly);
+
+      if (engineWriteRe.test(text)) {
+        engineWriteModules.add(rel);
+      }
+      engineWriteRe.lastIndex = 0;
+
+      if (applyDefRe.test(text)) {
+        applyEngineChildEnvDefs += 1;
+        assert.equal(
+          rel,
+          "src/engine-detour.ts",
+          `applyEngineChildEnv must live in engine-detour.ts; found ${rel}`,
+        );
+      }
+    }
+
+    assert.equal(
+      detourRegisterCalls,
+      1,
+      `registerEngineDetourTool call sites must be 1; got ${detourRegisterCalls}`,
+    );
+    assert.equal(
+      applyEngineChildEnvDefs,
+      1,
+      `applyEngineChildEnv definition count must be 1; got ${applyEngineChildEnvDefs}`,
+    );
+    // Sole write module = applyEngineChildEnv home (symbol-anchored; not prose).
+    assert.deepEqual(
+      [...engineWriteModules].sort(),
+      ["src/engine-detour.ts"],
+      `AK_ROLE_ENGINE write modules must be exactly [engine-detour.ts]; got ${[...engineWriteModules].join(", ") || "none"}`,
+    );
+
+    // Call-site cardinality for the helper itself: every public *-run.ts must call it.
+    let applyCalls = 0;
+    const applyCallRe = /(?<!function\s)applyEngineChildEnv\s*\(/g;
+    for (const file of files) {
+      const raw = await readFile(file, "utf8");
+      const text = stripTypeDeclarations(stripComments(raw));
+      const matches = text.match(applyCallRe) ?? [];
+      const defOnly = /export\s+function\s+applyEngineChildEnv\s*\(/.test(text) ? 1 : 0;
+      applyCalls += Math.max(0, matches.length - defOnly);
+    }
+    assert.equal(
+      applyCalls,
+      7,
+      `applyEngineChildEnv call sites must equal the 7 public role runners; got ${applyCalls}`,
+    );
+  },
+);
