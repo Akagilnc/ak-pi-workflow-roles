@@ -114,7 +114,7 @@ export function createEngineDetourToolDefinition(input) {
     });
 }
 /**
- * Register the engine-generic detour tool once for this process when Judge/Reviewer has
+ * Register the engine-generic detour tool once for this process when any role has
  * an engine activation signal. Returns whether registration occurred.
  * Once-latch is activation-scoped via the returned reset handle.
  */

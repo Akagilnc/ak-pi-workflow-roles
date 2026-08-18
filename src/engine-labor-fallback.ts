@@ -82,7 +82,7 @@ export function withEngineLaborFallbackField<T extends object>(
   return rest as T;
 }
 
-/** Install the activation-scoped latch (Judge/Reviewer session_start). */
+/** Install the activation-scoped latch (any role session_start with engine). */
 export function installActivationEngineLaborFallbackLatch(
   latch: EngineLaborFallbackLatch,
 ): void {

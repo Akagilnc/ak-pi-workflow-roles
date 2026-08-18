@@ -233,7 +233,7 @@ export async function markRunAdmitted(
  * resume override) and optional initial effective engine onto invocation.json
  * when known, then transition to running.
  * Role runners must not coordinate lifecycle ledger writes themselves.
- * Engine is write-if-present only — callers that omit it (resume / non-Judge)
+ * Engine is write-if-present only — callers that omit it (resume paths)
  * never touch the engine key.
  */
 export async function markRunRunning(
