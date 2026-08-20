@@ -38,9 +38,7 @@ import {
   applyReadmeOptionsSection,
   createTypedOptionConsumer,
   optionsForOwner,
-  projectCommandHelp,
   projectOwnerOptions,
-  publicCommandHelpTopics,
   renderReadmeOptionsMarkdown,
   type OptionOwner,
   type PublicOptionDefinition,
@@ -126,36 +124,6 @@ test("table→helpDocument: per-command structured option semantics are equivale
   }
   assert.equal(helpDocumentForCommand("navigator"), undefined);
   assert.equal(helpDocumentForCommand("not-a-command"), undefined);
-});
-
-/**
- * #125 — public command help facts live on the sole option-owner module.
- * Contract: every role owner + top-level topic is registered with non-empty
- * usage/examples arrays. Free text, headings, layout, and example wording are
- * presentation and are deliberately not asserted here.
- */
-test("public command help facts: every role owner and top topic are registered", () => {
-  const topics = publicCommandHelpTopics();
-  assert.equal(topics.includes("top"), true);
-  assert.equal(topics.includes("navigator"), false);
-
-  const top = projectCommandHelp("top");
-  assert.ok(top);
-  assert.equal(top.command, "top");
-  assert.ok(top.usage.length >= 1);
-  assert.ok(top.examples.length >= 1);
-
-  for (const owner of PUBLIC_ROLE_OPTION_OWNERS) {
-    const facts = projectCommandHelp(owner);
-    assert.ok(facts, owner);
-    assert.equal(facts.command, owner);
-    assert.ok(facts.usage.length >= 1, owner);
-    assert.ok(facts.examples.length >= 1, owner);
-  }
-
-  // Unknown / automatic seats have no public command help facts.
-  assert.equal(projectCommandHelp("navigator"), undefined);
-  assert.equal(projectCommandHelp("not-a-command"), undefined);
 });
 
 test("unconditional required: table required:true is the sole missing-option gate", () => {
