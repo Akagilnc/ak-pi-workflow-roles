@@ -5,7 +5,21 @@
   "type": "module",
   "license": "Apache-2.0",
   "keywords": [
-    "pi-package"
+    "pi-package",
+    "ai-agents",
+    "agents",
+    "agentic",
+    "multi-agent",
+    "agent-framework",
+    "agent-orchestration",
+    "ai-governance",
+    "human-in-the-loop",
+    "claude-code",
+    "codex",
+    "code-review",
+    "llm",
+    "ai",
+    "typescript"
   ],
   "bin": {
     "ak-role": "dist/public-cli/main.js"
