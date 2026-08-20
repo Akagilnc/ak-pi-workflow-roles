@@ -1172,11 +1172,6 @@ export function projectCommandHelp(
   };
 }
 
-/** Topics that carry owner-authored public help facts. */
-export function publicCommandHelpTopics(): readonly string[] {
-  return Object.keys(PUBLIC_COMMAND_HELP);
-}
-
 /**
  * Human OPTIONS lines from the sole option table.
  * Layout is presentation; structured identity stays on projectOwnerOptions.
@@ -1211,63 +1206,6 @@ export function renderHumanOwnerOptionLines(
     const tagText = tags.length === 0 ? "" : ` [${tags.join(", ")}]`;
     const desc = locale === "zh" ? opt.description.zh : opt.description.en;
     lines.push(`  ${spelling}${tagText}  ${desc}`);
-  }
-  return lines;
-}
-
-/**
- * Render one owner’s options as stable TSV lines for help.
- * Layout is presentation; identity columns are the structured contract.
- * Prefer renderHumanOwnerOptionLines for human public help pages.
- */
-export function renderOwnerOptionHelpLines(
-  owner: OptionOwner,
-  locale: "en" | "zh" = "en",
-): string[] {
-  const lines: string[] = [];
-  for (const opt of projectOwnerOptions(owner)) {
-    const aliasText =
-      opt.aliases.length === 0 ? "-" : opt.aliases.join(",");
-    const metavar = opt.valueMetavar ?? "-";
-    const required = opt.required ? "required" : "optional";
-    const repeatable = opt.repeatable ? "repeatable" : "single";
-    const form = opt.form;
-    const phases =
-      opt.phases === undefined ? "-" : opt.phases.join("|");
-    const modes = opt.modes === undefined ? "-" : opt.modes.join("|");
-    const requiredInModes =
-      opt.requiredInModes === undefined
-        ? "-"
-        : opt.requiredInModes.join("|");
-    const exclusiveWith =
-      opt.exclusiveWith === undefined ? "-" : opt.exclusiveWith.join("|");
-    const maxCount =
-      opt.maxCountByMode === undefined
-        ? "-"
-        : Object.entries(opt.maxCountByMode)
-            .map(([mode, n]) => `${mode}:${n}`)
-            .join(",");
-    const defaultValue = opt.defaultValue ?? "-";
-    const desc = locale === "zh" ? opt.description.zh : opt.description.en;
-    lines.push(
-      [
-        "option",
-        opt.id,
-        opt.canonical,
-        `aliases=${aliasText}`,
-        `metavar=${metavar}`,
-        required,
-        repeatable,
-        `form=${form}`,
-        `phases=${phases}`,
-        `modes=${modes}`,
-        `requiredInModes=${requiredInModes}`,
-        `exclusiveWith=${exclusiveWith}`,
-        `maxCountByMode=${maxCount}`,
-        `default=${defaultValue}`,
-        desc,
-      ].join("\t"),
-    );
   }
   return lines;
 }
