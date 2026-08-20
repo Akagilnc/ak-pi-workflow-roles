@@ -82,33 +82,9 @@ ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
 Roles are named after Tang/Song offices; the full roster and naming rule live in [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md).
 
-## Developer seam: raw session invocation (advanced)
+## Codex fast tier
 
-Most callers never need this. The source tree retains an explicitly loadable raw-Pi seam for package development and low-level diagnosis; it is not a supported invocation recipe—external callers use `ak-role`.
-
-A raw run loads the role runtime explicitly and selects the role through the internal flag. This is the real argv shape, taken from the CLI’s own builders and recorded runs under the ledger book:
-
-```bash
-run=~/.ak-roles/books/<book>/issues/<issue>/runs/<invocation>@<source-tree>
-pi --no-extensions \
-  -e <packageRoot>/extensions/role-runtime.ts \
-  --no-skills --no-prompt-templates --no-themes --no-context-files \
-  --session "$run/session/session.jsonl" \
-  --session-dir "$run/session" \
-  --ak-role judge --mode json \
-  "Adjudicate the attached materials." \
-  </dev/null >/dev/null 2>"$run/stderr.log"
-```
-
-`--session` names the exact session file principal (never directory-latest); `--session-dir` is its directory. Judge takes the instruction as the prompt; other roles pass durable payload files through their own internal flags (`--ak-coder-task`, `--ak-fix-packet`, and siblings), assembled by each role’s builder in `src/public-cli/*-run.ts` through the load boundary in `src/public-cli/explicit-internal.ts`. Derive flags from that source—and from recorded runs under the ledger book—never from prose.
-
-Discipline:
-
-- seal stdin with `</dev/null`—Pi reads a non-TTY stdin to EOF before starting, so an open background pipe parks the run forever;
-- send stdout to `/dev/null`—the session file is the authoritative record and stdout is an unbounded copy surface; attach dashboards to `stderr.log` and the session file;
-- keep `stderr.log` and `invocation.json` in the same `runs/` directory, as in the example above.
-
-Codex fast tier: enable fast tier with `echo "fast_mode = on" > ~/.pi-codex-fast`; disable it with `echo "fast_mode = off" > ~/.pi-codex-fast` (or delete the file). The change takes effect on the next request without a restart. Fast tier costs more than the default tier.
+Enable fast tier with `echo "fast_mode = on" > ~/.pi-codex-fast`; disable it with `echo "fast_mode = off" > ~/.pi-codex-fast` (or delete the file). The change takes effect on the next request without a restart. Fast tier costs more than the default tier.
 
 <!-- BEGIN GENERATED: public-cli-options -->
 ## Public CLI options (generated)

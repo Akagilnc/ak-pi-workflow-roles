@@ -43,8 +43,10 @@ import {
 import {
   createTypedOptionConsumer,
   optionsForOwner,
+  projectCommandHelp,
   projectOwnerOptions,
-  renderOwnerOptionHelpLines,
+  PUBLIC_NAVIGATOR_HELP_NOTE,
+  renderHumanOwnerOptionLines,
   type PublicOptionDefinition,
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
@@ -412,13 +414,34 @@ export function helpDocumentForCommand(command: string) {
   return undefined;
 }
 
+/** Append USAGE + EXAMPLES blocks from the sole public help-copy owner. */
+function appendUsageAndExamples(
+  lines: string[],
+  topic: string,
+): void {
+  const facts = projectCommandHelp(topic);
+  if (facts === undefined) return;
+  lines.push("", "USAGE");
+  for (const line of facts.usage) {
+    lines.push(`  ${line}`);
+  }
+  if (facts.examples.length > 0) {
+    lines.push("", "EXAMPLES");
+    for (const example of facts.examples) {
+      lines.push(`  ${example}`);
+    }
+  }
+}
+
 function renderHelp(): string {
   const doc = helpDocument();
+  const top = projectCommandHelp("top");
   const lines: string[] = [
-    "ak-role — public role CLI",
-    "",
-    "Support commands:",
+    `ak-role — ${top?.summary ?? "public role CLI"}`,
   ];
+  appendUsageAndExamples(lines, "top");
+  lines.push("", PUBLIC_NAVIGATOR_HELP_NOTE);
+  lines.push("", "Support commands:");
   for (const cap of doc.capabilities) {
     if (cap.kind === "support") {
       lines.push(`  ${cap.name}`);
@@ -441,8 +464,8 @@ function renderHelp(): string {
       lines.push(`  ${cap.name}`);
     }
   }
-  lines.push("", "Global options:");
-  lines.push(...renderOwnerOptionHelpLines("global"));
+  lines.push("", "OPTIONS");
+  lines.push(...renderHumanOwnerOptionLines("global"));
   lines.push(
     "",
     "Role options: ak-role help <command>",
@@ -457,24 +480,25 @@ function renderCommandHelp(command: string): string | undefined {
   const caps = listHelpCapabilities();
   const match = caps.find((cap) => cap.name === command);
   if (match === undefined) return undefined;
+  const facts = projectCommandHelp(command);
   const lines: string[] = [];
-  if (match.kind === "support") {
-    lines.push(`command\t${match.name}\tkind\tsupport`);
+  if (facts !== undefined) {
+    lines.push(`ak-role ${facts.command} — ${facts.summary}`);
+  } else if (match.kind === "support") {
+    lines.push(`ak-role ${match.name}`);
   } else if (match.kind === "deterministic") {
-    lines.push(`command\t${match.name}\tkind\tdeterministic`);
+    lines.push(`ak-role ${match.name}`);
   } else {
-    lines.push(
-      `command\t${match.name}\tkind\trole\tphases\t${match.phases
-        .map((p) => (p === null ? "none" : p))
-        .join(",")}\tdefault\t${match.defaultPhase ?? "none"}`,
-    );
+    lines.push(`ak-role ${match.name}`);
   }
-  if (command in PUBLIC_ROLE_ARGV) {
-    lines.push(
-      ...renderOwnerOptionHelpLines(
-        command as keyof typeof PUBLIC_ROLE_ARGV,
-      ),
-    );
+  appendUsageAndExamples(lines, command);
+  if (command in PUBLIC_ROLE_ARGV || command === "global") {
+    const owner =
+      command === "global"
+        ? "global"
+        : (command as keyof typeof PUBLIC_ROLE_ARGV);
+    lines.push("", "OPTIONS");
+    lines.push(...renderHumanOwnerOptionLines(owner));
   }
   return `${lines.join("\n")}\n`;
 }
