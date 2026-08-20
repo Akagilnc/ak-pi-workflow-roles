@@ -111,33 +111,9 @@ ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 
-## 开发者接缝：手拼 session（高级）
+## Codex fast 档
 
-多数调用者不需要本节。源码树保留一条可显式装载的 raw-Pi 接缝，供包开发与底层诊断；它不是受支持的调用配方——外部调用者用 `ak-role`。
-
-原始运行显式装载角色运行时，经内部旗标选角色。以下 argv 全形取自 CLI 自身 builder 与卷宗实记：
-
-```bash
-run=~/.ak-roles/books/<book>/issues/<issue>/runs/<invocation>@<源树>
-pi --no-extensions \
-  -e <packageRoot>/extensions/role-runtime.ts \
-  --no-skills --no-prompt-templates --no-themes --no-context-files \
-  --session "$run/session/session.jsonl" \
-  --session-dir "$run/session" \
-  --ak-role judge --mode json \
-  "Adjudicate the attached materials." \
-  </dev/null >/dev/null 2>"$run/stderr.log"
-```
-
-`--session` 指精确 session 文件正本（非 directory-latest）；`--session-dir` 为其目录。大理寺的指令走 prompt；其余角色经各自内部旗标传持久 payload 文件（`--ak-coder-task`、`--ak-fix-packet` 等），由各角色 builder（`src/public-cli/*-run.ts`）经装载边界 `src/public-cli/explicit-internal.ts` 装配。旗标从源码与卷宗实记推导，勿从散文推导。
-
-纪律：
-
-- stdin 须以 `</dev/null` 封死——Pi 会将非 TTY stdin 读到 EOF 才开工，未封死的后台管道＝永久停车；
-- stdout 丢 `/dev/null`——session 文件才是正本，stdout 是无上限副本面；仪表挂 `stderr.log` 与 session 文件；
-- `stderr.log` 与 `invocation.json` 落在同次 `runs/` 目录，如上例。
-
-Codex fast 档：开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：`echo "fast_mode = off" > ~/.pi-codex-fast`（或删文件）。修改后无需重启，下一个请求即生效。Fast 档价格高于默认档。
+开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：`echo "fast_mode = off" > ~/.pi-codex-fast`（或删文件）。修改后无需重启，下一个请求即生效。Fast 档价格高于默认档。
 
 <!-- BEGIN GENERATED: public-cli-options -->
 ## 公开 CLI 选项（生成）
