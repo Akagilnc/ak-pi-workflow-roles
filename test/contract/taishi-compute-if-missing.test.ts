@@ -163,9 +163,11 @@ async function listIssuePageNames(ledgerHome: string): Promise<string[]> {
   }
 }
 
-function indexRow(projectRoot: string, issueNumber: number) {
+function indexRow(projectRoot: string, issueNumber: number, bookKey?: string) {
+  const identity = physicalPathIdentity(projectRoot);
   return {
-    projectRoot: physicalPathIdentity(projectRoot),
+    bookKey: bookKey ?? `root:${identity}`,
+    projectRoot: identity,
     issueNumber,
     totalElapsedMs: 0,
     changedLines: { status: "absent" as const },
@@ -179,32 +181,24 @@ test("taishi #338 issue compute-if-missing: no page → public CLI computes, wri
     await withTempHome(async (home) => {
       const ledgerHome = join(home, ".ak-roles");
       // Guarantee no pre-existing page for this root.
-      const pagePath = taishiIssuePagePath(ledgerHome, ISSUE_ROOT);
+      const pagePath = taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_ROOT)}`, scopeRootIdentity: ISSUE_ROOT });
       await rm(pagePath, { force: true });
       const beforePages = await listIssuePageNames(ledgerHome);
       assert.equal(
-        beforePages.includes(`${taishiIssuePageKey(ISSUE_ROOT)}.json`),
+        beforePages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(ISSUE_ROOT)}`, scopeRootIdentity: ISSUE_ROOT })}.json`),
         false,
         "precondition: issue page absent",
       );
 
-      const { io, stdout, stderr } = captureIo();
-      const result = await runAkRole(
-        ["taishi", "--project-root", ISSUE_ROOT],
-        { packageRoot, home, io },
-      );
-
-      assert.equal(result.exitCode, 0, stderr.join(""));
-      assert.equal(stderr.join(""), "");
-
-      const body = JSON.parse(stdout.join("")) as {
-        mode: string;
-        page: TaishiIssueMetricsPage;
-        pagePath: string;
-      };
+      // #399: issue CLI no longer takes --project-root; library path proves compute-if-missing.
+      const body = await readOrComputeTaishiIssuePage({
+        mode: "issue",
+        projectRoot: ISSUE_ROOT,
+      });
       assert.equal(body.mode, "issue");
       assert.equal(body.page.kind, "taishi-issue-metrics");
       assert.equal(body.page.projectRoot, physicalPathIdentity(ISSUE_ROOT));
+      assert.equal(body.page.bookKey, `root:${physicalPathIdentity(ISSUE_ROOT)}`);
       assert.equal(body.page.totalElapsedMs, ISSUE_WALL_MS);
       assert.deepEqual(
         body.page.legs.map((leg) => leg.runId),
@@ -214,7 +208,7 @@ test("taishi #338 issue compute-if-missing: no page → public CLI computes, wri
       // Page directory reflects the newly written page.
       const afterPages = await listIssuePageNames(ledgerHome);
       assert.equal(
-        afterPages.includes(`${taishiIssuePageKey(ISSUE_ROOT)}.json`),
+        afterPages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(ISSUE_ROOT)}`, scopeRootIdentity: ISSUE_ROOT })}.json`),
         true,
         "compute-if-missing must write the issue page",
       );
@@ -237,11 +231,11 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
           indexRow(COHORT_B_ROOT, COHORT_ISSUE_B),
         ]),
       );
-      await rm(taishiIssuePagePath(ledgerHome, COHORT_A_ROOT), { force: true });
-      await rm(taishiIssuePagePath(ledgerHome, COHORT_B_ROOT), { force: true });
+      await rm(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(COHORT_A_ROOT)}`, issueNumber: COHORT_ISSUE_A }), { force: true });
+      await rm(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(COHORT_B_ROOT)}`, issueNumber: COHORT_ISSUE_B }), { force: true });
       const beforePages = await listIssuePageNames(ledgerHome);
-      assert.equal(beforePages.includes(`${taishiIssuePageKey(COHORT_A_ROOT)}.json`), false);
-      assert.equal(beforePages.includes(`${taishiIssuePageKey(COHORT_B_ROOT)}.json`), false);
+      assert.equal(beforePages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(COHORT_A_ROOT)}`, issueNumber: COHORT_ISSUE_A })}.json`), false);
+      assert.equal(beforePages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(COHORT_B_ROOT)}`, issueNumber: COHORT_ISSUE_B })}.json`), false);
 
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(
@@ -273,6 +267,7 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
         {
           issueNumber: COHORT_ISSUE_A,
           status: "present",
+          bookKey: `root:${physicalPathIdentity(COHORT_A_ROOT)}`,
           projectRoot: physicalPathIdentity(COHORT_A_ROOT),
         },
       ]);
@@ -280,6 +275,7 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
         {
           issueNumber: COHORT_ISSUE_B,
           status: "present",
+          bookKey: `root:${physicalPathIdentity(COHORT_B_ROOT)}`,
           projectRoot: physicalPathIdentity(COHORT_B_ROOT),
         },
       ]);
@@ -312,15 +308,15 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
 
       // Both missing pages materialized via sole compute kernel + existing writer.
       const afterPages = await listIssuePageNames(ledgerHome);
-      assert.equal(afterPages.includes(`${taishiIssuePageKey(COHORT_A_ROOT)}.json`), true);
-      assert.equal(afterPages.includes(`${taishiIssuePageKey(COHORT_B_ROOT)}.json`), true);
+      assert.equal(afterPages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(COHORT_A_ROOT)}`, issueNumber: COHORT_ISSUE_A })}.json`), true);
+      assert.equal(afterPages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(COHORT_B_ROOT)}`, issueNumber: COHORT_ISSUE_B })}.json`), true);
       const pageA = JSON.parse(
-        await readFile(taishiIssuePagePath(ledgerHome, COHORT_A_ROOT), "utf8"),
+        await readFile(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(COHORT_A_ROOT)}`, issueNumber: COHORT_ISSUE_A }), "utf8"),
       ) as TaishiIssueMetricsPage;
       assert.deepEqual(pageA.legs.map((l) => l.runId), [COHORT_A_RUN]);
       assert.equal(pageA.totalElapsedMs, COHORT_A_WALL_MS);
       const pageB = JSON.parse(
-        await readFile(taishiIssuePagePath(ledgerHome, COHORT_B_ROOT), "utf8"),
+        await readFile(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(COHORT_B_ROOT)}`, issueNumber: COHORT_ISSUE_B }), "utf8"),
       ) as TaishiIssueMetricsPage;
       assert.deepEqual(pageB.legs.map((l) => l.runId), [COHORT_B_RUN]);
       assert.equal(pageB.totalElapsedMs, COHORT_B_WALL_MS);
@@ -332,11 +328,11 @@ test("taishi #338 model-groups compute-if-missing: uncomputed roots → pages wr
   await withBusinessRepo(async () => {
     await withTempHome(async (home) => {
       const ledgerHome = join(home, ".ak-roles");
-      await rm(taishiIssuePagePath(ledgerHome, MODELS_A_ROOT), { force: true });
-      await rm(taishiIssuePagePath(ledgerHome, MODELS_B_ROOT), { force: true });
+      await rm(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(MODELS_A_ROOT)}`, scopeRootIdentity: MODELS_A_ROOT }), { force: true });
+      await rm(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(MODELS_B_ROOT)}`, scopeRootIdentity: MODELS_B_ROOT }), { force: true });
       const beforePages = await listIssuePageNames(ledgerHome);
-      assert.equal(beforePages.includes(`${taishiIssuePageKey(MODELS_A_ROOT)}.json`), false);
-      assert.equal(beforePages.includes(`${taishiIssuePageKey(MODELS_B_ROOT)}.json`), false);
+      assert.equal(beforePages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(MODELS_A_ROOT)}`, scopeRootIdentity: MODELS_A_ROOT })}.json`), false);
+      assert.equal(beforePages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(MODELS_B_ROOT)}`, scopeRootIdentity: MODELS_B_ROOT })}.json`), false);
 
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(
@@ -377,14 +373,14 @@ test("taishi #338 model-groups compute-if-missing: uncomputed roots → pages wr
       assert.equal(sol.wallClockMedianMs, MODELS_B_WALL_MS);
 
       const afterPages = await listIssuePageNames(ledgerHome);
-      assert.equal(afterPages.includes(`${taishiIssuePageKey(MODELS_A_ROOT)}.json`), true);
-      assert.equal(afterPages.includes(`${taishiIssuePageKey(MODELS_B_ROOT)}.json`), true);
+      assert.equal(afterPages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(MODELS_A_ROOT)}`, scopeRootIdentity: MODELS_A_ROOT })}.json`), true);
+      assert.equal(afterPages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(MODELS_B_ROOT)}`, scopeRootIdentity: MODELS_B_ROOT })}.json`), true);
       const pageA = JSON.parse(
-        await readFile(taishiIssuePagePath(ledgerHome, MODELS_A_ROOT), "utf8"),
+        await readFile(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(MODELS_A_ROOT)}`, scopeRootIdentity: MODELS_A_ROOT }), "utf8"),
       ) as TaishiIssueMetricsPage;
       assert.deepEqual(pageA.legs.map((l) => l.runId), [MODELS_A_RUN]);
       const pageB = JSON.parse(
-        await readFile(taishiIssuePagePath(ledgerHome, MODELS_B_ROOT), "utf8"),
+        await readFile(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(MODELS_B_ROOT)}`, scopeRootIdentity: MODELS_B_ROOT }), "utf8"),
       ) as TaishiIssueMetricsPage;
       assert.deepEqual(pageB.legs.map((l) => l.runId), [MODELS_B_RUN]);
     });
@@ -404,11 +400,12 @@ test("taishi #338 whole-compute failure: write-page blocked → typed terminal i
           indexRow(NEG_ROOT, NEG_ISSUE),
         ]),
       );
-      await rm(taishiIssuePagePath(ledgerHome, COHORT_A_ROOT), { force: true });
-      await rm(taishiIssuePagePath(ledgerHome, NEG_ROOT), { force: true });
+      await rm(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(COHORT_A_ROOT)}`, issueNumber: COHORT_ISSUE_A }), { force: true });
+      await rm(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(NEG_ROOT)}`, issueNumber: NEG_ISSUE }), { force: true });
 
       // Block the sole write entry: page path is a directory → EISDIR on atomic write.
-      const blockedPath = taishiIssuePagePath(ledgerHome, NEG_ROOT);
+      // Cohort ensure addresses pages by book + issueNumber (not path-narrow root alone).
+      const blockedPath = taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(NEG_ROOT)}`, issueNumber: NEG_ISSUE });
       await mkdir(blockedPath, { recursive: true });
       await writeFile(join(blockedPath, "trap"), "blocked\n", "utf8");
 
@@ -461,8 +458,8 @@ test("taishi #338 whole-compute failure: write-page blocked → typed terminal i
       // Page names that are real .json files must not include a forged NEG success page.
       const afterPages = await listIssuePageNames(ledgerHome);
       assert.equal(
-        afterPages.includes(`${taishiIssuePageKey(NEG_ROOT)}.json`),
-        beforePages.includes(`${taishiIssuePageKey(NEG_ROOT)}.json`),
+        afterPages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(NEG_ROOT)}`, scopeRootIdentity: NEG_ROOT })}.json`),
+        beforePages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(NEG_ROOT)}`, scopeRootIdentity: NEG_ROOT })}.json`),
       );
     });
   });
@@ -484,22 +481,12 @@ test("taishi #338 single-run damage: unreadable exclusion on page; retrieval sti
         "session.jsonl",
       );
       await writeFile(sessionPath, "THIS IS NOT VALID SESSION JSONL {{{\n", "utf8");
-      await rm(taishiIssuePagePath(ledgerHome, NEG_ROOT), { force: true });
+      await rm(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(NEG_ROOT)}`, scopeRootIdentity: NEG_ROOT }), { force: true });
 
-      const { io, stdout, stderr } = captureIo();
-      const result = await runAkRole(
-        ["taishi", "--project-root", NEG_ROOT],
-        { packageRoot, home, io },
-      );
-
-      assert.equal(result.exitCode, 0, stderr.join(""));
-      assert.equal(stderr.join(""), "");
-
-      const body = JSON.parse(stdout.join("")) as {
-        mode: string;
-        page: TaishiIssueMetricsPage;
-        pagePath: string;
-      };
+      const body = await readOrComputeTaishiIssuePage({
+        mode: "issue",
+        projectRoot: NEG_ROOT,
+      });
       assert.equal(body.mode, "issue");
       assert.equal(body.page.kind, "taishi-issue-metrics");
       assert.equal(body.page.projectRoot, physicalPathIdentity(NEG_ROOT));

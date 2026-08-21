@@ -3,7 +3,8 @@
  * Deterministic analysis seat — no Pi runner, no admission lease.
  * Reuses existing CLI failure envelope (CliUsageError + structural reject +
  * ControlledFailure).
- * #399: --ticket N computes live from the ledger book — no library-index bootstrap.
+ * #399: issue query = book (cwd git common-dir) × optional --ticket N.
+ *   Bare call = whole book; --project-root deleted from issue face; no library-index bootstrap.
  * #337 sweep: exactly one typed JSON attachment → TaishiSweepModeInput → #329 kernel.
  * #338: three query faces; sync compute-if-missing; whole-compute failure →
  * ControlledFailure terminal (code/projectRoot/issueNumber/real cause).
@@ -14,7 +15,12 @@ import { isAbsolute, resolve } from "node:path";
 import { Value } from "typebox/value";
 
 import {
+  ActivationGitRepositoryRequiredError,
+  resolveBookKeyFromGit,
+} from "../activation-ledger-git.ts";
+import {
   errnoCode,
+  physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { exactUtf8 } from "../exact-utf8.ts";
@@ -39,32 +45,49 @@ export type TaishiRunEnv = {
 };
 
 /**
+ * Resolve the issue-query book from cwd git common-dir (same owner as record layer).
+ * Non-git cwd fails loud — bare / --ticket both require a book identity.
+ */
+export function resolveTaishiIssueBookKeyFromCwd(cwd: string = process.cwd()): string {
+  try {
+    return resolveBookKeyFromGit(cwd);
+  } catch (error) {
+    if (error instanceof ActivationGitRepositoryRequiredError) {
+      throw new CliUsageError(
+        "taishi issue query requires a git repository cwd (book = git common-dir); run inside a repository (bare = whole book, or --ticket N)",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+/**
  * Build the sole library issue-mode input from public argv faces (#399).
- * - ticket N → issueNumber = ticketNumber = N; live book compute (no library-index bootstrap).
- * - project-root P → book pointer (git common-dir) / path-narrow face for the scan.
- * - both → project-root selects the book; ticket filters inside it.
- * - bare ticket → cwd is the book pointer (must be a git tree for book resolve).
- * Bare both-missing is owned by parseTaishiArgv — no second reject here.
+ * - bare → whole book from cwd git common-dir
+ * - --ticket N → issueNumber = ticketNumber = N inside that book (strict; no index)
+ * - --project-root rejected at parse (deleted from issue face)
  */
 export async function buildTaishiIssueModeInputFromPublicArgv(
   parsed: ParseTaishiIssueArgv,
   _ledgerHome: string,
 ): Promise<TaishiIssueModeInput> {
+  const cwd = process.cwd();
+  const bookKey = resolveTaishiIssueBookKeyFromCwd(cwd);
+  const projectRoot = physicalPathIdentity(cwd);
   const ticket = parsed.ticket;
-  const directRoot = parsed.projectRoot;
 
   if (ticket === undefined) {
     return {
       mode: "issue",
-      projectRoot: directRoot!,
+      bookKey,
+      projectRoot,
     };
   }
 
-  // ticket N = issueNumber (no conversion); C4 typed ticket face.
-  // Live from the book — index is not a prerequisite (defect 3 dead-loop removed).
-  const projectRoot = directRoot ?? process.cwd();
   return {
     mode: "issue",
+    bookKey,
     projectRoot,
     ticketNumber: ticket,
     issueNumber: ticket,
@@ -196,6 +219,7 @@ export async function runPublicTaishi(
         ...(code === undefined ? {} : { identity: { code } }),
         details: {
           code: error.code,
+          bookKey: error.bookKey,
           projectRoot: error.projectRoot,
           ...(error.issueNumber === undefined ? {} : { issueNumber: error.issueNumber }),
         },

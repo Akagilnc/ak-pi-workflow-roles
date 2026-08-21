@@ -1,10 +1,11 @@
 /**
- * #332 taishi-C4 — issue scope prefers typed ticketNumber (#176) over projectRoot.
- * #399: ticket face is strict — no silent projectRoot fallback for unbound runs.
+ * #332 taishi-C4 — issue scope typed ticketNumber (#176).
+ * #399: ticket face is strict — no silent projectRoot fallback for unbound runs;
+ *       book × ticket is the query scope (projectRoot path-narrow is sweep/legacy only).
  *
  * Two fixture paths, hand-computed expected runId sets:
- * 1) ticketNumber path: typed ticket alone admits; projectRoot mismatch = conflict fact.
- * 2) no-ticketNumber path: projectRoot mechanical-key narrow filter (non-git pointer).
+ * 1) ticketNumber path: typed ticket alone admits within scanned books.
+ * 2) no-ticketNumber path: sweep/legacy projectRoot path-narrow filter (non-git pointer).
  * C4 fixture runs use exclusive runId segment 019ff000-4xxx.
  * Assert only through sole entry runTaishi — no second parse kernel.
  */
@@ -18,19 +19,18 @@ import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runTaishi } from "../../src/taishi-entry.ts";
-import type { TaishiScopeConflict } from "../../src/taishi-page.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/taishi/home");
 
-/** Issue primary root — ticket path scope projectRoot. */
+/** Issue primary root — legacy path-narrow / display face. */
 const ISSUE_PRIMARY = "/taishi-fixture/c4-issue-primary";
-/** Alien root used to force typed-vs-projectRoot conflict. */
+/** Alien root used historically for dual-key conflict; ticket path no longer conflicts. */
 const ISSUE_ALIEN = "/taishi-fixture/c4-issue-alien";
-/** Dedicated root for no-ticketNumber fallback path. */
+/** Dedicated root for no-ticketNumber path-narrow path. */
 const ISSUE_FALLBACK = "/taishi-fixture/c4-issue-fallback";
 
-/** Caller typed ticket face for the conflict path. */
+/** Caller typed ticket face for the ticket path. */
 const SCOPE_TICKET = 4401;
 /** Decoy ticket bound on a primary-root run — must stay out when typed wins. */
 const DECOY_TICKET = 9999;
@@ -44,9 +44,9 @@ const RUN_FALLBACK_IN = "019ff000-4010-7000-8000-0000000004b0";
 const RUN_FALLBACK_OUT = "019ff000-4011-7000-8000-0000000004b1";
 
 /**
- * Hand oracle — ticketNumber path (input ticket=4401, projectRoot=primary):
- *   4001 ticket 4401 + primary → IN (no conflict)
- *   4002 ticket 4401 + alien   → IN by typed; CONFLICT recorded
+ * Hand oracle — ticketNumber path (bookKey fixture-book-c4, ticket=4401):
+ *   4001 ticket 4401 + primary → IN
+ *   4002 ticket 4401 + alien   → IN (same book; no projectRoot conflict on book×ticket)
  *   4003 no ticket + primary   → OUT (#399: no path fallback when ticket requested)
  *   4004 ticket 9999 + primary → OUT
  *   4005 no ticket + alien     → OUT
@@ -56,18 +56,10 @@ const EXPECTED_TICKET_PATH_RUN_IDS = [
   RUN_TICKET_MATCH_ALIEN,
 ].sort();
 
-const EXPECTED_CONFLICT: TaishiScopeConflict = {
-  runId: RUN_TICKET_MATCH_ALIEN,
-  ticketNumber: SCOPE_TICKET,
-  projectRoot: physicalPathIdentity(ISSUE_ALIEN),
-  fact: "typed-ticketNumber-over-projectRoot",
-};
-
 /**
- * Hand oracle — no-ticketNumber path (input projectRoot=fallback only):
+ * Hand oracle — no-ticketNumber path (input projectRoot=fallback only, legacy narrow):
  *   4010 no ticket + fallback → IN
  *   4011 no ticket + alien    → OUT
- *   (ticket-path runs never share this projectRoot)
  */
 const EXPECTED_FALLBACK_RUN_IDS = [RUN_FALLBACK_IN];
 
@@ -112,16 +104,20 @@ async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   }
 }
 
-test("taishi C4 ticket path: typed ticketNumber wins conflict; page records four conflict facts", async () => {
+test("taishi C4 ticket path: typed ticketNumber alone admits; no path fallback", async () => {
   await withBusinessRepo(async () => {
     await withTempHome(async () => {
       const result = await runTaishi({
         mode: "issue",
+        bookKey: "fixture-book-c4",
         projectRoot: ISSUE_PRIMARY,
         ticketNumber: SCOPE_TICKET,
+        issueNumber: SCOPE_TICKET,
       });
 
       assert.equal(result.mode, "issue");
+      assert.equal(result.page.bookKey, "fixture-book-c4");
+      assert.equal(result.page.issueNumber, SCOPE_TICKET);
 
       // Exact runId set equality (hand oracle) — readable legs only.
       const actualRunIds = result.page.legs.map((leg) => leg.runId).sort();
@@ -132,19 +128,15 @@ test("taishi C4 ticket path: typed ticketNumber wins conflict; page records four
       // Decoy ticket on primary root and alien unbound must stay out.
       assert.equal(actualRunIds.includes(RUN_DECOY_TICKET_PRIMARY), false);
       assert.equal(actualRunIds.includes(RUN_NO_TICKET_ALIEN), false);
-
-      // Conflict: typed ticket matched while projectRoot mechanical key differed.
-      assert.deepEqual(result.page.scopeConflicts, [EXPECTED_CONFLICT]);
-      const conflict = result.page.scopeConflicts[0]!;
-      assert.equal(conflict.runId, RUN_TICKET_MATCH_ALIEN);
-      assert.equal(conflict.ticketNumber, SCOPE_TICKET);
-      assert.equal(conflict.projectRoot, physicalPathIdentity(ISSUE_ALIEN));
-      assert.equal(conflict.fact, "typed-ticketNumber-over-projectRoot");
+      // Book×ticket scope does not emit projectRoot dual-key conflicts.
+      assert.deepEqual(result.page.scopeConflicts, []);
+      void DECOY_TICKET;
+      void ISSUE_ALIEN;
     });
   });
 });
 
-test("taishi C4 no-ticketNumber path: projectRoot mechanical-key fallback", async () => {
+test("taishi C4 no-ticketNumber path: sweep/legacy projectRoot path-narrow", async () => {
   await withBusinessRepo(async () => {
     await withTempHome(async () => {
       const result = await runTaishi({
@@ -161,6 +153,8 @@ test("taishi C4 no-ticketNumber path: projectRoot mechanical-key fallback", asyn
       assert.equal(actualRunIds.includes(RUN_FALLBACK_OUT), false);
       // No ticketNumber on input → no typed/projectRoot conflict surface.
       assert.deepEqual(result.page.scopeConflicts, []);
+      assert.equal(result.page.bookKey, `root:${physicalPathIdentity(ISSUE_FALLBACK)}`);
+      assert.equal(result.page.scopeRootIdentity !== undefined, true);
     });
   });
 });

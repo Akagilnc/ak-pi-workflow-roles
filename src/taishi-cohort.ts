@@ -32,6 +32,7 @@ import type { TaishiAcceptanceSuccessReworkSection } from "./taishi-metric-famil
 export type TaishiIssuePageEnsuring = (input: {
   readonly projectRoot: string;
   readonly issueNumber: number;
+  readonly bookKey?: string;
 }) => Promise<TaishiIssueMetricsPage>;
 
 /** LOC-style optional metric — never encode absence as 0 or Infinity. */
@@ -56,6 +57,7 @@ export type TaishiCohortIssueEntry =
   | {
       readonly issueNumber: number;
       readonly status: "present";
+      readonly bookKey: string;
       readonly projectRoot: string;
     }
   | {
@@ -170,11 +172,13 @@ async function aggregateGroup(
     const page = (await ensureIssuePage({
       projectRoot: row.projectRoot,
       issueNumber,
+      bookKey: row.bookKey,
     })) as TaishiCohortSourcePage;
 
     issueEntries.push({
       issueNumber,
       status: "present",
+      bookKey: row.bookKey,
       projectRoot: row.projectRoot,
     });
 

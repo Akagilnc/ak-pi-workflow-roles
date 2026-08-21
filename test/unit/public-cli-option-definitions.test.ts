@@ -324,8 +324,8 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     optionsForOwner("taishi").map((opt) => [opt.id, opt] as const),
   );
   assert.ok(byId.get("ticket")?.modes?.includes("issue"));
-  assert.ok(byId.get("project-root")?.modes?.includes("issue"));
-  assert.deepEqual(byId.get("project-root")?.maxCountByMode, { issue: 1 });
+  assert.deepEqual(byId.get("project-root")?.modes, ["model-groups"]);
+  assert.equal(byId.get("project-root")?.maxCountByMode, undefined);
   assert.deepEqual(byId.get("project-root")?.requiredInModes, ["model-groups"]);
   assert.deepEqual(byId.get("cohort")?.exclusiveWith, ["model-groups"]);
   assert.deepEqual(byId.get("model-groups")?.exclusiveWith, ["cohort"]);
@@ -344,10 +344,7 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     assert.deepEqual(byId.get(id)?.requiredInModes, ["cohort"]);
     assert.deepEqual(byId.get(id)?.modes, ["cohort"]);
   }
-  assert.deepEqual(
-    [...TAISHI_REQUIRE_ANY_OF],
-    [{ mode: "issue", optionIds: ["ticket", "project-root"] }],
-  );
+  assert.deepEqual([...TAISHI_REQUIRE_ANY_OF], []);
 
   type Expect =
     | { ok: true; query: string }
@@ -360,32 +357,26 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
   }> = [
     {
       name: "issue+ticket",
-      rule: "requireAnyOf:issue:ticket|project-root",
+      rule: "modes:ticket:issue-ok",
       argv: ["--ticket", "1"],
       expect: { ok: true, query: "issue" },
     },
     {
-      name: "issue+project-root",
-      rule: "requireAnyOf:issue:ticket|project-root",
-      argv: ["--project-root", "/tmp/p"],
-      expect: { ok: true, query: "issue" },
-    },
-    {
-      name: "issue+both",
-      rule: "requireAnyOf:issue:ticket|project-root",
-      argv: ["--ticket", "1", "--project-root", "/tmp/p"],
-      expect: { ok: true, query: "issue" },
-    },
-    {
       name: "issue bare",
-      rule: "requireAnyOf:issue:ticket|project-root",
+      rule: "issue-bare-lawful",
       argv: [],
-      expect: { ok: false, re: /ticket|project-root/i },
+      expect: { ok: true, query: "issue" },
     },
     {
-      name: "issue two roots",
-      rule: "maxCountByMode:project-root:issue:1",
-      argv: ["--project-root", "/a", "--project-root", "/b"],
+      name: "issue rejects project-root",
+      rule: "modes:project-root:model-groups-only",
+      argv: ["--project-root", "/tmp/p"],
+      expect: { ok: false, re: /project-root/i },
+    },
+    {
+      name: "issue rejects ticket+project-root",
+      rule: "modes:project-root:model-groups-only",
+      argv: ["--ticket", "1", "--project-root", "/tmp/p"],
       expect: { ok: false, re: /project-root/i },
     },
     {
@@ -408,7 +399,7 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     },
     {
       name: "cohort×root",
-      rule: "modes:project-root:issue|model-groups",
+      rule: "modes:project-root:model-groups-only",
       argv: [...COHORT_MIN, "--project-root", "/p"],
       expect: { ok: false, re: /project-root/i },
     },
@@ -480,7 +471,7 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     },
     {
       name: "sweep×root",
-      rule: "modes:project-root:issue|model-groups",
+      rule: "modes:project-root:model-groups-only",
       argv: ["--attach", "/tmp/s.json", "--project-root", "/p"],
       expect: { ok: false, re: /project-root/i },
     },
@@ -511,15 +502,15 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     }
   }
   for (const rule of [
-    "requireAnyOf:issue:ticket|project-root",
-    "maxCountByMode:project-root:issue:1",
+    "issue-bare-lawful",
+    "modes:ticket:issue-ok",
+    "modes:project-root:model-groups-only",
     "requiredInModes:cohort:group-*",
     "requiredInModes:model-groups:project-root",
     "requiredInModes:sweep:attach",
     "maxCountByMode:attach:sweep:1",
     "exclusiveWith:cohort×model-groups",
     "modes:ticket:issue-only",
-    "modes:project-root:issue|model-groups",
     "modes:attach:sweep-only",
     "modes:group-a-label:cohort-only",
     "selectsMode:attach→sweep",
@@ -626,7 +617,7 @@ test("public dashed options admitted; shared project/attach owner-binding preser
             : opt.id === "ticket"
               ? ["--ticket", "1"]
               : opt.id === "project-root"
-                ? ["--project-root", "/tmp/p"]
+                ? ["--model-groups", "--project-root", "/tmp/p"]
                 : [
                     "--ticket",
                     "1",

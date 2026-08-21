@@ -33,6 +33,7 @@ import {
   buildTaishiModelGroupsPage,
   type TaishiModelGroupsPage,
 } from "./taishi-model-groups.ts";
+import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   assertTaishiChangedLinesInput,
   buildTaishiIssueMetricsPage,
@@ -45,10 +46,12 @@ import {
 /** #338 compute-if-missing failure — issue identity + real cause (CLI → ControlledFailure). */
 export class TaishiIssueComputeError extends Error {
   readonly code = "taishi-issue-compute-failed" as const;
+  readonly bookKey: string;
   readonly projectRoot: string;
   readonly issueNumber?: number;
 
   constructor(input: {
+    readonly bookKey: string;
     readonly projectRoot: string;
     readonly issueNumber?: number;
     readonly cause: unknown;
@@ -60,12 +63,13 @@ export class TaishiIssueComputeError extends Error {
         : String(input.cause);
     const issueFace =
       input.issueNumber === undefined
-        ? `projectRoot ${root}`
-        : `issue ${input.issueNumber} (projectRoot ${root})`;
+        ? `book ${input.bookKey} (projectRoot ${root})`
+        : `issue ${input.issueNumber} book ${input.bookKey} (projectRoot ${root})`;
     super(`taishi compute failed for ${issueFace}: ${causeText}`, {
       cause: input.cause,
     });
     this.name = "TaishiIssueComputeError";
+    this.bookKey = input.bookKey;
     this.projectRoot = root;
     if (input.issueNumber !== undefined) {
       this.issueNumber = input.issueNumber;
@@ -81,9 +85,18 @@ function isMissingPathError(error: unknown): boolean {
   );
 }
 
-/** Issue-mode typed input — book-first scope (#399); projectRoot is book pointer / page key. */
+/** Issue-mode typed input — book × ticket scope (#399). */
 export type TaishiIssueModeInput = {
   readonly mode: "issue";
+  /**
+   * Ledger book identity (git common-dir key). Required for CLI issue query.
+   * When omitted, sweep/legacy may supply projectRoot alone (path-narrow / git resolve).
+   */
+  readonly bookKey?: string;
+  /**
+   * Recording/display face and sweep/legacy path-narrow pointer.
+   * Not the CLI issue-query mechanical key after #399 (ADR 0068 revised).
+   */
   readonly projectRoot: string;
   /**
    * C4/#399: caller typed ticket face (#176). When set, issue 圈定 admits only
@@ -91,20 +104,14 @@ export type TaishiIssueModeInput = {
    */
   readonly ticketNumber?: number;
   /**
-   * Optional call-face conflict carrier (legacy dual-param). When set and
-   * identity-distinct from projectRoot with a ticket, page records the C4
-   * typed-ticketNumber-over-projectRoot fact for this call.
-   */
-  readonly conflictingProjectRoot?: string;
-  /**
    * 排除后改动行数 — optional caller typed input.
    * Omit or 0 → page retains typed 空缺 for LOC and 耗时/千行.
    */
   readonly changedLines?: number;
   /**
    * Caller typed issue number — retained on the metrics page for cohort index join.
-   * Page addressing remains projectRoot (ADR 0068); issueNumber is not the key.
-   * When present, issue mode also maintains the unique issueNumber→projectRoot index row.
+   * Page address = book + ticket when present (#399); not a global bare number key.
+   * When present, issue mode also maintains the library-index row (cohort consumer).
    */
   readonly issueNumber?: number;
 };
@@ -198,16 +205,16 @@ export type TaishiResult =
  * whole-compute failure. Sweep / explicit recompute still use runTaishiIssueMode.
  */
 /**
- * Cached page may be reused only under bidirectional ticket-scope equality.
- * - requested ticket present: page.issueNumber must equal it
+ * Cached page may be reused only under bidirectional book×ticket scope equality.
+ * - requested ticket present: page.issueNumber must equal it and bookKey matches
  * - requested ticket absent: only reuse a page that also lacks issueNumber
- *   (a narrower ticket page must not stand in for the full root page)
- * projectRoot path alone is not scope identity either direction.
+ *   (a narrower ticket page must not stand in for the full book page)
  */
 function cachedPageMatchesRequestedScope(
   page: TaishiIssueMetricsPage,
-  input: TaishiIssueModeInput,
+  input: { readonly bookKey: string; readonly issueNumber?: number; readonly ticketNumber?: number },
 ): boolean {
+  if (page.bookKey !== input.bookKey) return false;
   const requestedTicket = input.ticketNumber ?? input.issueNumber;
   if (requestedTicket === undefined) {
     return page.issueNumber === undefined;
@@ -215,17 +222,52 @@ function cachedPageMatchesRequestedScope(
   return page.issueNumber === requestedTicket;
 }
 
+function tryResolveBookKey(projectRoot: string): string | undefined {
+  try {
+    return resolveBookKeyFromGit(projectRoot);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve page/scan book identity for issue mode (#399).
+ * CLI supplies bookKey from cwd git common-dir.
+ * Sweep/legacy without bookKey: git common-dir when possible; else stable synthetic
+ * `root:<projectRoot identity>` so read/write page paths agree without a prior scan.
+ */
+function resolveIssueBookKey(input: {
+  readonly bookKey?: string;
+  readonly projectRoot: string;
+}): string {
+  if (input.bookKey !== undefined && input.bookKey.trim() !== "") {
+    return input.bookKey;
+  }
+  const fromGit = tryResolveBookKey(input.projectRoot);
+  if (fromGit !== undefined) return fromGit;
+  return `root:${physicalPathIdentity(input.projectRoot)}`;
+}
+
 export async function readOrComputeTaishiIssuePage(
   input: TaishiIssueModeInput,
 ): Promise<TaishiIssueModeResult> {
   const ledgerHome = resolveActivationLedgerHome();
   const projectRoot = physicalPathIdentity(input.projectRoot);
-  const pagePath = taishiIssuePagePath(ledgerHome, projectRoot);
+  const bookKey = resolveIssueBookKey(input);
+  const issueNumber = input.ticketNumber ?? input.issueNumber;
+  const pagePath = taishiIssuePagePath(ledgerHome, {
+    bookKey,
+    ...(issueNumber === undefined ? {} : { issueNumber }),
+    // Sweep/legacy path-narrow pages (no ticket, no explicit CLI book-only scope).
+    ...(issueNumber === undefined && input.bookKey === undefined
+      ? { scopeRootIdentity: projectRoot }
+      : {}),
+  });
 
   try {
     const raw = await readFile(pagePath, "utf8");
     const page = JSON.parse(raw) as TaishiIssueMetricsPage;
-    if (cachedPageMatchesRequestedScope(page, input)) {
+    if (cachedPageMatchesRequestedScope(page, { bookKey, ...input })) {
       return { mode: "issue", page, pagePath };
     }
     // Existing page is for a different / absent ticket scope — same kernel recompute.
@@ -233,8 +275,9 @@ export async function readOrComputeTaishiIssuePage(
     if (!isMissingPathError(error)) {
       // Corrupt / blocked page path — loud with issue identity, not absent.
       throw new TaishiIssueComputeError({
+        bookKey,
         projectRoot,
-        ...(input.issueNumber === undefined ? {} : { issueNumber: input.issueNumber }),
+        ...(issueNumber === undefined ? {} : { issueNumber }),
         cause: error,
       });
     }
@@ -245,8 +288,9 @@ export async function readOrComputeTaishiIssuePage(
   } catch (error) {
     if (error instanceof TaishiIssueComputeError) throw error;
     throw new TaishiIssueComputeError({
+      bookKey,
       projectRoot,
-      ...(input.issueNumber === undefined ? {} : { issueNumber: input.issueNumber }),
+      ...(issueNumber === undefined ? {} : { issueNumber }),
       cause: error,
     });
   }
@@ -264,48 +308,54 @@ async function runTaishiIssueMode(
   // Sweep entries carry projectRoot only; issue mode may add ticketNumber (C4).
   const ticketNumber =
     "ticketNumber" in input ? input.ticketNumber : undefined;
+  const inputBookKey =
+    "bookKey" in input && typeof input.bookKey === "string" && input.bookKey.trim() !== ""
+      ? input.bookKey
+      : undefined;
 
   const scan = precomputedScan ??
-    (ticketNumber === undefined
+    (inputBookKey !== undefined
+      ? await scanTaishiIssueRuns({
+          bookKey: inputBookKey,
+          ...(ticketNumber === undefined ? {} : { ticketNumber }),
+        })
+      : ticketNumber === undefined
       ? await scanTaishiIssueRuns({ projectRoot })
       : await scanTaishiIssueRuns({ projectRoot, ticketNumber }));
 
   // exactOptionalPropertyTypes: only pass optional faces when caller supplied them.
   const issueNumber =
     "issueNumber" in input ? input.issueNumber : undefined;
-  const conflictingProjectRoot =
-    "conflictingProjectRoot" in input ? input.conflictingProjectRoot : undefined;
 
-  // Caller dual-param conflict (ticket/index root already won): record C4 fact
-  // from the call faces themselves — independent of ledger alien runs.
-  const scopeConflicts = [...scan.scopeConflicts];
-  if (conflictingProjectRoot !== undefined && ticketNumber !== undefined) {
-    const losingRoot = physicalPathIdentity(conflictingProjectRoot);
-    const winningRoot = physicalPathIdentity(projectRoot);
-    if (losingRoot !== winningRoot) {
-      scopeConflicts.push({
-        ticketNumber,
-        projectRoot: losingRoot,
-        fact: "typed-ticketNumber-over-projectRoot",
-      });
-    }
-  }
+  const bookKey = resolveIssueBookKey({
+    ...(inputBookKey === undefined ? {} : { bookKey: inputBookKey }),
+    projectRoot,
+  });
+
+  // CLI book/ticket pages: no scopeRootIdentity.
+  // Sweep/legacy path-narrow (no explicit bookKey, no ticket): address includes root.
+  const scopeRootIdentity =
+    inputBookKey === undefined && ticketNumber === undefined && issueNumber === undefined
+      ? physicalPathIdentity(projectRoot)
+      : undefined;
 
   // Page build discovers metric families first — missing tree fails before write.
   const page = await buildTaishiIssueMetricsPage({
+    bookKey,
     projectRoot,
     runs: scan.runs,
     unreadable: scan.unreadable,
-    scopeConflicts,
+    scopeConflicts: scan.scopeConflicts,
     ...(input.changedLines === undefined ? {} : { changedLines: input.changedLines }),
     ...(issueNumber === undefined ? {} : { issueNumber }),
+    ...(scopeRootIdentity === undefined ? {} : { scopeRootIdentity }),
   });
 
   const pagePath = await writeTaishiIssueMetricsPage(ledgerHome, page);
 
-  // Issue number present → maintain the unique issueNumber→projectRoot index row
-  // so cohort can join without a second addressing kernel (ADR 0068 page key unchanged).
-  // Row carries C1 efficiency columns from the page (single index shape, no second kernel).
+  // Issue number present → maintain library-index row for cohort join (sole remaining
+  // consumer of the index; ticket CLI path never reads it — #399 D9).
+  // Row carries bookKey so cross-book same ticket numbers do not merge (D5).
   // Locked read→upsert→write so concurrent issue/sweep CLI writers do not drop rows.
   if (issueNumber !== undefined) {
     await mergeTaishiLibraryIndexRows(ledgerHome, [
@@ -356,20 +406,24 @@ async function runTaishiModelGroupsMode(
     runs.push(...scan.runs);
     unreadable.push(...scan.unreadable);
 
-    const pagePath = taishiIssuePagePath(ledgerHome, projectRoot);
+    const bookKey = resolveIssueBookKey({ projectRoot });
+    const pagePath = taishiIssuePagePath(ledgerHome, {
+      bookKey,
+      scopeRootIdentity: projectRoot,
+    });
     try {
       const raw = await readFile(pagePath, "utf8");
       JSON.parse(raw); // present page must parse (same loud face as readOrCompute)
     } catch (error) {
       if (!isMissingPathError(error)) {
-        throw new TaishiIssueComputeError({ projectRoot, cause: error });
+        throw new TaishiIssueComputeError({ bookKey, projectRoot, cause: error });
       }
       try {
         // Reuse this root's scan facts — no second ledger walk on compute-if-missing.
         await runTaishiIssueMode({ mode: "issue", projectRoot }, scan);
       } catch (computeError) {
         if (computeError instanceof TaishiIssueComputeError) throw computeError;
-        throw new TaishiIssueComputeError({ projectRoot, cause: computeError });
+        throw new TaishiIssueComputeError({ bookKey, projectRoot, cause: computeError });
       }
     }
   }
@@ -412,11 +466,20 @@ export async function runTaishi(input: TaishiInput): Promise<TaishiResult> {
   }
   if (input.mode === "cohort") {
     const ledgerHome = resolveActivationLedgerHome();
-    return runTaishiCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber }) => {
+    return runTaishiCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber, bookKey }) => {
+      // Real ledger book keys drive book scope. Synthetic `root:<id>` address keys
+      // (sweep/legacy path-narrow) must not be used as books/ directory names.
+      // issueNumber labels the page/index join only — not a ticketNumber scan filter
+      // (cohort fixtures historically bind by projectRoot path, not typed ticket).
+      const realBookKey =
+        bookKey !== undefined && !bookKey.startsWith("root:")
+          ? bookKey
+          : undefined;
       const ensured = await readOrComputeTaishiIssuePage({
         mode: "issue",
         projectRoot,
         issueNumber,
+        ...(realBookKey === undefined ? {} : { bookKey: realBookKey }),
       });
       return ensured.page;
     });

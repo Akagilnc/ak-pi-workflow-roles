@@ -66,7 +66,7 @@ export type PublicOptionDefinition = {
    * (e.g. cohort × model-groups).
    */
   readonly exclusiveWith?: readonly string[];
-  /** Per-mode maximum occurrences (issue `--project-root` ≤ 1). */
+  /** Per-mode maximum occurrences. */
   readonly maxCountByMode?: Readonly<Partial<Record<TaishiMode, number>>>;
   /**
    * When this option (or positional) is present it activates this mode.
@@ -85,10 +85,11 @@ export type TaishiRequireAnyOfRule = {
   readonly optionIds: readonly string[];
 };
 
-/** Issue face: ticket | project-root at least one. */
-export const TAISHI_REQUIRE_ANY_OF = [
-  { mode: "issue", optionIds: ["ticket", "project-root"] },
-] as const satisfies readonly TaishiRequireAnyOfRule[];
+/**
+ * Cross-field at-least-one rules for taishi modes.
+ * #399: issue bare call is lawful (whole book from cwd) — no require-any-of on issue.
+ */
+export const TAISHI_REQUIRE_ANY_OF: readonly TaishiRequireAnyOfRule[] = [];
 
 /** Residual taishi mode when no `selectsMode` option is present. */
 export const TAISHI_DEFAULT_MODE: TaishiMode = "issue";
@@ -150,6 +151,14 @@ export function evaluateTaishiModeOptionContract(
           message: `taishi sweep --attach cannot combine with ${def.canonical}`,
         };
       }
+      // #399: --project-root deleted from issue query — point callers to bare/--ticket.
+      if (mode === "issue" && def.id === "project-root") {
+        return {
+          ok: false,
+          message:
+            "taishi issue query no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)",
+        };
+      }
       return {
         ok: false,
         message: `taishi ${mode} does not accept ${def.canonical}`,
@@ -205,7 +214,7 @@ export function evaluateTaishiModeOptionContract(
       return {
         ok: false,
         message:
-          "usage: ak-role taishi ((--ticket <N> | --project-root <P>) | [sweep] --attach <sweep.json> | --cohort ... | --model-groups ...)",
+          "usage: ak-role taishi ([--ticket <N>] | [sweep] --attach <sweep.json> | --cohort ... | --model-groups ...)",
       };
     }
     const flags = rule.optionIds
@@ -574,12 +583,12 @@ const TAISHI_OPTIONS = [
     required: false,
     repeatable: true,
     form: "option",
-    modes: ["issue", "model-groups"],
+    // #399: deleted from issue query face; retained only for model-groups scope set.
+    modes: ["model-groups"],
     requiredInModes: ["model-groups"],
-    maxCountByMode: { issue: 1 },
     description: {
-      en: "Book pointer (git common-dir) / workspace narrow. Issue: at most one (with --ticket at least one of the two). Model-groups: one or more required.",
-      zh: "候簿指针（git common-dir）/ 工作区窄过滤。issue：至多一个（与 --ticket 至少居其一）。model-groups：一个或多个且必填。",
+      en: "Model-groups issue-set scope roots (one or more required). Not an issue-query face (#399 deleted --project-root from issue).",
+      zh: "model-groups 议题集合根（一个或多个且必填）。不是 issue 查询面（#399 已从 issue 删除 --project-root）。",
     },
   },
   {
@@ -593,8 +602,8 @@ const TAISHI_OPTIONS = [
     form: "option",
     modes: ["issue"],
     description: {
-      en: "Ticket/issue number; live book filter by invocation.ticketNumber (with --project-root at least one of the two). No library-index bootstrap.",
-      zh: "票号；从候簿按 invocation.ticketNumber 现取现算（与 --project-root 至少居其一）。不依赖 library-index 自举。",
+      en: "Ticket/issue number; live filter by invocation.ticketNumber inside the cwd book (git common-dir). Bare call = whole book. No library-index bootstrap.",
+      zh: "票号；在 cwd 候簿（git common-dir）内按 invocation.ticketNumber 现取现算。裸调用=整簿。不依赖 library-index 自举。",
     },
   },
   {
@@ -1099,12 +1108,13 @@ const ROLE_COMMAND_HELP = {
     command: "taishi",
     summary: "Deterministic analysis seat (issue / sweep / cohort / model-groups).",
     usage: [
-      "ak-role taishi (--ticket <N> | --project-root <P>) [options]",
+      "ak-role taishi [--ticket <N>]",
       "ak-role taishi [sweep] --attach <path>",
       "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>",
       "ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]",
     ],
     examples: [
+      "ak-role taishi",
       "ak-role taishi --ticket 125",
       "ak-role taishi sweep --attach ./sweep.json",
     ],
