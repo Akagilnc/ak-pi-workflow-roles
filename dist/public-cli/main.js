@@ -136,6 +136,54 @@ var init_collector_output = __esm({
   }
 });
 
+// src/engine-labor-fallback.ts
+function buildEngineLaborFallbackField(input) {
+  return Object.freeze({
+    engineLaborFallback: Object.freeze({
+      engine: input.engine,
+      failure: input.failure,
+      laborBy: "seat"
+    })
+  });
+}
+function isSeatFallbackTaintedStatus(status) {
+  return status.endsWith(SEAT_FALLBACK_STATUS_SUFFIX);
+}
+function seatFallbackBaseStatus(status) {
+  return isSeatFallbackTaintedStatus(status) ? status.slice(0, -SEAT_FALLBACK_STATUS_SUFFIX.length) : status;
+}
+function seatFallbackStatusHasLawfulEvidence(status, source) {
+  if (!isSeatFallbackTaintedStatus(status)) return true;
+  return readEngineLaborFallbackFieldFrom(source) !== void 0;
+}
+function readEngineLaborFallbackFieldFrom(source) {
+  if (typeof source !== "object" || source === null || Array.isArray(source)) {
+    return void 0;
+  }
+  let raw;
+  try {
+    raw = source.engineLaborFallback;
+  } catch {
+    return void 0;
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return void 0;
+  const rec = raw;
+  if (typeof rec.engine !== "string" || typeof rec.failure !== "string" || rec.laborBy !== "seat") {
+    return void 0;
+  }
+  return buildEngineLaborFallbackField({
+    engine: rec.engine,
+    failure: rec.failure
+  });
+}
+var SEAT_FALLBACK_STATUS_SUFFIX;
+var init_engine_labor_fallback = __esm({
+  "src/engine-labor-fallback.ts"() {
+    "use strict";
+    SEAT_FALLBACK_STATUS_SUFFIX = "-by-fallback";
+  }
+});
+
 // src/package-contracts/judge-output.ts
 function validateAcceptedJudgeDetails(verdict) {
   if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) throw new Error("Judge verdict has no execution discriminator");
@@ -145,13 +193,20 @@ function validateAcceptedJudgeDetails(verdict) {
   } catch {
     throw new Error("Judge verdict has no execution discriminator");
   }
-  if (["converged", "continue", "escalate"].includes(String(judgeStatus))) return verdict;
+  if (typeof judgeStatus !== "string") {
+    throw new Error("Judge verdict has no execution discriminator");
+  }
+  const base = seatFallbackBaseStatus(judgeStatus);
+  if (["converged", "continue", "escalate"].includes(base) && seatFallbackStatusHasLawfulEvidence(judgeStatus, verdict)) {
+    return verdict;
+  }
   throw new Error("Judge verdict has no execution discriminator");
 }
 var JUDGE_OUTPUT_TOOL_NAME;
 var init_judge_output = __esm({
   "src/package-contracts/judge-output.ts"() {
     "use strict";
+    init_engine_labor_fallback();
     JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
   }
 });
@@ -169,6 +224,10 @@ function read(value, key) {
   }
 }
 function validateRuntimeReviewerReceipt(output) {
+  const status = read(output, "status");
+  if (typeof status === "string" && !seatFallbackStatusHasLawfulEvidence(status, output)) {
+    throw new Error("Reviewer receipt has no recognized execution discriminator");
+  }
   const acceptedBatch = read(output, "acceptedBatch");
   const identities = read(output, "identities");
   const construction = read(identities, "construction");
@@ -199,11 +258,11 @@ function validateRuntimeReviewerReceipt(output) {
       const expectedPrompt = read(read(legs[index], "prompt"), "text");
       const actualPrompt = read(read(outcome, "prompt"), "text");
       if (expectedPrompt !== actualPrompt) throw new Error("Reviewer outcome prompt disagrees with accepted leg");
-      const status = read(outcome, "status");
+      const status2 = read(outcome, "status");
       const report = read(reports, axis);
-      if (status === "successful" && report === void 0)
+      if (status2 === "successful" && report === void 0)
         throw new Error("Successful Reviewer outcome lacks report");
-      if (status === "failed" && report !== void 0) throw new Error("Failed Reviewer outcome cannot bind a report");
+      if (status2 === "failed" && report !== void 0) throw new Error("Failed Reviewer outcome cannot bind a report");
     }
     const specDisposition = read(output, "specDisposition");
     if (specDisposition === "launched") {
@@ -224,6 +283,7 @@ var REVIEWER_OUTPUT_TOOL_NAME;
 var init_reviewer_output = __esm({
   "src/package-contracts/reviewer-output.ts"() {
     "use strict";
+    init_engine_labor_fallback();
     REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
   }
 });
@@ -14086,12 +14146,18 @@ function read2(value, key) {
 }
 function validateDoctorSubmissionShape(value) {
   const status = read2(value, "status");
-  if (status !== "completed" && status !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  const base = typeof status === "string" ? seatFallbackBaseStatus(status) : status;
+  if (base !== "completed" && base !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  if (typeof status === "string" && !seatFallbackStatusHasLawfulEvidence(status, value)) {
+    throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  }
   return value;
 }
 function validateRecordedDoctorOutput(value) {
   const output = validateDoctorSubmissionShape(value);
-  if (read2(output, "status") === "completed" && read2(output, "cost") === void 0) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
+  const status = read2(output, "status");
+  const base = typeof status === "string" ? seatFallbackBaseStatus(status) : status;
+  if (base === "completed" && read2(output, "cost") === void 0) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
   return output;
 }
 var DOCTOR_OUTPUT_TOOL_NAME, DOCTOR_TARGET_KINDS, nonblank, count, evidenceIds, guardrail, lastRealBite, assetKinds, findingBody, finding, caseIdentity, cost, doctorSubmissionVariants, doctorSubmissionSchema, doctorOutputSchema, doctorEvidenceReadSchema, DoctorSubmissionContractError;
@@ -14100,6 +14166,7 @@ var init_doctor_contracts = __esm({
     "use strict";
     init_build();
     init_canonical_json();
+    init_engine_labor_fallback();
     init_open_tool_schema();
     DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
     DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
@@ -14243,8 +14310,13 @@ function validateMergerInput(value) {
 }
 function validateMergerOutput(value, expectedAttemptId) {
   if (!record(value) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("Merger output attempt mismatch");
-  if (value.status === "completed" && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
-  if (value.status === "escalate") return structuredClone(value);
+  const status = typeof value.status === "string" ? value.status : void 0;
+  const statusBase = status !== void 0 ? seatFallbackBaseStatus(status) : void 0;
+  if (status !== void 0 && !seatFallbackStatusHasLawfulEvidence(status, value)) {
+    throw new Error("Merger output has no recognized execution discriminator");
+  }
+  if (statusBase === "completed" && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
+  if (statusBase === "escalate") return structuredClone(value);
   throw new Error("Merger output has no recognized execution discriminator");
 }
 var oidPattern, materialSchema, checkSchema, mergerInputSchema, mergerOutputVariants, mergerOutputSchema, MERGER_OUTPUT_TOOL_NAME, record, blank, MergerInputContractError;
@@ -14254,6 +14326,7 @@ var init_merger_contracts = __esm({
     init_build();
     init_git_object_id();
     init_exact_utf8();
+    init_engine_labor_fallback();
     init_sha256();
     init_open_tool_schema();
     oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
@@ -15190,8 +15263,10 @@ function validateAcceptedDetails(toolName, details) {
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"]
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
-  const runtimeBindingMissing = toolName === DOCTOR_OUTPUT_TOOL_NAME && discriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object") || toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2;
-  if (runtimeBindingMissing || !collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(discriminator))) {
+  const baseDiscriminator = typeof discriminator === "string" ? seatFallbackBaseStatus(discriminator) : discriminator;
+  const taintedWithoutEvidence = typeof discriminator === "string" && !seatFallbackStatusHasLawfulEvidence(discriminator, details);
+  const runtimeBindingMissing = toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object") || toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2;
+  if (taintedWithoutEvidence || runtimeBindingMissing || !collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator))) {
     throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
   }
   try {
@@ -15227,7 +15302,8 @@ function acceptedFacts(toolName, details) {
       return { status: details.judgeStatus };
     case MERGER_OUTPUT_TOOL_NAME: {
       const output = details;
-      return { status: output.status, ...output.status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {} };
+      const status = output.status;
+      return { status, ...seatFallbackBaseStatus(status) === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {} };
     }
     case COLLECTOR_OUTPUT_TOOL:
       return { status: "collected" };
@@ -15241,6 +15317,7 @@ var init_terminating_tools = __esm({
     init_judge_output();
     init_reviewer_output();
     init_audit_escalation();
+    init_engine_labor_fallback();
     init_doctor_contracts();
     init_merger_contracts();
     init_worker_output();
@@ -19266,42 +19343,6 @@ var init_auditor_dossier_tool = __esm({
   }
 });
 
-// src/engine-labor-fallback.ts
-function buildEngineLaborFallbackField(input) {
-  return Object.freeze({
-    engineLaborFallback: Object.freeze({
-      engine: input.engine,
-      failure: input.failure,
-      laborBy: "seat"
-    })
-  });
-}
-function readEngineLaborFallbackFieldFrom(source) {
-  if (typeof source !== "object" || source === null || Array.isArray(source)) {
-    return void 0;
-  }
-  let raw;
-  try {
-    raw = source.engineLaborFallback;
-  } catch {
-    return void 0;
-  }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return void 0;
-  const rec = raw;
-  if (typeof rec.engine !== "string" || typeof rec.failure !== "string" || rec.laborBy !== "seat") {
-    return void 0;
-  }
-  return buildEngineLaborFallbackField({
-    engine: rec.engine,
-    failure: rec.failure
-  });
-}
-var init_engine_labor_fallback = __esm({
-  "src/engine-labor-fallback.ts"() {
-    "use strict";
-  }
-});
-
 // src/engine-detour-tool.ts
 var engineDetourArgsSchema;
 var init_engine_detour_tool = __esm({
@@ -20403,7 +20444,8 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
     // #380: spread sole-built field; do not re-key here (S1).
     ...readEngineLaborFallbackFieldFrom(verdict)
   };
-  if (judgeStatus === "continue") {
+  const statusBase = seatFallbackBaseStatus(judgeStatus);
+  if (statusBase === "continue") {
     const fix = safelyRead(verdict, "fix");
     if (fix.readable && isRecord5(fix.value)) {
       const summary = safelyRead(fix.value, "summary");
@@ -20428,7 +20470,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
       }
     }
   }
-  if (judgeStatus === "escalate") {
+  if (statusBase === "escalate") {
     const gate = safelyRead(verdict, "decisionGate");
     if (gate.readable && isRecord5(gate.value)) {
       const question = safelyRead(gate.value, "question");
@@ -20452,10 +20494,11 @@ function coderDecisiveFacts(output) {
   const status = safelyRead(candidate, "status");
   const facts = {};
   if (status.readable && typeof status.value === "string") facts.coderStatus = status.value;
+  const statusBase = status.readable && typeof status.value === "string" ? seatFallbackBaseStatus(status.value) : void 0;
   const remainingScope = safelyRead(candidate, "remainingScope");
-  if (status.readable && status.value === "unfinished" && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  if (statusBase === "unfinished" && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
   const reason = safelyRead(candidate, "reason");
-  if (status.readable && status.value === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
+  if (statusBase === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
     facts.reason = reason.value;
   }
   const report = safelyRead(candidate, "report");
@@ -20467,14 +20510,15 @@ function fixerDecisiveFacts(output) {
   const status = safelyRead(candidate, "status");
   const facts = {};
   if (status.readable && typeof status.value === "string") facts.fixerStatus = status.value;
+  const statusBase = status.readable && typeof status.value === "string" ? seatFallbackBaseStatus(status.value) : void 0;
   const remainingScope = safelyRead(candidate, "remainingScope");
-  if (status.readable && (status.value === "unfinished" || status.value === "refused") && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  if ((statusBase === "unfinished" || statusBase === "refused") && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
   const reason = safelyRead(candidate, "reason");
-  if (status.readable && status.value === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
+  if (statusBase === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
     facts.reason = reason.value;
   }
   const blockerRead = safelyRead(candidate, "blocker");
-  if (status.readable && status.value === "refused" && blockerRead.readable && isRecord5(blockerRead.value)) {
+  if (statusBase === "refused" && blockerRead.readable && isRecord5(blockerRead.value)) {
     const cause = safelyRead(blockerRead.value, "cause");
     if (cause.readable && typeof cause.value === "string") facts.blockerCause = cause.value;
     const prerequisiteId = safelyRead(blockerRead.value, "prerequisiteId");
@@ -20550,7 +20594,8 @@ function doctorDecisiveFacts(output) {
   const status = safelyRead(candidate, "status");
   const facts = { ...auditNoReceiptDecisiveFact(candidate) };
   if (status.readable && typeof status.value === "string") facts.doctorStatus = status.value;
-  if (status.readable && status.value === "refused") {
+  const statusBase = status.readable && typeof status.value === "string" ? seatFallbackBaseStatus(status.value) : void 0;
+  if (statusBase === "refused") {
     const reason = safelyRead(candidate, "reason");
     if (reason.readable && reason.value !== void 0) facts.reason = reason.value;
     const missing = safelyRead(candidate, "missingEvidence");
@@ -20597,7 +20642,8 @@ function reviewerDecisiveFacts(output) {
     facts.specDisposition = specDisposition.value;
   }
   const diagnostic = safelyRead(candidate, "diagnostic");
-  if (status.readable && status.value === "refused" && diagnostic.readable) {
+  const statusBase = status.readable && typeof status.value === "string" ? seatFallbackBaseStatus(status.value) : void 0;
+  if (statusBase === "refused" && diagnostic.readable) {
     facts.diagnosticPresent = typeof diagnostic.value === "string" && diagnostic.value.trim().length > 0;
   }
   return facts;
@@ -21038,9 +21084,11 @@ function extractJudgeRoleOutcome(entries) {
     if (isUnboundAuditEscalationFace(details)) continue;
     if (!isRecord5(details)) continue;
     const statusRead = safelyRead(details, "judgeStatus");
-    if (!statusRead.readable) continue;
+    if (!statusRead.readable || typeof statusRead.value !== "string") continue;
     const judgeStatus = statusRead.value;
-    if (judgeStatus !== "converged" && judgeStatus !== "continue" && judgeStatus !== "escalate") continue;
+    const statusBase = seatFallbackBaseStatus(judgeStatus);
+    if (statusBase !== "converged" && statusBase !== "continue" && statusBase !== "escalate") continue;
+    if (!seatFallbackStatusHasLawfulEvidence(judgeStatus, details)) continue;
     return {
       kind: "accepted",
       role: "judge",
@@ -21730,8 +21778,9 @@ async function settleLawfulDoctorTerminalResult(admitted) {
   if (entries === void 0) return void 0;
   const extracted = extractDoctorRoleOutcome(entries);
   if (extracted === void 0) return void 0;
-  if (extracted.output !== void 0 && extracted.output.status === "completed") {
-    if (extracted.output.case.issueNumber !== admitted.caseIdentity.issueNumber || extracted.output.case.runsPath !== admitted.caseIdentity.runsPath) {
+  if (extracted.output !== void 0 && seatFallbackBaseStatus(String(extracted.output.status)) === "completed") {
+    const completedCase = extracted.output.case;
+    if (completedCase.issueNumber !== admitted.caseIdentity.issueNumber || completedCase.runsPath !== admitted.caseIdentity.runsPath) {
       const error = new Error(
         "Doctor receipt case identity does not match admitted case identity"
       );
@@ -21945,7 +21994,8 @@ function mergerDecisiveFacts(output) {
   const attemptId = safelyRead(candidate, "attemptId");
   if (status.readable && typeof status.value === "string") facts.mergerStatus = status.value;
   if (attemptId.readable && attemptId.value !== void 0) facts.attemptId = attemptId.value;
-  const decisiveKey = status.readable && status.value === "completed" ? "mergeCommitId" : "diagnosis";
+  const statusBase = status.readable && typeof status.value === "string" ? seatFallbackBaseStatus(status.value) : void 0;
+  const decisiveKey = statusBase === "completed" ? "mergeCommitId" : "diagnosis";
   const decisive = safelyRead(candidate, decisiveKey);
   if (decisive.readable && decisive.value !== void 0) facts[decisiveKey] = decisive.value;
   return facts;
@@ -25881,8 +25931,9 @@ function mapTerminal(role, terminal) {
       noReceipt: false
     };
   }
+  const statusBase = seatFallbackBaseStatus(status);
   const acceptedSet = ACCEPTED_STATUS[role];
-  if (acceptedSet === void 0 || !acceptedSet.has(status)) {
+  if (acceptedSet === void 0 || !acceptedSet.has(statusBase)) {
     return {
       terminalLabel: status,
       accepted: false,
@@ -25891,9 +25942,9 @@ function mapTerminal(role, terminal) {
       noReceipt: false
     };
   }
-  const plannedDuty = WORKER_ROLES.has(role) && status === "planned";
+  const plannedDuty = WORKER_ROLES.has(role) && statusBase === "planned";
   const successSet = SUCCESS_STATUS[role] ?? /* @__PURE__ */ new Set();
-  const success = !plannedDuty && successSet.has(status);
+  const success = !plannedDuty && successSet.has(statusBase);
   const successEligible = !plannedDuty;
   return {
     terminalLabel: status,
@@ -26015,6 +26066,7 @@ var WORKER_ROLES, ACCEPTED_STATUS, SUCCESS_STATUS, acceptanceSuccessReworkFamily
 var init_acceptance_success_rework = __esm({
   "src/taishi-metric-families/acceptance-success-rework.ts"() {
     "use strict";
+    init_engine_labor_fallback();
     init_taishi_median();
     WORKER_ROLES = /* @__PURE__ */ new Set(["coder", "fixer"]);
     ACCEPTED_STATUS = {
