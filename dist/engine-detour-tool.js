@@ -1,7 +1,6 @@
 import { Type } from "typebox";
 import { ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC, ENGINE_DETOUR_TOOL_NAME, engineDetourFailureDiagnostic, engineNameFromEnv, isEngineDetourFailure, runEngineDetourOnce, } from "./engine-detour.js";
 import { activationEngineLaborFallbackLatch, recordEngineLaborFallback, } from "./engine-labor-fallback.js";
-import { isPackageOwnedToolIdleTimeoutError, pokePackageOwnedToolIdle, wrapPackageOwnedToolDefinition, } from "./package-owned-tool-idle.js";
 const engineDetourArgsSchema = Type.Object({
     argv: Type.Array(Type.String({ minLength: 1 }), {
         minItems: 1,
@@ -23,14 +22,8 @@ function seatFallbackToolResult(field, failure) {
         },
     };
 }
-/** Caller/upper-layer cancel must propagate; idle backstop is seat-fallback, not cancel. */
+/** Caller/upper-layer cancel must propagate; process failure is seat-fallback, not cancel. */
 function isCallerCancellation(error, signal) {
-    if (isPackageOwnedToolIdleTimeoutError(error))
-        return false;
-    if (signal !== undefined &&
-        isPackageOwnedToolIdleTimeoutError(signal.reason)) {
-        return false;
-    }
     if (signal?.aborted === true)
         return true;
     if (typeof error === "object" &&
@@ -44,13 +37,13 @@ function isCallerCancellation(error, signal) {
  * Build one once-latch detour tool definition for a configured engine name.
  * `latch` is shared so parent registration can reset between activations.
  * `fail` owns host abort (parent) vs throw (evidence child) for tool misuse only.
- * Engine process failure (nonzero/empty/spawn/idle-timeout) soft-returns seat fallback (#380).
+ * Engine process failure (nonzero/empty/spawn) soft-returns seat fallback (#380).
  * Caller AbortSignal cancel propagates without writing fallback.
  */
 export function createEngineDetourToolDefinition(input) {
     const latch = input.latch ?? { used: false };
     const engineName = input.engineName;
-    return wrapPackageOwnedToolDefinition({
+    return {
         name: ENGINE_DETOUR_TOOL_NAME,
         label: "Engine Detour",
         description: `Run one labor-engine subprocess (engine=${engineName}) and return its stdout to this session. Call at most once per activation. Build argv from the host CLI actual interface for this engine name; when optional packaged notes are present in the session prompt, follow those bytes too.`,
@@ -83,17 +76,14 @@ export function createEngineDetourToolDefinition(input) {
             };
             let result;
             try {
-                // Byte activity on stdout/stderr touches the outer package-owned idle clock
-                // (183s silence law unchanged). True hangs still die; slow streaming engines live.
                 result = await runEngineDetourOnce({
                     argv,
                     cwd: ctx.cwd,
                     ...(signal === undefined ? {} : { signal }),
-                    onOutputActivity: pokePackageOwnedToolIdle,
                 });
             }
             catch (error) {
-                // Caller cancel: propagate. Idle backstop + spawn/engine failure: seat fallback.
+                // Caller cancel: propagate. Spawn/engine failure: seat fallback.
                 if (isCallerCancellation(error, signal)) {
                     throw error;
                 }
@@ -111,7 +101,7 @@ export function createEngineDetourToolDefinition(input) {
                 },
             };
         },
-    });
+    };
 }
 /**
  * Register the engine-generic detour tool once for this process when any role has
