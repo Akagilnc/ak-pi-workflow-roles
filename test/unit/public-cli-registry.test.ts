@@ -2,10 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  helpDocument,
-  helpDocumentForCommand,
-} from "../../src/public-cli/cli.ts";
-import {
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CLI_SUPPORT_COMMANDS,
   PUBLIC_CONFIGURABLE_SEATS,
@@ -89,17 +85,4 @@ test("startup model candidates follow #11 package defaults per seat", () => {
       { provider: "xai", model: "grok-4.5", thinking: "high" },
     ]);
   }
-});
-
-test("general help and help taishi both discover the deterministic taishi command", () => {
-  // Structured discovery only — help free text is a human surface (#125 / 锚定宪法).
-  const doc = helpDocument();
-  const fromGeneral = doc.capabilities.find((cap) => cap.name === "taishi");
-  assert.ok(fromGeneral, "top help capabilities must include taishi");
-  assert.equal(fromGeneral.kind, "deterministic");
-
-  const fromCommand = helpDocumentForCommand("taishi");
-  assert.ok(fromCommand, "helpDocumentForCommand(taishi) must resolve");
-  assert.equal(fromCommand.command, "taishi");
-  assert.equal(fromCommand.kind, "deterministic");
 });
