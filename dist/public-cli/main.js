@@ -15806,44 +15806,46 @@ function projectOwnerOptions(owner) {
     description: def.description
   }));
 }
-function renderOwnerOptionHelpLines(owner, locale2 = "en") {
+function projectCommandHelp(topic) {
+  if (!(topic in PUBLIC_COMMAND_HELP)) return void 0;
+  const facts = PUBLIC_COMMAND_HELP[topic];
+  return {
+    command: facts.command,
+    summary: facts.summary,
+    usage: [...facts.usage],
+    examples: [...facts.examples]
+  };
+}
+function renderHumanOwnerOptionLines(owner, locale2 = "en") {
   const lines = [];
   for (const opt of projectOwnerOptions(owner)) {
-    const aliasText = opt.aliases.length === 0 ? "-" : opt.aliases.join(",");
-    const metavar = opt.valueMetavar ?? "-";
-    const required = opt.required ? "required" : "optional";
-    const repeatable = opt.repeatable ? "repeatable" : "single";
-    const form = opt.form;
-    const phases = opt.phases === void 0 ? "-" : opt.phases.join("|");
-    const modes = opt.modes === void 0 ? "-" : opt.modes.join("|");
-    const requiredInModes = opt.requiredInModes === void 0 ? "-" : opt.requiredInModes.join("|");
-    const exclusiveWith = opt.exclusiveWith === void 0 ? "-" : opt.exclusiveWith.join("|");
-    const maxCount = opt.maxCountByMode === void 0 ? "-" : Object.entries(opt.maxCountByMode).map(([mode, n]) => `${mode}:${n}`).join(",");
-    const defaultValue = opt.defaultValue ?? "-";
+    let spelling = opt.canonical;
+    if (opt.valueMetavar !== null) {
+      spelling = `${spelling} <${opt.valueMetavar}>`;
+    }
+    if (opt.aliases.length > 0) {
+      const aliasHint = opt.aliases.join(", ");
+      if (opt.form === "positional") {
+        spelling = opt.aliases.length > 0 ? opt.aliases.join("|") : spelling;
+      } else {
+        spelling = `${spelling} (${aliasHint})`;
+      }
+    }
+    const tags = [];
+    if (opt.required) tags.push("required");
+    if (opt.requiredInModes !== void 0) {
+      tags.push(`required:${opt.requiredInModes.join("|")}`);
+    }
+    if (opt.repeatable) tags.push("repeatable");
+    if (opt.defaultValue !== void 0) tags.push(`default=${opt.defaultValue}`);
+    if (opt.form === "positional") tags.push("positional");
+    const tagText = tags.length === 0 ? "" : ` [${tags.join(", ")}]`;
     const desc = locale2 === "zh" ? opt.description.zh : opt.description.en;
-    lines.push(
-      [
-        "option",
-        opt.id,
-        opt.canonical,
-        `aliases=${aliasText}`,
-        `metavar=${metavar}`,
-        required,
-        repeatable,
-        `form=${form}`,
-        `phases=${phases}`,
-        `modes=${modes}`,
-        `requiredInModes=${requiredInModes}`,
-        `exclusiveWith=${exclusiveWith}`,
-        `maxCountByMode=${maxCount}`,
-        `default=${defaultValue}`,
-        desc
-      ].join("	")
-    );
+    lines.push(`  ${spelling}${tagText}  ${desc}`);
   }
   return lines;
 }
-var TAISHI_REQUIRE_ANY_OF, TAISHI_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, SHARED_PROJECT_SEMANTICS, SHARED_ATTACH_SEMANTICS, JUDGE_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, MERGER_OPTIONS, TAISHI_OPTIONS, PUBLIC_OPTION_TABLE;
+var TAISHI_REQUIRE_ANY_OF, TAISHI_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, SHARED_PROJECT_SEMANTICS, SHARED_ATTACH_SEMANTICS, JUDGE_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, MERGER_OPTIONS, TAISHI_OPTIONS, PUBLIC_OPTION_TABLE, PUBLIC_NAVIGATOR_HELP_NOTE, TOP_LEVEL_HELP, ROLE_COMMAND_HELP, SUPPORT_COMMAND_HELP, PUBLIC_COMMAND_HELP;
 var init_option_definitions = __esm({
   "src/public-cli/option-definitions.ts"() {
     "use strict";
@@ -16316,6 +16318,133 @@ var init_option_definitions = __esm({
       doctor: DOCTOR_OPTIONS,
       merger: MERGER_OPTIONS,
       taishi: TAISHI_OPTIONS
+    };
+    PUBLIC_NAVIGATOR_HELP_NOTE = "Navigator attends automatically on every run; configure with `ak-role config set navigator <provider/model[:thinking]>` (not a caller command).";
+    TOP_LEVEL_HELP = {
+      command: "top",
+      summary: "public role CLI",
+      usage: [
+        "ak-role <command> [options]",
+        "ak-role help <command>"
+      ],
+      examples: [
+        'ak-role judge --attach ./plan.md "Review this plan."',
+        'ak-role coder plan "Propose the first implementation plan."'
+      ]
+    };
+    ROLE_COMMAND_HELP = {
+      judge: {
+        command: "judge",
+        summary: "Adjudicate the supplied materials; infers its own burden.",
+        usage: ["ak-role judge [options] [instruction]"],
+        examples: [
+          'ak-role judge --attach ./plan.md "Review this plan."',
+          'ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."'
+        ]
+      },
+      coder: {
+        command: "coder",
+        summary: "First implementation; phase defaults to apply.",
+        usage: ["ak-role coder [plan|apply] [options] <instruction>"],
+        examples: [
+          'ak-role coder plan "Propose the first implementation plan."',
+          'ak-role coder apply --attach ./plan.md "Implement the approved slice."'
+        ]
+      },
+      fixer: {
+        command: "fixer",
+        summary: "Repair the assigned findings; phase defaults to apply.",
+        usage: ["ak-role fixer [plan|apply] [options] <instruction>"],
+        examples: [
+          'ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."',
+          'ak-role fixer plan --attach ./findings.md "Propose the repair plan."'
+        ]
+      },
+      reviewer: {
+        command: "reviewer",
+        summary: "Fixed-target two-axis review (Standards + Spec).",
+        usage: ["ak-role reviewer --base <revision> [options] <instruction>"],
+        examples: [
+          'ak-role reviewer --base main "Review the branch against the governing issue and repository authority."'
+        ]
+      },
+      collector: {
+        command: "collector",
+        summary: "Collect GitHub PR review evidence (one-shot).",
+        usage: ["ak-role collector --pr <number> [options] [instruction]"],
+        examples: [
+          "ak-role collector --pr 42 --repo owner/repository",
+          "ak-role collector --pr 42 --request-manifest ./requests.json"
+        ]
+      },
+      doctor: {
+        command: "doctor",
+        summary: "Diagnose one retained case (one-shot).",
+        usage: ["ak-role doctor --issue <number> [options] [instruction]"],
+        examples: [
+          'ak-role doctor --issue 115 "Diagnose this retained case."'
+        ]
+      },
+      merger: {
+        command: "merger",
+        summary: "Resolve one ordinary merge already in conflict.",
+        usage: ["ak-role merger [options] <instruction>"],
+        examples: [
+          'ak-role merger --project /path/to/worktree "Reconcile the active merge."'
+        ]
+      },
+      taishi: {
+        command: "taishi",
+        summary: "Deterministic analysis seat (issue / sweep / cohort / model-groups).",
+        usage: [
+          "ak-role taishi (--ticket <N> | --project-root <P>) [options]",
+          "ak-role taishi [sweep] --attach <path>",
+          "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>",
+          "ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]"
+        ],
+        examples: [
+          "ak-role taishi --ticket 125",
+          "ak-role taishi sweep --attach ./sweep.json"
+        ]
+      }
+    };
+    SUPPORT_COMMAND_HELP = {
+      roles: {
+        command: "roles",
+        summary: "List effective seats and models.",
+        usage: ["ak-role roles"],
+        examples: ["ak-role roles"]
+      },
+      config: {
+        command: "config",
+        summary: "Persistent seat model and labor-engine defaults.",
+        usage: [
+          "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
+          "ak-role config set-engine <seat> <name>",
+          "ak-role config unset-engine <seat>"
+        ],
+        examples: [
+          "ak-role config set judge openai-codex/gpt-5.6-sol:high",
+          "ak-role config set-engine judge opus"
+        ]
+      },
+      help: {
+        command: "help",
+        summary: "Show public CLI help.",
+        usage: ["ak-role help [command]", "ak-role --help"],
+        examples: ["ak-role help coder", "ak-role help judge"]
+      },
+      resume: {
+        command: "resume",
+        summary: "Reopen an exact role run after a typed HTTP 429.",
+        usage: ["ak-role resume <runId>"],
+        examples: ["ak-role resume 01abc\u2026"]
+      }
+    };
+    PUBLIC_COMMAND_HELP = {
+      top: TOP_LEVEL_HELP,
+      ...ROLE_COMMAND_HELP,
+      ...SUPPORT_COMMAND_HELP
     };
   }
 });
@@ -27130,13 +27259,29 @@ function helpDocumentForCommand(command) {
   }
   return void 0;
 }
+function appendUsageAndExamples(lines, topic) {
+  const facts = projectCommandHelp(topic);
+  if (facts === void 0) return;
+  lines.push("", "USAGE");
+  for (const line2 of facts.usage) {
+    lines.push(`  ${line2}`);
+  }
+  if (facts.examples.length > 0) {
+    lines.push("", "EXAMPLES");
+    for (const example of facts.examples) {
+      lines.push(`  ${example}`);
+    }
+  }
+}
 function renderHelp() {
   const doc = helpDocument();
+  const top = projectCommandHelp("top");
   const lines = [
-    "ak-role \u2014 public role CLI",
-    "",
-    "Support commands:"
+    `ak-role \u2014 ${top?.summary ?? "public role CLI"}`
   ];
+  appendUsageAndExamples(lines, "top");
+  lines.push("", PUBLIC_NAVIGATOR_HELP_NOTE);
+  lines.push("", "Support commands:");
   for (const cap of doc.capabilities) {
     if (cap.kind === "support") {
       lines.push(`  ${cap.name}`);
@@ -27155,8 +27300,8 @@ function renderHelp() {
       lines.push(`  ${cap.name}`);
     }
   }
-  lines.push("", "Global options:");
-  lines.push(...renderOwnerOptionHelpLines("global"));
+  lines.push("", "OPTIONS");
+  lines.push(...renderHumanOwnerOptionLines("global"));
   lines.push(
     "",
     "Role options: ak-role help <command>",
@@ -27171,22 +27316,22 @@ function renderCommandHelp(command) {
   const caps = listHelpCapabilities();
   const match = caps.find((cap) => cap.name === command);
   if (match === void 0) return void 0;
+  const facts = projectCommandHelp(command);
   const lines = [];
-  if (match.kind === "support") {
-    lines.push(`command	${match.name}	kind	support`);
+  if (facts !== void 0) {
+    lines.push(`ak-role ${facts.command} \u2014 ${facts.summary}`);
+  } else if (match.kind === "support") {
+    lines.push(`ak-role ${match.name}`);
   } else if (match.kind === "deterministic") {
-    lines.push(`command	${match.name}	kind	deterministic`);
+    lines.push(`ak-role ${match.name}`);
   } else {
-    lines.push(
-      `command	${match.name}	kind	role	phases	${match.phases.map((p) => p === null ? "none" : p).join(",")}	default	${match.defaultPhase ?? "none"}`
-    );
+    lines.push(`ak-role ${match.name}`);
   }
-  if (command in PUBLIC_ROLE_ARGV) {
-    lines.push(
-      ...renderOwnerOptionHelpLines(
-        command
-      )
-    );
+  appendUsageAndExamples(lines, command);
+  if (command in PUBLIC_ROLE_ARGV || command === "global") {
+    const owner = command === "global" ? "global" : command;
+    lines.push("", "OPTIONS");
+    lines.push(...renderHumanOwnerOptionLines(owner));
   }
   return `${lines.join("\n")}
 `;

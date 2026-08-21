@@ -998,57 +998,214 @@ export function allRejectedSpellingTokens(): readonly string[] {
 }
 
 /**
- * Render one owner’s options as stable TSV lines for help.
- * Layout is presentation; identity columns are the structured contract.
+ * #125 — public command help facts on the sole option-owner module.
+ * Presentation inputs only (USAGE synopsis + public `ak-role` examples).
+ * Option identity/requiredness remain on PUBLIC_OPTION_TABLE rows.
+ * Free text is not a test contract (机器只咬契约，不咬呈现).
  */
-export function renderOwnerOptionHelpLines(
+export type PublicCommandHelpFacts = {
+  /** Command / topic id (role owner, support command, or "top"). */
+  readonly command: string;
+  /** One-line what-it-does (presentation). */
+  readonly summary: string;
+  /** USAGE synopsis line(s), each a full public `ak-role …` sketch. */
+  readonly usage: readonly string[];
+  /** 1–2 public invocation examples using only public spellings. */
+  readonly examples: readonly string[];
+};
+
+/**
+ * Top-level public help short note for automatic Navigator attendance.
+ * Not a caller command; configure via `ak-role config set navigator …`.
+ */
+export const PUBLIC_NAVIGATOR_HELP_NOTE =
+  "Navigator attends automatically on every run; configure with `ak-role config set navigator <provider/model[:thinking]>` (not a caller command)." as const;
+
+const TOP_LEVEL_HELP = {
+  command: "top",
+  summary: "public role CLI",
+  usage: [
+    "ak-role <command> [options]",
+    "ak-role help <command>",
+  ],
+  examples: [
+    'ak-role judge --attach ./plan.md "Review this plan."',
+    'ak-role coder plan "Propose the first implementation plan."',
+  ],
+} as const satisfies PublicCommandHelpFacts;
+
+const ROLE_COMMAND_HELP = {
+  judge: {
+    command: "judge",
+    summary: "Adjudicate the supplied materials; infers its own burden.",
+    usage: ["ak-role judge [options] [instruction]"],
+    examples: [
+      'ak-role judge --attach ./plan.md "Review this plan."',
+      'ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."',
+    ],
+  },
+  coder: {
+    command: "coder",
+    summary: "First implementation; phase defaults to apply.",
+    usage: ["ak-role coder [plan|apply] [options] <instruction>"],
+    examples: [
+      'ak-role coder plan "Propose the first implementation plan."',
+      'ak-role coder apply --attach ./plan.md "Implement the approved slice."',
+    ],
+  },
+  fixer: {
+    command: "fixer",
+    summary: "Repair the assigned findings; phase defaults to apply.",
+    usage: ["ak-role fixer [plan|apply] [options] <instruction>"],
+    examples: [
+      'ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."',
+      'ak-role fixer plan --attach ./findings.md "Propose the repair plan."',
+    ],
+  },
+  reviewer: {
+    command: "reviewer",
+    summary: "Fixed-target two-axis review (Standards + Spec).",
+    usage: ["ak-role reviewer --base <revision> [options] <instruction>"],
+    examples: [
+      'ak-role reviewer --base main "Review the branch against the governing issue and repository authority."',
+    ],
+  },
+  collector: {
+    command: "collector",
+    summary: "Collect GitHub PR review evidence (one-shot).",
+    usage: ["ak-role collector --pr <number> [options] [instruction]"],
+    examples: [
+      "ak-role collector --pr 42 --repo owner/repository",
+      "ak-role collector --pr 42 --request-manifest ./requests.json",
+    ],
+  },
+  doctor: {
+    command: "doctor",
+    summary: "Diagnose one retained case (one-shot).",
+    usage: ["ak-role doctor --issue <number> [options] [instruction]"],
+    examples: [
+      'ak-role doctor --issue 115 "Diagnose this retained case."',
+    ],
+  },
+  merger: {
+    command: "merger",
+    summary: "Resolve one ordinary merge already in conflict.",
+    usage: ["ak-role merger [options] <instruction>"],
+    examples: [
+      'ak-role merger --project /path/to/worktree "Reconcile the active merge."',
+    ],
+  },
+  taishi: {
+    command: "taishi",
+    summary: "Deterministic analysis seat (issue / sweep / cohort / model-groups).",
+    usage: [
+      "ak-role taishi (--ticket <N> | --project-root <P>) [options]",
+      "ak-role taishi [sweep] --attach <path>",
+      "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>",
+      "ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]",
+    ],
+    examples: [
+      "ak-role taishi --ticket 125",
+      "ak-role taishi sweep --attach ./sweep.json",
+    ],
+  },
+} as const satisfies Record<PublicRoleOptionOwner, PublicCommandHelpFacts>;
+
+const SUPPORT_COMMAND_HELP = {
+  roles: {
+    command: "roles",
+    summary: "List effective seats and models.",
+    usage: ["ak-role roles"],
+    examples: ["ak-role roles"],
+  },
+  config: {
+    command: "config",
+    summary: "Persistent seat model and labor-engine defaults.",
+    usage: [
+      "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
+      "ak-role config set-engine <seat> <name>",
+      "ak-role config unset-engine <seat>",
+    ],
+    examples: [
+      "ak-role config set judge openai-codex/gpt-5.6-sol:high",
+      "ak-role config set-engine judge opus",
+    ],
+  },
+  help: {
+    command: "help",
+    summary: "Show public CLI help.",
+    usage: ["ak-role help [command]", "ak-role --help"],
+    examples: ["ak-role help coder", "ak-role help judge"],
+  },
+  resume: {
+    command: "resume",
+    summary: "Reopen an exact role run after a typed HTTP 429.",
+    usage: ["ak-role resume <runId>"],
+    examples: ["ak-role resume 01abc…"],
+  },
+} as const satisfies Record<string, PublicCommandHelpFacts>;
+
+/**
+ * Sole public help-copy owner keyed by command/topic id.
+ * Role topics share identity with PUBLIC_ROLE_OPTION_OWNERS; options still
+ * project from PUBLIC_OPTION_TABLE. Support topics cover non-option commands.
+ */
+export const PUBLIC_COMMAND_HELP = {
+  top: TOP_LEVEL_HELP,
+  ...ROLE_COMMAND_HELP,
+  ...SUPPORT_COMMAND_HELP,
+} as const;
+
+export type PublicCommandHelpTopic = keyof typeof PUBLIC_COMMAND_HELP;
+
+/** Structured projector — identity + presence; free text is presentation. */
+export function projectCommandHelp(
+  topic: string,
+): PublicCommandHelpFacts | undefined {
+  if (!(topic in PUBLIC_COMMAND_HELP)) return undefined;
+  const facts = PUBLIC_COMMAND_HELP[topic as PublicCommandHelpTopic];
+  return {
+    command: facts.command,
+    summary: facts.summary,
+    usage: [...facts.usage],
+    examples: [...facts.examples],
+  };
+}
+
+/**
+ * Human OPTIONS lines from the sole option table.
+ * Layout is presentation; structured identity stays on projectOwnerOptions.
+ */
+export function renderHumanOwnerOptionLines(
   owner: OptionOwner,
   locale: "en" | "zh" = "en",
 ): string[] {
   const lines: string[] = [];
   for (const opt of projectOwnerOptions(owner)) {
-    const aliasText =
-      opt.aliases.length === 0 ? "-" : opt.aliases.join(",");
-    const metavar = opt.valueMetavar ?? "-";
-    const required = opt.required ? "required" : "optional";
-    const repeatable = opt.repeatable ? "repeatable" : "single";
-    const form = opt.form;
-    const phases =
-      opt.phases === undefined ? "-" : opt.phases.join("|");
-    const modes = opt.modes === undefined ? "-" : opt.modes.join("|");
-    const requiredInModes =
-      opt.requiredInModes === undefined
-        ? "-"
-        : opt.requiredInModes.join("|");
-    const exclusiveWith =
-      opt.exclusiveWith === undefined ? "-" : opt.exclusiveWith.join("|");
-    const maxCount =
-      opt.maxCountByMode === undefined
-        ? "-"
-        : Object.entries(opt.maxCountByMode)
-            .map(([mode, n]) => `${mode}:${n}`)
-            .join(",");
-    const defaultValue = opt.defaultValue ?? "-";
+    let spelling = opt.canonical;
+    if (opt.valueMetavar !== null) {
+      spelling = `${spelling} <${opt.valueMetavar}>`;
+    }
+    if (opt.aliases.length > 0) {
+      // Prefer single-token aliases in the spelling hint (plan/apply, -h).
+      const aliasHint = opt.aliases.join(", ");
+      if (opt.form === "positional") {
+        spelling = opt.aliases.length > 0 ? opt.aliases.join("|") : spelling;
+      } else {
+        spelling = `${spelling} (${aliasHint})`;
+      }
+    }
+    const tags: string[] = [];
+    if (opt.required) tags.push("required");
+    if (opt.requiredInModes !== undefined) {
+      tags.push(`required:${opt.requiredInModes.join("|")}`);
+    }
+    if (opt.repeatable) tags.push("repeatable");
+    if (opt.defaultValue !== undefined) tags.push(`default=${opt.defaultValue}`);
+    if (opt.form === "positional") tags.push("positional");
+    const tagText = tags.length === 0 ? "" : ` [${tags.join(", ")}]`;
     const desc = locale === "zh" ? opt.description.zh : opt.description.en;
-    lines.push(
-      [
-        "option",
-        opt.id,
-        opt.canonical,
-        `aliases=${aliasText}`,
-        `metavar=${metavar}`,
-        required,
-        repeatable,
-        `form=${form}`,
-        `phases=${phases}`,
-        `modes=${modes}`,
-        `requiredInModes=${requiredInModes}`,
-        `exclusiveWith=${exclusiveWith}`,
-        `maxCountByMode=${maxCount}`,
-        `default=${defaultValue}`,
-        desc,
-      ].join("\t"),
-    );
+    lines.push(`  ${spelling}${tagText}  ${desc}`);
   }
   return lines;
 }
