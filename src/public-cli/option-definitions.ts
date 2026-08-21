@@ -177,7 +177,7 @@ export function evaluateTaishiModeOptionContract(
       return {
         ok: false,
         message:
-          "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]",
+          "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>",
       };
     }
     return {
@@ -643,15 +643,15 @@ const TAISHI_OPTIONS = [
     owner: "taishi",
     canonical: "--group-a-issues",
     aliases: [],
-    valueMetavar: "N[,N...]",
+    valueMetavar: "N|book:N[,...]",
     required: false,
     repeatable: false,
     form: "option",
     modes: ["cohort"],
     requiredInModes: ["cohort"],
     description: {
-      en: "Cohort group A comma-separated positive issue numbers (required in cohort mode).",
-      zh: "cohort A 组逗号分隔正整数 issue 列表（cohort 模式必填）。",
+      en: "Cohort group A issues: bare N joins cwd book; book:N selects another book (required in cohort mode).",
+      zh: "cohort A 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿（cohort 模式必填）。",
     },
   },
   {
@@ -675,15 +675,15 @@ const TAISHI_OPTIONS = [
     owner: "taishi",
     canonical: "--group-b-issues",
     aliases: [],
-    valueMetavar: "N[,N...]",
+    valueMetavar: "N|book:N[,...]",
     required: false,
     repeatable: false,
     form: "option",
     modes: ["cohort"],
     requiredInModes: ["cohort"],
     description: {
-      en: "Cohort group B comma-separated positive issue numbers (required in cohort mode).",
-      zh: "cohort B 组逗号分隔正整数 issue 列表（cohort 模式必填）。",
+      en: "Cohort group B issues: bare N joins cwd book; book:N selects another book (required in cohort mode).",
+      zh: "cohort B 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿（cohort 模式必填）。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];
@@ -1074,7 +1074,7 @@ const ROLE_COMMAND_HELP = {
     usage: [
       "ak-role taishi [--ticket <N>]",
       "ak-role taishi [sweep] --attach <path>",
-      "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>",
+      "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>",
     ],
     examples: [
       "ak-role taishi",
@@ -1161,9 +1161,10 @@ export function renderHumanOwnerOptionLines(
     }
     if (opt.aliases.length > 0) {
       // Prefer single-token aliases in the spelling hint (plan/apply, -h).
+      // #412/397-F2: inside aliases.length > 0 the empty branch is dead — join directly.
       const aliasHint = opt.aliases.join(", ");
       if (opt.form === "positional") {
-        spelling = opt.aliases.length > 0 ? opt.aliases.join("|") : spelling;
+        spelling = opt.aliases.join("|");
       } else {
         spelling = `${spelling} (${aliasHint})`;
       }

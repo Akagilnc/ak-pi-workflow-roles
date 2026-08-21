@@ -239,6 +239,9 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
       assert.equal(beforePages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(COHORT_B_ROOT)}`, issueNumber: COHORT_ISSUE_B })}.json`), false);
 
       const { io, stdout, stderr } = captureIo();
+      // #412: cross-book cohort must pass book:N (bare N = cwd book only).
+      const bookA = `root:${physicalPathIdentity(COHORT_A_ROOT)}`;
+      const bookB = `root:${physicalPathIdentity(COHORT_B_ROOT)}`;
       const result = await runAkRole(
         [
           "taishi",
@@ -246,11 +249,11 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
           "--group-a-label",
           "before",
           "--group-a-issues",
-          String(COHORT_ISSUE_A),
+          `${bookA}:${COHORT_ISSUE_A}`,
           "--group-b-label",
           "after",
           "--group-b-issues",
-          String(COHORT_ISSUE_B),
+          `${bookB}:${COHORT_ISSUE_B}`,
         ],
         { packageRoot, home, io },
       );
@@ -400,6 +403,8 @@ test("taishi #338 whole-compute failure: write-page blocked → typed terminal i
       const beforePages = await listIssuePageNames(ledgerHome);
 
       const { io, stdout, stderr } = captureIo();
+      const bookNeg = `root:${physicalPathIdentity(NEG_ROOT)}`;
+      const bookA = `root:${physicalPathIdentity(COHORT_A_ROOT)}`;
       const result = await runAkRole(
         [
           "taishi",
@@ -408,11 +413,12 @@ test("taishi #338 whole-compute failure: write-page blocked → typed terminal i
           "left",
           "--group-a-issues",
           // Fail first so no partial sibling compute mutates index before the loud stop.
-          `${NEG_ISSUE},${COHORT_ISSUE_A}`,
+          // #412: book:N required when index rows are not the cwd book.
+          `${bookNeg}:${NEG_ISSUE},${bookA}:${COHORT_ISSUE_A}`,
           "--group-b-label",
           "right",
           "--group-b-issues",
-          String(COHORT_ISSUE_A),
+          `${bookA}:${COHORT_ISSUE_A}`,
         ],
         { packageRoot, home, io },
       );

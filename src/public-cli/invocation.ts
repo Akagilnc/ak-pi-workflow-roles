@@ -436,9 +436,16 @@ export type ParseTaishiSweepArgv = {
 
 export type ParseTaishiCohortArgv = {
   readonly query: "cohort";
+  /** Tokens before cwd-book stamping; bare N resolves at run (#412). */
   readonly groups: readonly [
-    { readonly groupLabel: string; readonly issues: readonly number[] },
-    { readonly groupLabel: string; readonly issues: readonly number[] },
+    {
+      readonly groupLabel: string;
+      readonly issues: readonly TaishiCohortIssueToken[];
+    },
+    {
+      readonly groupLabel: string;
+      readonly issues: readonly TaishiCohortIssueToken[];
+    },
   ];
 };
 
@@ -2198,17 +2205,74 @@ export function parseTaishiTicketNumber(
   return value;
 }
 
-function parseTaishiIssueNumberList(raw: string, flag: string): number[] {
+/**
+ * One cohort issue token before cwd-book stamping.
+ * - bare N → join cwd book at run time (#412 / #399 ticket口径)
+ * - book:N → explicit cross-book join (last ":" + positive integer RHS)
+ */
+export type TaishiCohortIssueToken =
+  | { readonly kind: "bare"; readonly issueNumber: number }
+  | {
+      readonly kind: "book-qualified";
+      readonly bookKey: string;
+      readonly issueNumber: number;
+    };
+
+/**
+ * Parse one cohort issue token: bare positive integer or `book:N`.
+ * Book keys may contain ":" (e.g. synthetic `root:<path>`) — split on the last
+ * colon only when the RHS is a positive integer token.
+ */
+export function parseTaishiCohortIssueToken(
+  raw: string,
+  flag: string,
+): TaishiCohortIssueToken {
   const trimmed = raw.trim();
   if (trimmed === "") {
-    throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
+    throw new CliUsageError(
+      `${flag} requires a comma-separated list of N or book:N`,
+    );
+  }
+  const sep = trimmed.lastIndexOf(":");
+  if (sep > 0) {
+    const rhs = trimmed.slice(sep + 1);
+    if (TAISHI_TICKET_NUMBER_PATTERN.test(rhs)) {
+      const bookKey = trimmed.slice(0, sep);
+      if (bookKey.trim() === "") {
+        throw new CliUsageError(
+          `${flag} book:N requires a non-empty book key, got ${raw}`,
+        );
+      }
+      return {
+        kind: "book-qualified",
+        bookKey,
+        issueNumber: parseTaishiTicketNumber(rhs, flag),
+      };
+    }
+  }
+  return {
+    kind: "bare",
+    issueNumber: parseTaishiTicketNumber(trimmed, flag),
+  };
+}
+
+function parseTaishiCohortIssueTokenList(
+  raw: string,
+  flag: string,
+): TaishiCohortIssueToken[] {
+  const trimmed = raw.trim();
+  if (trimmed === "") {
+    throw new CliUsageError(
+      `${flag} requires a comma-separated list of N or book:N`,
+    );
   }
   const parts = trimmed.split(",").map((part) => part.trim());
   if (parts.some((part) => part === "")) {
-    throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
+    throw new CliUsageError(
+      `${flag} requires a comma-separated list of N or book:N`,
+    );
   }
-  // Same numeric rule as --ticket; diagnostic names the actual group flag.
-  return parts.map((part) => parseTaishiTicketNumber(part, flag));
+  return parts.map((part) => parseTaishiCohortIssueToken(part, flag));
 }
 
 function requireOptionValue(
@@ -2285,7 +2349,7 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
           requireOptionValue(
             taken.def.canonical,
             taken.value,
-            "a comma-separated positive integer list",
+            "a comma-separated list of N or book:N",
           ),
         );
         continue;
@@ -2340,11 +2404,17 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
       groups: [
         {
           groupLabel: groupALabel,
-          issues: parseTaishiIssueNumberList(groupAIssuesRaw, "--group-a-issues"),
+          issues: parseTaishiCohortIssueTokenList(
+            groupAIssuesRaw,
+            "--group-a-issues",
+          ),
         },
         {
           groupLabel: groupBLabel,
-          issues: parseTaishiIssueNumberList(groupBIssuesRaw, "--group-b-issues"),
+          issues: parseTaishiCohortIssueTokenList(
+            groupBIssuesRaw,
+            "--group-b-issues",
+          ),
         },
       ],
     };
