@@ -25007,12 +25007,22 @@ var init_reviewer_run = __esm({
 });
 
 // src/taishi-book-key.ts
+import { statSync as statSync2 } from "node:fs";
 function resolveTaishiBookKey(projectRoot) {
   const identity = physicalPathIdentity(projectRoot);
+  let stats;
+  try {
+    stats = statSync2(identity);
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return `root:${identity}`;
+    throw error;
+  }
+  if (!stats.isDirectory()) return `root:${identity}`;
   try {
     return resolveBookKeyFromGit(identity);
-  } catch {
-    return `root:${identity}`;
+  } catch (error) {
+    if (error instanceof ActivationGitRepositoryRequiredError) return `root:${identity}`;
+    throw error;
   }
 }
 var init_taishi_book_key = __esm({
