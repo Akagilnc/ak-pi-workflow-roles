@@ -26,7 +26,6 @@ import {
   type PiManagedInstall,
 } from "../helpers/pi-test-harness.ts";
 import {
-  PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
 } from "../../src/public-cli/registry.ts";
 import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
@@ -189,16 +188,15 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     assert.match(roles.stdout, /^navigator\tautomatic\t/m);
     assert.equal(roles.stdout.includes("auditor"), false);
 
-    // Help capabilities: exit 0; topic listing includes registry support + role names.
-    // Do not assert exact prose/layout (锚定宪法).
+    // Help is loud smoke only (exit 0 + non-empty). Capability membership is a
+    // typed contract (listHelpCapabilities / helpDocument); do not stare at help
+    // free text (#125 / 锚定宪法).
     const help = await runAkRoleBin(installed.akRoleBin, ["help"], {
       home,
       agentDir: piAgentDir,
     });
     assert.equal(help.code, 0, help.stderr);
-    for (const name of ["roles", "config", "help", ...PUBLIC_CALLABLE_ROLES]) {
-      assert.equal(help.stdout.includes(name), true, `help must mention ${name}`);
-    }
+    assert.ok(help.stdout.trim().length > 0, "help stdout must be non-empty");
 
     // Bulk config survives a new process.
     const set = await runAkRoleBin(
