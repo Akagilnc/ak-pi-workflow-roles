@@ -21,6 +21,7 @@ import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
   UNACCEPTED_FLYING_MS,
   UNACCEPTED_WATCH_MS,
+  decideTicketCurrentState,
   renderFactoryBoardHtml,
   startFactoryBoardPage,
   writeFactoryBoardPage,
@@ -28,6 +29,7 @@ import {
   type FactoryBoardScheduler,
   type FactoryBoardView,
 } from "../../src/factory-board.ts";
+import { loadTicketTrajectoryRuns } from "../../src/ticket-trajectory.ts";
 import {
   createGhTicketSnapshotTransport,
   fetchBoardSnapshot,
@@ -4567,6 +4569,51 @@ test("kanban presentation: family options carry mechanical open-child count", as
     assert.equal(options.length, 1);
     assert.equal(options[0]?.["data-family-option"], "10");
     assert.equal(options[0]?.["data-child-count"], "2");
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Shortest true-path tracer: real session → trajectory resultStatus → decideTicketCurrentState.
+ * Seat-fallback escalate must keep the escalate-awaiting overlay (not accepted-awaiting).
+ */
+test("decideTicketCurrentState: escalate-by-fallback from real trajectory stays escalate-awaiting", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-escalate-fallback-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    await writeRunSession(
+      ledgerDir,
+      42,
+      "judge-escalate-fallback@x",
+      [
+        sessionHeader("2026-08-05T11:00:00.000Z"),
+        ...acceptedJudgeFinal(
+          "2026-08-05T11:50:00.000Z",
+          {
+            judgeStatus: "escalate-by-fallback",
+            decisionGate: { question: "q", options: ["a", "b"] },
+            engineLaborFallback: { engine: "kimi", failure: "exit 1", laborBy: "seat" },
+          },
+          0.11,
+          110,
+        ),
+      ],
+      { mtime: new Date(now.getTime() - 600_000) },
+    );
+
+    const runs = await loadTicketTrajectoryRuns(ledgerDir, 42);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]?.hasResult, true);
+    assert.equal(runs[0]?.resultStatus, "escalate-by-fallback");
+
+    const state = decideTicketCurrentState({
+      ticketState: "open",
+      runs,
+      now,
+    });
+    assert.equal(state, "escalate-awaiting");
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }

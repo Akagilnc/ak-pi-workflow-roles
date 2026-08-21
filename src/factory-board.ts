@@ -177,7 +177,8 @@ export function decideTicketCurrentState(input: {
   const latest = sortRunsByStart(input.runs).at(-1)!;
   if (!latest.hasResult) return unacceptedBand(latest.mtimeMs, input.now.getTime());
   // Escalate is an awaiting overlay: same placement and sort band, distinct state.
-  if (latest.resultStatus === "escalate") return "escalate-awaiting";
+  // Seat-fallback taint (`escalate-by-fallback`) keeps escalate base semantics.
+  if (seatFallbackBaseStatus(latest.resultStatus) === "escalate") return "escalate-awaiting";
   return "accepted-awaiting";
 }
 
