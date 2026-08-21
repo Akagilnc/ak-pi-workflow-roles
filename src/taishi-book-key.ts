@@ -5,20 +5,23 @@
  * without a prior scan. Issue/sweep derivation and legacy library-index
  * healing must both call this rule — never a second copy of the fallback.
  *
- * Failure honesty: only failures that mean "this path can never host a
- * repository" become `root:` — the projectRoot itself being absent / not a
- * directory / unreachable through a plain-file path component (ENOTDIR —
- * structurally the same "no repository can live here" fact as ENOENT).
- * Every git child outcome keeps its own identity and propagates loudly —
- * including nonzero exits the shared resolver wraps as
- * ActivationGitRepositoryRequiredError: that type does not certify "non
- * repository" (a dubious-ownership exit 128 is not a no-repo verdict), so
- * washing it into a synthetic key would be silent identity drift (#413 r2 U5).
- * The real cause is the loud carrier.
+ * Failure honesty: a real existing directory that is a *confirmed* non-repository
+ * (git's own "not a git repository" verdict, plus the structurally-identical
+ * absent root / non-directory root / ENOTDIR mid-path faces — no repository can
+ * ever live there) keeps the r4-adjudicated legal `root:<identity>` fallback.
+ * Unconfirmed git failures — dubious ownership exit 128 and every other
+ * diagnostic that does not certify "non repository" — propagate loudly with
+ * their real cause (#413 r2 U5): washing them into a synthetic key would be
+ * silent identity drift. Git infrastructure failures (missing binary → ENOENT)
+ * stay loud too. The confirmed/unconfirmed classification is implemented once,
+ * in the shared resolver owner.
  */
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
+import {
+  ActivationGitRepositoryRequiredError,
+  resolveBookKeyFromGit,
+} from "./activation-ledger-git.ts";
 import { errnoCode, physicalPathIdentity } from "./activation-ledger-topology.ts";
 
 export function resolveTaishiBookKey(projectRoot: string): string {
@@ -34,9 +37,20 @@ export function resolveTaishiBookKey(projectRoot: string): string {
     throw error;
   }
   if (!stats.isDirectory()) return `root:${identity}`;
-  // No Activation catch (#413 r2 U5): a nonzero git exit is an unconfirmed
-  // category — it must propagate with its real cause, never become `root:`.
-  return resolveBookKeyFromGit(identity);
+  // #413 r2 U5 boundary at the Taishi seam: only git's own confirmed
+  // "not a git repository" verdict may fall back to `root:<identity>`;
+  // unconfirmed nonzero exits (dubious ownership etc.) stay loud.
+  try {
+    return resolveBookKeyFromGit(identity);
+  } catch (error) {
+    if (
+      error instanceof ActivationGitRepositoryRequiredError
+      && error.confirmedNonRepository
+    ) {
+      return `root:${identity}`;
+    }
+    throw error;
+  }
 }
 
 /**
