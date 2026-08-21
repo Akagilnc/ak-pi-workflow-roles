@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
+import { seatFallbackBaseStatus } from "./engine-labor-fallback.ts";
 import {
   formatDurationZh,
   formatLocalDateTime,
@@ -176,7 +177,8 @@ export function decideTicketCurrentState(input: {
   const latest = sortRunsByStart(input.runs).at(-1)!;
   if (!latest.hasResult) return unacceptedBand(latest.mtimeMs, input.now.getTime());
   // Escalate is an awaiting overlay: same placement and sort band, distinct state.
-  if (latest.resultStatus === "escalate") return "escalate-awaiting";
+  // Seat-fallback taint (`escalate-by-fallback`) keeps escalate base semantics.
+  if (seatFallbackBaseStatus(latest.resultStatus) === "escalate") return "escalate-awaiting";
   return "accepted-awaiting";
 }
 
@@ -843,7 +845,9 @@ function buildBreadcrumbSteps(runs: readonly TicketTrajectoryRun[]): BreadcrumbS
     const isReturn = seen.has(group.station);
     seen.add(group.station);
     const isRejected = group.runs.some(
-      (run) => run.hasResult && REJECTED_RESULT_STATUSES.has(run.resultStatus),
+      (run) =>
+        run.hasResult &&
+        REJECTED_RESULT_STATUSES.has(seatFallbackBaseStatus(run.resultStatus)),
     );
     steps.push({
       station: group.station,

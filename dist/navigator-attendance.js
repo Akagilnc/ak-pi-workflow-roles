@@ -6,6 +6,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { seatFallbackBaseStatus } from "./engine-labor-fallback.js";
 import {
   NAVIGATOR_INVOCATION_ENTRY,
   mintNavigatorInvocationId
@@ -257,6 +258,13 @@ function createNavigatorPrepareTool(onOutput) {
     }
   };
 }
+function statusListMatchesSettlement(candidateStatuses, settlementStatus) {
+  if (candidateStatuses.includes(settlementStatus)) return true;
+  const settlementBase = seatFallbackBaseStatus(settlementStatus);
+  return candidateStatuses.some(
+    (status) => seatFallbackBaseStatus(status) === settlementBase
+  );
+}
 function selectNavigatorCandidate(candidates, settlement) {
   if (settlement.kind !== "accepted") return void 0;
   const usable = candidates.filter((candidate) => candidate.next !== void 0);
@@ -267,7 +275,7 @@ function selectNavigatorCandidate(candidates, settlement) {
   if (rolePhaseMatched.length > 0) {
     if (settlement.status !== void 0) {
       const statusSpecific = rolePhaseMatched.find(
-        (candidate) => candidate.matches?.statuses?.includes(settlement.status) === true
+        (candidate) => candidate.matches?.statuses !== void 0 && statusListMatchesSettlement(candidate.matches.statuses, settlement.status)
       );
       if (statusSpecific !== void 0) {
         return { candidate: statusSpecific, matchedToSettlement: true };

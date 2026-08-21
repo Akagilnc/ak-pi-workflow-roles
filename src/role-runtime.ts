@@ -27,6 +27,8 @@ import {
   createEngineLaborFallbackLatch,
   installActivationEngineLaborFallbackLatch,
   restoreEngineLaborFallbackFromSessionEntries,
+  seatFallbackBaseStatus,
+  seatFallbackStatusHasLawfulEvidence,
 } from "./engine-labor-fallback.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
@@ -564,7 +566,12 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   const status = typeof details.status === "string"
     ? details.status
     : typeof details.judgeStatus === "string" ? details.judgeStatus : undefined;
-  if (status === "escalate") {
+  // ADR 0071: `-by-fallback` without latch-shaped evidence is not a lawful terminal.
+  if (status !== undefined && !seatFallbackStatusHasLawfulEvidence(status, event.details)) {
+    return undefined;
+  }
+  // Seat-fallback taint keeps escalate semantics (base) while preserving the polluted token.
+  if (status !== undefined && seatFallbackBaseStatus(status) === "escalate") {
     return { kind: "human_decision", role, phase, status };
   }
   return { kind: "accepted", role, phase, ...(status === undefined ? {} : { status }) };
