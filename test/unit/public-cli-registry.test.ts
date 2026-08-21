@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
+import {
+  helpDocument,
+  helpDocumentForCommand,
+} from "../../src/public-cli/cli.ts";
 import {
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CLI_SUPPORT_COMMANDS,
@@ -88,42 +91,15 @@ test("startup model candidates follow #11 package defaults per seat", () => {
   }
 });
 
-test("general help and help taishi both discover the deterministic taishi command", async () => {
-  const { runAkRole } = await import("../../src/public-cli/cli.ts");
-  const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-  const capture = () => {
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    return {
-      stdout,
-      stderr,
-      io: {
-        stdout: (t: string) => {
-          stdout.push(t);
-        },
-        stderr: (t: string) => {
-          stderr.push(t);
-        },
-      },
-    };
-  };
-  {
-    const { io, stdout, stderr } = capture();
-    const result = await runAkRole(["--help"], { packageRoot, home: process.env.HOME ?? "/tmp", io });
-    assert.equal(result.exitCode, 0, stderr.join(""));
-    const text = stdout.join("");
-    assert.match(text, /\btaishi\b/);
-  }
-  {
-    const { io, stdout, stderr } = capture();
-    const result = await runAkRole(["help", "taishi"], {
-      packageRoot,
-      home: process.env.HOME ?? "/tmp",
-      io,
-    });
-    assert.equal(result.exitCode, 0, stderr.join(""));
-    const text = stdout.join("");
-    assert.match(text, /\btaishi\b/);
-    assert.match(text, /deterministic/);
-  }
+test("general help and help taishi both discover the deterministic taishi command", () => {
+  // Structured discovery only — help free text is a human surface (#125 / 锚定宪法).
+  const doc = helpDocument();
+  const fromGeneral = doc.capabilities.find((cap) => cap.name === "taishi");
+  assert.ok(fromGeneral, "top help capabilities must include taishi");
+  assert.equal(fromGeneral.kind, "deterministic");
+
+  const fromCommand = helpDocumentForCommand("taishi");
+  assert.ok(fromCommand, "helpDocumentForCommand(taishi) must resolve");
+  assert.equal(fromCommand.command, "taishi");
+  assert.equal(fromCommand.kind, "deterministic");
 });
