@@ -2256,6 +2256,38 @@ export function parseTaishiCohortIssueToken(
   };
 }
 
+/**
+ * Sole cohort list grammar (#412): split on unescaped commas. `\,` is a literal
+ * comma and `\\` a literal backslash — both round-trip, so any directory-name
+ * book key (ADR 0048) is expressible. Any other `\x` stays literally `\x`, so
+ * pre-existing unescaped input never changes meaning. Colons remain owned by
+ * the token's lastIndexOf(':') rule.
+ */
+function splitTaishiCohortIssueListParts(raw: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let escaped = false;
+  for (const ch of raw) {
+    if (escaped) {
+      current += ch === "," || ch === "\\" ? ch : `\\${ch}`;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === ",") {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(escaped ? `${current}\\` : current);
+  return parts;
+}
+
 function parseTaishiCohortIssueTokenList(
   raw: string,
   flag: string,
@@ -2266,7 +2298,9 @@ function parseTaishiCohortIssueTokenList(
       `${flag} requires a comma-separated list of N or book:N`,
     );
   }
-  const parts = trimmed.split(",").map((part) => part.trim());
+  const parts = splitTaishiCohortIssueListParts(trimmed).map((part) =>
+    part.trim(),
+  );
   if (parts.some((part) => part === "")) {
     throw new CliUsageError(
       `${flag} requires a comma-separated list of N or book:N`,

@@ -650,8 +650,8 @@ const TAISHI_OPTIONS = [
     modes: ["cohort"],
     requiredInModes: ["cohort"],
     description: {
-      en: "Cohort group A issues: bare N joins cwd book; book:N selects another book (required in cohort mode).",
-      zh: "cohort A 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿（cohort 模式必填）。",
+      en: "Cohort group A issues: bare N joins cwd book; book:N selects another book; escape a literal comma/backslash in a book key as \\, / \\\\ (required in cohort mode).",
+      zh: "cohort A 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿；簿键中的逗号/反斜杠用 \\, / \\\\ 转义（cohort 模式必填）。",
     },
   },
   {
@@ -682,8 +682,8 @@ const TAISHI_OPTIONS = [
     modes: ["cohort"],
     requiredInModes: ["cohort"],
     description: {
-      en: "Cohort group B issues: bare N joins cwd book; book:N selects another book (required in cohort mode).",
-      zh: "cohort B 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿（cohort 模式必填）。",
+      en: "Cohort group B issues: bare N joins cwd book; book:N selects another book; escape a literal comma/backslash in a book key as \\, / \\\\ (required in cohort mode).",
+      zh: "cohort B 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿；簿键中的逗号/反斜杠用 \\, / \\\\ 转义（cohort 模式必填）。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];
