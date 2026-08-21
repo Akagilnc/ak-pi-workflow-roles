@@ -1,11 +1,13 @@
 /**
- * Public taishi adapter (#336/#337/#338): argv → typed query → runTaishi family.
+ * Public taishi adapter (#336/#337/#338/#399): argv → typed query → runTaishi family.
  * Deterministic analysis seat — no Pi runner, no admission lease.
  * Reuses existing CLI failure envelope (CliUsageError + structural reject +
  * ControlledFailure).
- * Index read reuses readTaishiLibraryIndexPage / findTaishiLibraryIndexRow.
+ * #399: issue query = book (cwd git common-dir) × optional --ticket N.
+ *   Bare call = whole book; --project-root deleted; --model-groups public face disabled;
+ *   no library-index bootstrap. Library model-groups kernel retained for follow-up.
  * #337 sweep: exactly one typed JSON attachment → TaishiSweepModeInput → #329 kernel.
- * #338: three query faces; sync compute-if-missing; whole-compute failure →
+ * #338: issue/cohort (+ library model-groups); sync compute-if-missing; whole-compute failure →
  * ControlledFailure terminal (code/projectRoot/issueNumber/real cause).
  * "Unobtrusive" binds #337 merge auto-trigger only, not this user-initiated query.
  */
@@ -14,15 +16,15 @@ import { isAbsolute, resolve } from "node:path";
 import { Value } from "typebox/value";
 
 import {
+  ActivationGitRepositoryRequiredError,
+  resolveBookKeyFromGit,
+} from "../activation-ledger-git.ts";
+import {
   errnoCode,
   physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { exactUtf8 } from "../exact-utf8.ts";
-import {
-  findTaishiLibraryIndexRow,
-  readTaishiLibraryIndexPage,
-} from "../taishi-index.ts";
 import {
   readOrComputeTaishiIssuePage,
   runTaishi,
@@ -44,58 +46,52 @@ export type TaishiRunEnv = {
 };
 
 /**
- * Build the sole library issue-mode input from public argv faces.
- * - ticket N → issueNumber = ticketNumber = N; projectRoot from index (or project-root fallback).
- * - project-root P → direct mechanical key.
- * - both + index hit → index projectRoot wins; when direct root differs, retain it as
- *   conflictingProjectRoot so runTaishi records the C4 dual-param conflict fact on the page.
- * - both + index miss → project-root fallback.
- * Bare both-missing is owned by parseTaishiArgv — no second reject here.
+ * Resolve the issue-query book from cwd git common-dir (same owner as record layer).
+ * Non-git cwd fails loud — bare / --ticket both require a book identity.
+ */
+export function resolveTaishiIssueBookKeyFromCwd(cwd: string = process.cwd()): string {
+  try {
+    return resolveBookKeyFromGit(cwd);
+  } catch (error) {
+    if (error instanceof ActivationGitRepositoryRequiredError) {
+      throw new CliUsageError(
+        "taishi issue query requires a git repository cwd (book = git common-dir); run inside a repository (bare = whole book, or --ticket N)",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Build the sole library issue-mode input from public argv faces (#399).
+ * - bare → whole book from cwd git common-dir
+ * - --ticket N → issueNumber = ticketNumber = N inside that book (strict; no index)
+ * - --project-root rejected at parse (deleted unconditionally)
  */
 export async function buildTaishiIssueModeInputFromPublicArgv(
   parsed: ParseTaishiIssueArgv,
-  ledgerHome: string,
+  _ledgerHome: string,
 ): Promise<TaishiIssueModeInput> {
+  const cwd = process.cwd();
+  const bookKey = resolveTaishiIssueBookKeyFromCwd(cwd);
+  const projectRoot = physicalPathIdentity(cwd);
   const ticket = parsed.ticket;
-  const directRoot = parsed.projectRoot;
 
   if (ticket === undefined) {
     return {
       mode: "issue",
-      projectRoot: directRoot!,
+      bookKey,
+      projectRoot,
     };
   }
 
-  // ticket N = issueNumber (no conversion); also the C4 typed ticket face.
-  const index = await readTaishiLibraryIndexPage(ledgerHome);
-  const row = findTaishiLibraryIndexRow(index, ticket);
-
-  let projectRoot: string;
-  if (row !== undefined) {
-    // Ticket-resolved index projectRoot wins over any concurrent --project-root.
-    projectRoot = row.projectRoot;
-  } else if (directRoot !== undefined) {
-    // Index miss with project-root fallback (ticket faces still set for C4).
-    projectRoot = directRoot;
-  } else {
-    throw new CliUsageError(
-      `taishi library index has no row for ticket ${ticket}`,
-    );
-  }
-
-  // Dual-param conflict: index root won, but caller also supplied a distinct --project-root.
-  // Carry the losing root so the metrics page records the call-face conflict fact.
-  const dualParamConflict =
-    row !== undefined
-    && directRoot !== undefined
-    && physicalPathIdentity(directRoot) !== physicalPathIdentity(projectRoot);
-
   return {
     mode: "issue",
+    bookKey,
     projectRoot,
     ticketNumber: ticket,
     issueNumber: ticket,
-    ...(dualParamConflict ? { conflictingProjectRoot: directRoot } : {}),
   };
 }
 
@@ -164,7 +160,8 @@ export async function buildTaishiSweepModeInputFromAttachmentPaths(
 
 /**
  * Public taishi run path — parse → resolve → query → typed receipt on stdout.
- * Issue (#336/#338 compute-if-missing), sweep (#337), cohort/model-groups (#338).
+ * Issue (#336/#338 compute-if-missing), sweep (#337), cohort (#338).
+ * model-groups public face disabled at parse (#399); library kernel retained.
  */
 export async function runPublicTaishi(
   argv: readonly string[],
@@ -195,15 +192,6 @@ export async function runPublicTaishi(
       return { exitCode: 0 };
     }
 
-    if (parsed.query === "model-groups") {
-      const result = await runTaishi({
-        mode: "model-groups",
-        projectRoots: parsed.projectRoots,
-      });
-      io.stdout(`${JSON.stringify(result, null, 2)}\n`);
-      return { exitCode: 0 };
-    }
-
     // issue query — compute-if-missing (#338); sole kernel on miss.
     const input = await buildTaishiIssueModeInputFromPublicArgv(parsed, ledgerHome);
     const result = await readOrComputeTaishiIssuePage(input);
@@ -224,6 +212,7 @@ export async function runPublicTaishi(
         ...(code === undefined ? {} : { identity: { code } }),
         details: {
           code: error.code,
+          bookKey: error.bookKey,
           projectRoot: error.projectRoot,
           ...(error.issueNumber === undefined ? {} : { issueNumber: error.issueNumber }),
         },

@@ -789,7 +789,7 @@ test("taishi issue-mode entry: fixture page+static family registry hand-equal; a
   await withBusinessRepo(async () => {
     await withTempHome(async (home) => {
       const ledgerHome = join(home, ".ak-roles");
-      const pagePath = taishiIssuePagePath(ledgerHome, ISSUE_PROJECT_ROOT);
+      const pagePath = taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_PROJECT_ROOT)}`, scopeRootIdentity: ISSUE_PROJECT_ROOT });
 
       // Pre-seed a stale page at the canonical path — replace must be atomic/idempotent.
       await mkdir(join(ledgerHome, "taishi", "issues"), { recursive: true });
@@ -1065,9 +1065,16 @@ test("public ak-role bundle assembles B1-B4 metric families without sibling fami
           recursive: true,
           force: true,
         });
+        // #399: issue CLI is bare/--ticket from cwd book. Seed fixture runs under
+        // packageRoot's git book key, then bare-call the public bundle.
+        const { resolveBookKeyFromGit } = await import("../../src/activation-ledger-git.ts");
+        const bookKey = resolveBookKeyFromGit(packageRoot);
+        const srcBook = join(home, ".ak-roles", "books", BOOK);
+        const dstBook = join(home, ".ak-roles", "books", bookKey);
+        await cp(srcBook, dstBook, { recursive: true });
         const result = execFileSync(
           process.execPath,
-          [binPath, "taishi", "--project-root", ISSUE_PROJECT_ROOT],
+          [binPath, "taishi"],
           {
             cwd: packageRoot,
             encoding: "utf8",
@@ -1075,7 +1082,7 @@ test("public ak-role bundle assembles B1-B4 metric families without sibling fami
           },
         );
         assert.match(result, /taishi-issue-metrics|"mode"\s*:\s*"issue"/);
-        const pagePath = taishiIssuePagePath(join(home, ".ak-roles"), ISSUE_PROJECT_ROOT);
+        const pagePath = taishiIssuePagePath(join(home, ".ak-roles"), { bookKey });
         const page = JSON.parse(await readFile(pagePath, "utf8")) as PageWithMetricFamilies;
         assert.ok(page.legWallClock, "B1 must be reachable from public bundle");
         assert.ok(page.b2FrameBucketsActions, "B2 must be reachable from public bundle");

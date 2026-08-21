@@ -255,15 +255,22 @@ test("real parsers: phase from table; repeatable:false rejects; repeatable:true 
     ]).authorityRefs,
     ["https://example.test/a", "https://example.test/b"],
   );
-  const mg = parseTaishiArgv([
-    "--model-groups",
-    "--project-root",
-    "/a",
-    "--project-root",
-    "/b",
-  ]);
-  assert.equal(mg.query, "model-groups");
-  if (mg.query === "model-groups") assert.deepEqual(mg.projectRoots, ["/a", "/b"]);
+  assert.throws(
+    () => parseTaishiArgv(["--model-groups"]),
+    (e: unknown) =>
+      isUsage(e)
+      && e instanceof Error
+      && /model-groups/i.test(e.message)
+      && /disabled|redesign|multi-issue|follow-up/i.test(e.message),
+  );
+  assert.throws(
+    () => parseTaishiArgv(["--project-root", "/a"]),
+    (e: unknown) =>
+      isUsage(e)
+      && e instanceof Error
+      && /project-root/i.test(e.message)
+      && /deleted|bare|--ticket/i.test(e.message),
+  );
 
   assert.throws(
     () => parseTaishiArgv(["sweep", "sweep", "--attach", "/x"]),
@@ -278,6 +285,8 @@ test("rejected spellings: absent from public surfaces; parsers refuse them", () 
   const rejected = allRejectedSpellingTokens();
   assert.ok(rejected.includes("--burden"));
   assert.ok(rejected.includes("--ak-merger-input"));
+  assert.ok(rejected.includes("--project-root"));
+  assert.ok(rejected.includes("--model-groups"));
 
   for (const owner of ["global", ...PUBLIC_ROLE_OPTION_OWNERS] as OptionOwner[]) {
     const doc = helpDocumentForCommand(owner);
@@ -315,6 +324,17 @@ test("rejected spellings: absent from public surfaces; parsers refuse them", () 
               || e.message.includes("merger")),
         );
       }
+      if (entry.owner === "taishi") {
+        const argv =
+          spelling === "--project-root" ? [spelling, "/tmp/p"] : [spelling];
+        assert.throws(
+          () => parseTaishiArgv(argv),
+          (e: unknown) =>
+            e instanceof Error
+            && e.message.includes(spelling.slice(2))
+            && !e.message.includes("unknown taishi option"),
+        );
+      }
     }
   }
 });
@@ -324,13 +344,10 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     optionsForOwner("taishi").map((opt) => [opt.id, opt] as const),
   );
   assert.ok(byId.get("ticket")?.modes?.includes("issue"));
-  assert.ok(byId.get("project-root")?.modes?.includes("issue"));
-  assert.deepEqual(byId.get("project-root")?.maxCountByMode, { issue: 1 });
-  assert.deepEqual(byId.get("project-root")?.requiredInModes, ["model-groups"]);
-  assert.deepEqual(byId.get("cohort")?.exclusiveWith, ["model-groups"]);
-  assert.deepEqual(byId.get("model-groups")?.exclusiveWith, ["cohort"]);
+  assert.equal(byId.has("project-root"), false);
+  assert.equal(byId.has("model-groups"), false);
   assert.equal(byId.get("cohort")?.selectsMode, "cohort");
-  assert.equal(byId.get("model-groups")?.selectsMode, "model-groups");
+  assert.equal(byId.get("cohort")?.exclusiveWith, undefined);
   assert.equal(byId.get("sweep")?.selectsMode, "sweep");
   assert.equal(byId.get("attach")?.selectsMode, "sweep");
   assert.deepEqual(byId.get("attach")?.requiredInModes, ["sweep"]);
@@ -344,10 +361,10 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     assert.deepEqual(byId.get(id)?.requiredInModes, ["cohort"]);
     assert.deepEqual(byId.get(id)?.modes, ["cohort"]);
   }
-  assert.deepEqual(
-    [...TAISHI_REQUIRE_ANY_OF],
-    [{ mode: "issue", optionIds: ["ticket", "project-root"] }],
-  );
+  assert.deepEqual([...TAISHI_REQUIRE_ANY_OF], []);
+  const rejected = allRejectedSpellingTokens();
+  assert.ok(rejected.includes("--project-root"));
+  assert.ok(rejected.includes("--model-groups"));
 
   type Expect =
     | { ok: true; query: string }
@@ -360,32 +377,26 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
   }> = [
     {
       name: "issue+ticket",
-      rule: "requireAnyOf:issue:ticket|project-root",
+      rule: "modes:ticket:issue-ok",
       argv: ["--ticket", "1"],
       expect: { ok: true, query: "issue" },
     },
     {
-      name: "issue+project-root",
-      rule: "requireAnyOf:issue:ticket|project-root",
-      argv: ["--project-root", "/tmp/p"],
-      expect: { ok: true, query: "issue" },
-    },
-    {
-      name: "issue+both",
-      rule: "requireAnyOf:issue:ticket|project-root",
-      argv: ["--ticket", "1", "--project-root", "/tmp/p"],
-      expect: { ok: true, query: "issue" },
-    },
-    {
       name: "issue bare",
-      rule: "requireAnyOf:issue:ticket|project-root",
+      rule: "issue-bare-lawful",
       argv: [],
-      expect: { ok: false, re: /ticket|project-root/i },
+      expect: { ok: true, query: "issue" },
     },
     {
-      name: "issue two roots",
-      rule: "maxCountByMode:project-root:issue:1",
-      argv: ["--project-root", "/a", "--project-root", "/b"],
+      name: "issue rejects project-root",
+      rule: "rejected:project-root",
+      argv: ["--project-root", "/tmp/p"],
+      expect: { ok: false, re: /project-root/i },
+    },
+    {
+      name: "issue rejects ticket+project-root",
+      rule: "rejected:project-root",
+      argv: ["--ticket", "1", "--project-root", "/tmp/p"],
       expect: { ok: false, re: /project-root/i },
     },
     {
@@ -408,7 +419,7 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     },
     {
       name: "cohort×root",
-      rule: "modes:project-root:issue|model-groups",
+      rule: "rejected:project-root",
       argv: [...COHORT_MIN, "--project-root", "/p"],
       expect: { ok: false, re: /project-root/i },
     },
@@ -419,34 +430,22 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
       expect: { ok: false, re: /attach/i },
     },
     {
-      name: "cohort xor mg",
-      rule: "exclusiveWith:cohort×model-groups",
-      argv: ["--cohort", "--model-groups", "--project-root", "/p"],
-      expect: { ok: false, re: /cohort|model-groups/i },
-    },
-    {
-      name: "mg missing root",
-      rule: "requiredInModes:model-groups:project-root",
+      name: "model-groups disabled bare",
+      rule: "rejected:model-groups-disabled",
       argv: ["--model-groups"],
-      expect: { ok: false, re: /project-root|model-groups/i },
+      expect: { ok: false, re: /model-groups/i },
     },
     {
-      name: "mg multi root",
-      rule: "requiredInModes:model-groups:project-root",
+      name: "model-groups disabled + roots",
+      rule: "rejected:model-groups-disabled",
       argv: ["--model-groups", "--project-root", "/a", "--project-root", "/b"],
-      expect: { ok: true, query: "model-groups" },
+      expect: { ok: false, re: /model-groups|project-root/i },
     },
     {
-      name: "mg×ticket",
-      rule: "modes:ticket:issue-only",
-      argv: ["--model-groups", "--project-root", "/a", "--ticket", "1"],
-      expect: { ok: false, re: /ticket/i },
-    },
-    {
-      name: "mg×group",
-      rule: "modes:group-a-label:cohort-only",
-      argv: ["--model-groups", "--project-root", "/a", "--group-a-label", "A"],
-      expect: { ok: false, re: /group-a-label/i },
+      name: "cohort×model-groups",
+      rule: "rejected:model-groups-disabled",
+      argv: ["--cohort", "--model-groups"],
+      expect: { ok: false, re: /model-groups/i },
     },
     {
       name: "sweep attach",
@@ -480,7 +479,7 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     },
     {
       name: "sweep×root",
-      rule: "modes:project-root:issue|model-groups",
+      rule: "rejected:project-root",
       argv: ["--attach", "/tmp/s.json", "--project-root", "/p"],
       expect: { ok: false, re: /project-root/i },
     },
@@ -511,15 +510,14 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     }
   }
   for (const rule of [
-    "requireAnyOf:issue:ticket|project-root",
-    "maxCountByMode:project-root:issue:1",
+    "issue-bare-lawful",
+    "modes:ticket:issue-ok",
+    "rejected:project-root",
+    "rejected:model-groups-disabled",
     "requiredInModes:cohort:group-*",
-    "requiredInModes:model-groups:project-root",
     "requiredInModes:sweep:attach",
     "maxCountByMode:attach:sweep:1",
-    "exclusiveWith:cohort×model-groups",
     "modes:ticket:issue-only",
-    "modes:project-root:issue|model-groups",
     "modes:attach:sweep-only",
     "modes:group-a-label:cohort-only",
     "selectsMode:attach→sweep",
@@ -611,28 +609,22 @@ test("public dashed options admitted; shared project/attach owner-binding preser
     const face =
       opt.modes?.[0] === "cohort"
         ? [...COHORT_MIN]
-        : opt.modes?.[0] === "model-groups"
-          ? opt.id === "project-root"
-            ? ["--model-groups", "--project-root", "/tmp/p"]
-            : ["--model-groups", "--project-root", "/tmp/p", opt.canonical]
-          : opt.modes?.[0] === "sweep"
-            ? opt.id === "attach"
-              ? ["--attach", "/tmp/s.json"]
-              : [
-                  "sweep",
-                  opt.canonical,
-                  sampleValue(opt.valueMetavar ?? "path", opt.id),
-                ]
-            : opt.id === "ticket"
-              ? ["--ticket", "1"]
-              : opt.id === "project-root"
-                ? ["--project-root", "/tmp/p"]
-                : [
-                    "--ticket",
-                    "1",
-                    opt.canonical,
-                    sampleValue(opt.valueMetavar ?? "path", opt.id),
-                  ];
+        : opt.modes?.[0] === "sweep"
+          ? opt.id === "attach"
+            ? ["--attach", "/tmp/s.json"]
+            : [
+                "sweep",
+                opt.canonical,
+                sampleValue(opt.valueMetavar ?? "path", opt.id),
+              ]
+          : opt.id === "ticket"
+            ? ["--ticket", "1"]
+            : [
+                "--ticket",
+                "1",
+                opt.canonical,
+                sampleValue(opt.valueMetavar ?? "path", opt.id),
+              ];
     try {
       parseTaishiArgv(face);
     } catch (error) {
