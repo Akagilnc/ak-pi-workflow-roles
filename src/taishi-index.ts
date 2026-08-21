@@ -5,8 +5,10 @@
  * 完全耗时 / 排除后改动行数 / 耗时每千行 / 末次活动时间戳.
  * Rows carry their own sort keys — readers choose order (Story 6/8).
  *
- * Cross-book one row per issue. C2 joins cohort groups by issueNumber →
- * projectRoot page reference (ADR 0068 mechanical key). Missing row =
+ * #399 D9: retained solely for cohort (and sweep producers that feed it).
+ * Ticket CLI query path must not read this index (no bootstrap prerequisite).
+ * Row address includes book identity so cross-book same ticket numbers do not merge (D5).
+ * C2 joins cohort groups by issueNumber → page reference. Missing row =
  * typed vacancy entry — never silent skip, never live recompute.
  *
  * Multi-process issue/sweep writers coordinate the whole read→upsert→write
@@ -77,12 +79,14 @@ async function withTaishiLibraryIndexLock<T>(
 }
 
 /**
- * One issue row on the cross-book library index.
- * projectRoot = page addressing key (ADR 0068).
+ * One issue row on the library index.
+ * bookKey = book identity (page address component; #399 D5).
+ * projectRoot = retained recording/display face (not sole address key after ADR 0068 revision).
  * issueNumber = optional caller typed field retained for cohort join.
  * C1 four columns make the row self-sufficient for cross-issue listing.
  */
 export type TaishiLibraryIndexRow = {
+  readonly bookKey: string;
   readonly projectRoot: string;
   /** Caller typed issue number — present when issue-mode supplied it for cohort join. */
   readonly issueNumber?: number;
@@ -113,6 +117,7 @@ export function rowFromIssueMetricsPage(
   page: TaishiIssueMetricsPage,
 ): TaishiLibraryIndexRow {
   return {
+    bookKey: page.bookKey,
     projectRoot: page.projectRoot,
     // exactOptionalPropertyTypes: only materialize when page carries it.
     ...(page.issueNumber === undefined ? {} : { issueNumber: page.issueNumber }),
@@ -126,9 +131,11 @@ export function rowFromIssueMetricsPage(
 function sortRows(
   rows: readonly TaishiLibraryIndexRow[],
 ): TaishiLibraryIndexRow[] {
-  // Stable projectRoot sort (C1 listing). Cohort join is by issueNumber find,
+  // Stable book → projectRoot sort (C1 listing). Cohort join is by issueNumber find,
   // not row order — issueNumber secondary keeps C2 rows deterministic too.
   return [...rows].sort((a, b) => {
+    const byBook = a.bookKey.localeCompare(b.bookKey);
+    if (byBook !== 0) return byBook;
     const byRoot = a.projectRoot.localeCompare(b.projectRoot);
     if (byRoot !== 0) return byRoot;
     const aNum = a.issueNumber;
@@ -162,39 +169,51 @@ export function findTaishiLibraryIndexRow(
   return index.rows.find((row) => row.issueNumber === issueNumber);
 }
 
+/** Row map key: book + root keeps cross-book same-ticket rows distinct (D5). */
+function indexRowKey(row: Pick<TaishiLibraryIndexRow, "bookKey" | "projectRoot">): string {
+  return `${row.bookKey}\0${row.projectRoot}`;
+}
+
+/** Within one book, issueNumber stays unique for cohort join. */
+function issueBookKey(bookKey: string, issueNumber: number): string {
+  return `${bookKey}\0${issueNumber}`;
+}
+
 /**
  * Upsert issue rows into an existing index (or empty).
- * - One row per projectRoot — re-sweep overwrites that issue's row only (C1).
- * - When issueNumber is present, also unique per issueNumber — re-issue
- *   overwrites that number's row only (C2 issueNumber→projectRoot join).
+ * - One row per (bookKey, projectRoot) — re-sweep overwrites that issue's row only (C1).
+ * - When issueNumber is present, unique per (bookKey, issueNumber) — re-issue
+ *   overwrites that number's row only within the book (C2; D5 cross-book safe).
  */
 export function upsertTaishiLibraryIndexRows(
   existing: TaishiLibraryIndexPage | undefined,
   upserts: readonly TaishiLibraryIndexRow[],
 ): TaishiLibraryIndexPage {
-  const byRoot = new Map<string, TaishiLibraryIndexRow>();
-  const rootByIssue = new Map<number, string>();
+  const byKey = new Map<string, TaishiLibraryIndexRow>();
+  const keyByIssue = new Map<string, string>();
 
   const ingest = (row: TaishiLibraryIndexRow): void => {
-    // C2 uniqueness: one row per issueNumber — drop prior root if number moved.
+    const key = indexRowKey(row);
+    // C2 uniqueness within book: one row per issueNumber — drop prior if number moved.
     if (row.issueNumber !== undefined) {
-      const priorRoot = rootByIssue.get(row.issueNumber);
-      if (priorRoot !== undefined && priorRoot !== row.projectRoot) {
-        byRoot.delete(priorRoot);
+      const issueKey = issueBookKey(row.bookKey, row.issueNumber);
+      const priorKey = keyByIssue.get(issueKey);
+      if (priorKey !== undefined && priorKey !== key) {
+        byKey.delete(priorKey);
       }
     }
-    // C1 uniqueness: one row per projectRoot — drop prior issue map if root reused.
-    const prior = byRoot.get(row.projectRoot);
+    // C1 uniqueness: one row per (book, projectRoot) — drop prior issue map if root reused.
+    const prior = byKey.get(key);
     if (
       prior !== undefined
       && prior.issueNumber !== undefined
       && prior.issueNumber !== row.issueNumber
     ) {
-      rootByIssue.delete(prior.issueNumber);
+      keyByIssue.delete(issueBookKey(prior.bookKey, prior.issueNumber));
     }
-    byRoot.set(row.projectRoot, row);
+    byKey.set(key, row);
     if (row.issueNumber !== undefined) {
-      rootByIssue.set(row.issueNumber, row.projectRoot);
+      keyByIssue.set(issueBookKey(row.bookKey, row.issueNumber), key);
     }
   };
 
@@ -206,7 +225,7 @@ export function upsertTaishiLibraryIndexRows(
   for (const row of upserts) {
     ingest(row);
   }
-  return buildTaishiLibraryIndexPage([...byRoot.values()]);
+  return buildTaishiLibraryIndexPage([...byKey.values()]);
 }
 
 /**

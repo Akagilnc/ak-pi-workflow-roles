@@ -260,9 +260,10 @@ test("taishi public CLI sweep reject classes: typed envelope + zero writes", asy
         err: /attach/i,
       },
       {
-        name: "mix-issue-face",
+        // #399: --project-root deleted unconditionally (not a mix-face attach reject).
+        name: "mix-deleted-project-root",
         argv: ["taishi", "--attach", validPath, "--project-root", ISSUE_ALPHA],
-        err: /attach/i,
+        err: /project-root/i,
       },
       // ② non-UTF-8 / JSON parse failure
       { name: "bad-utf8", argv: ["taishi", "--attach", badUtf8Path], err: /utf-8/i },

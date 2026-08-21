@@ -24,3 +24,16 @@ Status: accepted（陛下 2026-08-13 grill 逐项拍定；decision keys 与绑�
 - **一次性探针不设席**：被陛下定性替代——「严格来说是一个分析能力」；分析是司天台第二职掌的常设席位，不是抛弃式脚本。
 - **每 issue 归属做成记录内机械字段**：不需要——issue 与 worktree 一一对应，`projectRoot` 即机械键（「目前我们的issue不都是一个固定的worktree吗？为什么不能圈定？」）。
 - **发明单一效率分**：初期不做；并列粗指标看趋势，口径攒够数据再收敛。
+
+## 修订（owner 2026-08-21 / #399）
+
+**查询机械键不再是 `projectRoot`。** 票庭 owner 裁定：
+
+1. 裸调用 = 查当前仓整簿（按 cwd `git common-dir` 定簿，与记录层同一定簿逻辑）；不为整簿造新参数。
+2. `--project-root` **无条件删除**（无用户的机制不留；**无模式例外**——含 model-groups）；一切 taishi 调用传入即明确报错并提示裸调用 / `--ticket`。
+3. model-groups **真需求 = 多 issue 对比而非多目录**；现多 root 入口属错形。公开 CLI 面诚实停用：调用即报错说明「输入面按多 issue 重设计中（见后续票）」；不新造任何替代参数。聚合内核（`TaishiModelGroupsMode` 库层）保留原样供后续票复用。
+4. ADR 0068 若错了就改——本修订授权随 #399 同落，与实现对齐。
+
+现行公开查询范围 = **簿**（候选集合，cwd git common-dir）× **票**（集合内过滤，`--ticket N` → `invocation.ticketNumber===N`，缺 typed ticket 不回退；零匹配诚实空页）以及既有 sweep / cohort 面。页面 / 索引地址含 **book identity**，跨簿同票号不得碰撞合并。记录侧 invocation 上的 `projectRoot` 字段不动（仍为记录/展示面）；`library-index` 仅保留给 cohort（及喂养它的 sweep 生产路径），ticket 查询路径不读 index。
+
+上表 Considered Options 中「`projectRoot` 即机械键」的查询面主张由本修订废止；该句保留为历史选项记录，不再生效。

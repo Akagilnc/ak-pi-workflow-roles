@@ -205,11 +205,13 @@ test("taishi C2 cohort: side-by-side group metrics join index by issueNumber; va
         {
           issueNumber: 201,
           status: "present",
+          bookKey: `root:${physicalPathIdentity(ISSUE_201_ROOT)}`,
           projectRoot: physicalPathIdentity(ISSUE_201_ROOT),
         },
         {
           issueNumber: 202,
           status: "present",
+          bookKey: `root:${physicalPathIdentity(ISSUE_202_ROOT)}`,
           projectRoot: physicalPathIdentity(ISSUE_202_ROOT),
         },
       ]);
@@ -217,6 +219,7 @@ test("taishi C2 cohort: side-by-side group metrics join index by issueNumber; va
         {
           issueNumber: 203,
           status: "present",
+          bookKey: `root:${physicalPathIdentity(ISSUE_203_ROOT)}`,
           projectRoot: physicalPathIdentity(ISSUE_203_ROOT),
         },
         { issueNumber: 204, status: "absent" },
@@ -333,6 +336,7 @@ test("taishi C2 cohort: index hit + page missing recomputes via sole kernel (not
         {
           issueNumber: 201,
           status: "present",
+          bookKey: `root:${physicalPathIdentity(ISSUE_201_ROOT)}`,
           projectRoot: physicalPathIdentity(ISSUE_201_ROOT),
         },
       ]);

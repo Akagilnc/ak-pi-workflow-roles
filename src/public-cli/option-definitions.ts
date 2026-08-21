@@ -13,8 +13,8 @@
 
 import { CliUsageError } from "./cli-errors.ts";
 
-/** Taishi query faces (#336/#337/#338). */
-export type TaishiMode = "issue" | "sweep" | "cohort" | "model-groups";
+/** Taishi public query faces (#336/#337/#338/#399). model-groups CLI face disabled (library kernel retained). */
+export type TaishiMode = "issue" | "sweep" | "cohort";
 
 /** Coder/Fixer public phase tokens. */
 export type RolePhase = "plan" | "apply";
@@ -62,11 +62,10 @@ export type PublicOptionDefinition = {
   /** Modes in which this option is required (taishi conditional requiredness). */
   readonly requiredInModes?: readonly TaishiMode[];
   /**
-   * Other option ids on the same owner that cannot co-occur
-   * (e.g. cohort × model-groups).
+   * Other option ids on the same owner that cannot co-occur.
    */
   readonly exclusiveWith?: readonly string[];
-  /** Per-mode maximum occurrences (issue `--project-root` ≤ 1). */
+  /** Per-mode maximum occurrences. */
   readonly maxCountByMode?: Readonly<Partial<Record<TaishiMode, number>>>;
   /**
    * When this option (or positional) is present it activates this mode.
@@ -85,10 +84,11 @@ export type TaishiRequireAnyOfRule = {
   readonly optionIds: readonly string[];
 };
 
-/** Issue face: ticket | project-root at least one. */
-export const TAISHI_REQUIRE_ANY_OF = [
-  { mode: "issue", optionIds: ["ticket", "project-root"] },
-] as const satisfies readonly TaishiRequireAnyOfRule[];
+/**
+ * Cross-field at-least-one rules for taishi modes.
+ * #399: issue bare call is lawful (whole book from cwd) — no require-any-of on issue.
+ */
+export const TAISHI_REQUIRE_ANY_OF: readonly TaishiRequireAnyOfRule[] = [];
 
 /** Residual taishi mode when no `selectsMode` option is present. */
 export const TAISHI_DEFAULT_MODE: TaishiMode = "issue";
@@ -107,7 +107,6 @@ export function resolveTaishiMode(
   }
   if (selected.size === 0) return TAISHI_DEFAULT_MODE;
   if (selected.has("cohort")) return "cohort";
-  if (selected.has("model-groups")) return "model-groups";
   if (selected.has("sweep")) return "sweep";
   if (selected.has("issue")) return "issue";
   return TAISHI_DEFAULT_MODE;
@@ -181,13 +180,6 @@ export function evaluateTaishiModeOptionContract(
           "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]",
       };
     }
-    if (mode === "model-groups") {
-      return {
-        ok: false,
-        message:
-          "usage: ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]",
-      };
-    }
     return {
       ok: false,
       message: `usage: ak-role taishi ${mode} requires ${missingRequired
@@ -205,7 +197,7 @@ export function evaluateTaishiModeOptionContract(
       return {
         ok: false,
         message:
-          "usage: ak-role taishi ((--ticket <N> | --project-root <P>) | [sweep] --attach <sweep.json> | --cohort ... | --model-groups ...)",
+          "usage: ak-role taishi ([--ticket <N>] | [sweep] --attach <sweep.json> | --cohort ...)",
       };
     }
     const flags = rule.optionIds
@@ -245,6 +237,22 @@ export const REJECTED_PUBLIC_SPELLINGS = [
     reason: {
       en: "Merger input packet is assembled internally; not a public flag.",
       zh: "校书郎 input packet 由内部装配，不是公开旗标。",
+    },
+  },
+  {
+    owner: "taishi",
+    spellings: ["--project-root"],
+    reason: {
+      en: "Deleted (#399). taishi no longer accepts --project-root; use bare call for whole book or --ticket N (cwd git common-dir selects the book).",
+      zh: "已删除（#399）。taishi 不再接受 --project-root；裸调用=整簿，或 --ticket N（cwd git common-dir 定簿）。",
+    },
+  },
+  {
+    owner: "taishi",
+    spellings: ["--model-groups"],
+    reason: {
+      en: "Public CLI face disabled (#399). Input face is being redesigned for multi-issue comparison (see follow-up ticket). Library kernel retained.",
+      zh: "公开 CLI 面已停用（#399）。输入面按多 issue 重设计中（见后续票）。聚合内核保留。",
     },
   },
 ] as const satisfies readonly RejectedSpelling[];
@@ -311,8 +319,8 @@ const GLOBAL_OPTIONS = [
 /**
  * Immutable shared semantics for the common ledger `--project` face.
  * Role rows bind owner only — do not copy these fields per role.
- * Role-specific project faces (merger merge-root; taishi `--project-root`)
- * stay explicit below and must not use this binding.
+ * Role-specific project faces (merger merge-root) stay explicit below and
+ * must not use this binding. taishi `--project-root` is deleted (#399).
  */
 const SHARED_PROJECT_SEMANTICS = {
   id: "project",
@@ -566,23 +574,6 @@ const TAISHI_OPTIONS = [
     },
   },
   {
-    id: "project-root",
-    owner: "taishi",
-    canonical: "--project-root",
-    aliases: [],
-    valueMetavar: "path",
-    required: false,
-    repeatable: true,
-    form: "option",
-    modes: ["issue", "model-groups"],
-    requiredInModes: ["model-groups"],
-    maxCountByMode: { issue: 1 },
-    description: {
-      en: "Project-root scope key. Issue: at most one (with --ticket at least one of the two). Model-groups: one or more required.",
-      zh: "projectRoot 范围键。issue：至多一个（与 --ticket 至少居其一）。model-groups：一个或多个且必填。",
-    },
-  },
-  {
     id: "ticket",
     owner: "taishi",
     canonical: "--ticket",
@@ -593,8 +584,8 @@ const TAISHI_OPTIONS = [
     form: "option",
     modes: ["issue"],
     description: {
-      en: "Ticket/issue number for issue mode (with --project-root at least one of the two).",
-      zh: "issue 模式的票号（与 --project-root 至少居其一）。",
+      en: "Ticket/issue number; live filter by invocation.ticketNumber inside the cwd book (git common-dir). Bare call = whole book. No library-index bootstrap.",
+      zh: "票号；在 cwd 候簿（git common-dir）内按 invocation.ticketNumber 现取现算。裸调用=整簿。不依赖 library-index 自举。",
     },
   },
   {
@@ -625,28 +616,10 @@ const TAISHI_OPTIONS = [
     repeatable: false,
     form: "option",
     modes: ["cohort"],
-    exclusiveWith: ["model-groups"],
     selectsMode: "cohort",
     description: {
-      en: "Select cohort mode (mutually exclusive with --model-groups).",
-      zh: "选择 cohort 模式（与 --model-groups 互斥）。",
-    },
-  },
-  {
-    id: "model-groups",
-    owner: "taishi",
-    canonical: "--model-groups",
-    aliases: [],
-    valueMetavar: null,
-    required: false,
-    repeatable: false,
-    form: "option",
-    modes: ["model-groups"],
-    exclusiveWith: ["cohort"],
-    selectsMode: "model-groups",
-    description: {
-      en: "Select model-groups mode (mutually exclusive with --cohort).",
-      zh: "选择 model-groups 模式（与 --cohort 互斥）。",
+      en: "Select cohort mode.",
+      zh: "选择 cohort 模式。",
     },
   },
   {
@@ -1097,14 +1070,14 @@ const ROLE_COMMAND_HELP = {
   },
   taishi: {
     command: "taishi",
-    summary: "Deterministic analysis seat (issue / sweep / cohort / model-groups).",
+    summary: "Deterministic analysis seat (issue / sweep / cohort).",
     usage: [
-      "ak-role taishi (--ticket <N> | --project-root <P>) [options]",
+      "ak-role taishi [--ticket <N>]",
       "ak-role taishi [sweep] --attach <path>",
       "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>",
-      "ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]",
     ],
     examples: [
+      "ak-role taishi",
       "ak-role taishi --ticket 125",
       "ak-role taishi sweep --attach ./sweep.json",
     ],

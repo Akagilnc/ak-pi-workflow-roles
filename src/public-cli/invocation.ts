@@ -412,19 +412,17 @@ export type ParseMergerArgvResult = {
 };
 
 /**
- * #336/#337/#338 taishi public argv — four faces on one registration seam.
- * - issue (default): ticket N and/or project-root P
+ * #336/#337/#338/#399 taishi public argv — three live faces on one registration seam.
+ * - issue (default): bare whole-book or --ticket N (cwd git common-dir)
  * - sweep (#337): optional positional `sweep` and/or --attach paths;
  *   sweep payload rides exactly one typed JSON attachment (not argv/stdin)
  * - cohort: two labeled issue-number groups
- * - model-groups: one or more project-root scope keys
+ * --project-root deleted; --model-groups public face disabled (library kernel retained).
  */
 export type ParseTaishiIssueArgv = {
   readonly query: "issue";
   /** Caller ticket / issue number face (#176 numbering space). */
   readonly ticket?: number;
-  /** Direct projectRoot mechanical key (ADR 0068). */
-  readonly projectRoot?: string;
 };
 
 export type ParseTaishiSweepArgv = {
@@ -444,16 +442,10 @@ export type ParseTaishiCohortArgv = {
   ];
 };
 
-export type ParseTaishiModelGroupsArgv = {
-  readonly query: "model-groups";
-  readonly projectRoots: readonly string[];
-};
-
 export type ParseTaishiArgvResult =
   | ParseTaishiIssueArgv
   | ParseTaishiSweepArgv
-  | ParseTaishiCohortArgv
-  | ParseTaishiModelGroupsArgv;
+  | ParseTaishiCohortArgv;
 
 /** Honest activation-class failure while deriving the active-merge envelope. */
 export class MergerEnvelopeDerivationError extends Error {
@@ -2271,13 +2263,6 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
         pushValue("ticket", taken.value);
         continue;
       }
-      if (taken.def.id === "project-root") {
-        pushValue(
-          "project-root",
-          requireOptionPath(taken.def.canonical, taken.value),
-        );
-        continue;
-      }
       if (taken.def.id === "attach") {
         pushValue(
           "attach",
@@ -2308,6 +2293,20 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
       throw new CliUsageError(`unknown taishi option: ${taken.def.canonical}`);
     }
     const token = tokens.shift()!;
+    // #399: deleted --project-root; disabled --model-groups public face.
+    if (isRejectedPublicSpelling("taishi", token)) {
+      if (token === "--project-root" || token.startsWith("--project-root=")) {
+        throw new CliUsageError(
+          "taishi no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)",
+        );
+      }
+      if (token === "--model-groups" || token.startsWith("--model-groups=")) {
+        throw new CliUsageError(
+          "taishi --model-groups public CLI face is disabled; input face is being redesigned for multi-issue comparison (see follow-up ticket)",
+        );
+      }
+      throw new CliUsageError(`unknown taishi option: ${token}`);
+    }
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown taishi option: ${token}`);
     }
@@ -2351,13 +2350,6 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
     };
   }
 
-  if (mode === "model-groups") {
-    return {
-      query: "model-groups",
-      projectRoots: valueLists.get("project-root") ?? [],
-    };
-  }
-
   if (mode === "sweep") {
     return {
       query: "sweep",
@@ -2366,12 +2358,10 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
   }
 
   const ticketRaw = valueLists.get("ticket")?.[0];
-  const projectRoot = valueLists.get("project-root")?.[0];
   return {
     query: "issue",
     ...(ticketRaw === undefined
       ? {}
       : { ticket: parseTaishiTicketNumber(ticketRaw) }),
-    ...(projectRoot === undefined ? {} : { projectRoot }),
   };
 }
