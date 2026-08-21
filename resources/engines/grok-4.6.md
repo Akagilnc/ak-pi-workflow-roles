@@ -37,6 +37,11 @@ grok --prompt-file /path/to/labor-prompt.md -m grok-4.6 --always-approve --outpu
   alias `--effort`; a low-tier run completed correctly). If the mandate names
   no tier, use the seat's ordered thinking tier; never omit the flag — the
   CLI default is not guaranteed to match the ordered tier.
+- **Labor prompt must be seat-authored**: write the complete task brief into a
+  temp file and pass it via `--prompt-file`. Attachments/receipt JSON are
+  evidence material, not the prompt body — feeding them directly is rejected
+  by the CLI as non-ACP JSON (`JSON object must have a type field`;
+  live-verified 2026-08-21).
 
 ## Failure handling
 
