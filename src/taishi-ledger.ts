@@ -1,10 +1,12 @@
 /**
- * Taishi ledger scan: S-family book/runs topology, book-first issue scope
+ * Taishi ledger scan: S-family book/runs topology, book × ticket issue scope
  * (#399), and loud unreadable exclusion for required sources.
  * Reuses canonical session/artifact readers — does not parse session JSONL itself.
  *
- * Scope unit = ledger book (git common-dir key). projectRoot is the book pointer
- * and optional path narrow for non-git fixtures — not the sole membership key.
+ * Scope unit = ledger book (git common-dir key) × optional typed ticket filter.
+ * CLI issue query never path-filters by projectRoot (owner #399: that face deleted).
+ * Sweep/legacy library may still pass projectRoot as a path-narrow when bookKey
+ * is absent — recording-side field, not the public query mechanical key.
  * Typed ticketNumber, when requested, decides alone (no silent projectRoot fallback).
  *
  * A2: classifyScopedRun retains typed per-run facts (frame span, tool intervals,
@@ -144,43 +146,33 @@ async function readInvocationScopeFields(
  * Issue scope decision for one run (#399 / C4).
  * - Scope ticket set → typed ticket alone decides (match in; else out).
  *   No projectRoot fallback — that silent path labeled full-project pages as ticket N.
- *   Ticket match + supplied scope projectRoot mismatch → conflict fact.
- * - No ticket + book resolved from git → whole-book membership (worktrees stay visible).
- * - No ticket + non-git projectRoot pointer → path narrow filter (fixture / explicit workspace).
+ * - Whole-book scope (CLI bare / bookKey without ticket) → every run in the book.
+ * - Path-narrow (sweep/legacy only): no ticket + scopeRootIdentity → path match.
  */
 function decideIssueScope(input: {
-  readonly scopeProjectRootIdentity: string | undefined;
   readonly scopeTicketNumber: number | undefined;
-  /** projectRoot identified a ledger book via git common-dir. */
-  readonly bookResolvedFromGit: boolean;
+  /** Whole-book membership when true (CLI bare / git-resolved book). */
+  readonly wholeBook: boolean;
+  readonly scopeRootIdentity: string | undefined;
   readonly runProjectRootIdentity: string;
   readonly runTicketNumber: number | undefined;
-}): { readonly inScope: boolean; readonly conflict: boolean } {
-  const projectRootMatch =
-    input.scopeProjectRootIdentity !== undefined
-    && input.runProjectRootIdentity === input.scopeProjectRootIdentity;
-
+}): { readonly inScope: boolean } {
   if (input.scopeTicketNumber !== undefined) {
-    if (input.runTicketNumber === input.scopeTicketNumber) {
-      return {
-        inScope: true,
-        conflict:
-          input.scopeProjectRootIdentity !== undefined && !projectRootMatch,
-      };
-    }
-    // Different ticket, or run has no typed ticket — never fall back to path match.
-    return { inScope: false, conflict: false };
+    // Strict (book, N): typed ticket alone; never fall back to path match.
+    return { inScope: input.runTicketNumber === input.scopeTicketNumber };
   }
 
-  if (input.bookResolvedFromGit) {
-    return { inScope: true, conflict: false };
+  if (input.wholeBook) {
+    return { inScope: true };
   }
 
-  if (input.scopeProjectRootIdentity !== undefined) {
-    return { inScope: projectRootMatch, conflict: false };
+  if (input.scopeRootIdentity !== undefined) {
+    return {
+      inScope: input.runProjectRootIdentity === input.scopeRootIdentity,
+    };
   }
 
-  return { inScope: true, conflict: false };
+  return { inScope: true };
 }
 
 async function resolveSessionFile(
@@ -408,45 +400,49 @@ async function classifyScopedRun(input: {
 
 /**
  * Scan ledger home books/<book>/runs for runs in the issue scope.
- * #399: book is the scope unit (git common-dir key from projectRoot when possible).
- * Typed ticketNumber decides membership alone when requested — no path fallback.
- * Without ticket, a git-resolved book admits every run in that book (worktrees
- * included); a non-git projectRoot pointer keeps path-narrow filter for fixtures.
- * Ticket-vs-projectRoot conflicts still admit the run and surface on scopeConflicts.
+ * #399: scope = book × optional ticket.
+ * - bookKey set → that book only; whole-book when no ticket; ticket filters alone.
+ * - projectRoot without bookKey (sweep/legacy): git-resolved → whole that book;
+ *   non-git → path-narrow across books (fixture isolation).
  * Damaged required sources become unreadable exclusions.
  * Readable runs retain typed facts for metric-family composition.
  */
 export async function scanTaishiIssueRuns(input: {
-  /** Book pointer and/or path-narrow face. Optional when bookKey or bare ticket scan. */
-  readonly projectRoot?: string;
+  /** Explicit book key — CLI issue query always supplies this. */
+  readonly bookKey?: string;
   /** Caller typed ticket face — when set, only matching invocation.ticketNumber admits. */
   readonly ticketNumber?: number;
-  /** Explicit book key; when set, scan only this book. */
-  readonly bookKey?: string;
+  /**
+   * Sweep/legacy path-narrow pointer. Not a CLI issue-query face (#399 deleted).
+   * When bookKey absent: git common-dir → whole book; else path filter.
+   */
+  readonly projectRoot?: string;
 }): Promise<TaishiScopedRunScan> {
   // Package-owned machine home only (ADR 0048) — no invocation-varying override.
   const ledgerHome = resolveActivationLedgerHome();
   const scopeTicketNumber = input.ticketNumber;
-  const scopeProjectRootIdentity =
-    input.projectRoot !== undefined
-      ? physicalPathIdentity(input.projectRoot)
-      : undefined;
   const booksRoot = join(ledgerHome, "books");
 
-  let bookResolvedFromGit = false;
+  let wholeBook = false;
+  let scopeRootIdentity: string | undefined;
   let bookNames: string[];
+
   if (input.bookKey !== undefined && input.bookKey.trim() !== "") {
     bookNames = [input.bookKey];
+    // CLI book scope: whole book unless ticket filters. Never path-narrow.
+    wholeBook = true;
   } else if (input.projectRoot !== undefined) {
     const resolved = tryResolveBookKeyFromProjectRoot(input.projectRoot);
     if (resolved !== undefined) {
       bookNames = [resolved];
-      bookResolvedFromGit = true;
+      wholeBook = true;
     } else {
       bookNames = await listLedgerBookNames(booksRoot);
+      scopeRootIdentity = physicalPathIdentity(input.projectRoot);
     }
   } else {
     bookNames = await listLedgerBookNames(booksRoot);
+    wholeBook = true;
   }
 
   if (bookNames.length === 0) {
@@ -455,6 +451,8 @@ export async function scanTaishiIssueRuns(input: {
 
   const runs: TaishiReadableRunFacts[] = [];
   const unreadable: TaishiUnreadableRun[] = [];
+  // scopeConflicts retained on the scan face for page envelope compat; book×ticket
+  // scope no longer emits projectRoot dual-key conflicts on the CLI path.
   const scopeConflicts: TaishiScopeConflict[] = [];
 
   for (const book of bookNames) {
@@ -485,23 +483,13 @@ export async function scanTaishiIssueRuns(input: {
 
       const runProjectRootIdentity = physicalPathIdentity(scopeFields.projectRoot);
       const decision = decideIssueScope({
-        scopeProjectRootIdentity,
         scopeTicketNumber,
-        bookResolvedFromGit,
+        wholeBook,
+        scopeRootIdentity,
         runProjectRootIdentity,
         runTicketNumber: scopeFields.ticketNumber,
       });
       if (!decision.inScope) continue;
-
-      if (decision.conflict) {
-        // ticketNumber is defined on the run whenever conflict is true.
-        scopeConflicts.push({
-          runId: parsed.runId,
-          ticketNumber: scopeFields.ticketNumber as number,
-          projectRoot: runProjectRootIdentity,
-          fact: "typed-ticketNumber-over-projectRoot",
-        });
-      }
 
       const classified = await classifyScopedRun({
         book,

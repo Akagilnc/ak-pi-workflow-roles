@@ -96,15 +96,26 @@ export type TaishiOptionalTimestamp =
  * through directory discovery — keep this envelope stable.
  * C1 efficiency fields (完全耗时 / 排除后改动行数 / 耗时每千行 / 末次活动)
  * live on the envelope so sweep can project index rows without family dig.
- * issueNumber = caller typed field retained for cohort index join (ADR 0068
- * page key remains projectRoot; issueNumber is not the mechanical address).
+ * #399: page mechanical address includes book identity (and ticket when set).
+ * projectRoot is a retained recording/display field — not the address key.
  */
 export type TaishiIssueMetricsPage = {
   readonly kind: "taishi-issue-metrics";
   readonly mode: "issue";
+  /** Ledger book identity — part of the page mechanical address (#399). */
+  readonly bookKey: string;
+  /**
+   * Recording/display face (cwd or sweep workspace pointer).
+   * Not the page mechanical key after #399 / ADR 0068 revision.
+   */
   readonly projectRoot: string;
   /** Caller typed issue number — present only when supplied on the entry. */
   readonly issueNumber?: number;
+  /**
+   * Path-narrow address fragment for sweep/legacy fixture pages that share a
+   * book but represent distinct workspace roots. Absent on CLI book/ticket pages.
+   */
+  readonly scopeRootIdentity?: string;
   readonly legs: readonly TaishiLegEntry[];
   readonly unreadable: readonly TaishiUnreadableRun[];
   readonly unreadableCount: number;
@@ -124,13 +135,48 @@ export type TaishiIssueMetricsPage = {
   readonly lastActivityAt: TaishiOptionalTimestamp;
 };
 
-export function taishiIssuePageKey(projectRoot: string): string {
-  const identity = physicalPathIdentity(projectRoot);
-  return createHash("sha256").update(identity).digest("hex").slice(0, 32);
+/**
+ * Page mechanical address (#399): always carries book identity.
+ * - book scope (CLI bare): bookKey only
+ * - ticket scope (CLI --ticket N): bookKey + issueNumber
+ * - root-narrow (sweep/legacy): bookKey + scopeRootIdentity
+ */
+export type TaishiIssuePageAddress = {
+  readonly bookKey: string;
+  readonly issueNumber?: number;
+  readonly scopeRootIdentity?: string;
+};
+
+export function taishiIssuePageKey(address: TaishiIssuePageAddress): string {
+  const parts = ["book", address.bookKey];
+  if (address.issueNumber !== undefined) {
+    parts.push("ticket", String(address.issueNumber));
+  } else if (address.scopeRootIdentity !== undefined) {
+    parts.push("root", physicalPathIdentity(address.scopeRootIdentity));
+  }
+  return createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
 }
 
-export function taishiIssuePagePath(ledgerHome: string, projectRoot: string): string {
-  return join(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(projectRoot)}.json`);
+export function taishiIssuePagePath(
+  ledgerHome: string,
+  address: TaishiIssuePageAddress,
+): string {
+  return join(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(address)}.json`);
+}
+
+export function taishiIssuePageAddressFromPage(
+  page: Pick<
+    TaishiIssueMetricsPage,
+    "bookKey" | "issueNumber" | "scopeRootIdentity"
+  >,
+): TaishiIssuePageAddress {
+  return {
+    bookKey: page.bookKey,
+    ...(page.issueNumber === undefined ? {} : { issueNumber: page.issueNumber }),
+    ...(page.scopeRootIdentity === undefined
+      ? {}
+      : { scopeRootIdentity: page.scopeRootIdentity }),
+  };
 }
 
 function sortLegs(legs: readonly TaishiLegEntry[]): TaishiLegEntry[] {
@@ -250,6 +296,7 @@ export function summarizeTaishiRunEfficiency(
 }
 
 export async function buildTaishiIssueMetricsPage(input: {
+  readonly bookKey: string;
   readonly projectRoot: string;
   readonly runs: readonly TaishiReadableRunFacts[];
   readonly unreadable: readonly TaishiUnreadableRun[];
@@ -259,6 +306,11 @@ export async function buildTaishiIssueMetricsPage(input: {
   readonly changedLines?: number;
   /** Caller typed issue number — retained on page for cohort index join. */
   readonly issueNumber?: number;
+  /**
+   * When set, page address is book+root (sweep/legacy path-narrow).
+   * Must be absent for CLI whole-book / ticket pages so cross-cwd same book collides correctly.
+   */
+  readonly scopeRootIdentity?: string;
 }): Promise<TaishiIssueMetricsPage> {
   // Discover before compose/write — missing family tree fails loud with native
   // ENOENT/ENOTDIR (no empty-registry wash) and never emits a success page.
@@ -283,9 +335,13 @@ export async function buildTaishiIssueMetricsPage(input: {
   const envelope = {
     kind: "taishi-issue-metrics" as const,
     mode: "issue" as const,
+    bookKey: input.bookKey,
     projectRoot,
     // exactOptionalPropertyTypes: only materialize when caller supplied it.
     ...(input.issueNumber === undefined ? {} : { issueNumber: input.issueNumber }),
+    ...(input.scopeRootIdentity === undefined
+      ? {}
+      : { scopeRootIdentity: physicalPathIdentity(input.scopeRootIdentity) }),
     legs,
     unreadable,
     unreadableCount: unreadable.length,
@@ -312,7 +368,7 @@ export async function writeTaishiIssueMetricsPage(
   ledgerHome: string,
   page: TaishiIssueMetricsPage,
 ): Promise<string> {
-  const path = taishiIssuePagePath(ledgerHome, page.projectRoot);
+  const path = taishiIssuePagePath(ledgerHome, taishiIssuePageAddressFromPage(page));
   ensureRealDirectoryTree(ledgerHome, dirname(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}\n`);

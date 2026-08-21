@@ -140,13 +140,17 @@ function expectedRow(input: {
   readonly changedLines: TaishiOptionalMetricNumber;
   readonly msPerKLines: TaishiOptionalMetricNumber;
   readonly lastActivityAt: TaishiOptionalTimestamp;
+  readonly issueNumber?: number;
 }): TaishiLibraryIndexRow {
+  const projectRoot = physicalPathIdentity(input.projectRoot);
   return {
-    projectRoot: physicalPathIdentity(input.projectRoot),
+    bookKey: `root:${projectRoot}`,
+    projectRoot,
     totalElapsedMs: input.totalElapsedMs,
     changedLines: input.changedLines,
     msPerKLines: input.msPerKLines,
     lastActivityAt: input.lastActivityAt,
+    ...(input.issueNumber === undefined ? {} : { issueNumber: input.issueNumber }),
   };
 }
 
@@ -178,9 +182,9 @@ test("taishi C1 sweep: backfills issue pages, maintains index rows, LOC present/
       const pageFiles = (await readdir(issueDir)).filter((n) => n.endsWith(".json")).sort();
       assert.equal(pageFiles.length, 3, "sweep writes one page per issue");
 
-      const demoPath = taishiIssuePagePath(ledgerHome, ISSUE_DEMO);
-      const alphaPath = taishiIssuePagePath(ledgerHome, ISSUE_ALPHA);
-      const betaPath = taishiIssuePagePath(ledgerHome, ISSUE_BETA);
+      const demoPath = taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_DEMO)}`, scopeRootIdentity: ISSUE_DEMO });
+      const alphaPath = taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_ALPHA)}`, scopeRootIdentity: ISSUE_ALPHA });
+      const betaPath = taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_BETA)}`, scopeRootIdentity: ISSUE_BETA });
       // One canonical page file per issue key — no duplicates on disk.
       assert.deepEqual(
         new Set(pageFiles),
@@ -340,7 +344,7 @@ test("taishi C1 sweep: unreadable later end-frame still wins lastActivityAt; ela
       assert.deepEqual(page.changedLines, present(100));
       assert.deepEqual(page.msPerKLines, present(200_000)); // 20000 / (100/1000)
 
-      const pagePath = taishiIssuePagePath(ledgerHome, ISSUE_GAMMA);
+      const pagePath = taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_GAMMA)}`, scopeRootIdentity: ISSUE_GAMMA });
       const onDisk = JSON.parse(await readFile(pagePath, "utf8")) as TaishiIssueMetricsPage;
       assert.deepEqual(onDisk.lastActivityAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
       assert.equal(onDisk.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
@@ -379,6 +383,7 @@ test("taishi library-index concurrent issue upserts retain both rows", async () 
         ledgerHome,
         buildTaishiLibraryIndexPage([
           {
+            bookKey: `root:${physicalPathIdentity("/taishi-fixture/c1-lock-seed")}`,
             projectRoot: physicalPathIdentity("/taishi-fixture/c1-lock-seed"),
             issueNumber: 9000,
             totalElapsedMs: 1,
@@ -406,6 +411,7 @@ if (!ledgerHome || !Number.isFinite(issueNumber) || !projectRoot) {
 }
 await new Promise((r) => setTimeout(r, 25));
 await mergeTaishiLibraryIndexRows(ledgerHome, [{
+  bookKey: "fixture-book-c1",
   projectRoot: physicalPathIdentity(projectRoot),
   issueNumber,
   totalElapsedMs: issueNumber,
