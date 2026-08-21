@@ -11,7 +11,8 @@
  * C2 joins cohort groups by (bookKey, issueNumber) → page reference. Missing row =
  * typed vacancy entry — never silent skip, never live recompute.
  * #412: bare cohort issue numbers resolve inside one book; no cross-book silent find.
- * Legacy rows lacking bookKey normalize to root:<projectRoot> on read/ingest (F1/F3).
+ * Legacy rows lacking bookKey heal via the single shared projectRoot→bookKey rule
+ * (git common-dir when resolvable, else `root:<identity>`) on read/ingest (F1/F3).
  *
  * Multi-process issue/sweep writers coordinate the whole read→upsert→write
  * on one exclusive lock next to the index (atomic rename still prevents torn
@@ -21,12 +22,12 @@ import { open, readFile, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { writeFileAtomically } from "./atomic-write.ts";
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   assertLedgerFileInsideHome,
   ensureRealDirectoryTree,
   physicalPathIdentity,
 } from "./activation-ledger-topology.ts";
+import { resolveTaishiBookKey } from "./taishi-book-key.ts";
 import type {
   TaishiIssueMetricsPage,
   TaishiOptionalMetricNumber,
@@ -133,10 +134,9 @@ export function rowFromIssueMetricsPage(
 }
 
 /**
- * #412 F1/F3: pre-#399 library-index rows omit bookKey. Heal with the same book
- * identity rule as issue/sweep (#399 / ADR 0048): git common-dir host directory
- * when projectRoot resolves to a Git repository; `root:<projectRoot identity>`
- * only when Git cannot place the book. Same rule — not a second resolver.
+ * #412 F1/F3: pre-#399 library-index rows omit bookKey. Heal with the single
+ * shared projectRoot→bookKey rule (#399 / ADR 0048) — the same rule the
+ * issue/sweep path uses, never a second resolver.
  */
 export function normalizeTaishiLibraryIndexRow(
   row: TaishiLibraryIndexRow,
@@ -147,15 +147,7 @@ export function normalizeTaishiLibraryIndexRow(
     return { ...row, bookKey: rawBook };
   }
   const projectRoot = physicalPathIdentity(row.projectRoot);
-  try {
-    return { ...row, projectRoot, bookKey: resolveBookKeyFromGit(projectRoot) };
-  } catch {
-    return {
-      ...row,
-      bookKey: `root:${projectRoot}`,
-      projectRoot,
-    };
-  }
+  return { ...row, projectRoot, bookKey: resolveTaishiBookKey(projectRoot) };
 }
 
 function sortRows(

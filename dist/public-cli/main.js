@@ -25006,6 +25006,23 @@ var init_reviewer_run = __esm({
   }
 });
 
+// src/taishi-book-key.ts
+function resolveTaishiBookKey(projectRoot) {
+  const identity = physicalPathIdentity(projectRoot);
+  try {
+    return resolveBookKeyFromGit(identity);
+  } catch {
+    return `root:${identity}`;
+  }
+}
+var init_taishi_book_key = __esm({
+  "src/taishi-book-key.ts"() {
+    "use strict";
+    init_activation_ledger_git();
+    init_activation_ledger_topology();
+  }
+});
+
 // src/atomic-write.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { rename, rm, writeFile as writeFile13 } from "node:fs/promises";
@@ -25086,15 +25103,7 @@ function normalizeTaishiLibraryIndexRow(row) {
     return { ...row, bookKey: rawBook };
   }
   const projectRoot = physicalPathIdentity(row.projectRoot);
-  try {
-    return { ...row, projectRoot, bookKey: resolveBookKeyFromGit(projectRoot) };
-  } catch {
-    return {
-      ...row,
-      bookKey: `root:${projectRoot}`,
-      projectRoot
-    };
-  }
+  return { ...row, projectRoot, bookKey: resolveTaishiBookKey(projectRoot) };
 }
 function sortRows(rows) {
   return [...rows].sort((a, b) => {
@@ -25198,8 +25207,8 @@ var init_taishi_index = __esm({
   "src/taishi-index.ts"() {
     "use strict";
     init_atomic_write();
-    init_activation_ledger_git();
     init_activation_ledger_topology();
+    init_taishi_book_key();
     LIBRARY_INDEX_LOCK_NAME = ".library-index.lock";
     LIBRARY_INDEX_LOCK_TIMEOUT_MS = 3e4;
     LIBRARY_INDEX_LOCK_RETRY_MS = 15;
@@ -26812,20 +26821,11 @@ function cachedPageMatchesRequestedScope(page, input) {
   }
   return page.issueNumber === requestedTicket;
 }
-function tryResolveBookKey(projectRoot) {
-  try {
-    return resolveBookKeyFromGit(projectRoot);
-  } catch {
-    return void 0;
-  }
-}
 function resolveIssueBookKey(input) {
   if (input.bookKey !== void 0 && input.bookKey.trim() !== "") {
     return input.bookKey;
   }
-  const fromGit = tryResolveBookKey(input.projectRoot);
-  if (fromGit !== void 0) return fromGit;
-  return `root:${physicalPathIdentity(input.projectRoot)}`;
+  return resolveTaishiBookKey(input.projectRoot);
 }
 async function readOrComputeTaishiIssuePage(input) {
   const ledgerHome = resolveActivationLedgerHome();
@@ -26982,11 +26982,11 @@ var init_taishi_entry = __esm({
     "use strict";
     init_build();
     init_activation_ledger_topology();
+    init_taishi_book_key();
     init_taishi_cohort();
     init_taishi_ledger();
     init_taishi_index();
     init_taishi_model_groups();
-    init_activation_ledger_git();
     init_taishi_page();
     TaishiIssueComputeError = class extends Error {
       code = "taishi-issue-compute-failed";

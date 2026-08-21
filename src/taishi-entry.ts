@@ -14,6 +14,7 @@ import { readFile } from "node:fs/promises";
 import { Type, type Static } from "typebox";
 
 import { physicalPathIdentity, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
+import { resolveTaishiBookKey } from "./taishi-book-key.ts";
 import {
   runTaishiCohortMode,
   type TaishiCohortModeInput,
@@ -33,7 +34,6 @@ import {
   buildTaishiModelGroupsPage,
   type TaishiModelGroupsPage,
 } from "./taishi-model-groups.ts";
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   assertTaishiChangedLinesInput,
   buildTaishiIssueMetricsPage,
@@ -222,19 +222,11 @@ function cachedPageMatchesRequestedScope(
   return page.issueNumber === requestedTicket;
 }
 
-function tryResolveBookKey(projectRoot: string): string | undefined {
-  try {
-    return resolveBookKeyFromGit(projectRoot);
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Resolve page/scan book identity for issue mode (#399).
  * CLI supplies bookKey from cwd git common-dir.
- * Sweep/legacy without bookKey: git common-dir when possible; else stable synthetic
- * `root:<projectRoot identity>` so read/write page paths agree without a prior scan.
+ * Sweep/legacy without bookKey falls back to the single shared
+ * projectRoot→bookKey rule (git common-dir, else `root:<identity>`).
  */
 function resolveIssueBookKey(input: {
   readonly bookKey?: string;
@@ -243,9 +235,7 @@ function resolveIssueBookKey(input: {
   if (input.bookKey !== undefined && input.bookKey.trim() !== "") {
     return input.bookKey;
   }
-  const fromGit = tryResolveBookKey(input.projectRoot);
-  if (fromGit !== undefined) return fromGit;
-  return `root:${physicalPathIdentity(input.projectRoot)}`;
+  return resolveTaishiBookKey(input.projectRoot);
 }
 
 export async function readOrComputeTaishiIssuePage(
