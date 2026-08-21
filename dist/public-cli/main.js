@@ -15054,11 +15054,14 @@ var init_activation_ledger_topology = __esm({
 import { execFileSync } from "node:child_process";
 import { basename as basename2, dirname as dirname4, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
 function envWithoutGitDiscovery(base = process.env) {
-  const env = { ...base };
+  const env = { ...base, LC_ALL: "C" };
   for (const key of GIT_DISCOVERY_ENV_KEYS) {
     delete env[key];
   }
   return env;
+}
+function isConfirmedNonRepositoryStderr(stderr) {
+  return CONFIRMED_NON_REPOSITORY_STDERR.test(stderr);
 }
 function isGitSpawnInfrastructureError(error) {
   if (error === null || typeof error !== "object" || !("code" in error)) return false;
@@ -15085,7 +15088,10 @@ function resolveBookKeyFromGit(cwd) {
     }
     const err = error;
     const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
-    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
+    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", {
+      cause: error,
+      confirmedNonRepository: isConfirmedNonRepositoryStderr(detail)
+    });
   }
   if (commonDir.length === 0) {
     throw new Error("git rev-parse --git-common-dir returned an empty path");
@@ -15098,7 +15104,7 @@ function resolveBookKeyFromGit(cwd) {
   }
   return bookKey;
 }
-var GIT_DISCOVERY_ENV_KEYS, ActivationGitRepositoryRequiredError;
+var GIT_DISCOVERY_ENV_KEYS, CONFIRMED_NON_REPOSITORY_STDERR, ActivationGitRepositoryRequiredError;
 var init_activation_ledger_git = __esm({
   "src/activation-ledger-git.ts"() {
     "use strict";
@@ -15109,14 +15115,17 @@ var init_activation_ledger_git = __esm({
       "GIT_CEILING_DIRECTORIES",
       "GIT_DISCOVERY_ACROSS_FILESYSTEM"
     ];
+    CONFIRMED_NON_REPOSITORY_STDERR = /^fatal:\s*not a git repository/i;
     ActivationGitRepositoryRequiredError = class extends Error {
       code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
+      confirmedNonRepository;
       constructor(detail, options) {
         super(
           `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
           options?.cause === void 0 ? void 0 : { cause: options.cause }
         );
         this.name = "ActivationGitRepositoryRequiredError";
+        this.confirmedNonRepository = options?.confirmedNonRepository ?? false;
       }
     };
   }
@@ -25046,7 +25055,14 @@ function resolveTaishiBookKey(projectRoot) {
     throw error;
   }
   if (!stats.isDirectory()) return `root:${identity}`;
-  return resolveBookKeyFromGit(identity);
+  try {
+    return resolveBookKeyFromGit(identity);
+  } catch (error) {
+    if (error instanceof ActivationGitRepositoryRequiredError && error.confirmedNonRepository) {
+      return `root:${identity}`;
+    }
+    throw error;
+  }
 }
 function isSyntheticTaishiBookKey(bookKey) {
   return bookKey.startsWith("root:") && isAbsolute5(bookKey.slice("root:".length));
