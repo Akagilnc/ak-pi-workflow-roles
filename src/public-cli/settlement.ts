@@ -34,7 +34,10 @@ import {
   COLLECTOR_WAIT_TOOL,
 } from "../collector-ledger.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../engine-detour.ts";
-import { readEngineLaborFallbackFieldFrom } from "../engine-labor-fallback.ts";
+import {
+  readEngineLaborFallbackFieldFrom,
+  seatFallbackBaseStatus,
+} from "../engine-labor-fallback.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
@@ -1059,7 +1062,7 @@ function auditNoReceiptDecisiveFact(candidate: object): Record<string, unknown> 
 
 function judgeDecisiveFacts(
   verdict: object,
-  judgeStatus: JudgeVerdict["judgeStatus"],
+  judgeStatus: string,
 ): Record<string, unknown> {
   const facts: Record<string, unknown> = {
     judgeStatus,
@@ -1067,7 +1070,8 @@ function judgeDecisiveFacts(
     // #380: spread sole-built field; do not re-key here (S1).
     ...readEngineLaborFallbackFieldFrom(verdict),
   };
-  if (judgeStatus === "continue") {
+  const statusBase = seatFallbackBaseStatus(judgeStatus);
+  if (statusBase === "continue") {
     const fix = safelyRead(verdict, "fix");
     if (fix.readable && isRecord(fix.value)) {
       const summary = safelyRead(fix.value, "summary");
@@ -1093,7 +1097,7 @@ function judgeDecisiveFacts(
       }
     }
   }
-  if (judgeStatus === "escalate") {
+  if (statusBase === "escalate") {
     const gate = safelyRead(verdict, "decisionGate");
     if (gate.readable && isRecord(gate.value)) {
       const question = safelyRead(gate.value, "question");
@@ -1118,10 +1122,14 @@ function coderDecisiveFacts(output: CoderOutput): Record<string, unknown> {
   const status = safelyRead(candidate, "status");
   const facts: Record<string, unknown> = {};
   if (status.readable && typeof status.value === "string") facts.coderStatus = status.value;
+  const statusBase =
+    status.readable && typeof status.value === "string"
+      ? seatFallbackBaseStatus(status.value)
+      : undefined;
   const remainingScope = safelyRead(candidate, "remainingScope");
-  if (status.readable && status.value === "unfinished" && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  if (statusBase === "unfinished" && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
   const reason = safelyRead(candidate, "reason");
-  if (status.readable && status.value === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
+  if (statusBase === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
     facts.reason = reason.value;
   }
   const report = safelyRead(candidate, "report");
@@ -1134,14 +1142,18 @@ function fixerDecisiveFacts(output: FixerOutput): Record<string, unknown> {
   const status = safelyRead(candidate, "status");
   const facts: Record<string, unknown> = {};
   if (status.readable && typeof status.value === "string") facts.fixerStatus = status.value;
+  const statusBase =
+    status.readable && typeof status.value === "string"
+      ? seatFallbackBaseStatus(status.value)
+      : undefined;
   const remainingScope = safelyRead(candidate, "remainingScope");
-  if (status.readable && (status.value === "unfinished" || status.value === "refused") && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
+  if ((statusBase === "unfinished" || statusBase === "refused") && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
   const reason = safelyRead(candidate, "reason");
-  if (status.readable && status.value === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
+  if (statusBase === "unfinished" && reason.readable && typeof reason.value === "string" && reason.value.trim().length > 0) {
     facts.reason = reason.value;
   }
   const blockerRead = safelyRead(candidate, "blocker");
-  if (status.readable && status.value === "refused" && blockerRead.readable && isRecord(blockerRead.value)) {
+  if (statusBase === "refused" && blockerRead.readable && isRecord(blockerRead.value)) {
     const cause = safelyRead(blockerRead.value, "cause");
     if (cause.readable && typeof cause.value === "string") facts.blockerCause = cause.value;
     const prerequisiteId = safelyRead(blockerRead.value, "prerequisiteId");
@@ -1223,7 +1235,11 @@ function doctorDecisiveFacts(output: DoctorOutput): Record<string, unknown> {
   const status = safelyRead(candidate, "status");
   const facts: Record<string, unknown> = { ...auditNoReceiptDecisiveFact(candidate) };
   if (status.readable && typeof status.value === "string") facts.doctorStatus = status.value;
-  if (status.readable && status.value === "refused") {
+  const statusBase =
+    status.readable && typeof status.value === "string"
+      ? seatFallbackBaseStatus(status.value)
+      : undefined;
+  if (statusBase === "refused") {
     const reason = safelyRead(candidate, "reason");
     if (reason.readable && reason.value !== undefined) facts.reason = reason.value;
     const missing = safelyRead(candidate, "missingEvidence");
@@ -1277,7 +1293,11 @@ function reviewerDecisiveFacts(
     facts.specDisposition = specDisposition.value;
   }
   const diagnostic = safelyRead(candidate, "diagnostic");
-  if (status.readable && status.value === "refused" && diagnostic.readable) {
+  const statusBase =
+    status.readable && typeof status.value === "string"
+      ? seatFallbackBaseStatus(status.value)
+      : undefined;
+  if (statusBase === "refused" && diagnostic.readable) {
     facts.diagnosticPresent = typeof diagnostic.value === "string" && diagnostic.value.trim().length > 0;
   }
   return facts;
@@ -1980,9 +2000,10 @@ export function extractJudgeRoleOutcome(
     // must not become a second verdict-shape gate (ADR 0040).
     if (!isRecord(details)) continue;
     const statusRead = safelyRead(details, "judgeStatus");
-    if (!statusRead.readable) continue;
+    if (!statusRead.readable || typeof statusRead.value !== "string") continue;
     const judgeStatus = statusRead.value;
-    if (judgeStatus !== "converged" && judgeStatus !== "continue" && judgeStatus !== "escalate") continue;
+    const statusBase = seatFallbackBaseStatus(judgeStatus);
+    if (statusBase !== "converged" && statusBase !== "continue" && statusBase !== "escalate") continue;
     return {
       kind: "accepted",
       role: "judge",
@@ -2985,13 +3006,19 @@ async function settleLawfulDoctorTerminalResult(
   const extracted = extractDoctorRoleOutcome(entries);
   if (extracted === undefined) return undefined;
   // Bind completed receipt case identity to the admitted Issue evidence case.
+  // Seat-fallback may taint status; base semantics still require case binding.
   if (
     extracted.output !== undefined &&
-    extracted.output.status === "completed"
+    seatFallbackBaseStatus(String(extracted.output.status)) === "completed"
   ) {
+    const completedCase = (
+      extracted.output as {
+        case: { issueNumber: number; runsPath: string };
+      }
+    ).case;
     if (
-      extracted.output.case.issueNumber !== admitted.caseIdentity.issueNumber ||
-      extracted.output.case.runsPath !== admitted.caseIdentity.runsPath
+      completedCase.issueNumber !== admitted.caseIdentity.issueNumber ||
+      completedCase.runsPath !== admitted.caseIdentity.runsPath
     ) {
       const error = new Error(
         "Doctor receipt case identity does not match admitted case identity",
@@ -3331,7 +3358,11 @@ function mergerDecisiveFacts(output: MergerOutput): Record<string, unknown> {
   const attemptId = safelyRead(candidate, "attemptId");
   if (status.readable && typeof status.value === "string") facts.mergerStatus = status.value;
   if (attemptId.readable && attemptId.value !== undefined) facts.attemptId = attemptId.value;
-  const decisiveKey = status.readable && status.value === "completed" ? "mergeCommitId" : "diagnosis";
+  const statusBase =
+    status.readable && typeof status.value === "string"
+      ? seatFallbackBaseStatus(status.value)
+      : undefined;
+  const decisiveKey = statusBase === "completed" ? "mergeCommitId" : "diagnosis";
   const decisive = safelyRead(candidate, decisiveKey);
   if (decisive.readable && decisive.value !== undefined) facts[decisiveKey] = decisive.value;
   return facts;

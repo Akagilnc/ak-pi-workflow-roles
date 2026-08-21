@@ -27,6 +27,7 @@ import {
   createEngineLaborFallbackLatch,
   installActivationEngineLaborFallbackLatch,
   restoreEngineLaborFallbackFromSessionEntries,
+  seatFallbackBaseStatus,
 } from "./engine-labor-fallback.ts";
 import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
@@ -565,7 +566,8 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   const status = typeof details.status === "string"
     ? details.status
     : typeof details.judgeStatus === "string" ? details.judgeStatus : undefined;
-  if (status === "escalate") {
+  // Seat-fallback taint keeps escalate semantics (base) while preserving the polluted token.
+  if (status !== undefined && seatFallbackBaseStatus(status) === "escalate") {
     return { kind: "human_decision", role, phase, status };
   }
   return { kind: "accepted", role, phase, ...(status === undefined ? {} : { status }) };

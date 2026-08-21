@@ -25,6 +25,7 @@ import {
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
 import { isAuditEscalationResult } from "../audit-escalation.ts";
+import { seatFallbackBaseStatus } from "../engine-labor-fallback.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import {
@@ -159,10 +160,11 @@ export function validateAcceptedDetails(
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
+  const baseDiscriminator = typeof discriminator === "string" ? seatFallbackBaseStatus(discriminator) : discriminator;
   const runtimeBindingMissing =
-    (toolName === DOCTOR_OUTPUT_TOOL_NAME && discriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
+    (toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
     (toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2);
-  if (runtimeBindingMissing || (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(discriminator)))) {
+  if (runtimeBindingMissing || (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator as string)))) {
     throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
   }
   try {
@@ -196,12 +198,14 @@ export function validateAcceptedLifecycle(
   const details = validateAcceptedDetails(toolName, detailsValue);
   if (toolName === DOCTOR_OUTPUT_TOOL_NAME) {
     const testimony = validateDoctorSubmissionShape(argumentsValue);
-    if (testimony.status === "refused") {
+    if (seatFallbackBaseStatus(String(testimony.status)) === "refused") {
       if (!deepEqual(testimony, details)) throw new Error("accepted tool lifecycle details mismatch");
       return details;
     }
-    const receipt = details as DoctorOutput;
-    if (receipt.status !== "completed") throw new Error("accepted tool lifecycle details mismatch");
+    const receipt = details as DoctorOutput & { cost?: unknown };
+    if (seatFallbackBaseStatus(String(receipt.status)) !== "completed") {
+      throw new Error("accepted tool lifecycle details mismatch");
+    }
     const { cost: _runtimeCost, ...projected } = receipt;
     if (!deepEqual(testimony, projected)) throw new Error("accepted tool lifecycle details mismatch");
     return details;
@@ -226,7 +230,8 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as { judgeStatus: string }).judgeStatus };
     case MERGER_OUTPUT_TOOL_NAME: {
       const output = details as unknown as Record<string, unknown>;
-      return { status: output.status as string, ...(output.status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {}) };
+      const status = output.status as string;
+      return { status, ...(seatFallbackBaseStatus(status) === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {}) };
     }
     case COLLECTOR_OUTPUT_TOOL:
       return { status: "collected" };
