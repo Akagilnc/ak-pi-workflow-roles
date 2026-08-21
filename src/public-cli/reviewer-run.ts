@@ -44,6 +44,7 @@ import {
   isV1ResumableFailure,
   loadResumableReviewerRun,
   markRunAdmitted,
+  projectRecordedEngine,
   markRunResumable,
   markRunRunning,
   markRunTerminal,
@@ -625,6 +626,7 @@ export async function runPublicReviewerResume(
     env: {
       ...env,
       ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+      ...projectRecordedEngine(loaded.recordedEngine),
     },
     io,
     extraArgs,

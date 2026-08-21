@@ -43,6 +43,7 @@ import {
   isV1ResumableFailure,
   loadResumableFixerRun,
   markRunAdmitted,
+  projectRecordedEngine,
   markRunResumable,
   markRunRunning,
   markRunTerminal,
@@ -605,6 +606,7 @@ export async function runPublicFixerResume(
     env: {
       ...env,
       ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+      ...projectRecordedEngine(loaded.recordedEngine),
     },
     io,
     extraArgs,

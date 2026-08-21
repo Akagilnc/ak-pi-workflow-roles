@@ -438,6 +438,63 @@ function parsePersistedTicketIdentity(
   };
 }
 
+/** Durable invocation.json engine name, if present and non-blank. */
+function parsePersistedEngineName(
+  record: Record<string, unknown>,
+): string | undefined {
+  if (typeof record.engine !== "string") return undefined;
+  const engine = record.engine.trim();
+  return engine === "" ? undefined : engine;
+}
+
+async function readPersistedInvocationPage(
+  runDirectory: string,
+  runId: string,
+): Promise<Record<string, unknown> | undefined> {
+  try {
+    const invocationRaw: unknown = JSON.parse(
+      await readFile(join(runDirectory, "invocation.json"), "utf8"),
+    );
+    if (
+      invocationRaw !== null &&
+      typeof invocationRaw === "object" &&
+      !Array.isArray(invocationRaw)
+    ) {
+      return invocationRaw as Record<string, unknown>;
+    }
+    return undefined;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "ENOENT"
+    ) {
+      return undefined;
+    }
+    throw new CliUsageError(
+      `role run invocation identity is unreadable: ${runId}`,
+      { cause: error },
+    );
+  }
+}
+
+function recordedEngineFields(recordedEngine?: string): {
+  recordedEngine?: string;
+} {
+  return recordedEngine === undefined ? {} : { recordedEngine };
+}
+
+/**
+ * Resume child-env projection of durable invocation.json engine.
+ * Restores the detour signal; callers must still omit effectiveEngine so
+ * provenance is not rewritten.
+ */
+export function projectRecordedEngine(
+  recordedEngine?: string,
+): { engine: string } | Record<PropertyKey, never> {
+  return recordedEngine === undefined ? {} : { engine: recordedEngine };
+}
+
 function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
   correlationId?: string;
   ticketNumber?: number;
@@ -455,6 +512,7 @@ async function loadResumableRunRecord(
   readonly run: RoleRunRecord;
   readonly observation: TypedHttp429Observation;
   readonly admittedFields: LoadedAdmittedRequestFields;
+  readonly recordedEngine?: string;
 }> {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) {
@@ -585,37 +643,22 @@ async function loadResumableRunRecord(
       { cause: error },
     );
   }
-  if (correlationId === undefined || ticketNumber === undefined) {
-    try {
-      const invocationRaw: unknown = JSON.parse(
-        await readFile(join(run.runDirectory, "invocation.json"), "utf8"),
-      );
-      if (
-        invocationRaw !== null &&
-        typeof invocationRaw === "object" &&
-        !Array.isArray(invocationRaw)
-      ) {
-        const fromInvocation = parsePersistedTicketIdentity(
-          invocationRaw as Record<string, unknown>,
-        );
-        if (correlationId === undefined) correlationId = fromInvocation.correlationId;
-        if (ticketNumber === undefined) ticketNumber = fromInvocation.ticketNumber;
-      }
-    } catch (error) {
-      if (
-        !(
-          error instanceof Error &&
-          "code" in error &&
-          (error as { code?: unknown }).code === "ENOENT"
-        )
-      ) {
-        throw new CliUsageError(
-          `role run invocation identity is unreadable: ${runId}`,
-          { cause: error },
-        );
-      }
-    }
+  const invocationPage = await readPersistedInvocationPage(
+    run.runDirectory,
+    runId,
+  );
+  if (
+    invocationPage !== undefined &&
+    (correlationId === undefined || ticketNumber === undefined)
+  ) {
+    const fromInvocation = parsePersistedTicketIdentity(invocationPage);
+    if (correlationId === undefined) correlationId = fromInvocation.correlationId;
+    if (ticketNumber === undefined) ticketNumber = fromInvocation.ticketNumber;
   }
+  const recordedEngine =
+    invocationPage === undefined
+      ? undefined
+      : parsePersistedEngineName(invocationPage);
   return {
     run,
     observation: run.resumable,
@@ -635,6 +678,7 @@ async function loadResumableRunRecord(
       ...(correlationId === undefined ? {} : { correlationId }),
       ...(ticketNumber === undefined ? {} : { ticketNumber }),
     },
+    ...recordedEngineFields(recordedEngine),
   };
 }
 
@@ -642,24 +686,28 @@ export type LoadedResumableJudgeRun = {
   readonly admitted: AdmittedJudgeInvocation;
   readonly run: RoleRunRecord;
   readonly observation: TypedHttp429Observation;
+  readonly recordedEngine?: string;
 };
 
 export type LoadedResumableCoderRun = {
   readonly admitted: AdmittedCoderInvocation;
   readonly run: RoleRunRecord;
   readonly observation: TypedHttp429Observation;
+  readonly recordedEngine?: string;
 };
 
 export type LoadedResumableFixerRun = {
   readonly admitted: AdmittedFixerInvocation;
   readonly run: RoleRunRecord;
   readonly observation: TypedHttp429Observation;
+  readonly recordedEngine?: string;
 };
 
 export type LoadedResumableReviewerRun = {
   readonly admitted: AdmittedReviewerInvocation;
   readonly run: RoleRunRecord;
   readonly observation: TypedHttp429Observation;
+  readonly recordedEngine?: string;
 };
 
 /**
@@ -694,6 +742,7 @@ export async function loadResumableJudgeRun(
     admitted,
     run: loaded.run,
     observation: loaded.observation,
+    ...recordedEngineFields(loaded.recordedEngine),
   };
 }
 
@@ -748,6 +797,7 @@ export async function loadResumableCoderRun(
     admitted,
     run: loaded.run,
     observation: loaded.observation,
+    ...recordedEngineFields(loaded.recordedEngine),
   };
 }
 
@@ -807,6 +857,7 @@ export async function loadResumableFixerRun(
     admitted,
     run: loaded.run,
     observation: loaded.observation,
+    ...recordedEngineFields(loaded.recordedEngine),
   };
 }
 
@@ -854,6 +905,7 @@ export async function loadResumableReviewerRun(
     admitted,
     run: loaded.run,
     observation: loaded.observation,
+    ...recordedEngineFields(loaded.recordedEngine),
   };
 }
 
@@ -861,6 +913,7 @@ export type LoadedResumableMergerRun = {
   readonly admitted: AdmittedMergerInvocation;
   readonly run: RoleRunRecord;
   readonly observation: TypedHttp429Observation;
+  readonly recordedEngine?: string;
 };
 
 /**
@@ -914,6 +967,7 @@ export async function loadResumableMergerRun(
     admitted,
     run: loaded.run,
     observation: loaded.observation,
+    ...recordedEngineFields(loaded.recordedEngine),
   };
 }
 

@@ -36,6 +36,7 @@ import {
   isV1ResumableFailure,
   loadResumableJudgeRun,
   markRunAdmitted,
+  projectRecordedEngine,
   markRunResumable,
   markRunRunning,
   markRunTerminal,
@@ -493,8 +494,9 @@ export async function runPublicJudge(
 
 /**
  * Resume a previously admitted Role run after a typed HTTP 429 interruption.
- * Restores role/project/instruction/attachments/session identity; model override
- * is temporary for this invocation only.
+ * Restores role/project/instruction/attachments/session identity and the
+ * recorded engine child-env signal; model override is temporary and
+ * invocation.json engine provenance is not rewritten.
  */
 export async function runPublicResume(
   argv: readonly string[],
@@ -557,6 +559,7 @@ export async function runPublicResume(
     env: {
       ...env,
       ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+      ...projectRecordedEngine(loaded.recordedEngine),
     },
     io,
     extraArgs,

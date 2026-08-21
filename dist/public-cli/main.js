@@ -18753,6 +18753,36 @@ function parsePersistedTicketIdentity(record4) {
     ...ticketNumber === void 0 ? {} : { ticketNumber }
   };
 }
+function parsePersistedEngineName(record4) {
+  if (typeof record4.engine !== "string") return void 0;
+  const engine = record4.engine.trim();
+  return engine === "" ? void 0 : engine;
+}
+async function readPersistedInvocationPage(runDirectory, runId) {
+  try {
+    const invocationRaw = JSON.parse(
+      await readFile8(join10(runDirectory, "invocation.json"), "utf8")
+    );
+    if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
+      return invocationRaw;
+    }
+    return void 0;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return void 0;
+    }
+    throw new CliUsageError(
+      `role run invocation identity is unreadable: ${runId}`,
+      { cause: error }
+    );
+  }
+}
+function recordedEngineFields(recordedEngine) {
+  return recordedEngine === void 0 ? {} : { recordedEngine };
+}
+function projectRecordedEngine(recordedEngine) {
+  return recordedEngine === void 0 ? {} : { engine: recordedEngine };
+}
 function restoredTicketFields(fields) {
   return {
     ...fields.correlationId === void 0 ? {} : { correlationId: fields.correlationId },
@@ -18864,27 +18894,16 @@ async function loadResumableRunRecord(home, runId) {
       { cause: error }
     );
   }
-  if (correlationId === void 0 || ticketNumber === void 0) {
-    try {
-      const invocationRaw = JSON.parse(
-        await readFile8(join10(run.runDirectory, "invocation.json"), "utf8")
-      );
-      if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
-        const fromInvocation = parsePersistedTicketIdentity(
-          invocationRaw
-        );
-        if (correlationId === void 0) correlationId = fromInvocation.correlationId;
-        if (ticketNumber === void 0) ticketNumber = fromInvocation.ticketNumber;
-      }
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-        throw new CliUsageError(
-          `role run invocation identity is unreadable: ${runId}`,
-          { cause: error }
-        );
-      }
-    }
+  const invocationPage = await readPersistedInvocationPage(
+    run.runDirectory,
+    runId
+  );
+  if (invocationPage !== void 0 && (correlationId === void 0 || ticketNumber === void 0)) {
+    const fromInvocation = parsePersistedTicketIdentity(invocationPage);
+    if (correlationId === void 0) correlationId = fromInvocation.correlationId;
+    if (ticketNumber === void 0) ticketNumber = fromInvocation.ticketNumber;
   }
+  const recordedEngine = invocationPage === void 0 ? void 0 : parsePersistedEngineName(invocationPage);
   return {
     run,
     observation: run.resumable,
@@ -18903,7 +18922,8 @@ async function loadResumableRunRecord(home, runId) {
       ...derived === void 0 ? {} : { derived },
       ...correlationId === void 0 ? {} : { correlationId },
       ...ticketNumber === void 0 ? {} : { ticketNumber }
-    }
+    },
+    ...recordedEngineFields(recordedEngine)
   };
 }
 async function loadResumableJudgeRun(home, runId) {
@@ -18930,7 +18950,8 @@ async function loadResumableJudgeRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    observation: loaded.observation,
+    ...recordedEngineFields(loaded.recordedEngine)
   };
 }
 async function loadResumableCoderRun(home, runId) {
@@ -18976,7 +18997,8 @@ async function loadResumableCoderRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    observation: loaded.observation,
+    ...recordedEngineFields(loaded.recordedEngine)
   };
 }
 async function loadResumableFixerRun(home, runId) {
@@ -19025,7 +19047,8 @@ async function loadResumableFixerRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    observation: loaded.observation,
+    ...recordedEngineFields(loaded.recordedEngine)
   };
 }
 async function loadResumableReviewerRun(home, runId) {
@@ -19060,7 +19083,8 @@ async function loadResumableReviewerRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    observation: loaded.observation,
+    ...recordedEngineFields(loaded.recordedEngine)
   };
 }
 async function loadResumableMergerRun(home, runId) {
@@ -19106,7 +19130,8 @@ async function loadResumableMergerRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    observation: loaded.observation,
+    ...recordedEngineFields(loaded.recordedEngine)
   };
 }
 async function peekRoleRunRole(home, runId) {
@@ -22749,7 +22774,8 @@ async function runPublicCoderResume(argv, env, io) {
     admitted,
     env: {
       ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId },
+      ...projectRecordedEngine(loaded.recordedEngine)
     },
     io,
     extraArgs,
@@ -23624,7 +23650,8 @@ async function runPublicFixerResume(argv, env, io) {
     admitted,
     env: {
       ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId },
+      ...projectRecordedEngine(loaded.recordedEngine)
     },
     io,
     extraArgs,
@@ -23969,7 +23996,8 @@ async function runPublicResume(argv, env, io) {
     admitted,
     env: {
       ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId },
+      ...projectRecordedEngine(loaded.recordedEngine)
     },
     io,
     extraArgs,
@@ -24433,7 +24461,8 @@ async function runPublicMergerResume(argv, env, io) {
     admitted,
     env: {
       ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId },
+      ...projectRecordedEngine(loaded.recordedEngine)
     },
     io,
     extraArgs,
@@ -24848,7 +24877,8 @@ async function runPublicReviewerResume(argv, env, io) {
     admitted,
     env: {
       ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId },
+      ...projectRecordedEngine(loaded.recordedEngine)
     },
     io,
     extraArgs,

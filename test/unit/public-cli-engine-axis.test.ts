@@ -47,6 +47,7 @@ import {
   type AdmittedReviewerInvocation,
 } from "../../src/public-cli/invocation.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 /** Read the durable invocation identity page for a public role run (#358/#391). */
 function readRoleInvocation(
@@ -1565,3 +1566,275 @@ test("#391 E4 negative table: navigator / taishi / resume / illegal / model-befo
     });
   },
 );
+
+function writeSessionPrincipal(
+  sessionDir: string,
+  input: { provider: string; errorMessage: string },
+): Promise<void> {
+  return writeFile(
+    join(sessionDir, "session.jsonl"),
+    [
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "go" }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: input.errorMessage,
+          provider: input.provider,
+          model: "probe",
+          api: "openai-responses",
+        },
+      }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
+}
+
+test("resume restores invocation.json engine into child env and does not rewrite provenance", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: project });
+    execFileSync("git", ["config", "user.email", "engine@test.local"], {
+      cwd: project,
+    });
+    execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
+      cwd: project,
+    });
+    const bookKey = resolveBookKeyFromGit(project);
+    const runId = "engine-resume-restore-001";
+
+    const seed = captureIo();
+    const setModel = await runAkRole(
+      ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
+      { packageRoot, home, io: seed.io },
+    );
+    assert.equal(setModel.exitCode, 0, seed.stderr.join(""));
+
+    {
+      const { io, stderr } = captureIo();
+      const first = await runAkRole(
+        [
+          "judge",
+          "--engine",
+          "cursor",
+          "--project",
+          project,
+          "engine labor then typed 429",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => runId,
+          credentials,
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await observeTyped429ViaProductionHandler({
+              runDirectory: join(sessionDir, ".."),
+              provider: "openai-codex",
+            });
+            await writeSessionPrincipal(sessionDir, {
+              provider: "openai-codex",
+              errorMessage: "HTTP 429",
+            });
+            return {
+              code: 1,
+              stderr: "provider_error\n",
+              timedOut: false,
+              args: [...args],
+              knownFailure: {
+                cause: "provider",
+                identity: { name: "ProviderError", code: 429 },
+                diagnostic: "HTTP 429",
+              },
+            };
+          },
+        },
+      );
+      assert.equal(first.exitCode, 1, stderr.join(""));
+      assert.ok(first.terminal?.resume, stderr.join(""));
+    }
+
+    assert.equal(readJudgeInvocation(home, bookKey, runId).engine, "cursor");
+
+    // Later persistent set-engine must not steal this run's recorded engine.
+    const persist = captureIo();
+    const setEngine = await runAkRole(
+      ["config", "set-engine", "judge", "opus"],
+      { packageRoot, home, io: persist.io },
+    );
+    assert.equal(setEngine.exitCode, 0, persist.stderr.join(""));
+
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    let capturedArgs: string[] | undefined;
+    const { io, stderr } = captureIo();
+    const resumed = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials,
+      io,
+      piRunner: async (args, options) => {
+        capturedArgs = [...args];
+        capturedEnv = options.env;
+        const sessionFile = args[args.indexOf("--session") + 1]!;
+        await writeFile(sessionFile, "\n", "utf8");
+        return {
+          code: 1,
+          stderr: "stop after resume capture",
+          timedOut: false,
+          args: [...args],
+        };
+      },
+    });
+
+    assert.notEqual(
+      resumed.exitCode,
+      2,
+      `resume must not structural-reject: ${stderr.join("")}`,
+    );
+    assert.equal(
+      capturedEnv !== undefined && capturedArgs !== undefined,
+      true,
+      `resume piRunner not reached; exit=${resumed.exitCode} stderr=${stderr.join("")}`,
+    );
+    assert.equal(
+      capturedEnv?.[AK_ROLE_ENGINE_ENV],
+      "cursor",
+      "resume must restore recorded engine into child env",
+    );
+    assertNoEngineFlagsInArgv(capturedArgs!);
+    assert.equal(
+      readJudgeInvocation(home, bookKey, runId).engine,
+      "cursor",
+      "resume must not rewrite invocation.json engine provenance",
+    );
+  });
+});
+
+test("engine-free resumable run stays engine-free even after later set-engine", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: project });
+    execFileSync("git", ["config", "user.email", "engine@test.local"], {
+      cwd: project,
+    });
+    execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
+      cwd: project,
+    });
+    const bookKey = resolveBookKeyFromGit(project);
+    const runId = "engine-resume-free-001";
+
+    const seed = captureIo();
+    const setModel = await runAkRole(
+      ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
+      { packageRoot, home, io: seed.io },
+    );
+    assert.equal(setModel.exitCode, 0, seed.stderr.join(""));
+
+    {
+      const { io, stderr } = captureIo();
+      const first = await runAkRole(
+        ["judge", "--project", project, "engine-free then typed 429"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => runId,
+          credentials,
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await observeTyped429ViaProductionHandler({
+              runDirectory: join(sessionDir, ".."),
+              provider: "openai-codex",
+            });
+            await writeSessionPrincipal(sessionDir, {
+              provider: "openai-codex",
+              errorMessage: "HTTP 429",
+            });
+            return {
+              code: 1,
+              stderr: "provider_error\n",
+              timedOut: false,
+              args: [...args],
+              knownFailure: {
+                cause: "provider",
+                identity: { name: "ProviderError", code: 429 },
+                diagnostic: "HTTP 429",
+              },
+            };
+          },
+        },
+      );
+      assert.equal(first.exitCode, 1, stderr.join(""));
+      assert.ok(first.terminal?.resume, stderr.join(""));
+    }
+
+    assert.equal(readJudgeInvocation(home, bookKey, runId).engine, undefined);
+
+    const persist = captureIo();
+    const setEngine = await runAkRole(
+      ["config", "set-engine", "judge", "opus"],
+      { packageRoot, home, io: persist.io },
+    );
+    assert.equal(setEngine.exitCode, 0, persist.stderr.join(""));
+
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const { io, stderr } = captureIo();
+    const resumed = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials,
+      io,
+      piRunner: async (args, options) => {
+        capturedEnv = options.env;
+        const sessionFile = args[args.indexOf("--session") + 1]!;
+        await writeFile(sessionFile, "\n", "utf8");
+        return {
+          code: 1,
+          stderr: "stop after resume capture",
+          timedOut: false,
+          args: [...args],
+        };
+      },
+    });
+
+    assert.notEqual(
+      resumed.exitCode,
+      2,
+      `resume must not structural-reject: ${stderr.join("")}`,
+    );
+    assert.equal(
+      capturedEnv !== undefined,
+      true,
+      `resume piRunner not reached; exit=${resumed.exitCode} stderr=${stderr.join("")}`,
+    );
+    const restored = capturedEnv![AK_ROLE_ENGINE_ENV];
+    assert.equal(
+      typeof restored === "string" && restored.trim() !== "",
+      false,
+      `engine-free resume must not inherit later set-engine: ${String(restored)}`,
+    );
+    assert.equal(
+      "engine" in readJudgeInvocation(home, bookKey, runId),
+      false,
+      "engine-free resume must not invent invocation.json engine",
+    );
+  });
+});

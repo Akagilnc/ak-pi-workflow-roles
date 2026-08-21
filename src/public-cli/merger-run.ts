@@ -46,6 +46,7 @@ import {
   isV1ResumableFailure,
   loadResumableMergerRun,
   markRunAdmitted,
+  projectRecordedEngine,
   markRunResumable,
   markRunRunning,
   markRunTerminal,
@@ -686,6 +687,7 @@ export async function runPublicMergerResume(
     env: {
       ...env,
       ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+      ...projectRecordedEngine(loaded.recordedEngine),
     },
     io,
     extraArgs,
