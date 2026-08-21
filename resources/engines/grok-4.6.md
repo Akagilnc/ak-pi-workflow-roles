@@ -33,9 +33,11 @@ grok --prompt-file /path/to/labor-prompt.md -m grok-4.6 --always-approve --outpu
   object's `data` where `type == "text"`, in stream order; `type == "end"`
   (stopReason end_turn) marks completion. Do not treat `thought` events as
   the answer (live-verified stream shape 2026-08-21).
-- Reasoning effort follows the host CLI defaults; grok effort tiers are
-  low/med/high when a flag is exposed by the installed CLI version — check
-  `grok --help` and follow the actual interface. Do not invent flags.
+- **Always pass `--reasoning-effort <low|medium|high>`** matching the effort
+  tier ordered in the labor mandate (verified live 2026-08-21: flag exists,
+  alias `--effort`; a low-tier run completed correctly). If the mandate names
+  no tier, use the seat's ordered thinking tier; never omit the flag — the
+  CLI default is not guaranteed to match the ordered tier.
 
 ## Failure handling
 
