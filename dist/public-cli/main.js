@@ -26778,7 +26778,7 @@ async function readOrComputeTaishiIssuePage(input) {
   try {
     const raw = await readFile14(pagePath, "utf8");
     const page = JSON.parse(raw);
-    if (cachedPageMatchesRequestedScope(page, { bookKey, ...input })) {
+    if (cachedPageMatchesRequestedScope(page, { ...input, bookKey })) {
       return { mode: "issue", page, pagePath };
     }
   } catch (error) {
@@ -26808,12 +26808,13 @@ async function runTaishiIssueMode(input, precomputedScan) {
   const ledgerHome = resolveActivationLedgerHome();
   const projectRoot = input.projectRoot;
   const ticketNumber = "ticketNumber" in input ? input.ticketNumber : void 0;
+  const issueNumber = "issueNumber" in input ? input.issueNumber : void 0;
   const inputBookKey = "bookKey" in input && typeof input.bookKey === "string" && input.bookKey.trim() !== "" ? input.bookKey : void 0;
+  const scanTicketNumber = ticketNumber ?? (inputBookKey !== void 0 ? issueNumber : void 0);
   const scan = precomputedScan ?? (inputBookKey !== void 0 ? await scanTaishiIssueRuns({
     bookKey: inputBookKey,
-    ...ticketNumber === void 0 ? {} : { ticketNumber }
-  }) : ticketNumber === void 0 ? await scanTaishiIssueRuns({ projectRoot }) : await scanTaishiIssueRuns({ projectRoot, ticketNumber }));
-  const issueNumber = "issueNumber" in input ? input.issueNumber : void 0;
+    ...scanTicketNumber === void 0 ? {} : { ticketNumber: scanTicketNumber }
+  }) : scanTicketNumber === void 0 ? await scanTaishiIssueRuns({ projectRoot }) : await scanTaishiIssueRuns({ projectRoot, ticketNumber: scanTicketNumber }));
   const bookKey = resolveIssueBookKey({
     ...inputBookKey === void 0 ? {} : { bookKey: inputBookKey },
     projectRoot
@@ -26903,7 +26904,7 @@ async function runTaishi(input) {
         mode: "issue",
         projectRoot,
         issueNumber,
-        ...realBookKey === void 0 ? {} : { bookKey: realBookKey }
+        ...realBookKey === void 0 ? {} : { bookKey: realBookKey, ticketNumber: issueNumber }
       });
       return ensured.page;
     });

@@ -267,7 +267,7 @@ export async function readOrComputeTaishiIssuePage(
   try {
     const raw = await readFile(pagePath, "utf8");
     const page = JSON.parse(raw) as TaishiIssueMetricsPage;
-    if (cachedPageMatchesRequestedScope(page, { bookKey, ...input })) {
+    if (cachedPageMatchesRequestedScope(page, { ...input, bookKey })) {
       return { mode: "issue", page, pagePath };
     }
     // Existing page is for a different / absent ticket scope — same kernel recompute.
@@ -308,24 +308,29 @@ async function runTaishiIssueMode(
   // Sweep entries carry projectRoot only; issue mode may add ticketNumber (C4).
   const ticketNumber =
     "ticketNumber" in input ? input.ticketNumber : undefined;
+  const issueNumber =
+    "issueNumber" in input ? input.issueNumber : undefined;
   const inputBookKey =
     "bookKey" in input && typeof input.bookKey === "string" && input.bookKey.trim() !== ""
       ? input.bookKey
       : undefined;
 
+  // Book-addressed pages keyed by issueNumber are ticket pages (#399).
+  // Scanning the whole book and then labeling the page as ticket N is the
+  // silent full-book-as-ticket defect. Legacy path-narrow (no bookKey) still
+  // treats issueNumber as an index label only.
+  const scanTicketNumber =
+    ticketNumber ?? (inputBookKey !== undefined ? issueNumber : undefined);
+
   const scan = precomputedScan ??
     (inputBookKey !== undefined
       ? await scanTaishiIssueRuns({
           bookKey: inputBookKey,
-          ...(ticketNumber === undefined ? {} : { ticketNumber }),
+          ...(scanTicketNumber === undefined ? {} : { ticketNumber: scanTicketNumber }),
         })
-      : ticketNumber === undefined
+      : scanTicketNumber === undefined
       ? await scanTaishiIssueRuns({ projectRoot })
-      : await scanTaishiIssueRuns({ projectRoot, ticketNumber }));
-
-  // exactOptionalPropertyTypes: only pass optional faces when caller supplied them.
-  const issueNumber =
-    "issueNumber" in input ? input.issueNumber : undefined;
+      : await scanTaishiIssueRuns({ projectRoot, ticketNumber: scanTicketNumber }));
 
   const bookKey = resolveIssueBookKey({
     ...(inputBookKey === undefined ? {} : { bookKey: inputBookKey }),
@@ -467,10 +472,9 @@ export async function runTaishi(input: TaishiInput): Promise<TaishiResult> {
   if (input.mode === "cohort") {
     const ledgerHome = resolveActivationLedgerHome();
     return runTaishiCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber, bookKey }) => {
-      // Real ledger book keys drive book scope. Synthetic `root:<id>` address keys
-      // (sweep/legacy path-narrow) must not be used as books/ directory names.
-      // issueNumber labels the page/index join only — not a ticketNumber scan filter
-      // (cohort fixtures historically bind by projectRoot path, not typed ticket).
+      // Real ledger book keys drive book×ticket scope. Synthetic `root:<id>`
+      // address keys (sweep/legacy path-narrow) must not be used as books/
+      // directory names; those pages still bind by projectRoot path.
       const realBookKey =
         bookKey !== undefined && !bookKey.startsWith("root:")
           ? bookKey
@@ -479,7 +483,9 @@ export async function runTaishi(input: TaishiInput): Promise<TaishiResult> {
         mode: "issue",
         projectRoot,
         issueNumber,
-        ...(realBookKey === undefined ? {} : { bookKey: realBookKey }),
+        ...(realBookKey === undefined
+          ? {}
+          : { bookKey: realBookKey, ticketNumber: issueNumber }),
       });
       return ensured.page;
     });

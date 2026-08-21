@@ -13,7 +13,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
@@ -541,5 +541,47 @@ test("taishi #399 library bookKey scope: whole book includes worktree runs", asy
     );
     assert.equal(result.page.bookKey, bookKey);
     assert.equal(result.page.issueNumber, undefined);
+  });
+});
+
+/**
+ * #399 / #338: cohort compute-if-missing must restore the ticket page, not
+ * scan the whole book and write that onto the book×ticket address.
+ * Trigger: --ticket N writes a real-book index row; page is then missing;
+ * cohort ensure used to pass bookKey + issueNumber without ticketNumber.
+ */
+test("taishi #399 cohort ensure must not rewrite ticket page as whole book", async () => {
+  await withBookScopeWorld(async ({ mainRoot, bookKey }) => {
+    const produced = await runTaishi({
+      mode: "issue",
+      bookKey,
+      projectRoot: mainRoot,
+      ticketNumber: TICKET_A,
+      issueNumber: TICKET_A,
+    });
+    const ticketIds = produced.page.legs.map((leg) => leg.runId).sort();
+    assert.deepEqual(ticketIds, [RUN_WORKTREE_TICKET_A, RUN_MAIN_TICKET_A].sort());
+    await rm(produced.pagePath);
+
+    const cohort = await runTaishi({
+      mode: "cohort",
+      groups: [
+        { groupLabel: "left", issues: [TICKET_A] },
+        { groupLabel: "right", issues: [99_999] },
+      ],
+    });
+    assert.equal(cohort.groups[0]!.issues[0]?.status, "present");
+    assert.equal(cohort.groups[0]!.issues[0]?.bookKey, bookKey);
+
+    const restored = JSON.parse(
+      await readFile(produced.pagePath, "utf8"),
+    ) as TaishiIssueMetricsPage;
+    assert.equal(restored.issueNumber, TICKET_A);
+    assert.deepEqual(
+      restored.legs.map((leg) => leg.runId).sort(),
+      ticketIds,
+    );
+    assert.equal(restored.legs.some((leg) => leg.runId === RUN_MAIN_TICKET_B), false);
+    assert.equal(restored.legs.some((leg) => leg.runId === RUN_MAIN_NO_TICKET), false);
   });
 });
