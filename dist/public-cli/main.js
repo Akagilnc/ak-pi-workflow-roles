@@ -25086,11 +25086,15 @@ function normalizeTaishiLibraryIndexRow(row) {
     return { ...row, bookKey: rawBook };
   }
   const projectRoot = physicalPathIdentity(row.projectRoot);
-  return {
-    ...row,
-    bookKey: `root:${projectRoot}`,
-    projectRoot
-  };
+  try {
+    return { ...row, projectRoot, bookKey: resolveBookKeyFromGit(projectRoot) };
+  } catch {
+    return {
+      ...row,
+      bookKey: `root:${projectRoot}`,
+      projectRoot
+    };
+  }
 }
 function sortRows(rows) {
   return [...rows].sort((a, b) => {
@@ -25194,6 +25198,7 @@ var init_taishi_index = __esm({
   "src/taishi-index.ts"() {
     "use strict";
     init_atomic_write();
+    init_activation_ledger_git();
     init_activation_ledger_topology();
     LIBRARY_INDEX_LOCK_NAME = ".library-index.lock";
     LIBRARY_INDEX_LOCK_TIMEOUT_MS = 3e4;

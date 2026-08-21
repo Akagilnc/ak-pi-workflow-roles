@@ -21,6 +21,7 @@ import { open, readFile, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { writeFileAtomically } from "./atomic-write.ts";
+import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   assertLedgerFileInsideHome,
   ensureRealDirectoryTree,
@@ -132,8 +133,10 @@ export function rowFromIssueMetricsPage(
 }
 
 /**
- * #412 F1/F3: pre-#399 library-index rows omit bookKey. Synthetic address matches
- * issue-mode fallback (`root:<projectRoot identity>`) so sort/join/present stay defined.
+ * #412 F1/F3: pre-#399 library-index rows omit bookKey. Heal with the same book
+ * identity rule as issue/sweep (#399 / ADR 0048): git common-dir host directory
+ * when projectRoot resolves to a Git repository; `root:<projectRoot identity>`
+ * only when Git cannot place the book. Same rule — not a second resolver.
  */
 export function normalizeTaishiLibraryIndexRow(
   row: TaishiLibraryIndexRow,
@@ -144,11 +147,15 @@ export function normalizeTaishiLibraryIndexRow(
     return { ...row, bookKey: rawBook };
   }
   const projectRoot = physicalPathIdentity(row.projectRoot);
-  return {
-    ...row,
-    bookKey: `root:${projectRoot}`,
-    projectRoot,
-  };
+  try {
+    return { ...row, projectRoot, bookKey: resolveBookKeyFromGit(projectRoot) };
+  } catch {
+    return {
+      ...row,
+      bookKey: `root:${projectRoot}`,
+      projectRoot,
+    };
+  }
 }
 
 function sortRows(
