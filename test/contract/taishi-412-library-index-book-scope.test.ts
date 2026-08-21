@@ -93,8 +93,11 @@ test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other 
     const ledgerHome = join(home, ".ak-roles");
     const issueNumber = 412;
     const otherBook = "other-book-412";
+    // ADR 0048: book keys are directory basenames — commas are legal (#412 T2).
+    const commaBook = "other,book-412";
     const repoRoot = physicalPathIdentity(repo);
     const otherRoot = physicalPathIdentity("/taishi-fixture/412-entry-other");
+    const commaRoot = physicalPathIdentity("/taishi-fixture/412-entry-comma");
 
     // Raw legacy index: cwd row carries NO bookKey. Read-boundary heal must map
     // it onto the real Git book so the bare-number public path can hit it —
@@ -115,6 +118,7 @@ test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other 
               lastActivityAt: ABSENT_METRIC,
             },
             modernRow(otherBook, otherRoot, issueNumber),
+            modernRow(commaBook, commaRoot, issueNumber),
           ],
         },
         null,
@@ -147,6 +151,7 @@ test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other 
     for (const [bookKey, projectRoot] of [
       [cwdBook, repoRoot],
       [otherBook, otherRoot],
+      [commaBook, commaRoot],
     ] as const) {
       await writeFile(
         taishiIssuePagePath(ledgerHome, { bookKey, issueNumber }),
@@ -203,6 +208,59 @@ test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other 
         projectRoot: otherRoot,
       },
       { issueNumber, status: "absent" },
+    ]);
+
+    // Same tracer, second leg (#412 T1 + T2): an all-book:N cohort from a
+    // NON-git cwd must not touch cwd Git at all (lazy cwd book resolution —
+    // pre-fix eager resolution rejected this pure cross-book query with usage
+    // exit 2), and a comma book key round-trips through the sole list
+    // parser's escaping (`other\,book-412` → book key `other,book-412`).
+    process.chdir(home);
+    const stdoutExplicit: string[] = [];
+    const resultExplicit = await runAkRole(
+      [
+        "taishi",
+        "--cohort",
+        "--group-a-label",
+        "explicit-side",
+        "--group-a-issues",
+        `${otherBook}:${issueNumber},no-such-book:${issueNumber}`,
+        "--group-b-label",
+        "comma-side",
+        "--group-b-issues",
+        `other\\,book-412:${issueNumber}`,
+      ],
+      {
+        packageRoot,
+        home,
+        io: {
+          stdout: (text) => stdoutExplicit.push(text),
+          stderr: () => {},
+        },
+      },
+    );
+
+    assert.equal(resultExplicit.exitCode, 0);
+    const payloadExplicit = JSON.parse(
+      stdoutExplicit.join(""),
+    ) as TaishiCohortModeResult;
+    assert.deepEqual(payloadExplicit.groups[0]!.issues, [
+      {
+        issueNumber,
+        status: "present",
+        bookKey: otherBook,
+        projectRoot: otherRoot,
+      },
+      { issueNumber, status: "absent" },
+    ]);
+    // Escaped comma round-trips to the single comma-bearing book key.
+    assert.deepEqual(payloadExplicit.groups[1]!.issues, [
+      {
+        issueNumber,
+        status: "present",
+        bookKey: commaBook,
+        projectRoot: commaRoot,
+      },
     ]);
   } finally {
     process.chdir(previousCwd);

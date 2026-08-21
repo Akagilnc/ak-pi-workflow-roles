@@ -54,6 +54,8 @@ const fixtureHome = join(packageRoot, "test/fixtures/taishi/home");
 /** #338 exclusive projectRoots (runId 6xxx books). */
 const ISSUE_ROOT = "/taishi-fixture/c338-issue-a";
 const COHORT_A_ROOT = "/taishi-fixture/c338-cohort-a";
+/** Same-book sibling root (#412 T4): shares fixture-book-c338-ca with COHORT_A_ROOT. */
+const COHORT_A_SIBLING_ROOT = "/taishi-fixture/c338-cohort-a-sibling";
 const COHORT_B_ROOT = "/taishi-fixture/c338-cohort-b";
 const MODELS_A_ROOT = "/taishi-fixture/c338-models-a";
 const MODELS_B_ROOT = "/taishi-fixture/c338-models-b";
@@ -62,6 +64,7 @@ const NEG_ROOT = "/taishi-fixture/c338-neg-broken";
 
 const ISSUE_RUN = "019ff000-6001-7000-8000-0000000006a1";
 const COHORT_A_RUN = "019ff000-6002-7000-8000-0000000006b2";
+const COHORT_A_SIBLING_RUN = "019ff000-6007-7000-8000-0000000007c4";
 const COHORT_B_RUN = "019ff000-6003-7000-8000-0000000006c3";
 const MODELS_A_RUN = "019ff000-6004-7000-8000-0000000006d4";
 const MODELS_B_RUN = "019ff000-6005-7000-8000-0000000006e5";
@@ -77,6 +80,8 @@ const NEG_ISSUE = 6699;
  * Hand oracles (ms):
  * issue-a coder 6001 completed wall 60_000
  * cohort-a coder 6002 completed wall 30_000
+ * cohort-a sibling coder 6007 completed wall 90_000 (same book, other root —
+ *   must never leak into the cohort-a issue page on a cache-miss recompute)
  * cohort-b coder 6003 completed wall 20_000
  * models-a coder 6004 grok-4.5 completed wall 40_000
  * models-b coder 6005 sol-low completed wall 10_000
@@ -84,6 +89,7 @@ const NEG_ISSUE = 6699;
  */
 const ISSUE_WALL_MS = 60_000;
 const COHORT_A_WALL_MS = 30_000;
+const COHORT_A_SIBLING_WALL_MS = 90_000;
 const COHORT_B_WALL_MS = 20_000;
 const MODELS_A_WALL_MS = 40_000;
 const MODELS_B_WALL_MS = 10_000;
@@ -225,22 +231,27 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
     await withTempHome(async (home) => {
       const ledgerHome = join(home, ".ak-roles");
       // Index supplies issueNumber→projectRoot join; pages intentionally absent.
+      // Counterexample shape (#412 T4): the selected row carries a REAL bookKey
+      // (fixture-book-c338-ca) whose checkout (/taishi-fixture/...) is gone, and
+      // the same book also holds a sibling root's run — a miss recompute must
+      // scan this root of this book only, never the whole book.
       await writeTaishiLibraryIndexPage(
         ledgerHome,
         buildTaishiLibraryIndexPage([
-          indexRow(COHORT_A_ROOT, COHORT_ISSUE_A),
+          indexRow(COHORT_A_ROOT, COHORT_ISSUE_A, "fixture-book-c338-ca"),
           indexRow(COHORT_B_ROOT, COHORT_ISSUE_B),
         ]),
       );
-      await rm(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(COHORT_A_ROOT)}`, issueNumber: COHORT_ISSUE_A }), { force: true });
+      await rm(taishiIssuePagePath(ledgerHome, { bookKey: "fixture-book-c338-ca", issueNumber: COHORT_ISSUE_A }), { force: true });
       await rm(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(COHORT_B_ROOT)}`, issueNumber: COHORT_ISSUE_B }), { force: true });
       const beforePages = await listIssuePageNames(ledgerHome);
-      assert.equal(beforePages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(COHORT_A_ROOT)}`, issueNumber: COHORT_ISSUE_A })}.json`), false);
+      assert.equal(beforePages.includes(`${taishiIssuePageKey({ bookKey: "fixture-book-c338-ca", issueNumber: COHORT_ISSUE_A })}.json`), false);
       assert.equal(beforePages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(COHORT_B_ROOT)}`, issueNumber: COHORT_ISSUE_B })}.json`), false);
 
       const { io, stdout, stderr } = captureIo();
       // #412: cross-book cohort must pass book:N (bare N = cwd book only).
-      const bookA = `root:${physicalPathIdentity(COHORT_A_ROOT)}`;
+      // Group A joins by the row's real book key — checkout deleted, sibling
+      // root's run lives in the same book.
       const bookB = `root:${physicalPathIdentity(COHORT_B_ROOT)}`;
       const result = await runAkRole(
         [
@@ -249,7 +260,7 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
           "--group-a-label",
           "before",
           "--group-a-issues",
-          `${bookA}:${COHORT_ISSUE_A}`,
+          `fixture-book-c338-ca:${COHORT_ISSUE_A}`,
           "--group-b-label",
           "after",
           "--group-b-issues",
@@ -271,7 +282,7 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
         {
           issueNumber: COHORT_ISSUE_A,
           status: "present",
-          bookKey: `root:${physicalPathIdentity(COHORT_A_ROOT)}`,
+          bookKey: "fixture-book-c338-ca",
           projectRoot: physicalPathIdentity(COHORT_A_ROOT),
         },
       ]);
@@ -312,13 +323,17 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
 
       // Both missing pages materialized via sole compute kernel + existing writer.
       const afterPages = await listIssuePageNames(ledgerHome);
-      assert.equal(afterPages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(COHORT_A_ROOT)}`, issueNumber: COHORT_ISSUE_A })}.json`), true);
+      assert.equal(afterPages.includes(`${taishiIssuePageKey({ bookKey: "fixture-book-c338-ca", issueNumber: COHORT_ISSUE_A })}.json`), true);
       assert.equal(afterPages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(COHORT_B_ROOT)}`, issueNumber: COHORT_ISSUE_B })}.json`), true);
       const pageA = JSON.parse(
-        await readFile(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(COHORT_A_ROOT)}`, issueNumber: COHORT_ISSUE_A }), "utf8"),
+        await readFile(taishiIssuePagePath(ledgerHome, { bookKey: "fixture-book-c338-ca", issueNumber: COHORT_ISSUE_A }), "utf8"),
       ) as TaishiIssueMetricsPage;
       assert.deepEqual(pageA.legs.map((l) => l.runId), [COHORT_A_RUN]);
       assert.equal(pageA.totalElapsedMs, COHORT_A_WALL_MS);
+      // The same-book sibling root's run stays out — scope widening would
+      // inflate the page to [COHORT_A_RUN, COHORT_A_SIBLING_RUN] and
+      // COHORT_A_WALL_MS + COHORT_A_SIBLING_WALL_MS.
+      assert.equal(pageA.projectRoot, physicalPathIdentity(COHORT_A_ROOT));
       const pageB = JSON.parse(
         await readFile(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(COHORT_B_ROOT)}`, issueNumber: COHORT_ISSUE_B }), "utf8"),
       ) as TaishiIssueMetricsPage;

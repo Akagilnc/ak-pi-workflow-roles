@@ -240,6 +240,12 @@ function resolveIssueBookKey(input: {
 
 export async function readOrComputeTaishiIssuePage(
   input: TaishiIssueModeInput,
+  /**
+   * Cohort ensure only (#412): narrow the cache-miss recompute scan to this
+   * root inside the already-selected book — a miss must never widen to a
+   * whole-book scan for one index row. Not a public CLI face.
+   */
+  options?: { readonly scanProjectRoot?: string },
 ): Promise<TaishiIssueModeResult> {
   const ledgerHome = resolveActivationLedgerHome();
   const projectRoot = physicalPathIdentity(input.projectRoot);
@@ -274,7 +280,7 @@ export async function readOrComputeTaishiIssuePage(
   }
 
   try {
-    return await runTaishiIssueMode(input);
+    return await runTaishiIssueMode(input, undefined, options?.scanProjectRoot);
   } catch (error) {
     if (error instanceof TaishiIssueComputeError) throw error;
     throw new TaishiIssueComputeError({
@@ -290,6 +296,8 @@ async function runTaishiIssueMode(
   input: TaishiIssueModeInput | TaishiMergedPullRequest,
   /** Caller-supplied scan facts — skip a second ledger walk when already scanned. */
   precomputedScan?: TaishiScopedRunScan,
+  /** Cohort ensure conjunction (#412): scan this root inside the selected book. */
+  scanProjectRoot?: string,
 ): Promise<TaishiIssueModeResult> {
   // Programmatic issue/sweep entry boundary — same finite non-negative rule as attach schema.
   assertTaishiChangedLinesInput(input.changedLines);
@@ -307,6 +315,7 @@ async function runTaishiIssueMode(
     (inputBookKey !== undefined
       ? await scanTaishiIssueRuns({
           bookKey: inputBookKey,
+          ...(scanProjectRoot === undefined ? {} : { projectRoot: scanProjectRoot }),
           ...(ticketNumber === undefined ? {} : { ticketNumber }),
         })
       : ticketNumber === undefined
@@ -470,7 +479,7 @@ export async function runTaishi(input: TaishiInput): Promise<TaishiResult> {
         projectRoot,
         issueNumber,
         ...(realBookKey === undefined ? {} : { bookKey: realBookKey }),
-      });
+      }, { scanProjectRoot: projectRoot });
       return ensured.page;
     });
   }

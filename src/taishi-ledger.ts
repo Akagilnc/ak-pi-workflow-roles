@@ -401,7 +401,9 @@ async function classifyScopedRun(input: {
 /**
  * Scan ledger home books/<book>/runs for runs in the issue scope.
  * #399: scope = book × optional ticket.
- * - bookKey set → that book only; whole-book when no ticket; ticket filters alone.
+ * - bookKey set → that book only; whole-book when no ticket and no projectRoot;
+ *   ticket filters alone; bookKey + projectRoot (cohort ensure, #412) narrows
+ *   to that root inside the book.
  * - projectRoot without bookKey (sweep/legacy): git-resolved → whole that book;
  *   non-git → path-narrow across books (fixture isolation).
  * Damaged required sources become unreadable exclusions.
@@ -429,8 +431,16 @@ export async function scanTaishiIssueRuns(input: {
 
   if (input.bookKey !== undefined && input.bookKey.trim() !== "") {
     bookNames = [input.bookKey];
-    // CLI book scope: whole book unless ticket filters. Never path-narrow.
-    wholeBook = true;
+    if (input.projectRoot !== undefined) {
+      // Cohort ensure conjunction (#412): the index join already selected the
+      // row — a cache-miss recompute must stay inside this root of this book,
+      // never inhale sibling roots' runs into one issue page.
+      wholeBook = false;
+      scopeRootIdentity = physicalPathIdentity(input.projectRoot);
+    } else {
+      // CLI book scope: whole book unless ticket filters. Never path-narrow.
+      wholeBook = true;
+    }
   } else if (input.projectRoot !== undefined) {
     const resolved = tryResolveBookKeyFromProjectRoot(input.projectRoot);
     if (resolved !== undefined) {
