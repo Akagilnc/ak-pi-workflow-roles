@@ -40,10 +40,16 @@ export type TaishiCohortOptionalMetric =
   | { readonly status: "present"; readonly value: number }
   | { readonly status: "absent" };
 
+/** Fully resolved cohort issue identity — book is always explicit at the library face. */
+export type TaishiCohortIssueRef = {
+  readonly bookKey: string;
+  readonly issueNumber: number;
+};
+
 export type TaishiCohortGroupInput = {
   readonly groupLabel: string;
-  /** Issue numbers (caller typed); join key into the library index. */
-  readonly issues: readonly number[];
+  /** (bookKey, issueNumber) pairs; join key into the library index (#412). */
+  readonly issues: readonly TaishiCohortIssueRef[];
 };
 
 export type TaishiCohortModeInput = {
@@ -159,16 +165,18 @@ async function aggregateGroup(
   let hasReworkSample = false;
   const legWalls: number[] = [];
 
-  for (const issueNumber of input.issues) {
-    const row = findTaishiLibraryIndexRow(index, issueNumber);
+  for (const ref of input.issues) {
+    const { issueNumber, bookKey } = ref;
+    const row = findTaishiLibraryIndexRow(index, issueNumber, bookKey);
     if (row === undefined) {
-      // Only "index has no such row" is typed vacancy.
+      // Only "index has no such row in this book" is typed vacancy.
       issueEntries.push({ issueNumber, status: "absent" });
       continue;
     }
 
     // Index hit: ensure page via sole compute-if-missing kernel (read or compute).
     // Ensure failure stays loud with issue identity — never washed to absent.
+    // row.bookKey is normalized at index read — present projection always carries it (F3).
     const page = (await ensureIssuePage({
       projectRoot: row.projectRoot,
       issueNumber,
@@ -216,7 +224,7 @@ async function aggregateGroup(
 }
 
 /**
- * Run cohort contrast: join index by issueNumber, ensure pages (#338), fold,
+ * Run cohort contrast: join index by (bookKey, issueNumber), ensure pages (#338), fold,
  * emit two side-by-side group results. Page writes happen only through the
  * injected ensurer (sole issue kernel + existing writer) — cohort itself is
  * not a second compute kernel or projection.

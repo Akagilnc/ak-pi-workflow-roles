@@ -8,8 +8,10 @@
  * #399 D9: retained solely for cohort (and sweep producers that feed it).
  * Ticket CLI query path must not read this index (no bootstrap prerequisite).
  * Row address includes book identity so cross-book same ticket numbers do not merge (D5).
- * C2 joins cohort groups by issueNumber → page reference. Missing row =
+ * C2 joins cohort groups by (bookKey, issueNumber) → page reference. Missing row =
  * typed vacancy entry — never silent skip, never live recompute.
+ * #412: bare cohort issue numbers resolve inside one book; no cross-book silent find.
+ * Legacy rows lacking bookKey normalize to root:<projectRoot> on read/ingest (F1/F3).
  *
  * Multi-process issue/sweep writers coordinate the whole read→upsert→write
  * on one exclusive lock next to the index (atomic rename still prevents torn
@@ -22,6 +24,7 @@ import { writeFileAtomically } from "./atomic-write.ts";
 import {
   assertLedgerFileInsideHome,
   ensureRealDirectoryTree,
+  physicalPathIdentity,
 } from "./activation-ledger-topology.ts";
 import type {
   TaishiIssueMetricsPage,
@@ -128,10 +131,30 @@ export function rowFromIssueMetricsPage(
   };
 }
 
+/**
+ * #412 F1/F3: pre-#399 library-index rows omit bookKey. Synthetic address matches
+ * issue-mode fallback (`root:<projectRoot identity>`) so sort/join/present stay defined.
+ */
+export function normalizeTaishiLibraryIndexRow(
+  row: TaishiLibraryIndexRow,
+): TaishiLibraryIndexRow {
+  const rawBook = (row as { readonly bookKey?: unknown }).bookKey;
+  if (typeof rawBook === "string" && rawBook !== "") {
+    if (rawBook === row.bookKey) return row;
+    return { ...row, bookKey: rawBook };
+  }
+  const projectRoot = physicalPathIdentity(row.projectRoot);
+  return {
+    ...row,
+    bookKey: `root:${projectRoot}`,
+    projectRoot,
+  };
+}
+
 function sortRows(
   rows: readonly TaishiLibraryIndexRow[],
 ): TaishiLibraryIndexRow[] {
-  // Stable book → projectRoot sort (C1 listing). Cohort join is by issueNumber find,
+  // Stable book → projectRoot sort (C1 listing). Cohort join is by (book, issue) find,
   // not row order — issueNumber secondary keeps C2 rows deterministic too.
   return [...rows].sort((a, b) => {
     const byBook = a.bookKey.localeCompare(b.bookKey);
@@ -153,20 +176,24 @@ export function buildTaishiLibraryIndexPage(
 ): TaishiLibraryIndexPage {
   return {
     kind: "taishi-library-index",
-    rows: sortRows(rows),
+    rows: sortRows(rows.map(normalizeTaishiLibraryIndexRow)),
   };
 }
 
 /**
- * Look up the first index row for an issue number.
+ * Look up the index row for (bookKey, issueNumber).
+ * #412: no cross-book silent scan — caller supplies the book (cwd book or book:N).
  * Absence is a lawful cohort vacancy signal — not an error.
  */
 export function findTaishiLibraryIndexRow(
   index: TaishiLibraryIndexPage | undefined,
   issueNumber: number,
+  bookKey: string,
 ): TaishiLibraryIndexRow | undefined {
   if (index === undefined) return undefined;
-  return index.rows.find((row) => row.issueNumber === issueNumber);
+  return index.rows.find(
+    (row) => row.issueNumber === issueNumber && row.bookKey === bookKey,
+  );
 }
 
 /** Row map key: book + root keeps cross-book same-ticket rows distinct (D5). */
@@ -193,6 +220,7 @@ export function upsertTaishiLibraryIndexRows(
   const keyByIssue = new Map<string, string>();
 
   const ingest = (row: TaishiLibraryIndexRow): void => {
+    row = normalizeTaishiLibraryIndexRow(row);
     const key = indexRowKey(row);
     // C2 uniqueness within book: one row per issueNumber — drop prior if number moved.
     if (row.issueNumber !== undefined) {
@@ -250,7 +278,12 @@ export async function readTaishiLibraryIndexPage(
     }
     throw error;
   }
-  return JSON.parse(raw) as TaishiLibraryIndexPage;
+  const parsed = JSON.parse(raw) as TaishiLibraryIndexPage;
+  if (parsed === null || typeof parsed !== "object" || !Array.isArray(parsed.rows)) {
+    return parsed;
+  }
+  // Heal legacy rows at the read boundary so every consumer sees defined bookKey.
+  return buildTaishiLibraryIndexPage(parsed.rows as TaishiLibraryIndexRow[]);
 }
 
 /**
