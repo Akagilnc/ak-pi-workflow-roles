@@ -31,8 +31,8 @@ kimi -m <model-alias> -p "YOUR_LABOR_PROMPT"
 ```
 
 Use `--output-format stream-json` (choices measured on this host: `text`,
-`stream-json`; default is `text`) so the package idle clock can see subprocess
-activity while the engine works. Take the labor body from
+`stream-json`; default is `text`) when long labor needs progressive observability
+while the engine works. Take the labor body from
 `{"role":"assistant","content":...}` rows, not from `role:meta` rows:
 
 ```bash

@@ -16,7 +16,6 @@ import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from 
 import { openInProcessAgentSession } from "./in-process-session.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
-import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import {
@@ -437,7 +436,7 @@ export function parseNavigatorModelSetting(value: string): { provider: string; m
 }
 
 export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => void): ToolDefinition {
-  return wrapPackageOwnedToolDefinition({
+  return {
     name: NAVIGATOR_PREPARE_TOOL_NAME,
     label: "Navigator preparation",
     description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
@@ -448,7 +447,7 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
       onOutput(value as PrepareOutput);
       return { content: [{ type: "text" as const, text: "Navigator preparation accepted" }], details: value, terminate: true as const };
     },
-  });
+  };
 }
 
 /**
