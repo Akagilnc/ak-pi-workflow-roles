@@ -1,5 +1,5 @@
 /** Package-owned Reviewer intent and runtime-receipt leaves — no role registration surface. */
-import { seatFallbackBaseStatus } from "../engine-labor-fallback.js";
+import { seatFallbackBaseStatus, seatFallbackStatusHasLawfulEvidence, } from "../engine-labor-fallback.js";
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
 export const REVIEWER_ACCEPTED_TEXT = "Reviewer report accepted";
 function isRecord(value) {
@@ -25,6 +25,11 @@ export function validateReviewerIntent(output) {
 }
 /** Validate runtime-owned facts at their real identity seams (target pins + plain text). */
 export function validateRuntimeReviewerReceipt(output) {
+    const status = read(output, "status");
+    // ADR 0071: tainted top-level status requires latch-shaped engineLaborFallback evidence.
+    if (typeof status === "string" && !seatFallbackStatusHasLawfulEvidence(status, output)) {
+        throw new Error("Reviewer receipt has no recognized execution discriminator");
+    }
     const acceptedBatch = read(output, "acceptedBatch");
     const identities = read(output, "identities");
     const construction = read(identities, "construction");
@@ -92,7 +97,8 @@ export function validateRuntimeReviewerReceipt(output) {
 export function projectReviewerIntentToReceipt(intentValue, receiptValue) {
     const intent = validateReviewerIntent(intentValue);
     const receipt = validateRuntimeReviewerReceipt(receiptValue);
-    const receiptBase = seatFallbackBaseStatus(receipt.status);
+    const receiptStatus = String(receipt.status);
+    const receiptBase = seatFallbackBaseStatus(receiptStatus);
     if (receiptBase !== intent.status || (intent.status === "completed" ? receipt.diagnostic !== undefined : receipt.diagnostic !== intent.diagnostic)) {
         throw new Error("Reviewer intent and runtime receipt disagree");
     }

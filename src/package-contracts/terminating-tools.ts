@@ -25,7 +25,10 @@ import {
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
 import { isAuditEscalationResult } from "../audit-escalation.ts";
-import { seatFallbackBaseStatus } from "../engine-labor-fallback.ts";
+import {
+  seatFallbackBaseStatus,
+  seatFallbackStatusHasLawfulEvidence,
+} from "../engine-labor-fallback.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import {
@@ -161,10 +164,18 @@ export function validateAcceptedDetails(
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = typeof discriminator === "string" ? seatFallbackBaseStatus(discriminator) : discriminator;
+  // ADR 0071: `-by-fallback` is not independently lawful — require latch-shaped evidence.
+  const taintedWithoutEvidence =
+    typeof discriminator === "string" &&
+    !seatFallbackStatusHasLawfulEvidence(discriminator, details);
   const runtimeBindingMissing =
     (toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
     (toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2);
-  if (runtimeBindingMissing || (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator as string)))) {
+  if (
+    taintedWithoutEvidence ||
+    runtimeBindingMissing ||
+    (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator as string)))
+  ) {
     throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
   }
   try {

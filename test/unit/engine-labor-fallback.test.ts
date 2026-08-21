@@ -26,6 +26,10 @@ import {
 import { createJudgeRoleRuntime, JUDGE_OUTPUT_TOOL_NAME } from "../../src/judge-role.ts";
 import { selectNavigatorCandidate } from "../../src/navigator-attendance.ts";
 import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
+import {
+  AcceptedDetailsContractError,
+  validateAcceptedDetails,
+} from "../../src/package-contracts/terminating-tools.ts";
 import { extractJudgeRoleOutcome } from "../../src/public-cli/settlement.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 
@@ -233,10 +237,18 @@ test("settlement accepts tainted judgeStatus and keeps it on the status line", (
 });
 
 test("navigator treats escalate-by-fallback as human_decision and matches clean status routes", () => {
+  const fallback = {
+    engine: "kimi",
+    failure: "exit 1",
+    laborBy: "seat" as const,
+  };
   const settlement = publicNavigatorSettlement("judge", null, {
     toolName: JUDGE_OUTPUT_TOOL_NAME,
     isError: false,
-    details: { judgeStatus: "escalate-by-fallback" },
+    details: {
+      judgeStatus: "escalate-by-fallback",
+      engineLaborFallback: fallback,
+    },
   });
   assert.deepEqual(settlement, {
     kind: "human_decision",
@@ -248,7 +260,10 @@ test("navigator treats escalate-by-fallback as human_decision and matches clean 
   const accepted = publicNavigatorSettlement("judge", null, {
     toolName: JUDGE_OUTPUT_TOOL_NAME,
     isError: false,
-    details: { judgeStatus: "converged-by-fallback" },
+    details: {
+      judgeStatus: "converged-by-fallback",
+      engineLaborFallback: fallback,
+    },
   });
   assert.deepEqual(accepted, {
     kind: "accepted",
@@ -271,6 +286,71 @@ test("navigator treats escalate-by-fallback as human_decision and matches clean 
   const selection = selectNavigatorCandidate([convergedRoute], accepted!);
   assert.equal(selection?.candidate.id, "converged-route");
   assert.equal(seatFallbackBaseStatus("converged-by-fallback"), "converged");
+});
+
+test("tainted status without engineLaborFallback is not a lawful terminal", () => {
+  assert.throws(
+    () =>
+      validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, {
+        judgeStatus: "converged-by-fallback",
+        note: "forged taint",
+      }),
+    (error: unknown) =>
+      error instanceof AcceptedDetailsContractError &&
+      /no recognized execution discriminator/.test(error.message),
+  );
+
+  // Valid latch-shaped evidence pairs with the suffix.
+  const accepted = validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, {
+    judgeStatus: "converged-by-fallback",
+    note: "seat",
+    engineLaborFallback: {
+      engine: "kimi",
+      failure: "exit 1",
+      laborBy: "seat",
+    },
+  });
+  assert.equal(
+    (accepted as { judgeStatus: string }).judgeStatus,
+    "converged-by-fallback",
+  );
+
+  // Settlement / navigator refuse the same forged face.
+  const entries = [
+    {
+      type: "custom",
+      customType: NAVIGATOR_INVOCATION_ENTRY,
+      data: {
+        invocationId: "019f8c2a-fbfb-7fbf-8fbf-fbfbfbfbfbfb",
+        role: "judge",
+        phase: null,
+        subjectKey: "/repo/.ak/work",
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: { judgeStatus: "converged-by-fallback", note: "forged" },
+      },
+    },
+  ];
+  assert.equal(
+    extractJudgeRoleOutcome(entries as never),
+    undefined,
+    "settlement must not accept tainted status without engineLaborFallback",
+  );
+  assert.equal(
+    publicNavigatorSettlement("judge", null, {
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: false,
+      details: { judgeStatus: "escalate-by-fallback" },
+    }),
+    undefined,
+    "navigator must not project tainted status without engineLaborFallback",
+  );
 });
 
 test("judge escalate deliveredOutput projects mechanical engineLaborFallback", async () => {

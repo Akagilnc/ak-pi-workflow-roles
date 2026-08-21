@@ -1,6 +1,10 @@
 import { Type } from "typebox";
 import { canonicalJson } from "./canonical-json.ts";
-import { seatFallbackBaseStatus } from "./engine-labor-fallback.ts";
+import {
+  seatFallbackBaseStatus,
+  seatFallbackStatusHasLawfulEvidence,
+  type WithEngineLaborFallback,
+} from "./engine-labor-fallback.ts";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
@@ -38,9 +42,13 @@ export type DoctorFinding =
 export type DoctorSubmission =
   | { status: "completed"; case: DoctorCaseIdentity; findings: DoctorFinding[] }
   | { status: "refused"; reason: string; missingEvidence: Array<{ need: string; targetKeys: string[] }> };
-export type DoctorOutput =
+type DoctorOutputClean =
   | { status: "completed"; case: DoctorCaseIdentity; findings: DoctorFinding[]; cost: DoctorCaseCost }
   | Extract<DoctorSubmission, { status: "refused" }>;
+/** Clean recorded shape or seat-fallback tainted accepted receipt (ADR 0071). */
+export type DoctorOutput =
+  | DoctorOutputClean
+  | WithEngineLaborFallback<DoctorOutputClean>;
 export type DoctorEvidenceEntry = { id: string; kind: "session" | "stderr"; byteLength: number; contentLength: number; sha256: string; content: string };
 export type DoctorCase = { version: 1; identity: DoctorCaseIdentity; evidence: DoctorEvidenceEntry[]; cost: DoctorCaseCost };
 
@@ -99,6 +107,10 @@ export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission 
   const status = read(value, "status");
   const base = typeof status === "string" ? seatFallbackBaseStatus(status) : status;
   if (base !== "completed" && base !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  // ADR 0071: tainted status requires latch-shaped engineLaborFallback evidence.
+  if (typeof status === "string" && !seatFallbackStatusHasLawfulEvidence(status, value)) {
+    throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  }
   return value as DoctorSubmission;
 }
 export function validateRecordedDoctorOutput(value: unknown): DoctorOutput {

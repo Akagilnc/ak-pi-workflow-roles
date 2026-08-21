@@ -51,16 +51,48 @@ export function seatFallbackBaseStatus(status: string): string {
     : status;
 }
 
+/**
+ * ADR 0071: `-by-fallback` is lawful only with a valid `engineLaborFallback`
+ * declaration (latch-shaped triple). Clean statuses do not need the field.
+ */
+export function seatFallbackStatusHasLawfulEvidence(
+  status: string,
+  source: unknown,
+): boolean {
+  if (!isSeatFallbackTaintedStatus(status)) return true;
+  return readEngineLaborFallbackFieldFrom(source) !== undefined;
+}
+
 /** Idempotent taint: clean → `${clean}-by-fallback`; already tainted stays. */
 export function taintStatusForSeatFallback(status: string): string {
   if (status.length === 0 || isSeatFallbackTaintedStatus(status)) return status;
   return `${status}${SEAT_FALLBACK_STATUS_SUFFIX}`;
 }
 
+/** Clean status literal or its seat-fallback tainted form. */
+export type SeatFallbackTaintedStatus<S extends string = string> =
+  | S
+  | `${S}${typeof SEAT_FALLBACK_STATUS_SUFFIX}`;
+
+type TaintDiscriminatorFields<T> = {
+  [K in keyof T]: K extends "status" | "judgeStatus"
+    ? T[K] extends string
+      ? SeatFallbackTaintedStatus<Extract<T[K], string>>
+      : T[K]
+    : T[K];
+};
+
+/** Receipt shape after sole-built field attach + status taint (runtime truth). */
+export type WithEngineLaborFallback<T extends object> = T extends unknown
+  ? TaintDiscriminatorFields<T> & EngineLaborFallbackField
+  : never;
+
 const STATUS_DISCRIMINATOR_KEYS = ["judgeStatus", "status"] as const;
 
 /** Rewrite known status discriminators on a receipt when seat fallback is declared. */
-function taintReceiptStatusDiscriminators<T extends object>(receipt: T): T {
+function taintReceiptStatusDiscriminators<T extends object>(
+  receipt: T,
+): TaintDiscriminatorFields<T> {
   let next: Record<string, unknown> | undefined;
   for (const key of STATUS_DISCRIMINATOR_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(receipt, key)) continue;
@@ -78,7 +110,7 @@ function taintReceiptStatusDiscriminators<T extends object>(receipt: T): T {
     }
     next[key] = tainted;
   }
-  return next === undefined ? receipt : (next as T);
+  return (next === undefined ? receipt : next) as TaintDiscriminatorFields<T>;
 }
 
 export type EngineLaborFallbackLatch = {
@@ -114,14 +146,28 @@ export function readEngineLaborFallbackField(
  * When the field is present, also taint typed status discriminators so a
  * status-line-only reader cannot mistake seat labor for clean engine labor.
  * Without a mechanical latch, strip any model-injected reserved key (no forged declaration).
+ * Return type widens when field is attached: discriminators may carry `-by-fallback`
+ * and the sole-built field is present (callers must not assume clean-only unions).
  */
 export function withEngineLaborFallbackField<T extends object>(
   receipt: T,
+  field: EngineLaborFallbackField,
+): WithEngineLaborFallback<T>;
+export function withEngineLaborFallbackField<T extends object>(
+  receipt: T,
+  field: undefined,
+): T;
+export function withEngineLaborFallbackField<T extends object>(
+  receipt: T,
   field: EngineLaborFallbackField | undefined,
-): T {
+): T | WithEngineLaborFallback<T>;
+export function withEngineLaborFallbackField<T extends object>(
+  receipt: T,
+  field: EngineLaborFallbackField | undefined,
+): T | WithEngineLaborFallback<T> {
   if (field !== undefined) {
     const taintedReceipt = taintReceiptStatusDiscriminators(receipt);
-    return { ...taintedReceipt, ...field };
+    return { ...taintedReceipt, ...field } as WithEngineLaborFallback<T>;
   }
   if (
     !Object.prototype.hasOwnProperty.call(receipt, "engineLaborFallback")
