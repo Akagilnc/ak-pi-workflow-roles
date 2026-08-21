@@ -15726,7 +15726,7 @@ function evaluateTaishiModeOptionContract(mode, counts) {
     if (mode === "cohort") {
       return {
         ok: false,
-        message: "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]"
+        message: "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>"
       };
     }
     return {
@@ -15896,7 +15896,7 @@ function renderHumanOwnerOptionLines(owner, locale2 = "en") {
     if (opt.aliases.length > 0) {
       const aliasHint = opt.aliases.join(", ");
       if (opt.form === "positional") {
-        spelling = opt.aliases.length > 0 ? opt.aliases.join("|") : spelling;
+        spelling = opt.aliases.join("|");
       } else {
         spelling = `${spelling} (${aliasHint})`;
       }
@@ -16313,15 +16313,15 @@ var init_option_definitions = __esm({
         owner: "taishi",
         canonical: "--group-a-issues",
         aliases: [],
-        valueMetavar: "N[,N...]",
+        valueMetavar: "N|book:N[,...]",
         required: false,
         repeatable: false,
         form: "option",
         modes: ["cohort"],
         requiredInModes: ["cohort"],
         description: {
-          en: "Cohort group A comma-separated positive issue numbers (required in cohort mode).",
-          zh: "cohort A \u7EC4\u9017\u53F7\u5206\u9694\u6B63\u6574\u6570 issue \u5217\u8868\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
+          en: "Cohort group A issues: bare N joins cwd book; book:N selects another book (required in cohort mode).",
+          zh: "cohort A \u7EC4 issue\uFF1A\u88F8 N \u5F52\u5C5E cwd \u7C3F\uFF1Bbook:N \u663E\u5F0F\u8DE8\u7C3F\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
         }
       },
       {
@@ -16345,15 +16345,15 @@ var init_option_definitions = __esm({
         owner: "taishi",
         canonical: "--group-b-issues",
         aliases: [],
-        valueMetavar: "N[,N...]",
+        valueMetavar: "N|book:N[,...]",
         required: false,
         repeatable: false,
         form: "option",
         modes: ["cohort"],
         requiredInModes: ["cohort"],
         description: {
-          en: "Cohort group B comma-separated positive issue numbers (required in cohort mode).",
-          zh: "cohort B \u7EC4\u9017\u53F7\u5206\u9694\u6B63\u6574\u6570 issue \u5217\u8868\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
+          en: "Cohort group B issues: bare N joins cwd book; book:N selects another book (required in cohort mode).",
+          zh: "cohort B \u7EC4 issue\uFF1A\u88F8 N \u5F52\u5C5E cwd \u7C3F\uFF1Bbook:N \u663E\u5F0F\u8DE8\u7C3F\uFF08cohort \u6A21\u5F0F\u5FC5\u586B\uFF09\u3002"
         }
       }
     ];
@@ -16448,7 +16448,7 @@ var init_option_definitions = __esm({
         usage: [
           "ak-role taishi [--ticket <N>]",
           "ak-role taishi [sweep] --attach <path>",
-          "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>"
+          "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>"
         ],
         examples: [
           "ak-role taishi",
@@ -17878,16 +17878,49 @@ function parseTaishiTicketNumber(raw, flag = "--ticket") {
   }
   return value;
 }
-function parseTaishiIssueNumberList(raw, flag) {
+function parseTaishiCohortIssueToken(raw, flag) {
   const trimmed = raw.trim();
   if (trimmed === "") {
-    throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
+    throw new CliUsageError(
+      `${flag} requires a comma-separated list of N or book:N`
+    );
+  }
+  const sep4 = trimmed.lastIndexOf(":");
+  if (sep4 > 0) {
+    const rhs = trimmed.slice(sep4 + 1);
+    if (TAISHI_TICKET_NUMBER_PATTERN.test(rhs)) {
+      const bookKey = trimmed.slice(0, sep4);
+      if (bookKey.trim() === "") {
+        throw new CliUsageError(
+          `${flag} book:N requires a non-empty book key, got ${raw}`
+        );
+      }
+      return {
+        kind: "book-qualified",
+        bookKey,
+        issueNumber: parseTaishiTicketNumber(rhs, flag)
+      };
+    }
+  }
+  return {
+    kind: "bare",
+    issueNumber: parseTaishiTicketNumber(trimmed, flag)
+  };
+}
+function parseTaishiCohortIssueTokenList(raw, flag) {
+  const trimmed = raw.trim();
+  if (trimmed === "") {
+    throw new CliUsageError(
+      `${flag} requires a comma-separated list of N or book:N`
+    );
   }
   const parts = trimmed.split(",").map((part) => part.trim());
   if (parts.some((part) => part === "")) {
-    throw new CliUsageError(`${flag} requires a comma-separated positive integer list`);
+    throw new CliUsageError(
+      `${flag} requires a comma-separated list of N or book:N`
+    );
   }
-  return parts.map((part) => parseTaishiTicketNumber(part, flag));
+  return parts.map((part) => parseTaishiCohortIssueToken(part, flag));
 }
 function requireOptionValue(flag, value, what) {
   if (value === void 0 || value.trim() === "") {
@@ -17946,7 +17979,7 @@ function parseTaishiArgv(args) {
           requireOptionValue(
             taken.def.canonical,
             taken.value,
-            "a comma-separated positive integer list"
+            "a comma-separated list of N or book:N"
           )
         );
         continue;
@@ -17997,11 +18030,17 @@ function parseTaishiArgv(args) {
       groups: [
         {
           groupLabel: groupALabel,
-          issues: parseTaishiIssueNumberList(groupAIssuesRaw, "--group-a-issues")
+          issues: parseTaishiCohortIssueTokenList(
+            groupAIssuesRaw,
+            "--group-a-issues"
+          )
         },
         {
           groupLabel: groupBLabel,
-          issues: parseTaishiIssueNumberList(groupBIssuesRaw, "--group-b-issues")
+          issues: parseTaishiCohortIssueTokenList(
+            groupBIssuesRaw,
+            "--group-b-issues"
+          )
         }
       ]
     };
@@ -25040,6 +25079,19 @@ function rowFromIssueMetricsPage(page) {
     lastActivityAt: page.lastActivityAt
   };
 }
+function normalizeTaishiLibraryIndexRow(row) {
+  const rawBook = row.bookKey;
+  if (typeof rawBook === "string" && rawBook !== "") {
+    if (rawBook === row.bookKey) return row;
+    return { ...row, bookKey: rawBook };
+  }
+  const projectRoot = physicalPathIdentity(row.projectRoot);
+  return {
+    ...row,
+    bookKey: `root:${projectRoot}`,
+    projectRoot
+  };
+}
 function sortRows(rows) {
   return [...rows].sort((a, b) => {
     const byBook = a.bookKey.localeCompare(b.bookKey);
@@ -25057,12 +25109,14 @@ function sortRows(rows) {
 function buildTaishiLibraryIndexPage(rows) {
   return {
     kind: "taishi-library-index",
-    rows: sortRows(rows)
+    rows: sortRows(rows.map(normalizeTaishiLibraryIndexRow))
   };
 }
-function findTaishiLibraryIndexRow(index, issueNumber) {
+function findTaishiLibraryIndexRow(index, issueNumber, bookKey) {
   if (index === void 0) return void 0;
-  return index.rows.find((row) => row.issueNumber === issueNumber);
+  return index.rows.find(
+    (row) => row.issueNumber === issueNumber && row.bookKey === bookKey
+  );
 }
 function indexRowKey(row) {
   return `${row.bookKey}\0${row.projectRoot}`;
@@ -25074,6 +25128,7 @@ function upsertTaishiLibraryIndexRows(existing, upserts) {
   const byKey = /* @__PURE__ */ new Map();
   const keyByIssue = /* @__PURE__ */ new Map();
   const ingest = (row) => {
+    row = normalizeTaishiLibraryIndexRow(row);
     const key = indexRowKey(row);
     if (row.issueNumber !== void 0) {
       const issueKey = issueBookKey(row.bookKey, row.issueNumber);
@@ -25112,7 +25167,11 @@ async function readTaishiLibraryIndexPage(ledgerHome) {
     }
     throw error;
   }
-  return JSON.parse(raw);
+  const parsed = JSON.parse(raw);
+  if (parsed === null || typeof parsed !== "object" || !Array.isArray(parsed.rows)) {
+    return parsed;
+  }
+  return buildTaishiLibraryIndexPage(parsed.rows);
 }
 async function writeTaishiLibraryIndexPage(ledgerHome, page) {
   const path = taishiLibraryIndexPath(ledgerHome);
@@ -25202,8 +25261,9 @@ async function aggregateGroup(index, input, ensureIssuePage) {
   let totalWallMs = 0;
   let hasReworkSample = false;
   const legWalls = [];
-  for (const issueNumber of input.issues) {
-    const row = findTaishiLibraryIndexRow(index, issueNumber);
+  for (const ref of input.issues) {
+    const { issueNumber, bookKey } = ref;
+    const row = findTaishiLibraryIndexRow(index, issueNumber, bookKey);
     if (row === void 0) {
       issueEntries.push({ issueNumber, status: "absent" });
       continue;
@@ -27057,9 +27117,20 @@ async function runPublicTaishi(argv, _env, io, parseTaishiArgv2) {
       return { exitCode: 0 };
     }
     if (parsed.query === "cohort") {
+      const defaultBookKey = resolveTaishiIssueBookKeyFromCwd();
+      const resolveIssue = (token) => token.kind === "book-qualified" ? { bookKey: token.bookKey, issueNumber: token.issueNumber } : { bookKey: defaultBookKey, issueNumber: token.issueNumber };
       const result3 = await runTaishi({
         mode: "cohort",
-        groups: parsed.groups
+        groups: [
+          {
+            groupLabel: parsed.groups[0].groupLabel,
+            issues: parsed.groups[0].issues.map(resolveIssue)
+          },
+          {
+            groupLabel: parsed.groups[1].groupLabel,
+            issues: parsed.groups[1].issues.map(resolveIssue)
+          }
+        ]
       });
       io.stdout(`${JSON.stringify(result3, null, 2)}
 `);
@@ -27324,7 +27395,7 @@ function renderHelp() {
   const doc = helpDocument();
   const top = projectCommandHelp("top");
   const lines = [
-    `ak-role \u2014 ${top?.summary ?? "public role CLI"}`
+    `ak-role \u2014 ${top.summary}`
   ];
   appendUsageAndExamples(lines, "top");
   lines.push("", PUBLIC_NAVIGATOR_HELP_NOTE);
@@ -27375,8 +27446,8 @@ function renderCommandHelp(command) {
     lines.push(`ak-role ${match.name}`);
   }
   appendUsageAndExamples(lines, command);
-  if (command in PUBLIC_ROLE_ARGV || command === "global") {
-    const owner = command === "global" ? "global" : command;
+  if (command in PUBLIC_ROLE_ARGV) {
+    const owner = command;
     lines.push("", "OPTIONS");
     lines.push(...renderHumanOwnerOptionLines(owner));
   }

@@ -35,6 +35,22 @@ const ISSUE_201_ROOT = "/taishi-fixture/c2-issue-201";
 const ISSUE_202_ROOT = "/taishi-fixture/c2-issue-202";
 const ISSUE_203_ROOT = "/taishi-fixture/c2-issue-203";
 
+/** #412: cohort library face requires explicit bookKey per issue (no cross-book find). */
+function issueRef(projectRoot: string, issueNumber: number) {
+  return {
+    bookKey: `root:${physicalPathIdentity(projectRoot)}`,
+    issueNumber,
+  };
+}
+
+/** Vacancy refs still need a book scope â€” synthetic root of a non-indexed path. */
+function absentRef(issueNumber: number) {
+  return {
+    bookKey: `root:${physicalPathIdentity(`/taishi-fixture/c2-absent-${issueNumber}`)}`,
+    issueNumber,
+  };
+}
+
 const RUN_201_CODER_1 = "019ff000-2001-7000-8000-0000000002a1";
 const RUN_201_CODER_2 = "019ff000-2002-7000-8000-0000000002a2";
 const RUN_201_JUDGE = "019ff000-2003-7000-8000-0000000002a3";
@@ -185,8 +201,14 @@ test("taishi C2 cohort: side-by-side group metrics join index by issueNumber; va
       const result = await runTaishi({
         mode: "cohort",
         groups: [
-          { groupLabel: "before", issues: [201, 202] },
-          { groupLabel: "after", issues: [203, 204] },
+          {
+            groupLabel: "before",
+            issues: [issueRef(ISSUE_201_ROOT, 201), issueRef(ISSUE_202_ROOT, 202)],
+          },
+          {
+            groupLabel: "after",
+            issues: [issueRef(ISSUE_203_ROOT, 203), absentRef(204)],
+          },
         ],
       });
 
@@ -266,8 +288,14 @@ test("taishi C2 cohort: side-by-side group metrics join index by issueNumber; va
       const again = await runTaishi({
         mode: "cohort",
         groups: [
-          { groupLabel: "before", issues: [201, 202] },
-          { groupLabel: "after", issues: [203, 204] },
+          {
+            groupLabel: "before",
+            issues: [issueRef(ISSUE_201_ROOT, 201), issueRef(ISSUE_202_ROOT, 202)],
+          },
+          {
+            groupLabel: "after",
+            issues: [issueRef(ISSUE_203_ROOT, 203), absentRef(204)],
+          },
         ],
       });
       assert.deepEqual(again, result);
@@ -282,8 +310,8 @@ test("taishi C2 cohort: all-absent group yields typed vacancy aggregates (no 0/â
       const result = await runTaishi({
         mode: "cohort",
         groups: [
-          { groupLabel: "left", issues: [901, 902] },
-          { groupLabel: "right", issues: [903] },
+          { groupLabel: "left", issues: [absentRef(901), absentRef(902)] },
+          { groupLabel: "right", issues: [absentRef(903)] },
         ],
       });
 
@@ -326,8 +354,8 @@ test("taishi C2 cohort: index hit + page missing recomputes via sole kernel (not
       const result = await runTaishi({
         mode: "cohort",
         groups: [
-          { groupLabel: "left", issues: [201] },
-          { groupLabel: "right", issues: [999] },
+          { groupLabel: "left", issues: [issueRef(ISSUE_201_ROOT, 201)] },
+          { groupLabel: "right", issues: [absentRef(999)] },
         ],
       });
 

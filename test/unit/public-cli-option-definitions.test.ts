@@ -39,6 +39,7 @@ import {
   createTypedOptionConsumer,
   optionsForOwner,
   projectOwnerOptions,
+  renderHumanOwnerOptionLines,
   renderReadmeOptionsMarkdown,
   type OptionOwner,
   type PublicOptionDefinition,
@@ -744,6 +745,26 @@ test("README EN/ZH generated regions are regeneration-clean", async () => {
       );
     }
   }
+});
+
+test("#412/397-F2 F3: help rendering has no dead alias ternary / global branch garbage", () => {
+  // 397-F2: positional alias spelling joins directly (no empty-branch ternary).
+  const coderLines = renderHumanOwnerOptionLines("coder");
+  const phaseLine = coderLines.find((line) => line.includes("plan|apply"));
+  assert.ok(phaseLine, "coder phase positional should render alias join");
+  assert.equal(phaseLine!.includes("undefined"), false);
+
+  // 397-F3: top-level help uses real top.summary; taishi command help still OPTIONS.
+  const top = helpDocument();
+  assert.ok(top.capabilities.length > 0);
+  const taishiHelp = helpDocumentForCommand("taishi");
+  assert.ok(taishiHelp !== undefined);
+  // Cohort issues metavar documents book:N (401-F2 flag shape).
+  const taishiLines = renderHumanOwnerOptionLines("taishi");
+  assert.ok(
+    taishiLines.some((line) => line.includes("book:N")),
+    "taishi OPTIONS must document book:N cohort tokens",
+  );
 });
 
 test("installed package bin tracer: bare --help and help <role> smoke (non-empty)", async () => {

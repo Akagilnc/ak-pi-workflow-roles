@@ -184,9 +184,27 @@ export async function runPublicTaishi(
     }
 
     if (parsed.query === "cohort") {
+      // #412: bare N → cwd book (same口径 as #399 --ticket); book:N stays explicit.
+      // No cross-book silent scan — callers pass book:N for another repo's issues.
+      const defaultBookKey = resolveTaishiIssueBookKeyFromCwd();
+      const resolveIssue = (
+        token: (typeof parsed.groups)[0]["issues"][number],
+      ) =>
+        token.kind === "book-qualified"
+          ? { bookKey: token.bookKey, issueNumber: token.issueNumber }
+          : { bookKey: defaultBookKey, issueNumber: token.issueNumber };
       const result = await runTaishi({
         mode: "cohort",
-        groups: parsed.groups,
+        groups: [
+          {
+            groupLabel: parsed.groups[0].groupLabel,
+            issues: parsed.groups[0].issues.map(resolveIssue),
+          },
+          {
+            groupLabel: parsed.groups[1].groupLabel,
+            issues: parsed.groups[1].issues.map(resolveIssue),
+          },
+        ],
       });
       io.stdout(`${JSON.stringify(result, null, 2)}\n`);
       return { exitCode: 0 };
