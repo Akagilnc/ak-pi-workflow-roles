@@ -61,10 +61,6 @@ const requestSchema = collectorRequestArgsSchema;
 const waitSchema = collectorWaitArgsSchema;
 const outputSchema = collectorOutputArgsSchema;
 
-// Well below the fixed 183s package-tool silence clock while avoiding noisy UI
-// churn during Collector's legal five-minute wait.
-const COLLECTOR_WAIT_PROGRESS_INTERVAL_MS = 60_000;
-
 type RequestParams = Static<typeof requestSchema>;
 type WaitParams = Static<typeof waitSchema>;
 type OutputParams = Static<typeof outputSchema>;
@@ -377,40 +373,18 @@ export function createCollectorRoleRuntime(
         "Call ak_collector_wait with a positive durationMs; runtime caps each wait to five minutes and to remaining eligibility.",
       ],
       parameters: waitSchema,
-      async execute(toolCallId, params: WaitParams, signal, onUpdate, ctx) {
+      async execute(toolCallId, params: WaitParams, signal, _onUpdate, ctx) {
         if (activation === undefined) {
           throw new Error("Collector is not activated");
         }
-        const currentActivation = activation;
-        let progressTimer: ReturnType<typeof setTimeout> | undefined;
         try {
-          currentActivation.ledger.beginOperational(COLLECTOR_WAIT_TOOL, toolCallId);
-          const waitStartedMono = currentActivation.clock.monoNow();
-          let lastElapsedMs = 0;
-          const scheduleProgress = (): void => {
-            if (onUpdate === undefined) return;
-            progressTimer = setTimeout(() => {
-              const elapsedMs = Math.max(
-                0,
-                Math.floor(currentActivation.clock.monoNow() - waitStartedMono),
-              );
-              if (elapsedMs > lastElapsedMs) {
-                lastElapsedMs = elapsedMs;
-                onUpdate({
-                  content: [],
-                  details: { kind: "collector_wait_progress", elapsedMs },
-                });
-              }
-              scheduleProgress();
-            }, COLLECTOR_WAIT_PROGRESS_INTERVAL_MS);
-          };
-          scheduleProgress();
-          const details = await currentActivation.ledger.wait(
+          activation.ledger.beginOperational(COLLECTOR_WAIT_TOOL, toolCallId);
+          const details = await activation.ledger.wait(
             params,
-            currentActivation.clock,
+            activation.clock,
             signal,
           );
-          currentActivation.ledger.completeOperational(toolCallId);
+          activation.ledger.completeOperational(toolCallId);
           return {
             content: [{
               type: "text" as const,
@@ -420,8 +394,6 @@ export function createCollectorRoleRuntime(
           };
         } catch (error) {
           hostActions.failInfrastructure(error, ctx);
-        } finally {
-          if (progressTimer !== undefined) clearTimeout(progressTimer);
         }
       },
     });

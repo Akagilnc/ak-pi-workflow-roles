@@ -14,7 +14,6 @@ import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-re
 import { openInProcessAgentSession } from "./in-process-session.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
-import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.js";
 import {
@@ -247,7 +246,7 @@ function parseNavigatorModelSetting(value) {
   return { provider, model, thinkingLevel: suffix === "max" ? "max" : "off" };
 }
 function createNavigatorPrepareTool(onOutput) {
-  return wrapPackageOwnedToolDefinition({
+  return {
     name: NAVIGATOR_PREPARE_TOOL_NAME,
     label: "Navigator preparation",
     description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
@@ -256,7 +255,7 @@ function createNavigatorPrepareTool(onOutput) {
       onOutput(value);
       return { content: [{ type: "text", text: "Navigator preparation accepted" }], details: value, terminate: true };
     }
-  });
+  };
 }
 function selectNavigatorCandidate(candidates, settlement) {
   if (settlement.kind !== "accepted") return void 0;

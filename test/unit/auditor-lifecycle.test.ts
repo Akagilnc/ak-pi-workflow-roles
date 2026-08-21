@@ -19,9 +19,6 @@ import {
 } from "../../src/evidence-child-executor.ts";
 import { COMPLIANCE_RESPONSE_ENTRY_TYPE, createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 import {
-  PackageOwnedToolIdleTimeoutError,
-} from "../../src/package-owned-tool-idle.ts";
-import {
   StreamIdleTimeoutError,
   isStreamIdleTimeoutError,
 } from "../../src/stream-idle-guard.ts";
@@ -615,18 +612,10 @@ test("provider-stream idle retries at most twice then fails loud as StreamIdleTi
         invalidDecisionLabel: "invalid idle decision",
         context: auditExtensionContext(cwd, sessionManager, faux),
       })),
-      (error: unknown) => isStreamIdleTimeoutError(error)
-        && !(error instanceof PackageOwnedToolIdleTimeoutError),
+      (error: unknown) => isStreamIdleTimeoutError(error),
     );
     assert.equal(streamAttempts, DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES + 1);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
-});
-
-test("package-owned tool idle identity is not StreamIdleTimeoutError", () => {
-  const packageIdle = new PackageOwnedToolIdleTimeoutError();
-  assert.equal(isStreamIdleTimeoutError(packageIdle), false);
-  assert.equal(packageIdle.name, "PackageOwnedToolIdleTimeoutError");
-  assert.notEqual(packageIdle.name, "StreamIdleTimeoutError");
 });

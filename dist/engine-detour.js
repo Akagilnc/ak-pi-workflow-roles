@@ -48,8 +48,8 @@ export async function runEngineDetourOnce(input) {
     return await new Promise((resolve, reject) => {
         let settled = false;
         const signal = input.signal;
-        // Own abort→kill explicitly so rejection preserves signal.reason (caller cancel
-        // vs package-owned idle). Do not pass `signal` to spawn (Node replaces reason).
+        // Own abort→kill explicitly so rejection preserves signal.reason (caller cancel).
+        // Do not pass `signal` to spawn (Node replaces reason).
         const child = spawn(command, args, {
             cwd: input.cwd,
             env: input.env ?? process.env,
@@ -57,18 +57,11 @@ export async function runEngineDetourOnce(input) {
         });
         let stdout = "";
         let stderr = "";
-        const noteActivity = (chunk) => {
-            if (chunk.length === 0)
-                return;
-            input.onOutputActivity?.();
-        };
         child.stdout.setEncoding("utf8").on("data", (chunk) => {
             stdout += chunk;
-            noteActivity(chunk);
         });
         child.stderr.setEncoding("utf8").on("data", (chunk) => {
             stderr += chunk;
-            noteActivity(chunk);
         });
         const fail = (error) => {
             if (settled)
@@ -89,8 +82,7 @@ export async function runEngineDetourOnce(input) {
             resolve(result);
         };
         const onAbort = () => {
-            // Fail synchronously so cooperative idle/cancel paths can soft-settle
-            // before the outer package-owned idle hard-reject drain.
+            // Fail synchronously so caller-cancel soft-settle preserves signal.reason.
             fail(signal !== undefined ? abortReasonError(signal) : new Error("aborted"));
             try {
                 child.kill("SIGTERM");
