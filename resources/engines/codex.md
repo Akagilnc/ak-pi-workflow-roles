@@ -33,10 +33,9 @@ codex exec --skip-git-repo-check --ephemeral -C "$PROJECT_ROOT" "YOUR_LABOR_PROM
 
 Default (non-`--json`) mode prints the session banner and progress on stderr
 (measured on this host). Collect the labor body from stdout so that stderr log
-noise is not mixed into the returned body; the package idle clock can still see
-activity on both streams. Use `--json` only when the seat itself needs
-machine-readable event rows (those rows land on stdout as JSONL; measured event
-types include `thread.started`, `turn.started`, `item.completed`, `error`,
+noise is not mixed into the returned body. Use `--json` only when the seat itself
+needs machine-readable event rows (those rows land on stdout as JSONL; measured
+event types include `thread.started`, `turn.started`, `item.completed`, `error`,
 `turn.failed`):
 
 ```bash
