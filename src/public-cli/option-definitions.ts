@@ -578,8 +578,8 @@ const TAISHI_OPTIONS = [
     requiredInModes: ["model-groups"],
     maxCountByMode: { issue: 1 },
     description: {
-      en: "Project-root scope key. Issue: at most one (with --ticket at least one of the two). Model-groups: one or more required.",
-      zh: "projectRoot 范围键。issue：至多一个（与 --ticket 至少居其一）。model-groups：一个或多个且必填。",
+      en: "Book pointer (git common-dir) / workspace narrow. Issue: at most one (with --ticket at least one of the two). Model-groups: one or more required.",
+      zh: "候簿指针（git common-dir）/ 工作区窄过滤。issue：至多一个（与 --ticket 至少居其一）。model-groups：一个或多个且必填。",
     },
   },
   {
@@ -593,8 +593,8 @@ const TAISHI_OPTIONS = [
     form: "option",
     modes: ["issue"],
     description: {
-      en: "Ticket/issue number for issue mode (with --project-root at least one of the two).",
-      zh: "issue 模式的票号（与 --project-root 至少居其一）。",
+      en: "Ticket/issue number; live book filter by invocation.ticketNumber (with --project-root at least one of the two). No library-index bootstrap.",
+      zh: "票号；从候簿按 invocation.ticketNumber 现取现算（与 --project-root 至少居其一）。不依赖 library-index 自举。",
     },
   },
   {

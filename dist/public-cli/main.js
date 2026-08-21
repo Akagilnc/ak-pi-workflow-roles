@@ -16172,8 +16172,8 @@ var init_option_definitions = __esm({
         requiredInModes: ["model-groups"],
         maxCountByMode: { issue: 1 },
         description: {
-          en: "Project-root scope key. Issue: at most one (with --ticket at least one of the two). Model-groups: one or more required.",
-          zh: "projectRoot \u8303\u56F4\u952E\u3002issue\uFF1A\u81F3\u591A\u4E00\u4E2A\uFF08\u4E0E --ticket \u81F3\u5C11\u5C45\u5176\u4E00\uFF09\u3002model-groups\uFF1A\u4E00\u4E2A\u6216\u591A\u4E2A\u4E14\u5FC5\u586B\u3002"
+          en: "Book pointer (git common-dir) / workspace narrow. Issue: at most one (with --ticket at least one of the two). Model-groups: one or more required.",
+          zh: "\u5019\u7C3F\u6307\u9488\uFF08git common-dir\uFF09/ \u5DE5\u4F5C\u533A\u7A84\u8FC7\u6EE4\u3002issue\uFF1A\u81F3\u591A\u4E00\u4E2A\uFF08\u4E0E --ticket \u81F3\u5C11\u5C45\u5176\u4E00\uFF09\u3002model-groups\uFF1A\u4E00\u4E2A\u6216\u591A\u4E2A\u4E14\u5FC5\u586B\u3002"
         }
       },
       {
@@ -16187,8 +16187,8 @@ var init_option_definitions = __esm({
         form: "option",
         modes: ["issue"],
         description: {
-          en: "Ticket/issue number for issue mode (with --project-root at least one of the two).",
-          zh: "issue \u6A21\u5F0F\u7684\u7968\u53F7\uFF08\u4E0E --project-root \u81F3\u5C11\u5C45\u5176\u4E00\uFF09\u3002"
+          en: "Ticket/issue number; live book filter by invocation.ticketNumber (with --project-root at least one of the two). No library-index bootstrap.",
+          zh: "\u7968\u53F7\uFF1B\u4ECE\u5019\u7C3F\u6309 invocation.ticketNumber \u73B0\u53D6\u73B0\u7B97\uFF08\u4E0E --project-root \u81F3\u5C11\u5C45\u5176\u4E00\uFF09\u3002\u4E0D\u4F9D\u8D56 library-index \u81EA\u4E3E\u3002"
         }
       },
       {
@@ -25612,6 +25612,22 @@ function parseRunDirectoryName(name) {
   if (at <= 0 || at === name.length - 1) return void 0;
   return { runId: name.slice(0, at), role: name.slice(at + 1) };
 }
+function tryResolveBookKeyFromProjectRoot(projectRoot) {
+  try {
+    return resolveBookKeyFromGit(projectRoot);
+  } catch {
+    return void 0;
+  }
+}
+async function listLedgerBookNames(booksRoot) {
+  try {
+    const entries = await readdir5(booksRoot, { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  } catch (error) {
+    if (isMissingPathError4(error)) return [];
+    throw error;
+  }
+}
 async function readInvocationScopeFields(runDirectory) {
   let raw;
   try {
@@ -25632,14 +25648,23 @@ async function readInvocationScopeFields(runDirectory) {
   return { projectRoot };
 }
 function decideIssueScope(input) {
-  const projectRootMatch = input.runProjectRootIdentity === input.scopeProjectRootIdentity;
-  if (input.scopeTicketNumber !== void 0 && input.runTicketNumber !== void 0) {
+  const projectRootMatch = input.scopeProjectRootIdentity !== void 0 && input.runProjectRootIdentity === input.scopeProjectRootIdentity;
+  if (input.scopeTicketNumber !== void 0) {
     if (input.runTicketNumber === input.scopeTicketNumber) {
-      return { inScope: true, conflict: !projectRootMatch };
+      return {
+        inScope: true,
+        conflict: input.scopeProjectRootIdentity !== void 0 && !projectRootMatch
+      };
     }
     return { inScope: false, conflict: false };
   }
-  return { inScope: projectRootMatch, conflict: false };
+  if (input.bookResolvedFromGit) {
+    return { inScope: true, conflict: false };
+  }
+  if (input.scopeProjectRootIdentity !== void 0) {
+    return { inScope: projectRootMatch, conflict: false };
+  }
+  return { inScope: true, conflict: false };
 }
 async function resolveSessionFile(runDirectory) {
   try {
@@ -25774,18 +25799,26 @@ async function classifyScopedRun(input) {
 }
 async function scanTaishiIssueRuns(input) {
   const ledgerHome = resolveActivationLedgerHome();
-  const scopeIdentity = physicalPathIdentity(input.projectRoot);
   const scopeTicketNumber = input.ticketNumber;
+  const scopeProjectRootIdentity = input.projectRoot !== void 0 ? physicalPathIdentity(input.projectRoot) : void 0;
   const booksRoot = join22(ledgerHome, "books");
+  let bookResolvedFromGit = false;
   let bookNames;
-  try {
-    const entries = await readdir5(booksRoot, { withFileTypes: true });
-    bookNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
-  } catch (error) {
-    if (isMissingPathError4(error)) {
-      return { runs: [], unreadable: [], scopeConflicts: [] };
+  if (input.bookKey !== void 0 && input.bookKey.trim() !== "") {
+    bookNames = [input.bookKey];
+  } else if (input.projectRoot !== void 0) {
+    const resolved = tryResolveBookKeyFromProjectRoot(input.projectRoot);
+    if (resolved !== void 0) {
+      bookNames = [resolved];
+      bookResolvedFromGit = true;
+    } else {
+      bookNames = await listLedgerBookNames(booksRoot);
     }
-    throw error;
+  } else {
+    bookNames = await listLedgerBookNames(booksRoot);
+  }
+  if (bookNames.length === 0) {
+    return { runs: [], unreadable: [], scopeConflicts: [] };
   }
   const runs = [];
   const unreadable = [];
@@ -25814,8 +25847,9 @@ async function scanTaishiIssueRuns(input) {
       if (scopeFields === void 0) continue;
       const runProjectRootIdentity = physicalPathIdentity(scopeFields.projectRoot);
       const decision = decideIssueScope({
-        scopeProjectRootIdentity: scopeIdentity,
+        scopeProjectRootIdentity,
         scopeTicketNumber,
+        bookResolvedFromGit,
         runProjectRootIdentity,
         runTicketNumber: scopeFields.ticketNumber
       });
@@ -25848,6 +25882,7 @@ var LIVE_RUN_STATES;
 var init_taishi_ledger = __esm({
   "src/taishi-ledger.ts"() {
     "use strict";
+    init_activation_ledger_git();
     init_activation_ledger_topology();
     init_ledger_session_read();
     init_run_terminal_artifacts();
@@ -26915,7 +26950,7 @@ var init_taishi_entry = __esm({
 // src/public-cli/taishi-run.ts
 import { readFile as readFile15 } from "node:fs/promises";
 import { isAbsolute as isAbsolute5, resolve as resolve7 } from "node:path";
-async function buildTaishiIssueModeInputFromPublicArgv(parsed, ledgerHome) {
+async function buildTaishiIssueModeInputFromPublicArgv(parsed, _ledgerHome) {
   const ticket = parsed.ticket;
   const directRoot = parsed.projectRoot;
   if (ticket === void 0) {
@@ -26924,25 +26959,12 @@ async function buildTaishiIssueModeInputFromPublicArgv(parsed, ledgerHome) {
       projectRoot: directRoot
     };
   }
-  const index = await readTaishiLibraryIndexPage(ledgerHome);
-  const row = findTaishiLibraryIndexRow(index, ticket);
-  let projectRoot;
-  if (row !== void 0) {
-    projectRoot = row.projectRoot;
-  } else if (directRoot !== void 0) {
-    projectRoot = directRoot;
-  } else {
-    throw new CliUsageError(
-      `taishi library index has no row for ticket ${ticket}`
-    );
-  }
-  const dualParamConflict = row !== void 0 && directRoot !== void 0 && physicalPathIdentity(directRoot) !== physicalPathIdentity(projectRoot);
+  const projectRoot = directRoot ?? process.cwd();
   return {
     mode: "issue",
     projectRoot,
     ticketNumber: ticket,
-    issueNumber: ticket,
-    ...dualParamConflict ? { conflictingProjectRoot: directRoot } : {}
+    issueNumber: ticket
   };
 }
 function parseTaishiSweepModeInputFromJsonValue(value) {
@@ -27052,7 +27074,6 @@ var init_taishi_run = __esm({
     init_value2();
     init_activation_ledger_topology();
     init_exact_utf8();
-    init_taishi_index();
     init_taishi_entry();
     init_cli_errors();
     init_settlement();

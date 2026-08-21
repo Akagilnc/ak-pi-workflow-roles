@@ -1,10 +1,10 @@
 /**
  * #332 taishi-C4 — issue scope prefers typed ticketNumber (#176) over projectRoot.
+ * #399: ticket face is strict — no silent projectRoot fallback for unbound runs.
  *
  * Two fixture paths, hand-computed expected runId sets:
- * 1) ticketNumber path: typed ticket vs projectRoot mechanical-key conflict —
- *    typed wins; metrics page records runId, ticketNumber, projectRoot, conflict fact.
- * 2) no-ticketNumber path: projectRoot mechanical-key fallback.
+ * 1) ticketNumber path: typed ticket alone admits; projectRoot mismatch = conflict fact.
+ * 2) no-ticketNumber path: projectRoot mechanical-key narrow filter (non-git pointer).
  * C4 fixture runs use exclusive runId segment 019ff000-4xxx.
  * Assert only through sole entry runTaishi — no second parse kernel.
  */
@@ -47,14 +47,13 @@ const RUN_FALLBACK_OUT = "019ff000-4011-7000-8000-0000000004b1";
  * Hand oracle — ticketNumber path (input ticket=4401, projectRoot=primary):
  *   4001 ticket 4401 + primary → IN (no conflict)
  *   4002 ticket 4401 + alien   → IN by typed; CONFLICT recorded
- *   4003 no ticket + primary   → IN by projectRoot fallback
- *   4004 ticket 9999 + primary → OUT (typed ticket prefers over projectRoot match)
+ *   4003 no ticket + primary   → OUT (#399: no path fallback when ticket requested)
+ *   4004 ticket 9999 + primary → OUT
  *   4005 no ticket + alien     → OUT
  */
 const EXPECTED_TICKET_PATH_RUN_IDS = [
   RUN_TICKET_MATCH_PRIMARY,
   RUN_TICKET_MATCH_ALIEN,
-  RUN_NO_TICKET_PRIMARY,
 ].sort();
 
 const EXPECTED_CONFLICT: TaishiScopeConflict = {
@@ -128,6 +127,8 @@ test("taishi C4 ticket path: typed ticketNumber wins conflict; page records four
       const actualRunIds = result.page.legs.map((leg) => leg.runId).sort();
       assert.deepEqual(actualRunIds, EXPECTED_TICKET_PATH_RUN_IDS);
 
+      // Unbound primary-root run must not enter via path fallback when ticket is set.
+      assert.equal(actualRunIds.includes(RUN_NO_TICKET_PRIMARY), false);
       // Decoy ticket on primary root and alien unbound must stay out.
       assert.equal(actualRunIds.includes(RUN_DECOY_TICKET_PRIMARY), false);
       assert.equal(actualRunIds.includes(RUN_NO_TICKET_ALIEN), false);
