@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { PUBLIC_ROLE_ARGV, runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { parseTaishiArgv } from "../../src/public-cli/invocation.ts";
+import { parseTaishiArgv, parseTaishiCohortIssueToken } from "../../src/public-cli/invocation.ts";
 import { runTaishi } from "../../src/taishi-entry.ts";
 import {
   taishiIssuePagePath,
@@ -477,4 +477,14 @@ test("taishi cohort list parse names the actual group flag, not --ticket", () =>
       return true;
     },
   );
+});
+
+// #412: synthetic root:<path> book keys contain colons — book:N splits on the
+// last colon only. Not covered by the public tracer (its books have no ":").
+test("taishi cohort book:N splits on the last colon so root:<path>:N parses", () => {
+  assert.deepEqual(parseTaishiCohortIssueToken("root:/tmp/a:b:181", "--group-a-issues"), {
+    kind: "book-qualified",
+    bookKey: "root:/tmp/a:b",
+    issueNumber: 181,
+  });
 });
