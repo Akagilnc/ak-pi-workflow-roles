@@ -1,5 +1,7 @@
 /** Package-owned Judge output leaf — no role registration surface. */
 
+import { seatFallbackBaseStatus } from "../engine-labor-fallback.ts";
+
 export const JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
 export const JUDGE_ACCEPTED_TEXT = "Judge verdict accepted";
 
@@ -34,6 +36,8 @@ export function validateAcceptedJudgeDetails(verdict: unknown): JudgeVerdict {
   } catch {
     throw new Error("Judge verdict has no execution discriminator");
   }
-  if (["converged", "continue", "escalate"].includes(String(judgeStatus))) return verdict as JudgeVerdict;
+  if (["converged", "continue", "escalate"].includes(seatFallbackBaseStatus(String(judgeStatus)))) {
+    return verdict as JudgeVerdict;
+  }
   throw new Error("Judge verdict has no execution discriminator");
 }

@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
+import { seatFallbackBaseStatus } from "./engine-labor-fallback.ts";
 import {
   formatDurationZh,
   formatLocalDateTime,
@@ -843,7 +844,9 @@ function buildBreadcrumbSteps(runs: readonly TicketTrajectoryRun[]): BreadcrumbS
     const isReturn = seen.has(group.station);
     seen.add(group.station);
     const isRejected = group.runs.some(
-      (run) => run.hasResult && REJECTED_RESULT_STATUSES.has(run.resultStatus),
+      (run) =>
+        run.hasResult &&
+        REJECTED_RESULT_STATUSES.has(seatFallbackBaseStatus(run.resultStatus)),
     );
     steps.push({
       station: group.station,

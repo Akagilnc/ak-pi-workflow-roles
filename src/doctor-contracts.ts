@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import { canonicalJson } from "./canonical-json.ts";
+import { seatFallbackBaseStatus } from "./engine-labor-fallback.ts";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
@@ -96,12 +97,15 @@ function isRecord(value: unknown): value is Record<string, unknown> { return typ
 function read(value: unknown, key: string): unknown { if (!isRecord(value)) return undefined; try { return value[key]; } catch { return undefined; } }
 export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission {
   const status = read(value, "status");
-  if (status !== "completed" && status !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  const base = typeof status === "string" ? seatFallbackBaseStatus(status) : status;
+  if (base !== "completed" && base !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
   return value as DoctorSubmission;
 }
 export function validateRecordedDoctorOutput(value: unknown): DoctorOutput {
   const output = validateDoctorSubmissionShape(value);
-  if (read(output, "status") === "completed" && read(output, "cost") === undefined) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
+  const status = read(output, "status");
+  const base = typeof status === "string" ? seatFallbackBaseStatus(status) : status;
+  if (base === "completed" && read(output, "cost") === undefined) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
   return output as DoctorOutput;
 }
 
