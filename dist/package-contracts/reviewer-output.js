@@ -1,4 +1,5 @@
 /** Package-owned Reviewer intent and runtime-receipt leaves — no role registration surface. */
+import { seatFallbackBaseStatus } from "../engine-labor-fallback.js";
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
 export const REVIEWER_ACCEPTED_TEXT = "Reviewer report accepted";
 function isRecord(value) {
@@ -91,7 +92,8 @@ export function validateRuntimeReviewerReceipt(output) {
 export function projectReviewerIntentToReceipt(intentValue, receiptValue) {
     const intent = validateReviewerIntent(intentValue);
     const receipt = validateRuntimeReviewerReceipt(receiptValue);
-    if (receipt.status !== intent.status || (intent.status === "completed" ? receipt.diagnostic !== undefined : receipt.diagnostic !== intent.diagnostic)) {
+    const receiptBase = seatFallbackBaseStatus(receipt.status);
+    if (receiptBase !== intent.status || (intent.status === "completed" ? receipt.diagnostic !== undefined : receipt.diagnostic !== intent.diagnostic)) {
         throw new Error("Reviewer intent and runtime receipt disagree");
     }
     return receipt;

@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { isFullGitObjectId } from "./git-object-id.js";
 import { exactUtf8 } from "./exact-utf8.js";
+import { seatFallbackBaseStatus } from "./engine-labor-fallback.js";
 import { sha256Hex } from "./sha256.js";
 import { openToolObjectFromUnion } from "./open-tool-schema.js";
 const oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
@@ -68,9 +69,10 @@ export function validateMergerInput(value) {
 export function validateMergerOutput(value, expectedAttemptId) {
     if (!record(value) || (expectedAttemptId !== undefined && value.attemptId !== expectedAttemptId))
         throw new Error("Merger output attempt mismatch");
-    if (value.status === "completed" && isFullGitObjectId(value.mergeCommitId))
+    const statusBase = typeof value.status === "string" ? seatFallbackBaseStatus(value.status) : undefined;
+    if (statusBase === "completed" && isFullGitObjectId(value.mergeCommitId))
         return structuredClone(value);
-    if (value.status === "escalate")
+    if (statusBase === "escalate")
         return structuredClone(value);
     throw new Error("Merger output has no recognized execution discriminator");
 }

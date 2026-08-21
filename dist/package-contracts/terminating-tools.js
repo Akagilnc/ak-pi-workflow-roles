@@ -6,6 +6,7 @@ import { COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, validateAcceptedCollect
 import { JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, validateAcceptedJudgeDetails, } from "./judge-output.js";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, } from "./reviewer-output.js";
 import { isAuditEscalationResult } from "../audit-escalation.js";
+import { seatFallbackBaseStatus } from "../engine-labor-fallback.js";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput } from "../doctor-contracts.js";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput } from "../merger-contracts.js";
 import { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, validateAcceptedWorkerDetails, } from "./worker-output.js";
@@ -79,9 +80,10 @@ export function validateAcceptedDetails(toolName, details) {
         [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
     };
     const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
-    const runtimeBindingMissing = (toolName === DOCTOR_OUTPUT_TOOL_NAME && discriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
+    const baseDiscriminator = typeof discriminator === "string" ? seatFallbackBaseStatus(discriminator) : discriminator;
+    const runtimeBindingMissing = (toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
         (toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2);
-    if (runtimeBindingMissing || (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(discriminator)))) {
+    if (runtimeBindingMissing || (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator)))) {
         throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
     }
     try {
@@ -112,14 +114,15 @@ export function validateAcceptedLifecycle(toolName, argumentsValue, detailsValue
     const details = validateAcceptedDetails(toolName, detailsValue);
     if (toolName === DOCTOR_OUTPUT_TOOL_NAME) {
         const testimony = validateDoctorSubmissionShape(argumentsValue);
-        if (testimony.status === "refused") {
+        if (seatFallbackBaseStatus(String(testimony.status)) === "refused") {
             if (!deepEqual(testimony, details))
                 throw new Error("accepted tool lifecycle details mismatch");
             return details;
         }
         const receipt = details;
-        if (receipt.status !== "completed")
+        if (seatFallbackBaseStatus(String(receipt.status)) !== "completed") {
             throw new Error("accepted tool lifecycle details mismatch");
+        }
         const { cost: _runtimeCost, ...projected } = receipt;
         if (!deepEqual(testimony, projected))
             throw new Error("accepted tool lifecycle details mismatch");
@@ -139,7 +142,8 @@ export function acceptedFacts(toolName, details) {
         case JUDGE_OUTPUT_TOOL_NAME: return { status: details.judgeStatus };
         case MERGER_OUTPUT_TOOL_NAME: {
             const output = details;
-            return { status: output.status, ...(output.status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {}) };
+            const status = output.status;
+            return { status, ...(seatFallbackBaseStatus(status) === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {}) };
         }
         case COLLECTOR_OUTPUT_TOOL:
             return { status: "collected" };
