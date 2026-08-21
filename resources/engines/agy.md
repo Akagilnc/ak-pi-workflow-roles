@@ -19,8 +19,7 @@ log file for diagnostics:
 agy --sandbox --print 'YOUR_LABOR_PROMPT' --log-file /tmp/agy-labor.log
 ```
 
-- Quota exhaustion is a known failure mode on this host; treat a quota error
-  as engine failure (do not retry-loop).
+- Treat a quota/auth error like any other engine failure (do not retry-loop).
 
 ## Failure handling
 
