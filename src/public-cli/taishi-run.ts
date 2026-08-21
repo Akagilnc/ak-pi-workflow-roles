@@ -4,9 +4,10 @@
  * Reuses existing CLI failure envelope (CliUsageError + structural reject +
  * ControlledFailure).
  * #399: issue query = book (cwd git common-dir) × optional --ticket N.
- *   Bare call = whole book; --project-root deleted from issue face; no library-index bootstrap.
+ *   Bare call = whole book; --project-root deleted; --model-groups public face disabled;
+ *   no library-index bootstrap. Library model-groups kernel retained for follow-up.
  * #337 sweep: exactly one typed JSON attachment → TaishiSweepModeInput → #329 kernel.
- * #338: three query faces; sync compute-if-missing; whole-compute failure →
+ * #338: issue/cohort (+ library model-groups); sync compute-if-missing; whole-compute failure →
  * ControlledFailure terminal (code/projectRoot/issueNumber/real cause).
  * "Unobtrusive" binds #337 merge auto-trigger only, not this user-initiated query.
  */
@@ -66,7 +67,7 @@ export function resolveTaishiIssueBookKeyFromCwd(cwd: string = process.cwd()): s
  * Build the sole library issue-mode input from public argv faces (#399).
  * - bare → whole book from cwd git common-dir
  * - --ticket N → issueNumber = ticketNumber = N inside that book (strict; no index)
- * - --project-root rejected at parse (deleted from issue face)
+ * - --project-root rejected at parse (deleted unconditionally)
  */
 export async function buildTaishiIssueModeInputFromPublicArgv(
   parsed: ParseTaishiIssueArgv,
@@ -159,7 +160,8 @@ export async function buildTaishiSweepModeInputFromAttachmentPaths(
 
 /**
  * Public taishi run path — parse → resolve → query → typed receipt on stdout.
- * Issue (#336/#338 compute-if-missing), sweep (#337), cohort/model-groups (#338).
+ * Issue (#336/#338 compute-if-missing), sweep (#337), cohort (#338).
+ * model-groups public face disabled at parse (#399); library kernel retained.
  */
 export async function runPublicTaishi(
   argv: readonly string[],
@@ -185,15 +187,6 @@ export async function runPublicTaishi(
       const result = await runTaishi({
         mode: "cohort",
         groups: parsed.groups,
-      });
-      io.stdout(`${JSON.stringify(result, null, 2)}\n`);
-      return { exitCode: 0 };
-    }
-
-    if (parsed.query === "model-groups") {
-      const result = await runTaishi({
-        mode: "model-groups",
-        projectRoots: parsed.projectRoots,
       });
       io.stdout(`${JSON.stringify(result, null, 2)}\n`);
       return { exitCode: 0 };

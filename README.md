@@ -163,11 +163,9 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sweep` | — | — | no | no | positional | modes=sweep | Optional sweep mode token (at most once; no other positionals). |
-| `--project-root` | — | `path` | when:model-groups | yes | option | modes=model-groups | Model-groups issue-set scope roots (one or more required). Not an issue-query face (#399 deleted --project-root from issue). |
 | `--ticket` | — | `number` | no | no | option | modes=issue | Ticket/issue number; live filter by invocation.ticketNumber inside the cwd book (git common-dir). Bare call = whole book. No library-index bootstrap. |
 | `--attach` | — | `path` | when:sweep | yes | option | modes=sweep; max=sweep:1 | Sweep-mode attachment path; required exactly once in sweep; payload is the attachment body. |
-| `--cohort` | — | — | no | no | option | modes=cohort; xor=model-groups | Select cohort mode (mutually exclusive with --model-groups). |
-| `--model-groups` | — | — | no | no | option | modes=model-groups; xor=cohort | Select model-groups mode (mutually exclusive with --cohort). |
+| `--cohort` | — | — | no | no | option | modes=cohort | Select cohort mode. |
 | `--group-a-label` | — | `label` | when:cohort | no | option | modes=cohort | Cohort group A label (required in cohort mode). |
 | `--group-a-issues` | — | `N[,N...]` | when:cohort | no | option | modes=cohort | Cohort group A comma-separated positive issue numbers (required in cohort mode). |
 | `--group-b-label` | — | `label` | when:cohort | no | option | modes=cohort | Cohort group B label (required in cohort mode). |

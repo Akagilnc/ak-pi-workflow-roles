@@ -1,7 +1,7 @@
 /**
  * #336 taishi public CLI — separately callable role surface (ADR 0052 / ADR 0068).
  * #399: issue query = bare whole book / --ticket N from cwd git common-dir;
- *       --project-root deleted from issue face; no library-index bootstrap.
+ *       --project-root deleted; --model-groups public face disabled; no library-index bootstrap.
  *
  * Sole external entry = ak-role taishi via PUBLIC_ROLE_ARGV single-table row.
  */
@@ -295,7 +295,7 @@ test("taishi public CLI bare call: whole book from cwd git common-dir", async ()
   });
 });
 
-test("taishi public CLI --project-root on issue face: deleted, loud reject", async () => {
+test("taishi public CLI --project-root: deleted, loud reject", async () => {
   await withBusinessRepo(async (repo) => {
     await withTempHome(async (home) => {
       const ledgerHome = join(home, ".ak-roles");
@@ -309,6 +309,26 @@ test("taishi public CLI --project-root on issue face: deleted, loud reject", asy
       assert.equal(result.exitCode, 2);
       assert.match(stderr.join(""), /project-root/i);
       assert.match(stderr.join(""), /deleted|bare|--ticket/i);
+      const after = await snapshotTaishiDir(ledgerHome);
+      assertSnapshotsEqual(before, after);
+    });
+  });
+});
+
+test("taishi public CLI --model-groups: disabled, redesign message", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async (home) => {
+      const ledgerHome = join(home, ".ak-roles");
+      await mkdir(join(ledgerHome, "taishi"), { recursive: true });
+      const before = await snapshotTaishiDir(ledgerHome);
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(
+        ["taishi", "--model-groups"],
+        { packageRoot, home, io },
+      );
+      assert.equal(result.exitCode, 2);
+      assert.match(stderr.join(""), /model-groups/i);
+      assert.match(stderr.join(""), /disabled|redesign|multi-issue|follow-up/i);
       const after = await snapshotTaishiDir(ledgerHome);
       assertSnapshotsEqual(before, after);
     });
