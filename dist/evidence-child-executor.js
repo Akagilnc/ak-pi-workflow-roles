@@ -11,7 +11,6 @@ import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_E
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.js";
 import { engineNameFromEnv } from "./engine-detour.js";
 import { appendEngineSessionMaterial, engineSessionMaterialFromOptions, } from "./package-resources/engine-material.js";
-import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
@@ -599,7 +598,7 @@ export async function executeAuditorChild(options) {
         let decisionToolFailure;
         const decisionToolFailures = new Map();
         const delivery = createReceiptDeliveryPolicy();
-        const tool = wrapPackageOwnedToolDefinition({
+        const tool = {
             ...options.tool,
             label: options.roleLabel,
             async execute(...args) {
@@ -625,7 +624,7 @@ export async function executeAuditorChild(options) {
                     throw error;
                 }
             },
-        });
+        };
         const parentSessionManager = options.context.sessionManager;
         const parentHeader = parentSessionManager?.getHeader?.();
         const parentSessionFile = parentSessionManager?.getSessionFile?.();
@@ -644,7 +643,7 @@ export async function executeAuditorChild(options) {
             thinkingLevel: options.context.thinkingLevel ?? "off",
             modelRuntime: inherited.runtime,
             systemPrompt: options.systemPrompt,
-            customTools: [wrapPackageOwnedToolDefinition({ ...options.dossierTool, label: options.roleLabel }), tool],
+            customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],
             sessionManager: auditorSessionManager,
         });
         const binding = {

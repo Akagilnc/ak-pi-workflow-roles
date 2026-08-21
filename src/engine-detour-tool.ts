@@ -4,7 +4,7 @@
  * Evidence-child legs install the same definition via customTools (no spawn in role modules).
  * #380: engine process failure soft-returns so the seat rejoins the main road; declaration
  * is recorded once via engine-labor-fallback (no fail-closed reject-leg).
- * Caller AbortSignal cancel propagates without fallback; package-owned idle abort soft-fails.
+ * Caller AbortSignal cancel propagates without fallback.
  */
 import type {
   AgentToolResult,
@@ -27,11 +27,6 @@ import {
   recordEngineLaborFallback,
   type EngineLaborFallbackField,
 } from "./engine-labor-fallback.ts";
-import {
-  isPackageOwnedToolIdleTimeoutError,
-  pokePackageOwnedToolIdle,
-  wrapPackageOwnedToolDefinition,
-} from "./package-owned-tool-idle.ts";
 
 const engineDetourArgsSchema = Type.Object(
   {
@@ -81,18 +76,11 @@ function seatFallbackToolResult(
   };
 }
 
-/** Caller/upper-layer cancel must propagate; idle backstop is seat-fallback, not cancel. */
+/** Caller/upper-layer cancel must propagate; process failure is seat-fallback, not cancel. */
 function isCallerCancellation(
   error: unknown,
   signal: AbortSignal | undefined,
 ): boolean {
-  if (isPackageOwnedToolIdleTimeoutError(error)) return false;
-  if (
-    signal !== undefined &&
-    isPackageOwnedToolIdleTimeoutError(signal.reason)
-  ) {
-    return false;
-  }
   if (signal?.aborted === true) return true;
   if (
     typeof error === "object" &&
@@ -108,7 +96,7 @@ function isCallerCancellation(
  * Build one once-latch detour tool definition for a configured engine name.
  * `latch` is shared so parent registration can reset between activations.
  * `fail` owns host abort (parent) vs throw (evidence child) for tool misuse only.
- * Engine process failure (nonzero/empty/spawn/idle-timeout) soft-returns seat fallback (#380).
+ * Engine process failure (nonzero/empty/spawn) soft-returns seat fallback (#380).
  * Caller AbortSignal cancel propagates without writing fallback.
  */
 export function createEngineDetourToolDefinition(input: {
@@ -118,7 +106,7 @@ export function createEngineDetourToolDefinition(input: {
 }): ToolDefinition {
   const latch = input.latch ?? { used: false };
   const engineName = input.engineName;
-  return wrapPackageOwnedToolDefinition({
+  return {
     name: ENGINE_DETOUR_TOOL_NAME,
     label: "Engine Detour",
     description:
@@ -170,16 +158,13 @@ export function createEngineDetourToolDefinition(input: {
 
       let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
       try {
-        // Byte activity on stdout/stderr touches the outer package-owned idle clock
-        // (183s silence law unchanged). True hangs still die; slow streaming engines live.
         result = await runEngineDetourOnce({
           argv,
           cwd: ctx.cwd,
           ...(signal === undefined ? {} : { signal }),
-          onOutputActivity: pokePackageOwnedToolIdle,
         });
       } catch (error) {
-        // Caller cancel: propagate. Idle backstop + spawn/engine failure: seat fallback.
+        // Caller cancel: propagate. Spawn/engine failure: seat fallback.
         if (isCallerCancellation(error, signal)) {
           throw error;
         }
@@ -200,7 +185,7 @@ export function createEngineDetourToolDefinition(input: {
         },
       };
     },
-  }) as ToolDefinition;
+  } as ToolDefinition;
 }
 
 /**

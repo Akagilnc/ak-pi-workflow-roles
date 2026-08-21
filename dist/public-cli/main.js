@@ -19343,64 +19343,6 @@ var init_auditor_dossier_tool = __esm({
   }
 });
 
-// src/stream-idle-guard.ts
-var init_stream_idle_guard = __esm({
-  "src/stream-idle-guard.ts"() {
-    "use strict";
-  }
-});
-
-// src/stderr-jsonl.ts
-var init_stderr_jsonl = __esm({
-  "src/stderr-jsonl.ts"() {
-    "use strict";
-  }
-});
-
-// src/tool-execution-observation.ts
-var observationBase, toolExecutionObservationRecordSchema;
-var init_tool_execution_observation = __esm({
-  "src/tool-execution-observation.ts"() {
-    "use strict";
-    init_build();
-    init_value2();
-    init_stderr_jsonl();
-    observationBase = {
-      role: typebox_exports.String({ minLength: 1 }),
-      toolCallId: typebox_exports.String({ minLength: 1 }),
-      toolName: typebox_exports.String({ minLength: 1 }),
-      timestamp: typebox_exports.String({ format: "date-time" })
-    };
-    toolExecutionObservationRecordSchema = typebox_exports.Union([
-      typebox_exports.Object({
-        ...observationBase,
-        event: typebox_exports.Literal("tool_execution_start")
-      }, { additionalProperties: true }),
-      typebox_exports.Object({
-        ...observationBase,
-        event: typebox_exports.Literal("tool_execution_update")
-      }, { additionalProperties: true }),
-      typebox_exports.Object({
-        ...observationBase,
-        event: typebox_exports.Literal("tool_execution_end"),
-        isError: typebox_exports.Boolean()
-      }, { additionalProperties: true })
-    ]);
-  }
-});
-
-// src/package-owned-tool-idle.ts
-import { AsyncLocalStorage } from "node:async_hooks";
-var packageOwnedToolIdleScope;
-var init_package_owned_tool_idle = __esm({
-  "src/package-owned-tool-idle.ts"() {
-    "use strict";
-    init_stream_idle_guard();
-    init_tool_execution_observation();
-    packageOwnedToolIdleScope = new AsyncLocalStorage();
-  }
-});
-
 // src/engine-detour-tool.ts
 var engineDetourArgsSchema;
 var init_engine_detour_tool = __esm({
@@ -19409,7 +19351,6 @@ var init_engine_detour_tool = __esm({
     init_build();
     init_engine_detour();
     init_engine_labor_fallback();
-    init_package_owned_tool_idle();
     engineDetourArgsSchema = typebox_exports.Object(
       {
         argv: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), {
@@ -19452,6 +19393,13 @@ var init_receipt_delivery_policy = __esm({
   }
 });
 
+// src/stream-idle-guard.ts
+var init_stream_idle_guard = __esm({
+  "src/stream-idle-guard.ts"() {
+    "use strict";
+  }
+});
+
 // src/evidence-child-executor.ts
 var init_evidence_child_executor = __esm({
   "src/evidence-child-executor.ts"() {
@@ -19460,7 +19408,6 @@ var init_evidence_child_executor = __esm({
     init_engine_detour_tool();
     init_engine_detour();
     init_engine_material();
-    init_package_owned_tool_idle();
     init_receipt_delivery_policy();
     init_reviewer_construction();
     init_stream_idle_guard();
@@ -19493,7 +19440,6 @@ var init_compliance_transport = __esm({
     init_build();
     init_evidence_child_executor();
     init_auditor_dossier_tool();
-    init_package_owned_tool_idle();
     nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
     decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
     complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
