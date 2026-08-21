@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import { Type, type Static } from "typebox";
 
 import { physicalPathIdentity, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
-import { resolveTaishiBookKey } from "./taishi-book-key.ts";
+import { isSyntheticTaishiBookKey, resolveTaishiBookKey } from "./taishi-book-key.ts";
 import {
   runTaishiCohortMode,
   type TaishiCohortModeInput,
@@ -466,18 +466,24 @@ export async function runTaishi(input: TaishiInput): Promise<TaishiResult> {
   if (input.mode === "cohort") {
     const ledgerHome = resolveActivationLedgerHome();
     return runTaishiCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber, bookKey }) => {
-      // Real ledger book keys drive book scope. Synthetic `root:<id>` address keys
-      // (sweep/legacy path-narrow) must not be used as books/ directory names.
-      // issueNumber labels the page/index join only — not a ticketNumber scan filter
-      // (cohort fixtures historically bind by projectRoot path, not typed ticket).
+      // Real ledger book keys drive book scope. Only `root:` + an absolute path
+      // is a synthetic sweep/legacy address key; a real book basename may be
+      // literally `root:foo` and must keep its book scope (U3, non-ambiguous
+      // bidirectional check — never a bare prefix test).
       const realBookKey =
-        bookKey !== undefined && !bookKey.startsWith("root:")
+        bookKey !== undefined && !isSyntheticTaishiBookKey(bookKey)
           ? bookKey
           : undefined;
+      // T4 revised (#413 r2 U2 owner decision, per #399 book×ticket identity):
+      // cohort issueNumber IS the ticketNumber. A cache-miss recompute filters
+      // by bookKey ∧ projectRoot ∧ invocation.ticketNumber; legacy runs without
+      // a typed ticket are excluded from the recompute — never merged into the
+      // issue page by path alone.
       const ensured = await readOrComputeTaishiIssuePage({
         mode: "issue",
         projectRoot,
         issueNumber,
+        ticketNumber: issueNumber,
         ...(realBookKey === undefined ? {} : { bookKey: realBookKey }),
       }, { scanProjectRoot: projectRoot });
       return ensured.page;

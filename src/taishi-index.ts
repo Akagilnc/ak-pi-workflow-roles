@@ -257,8 +257,10 @@ export function upsertTaishiLibraryIndexRows(
 
 /**
  * Read existing library index, or undefined when absent.
- * Single typed producer writes this file — JSON.parse failure is loud;
- * no bespoke shape validator on the self-read path.
+ * Single typed producer writes this file — JSON.parse failure is loud; a
+ * syntactically valid but malformed shape (null / non-object / rows not an
+ * array) is rejected at this sole read boundary with the file path and real
+ * shape, so no type assertion lets garbage reach consumers (#413 r2 U1).
  */
 export async function readTaishiLibraryIndexPage(
   ledgerHome: string,
@@ -277,12 +279,23 @@ export async function readTaishiLibraryIndexPage(
     }
     throw error;
   }
-  const parsed = JSON.parse(raw) as TaishiLibraryIndexPage;
-  if (parsed === null || typeof parsed !== "object" || !Array.isArray(parsed.rows)) {
-    return parsed;
+  const parsed: unknown = JSON.parse(raw);
+  if (
+    parsed === null
+    || typeof parsed !== "object"
+    || !Array.isArray((parsed as { readonly rows?: unknown }).rows)
+  ) {
+    const shape = parsed === null
+      ? "null"
+      : typeof parsed !== "object"
+      ? typeof parsed
+      : `object with non-array rows (${typeof (parsed as { rows?: unknown }).rows})`;
+    throw new Error(
+      `taishi library-index at ${path} is malformed (${shape}; expected an index page with a rows array) — rejected at the read boundary`,
+    );
   }
   // Heal legacy rows at the read boundary so every consumer sees defined bookKey.
-  return buildTaishiLibraryIndexPage(parsed.rows as TaishiLibraryIndexRow[]);
+  return buildTaishiLibraryIndexPage((parsed as TaishiLibraryIndexPage).rows);
 }
 
 /**

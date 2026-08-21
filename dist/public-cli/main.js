@@ -25034,6 +25034,7 @@ var init_reviewer_run = __esm({
 
 // src/taishi-book-key.ts
 import { statSync as statSync2 } from "node:fs";
+import { isAbsolute as isAbsolute5 } from "node:path";
 function resolveTaishiBookKey(projectRoot) {
   const identity = physicalPathIdentity(projectRoot);
   let stats;
@@ -25045,12 +25046,10 @@ function resolveTaishiBookKey(projectRoot) {
     throw error;
   }
   if (!stats.isDirectory()) return `root:${identity}`;
-  try {
-    return resolveBookKeyFromGit(identity);
-  } catch (error) {
-    if (error instanceof ActivationGitRepositoryRequiredError) return `root:${identity}`;
-    throw error;
-  }
+  return resolveBookKeyFromGit(identity);
+}
+function isSyntheticTaishiBookKey(bookKey) {
+  return bookKey.startsWith("root:") && isAbsolute5(bookKey.slice("root:".length));
 }
 var init_taishi_book_key = __esm({
   "src/taishi-book-key.ts"() {
@@ -25219,7 +25218,10 @@ async function readTaishiLibraryIndexPage(ledgerHome) {
   }
   const parsed = JSON.parse(raw);
   if (parsed === null || typeof parsed !== "object" || !Array.isArray(parsed.rows)) {
-    return parsed;
+    const shape = parsed === null ? "null" : typeof parsed !== "object" ? typeof parsed : `object with non-array rows (${typeof parsed.rows})`;
+    throw new Error(
+      `taishi library-index at ${path} is malformed (${shape}; expected an index page with a rows array) \u2014 rejected at the read boundary`
+    );
   }
   return buildTaishiLibraryIndexPage(parsed.rows);
 }
@@ -25316,7 +25318,7 @@ async function aggregateGroup(index, input, ensureIssuePage) {
     const { issueNumber, bookKey } = ref;
     const row = findTaishiLibraryIndexRow(index, issueNumber, bookKey);
     if (row === void 0) {
-      issueEntries.push({ issueNumber, status: "absent" });
+      issueEntries.push({ issueNumber, status: "absent", bookKey });
       continue;
     }
     const page = await ensureIssuePage({
@@ -27004,11 +27006,12 @@ async function runTaishi(input) {
   if (input.mode === "cohort") {
     const ledgerHome = resolveActivationLedgerHome();
     return runTaishiCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber, bookKey }) => {
-      const realBookKey = bookKey !== void 0 && !bookKey.startsWith("root:") ? bookKey : void 0;
+      const realBookKey = bookKey !== void 0 && !isSyntheticTaishiBookKey(bookKey) ? bookKey : void 0;
       const ensured = await readOrComputeTaishiIssuePage({
         mode: "issue",
         projectRoot,
         issueNumber,
+        ticketNumber: issueNumber,
         ...realBookKey === void 0 ? {} : { bookKey: realBookKey }
       }, { scanProjectRoot: projectRoot });
       return ensured.page;
@@ -27074,7 +27077,7 @@ var init_taishi_entry = __esm({
 
 // src/public-cli/taishi-run.ts
 import { readFile as readFile15 } from "node:fs/promises";
-import { isAbsolute as isAbsolute5, resolve as resolve7 } from "node:path";
+import { isAbsolute as isAbsolute6, resolve as resolve7 } from "node:path";
 function resolveTaishiIssueBookKeyFromCwd(cwd = process.cwd()) {
   try {
     return resolveBookKeyFromGit(cwd);
@@ -27123,7 +27126,7 @@ async function buildTaishiSweepModeInputFromAttachmentPaths(attachmentPaths) {
     );
   }
   const sourcePath = attachmentPaths[0];
-  const absolute = isAbsolute5(sourcePath) ? sourcePath : resolve7(sourcePath);
+  const absolute = isAbsolute6(sourcePath) ? sourcePath : resolve7(sourcePath);
   let bytes;
   try {
     bytes = await readFile15(absolute);

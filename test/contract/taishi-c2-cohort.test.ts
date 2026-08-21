@@ -10,7 +10,10 @@
  * Index rows come from the real issue-mode entry (no hand-written index assembly).
  * Index hit + page missing → #338 compute-if-missing (sole kernel) restores page;
  * index miss alone remains typed vacancy. Compute failure stays loud (not absent).
- * C2 fixture runs use exclusive runId segment 019ff000-2xxx.
+ * C2 fixture runs use exclusive runId segment 019ff000-2xxx and carry typed
+ * ticketNumbers matching their issue numbers — T4 revised (#413 r2 U2 owner
+ * decision): cohort issueNumber IS the ticketNumber, so a cache-miss recompute
+ * admits only invocation.ticketNumber-matching runs.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -244,7 +247,7 @@ test("taishi C2 cohort: side-by-side group metrics join index by issueNumber; va
           bookKey: `root:${physicalPathIdentity(ISSUE_203_ROOT)}`,
           projectRoot: physicalPathIdentity(ISSUE_203_ROOT),
         },
-        { issueNumber: 204, status: "absent" },
+        { issueNumber: 204, status: "absent", bookKey: absentRef(204).bookKey },
       ]);
 
       // ---- before group hand values ----
@@ -321,15 +324,17 @@ test("taishi C2 cohort: all-absent group yields typed vacancy aggregates (no 0/�
 
       assert.equal(left.groupLabel, "left");
       assert.deepEqual(left.issues, [
-        { issueNumber: 901, status: "absent" },
-        { issueNumber: 902, status: "absent" },
+        { issueNumber: 901, status: "absent", bookKey: absentRef(901).bookKey },
+        { issueNumber: 902, status: "absent", bookKey: absentRef(902).bookKey },
       ]);
       assert.deepEqual(left.byRole, []);
       assert.deepEqual(left.reworkRatio, ABSENT);
       assert.deepEqual(left.medianWallMs, ABSENT);
 
       assert.equal(right.groupLabel, "right");
-      assert.deepEqual(right.issues, [{ issueNumber: 903, status: "absent" }]);
+      assert.deepEqual(right.issues, [
+        { issueNumber: 903, status: "absent", bookKey: absentRef(903).bookKey },
+      ]);
       assert.deepEqual(right.byRole, []);
       assert.deepEqual(right.reworkRatio, ABSENT);
       assert.deepEqual(right.medianWallMs, ABSENT);
@@ -368,9 +373,11 @@ test("taishi C2 cohort: index hit + page missing recomputes via sole kernel (not
           projectRoot: physicalPathIdentity(ISSUE_201_ROOT),
         },
       ]);
-      // Right group index-miss stays typed vacancy (not a compute target).
+      // Right group index-miss stays typed vacancy (not a compute target);
+      // the vacancy carries the requested bookKey (U4) so cross-book same
+      // numbers stay self-describing.
       assert.deepEqual(result.groups[1]!.issues, [
-        { issueNumber: 999, status: "absent" },
+        { issueNumber: 999, status: "absent", bookKey: absentRef(999).bookKey },
       ]);
       // Page restored through sole writer entry.
       const restored = JSON.parse(

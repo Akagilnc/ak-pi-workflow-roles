@@ -207,7 +207,7 @@ test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other 
         bookKey: otherBook,
         projectRoot: otherRoot,
       },
-      { issueNumber, status: "absent" },
+      { issueNumber, status: "absent", bookKey: "no-such-book" },
     ]);
 
     // Same tracer, second leg (#412 T1 + T2): an all-book:N cohort from a
@@ -251,7 +251,7 @@ test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other 
         bookKey: otherBook,
         projectRoot: otherRoot,
       },
-      { issueNumber, status: "absent" },
+      { issueNumber, status: "absent", bookKey: "no-such-book" },
     ]);
     // Escaped comma round-trips to the single comma-bearing book key.
     assert.deepEqual(payloadExplicit.groups[1]!.issues, [
