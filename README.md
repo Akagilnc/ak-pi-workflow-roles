@@ -40,7 +40,7 @@ ak-role config unset-engine judge
 
 Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned. Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
 
-When a labor-engine detour fails and the seat continues the labor on the main road, the typed receipt may carry a mechanical `engineLaborFallback` field: `{ engine, failure, laborBy: "seat" }`. It appears only after a real detour failure that fell back to seat labor (including package-owned idle timeout on the detour tool)—not on detour success or caller cancel. First failure wins for the activation; model-forged `engineLaborFallback` keys are stripped unless the package latch recorded one. Sole producer: `src/engine-labor-fallback.ts`; decision record: [ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md). This README only projects that contract.
+When a labor-engine detour fails and the seat continues the labor on the main road, the typed receipt may carry a mechanical `engineLaborFallback` field: `{ engine, failure, laborBy: "seat" }`. It appears only after a real detour failure that fell back to seat labor—not on detour success or caller cancel. First failure wins for the activation; model-forged `engineLaborFallback` keys are stripped unless the package latch recorded one. Sole producer: `src/engine-labor-fallback.ts`; decision record: [ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md). This README only projects that contract.
 
 ## Call the roles
 

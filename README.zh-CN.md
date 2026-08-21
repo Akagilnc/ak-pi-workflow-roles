@@ -40,7 +40,7 @@ ak-role config unset-engine judge
 
 回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
 
-当劳务引擎绕行失败、座席回到主路继续劳务时，typed 回执可带机械字段 `engineLaborFallback`：`{ engine, failure, laborBy: "seat" }`。仅在真实绕行失败并座席顶班后出现（含 detour 工具命中 package-owned idle 超时）——成功绕行或调用方 cancel 不出现。同一次 activation 内先到先得；无包内 latch 时剥离模型伪造的 `engineLaborFallback` 键。唯一构造点：`src/engine-labor-fallback.ts`；决策记录：[ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)。本文只投影该契约。
+当劳务引擎绕行失败、座席回到主路继续劳务时，typed 回执可带机械字段 `engineLaborFallback`：`{ engine, failure, laborBy: "seat" }`。仅在真实绕行失败并座席顶班后出现——成功绕行或调用方 cancel 不出现。同一次 activation 内先到先得；无包内 latch 时剥离模型伪造的 `engineLaborFallback` 键。唯一构造点：`src/engine-labor-fallback.ts`；决策记录：[ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)。本文只投影该契约。
 
 ## 调用百官
 

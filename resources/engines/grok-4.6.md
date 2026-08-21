@@ -27,12 +27,11 @@ grok --prompt-file /path/to/labor-prompt.md -m grok-4.6 --always-approve --outpu
 - `--output-format plain` keeps stdout clean for capture — but it stays
   silent until the run finishes. **For labor longer than ~2 minutes use
   `--output-format streaming-json` instead**: it emits NDJSON events
-  (thought/text deltas) continuously from the first second, which keeps the
-  package idle watchdog fed (verified live 2026-08-21; a plain-format judge
-  run was killed by the 183s idle timeout). Reconstruct the final answer by concatenating each NDJSON
-  object's `data` where `type == "text"`, in stream order; `type == "end"`
-  (stopReason end_turn) marks completion. Do not treat `thought` events as
-  the answer (live-verified stream shape 2026-08-21).
+  (thought/text deltas) continuously from the first second, so long runs stay
+  observable instead of appearing hung. Reconstruct the final answer by
+  concatenating each NDJSON object's `data` where `type == "text"`, in stream
+  order; `type == "end"` (stopReason end_turn) marks completion. Do not treat
+  `thought` events as the answer (live-verified stream shape 2026-08-21).
 - Reasoning effort follows the host CLI defaults; grok effort tiers are
   low/med/high when a flag is exposed by the installed CLI version — check
   `grok --help` and follow the actual interface. Do not invent flags.
