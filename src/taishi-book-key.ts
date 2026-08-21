@@ -5,20 +5,20 @@
  * without a prior scan. Issue/sweep derivation and legacy library-index
  * healing must both call this rule — never a second copy of the fallback.
  *
- * Failure honesty: only failures that mean "Git cannot adjudicate this root"
- * become `root:` — the projectRoot itself being absent / not a directory /
- * unreachable through a plain-file path component (ENOTDIR — structurally the
- * same "no repository can live here" fact as ENOENT), and a git child that
- * ran and reported non-repository status (ActivationGitRepositoryRequiredError).
- * Git infrastructure failures
- * (missing/unreadable binary, OS errors, anything unknown) keep their own
- * identity and propagate loudly — never washed into a valid book key.
+ * Failure honesty: only failures that mean "this path can never host a
+ * repository" become `root:` — the projectRoot itself being absent / not a
+ * directory / unreachable through a plain-file path component (ENOTDIR —
+ * structurally the same "no repository can live here" fact as ENOENT).
+ * Every git child outcome keeps its own identity and propagates loudly —
+ * including nonzero exits the shared resolver wraps as
+ * ActivationGitRepositoryRequiredError: that type does not certify "non
+ * repository" (a dubious-ownership exit 128 is not a no-repo verdict), so
+ * washing it into a synthetic key would be silent identity drift (#413 r2 U5).
+ * The real cause is the loud carrier.
  */
 import { statSync } from "node:fs";
-import {
-  ActivationGitRepositoryRequiredError,
-  resolveBookKeyFromGit,
-} from "./activation-ledger-git.ts";
+import { isAbsolute } from "node:path";
+import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import { errnoCode, physicalPathIdentity } from "./activation-ledger-topology.ts";
 
 export function resolveTaishiBookKey(projectRoot: string): string {
@@ -34,10 +34,19 @@ export function resolveTaishiBookKey(projectRoot: string): string {
     throw error;
   }
   if (!stats.isDirectory()) return `root:${identity}`;
-  try {
-    return resolveBookKeyFromGit(identity);
-  } catch (error) {
-    if (error instanceof ActivationGitRepositoryRequiredError) return `root:${identity}`;
-    throw error;
-  }
+  // No Activation catch (#413 r2 U5): a nonzero git exit is an unconfirmed
+  // category — it must propagate with its real cause, never become `root:`.
+  return resolveBookKeyFromGit(identity);
+}
+
+/**
+ * #413 r2 U3: synthetic keys are exactly `root:` + an absolute path identity
+ * (the physicalPathIdentity face). A real Git book whose basename is literally
+ * `root:foo` is NOT synthetic — its remainder is not an absolute path. The
+ * check is bidirectional: real books are never misclassified by the prefix,
+ * and existing synthetic keys keep their path-scope meaning.
+ */
+export function isSyntheticTaishiBookKey(bookKey: string): boolean {
+  return bookKey.startsWith("root:")
+    && isAbsolute(bookKey.slice("root:".length));
 }

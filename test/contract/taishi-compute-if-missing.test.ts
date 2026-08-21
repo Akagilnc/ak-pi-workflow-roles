@@ -79,10 +79,14 @@ const NEG_ISSUE = 6699;
 /**
  * Hand oracles (ms):
  * issue-a coder 6001 completed wall 60_000
- * cohort-a coder 6002 completed wall 30_000
- * cohort-a sibling coder 6007 completed wall 90_000 (same book, other root —
+ * cohort-a coder 6002 completed wall 30_000 (typed ticketNumber 6601 — T4
+ *   revised #413 r2 U2: the cache-miss recompute filters invocation.ticketNumber)
+ * cohort-a coder 6007 completed wall 90_000 (same book, other root —
  *   must never leak into the cohort-a issue page on a cache-miss recompute)
- * cohort-b coder 6003 completed wall 20_000
+ * cohort-a coder 6004 completed wall 90_000 (same book, SAME root, but a
+ *   LEGACY run with no typed ticketNumber — pre-fix root-scan merged it into
+ *   the page; post-fix the ticket conjunction excludes it)
+ * cohort-b coder 6003 completed wall 20_000 (typed ticketNumber 6602)
  * models-a coder 6004 grok-4.5 completed wall 40_000
  * models-b coder 6005 sol-low completed wall 10_000
  * neg healthy coder 6006 completed wall 15_000 (write-failure subject only)
@@ -333,6 +337,9 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
       // The same-book sibling root's run stays out — scope widening would
       // inflate the page to [COHORT_A_RUN, COHORT_A_SIBLING_RUN] and
       // COHORT_A_WALL_MS + COHORT_A_SIBLING_WALL_MS.
+      // The same-root LEGACY run (6004, no typed ticket) stays out too —
+      // #413 r2 U2: ticket conjunction excludes ticketless runs from the
+      // cache-miss recompute; only the path filter would wrongly admit it.
       assert.equal(pageA.projectRoot, physicalPathIdentity(COHORT_A_ROOT));
       const pageB = JSON.parse(
         await readFile(taishiIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(COHORT_B_ROOT)}`, issueNumber: COHORT_ISSUE_B }), "utf8"),

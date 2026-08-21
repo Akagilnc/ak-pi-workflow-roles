@@ -69,6 +69,8 @@ export type TaishiCohortIssueEntry =
   | {
       readonly issueNumber: number;
       readonly status: "absent";
+      /** Requested book scope — cross-book same-number vacancies stay self-describing (#413 r2 U4). */
+      readonly bookKey: string;
     };
 
 /** Per-role contrast stats within one cohort group. */
@@ -170,7 +172,9 @@ async function aggregateGroup(
     const row = findTaishiLibraryIndexRow(index, issueNumber, bookKey);
     if (row === undefined) {
       // Only "index has no such row in this book" is typed vacancy.
-      issueEntries.push({ issueNumber, status: "absent" });
+      // The requested bookKey rides along so book-a:12 and book-b:12 absences
+      // are distinguishable (#413 r2 U4).
+      issueEntries.push({ issueNumber, status: "absent", bookKey });
       continue;
     }
 
