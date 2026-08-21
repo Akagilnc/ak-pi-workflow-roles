@@ -8,6 +8,7 @@ const entries = [
   "public-command-renderer",
   "work-subject-identity",
   "navigator-invocation-identity",
+  "engine-labor-fallback",
   "navigator-attendance",
   "activation-ledger-git",
   "activation-ledger-topology",

@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import { canonicalJson } from "./canonical-json.js";
+import { seatFallbackBaseStatus } from "./engine-labor-fallback.js";
 import { openToolObjectFromUnion } from "./open-tool-schema.js";
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
@@ -66,13 +67,16 @@ catch {
 } }
 export function validateDoctorSubmissionShape(value) {
     const status = read(value, "status");
-    if (status !== "completed" && status !== "refused")
+    const base = typeof status === "string" ? seatFallbackBaseStatus(status) : status;
+    if (base !== "completed" && base !== "refused")
         throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
     return value;
 }
 export function validateRecordedDoctorOutput(value) {
     const output = validateDoctorSubmissionShape(value);
-    if (read(output, "status") === "completed" && read(output, "cost") === undefined)
+    const status = read(output, "status");
+    const base = typeof status === "string" ? seatFallbackBaseStatus(status) : status;
+    if (base === "completed" && read(output, "cost") === undefined)
         throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
     return output;
 }
