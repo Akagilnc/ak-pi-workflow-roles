@@ -4,7 +4,7 @@
  * 1) Ticket face must actually filter — never return a full-book page labeled
  *    issueNumber=N; no silent projectRoot fallback for unbound runs.
  * 2) Scope unit is the ledger book (cwd git common-dir); bare call = whole book
- *    across worktrees; --project-root issue face deleted (loud reject).
+ *    across worktrees; --project-root deleted unconditionally (loud reject).
  * 3) --ticket N computes live from the book; library-index is not a bootstrap
  *    prerequisite (no "run once before you can query" dead loop).
  *

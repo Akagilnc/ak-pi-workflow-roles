@@ -1,10 +1,11 @@
 /**
  * #338 taishi on-demand retrieval — compute-if-missing (owner 2026-08-14).
  *
- * Public surface (reuse #336 PUBLIC_ROLE_ARGV taishi row) exposes three typed
- * reads: issue / cohort / model-groups. Unified semantics: in-scope issue with
- * a page → use it; missing page → sync-await sole compute kernel, write via the
- * existing page entry, then return the full result. No pending/async envelope.
+ * Public surface (reuse #336 PUBLIC_ROLE_ARGV taishi row) exposes issue / cohort
+ * reads; model-groups public CLI face disabled (#399) — library kernel retained
+ * and still proven here. Unified semantics: in-scope issue with a page → use it;
+ * missing page → sync-await sole compute kernel, write via the existing page
+ * entry, then return the full result. No pending/async envelope.
  * Whole-compute failure is typed terminal for this pull (names issue + real cause);
  * never washed to absent. Single-run unreadable/damaged keeps PRD #298 exclusion
  * (page-local), and does not fail the whole retrieval.
@@ -324,7 +325,8 @@ test("taishi #338 cohort compute-if-missing: uncomputed issues → pages written
   });
 });
 
-test("taishi #338 model-groups compute-if-missing: uncomputed roots → pages written + hand groups", async () => {
+test("taishi #338 model-groups library compute-if-missing: uncomputed roots → pages written + hand groups", async () => {
+  // #399: public --model-groups/--project-root deleted; library kernel retained.
   await withBusinessRepo(async () => {
     await withTempHome(async (home) => {
       const ledgerHome = join(home, ".ak-roles");
@@ -334,26 +336,11 @@ test("taishi #338 model-groups compute-if-missing: uncomputed roots → pages wr
       assert.equal(beforePages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(MODELS_A_ROOT)}`, scopeRootIdentity: MODELS_A_ROOT })}.json`), false);
       assert.equal(beforePages.includes(`${taishiIssuePageKey({ bookKey: `root:${physicalPathIdentity(MODELS_B_ROOT)}`, scopeRootIdentity: MODELS_B_ROOT })}.json`), false);
 
-      const { io, stdout, stderr } = captureIo();
-      const result = await runAkRole(
-        [
-          "taishi",
-          "--model-groups",
-          "--project-root",
-          MODELS_A_ROOT,
-          "--project-root",
-          MODELS_B_ROOT,
-        ],
-        { packageRoot, home, io },
-      );
+      const body = await runTaishi({
+        mode: "model-groups",
+        projectRoots: [MODELS_A_ROOT, MODELS_B_ROOT],
+      });
 
-      assert.equal(result.exitCode, 0, stderr.join(""));
-      assert.equal(stderr.join(""), "");
-
-      const body = JSON.parse(stdout.join("")) as {
-        mode: string;
-        page: TaishiModelGroupsPage;
-      };
       assert.equal(body.mode, "model-groups");
       assert.equal(body.page.kind, "taishi-model-groups");
       assert.equal(body.page.legCount, 2);

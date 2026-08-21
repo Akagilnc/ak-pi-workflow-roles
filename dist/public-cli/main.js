@@ -15597,7 +15597,6 @@ function resolveTaishiMode(presentOptionIds) {
   }
   if (selected.size === 0) return TAISHI_DEFAULT_MODE;
   if (selected.has("cohort")) return "cohort";
-  if (selected.has("model-groups")) return "model-groups";
   if (selected.has("sweep")) return "sweep";
   if (selected.has("issue")) return "issue";
   return TAISHI_DEFAULT_MODE;
@@ -15627,12 +15626,6 @@ function evaluateTaishiModeOptionContract(mode, counts) {
           message: `taishi sweep --attach cannot combine with ${def.canonical}`
         };
       }
-      if (mode === "issue" && def.id === "project-root") {
-        return {
-          ok: false,
-          message: "taishi issue query no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)"
-        };
-      }
       return {
         ok: false,
         message: `taishi ${mode} does not accept ${def.canonical}`
@@ -15659,12 +15652,6 @@ function evaluateTaishiModeOptionContract(mode, counts) {
         message: "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]"
       };
     }
-    if (mode === "model-groups") {
-      return {
-        ok: false,
-        message: "usage: ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]"
-      };
-    }
     return {
       ok: false,
       message: `usage: ak-role taishi ${mode} requires ${missingRequired.map((def) => def.canonical).join(" ")}`
@@ -15677,7 +15664,7 @@ function evaluateTaishiModeOptionContract(mode, counts) {
     if (mode === "issue") {
       return {
         ok: false,
-        message: "usage: ak-role taishi ([--ticket <N>] | [sweep] --attach <sweep.json> | --cohort ... | --model-groups ...)"
+        message: "usage: ak-role taishi ([--ticket <N>] | [sweep] --attach <sweep.json> | --cohort ...)"
       };
     }
     const flags = rule.optionIds.map((id) => byId.get(id)?.canonical ?? id).join(" | ");
@@ -15873,6 +15860,22 @@ var init_option_definitions = __esm({
         reason: {
           en: "Merger input packet is assembled internally; not a public flag.",
           zh: "\u6821\u4E66\u90CE input packet \u7531\u5185\u90E8\u88C5\u914D\uFF0C\u4E0D\u662F\u516C\u5F00\u65D7\u6807\u3002"
+        }
+      },
+      {
+        owner: "taishi",
+        spellings: ["--project-root"],
+        reason: {
+          en: "Deleted (#399). taishi no longer accepts --project-root; use bare call for whole book or --ticket N (cwd git common-dir selects the book).",
+          zh: "\u5DF2\u5220\u9664\uFF08#399\uFF09\u3002taishi \u4E0D\u518D\u63A5\u53D7 --project-root\uFF1B\u88F8\u8C03\u7528=\u6574\u7C3F\uFF0C\u6216 --ticket N\uFF08cwd git common-dir \u5B9A\u7C3F\uFF09\u3002"
+        }
+      },
+      {
+        owner: "taishi",
+        spellings: ["--model-groups"],
+        reason: {
+          en: "Public CLI face disabled (#399). Input face is being redesigned for multi-issue comparison (see follow-up ticket). Library kernel retained.",
+          zh: "\u516C\u5F00 CLI \u9762\u5DF2\u505C\u7528\uFF08#399\uFF09\u3002\u8F93\u5165\u9762\u6309\u591A issue \u91CD\u8BBE\u8BA1\u4E2D\uFF08\u89C1\u540E\u7EED\u7968\uFF09\u3002\u805A\u5408\u5185\u6838\u4FDD\u7559\u3002"
         }
       }
     ];
@@ -16164,23 +16167,6 @@ var init_option_definitions = __esm({
         }
       },
       {
-        id: "project-root",
-        owner: "taishi",
-        canonical: "--project-root",
-        aliases: [],
-        valueMetavar: "path",
-        required: false,
-        repeatable: true,
-        form: "option",
-        // #399: deleted from issue query face; retained only for model-groups scope set.
-        modes: ["model-groups"],
-        requiredInModes: ["model-groups"],
-        description: {
-          en: "Model-groups issue-set scope roots (one or more required). Not an issue-query face (#399 deleted --project-root from issue).",
-          zh: "model-groups \u8BAE\u9898\u96C6\u5408\u6839\uFF08\u4E00\u4E2A\u6216\u591A\u4E2A\u4E14\u5FC5\u586B\uFF09\u3002\u4E0D\u662F issue \u67E5\u8BE2\u9762\uFF08#399 \u5DF2\u4ECE issue \u5220\u9664 --project-root\uFF09\u3002"
-        }
-      },
-      {
         id: "ticket",
         owner: "taishi",
         canonical: "--ticket",
@@ -16223,28 +16209,10 @@ var init_option_definitions = __esm({
         repeatable: false,
         form: "option",
         modes: ["cohort"],
-        exclusiveWith: ["model-groups"],
         selectsMode: "cohort",
         description: {
-          en: "Select cohort mode (mutually exclusive with --model-groups).",
-          zh: "\u9009\u62E9 cohort \u6A21\u5F0F\uFF08\u4E0E --model-groups \u4E92\u65A5\uFF09\u3002"
-        }
-      },
-      {
-        id: "model-groups",
-        owner: "taishi",
-        canonical: "--model-groups",
-        aliases: [],
-        valueMetavar: null,
-        required: false,
-        repeatable: false,
-        form: "option",
-        modes: ["model-groups"],
-        exclusiveWith: ["cohort"],
-        selectsMode: "model-groups",
-        description: {
-          en: "Select model-groups mode (mutually exclusive with --cohort).",
-          zh: "\u9009\u62E9 model-groups \u6A21\u5F0F\uFF08\u4E0E --cohort \u4E92\u65A5\uFF09\u3002"
+          en: "Select cohort mode.",
+          zh: "\u9009\u62E9 cohort \u6A21\u5F0F\u3002"
         }
       },
       {
@@ -16399,12 +16367,11 @@ var init_option_definitions = __esm({
       },
       taishi: {
         command: "taishi",
-        summary: "Deterministic analysis seat (issue / sweep / cohort / model-groups).",
+        summary: "Deterministic analysis seat (issue / sweep / cohort).",
         usage: [
           "ak-role taishi [--ticket <N>]",
           "ak-role taishi [sweep] --attach <path>",
-          "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>",
-          "ak-role taishi --model-groups --project-root <P> [--project-root <P> ...]"
+          "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N[,N...]> --group-b-label <L> --group-b-issues <N[,N...]>"
         ],
         examples: [
           "ak-role taishi",
@@ -17882,13 +17849,6 @@ function parseTaishiArgv(args) {
         pushValue("ticket", taken.value);
         continue;
       }
-      if (taken.def.id === "project-root") {
-        pushValue(
-          "project-root",
-          requireOptionPath(taken.def.canonical, taken.value)
-        );
-        continue;
-      }
       if (taken.def.id === "attach") {
         pushValue(
           "attach",
@@ -17917,6 +17877,19 @@ function parseTaishiArgv(args) {
       throw new CliUsageError(`unknown taishi option: ${taken.def.canonical}`);
     }
     const token = tokens.shift();
+    if (isRejectedPublicSpelling("taishi", token)) {
+      if (token === "--project-root" || token.startsWith("--project-root=")) {
+        throw new CliUsageError(
+          "taishi no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)"
+        );
+      }
+      if (token === "--model-groups" || token.startsWith("--model-groups=")) {
+        throw new CliUsageError(
+          "taishi --model-groups public CLI face is disabled; input face is being redesigned for multi-issue comparison (see follow-up ticket)"
+        );
+      }
+      throw new CliUsageError(`unknown taishi option: ${token}`);
+    }
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown taishi option: ${token}`);
     }
@@ -17956,12 +17929,6 @@ function parseTaishiArgv(args) {
       ]
     };
   }
-  if (mode === "model-groups") {
-    return {
-      query: "model-groups",
-      projectRoots: valueLists.get("project-root") ?? []
-    };
-  }
   if (mode === "sweep") {
     return {
       query: "sweep",
@@ -17969,11 +17936,9 @@ function parseTaishiArgv(args) {
     };
   }
   const ticketRaw = valueLists.get("ticket")?.[0];
-  const projectRoot = valueLists.get("project-root")?.[0];
   return {
     query: "issue",
-    ...ticketRaw === void 0 ? {} : { ticket: parseTaishiTicketNumber(ticketRaw) },
-    ...projectRoot === void 0 ? {} : { projectRoot }
+    ...ticketRaw === void 0 ? {} : { ticket: parseTaishiTicketNumber(ticketRaw) }
   };
 }
 var MergerEnvelopeDerivationError, DOCTOR_ISSUE_NUMBER_PATTERN, DOCTOR_CASE_RUNS_PATH_PATTERN, TAISHI_TICKET_NUMBER_PATTERN;
@@ -27097,15 +27062,6 @@ async function runPublicTaishi(argv, _env, io, parseTaishiArgv2) {
       const result3 = await runTaishi({
         mode: "cohort",
         groups: parsed.groups
-      });
-      io.stdout(`${JSON.stringify(result3, null, 2)}
-`);
-      return { exitCode: 0 };
-    }
-    if (parsed.query === "model-groups") {
-      const result3 = await runTaishi({
-        mode: "model-groups",
-        projectRoots: parsed.projectRoots
       });
       io.stdout(`${JSON.stringify(result3, null, 2)}
 `);

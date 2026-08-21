@@ -192,11 +192,9 @@ ak-role merger --project /path/to/worktree "Reconcile the active merge."
 | 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sweep` | — | — | 否 | 否 | positional | modes=sweep | 可选 sweep 模式词元（至多一次；不得夹带其他 positional）。 |
-| `--project-root` | — | `path` | 条件:model-groups | 是 | option | modes=model-groups | model-groups 议题集合根（一个或多个且必填）。不是 issue 查询面（#399 已从 issue 删除 --project-root）。 |
 | `--ticket` | — | `number` | 否 | 否 | option | modes=issue | 票号；在 cwd 候簿（git common-dir）内按 invocation.ticketNumber 现取现算。裸调用=整簿。不依赖 library-index 自举。 |
 | `--attach` | — | `path` | 条件:sweep | 是 | option | modes=sweep; max=sweep:1 | sweep 模式附件路径；sweep 必填且恰一次；载荷为附件正文。 |
-| `--cohort` | — | — | 否 | 否 | option | modes=cohort; xor=model-groups | 选择 cohort 模式（与 --model-groups 互斥）。 |
-| `--model-groups` | — | — | 否 | 否 | option | modes=model-groups; xor=cohort | 选择 model-groups 模式（与 --cohort 互斥）。 |
+| `--cohort` | — | — | 否 | 否 | option | modes=cohort | 选择 cohort 模式。 |
 | `--group-a-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort A 组标签（cohort 模式必填）。 |
 | `--group-a-issues` | — | `N[,N...]` | 条件:cohort | 否 | option | modes=cohort | cohort A 组逗号分隔正整数 issue 列表（cohort 模式必填）。 |
 | `--group-b-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort B 组标签（cohort 模式必填）。 |
