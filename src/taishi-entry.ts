@@ -81,20 +81,19 @@ function isMissingPathError(error: unknown): boolean {
   );
 }
 
-/** Issue-mode typed input — single-issue scope via projectRoot mechanical key. */
+/** Issue-mode typed input — book-first scope (#399); projectRoot is book pointer / page key. */
 export type TaishiIssueModeInput = {
   readonly mode: "issue";
   readonly projectRoot: string;
   /**
-   * C4: caller typed ticket face (#176). When set, issue 圈定 prefers matching
-   * invocation.ticketNumber; runs without ticketNumber fall back to projectRoot.
+   * C4/#399: caller typed ticket face (#176). When set, issue 圈定 admits only
+   * matching invocation.ticketNumber — no silent projectRoot fallback.
    */
   readonly ticketNumber?: number;
   /**
-   * Losing caller projectRoot when typed ticket/index root already won
-   * (public CLI dual-param: --ticket index hit over concurrent --project-root).
-   * When set and identity-distinct from projectRoot, page records the C4
-   * typed-ticketNumber-over-projectRoot fact for this call — no ledger alien run required.
+   * Optional call-face conflict carrier (legacy dual-param). When set and
+   * identity-distinct from projectRoot with a ticket, page records the C4
+   * typed-ticketNumber-over-projectRoot fact for this call.
    */
   readonly conflictingProjectRoot?: string;
   /**

@@ -1,9 +1,9 @@
 /**
- * Public taishi adapter (#336/#337/#338): argv → typed query → runTaishi family.
+ * Public taishi adapter (#336/#337/#338/#399): argv → typed query → runTaishi family.
  * Deterministic analysis seat — no Pi runner, no admission lease.
  * Reuses existing CLI failure envelope (CliUsageError + structural reject +
  * ControlledFailure).
- * Index read reuses readTaishiLibraryIndexPage / findTaishiLibraryIndexRow.
+ * #399: --ticket N computes live from the ledger book — no library-index bootstrap.
  * #337 sweep: exactly one typed JSON attachment → TaishiSweepModeInput → #329 kernel.
  * #338: three query faces; sync compute-if-missing; whole-compute failure →
  * ControlledFailure terminal (code/projectRoot/issueNumber/real cause).
@@ -15,14 +15,9 @@ import { Value } from "typebox/value";
 
 import {
   errnoCode,
-  physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { exactUtf8 } from "../exact-utf8.ts";
-import {
-  findTaishiLibraryIndexRow,
-  readTaishiLibraryIndexPage,
-} from "../taishi-index.ts";
 import {
   readOrComputeTaishiIssuePage,
   runTaishi,
@@ -44,17 +39,16 @@ export type TaishiRunEnv = {
 };
 
 /**
- * Build the sole library issue-mode input from public argv faces.
- * - ticket N → issueNumber = ticketNumber = N; projectRoot from index (or project-root fallback).
- * - project-root P → direct mechanical key.
- * - both + index hit → index projectRoot wins; when direct root differs, retain it as
- *   conflictingProjectRoot so runTaishi records the C4 dual-param conflict fact on the page.
- * - both + index miss → project-root fallback.
+ * Build the sole library issue-mode input from public argv faces (#399).
+ * - ticket N → issueNumber = ticketNumber = N; live book compute (no library-index bootstrap).
+ * - project-root P → book pointer (git common-dir) / path-narrow face for the scan.
+ * - both → project-root selects the book; ticket filters inside it.
+ * - bare ticket → cwd is the book pointer (must be a git tree for book resolve).
  * Bare both-missing is owned by parseTaishiArgv — no second reject here.
  */
 export async function buildTaishiIssueModeInputFromPublicArgv(
   parsed: ParseTaishiIssueArgv,
-  ledgerHome: string,
+  _ledgerHome: string,
 ): Promise<TaishiIssueModeInput> {
   const ticket = parsed.ticket;
   const directRoot = parsed.projectRoot;
@@ -66,36 +60,14 @@ export async function buildTaishiIssueModeInputFromPublicArgv(
     };
   }
 
-  // ticket N = issueNumber (no conversion); also the C4 typed ticket face.
-  const index = await readTaishiLibraryIndexPage(ledgerHome);
-  const row = findTaishiLibraryIndexRow(index, ticket);
-
-  let projectRoot: string;
-  if (row !== undefined) {
-    // Ticket-resolved index projectRoot wins over any concurrent --project-root.
-    projectRoot = row.projectRoot;
-  } else if (directRoot !== undefined) {
-    // Index miss with project-root fallback (ticket faces still set for C4).
-    projectRoot = directRoot;
-  } else {
-    throw new CliUsageError(
-      `taishi library index has no row for ticket ${ticket}`,
-    );
-  }
-
-  // Dual-param conflict: index root won, but caller also supplied a distinct --project-root.
-  // Carry the losing root so the metrics page records the call-face conflict fact.
-  const dualParamConflict =
-    row !== undefined
-    && directRoot !== undefined
-    && physicalPathIdentity(directRoot) !== physicalPathIdentity(projectRoot);
-
+  // ticket N = issueNumber (no conversion); C4 typed ticket face.
+  // Live from the book — index is not a prerequisite (defect 3 dead-loop removed).
+  const projectRoot = directRoot ?? process.cwd();
   return {
     mode: "issue",
     projectRoot,
     ticketNumber: ticket,
     issueNumber: ticket,
-    ...(dualParamConflict ? { conflictingProjectRoot: directRoot } : {}),
   };
 }
 
