@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { canonicalJson } from "./canonical-json.js";
-import { seatFallbackBaseStatus } from "./engine-labor-fallback.js";
+import { seatFallbackBaseStatus, seatFallbackStatusHasLawfulEvidence, } from "./engine-labor-fallback.js";
 import { openToolObjectFromUnion } from "./open-tool-schema.js";
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
@@ -70,6 +70,10 @@ export function validateDoctorSubmissionShape(value) {
     const base = typeof status === "string" ? seatFallbackBaseStatus(status) : status;
     if (base !== "completed" && base !== "refused")
         throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+    // ADR 0071: tainted status requires latch-shaped engineLaborFallback evidence.
+    if (typeof status === "string" && !seatFallbackStatusHasLawfulEvidence(status, value)) {
+        throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+    }
     return value;
 }
 export function validateRecordedDoctorOutput(value) {

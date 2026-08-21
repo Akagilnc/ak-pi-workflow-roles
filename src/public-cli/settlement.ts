@@ -37,6 +37,7 @@ import { ENGINE_DETOUR_TOOL_NAME } from "../engine-detour.ts";
 import {
   readEngineLaborFallbackFieldFrom,
   seatFallbackBaseStatus,
+  seatFallbackStatusHasLawfulEvidence,
 } from "../engine-labor-fallback.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
@@ -2004,6 +2005,8 @@ export function extractJudgeRoleOutcome(
     const judgeStatus = statusRead.value;
     const statusBase = seatFallbackBaseStatus(judgeStatus);
     if (statusBase !== "converged" && statusBase !== "continue" && statusBase !== "escalate") continue;
+    // ADR 0071: `-by-fallback` without latch-shaped evidence is not a lawful terminal.
+    if (!seatFallbackStatusHasLawfulEvidence(judgeStatus, details)) continue;
     return {
       kind: "accepted",
       role: "judge",

@@ -6,7 +6,7 @@ import { COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, validateAcceptedCollect
 import { JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, validateAcceptedJudgeDetails, } from "./judge-output.js";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, } from "./reviewer-output.js";
 import { isAuditEscalationResult } from "../audit-escalation.js";
-import { seatFallbackBaseStatus } from "../engine-labor-fallback.js";
+import { seatFallbackBaseStatus, seatFallbackStatusHasLawfulEvidence, } from "../engine-labor-fallback.js";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput } from "../doctor-contracts.js";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput } from "../merger-contracts.js";
 import { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, validateAcceptedWorkerDetails, } from "./worker-output.js";
@@ -81,9 +81,14 @@ export function validateAcceptedDetails(toolName, details) {
     };
     const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
     const baseDiscriminator = typeof discriminator === "string" ? seatFallbackBaseStatus(discriminator) : discriminator;
+    // ADR 0071: `-by-fallback` is not independently lawful — require latch-shaped evidence.
+    const taintedWithoutEvidence = typeof discriminator === "string" &&
+        !seatFallbackStatusHasLawfulEvidence(discriminator, details);
     const runtimeBindingMissing = (toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
         (toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2);
-    if (runtimeBindingMissing || (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator)))) {
+    if (taintedWithoutEvidence ||
+        runtimeBindingMissing ||
+        (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator)))) {
         throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
     }
     try {

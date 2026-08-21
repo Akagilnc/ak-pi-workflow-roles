@@ -152,6 +152,10 @@ function isSeatFallbackTaintedStatus(status) {
 function seatFallbackBaseStatus(status) {
   return isSeatFallbackTaintedStatus(status) ? status.slice(0, -SEAT_FALLBACK_STATUS_SUFFIX.length) : status;
 }
+function seatFallbackStatusHasLawfulEvidence(status, source) {
+  if (!isSeatFallbackTaintedStatus(status)) return true;
+  return readEngineLaborFallbackFieldFrom(source) !== void 0;
+}
 function readEngineLaborFallbackFieldFrom(source) {
   if (typeof source !== "object" || source === null || Array.isArray(source)) {
     return void 0;
@@ -189,7 +193,11 @@ function validateAcceptedJudgeDetails(verdict) {
   } catch {
     throw new Error("Judge verdict has no execution discriminator");
   }
-  if (["converged", "continue", "escalate"].includes(seatFallbackBaseStatus(String(judgeStatus)))) {
+  if (typeof judgeStatus !== "string") {
+    throw new Error("Judge verdict has no execution discriminator");
+  }
+  const base = seatFallbackBaseStatus(judgeStatus);
+  if (["converged", "continue", "escalate"].includes(base) && seatFallbackStatusHasLawfulEvidence(judgeStatus, verdict)) {
     return verdict;
   }
   throw new Error("Judge verdict has no execution discriminator");
@@ -216,6 +224,10 @@ function read(value, key) {
   }
 }
 function validateRuntimeReviewerReceipt(output) {
+  const status = read(output, "status");
+  if (typeof status === "string" && !seatFallbackStatusHasLawfulEvidence(status, output)) {
+    throw new Error("Reviewer receipt has no recognized execution discriminator");
+  }
   const acceptedBatch = read(output, "acceptedBatch");
   const identities = read(output, "identities");
   const construction = read(identities, "construction");
@@ -246,11 +258,11 @@ function validateRuntimeReviewerReceipt(output) {
       const expectedPrompt = read(read(legs[index], "prompt"), "text");
       const actualPrompt = read(read(outcome, "prompt"), "text");
       if (expectedPrompt !== actualPrompt) throw new Error("Reviewer outcome prompt disagrees with accepted leg");
-      const status = read(outcome, "status");
+      const status2 = read(outcome, "status");
       const report = read(reports, axis);
-      if (status === "successful" && report === void 0)
+      if (status2 === "successful" && report === void 0)
         throw new Error("Successful Reviewer outcome lacks report");
-      if (status === "failed" && report !== void 0) throw new Error("Failed Reviewer outcome cannot bind a report");
+      if (status2 === "failed" && report !== void 0) throw new Error("Failed Reviewer outcome cannot bind a report");
     }
     const specDisposition = read(output, "specDisposition");
     if (specDisposition === "launched") {
@@ -14136,6 +14148,9 @@ function validateDoctorSubmissionShape(value) {
   const status = read2(value, "status");
   const base = typeof status === "string" ? seatFallbackBaseStatus(status) : status;
   if (base !== "completed" && base !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  if (typeof status === "string" && !seatFallbackStatusHasLawfulEvidence(status, value)) {
+    throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  }
   return value;
 }
 function validateRecordedDoctorOutput(value) {
@@ -14295,7 +14310,11 @@ function validateMergerInput(value) {
 }
 function validateMergerOutput(value, expectedAttemptId) {
   if (!record(value) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("Merger output attempt mismatch");
-  const statusBase = typeof value.status === "string" ? seatFallbackBaseStatus(value.status) : void 0;
+  const status = typeof value.status === "string" ? value.status : void 0;
+  const statusBase = status !== void 0 ? seatFallbackBaseStatus(status) : void 0;
+  if (status !== void 0 && !seatFallbackStatusHasLawfulEvidence(status, value)) {
+    throw new Error("Merger output has no recognized execution discriminator");
+  }
   if (statusBase === "completed" && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
   if (statusBase === "escalate") return structuredClone(value);
   throw new Error("Merger output has no recognized execution discriminator");
@@ -15245,8 +15264,9 @@ function validateAcceptedDetails(toolName, details) {
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = typeof discriminator === "string" ? seatFallbackBaseStatus(discriminator) : discriminator;
+  const taintedWithoutEvidence = typeof discriminator === "string" && !seatFallbackStatusHasLawfulEvidence(discriminator, details);
   const runtimeBindingMissing = toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object") || toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2;
-  if (runtimeBindingMissing || !collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator))) {
+  if (taintedWithoutEvidence || runtimeBindingMissing || !collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator))) {
     throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
   }
   try {
@@ -21122,6 +21142,7 @@ function extractJudgeRoleOutcome(entries) {
     const judgeStatus = statusRead.value;
     const statusBase = seatFallbackBaseStatus(judgeStatus);
     if (statusBase !== "converged" && statusBase !== "continue" && statusBase !== "escalate") continue;
+    if (!seatFallbackStatusHasLawfulEvidence(judgeStatus, details)) continue;
     return {
       kind: "accepted",
       role: "judge",
