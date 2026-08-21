@@ -28,7 +28,6 @@ import {
   installActivationEngineLaborFallbackLatch,
   restoreEngineLaborFallbackFromSessionEntries,
 } from "./engine-labor-fallback.ts";
-import { installPackageOwnedToolRegistration } from "./package-owned-tool-idle.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
 
@@ -575,8 +574,6 @@ export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
-    // #102: one shared package-owned tool registration surface for all role runtimes.
-    installPackageOwnedToolRegistration(pi);
     pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
     for (const flag of REVIEWER_TRANSPORT_FLAGS) {

@@ -44,11 +44,6 @@ export type EngineDetourRunInput = Readonly<{
   cwd: string;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
-  /**
-   * Called when the child emits at least one byte on stdout or stderr.
-   * Host wires this to the package-owned idle clock (activity = touch); no timer here.
-   */
-  onOutputActivity?: () => void;
 }>;
 
 function abortReasonError(signal: AbortSignal): Error {
@@ -78,8 +73,8 @@ export async function runEngineDetourOnce(
   return await new Promise<EngineDetourResult>((resolve, reject) => {
     let settled = false;
     const signal = input.signal;
-    // Own abort→kill explicitly so rejection preserves signal.reason (caller cancel
-    // vs package-owned idle). Do not pass `signal` to spawn (Node replaces reason).
+    // Own abort→kill explicitly so rejection preserves signal.reason (caller cancel).
+    // Do not pass `signal` to spawn (Node replaces reason).
     const child = spawn(command, args, {
       cwd: input.cwd,
       env: input.env ?? process.env,
@@ -87,17 +82,11 @@ export async function runEngineDetourOnce(
     });
     let stdout = "";
     let stderr = "";
-    const noteActivity = (chunk: string): void => {
-      if (chunk.length === 0) return;
-      input.onOutputActivity?.();
-    };
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
       stdout += chunk;
-      noteActivity(chunk);
     });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
       stderr += chunk;
-      noteActivity(chunk);
     });
     const fail = (error: unknown): void => {
       if (settled) return;
@@ -116,8 +105,7 @@ export async function runEngineDetourOnce(
       resolve(result);
     };
     const onAbort = (): void => {
-      // Fail synchronously so cooperative idle/cancel paths can soft-settle
-      // before the outer package-owned idle hard-reject drain.
+      // Fail synchronously so caller-cancel soft-settle preserves signal.reason.
       fail(signal !== undefined ? abortReasonError(signal) : new Error("aborted"));
       try {
         child.kill("SIGTERM");
