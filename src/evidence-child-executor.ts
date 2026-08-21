@@ -36,7 +36,6 @@ import {
   engineSessionMaterialFromOptions,
   type EngineSessionMaterial,
 } from "./package-resources/engine-material.ts";
-import { wrapPackageOwnedToolDefinition } from "./package-owned-tool-idle.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
@@ -750,7 +749,7 @@ export async function executeAuditorChild(
     let decisionToolFailure: unknown;
     const decisionToolFailures = new Map<string, unknown>();
     const delivery = createReceiptDeliveryPolicy();
-    const tool = wrapPackageOwnedToolDefinition({
+    const tool = {
       ...options.tool,
       label: options.roleLabel,
       async execute(...args: any[]) {
@@ -775,7 +774,7 @@ export async function executeAuditorChild(
           throw error;
         }
       },
-    });
+    };
 
     const parentSessionManager = options.context.sessionManager;
     const parentHeader = parentSessionManager?.getHeader?.();
@@ -796,7 +795,7 @@ export async function executeAuditorChild(
       thinkingLevel: options.context.thinkingLevel ?? "off",
       modelRuntime: inherited.runtime,
       systemPrompt: options.systemPrompt,
-      customTools: [wrapPackageOwnedToolDefinition({ ...options.dossierTool, label: options.roleLabel }), tool],
+      customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],
       sessionManager: auditorSessionManager,
     });
 

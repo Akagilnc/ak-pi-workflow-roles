@@ -33,8 +33,8 @@ claude -p --model opus --verbose --output-format=stream-json "YOUR_LABOR_PROMPT"
 ```
 
 Use `--output-format=stream-json` (choices measured on this host: `text`, `json`,
-`stream-json`) so the package idle clock can see subprocess activity while the
-engine works; take the labor body from the final `result` event's `result` field,
+`stream-json`) when long labor needs progressive observability while the engine
+works; take the labor body from the final `result` event's `result` field,
 not from intermediate stream rows.
 
 Prefer `claude --help` on the host over any remembered flag set. Do not wrap this
