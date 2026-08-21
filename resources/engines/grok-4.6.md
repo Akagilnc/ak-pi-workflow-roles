@@ -20,7 +20,10 @@ grok --prompt-file /path/to/labor-prompt.md -m grok-4.6 --always-approve --outpu
 
 - `-m grok-4.6` selects the model; `grok models` lists valid ids (currently
   `grok-4.6` default, `grok-4.5`).
-- `--always-approve` keeps the run non-interactive.
+- `--always-approve` keeps the run non-interactive (documented).
+- Official docs list `-p/--single` as the canonical headless prompt input;
+  `--prompt-file` exists in the installed CLI (`--help`) and is smoke-verified
+  on this host — prefer it for long prompts, fall back to `-p` if absent.
 - `--output-format plain` keeps stdout clean for capture.
 - Reasoning effort follows the host CLI defaults; grok effort tiers are
   low/med/high when a flag is exposed by the installed CLI version — check
