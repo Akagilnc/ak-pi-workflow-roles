@@ -90,6 +90,8 @@ export type MergerRunEnv = {
   engine?: string;
   credentials?: CredentialProviders;
   createRunId?: () => string;
+  /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
+  autoResumeLimit?: number;
   extraPiArgs?: readonly string[];
   timeoutMs?: number;
 };
@@ -575,6 +577,8 @@ export async function runPublicMerger(
   return runWithAutoResumeLoop({
     admitted,
     io,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () =>
       buildMergerActivationExtraArgs(admitted, {
         packageRoot: env.packageRoot,

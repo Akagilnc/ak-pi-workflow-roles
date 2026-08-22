@@ -33,6 +33,13 @@ export type PersistentSeatConfig = SeatModelConfig & {
 
 export type PublicCliConfig = {
   seats: Partial<Record<PublicConfigurableSeat, PersistentSeatConfig>>;
+  /**
+   * #422: single-call auto-resume retry ceiling, sibling of `seats`.
+   * Non-negative integer; 0 disables auto-resume (one dispatch per call).
+   * undefined = package default (AUTO_RESUME_LIMIT). No package-local upper
+   * bound (ADR 0035).
+   */
+  autoResumeLimit?: number;
 };
 
 export type EffectiveSource = "persistent" | "startup" | "invocation" | "unconfigured";
@@ -108,6 +115,9 @@ export function setPersistentSeatConfig(
 ): PublicCliConfig {
   const previous = config.seats[seat];
   return {
+    // Spread preserves sibling top-level keys such as autoResumeLimit (#422):
+    // a seat write must never silently drop them.
+    ...config,
     seats: {
       ...config.seats,
       [seat]: {
@@ -146,6 +156,7 @@ export function setPersistentSeatEngine(
   if (engine === undefined) {
     const { engine: _dropped, ...modelOnly } = previous;
     return {
+      ...config,
       seats: {
         ...config.seats,
         [seat]: modelOnly,
@@ -155,11 +166,38 @@ export function setPersistentSeatEngine(
   // Engine-name path-safety syntax is owned solely by assertLegalEngineName
   // (call-request + config-parse seams). Setter is pure seat mutation.
   return {
+    ...config,
     seats: {
       ...config.seats,
       [seat]: { ...previous, engine },
     },
   };
+}
+
+/**
+ * #422 value domain authority for the auto-resume ceiling: non-negative integer,
+ * no package-local upper bound (ADR 0035). `0` is legal and means auto-resume is
+ * disabled (a single dispatch, no in-place retry). Negative numbers, fractions,
+ * NaN, Infinity and non-number types are rejected loudly — never silently coerced.
+ */
+export function parseAutoResumeLimit(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(
+      `auto-resume limit must be a non-negative integer, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * #422: set the persistent autoResumeLimit top-level key. Pure mutation that
+ * preserves all sibling keys (seats included).
+ */
+export function setAutoResumeLimit(
+  config: PublicCliConfig,
+  limit: number,
+): PublicCliConfig {
+  return { ...config, autoResumeLimit: parseAutoResumeLimit(limit) };
 }
 
 /** Strip optional engine so activation model argv never sees the engine axis. */
@@ -261,9 +299,18 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("public CLI config must be an object");
   }
-  const record = value as { seats?: unknown };
+  const record = value as { seats?: unknown; autoResumeLimit?: unknown };
+  // #422 round-trip preservation: the sibling top-level key must survive every
+  // parse→save cycle; an unknown-key drop would silently erase it on any write.
+  let autoResumeLimit: number | undefined;
+  if (record.autoResumeLimit !== undefined) {
+    autoResumeLimit = parseAutoResumeLimit(record.autoResumeLimit);
+  }
   if (record.seats === undefined) {
-    return { seats: {} };
+    return {
+      seats: {},
+      ...(autoResumeLimit === undefined ? {} : { autoResumeLimit }),
+    };
   }
   if (
     record.seats === null ||
@@ -281,7 +328,10 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
     }
     seats[key as PublicConfigurableSeat] = parseSeatModelConfig(raw, key);
   }
-  return { seats };
+  return {
+    seats,
+    ...(autoResumeLimit === undefined ? {} : { autoResumeLimit }),
+  };
 }
 
 function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfig {

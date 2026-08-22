@@ -14505,6 +14505,9 @@ async function savePublicCliConfig(config, home = homedir()) {
 function setPersistentSeatConfig(config, seat, selection) {
   const previous = config.seats[seat];
   return {
+    // Spread preserves sibling top-level keys such as autoResumeLimit (#422):
+    // a seat write must never silently drop them.
+    ...config,
     seats: {
       ...config.seats,
       [seat]: {
@@ -14528,6 +14531,7 @@ function setPersistentSeatEngine(config, seat, engine) {
   if (engine === void 0) {
     const { engine: _dropped, ...modelOnly } = previous;
     return {
+      ...config,
       seats: {
         ...config.seats,
         [seat]: modelOnly
@@ -14535,11 +14539,23 @@ function setPersistentSeatEngine(config, seat, engine) {
     };
   }
   return {
+    ...config,
     seats: {
       ...config.seats,
       [seat]: { ...previous, engine }
     }
   };
+}
+function parseAutoResumeLimit(value) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(
+      `auto-resume limit must be a non-negative integer, got ${JSON.stringify(value)}`
+    );
+  }
+  return value;
+}
+function setAutoResumeLimit(config, limit) {
+  return { ...config, autoResumeLimit: parseAutoResumeLimit(limit) };
 }
 function seatModelOnly(seat) {
   return seat.thinking === void 0 ? { provider: seat.provider, model: seat.model } : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
@@ -14610,8 +14626,15 @@ function parsePublicCliConfig(value) {
     throw new Error("public CLI config must be an object");
   }
   const record4 = value;
+  let autoResumeLimit;
+  if (record4.autoResumeLimit !== void 0) {
+    autoResumeLimit = parseAutoResumeLimit(record4.autoResumeLimit);
+  }
   if (record4.seats === void 0) {
-    return { seats: {} };
+    return {
+      seats: {},
+      ...autoResumeLimit === void 0 ? {} : { autoResumeLimit }
+    };
   }
   if (record4.seats === null || typeof record4.seats !== "object" || Array.isArray(record4.seats)) {
     throw new Error("public CLI config.seats must be an object");
@@ -14625,7 +14648,10 @@ function parsePublicCliConfig(value) {
     }
     seats[key] = parseSeatModelConfig(raw, key);
   }
-  return { seats };
+  return {
+    seats,
+    ...autoResumeLimit === void 0 ? {} : { autoResumeLimit }
+  };
 }
 function parseSeatModelConfig(value, seat) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -16470,11 +16496,13 @@ var init_option_definitions = __esm({
         usage: [
           "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
           "ak-role config set-engine <seat> <name>",
-          "ak-role config unset-engine <seat>"
+          "ak-role config unset-engine <seat>",
+          "ak-role config set-auto-resume-limit <N>"
         ],
         examples: [
           "ak-role config set judge openai-codex/gpt-5.6-sol:high",
-          "ak-role config set-engine judge opus"
+          "ak-role config set-engine judge opus",
+          "ak-role config set-auto-resume-limit 3"
         ]
       },
       help: {
@@ -22607,6 +22635,8 @@ function presentTerminal(terminal, io) {
   }
 }
 async function runWithAutoResumeLoop(options) {
+  const limit = options.autoResumeLimit ?? AUTO_RESUME_LIMIT;
+  parseAutoResumeLimit(limit);
   let autoResumeAttempts = 0;
   let isFirst = true;
   let currentExtraArgs = options.buildInitialArgs();
@@ -22636,7 +22666,7 @@ async function runWithAutoResumeLoop(options) {
       }
       return result2;
     }
-    if (autoResumeAttempts >= AUTO_RESUME_LIMIT) {
+    if (autoResumeAttempts >= limit) {
       if (terminal !== void 0) presentTerminal(terminal, options.io);
       return result2;
     }
@@ -22654,6 +22684,7 @@ var init_auto_resume = __esm({
   "src/public-cli/auto-resume.ts"() {
     "use strict";
     init_run_lifecycle();
+    init_config2();
     init_terminal();
     init_settlement();
     dummyIo = { stdout: () => {
@@ -22930,6 +22961,8 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
   return runWithAutoResumeLoop({
     admitted,
     io,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () => buildCoderActivationExtraArgs(admitted, {
       packageRoot: env.packageRoot,
       ...env.model === void 0 ? {} : { model: env.model },
@@ -23814,6 +23847,8 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
   return runWithAutoResumeLoop({
     admitted,
     io,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () => buildFixerActivationExtraArgs(admitted, {
       packageRoot: env.packageRoot,
       ...env.model === void 0 ? {} : { model: env.model },
@@ -24178,6 +24213,8 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
   return runWithAutoResumeLoop({
     admitted,
     io,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () => buildJudgeActivationExtraArgs(admitted, {
       packageRoot: env.packageRoot,
       ...env.model === void 0 ? {} : { model: env.model },
@@ -24625,6 +24662,8 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
   return runWithAutoResumeLoop({
     admitted,
     io,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () => buildMergerActivationExtraArgs(admitted, {
       packageRoot: env.packageRoot,
       ...env.model === void 0 ? {} : { model: env.model },
@@ -25041,6 +25080,8 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
   return runWithAutoResumeLoop({
     admitted,
     io,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () => buildReviewerActivationExtraArgs(admitted, {
       packageRoot: env.packageRoot,
       ...env.model === void 0 ? {} : { model: env.model },
@@ -27594,6 +27635,7 @@ function renderConfig(config) {
       lines.push(`${seat}	${formatModelSpec(selection)}	${engine}`);
     }
   }
+  lines.push(`autoResumeLimit	${config.autoResumeLimit ?? AUTO_RESUME_LIMIT}`);
   return `${lines.join("\n")}
 `;
 }
@@ -27683,6 +27725,30 @@ async function runConfigCommand(args, home, packageRoot2, io) {
         { cause: error }
       );
     }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
+  if (args[0] === "set-auto-resume-limit") {
+    if (args.length !== 2) {
+      throw new CliUsageError(
+        "usage: ak-role config set-auto-resume-limit <N>"
+      );
+    }
+    const raw = args[1];
+    if (!/^[0-9]+$/.test(raw)) {
+      throw new CliUsageError(
+        `auto-resume limit must be a non-negative integer, got ${raw}`
+      );
+    }
+    const converted = Number(raw);
+    if (!Number.isFinite(converted) || BigInt(converted) !== BigInt(raw)) {
+      throw new CliUsageError(
+        `auto-resume limit ${raw} is not exactly representable as a number; refusing to silently round the value`
+      );
+    }
+    let config = await loadAndValidateConfig(home, packageRoot2);
+    config = setAutoResumeLimit(config, converted);
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));
     return 0;
@@ -27896,7 +27962,9 @@ async function runAkRole(argv, env) {
           ...projectSeatEngine(seat),
           ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
           ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
         },
         io,
         PUBLIC_ROLE_ARGV.judge.parse
@@ -27931,7 +27999,9 @@ async function runAkRole(argv, env) {
           ...projectSeatEngine(seat),
           ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
           ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
         },
         io,
         PUBLIC_ROLE_ARGV.coder.parse
@@ -27966,7 +28036,9 @@ async function runAkRole(argv, env) {
           ...projectSeatEngine(seat),
           ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
           ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
         },
         io,
         PUBLIC_ROLE_ARGV.fixer.parse
@@ -28036,7 +28108,9 @@ async function runAkRole(argv, env) {
           ...projectSeatEngine(seat),
           ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
           ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
         },
         io,
         PUBLIC_ROLE_ARGV.reviewer.parse
@@ -28106,7 +28180,9 @@ async function runAkRole(argv, env) {
           ...projectSeatEngine(seat),
           ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
           ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
         },
         io,
         PUBLIC_ROLE_ARGV.merger.parse
