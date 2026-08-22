@@ -1,49 +1,17 @@
 // #420 整改：自 test/unit/public-cli-reviewer.test.ts 按性质移出（起真 Pi 子进程，
 // 不属开发内环快档）。契约不变：激活拒绝经真实入口落 violation code 与诊断进卷宗。
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import {
+  captureIo,
+  seedGitProject,
+  withTempHome,
+} from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, runPiSubprocess } from "../helpers/pi-test-harness.ts";
-
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-reviewer-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "reviewer@test.local"], {
-    cwd: root,
-  });
-  execFileSync("git", ["config", "user.name", "Reviewer Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
 
 test("reviewer activation rejection lands violation code and diagnostic in books", async () => {
   // One true-seam tracer (ADR 0016 / host art. 13): public CLI → real Pi child
@@ -52,7 +20,9 @@ test("reviewer activation rejection lands violation code and diagnostic in books
   // Trigger: local-only repo + --base origin/main → production base-invalid preflight.
   const diagnostic =
     "base revision must name an existing pinned ref or reachable commit";
-  await withTempHome(async (home) => {
+  // Kit 差异参数化：保留本家族的临时目录标签，其余夹具与 failure-settlement 同源。
+  await withTempHome(
+    async (home) => {
     const project = join(home, "work");
     const agentDir = join(home, ".pi-agent");
     await mkdir(project, { recursive: true });
@@ -123,5 +93,7 @@ test("reviewer activation rejection lands violation code and diagnostic in books
       new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
     );
     assert.deepEqual(errorBody.details?.violations, ["base-invalid"]);
-  });
+  },
+  { prefix: "ak-public-cli-reviewer-" },
+  );
 });
