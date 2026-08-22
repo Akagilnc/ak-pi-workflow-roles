@@ -20200,12 +20200,24 @@ async function readBoundAuditorKnownFailure(sessionFile) {
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === void 0) return void 0;
+  const RESUME_ENVELOPE = "[ak-role:resume-continue]";
+  const isResumeEnvelope = (msg) => {
+    if (!isRecord5(msg) || msg.role !== "user") return false;
+    const text = typeof msg.text === "string" ? msg.text : typeof msg.content === "string" ? msg.content : void 0;
+    if (text === RESUME_ENVELOPE) return true;
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      return content.some((p) => isRecord5(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+    }
+    return false;
+  };
   let latestParentUserIndex = -1;
   for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
-    if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
-      latestParentUserIndex = i;
-      break;
-    }
+    const entry = parentEntries[i];
+    if (entry?.type !== "message" || entry.message?.role !== "user") continue;
+    if (isResumeEnvelope(entry.message)) continue;
+    latestParentUserIndex = i;
+    break;
   }
   const childDirectory = join11(dirname6(sessionFile), "auditor-roles");
   let names;
@@ -20215,6 +20227,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     if (isMissingPathError2(error)) return void 0;
     throw sessionReadFailure(error, "failed to read bound auditor session directory");
   }
+  const validAuditorFiles = [];
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
@@ -20229,6 +20242,9 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
     const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
+    validAuditorFiles.push({ file, entries, attemptEntryId });
+  }
+  for (const { entries, attemptEntryId } of validAuditorFiles) {
     const stop = extractSessionProviderStop(entries);
     if (stop === void 0) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -20248,6 +20264,10 @@ async function readBoundAuditorKnownFailure(sessionFile) {
         ...isRecord5(failure.details) ? { details: failure.details } : {}
       };
     }
+  }
+  for (const { entries } of validAuditorFiles) {
+    const stop = extractSessionProviderStop(entries);
+    if (stop === void 0) continue;
     const primary = knownFailureFromProviderStop(stop);
     return {
       ...primary,
