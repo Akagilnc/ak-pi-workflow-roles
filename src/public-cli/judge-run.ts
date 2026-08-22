@@ -45,6 +45,7 @@ import {
   RunWriterLeaseHeldError,
   type RunWriterLease,
 } from "./run-lifecycle.ts";
+import { runWithAutoResumeLoop } from "./auto-resume.ts";
 import {
   classifyPostAdmissionFailure,
   exitCodeForTerminalOutcome,
@@ -459,35 +460,33 @@ export async function runPublicJudge(
 
   await markRunAdmitted(admitted);
 
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  const extraArgs = buildJudgeActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-  });
-
-  return await dispatchAdmittedJudge({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
     io,
-    extraArgs,
-    lease,
-    // #358: only initial Judge dispatch records mechanical engine provenance.
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+    buildInitialArgs: () =>
+      buildJudgeActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    buildResumeArgs: () =>
+      buildJudgeResumeActivationExtraArgs(admitted, {
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
+      dispatchAdmittedJudge({
+        admitted,
+        env: {
+          ...env,
+          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+        },
+        io: attemptIo,
+        extraArgs,
+        lease,
+        ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
+      }),
   });
 }
 
@@ -552,7 +551,7 @@ export async function runPublicResume(
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
-  return await dispatchAdmittedJudge({
+  const result = await dispatchAdmittedJudge({
     admitted,
     env: {
       ...env,
@@ -562,4 +561,9 @@ export async function runPublicResume(
     extraArgs,
     lease,
   });
+  // Manual resume: distinct scope from per-call auto retry; just expose observation.
+  if (result.terminal !== undefined) {
+    (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+  }
+  return result;
 }

@@ -55,6 +55,7 @@ import {
   type RunWriterLease,
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
+import { runWithAutoResumeLoop } from "./auto-resume.ts";
 import {
   classifyPostAdmissionFailure,
   exitCodeForTerminalOutcome,
@@ -554,22 +555,10 @@ export async function runPublicMerger(
 
   await markRunAdmitted(admitted);
 
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
     return await presentControlledFailure(
       admitted,
       {
@@ -583,24 +572,35 @@ export async function runPublicMerger(
     );
   }
 
-  const extraArgs = buildMergerActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-  });
-
-  return await dispatchAdmittedMerger({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
     io,
-    extraArgs,
-    lease,
-    methodMaterial,
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+    buildInitialArgs: () =>
+      buildMergerActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    buildResumeArgs: () =>
+      buildMergerResumeActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
+      dispatchAdmittedMerger({
+        admitted,
+        env: {
+          ...env,
+          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+        },
+        io: attemptIo,
+        extraArgs,
+        lease,
+        methodMaterial,
+        ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
+      }),
   });
 }
 
@@ -681,7 +681,7 @@ export async function runPublicMergerResume(
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
-  return await dispatchAdmittedMerger({
+  const result = await dispatchAdmittedMerger({
     admitted,
     env: {
       ...env,
@@ -692,6 +692,8 @@ export async function runPublicMergerResume(
     lease,
     methodMaterial,
   });
+  if (result.terminal !== undefined) (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+  return result;
 }
 
 export type { ExplicitInternalKnownFailure, PackagedMethodSkillProvenance };
