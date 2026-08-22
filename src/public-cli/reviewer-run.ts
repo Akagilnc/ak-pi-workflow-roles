@@ -53,6 +53,7 @@ import {
   type RunWriterLease,
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
+import { runWithAutoResumeLoop } from "./auto-resume.ts";
 import {
   classifyPostAdmissionFailure,
   exitCodeForTerminalOutcome,
@@ -494,22 +495,10 @@ export async function runPublicReviewer(
 
   await markRunAdmitted(admitted);
 
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
     return await presentControlledFailure(
       admitted,
       {
@@ -522,25 +511,35 @@ export async function runPublicReviewer(
     );
   }
 
-  const extraArgs = buildReviewerActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-  });
-
-  return await dispatchAdmittedReviewer({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
     io,
-    extraArgs,
-    lease,
-    methodMaterial,
-    // #378: only initial Reviewer dispatch records mechanical engine provenance.
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+    buildInitialArgs: () =>
+      buildReviewerActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    buildResumeArgs: () =>
+      buildReviewerResumeActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
+      dispatchAdmittedReviewer({
+        admitted,
+        env: {
+          ...env,
+          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+        },
+        io: attemptIo,
+        extraArgs,
+        lease,
+        methodMaterial,
+        ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
+      }),
   });
 }
 
@@ -620,7 +619,7 @@ export async function runPublicReviewerResume(
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
-  return await dispatchAdmittedReviewer({
+  const result = await dispatchAdmittedReviewer({
     admitted,
     env: {
       ...env,
@@ -631,6 +630,8 @@ export async function runPublicReviewerResume(
     lease,
     methodMaterial,
   });
+  if (result.terminal !== undefined) (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+  return result;
 }
 
 export type { ExplicitInternalKnownFailure, PackagedMethodSkillProvenance };
