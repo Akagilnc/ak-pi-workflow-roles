@@ -14,7 +14,8 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { runAkRole } from "../../src/public-cli/cli.ts";
+import { runAkRole, PUBLIC_ROLE_ARGV } from "../../src/public-cli/cli.ts";
+import { runPublicJudge } from "../../src/public-cli/judge-run.ts";
 import {
   loadPublicCliConfig,
   publicCliConfigPath,
@@ -216,6 +217,55 @@ test("#422 set-auto-resume-limit rejects integers beyond the number fidelity bou
     assert.equal(ok.exitCode,0);
     const raw=JSON.parse(await readFile(join(home,".ak-roles","public-cli.json"),"utf8")) as Record<string,unknown>;
     assert.equal(raw.autoResumeLimit,9007199254740992);
+  });
+});
+
+test("#422 loop entry rejects NaN/negative/fractional/Infinity limits loudly before any dispatch", async()=>{
+  await withTempHome(async(home)=>{
+    const runDir=join(home,"runs","422-loop-nan");await mkdir(join(runDir,"session"),{recursive:true});
+    const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
+    for(const bad of [Number.NaN,-1,1.5,Infinity,-Infinity]){
+      let calls=0;const {io}=captureIo();
+      await assert.rejects(
+        ()=>runWithAutoResumeLoop({
+          admitted:{sessionFile,runDirectory:runDir},
+          io,
+          autoResumeLimit:bad,
+          buildInitialArgs: ()=>["--initial"],
+          buildResumeArgs: ()=>["--resume"],
+          dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
+        }),
+        /non-negative integer/,
+        `expected loud rejection for ${String(bad)}`,
+      );
+      assert.equal(calls,0,`NaN-style limit must not enter the first dispatch (${String(bad)})`);
+    }
+  });
+});
+
+test("#422 NaN injected via role entry (judge) terminates the whole call loudly without dispatching", async()=>{
+  await withTempHome(async(home)=>{
+    const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
+    const runId="422-nan-role-entry";let calls=0;
+    const {io,stderr}=captureIo();
+    await assert.rejects(
+      ()=>runPublicJudge(["--project",project,"auto"],{
+        home,
+        agentDir:join(home,".ak-roles","agent"),
+        packageRoot,
+        cwd:project,
+        credentials:{"openai-codex":true,xai:true},
+        createRunId:()=>runId,
+        autoResumeLimit:Number.NaN,
+        piRunner:async(args)=>{calls+=1;return{code:0,stderr:"",timedOut:false,args:[...args]};},
+      },io,PUBLIC_ROLE_ARGV.judge.parse),
+      (error:unknown)=>error instanceof Error &&
+        /non-negative integer/.test(error.message) &&
+        // NaN serializes as null in the diagnostic (JSON.stringify) — still loud, not silent.
+        error.message.includes("null"),
+    );
+    assert.equal(calls,0,"role entry with NaN ceiling must terminate the whole call before the first dispatch");
+    assert.deepEqual(stderr,[]);
   });
 });
 

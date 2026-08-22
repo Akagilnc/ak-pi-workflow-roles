@@ -1098,10 +1098,12 @@ const SUPPORT_COMMAND_HELP = {
       "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
       "ak-role config set-engine <seat> <name>",
       "ak-role config unset-engine <seat>",
+      "ak-role config set-auto-resume-limit <N>",
     ],
     examples: [
       "ak-role config set judge openai-codex/gpt-5.6-sol:high",
       "ak-role config set-engine judge opus",
+      "ak-role config set-auto-resume-limit 3",
     ],
   },
   help: {

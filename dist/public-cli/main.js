@@ -16496,11 +16496,13 @@ var init_option_definitions = __esm({
         usage: [
           "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
           "ak-role config set-engine <seat> <name>",
-          "ak-role config unset-engine <seat>"
+          "ak-role config unset-engine <seat>",
+          "ak-role config set-auto-resume-limit <N>"
         ],
         examples: [
           "ak-role config set judge openai-codex/gpt-5.6-sol:high",
-          "ak-role config set-engine judge opus"
+          "ak-role config set-engine judge opus",
+          "ak-role config set-auto-resume-limit 3"
         ]
       },
       help: {
@@ -22633,6 +22635,8 @@ function presentTerminal(terminal, io) {
   }
 }
 async function runWithAutoResumeLoop(options) {
+  const limit = options.autoResumeLimit ?? AUTO_RESUME_LIMIT;
+  parseAutoResumeLimit(limit);
   let autoResumeAttempts = 0;
   let isFirst = true;
   let currentExtraArgs = options.buildInitialArgs();
@@ -22662,7 +22666,7 @@ async function runWithAutoResumeLoop(options) {
       }
       return result2;
     }
-    if (autoResumeAttempts >= options.autoResumeLimit) {
+    if (autoResumeAttempts >= limit) {
       if (terminal !== void 0) presentTerminal(terminal, options.io);
       return result2;
     }
@@ -22680,6 +22684,7 @@ var init_auto_resume = __esm({
   "src/public-cli/auto-resume.ts"() {
     "use strict";
     init_run_lifecycle();
+    init_config2();
     init_terminal();
     init_settlement();
     dummyIo = { stdout: () => {
@@ -22956,8 +22961,8 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
   return runWithAutoResumeLoop({
     admitted,
     io,
-    // #422: effective ceiling injected once; the loop never re-reads disk.
-    autoResumeLimit: env.autoResumeLimit ?? AUTO_RESUME_LIMIT,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () => buildCoderActivationExtraArgs(admitted, {
       packageRoot: env.packageRoot,
       ...env.model === void 0 ? {} : { model: env.model },
@@ -23842,8 +23847,8 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
   return runWithAutoResumeLoop({
     admitted,
     io,
-    // #422: effective ceiling injected once; the loop never re-reads disk.
-    autoResumeLimit: env.autoResumeLimit ?? AUTO_RESUME_LIMIT,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () => buildFixerActivationExtraArgs(admitted, {
       packageRoot: env.packageRoot,
       ...env.model === void 0 ? {} : { model: env.model },
@@ -24208,8 +24213,8 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
   return runWithAutoResumeLoop({
     admitted,
     io,
-    // #422: effective ceiling injected once; the loop never re-reads disk.
-    autoResumeLimit: env.autoResumeLimit ?? AUTO_RESUME_LIMIT,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () => buildJudgeActivationExtraArgs(admitted, {
       packageRoot: env.packageRoot,
       ...env.model === void 0 ? {} : { model: env.model },
@@ -24657,8 +24662,8 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
   return runWithAutoResumeLoop({
     admitted,
     io,
-    // #422: effective ceiling injected once; the loop never re-reads disk.
-    autoResumeLimit: env.autoResumeLimit ?? AUTO_RESUME_LIMIT,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () => buildMergerActivationExtraArgs(admitted, {
       packageRoot: env.packageRoot,
       ...env.model === void 0 ? {} : { model: env.model },
@@ -25075,8 +25080,8 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
   return runWithAutoResumeLoop({
     admitted,
     io,
-    // #422: effective ceiling injected once; the loop never re-reads disk.
-    autoResumeLimit: env.autoResumeLimit ?? AUTO_RESUME_LIMIT,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () => buildReviewerActivationExtraArgs(admitted, {
       packageRoot: env.packageRoot,
       ...env.model === void 0 ? {} : { model: env.model },
