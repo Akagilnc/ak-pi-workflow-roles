@@ -220,3 +220,52 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// #420 整改：自 test/unit/public-cli-option-definitions.test.ts 按性质移出（装包/构建产物
+// 冒烟，不属开发内环快档）。契约不变：装好的 ak-role bin 对 --help 与每个角色的 help
+// 都给出非空输出。
+import { chmod } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+import { PUBLIC_ROLE_OPTION_OWNERS } from "../../src/public-cli/option-definitions.ts";
+
+const execFileAsync = promisify(execFile);
+
+test("installed package bin tracer: bare --help and help <role> smoke (non-empty)", async () => {
+  const { buildPublicAkRoleBin } = await loadBuildPackage();
+
+  const binDir = await mkdtemp(join("/tmp", "ak-opt-bin-"));
+  const binPath = join(binDir, "main.js");
+  const home = await mkdtemp(join(tmpdir(), "ak-opt-bin-home-"));
+  try {
+    const previousCwd = process.cwd();
+    process.chdir(packageRoot);
+    try {
+      await buildPublicAkRoleBin(binPath);
+    } finally {
+      process.chdir(previousCwd);
+    }
+    await chmod(binPath, 0o755);
+
+    const run = async (args: string[]): Promise<string> => {
+      const { stdout } = await execFileAsync(process.execPath, [binPath, ...args], {
+        cwd: packageRoot,
+        env: { ...process.env, HOME: home },
+        timeout: 30_000,
+      });
+      return stdout;
+    };
+
+    assert.ok((await run(["--help"])).trim().length > 0);
+    for (const owner of PUBLIC_ROLE_OPTION_OWNERS) {
+      assert.ok(
+        (await run(["help", owner])).trim().length > 0,
+        `help ${owner}`,
+      );
+    }
+  } finally {
+    await rm(binDir, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
+  }
+});
