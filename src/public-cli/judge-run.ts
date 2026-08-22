@@ -41,6 +41,7 @@ import {
   markRunTerminal,
   renderResumeCommand,
   type TypedProviderHttpObservation,
+  AUTO_RESUME_LIMIT,
   RESUME_TRANSPORT_ENVELOPE,
   RunWriterLeaseHeldError,
   type RunWriterLease,
@@ -89,6 +90,8 @@ export type JudgeRunEnv = {
    */
   credentials?: CredentialProviders;
   createRunId?: () => string;
+  /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
+  autoResumeLimit?: number;
   /** Extra Pi args inserted before the prompt (tests: faux provider extension). */
   extraPiArgs?: readonly string[];
   /** Override default role-run timeout. */
@@ -463,6 +466,8 @@ export async function runPublicJudge(
   return runWithAutoResumeLoop({
     admitted,
     io,
+    // #422: effective ceiling injected once; the loop never re-reads disk.
+    autoResumeLimit: env.autoResumeLimit ?? AUTO_RESUME_LIMIT,
     buildInitialArgs: () =>
       buildJudgeActivationExtraArgs(admitted, {
         packageRoot: env.packageRoot,

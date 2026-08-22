@@ -47,6 +47,7 @@ import {
   markRunRunning,
   markRunTerminal,
   renderResumeCommand,
+  AUTO_RESUME_LIMIT,
   RESUME_TRANSPORT_ENVELOPE,
   RunWriterLeaseHeldError,
   type RunWriterLease,
@@ -89,6 +90,8 @@ export type FixerRunEnv = {
   engine?: string;
   credentials?: CredentialProviders;
   createRunId?: () => string;
+  /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
+  autoResumeLimit?: number;
   extraPiArgs?: readonly string[];
   timeoutMs?: number;
 };
@@ -494,6 +497,8 @@ export async function runPublicFixer(
   return runWithAutoResumeLoop({
     admitted,
     io,
+    // #422: effective ceiling injected once; the loop never re-reads disk.
+    autoResumeLimit: env.autoResumeLimit ?? AUTO_RESUME_LIMIT,
     buildInitialArgs: () =>
       buildFixerActivationExtraArgs(admitted, {
         packageRoot: env.packageRoot,
