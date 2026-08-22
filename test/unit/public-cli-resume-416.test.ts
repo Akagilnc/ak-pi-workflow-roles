@@ -159,30 +159,37 @@ test("block2: second attempt success needs only 1 auto", async()=>{
 test("F1: audit_escalation lawful does not trigger auto", async()=>{
   assert.equal(isLawfulTypedTerminalOutcome({kind:"audit_escalation",role:"judge",status:"audit_escalation",decisiveFacts:{}}),true);
   await withTempHome(async(home)=>{
-    const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
-    const runId="416-audit-escal-001";let calls=0;
-    const {io}=captureIo();
-    // We can't easily produce audit_escalation via judge without complex auditor setup;
-    // instead we test the predicate directly and also verify a lawful accepted-like path already covers no-retry.
-    // For integration, we use a judge that returns a synthetic lawful audit_escalation by stubbing Pi to write a lawful receipt that settlement treats as lawful.
-    // Simplification: verify that a lawful no_receipt also doesn't trigger (see next test). The predicate test above plus accepted test covers F1.
-    // Keep this test as predicate proof; the next no_receipt integration proves no-retry.
-    assert.equal(calls,0);
+    const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
+    const runDir=join(home,"runs","416-audit-escal-loop");await mkdir(join(runDir,"session"),{recursive:true});
+    const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
+    let calls=0;const {io,stdout}=captureIo();
+    const result=await runWithAutoResumeLoop({
+      admitted:{sessionFile,runDirectory:runDir},
+      io,
+      buildInitialArgs: ()=>["--initial"],
+      buildResumeArgs: ()=>["--resume"],
+      dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"audit_escalation",role:"judge",status:"audit_escalation",decisiveFacts:{}},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-audit-escal-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
+    });
+    assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);assert.equal(stdout.length,1);
   });
 });
 
-test("F1: no_receipt lawful does not trigger auto (integration)", async()=>{
-  // no_receipt is produced when auditNoReceipt lifecycle entry is present; we test via direct lawful check
-  assert.equal(isLawfulTypedTerminalOutcome({kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:{},acceptedReceipt:false} as unknown as Parameters<typeof isLawfulTypedTerminalOutcome>[0]),true);
+test("F1: no_receipt lawful does not trigger auto", async()=>{
+  assert.equal(isLawfulTypedTerminalOutcome({kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:{acceptedReceipt:false}} as unknown as Parameters<typeof isLawfulTypedTerminalOutcome>[0]),true);
   await withTempHome(async(home)=>{
-    const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
-    const runId="416-no-receipt-no-auto-001";let calls=0;
-    const {io,stdout}=captureIo();
-    // Use a normal accepted run to prove lawful not retried; no_receipt would behave same via isLawful.
-    const result=await runAkRole(["judge","--project",project,"lawful"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
-      piRunner: async(args)=>{calls+=1;const sd=args[args.indexOf("--session-dir")+1]!;await mkdir(sd,{recursive:true});
-        const sf=args[args.indexOf("--session")+1]!;await writeFile(sf,JSON.stringify({type:"message",message:{role:"toolResult",toolName:JUDGE_OUTPUT_TOOL_NAME,isError:false,details:{judgeStatus:"converged"}}})+"\n","utf8");return{code:0,stderr:"",timedOut:false,args:[...args]};}});
-    assert.equal(calls,1);assert.equal(result.exitCode,0);assert.equal(stdout.length,1);
+    const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
+    const runDir=join(home,"runs","416-no-receipt-loop");await mkdir(join(runDir,"session"),{recursive:true});
+    const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
+    let calls=0;const {io,stdout}=captureIo();
+    const noReceiptFacts={acceptedReceipt:false, rejectedReceipts:[], deliveryTurns:0, sessionCompletion:"completed" as const};
+    const result=await runWithAutoResumeLoop({
+      admitted:{sessionFile,runDirectory:runDir},
+      io,
+      buildInitialArgs: ()=>["--initial"],
+      buildResumeArgs: ()=>["--resume"],
+      dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:noReceiptFacts,...noReceiptFacts},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-no-receipt-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
+    });
+    assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);assert.equal(stdout.length,1);
   });
 });
 
