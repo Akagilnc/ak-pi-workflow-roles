@@ -49,6 +49,13 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     || deliveryMode === "silence";
   const roleScripted = observation || deliveryMode !== undefined ||
     process.env.AK_AUDIT_NON_OBJECT === "1" || process.env.AK_AUDIT_UNKNOWN_STATUS === "1";
+  // #419: settlement binds tool calls to results one-to-one across the whole
+  // session. Auto-resume legs are separate pi subprocesses sharing one session,
+  // so a fixed id collides on every leg after the first; module-level counters
+  // reset per subprocess, so uniqueness needs pid + clock + in-process sequence.
+  let observedJudgeSeq = 0;
+  const observedJudgeCallId = () =>
+    `observed-judge-${process.pid}-${Date.now().toString(36)}-${observedJudgeSeq += 1}`;
   let navigatorCalls = 0;
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
@@ -126,7 +133,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
       if (deliveryMode === "silence") {
         return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "silence-judge" }), { stopReason: "toolUse" });
       }
-      if (roleScripted) return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "observed-judge" }), { stopReason: "toolUse" });
+      if (roleScripted) return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: observedJudgeCallId() }), { stopReason: "toolUse" });
       return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "fatal-judge" }), { stopReason: "toolUse" });
     }
     if (healthyNavigator || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
