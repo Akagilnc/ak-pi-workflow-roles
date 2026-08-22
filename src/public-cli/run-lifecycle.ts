@@ -375,9 +375,16 @@ export async function acquireRunWriterLease(
   onCleanupFailure?: (diagnostic: string) => void,
 ): Promise<RunWriterLease> {
   const reportCleanupFailure = (error: unknown): void => {
-    onCleanupFailure?.(
-      `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
-    );
+    // Sink isolation: a throwing onCleanupFailure must not propagate through
+    // release() — release stays best-effort by contract. The true cleanup
+    // cause has already been handed to the sink as its argument.
+    try {
+      onCleanupFailure?.(
+        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+      );
+    } catch {
+      // diagnostic-sink failure is itself best-effort; never break release().
+    }
   };
   const lockPath = join(runDirectory, WRITER_LOCK_FILE);
   try {

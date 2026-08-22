@@ -1196,6 +1196,26 @@ test("#418 lease release reports the true cleanup-failure cause via the diagnost
   });
 });
 
+test("#418 lease release stays best-effort when the diagnostic sink throws", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "runs", "run-lease-sink-throws@judge");
+    await mkdir(runDirectory, { recursive: true });
+    let sinkCalls = 0;
+    const lease = await acquireRunWriterLease(runDirectory, () => {
+      sinkCalls += 1;
+      throw new Error("diagnostic sink exploded");
+    });
+    // Force a truthful non-EACCES unlink failure (same seam as above).
+    const lockPath = join(runDirectory, "writer.lock");
+    await unlink(lockPath);
+    await mkdir(lockPath);
+    // Contract: release() resolves despite the throwing sink — no propagation.
+    await lease.release();
+    assert.equal(sinkCalls, 1);
+    await rm(lockPath, { recursive: true });
+  });
+});
+
 test("#418 lease release recovery path emits no false diagnostic", async () => {
   await withTempHome(async (home) => {
     const runDirectory = join(home, "runs", "run-lease-recover@judge");
