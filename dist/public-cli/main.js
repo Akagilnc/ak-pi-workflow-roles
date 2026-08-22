@@ -27736,8 +27736,14 @@ async function runConfigCommand(args, home, packageRoot2, io) {
         `auto-resume limit must be a non-negative integer, got ${raw}`
       );
     }
+    const converted = Number(raw);
+    if (!Number.isFinite(converted) || BigInt(converted) !== BigInt(raw)) {
+      throw new CliUsageError(
+        `auto-resume limit ${raw} is not exactly representable as a number; refusing to silently round the value`
+      );
+    }
     let config = await loadAndValidateConfig(home, packageRoot2);
-    config = setAutoResumeLimit(config, Number(raw));
+    config = setAutoResumeLimit(config, converted);
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));
     return 0;

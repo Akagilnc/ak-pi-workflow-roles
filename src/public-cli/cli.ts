@@ -648,8 +648,20 @@ async function runConfigCommand(
         `auto-resume limit must be a non-negative integer, got ${raw}`,
       );
     }
+    // #422 fidelity boundary (not an upper bound — ADR 0035 stays intact): the
+    // persisted representation is a JS number, and Number() silently rounds
+    // integers beyond 2^53-1 (e.g. 9007199254740993 → 9007199254740992). Refuse
+    // loudly instead of persisting a different N; every exactly-representable
+    // non-negative integer remains legal. The regex above guarantees pure
+    // digits, so BigInt(raw) has no leading-zero ambiguity.
+    const converted = Number(raw);
+    if (!Number.isFinite(converted) || BigInt(converted) !== BigInt(raw)) {
+      throw new CliUsageError(
+        `auto-resume limit ${raw} is not exactly representable as a number; refusing to silently round the value`,
+      );
+    }
     let config = await loadAndValidateConfig(home, packageRoot);
-    config = setAutoResumeLimit(config, Number(raw));
+    config = setAutoResumeLimit(config, converted);
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));
     return 0;
