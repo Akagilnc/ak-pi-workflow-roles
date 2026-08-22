@@ -20200,7 +20200,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === void 0) return void 0;
-  const RESUME_ENVELOPE = "[ak-role:resume-continue]";
+  const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
   const isResumeEnvelope = (msg) => {
     if (!isRecord5(msg) || msg.role !== "user") return false;
     const text = typeof msg.text === "string" ? msg.text : typeof msg.content === "string" ? msg.content : void 0;
@@ -20242,7 +20242,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
     const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
-    validAuditorFiles.push({ file, entries, attemptEntryId });
+    validAuditorFiles.push({ file, entries, ...attemptEntryId === void 0 ? {} : { attemptEntryId } });
   }
   for (const { entries, attemptEntryId } of validAuditorFiles) {
     const stop = extractSessionProviderStop(entries);
