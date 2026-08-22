@@ -195,6 +195,30 @@ test("#422 set-auto-resume-limit rejects negative, fractional and non-numeric in
   });
 });
 
+test("#422 set-auto-resume-limit rejects integers beyond the number fidelity boundary loudly without writing", async()=>{
+  await withTempHome(async(home)=>{
+    // 9007199254740993 is a legal non-negative integer, but Number() rounds it
+    // to ...992. The verb seam must refuse (exit 2 + diagnostic) instead of
+    // silently persisting a different N — and must not touch the config file.
+    const {io,stderr}=captureIo();
+    const rejected=await runAkRole(["config","set-auto-resume-limit","9007199254740993"],{packageRoot,home,io});
+    assert.equal(rejected.exitCode,2);
+    assert.match(stderr.join(""),/9007199254740993/);
+    assert.match(stderr.join(""),/not exactly representable/);
+    let wrote=false;
+    try{await readFile(join(home,".ak-roles","public-cli.json"),"utf8");wrote=true;}catch{}
+    assert.equal(wrote,false);
+
+    // Fidelity boundary, not a cap: the largest exactly representable value is
+    // still accepted and persisted byte-exactly.
+    const {io:io2}=captureIo();
+    const ok=await runAkRole(["config","set-auto-resume-limit","9007199254740992"],{packageRoot,home,io:io2});
+    assert.equal(ok.exitCode,0);
+    const raw=JSON.parse(await readFile(join(home,".ak-roles","public-cli.json"),"utf8")) as Record<string,unknown>;
+    assert.equal(raw.autoResumeLimit,9007199254740992);
+  });
+});
+
 test("#422 seat write after set-auto-resume-limit keeps both keys on disk", async()=>{
   await withTempHome(async(home)=>{
     const {io}=captureIo();
