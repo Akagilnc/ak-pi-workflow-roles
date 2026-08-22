@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import {
   getSharedIsolatedPack,
+  INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
 
@@ -37,6 +38,8 @@ interface ExtractedPack {
   packageJson: {
     name: string;
     license?: string;
+    bin?: Record<string, string>;
+    pi?: { extensions?: unknown[] };
     peerDependencies?: Record<string, string>;
     peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   };
@@ -331,6 +334,71 @@ test("packed artifact ships package-owned diagnosing-bugs method with adapted bo
     );
     assert.equal(skill.includes("hand off to the `/improve-codebase-architecture`"), false);
     assert.equal(skill.includes("Do **not** launch"), true);
+  });
+});
+
+/**
+ * #420 整改并入（自 public-cli-cold-matrix 第三条）：发布清单唯一所有者。
+ * Souls、方法树、运行时入口与 manifest 装载字段——cold-matrix 独有的断言在此收编，
+ * 原条删除；LICENSE/MIT/method 深度断言仍由本文件既有各条持有。
+ */
+test("packed artifact ships the release inventory: souls, method trees, and runtime entrypoints", async () => {
+  await withExtractedPack(async (extracted) => {
+    const souls = [
+      "souls/judge.md",
+      "souls/fixer.md",
+      "souls/coder.md",
+      "souls/reviewer.md",
+      "souls/collector.md",
+      "souls/doctor.md",
+      "souls/merger.md",
+      "souls/navigator.md",
+    ];
+    for (const soul of souls) {
+      assert.ok(
+        extracted.paths.includes(soul),
+        `pack must include ${soul}`,
+      );
+    }
+
+    // resolving-merge-conflicts tree — the one method family without a dedicated
+    // deep test above; presence + provenance here keep it covered.
+    const rmc = [
+      "resources/methods/resolving-merge-conflicts/SKILL.md",
+      "resources/methods/resolving-merge-conflicts/agents/openai.yaml",
+      "resources/methods/resolving-merge-conflicts/provenance.json",
+    ];
+    for (const rel of rmc) {
+      assert.ok(extracted.paths.includes(rel), `pack must include ${rel}`);
+    }
+    const rmcProvenance = JSON.parse(
+      await readFile(
+        resolve(extracted.root, "package/resources/methods/resolving-merge-conflicts/provenance.json"),
+        "utf8",
+      ),
+    ) as { name: string; upstream: { attribution: string; license: string } };
+    assert.equal(rmcProvenance.name, "resolving-merge-conflicts");
+    assert.equal(rmcProvenance.upstream.attribution, "mattpocock/skills");
+    assert.equal(rmcProvenance.upstream.license, "MIT");
+
+    // Runtime entrypoints ship in the artifact.
+    assert.ok(
+      extracted.paths.includes("dist/public-cli/main.js"),
+      "pack must include dist/public-cli/main.js",
+    );
+    assert.ok(
+      extracted.paths.includes(INTERNAL_ROLE_ENTRYPOINT_RELATIVE),
+      "pack must include the internal role entrypoint",
+    );
+    assert.ok(
+      extracted.paths.includes("extensions/role-runtime.ts"),
+      "pack must include extensions/role-runtime.ts",
+    );
+
+    // Manifest load fields: bin mapping and empty auto-extension list (ADR 0052:
+    // package auto-registration stays empty; explicit entrypoint owns loading).
+    assert.equal(extracted.packageJson.bin?.["ak-role"], "dist/public-cli/main.js");
+    assert.deepEqual(extracted.packageJson.pi?.extensions ?? ["missing"], []);
   });
 });
 
