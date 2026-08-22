@@ -1950,6 +1950,20 @@ export async function publishComplianceAuditIncompleteEvidence(
   outcome: ReturnType<typeof buildAuditIncompleteTerminalOutcome>,
 ): Promise<TerminalArtifactRef> {
   await appendRunAttemptHistory(admitted, outcome);
+  if (
+    typeof fsConstants.O_NOFOLLOW !== "number" ||
+    typeof fsConstants.O_NONBLOCK !== "number"
+  ) {
+    // #418 fail-closed: on platforms without O_NOFOLLOW (e.g. Windows,
+    // nodejs/node#41590) the JS bitwise-or below would silently drop the flag
+    // and the #182-A anti-symlink protection would vanish. Refuse loudly via
+    // the existing publication-failure channel instead of publishing
+    // unprotected; the complete attempt result above stays in appended history.
+    throw auditArtifactPublicationError(
+      "audit evidence publication requires O_NOFOLLOW|O_NONBLOCK open-flag support (anti-symlink/anti-planted protection must not be silently dropped); refusing to publish",
+      "ENOSYS",
+    );
+  }
   const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
   const evidencePath = join(artifactsDir, "audit-incomplete.json");
   let existing: Awaited<ReturnType<typeof lstat>> | undefined;

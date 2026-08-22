@@ -37,7 +37,9 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
   while (true) {
     let lease: RunWriterLease;
     try {
-      lease = await acquireRunWriterLease(options.admitted.runDirectory);
+      lease = await acquireRunWriterLease(options.admitted.runDirectory, (diagnostic) =>
+        options.io.stderr(diagnostic),
+      );
     } catch (error) {
       if (error instanceof RunWriterLeaseHeldError) {
         presentStructuralRejection(error, options.io);

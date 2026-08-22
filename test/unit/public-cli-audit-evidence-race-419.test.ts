@@ -166,7 +166,11 @@ test("#419 symlink swapped in between publication lstat and open is rejected ato
           let destExists = true;
           try {
             await lstat(dest);
-          } catch {
+          } catch (error) {
+            // Only a genuinely absent destination means "plant placeholder";
+            // any other lstat failure must keep its true identity (failure-
+            // honesty constitution: unrecognized errors never borrow labels).
+            if ((error as { code?: unknown }).code !== "ENOENT") throw error;
             destExists = false;
           }
           if (!destExists) await writeFile(dest, "placeholder\n", "utf8");
