@@ -38,7 +38,6 @@ import {
 } from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
-  AUTO_RESUME_LIMIT,
   clearTypedProviderHttpObservation,
   isSessionPrincipalAvailable,
   isV1ResumableFailure,
@@ -53,6 +52,7 @@ import {
   type RunWriterLease,
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
+import { runWithAutoResumeLoop } from "./auto-resume.ts";
 import {
   classifyPostAdmissionFailure,
   exitCodeForTerminalOutcome,
@@ -474,7 +474,6 @@ export async function runPublicFixer(
   }
 
   await markRunAdmitted(admitted);
-  // #416 scope = single LLM call: call-local retry counter, no persistence.
 
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
@@ -492,51 +491,36 @@ export async function runPublicFixer(
     );
   }
 
-  let autoResumeAttempts = 0;
-  let isFirst = true;
-  let currentExtraArgs = buildFixerActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+  return runWithAutoResumeLoop({
+    admitted,
+    io,
+    buildInitialArgs: () =>
+      buildFixerActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    buildResumeArgs: () =>
+      buildFixerResumeActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
+      dispatchAdmittedFixer({
+        admitted,
+        env: {
+          ...env,
+          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+        },
+        io: attemptIo,
+        extraArgs,
+        lease,
+        methodMaterial,
+        ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
+      }),
   });
-
-  while (true) {
-    let lease: RunWriterLease;
-    try {
-      lease = await acquireRunWriterLease(admitted.runDirectory);
-    } catch (error) {
-      if (error instanceof RunWriterLeaseHeldError) {
-        presentStructuralRejection(error, io);
-        return { exitCode: 2 };
-      }
-      throw error;
-    }
-    const result = await dispatchAdmittedFixer({
-      admitted,
-      env: {
-        ...env,
-        ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-      },
-      io,
-      extraArgs: currentExtraArgs,
-      lease,
-      methodMaterial,
-      ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
-    });
-    if (result.terminal !== undefined) (result.terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
-    const hasAcceptedReceipt = result.terminal !== undefined && result.terminal.roleOutcome.kind === "accepted";
-    if (hasAcceptedReceipt) return result;
-    if (autoResumeAttempts >= AUTO_RESUME_LIMIT) return result;
-    if (!(await isSessionPrincipalAvailable(admitted.sessionFile))) return result;
-    autoResumeAttempts++;
-    currentExtraArgs = buildFixerResumeActivationExtraArgs(admitted, {
-      packageRoot: env.packageRoot,
-      ...(env.model === undefined ? {} : { model: env.model }),
-      ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-    });
-    isFirst = false;
-  }
 }
 
 /**
