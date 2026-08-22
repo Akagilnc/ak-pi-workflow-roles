@@ -31,7 +31,6 @@ import {
 } from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
-  AUTO_RESUME_LIMIT,
   clearTypedProviderHttpObservation,
   isSessionPrincipalAvailable,
   isV1ResumableFailure,
@@ -46,6 +45,7 @@ import {
   RunWriterLeaseHeldError,
   type RunWriterLease,
 } from "./run-lifecycle.ts";
+import { runWithAutoResumeLoop } from "./auto-resume.ts";
 import {
   classifyPostAdmissionFailure,
   exitCodeForTerminalOutcome,
@@ -460,70 +460,34 @@ export async function runPublicJudge(
 
   await markRunAdmitted(admitted);
 
-  // #416 scope = single LLM call: call-local retry counter, no persistence.
-  let autoResumeAttempts = 0;
-  let isFirst = true;
-  let currentExtraArgs = buildJudgeActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+  return runWithAutoResumeLoop({
+    admitted,
+    io,
+    buildInitialArgs: () =>
+      buildJudgeActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    buildResumeArgs: () =>
+      buildJudgeResumeActivationExtraArgs(admitted, {
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
+      dispatchAdmittedJudge({
+        admitted,
+        env: {
+          ...env,
+          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+        },
+        io: attemptIo,
+        extraArgs,
+        lease,
+        ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
+      }),
   });
-  const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
-
-  while (true) {
-    let lease: RunWriterLease;
-    try {
-      lease = await acquireRunWriterLease(admitted.runDirectory);
-    } catch (error) {
-      if (error instanceof RunWriterLeaseHeldError) {
-        presentStructuralRejection(error, io);
-        return { exitCode: 2 };
-      }
-      throw error;
-    }
-
-    // Use dummy Io for intermediate attempts; only final presentation goes to real io.
-    const attemptIo = dummyIo;
-    const result = await dispatchAdmittedJudge({
-      admitted,
-      env: {
-        ...env,
-        ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-      },
-      io: attemptIo,
-      extraArgs: currentExtraArgs,
-      lease,
-      ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
-    });
-
-    if (result.terminal !== undefined) {
-      (result.terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
-    }
-
-    const hasAcceptedReceipt =
-      result.terminal !== undefined && result.terminal.roleOutcome.kind === "accepted";
-    if (hasAcceptedReceipt) {
-      // Final success: present once to real io
-      if (result.terminal) io.stdout(formatTerminalResult(result.terminal));
-      return result;
-    }
-
-    if (autoResumeAttempts >= AUTO_RESUME_LIMIT) {
-      if (result.terminal) presentFailureTerminal(result.terminal, io);
-      return result;
-    }
-    if (!(await isSessionPrincipalAvailable(admitted.sessionFile))) {
-      if (result.terminal) presentFailureTerminal(result.terminal, io);
-      return result;
-    }
-    autoResumeAttempts++;
-    currentExtraArgs = buildJudgeResumeActivationExtraArgs(admitted, {
-      ...(env.model === undefined ? {} : { model: env.model }),
-      ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-    });
-    isFirst = false;
-  }
 }
 
 /**

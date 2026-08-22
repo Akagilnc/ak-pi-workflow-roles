@@ -36,7 +36,6 @@ import {
 } from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
-  AUTO_RESUME_LIMIT,
   clearTypedProviderHttpObservation,
   isSessionPrincipalAvailable,
   isV1ResumableFailure,
@@ -51,6 +50,7 @@ import {
   type RunWriterLease,
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
+import { runWithAutoResumeLoop } from "./auto-resume.ts";
 import {
   classifyPostAdmissionFailure,
   exitCodeForTerminalOutcome,
@@ -458,9 +458,6 @@ export async function runPublicCoder(
       );
       methodProvenance = material.provenance;
     } catch (error) {
-      // No lease yet; present failure directly (no auto loop needed for pre-dispatch error).
-      const tmpLease = await acquireRunWriterLease(admitted.runDirectory).catch(() => undefined);
-      if (tmpLease) await tmpLease.release().catch(() => undefined);
       return await presentControlledFailure(
         admitted,
         {
@@ -475,56 +472,36 @@ export async function runPublicCoder(
     }
   }
 
-  let autoResumeAttempts = 0;
-  let isFirst = true;
-  let currentExtraArgs = buildCoderActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+  return runWithAutoResumeLoop({
+    admitted,
+    io,
+    buildInitialArgs: () =>
+      buildCoderActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    buildResumeArgs: () =>
+      buildCoderResumeActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
+      dispatchAdmittedCoder({
+        admitted,
+        env: {
+          ...env,
+          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+        },
+        io: attemptIo,
+        extraArgs,
+        lease,
+        ...(methodProvenance === undefined ? {} : { methodProvenance }),
+        ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
+      }),
   });
-
-  while (true) {
-    let lease: RunWriterLease;
-    try {
-      lease = await acquireRunWriterLease(admitted.runDirectory);
-    } catch (error) {
-      if (error instanceof RunWriterLeaseHeldError) {
-        presentStructuralRejection(error, io);
-        return { exitCode: 2 };
-      }
-      throw error;
-    }
-    const result = await dispatchAdmittedCoder({
-      admitted,
-      env: {
-        ...env,
-        ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-      },
-      io,
-      extraArgs: currentExtraArgs,
-      lease,
-      ...(methodProvenance === undefined ? {} : { methodProvenance }),
-      ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
-    });
-    if (result.terminal !== undefined) {
-      (result.terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
-    }
-    const hasAcceptedReceipt =
-      result.terminal !== undefined && result.terminal.roleOutcome.kind === "accepted";
-    if (hasAcceptedReceipt) {
-      return result;
-    }
-    if (autoResumeAttempts >= AUTO_RESUME_LIMIT) return result;
-    if (!(await isSessionPrincipalAvailable(admitted.sessionFile))) return result;
-    autoResumeAttempts++;
-    currentExtraArgs = buildCoderResumeActivationExtraArgs(admitted, {
-      packageRoot: env.packageRoot,
-      ...(env.model === undefined ? {} : { model: env.model }),
-      ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-    });
-    isFirst = false;
-  }
 }
 
 /**
