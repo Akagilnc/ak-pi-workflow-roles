@@ -22,14 +22,9 @@ import {
 } from "../helpers/pi-test-harness.ts";
 
 const CANNED_LABOR = "canned-reviewer-engine-labor-378";
-const FAIL_MARKER = "ENGINE_FAIL_REVIEWER_380_UNIQUE";
 const providerPath = resolve(
   packageRoot,
   "test/fixtures/reviewer-engine-detour-provider.ts",
-);
-const fallbackProviderPath = resolve(
-  packageRoot,
-  "test/fixtures/reviewer-engine-fallback-provider.ts",
 );
 
 function seedGitProject(root: string): string {
@@ -261,59 +256,12 @@ async function assertDetourLaborOnCase(
   assert.notEqual(String(invocation.engine).trim(), "");
 }
 
-test(
-  "AC name-only: free engine name → leg detour → typed reviewer receipt",
-  { timeout: 180_000 },
-  async () => {
-    const home = await mkdtemp(join(tmpdir(), "ak-reviewer-engine-name-"));
-    try {
-      const project = join(home, "work");
-      const binDir = join(home, "bin");
-      await mkdir(project, { recursive: true });
-      await mkdir(binDir, { recursive: true });
-      const base = seedGitProject(project);
-      await writeExecutable(
-        join(binDir, "kimi"),
-        `#!/bin/sh\nprintf '%s' '${CANNED_LABOR}\\n'\n`,
-      );
+  // 尺②同根收拢（#420 类一）：AC name-only 与保留的「AC with-notes」是同一条
+  // 「--engine → 双轴 leg detour → typed receipt」真入口链的两个引擎名变体；
+  // 自由名（无 notes）的 argv/材质形状由 test/unit/engine-material.test.ts
+  // （name-only omits read-these-bytes / assertLegalEngineName）与 #391 E4 表
+  // （自由名 → childEnv + invocation.engine）承接，删此留彼。
 
-      const result = await runReviewerWithEngine({
-        home,
-        project,
-        binDir,
-        runId: "run-reviewer-engine-name-001",
-        base,
-        engine: "nope-engine",
-      });
-
-      assert.equal(result.exitCode, 0, result.stderr.join(""));
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      await assertDetourLaborOnCase(
-        home,
-        project,
-        "run-reviewer-engine-name-001",
-      );
-      const bookKey = resolveBookKeyFromGit(project);
-      const invocation = JSON.parse(
-        await readFile(
-          join(
-            home,
-            ".ak-roles",
-            "books",
-            bookKey,
-            "runs",
-            "run-reviewer-engine-name-001@reviewer",
-            "invocation.json",
-          ),
-          "utf8",
-        ),
-      ) as Record<string, unknown>;
-      assert.equal(invocation.engine, "nope-engine");
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  },
-);
 
 test(
   "AC with-notes: cursor engine → leg detour → typed reviewer receipt",
@@ -371,83 +319,7 @@ test(
   },
 );
 
-test(
-  "B2 detour failure → seat labor + engineLaborFallback on accepted reviewer receipt",
-  { timeout: 180_000 },
-  async () => {
-    const home = await mkdtemp(join(tmpdir(), "ak-reviewer-engine-fallback-"));
-    try {
-      const project = join(home, "work");
-      const binDir = join(home, "bin");
-      await mkdir(project, { recursive: true });
-      await mkdir(binDir, { recursive: true });
-      const base = seedGitProject(project);
-      await writeExecutable(
-        join(binDir, "kimi"),
-        `#!/bin/sh\nprintf '%s' '${FAIL_MARKER}' >&2\nexit 1\n`,
-      );
-
-      const result = await runReviewerWithEngine({
-        home,
-        project,
-        binDir,
-        runId: "run-reviewer-engine-fallback-001",
-        base,
-        engine: "kimi",
-        providerPath: fallbackProviderPath,
-        modelId: "ak-reviewer-engine-fallback/faux-1",
-      });
-
-      assert.equal(result.exitCode, 0, result.stderr.join(""));
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      if (result.terminal?.roleOutcome.kind !== "accepted") {
-        assert.fail("expected accepted reviewer receipt");
-      }
-      const fallback = (result.terminal.roleOutcome.decisiveFacts as {
-        engineLaborFallback?: {
-          engine?: string;
-          failure?: string;
-          laborBy?: string;
-        };
-      }).engineLaborFallback;
-      assert.ok(fallback, "accepted receipt must declare engineLaborFallback");
-      assert.equal(fallback.engine, "kimi");
-      assert.equal(fallback.laborBy, "seat");
-      assert.ok(
-        typeof fallback.failure === "string" &&
-          fallback.failure.includes(FAIL_MARKER),
-        `failure must carry engine stderr: ${fallback.failure}`,
-      );
-
-      const bookKey = resolveBookKeyFromGit(project);
-      const sessionFile = join(
-        home,
-        ".ak-roles",
-        "books",
-        bookKey,
-        "runs",
-        "run-reviewer-engine-fallback-001@reviewer",
-        "session",
-        "session.jsonl",
-      );
-      const rows = (await readFile(sessionFile, "utf8"))
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as any);
-      const accepted = rows.find(
-        (row) =>
-          row.type === "message" &&
-          row.message?.role === "toolResult" &&
-          row.message?.toolName === "ak_reviewer_output" &&
-          row.message?.isError !== true,
-      );
-      assert.ok(accepted, "typed reviewer receipt must be accepted");
-      const detailsFallback = accepted.message.details?.engineLaborFallback;
-      assert.equal(detailsFallback?.engine, "kimi");
-      assert.equal(detailsFallback?.laborBy, "seat");
-      assert.ok(String(detailsFallback?.failure ?? "").includes(FAIL_MARKER));
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  },
-);
+  // 尺②同根收拢（#420 类一）：detour 失败 → seat labor + engineLaborFallback 的
+  // 机制与 stderr 逐字传播由快档 test/unit/reviewer-child-failure-projection.test.ts
+  // 的 #380 tracer 在进程内承接；真入口失败味的唯一 e2e 留在 judge 侧
+  // （trim-empty stdout → 常量诊断）。本条与其同根同断言，删此留彼。

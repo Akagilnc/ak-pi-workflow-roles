@@ -458,6 +458,12 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       instruction: "Review standards and spec axes.",
       attachmentPaths: [],
       baseRevision: "main",
+      // 尺③：非空 authorityRefs 落 evidence artifact 的契约在此承接（原冷装
+      // refs-only e2e 的独有断言，#420 类一收拢后由这条在进程内真 Terminal 承载）。
+      authorityRefs: [
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      ],
       createRunId: () => "run-reviewer-settle-001",
     });
     await mkdir(admitted.sessionDirectory, { recursive: true });
@@ -603,7 +609,10 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal("taskPath" in evidence, false);
     assert.equal("taskSha256" in evidence, false);
     assert.equal(evidence.baseRevision, "main");
-    assert.deepEqual(evidence.authorityRefs, []);
+    assert.deepEqual(evidence.authorityRefs, [
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+    ]);
     assert.equal(evidence.callerProvenance, "Review standards and spec axes.");
     assert.equal(evidence.methodProvenance.name, "code-review");
     assert.equal(
