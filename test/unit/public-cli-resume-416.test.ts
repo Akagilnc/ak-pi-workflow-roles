@@ -166,6 +166,7 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
     const result=await runWithAutoResumeLoop({
       admitted:{sessionFile,runDirectory:runDir},
       io,
+      autoResumeLimit:0,
       buildInitialArgs: ()=>["--initial"],
       buildResumeArgs: ()=>["--resume"],
       dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"audit_escalation",role:"judge",status:"audit_escalation",decisiveFacts:{}},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-audit-escal-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
@@ -185,6 +186,7 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
     const result=await runWithAutoResumeLoop({
       admitted:{sessionFile,runDirectory:runDir},
       io,
+      autoResumeLimit:0,
       buildInitialArgs: ()=>["--initial"],
       buildResumeArgs: ()=>["--resume"],
       dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:noReceiptFacts,...noReceiptFacts},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-no-receipt-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
