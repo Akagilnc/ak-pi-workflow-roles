@@ -19,11 +19,10 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -2050,7 +2049,7 @@ test("#419 symlink planted at audit evidence destination fails loudly and never 
     // Pre-planted variant: the symlink already occupies the destination when
     // the publication lstat looks, so the lstat fast-path branch rejects it
     // before the open seam. The genuine lstat→open swap window has its own
-    // mechanical regression below.
+    // mechanical regression in public-cli-audit-evidence-race-419.test.ts.
     const victimPath = join(home, "victim-audit-incomplete.json");
     const victimSentinel = `${JSON.stringify({ sentinel: "symlink-target-must-stay-intact" })}\n`;
     await writeFile(victimPath, victimSentinel, "utf8");
@@ -2098,190 +2097,6 @@ test("#419 symlink planted at audit evidence destination fails loudly and never 
     assert.deepEqual(outcome.auditResidual?.audit.candidate, ["retained"]);
     assert.equal(result.terminal!.artifacts.length, 0);
     // Nothing may be written through the link to its target.
-    assert.equal(await readFile(victimPath, "utf8"), victimSentinel);
-  });
-});
-
-test("#419 symlink swapped in between publication lstat and open is rejected atomically by O_NOFOLLOW", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const victimPath = join(home, "victim-audit-incomplete-race.json");
-    const victimSentinel = `${JSON.stringify({ sentinel: "race-target-must-stay-intact" })}\n`;
-    await writeFile(victimPath, victimSentinel, "utf8");
-
-    // Mechanical reproduction of the TOCTOU window, with zero production test
-    // hooks and real IO end to end: a fresh child process registers an ESM
-    // customization hook that redirects node:fs/promises to a wrapper whose
-    // lstat delegates to the real syscall and — only for the audit evidence
-    // destination — swaps the regular file it just stat'ed for a symlink to
-    // the victim. Production then reaches its open with a stale regular-file
-    // stat, so only O_NOFOLLOW at that open seam can refuse the swap; the
-    // lstat fast-path branch is provably bypassed (it saw a regular file).
-    const hooksSource = [
-      "const SHIM_SOURCE = `",
-      "export * from \"node:fs/promises\";",
-      "import { lstat as origLstat, open as origOpen } from \"node:fs/promises\";",
-      "const state = globalThis.__ak419RaceHookState ??= { publicationLstatSawRegularFile: false, swappedToSymlink: false, openRejectedSwappedSymlinkWithEloop: false };",
-      "let swapped = false;",
-      "export const lstat = Object.assign(async (...args) => {",
-      "  const result = await origLstat(...args);",
-      "  if (!swapped && typeof args[0] === \"string\" && args[0].endsWith(\"/artifacts/audit-incomplete.json\")) {",
-      // The kernel just observed the destination through the real lstat syscall.
-      // Record what it saw, then swap in the symlink — production's in-memory
-      // stat is now stale and only the no-follow open can refuse the swap.
-      "    state.publicationLstatSawRegularFile = result.isFile();",
-      "    const { unlink, symlink } = await import(\"node:fs/promises\");",
-      "    await unlink(args[0]);",
-      "    await symlink(process.env.AK_419_RACE_VICTIM, args[0]);",
-      "    swapped = true;",
-      "    state.swappedToSymlink = true;",
-      "  }",
-      "  return result;",
-      "}, origLstat);",
-      "export const open = Object.assign(async (...args) => {",
-      // Pure pass-through observation: the real open runs against the real
-      // kernel; we only record whether IT rejected the swapped-in symlink.
-      "  if (swapped && typeof args[0] === \"string\" && args[0].endsWith(\"/artifacts/audit-incomplete.json\")) {",
-      "    try {",
-      "      return await origOpen(...args);",
-      "    } catch (error) {",
-      "      if ((error ?? {}).code === \"ELOOP\") state.openRejectedSwappedSymlinkWithEloop = true;",
-      "      throw error;",
-      "    }",
-      "  }",
-      "  return origOpen(...args);",
-      "}, origOpen);`;",
-      "export function resolve(specifier, context, nextResolve) {",
-      "  if (specifier === \"node:fs/promises\" && !String(context.parentURL ?? \"\").startsWith(\"ak419-shim:\")) {",
-      "    return { url: \"ak419-shim:///node_fs_promises\", shortCircuit: true };",
-      "  }",
-      "  return nextResolve(specifier, context);",
-      "}",
-      "export function load(url, context, nextLoad) {",
-      "  if (url.startsWith(\"ak419-shim:\")) {",
-      "    return { format: \"module\", source: SHIM_SOURCE, shortCircuit: true };",
-      "  }",
-      "  return nextLoad(url, context);",
-      "}",
-    ].join("\n");
-    const hooksPath = join(home, "ak419-race-hooks.mjs");
-    await writeFile(hooksPath, hooksSource, "utf8");
-
-    const childScript = [
-      "const register = (await import(\"node:module\")).register;",
-      "const { join } = await import(\"node:path\");",
-      "const { mkdir, writeFile, lstat } = await import(\"node:fs/promises\");",
-      `await register(${JSON.stringify(pathToFileURL(hooksPath).href)});`,
-      `const { runAkRole } = await import(${JSON.stringify(pathToFileURL(join(packageRoot, "src/public-cli/cli.ts")).href)});`,
-      "const stdout = [];",
-      "const stderr = [];",
-      "const io = { stdout: (t) => stdout.push(t), stderr: (t) => stderr.push(t) };",
-      "const result = await runAkRole(",
-      `  ["judge", "--project", ${JSON.stringify(project)}, "audit evidence lstat-open race"],`,
-      "  {",
-      `    packageRoot: ${JSON.stringify(packageRoot)},`,
-      `    home: ${JSON.stringify(home)},`,
-      `    cwd: ${JSON.stringify(project)},`,
-      "    createRunId: () => \"run-audit-lstat-open-race-001\",",
-      "    io,",
-      "    piRunner: async (args) => {",
-      "      const sessionDir = args[args.indexOf(\"--session-dir\") + 1];",
-      "      const runDir = join(sessionDir, \"..\");",
-      "      await mkdir(join(runDir, \"artifacts\"), { recursive: true });",
-      "      // Plant the regular-file placeholder only while the destination is absent;",
-      "      // once the race hook has swapped in the symlink this stub must never touch",
-      "      // it again (a plain writeFile would follow the link and pollute the victim).",
-      "      const dest = join(runDir, \"artifacts\", \"audit-incomplete.json\");",
-      "      let destExists = true;",
-      "      try { await lstat(dest); } catch { destExists = false; }",
-      "      if (!destExists) await writeFile(dest, \"placeholder\\n\", \"utf8\");",
-      "      await mkdir(sessionDir, { recursive: true });",
-      "      await writeFile(join(sessionDir, \"session.jsonl\"), process.env.AK_419_RACE_SESSION_ROWS, \"utf8\");",
-      "      return { code: 0, stdout: \"\", stderr: \"\", timedOut: false, args: [...args] };",
-      "    },",
-      "  },",
-      ");",
-      "const outcome = result.terminal?.roleOutcome ?? {};",
-      "const report = {",
-      "  exitCode: result.exitCode,",
-      "  kind: outcome.kind,",
-      "  cause: outcome.cause,",
-      "  errorCode: outcome.decisiveFacts?.errorCode,",
-      "  acceptedReceipt: outcome.auditResidual?.acceptedReceipt,",
-      "  roleCandidate: outcome.auditResidual?.roleCandidate,",
-      "  artifacts: result.terminal?.artifacts?.length,",
-      "  stdoutCount: stdout.length,",
-      "  stderrCount: stderr.length,",
-      "  hookState: globalThis.__ak419RaceHookState ?? null,",
-      "  diagnostic: outcome.diagnostic ?? outcome.decisiveFacts?.diagnostic,",
-      "  stderrText: stderr.join(\"\").slice(0, 800),",
-      "};",
-      "console.log(\"@@AK419_RACE_REPORT@@\" + JSON.stringify(report));",
-    ].join("\n");
-
-    const child = spawnSync(
-      process.execPath,
-      ["--import", "tsx", "--input-type=module", "--eval", childScript],
-      {
-        env: {
-          ...process.env,
-          AK_419_RACE_VICTIM: victimPath,
-          AK_419_RACE_SESSION_ROWS: auditIncompleteSessionRows("role-1", ["retained"]),
-        },
-        cwd: packageRoot,
-        encoding: "utf8",
-        timeout: 120_000,
-      },
-    );
-    assert.equal(
-      child.status,
-      0,
-      `race child crashed: status=${child.status} signal=${child.signal}\nstdout=${child.stdout}\nstderr=${child.stderr}`,
-    );
-    const marker = child.stdout.split("\n").find((line) => line.startsWith("@@AK419_RACE_REPORT@@"));
-    assert.ok(marker, `missing race report marker in child stdout:\n${child.stdout}`);
-    const report = JSON.parse(marker.slice("@@AK419_RACE_REPORT@@".length)) as {
-      exitCode: number;
-      kind: string;
-      cause: string;
-      errorCode?: string;
-      acceptedReceipt?: boolean;
-      roleCandidate?: unknown;
-      artifacts?: number;
-      stdoutCount: number;
-      stderrCount: number;
-      diagnostic?: string;
-      stderrText?: string;
-      hookState: {
-        publicationLstatSawRegularFile: boolean;
-        swappedToSymlink: boolean;
-        openRejectedSwappedSymlinkWithEloop: boolean;
-      } | null;
-    };
-    // The swap provably landed inside the lstat→open window and the no-follow
-    // open seam itself refused it:
-    // 1. production's real lstat syscall observed the placeholder REGULAR file
-    //    (the lstat fast-path branch is provably bypassed),
-    // 2. the hook then swapped in the symlink to the victim,
-    // 3. production's real open syscall — same path, O_NOFOLLOW — rejected the
-    //    swapped symlink with ELOOP, so nothing was written through.
-    assert.deepEqual(report.hookState, {
-      publicationLstatSawRegularFile: true,
-      swappedToSymlink: true,
-      openRejectedSwappedSymlinkWithEloop: true,
-    });
-    assert.equal(report.exitCode, 1);
-    assert.equal(report.kind, "failure");
-    assert.equal(report.cause, "unrecognized");
-    assert.equal(report.errorCode, "ELOOP");
-    assert.equal(report.acceptedReceipt, false);
-    assert.deepEqual(report.roleCandidate, { judgeStatus: "converged" });
-    assert.equal(report.artifacts, 0);
-    assert.equal(report.stdoutCount, 1);
-    assert.equal(report.stderrCount, 1);
-    // The race must never write through the link: target byte-identical.
     assert.equal(await readFile(victimPath, "utf8"), victimSentinel);
   });
 });
