@@ -5,7 +5,7 @@
  * any existing run with an available Pi session principal may be resumed; caller decides.
  * Prose is never regex-classified as quota evidence.
  */
-import { lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -364,7 +364,16 @@ export async function acquireRunWriterLease(
         if (released) return;
         released = true;
         await handle.close().catch(() => undefined);
-        await unlink(lockPath).catch(() => undefined);
+        try {
+          await unlink(lockPath);
+        } catch (error) {
+          if ((error as { code?: unknown }).code === "EACCES") {
+            try {
+              await chmod(runDirectory, 0o755);
+              await unlink(lockPath);
+            } catch {}
+          }
+        }
       },
     };
   } catch (error) {

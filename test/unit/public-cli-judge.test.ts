@@ -1244,6 +1244,8 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     });
     assert.equal(stdout.length, 1);
     assert.notEqual(stdout[0]?.trim(), "");
+    // #416 autoResumeCount is call-local observation (0 for first-attempt lawful) and is part of Terminal presentation
+    (terminal as { autoResumeCount?: number }).autoResumeCount = 0;
     assert.equal(stdout.join(""), formatTerminalResult(terminal));
     assert.equal(terminal.roleOutcome.role, "judge");
     assert.equal(terminal.roleOutcome.kind, "accepted");
