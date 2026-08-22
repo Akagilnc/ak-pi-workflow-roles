@@ -19886,7 +19886,8 @@ var init_navigator_invocation_identity = __esm({
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { appendFile, lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
 import { dirname as dirname6, join as join11 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
@@ -21001,20 +21002,68 @@ async function ensureAuditEvidenceDirectory(runDirectory) {
   }
   return artifactsDir;
 }
+async function appendRunAttemptHistory(admitted, outcome) {
+  const entries = await readBoundSessionEntries(admitted.sessionFile);
+  let parentId = null;
+  let priorEntries = 0;
+  for (const entry of entries) {
+    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+    if (entry.type === "custom" && entry.customType === ATTEMPT_HISTORY_ENTRY_TYPE) {
+      priorEntries += 1;
+    }
+  }
+  const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
+  const line2 = `${JSON.stringify({
+    type: "custom",
+    customType: ATTEMPT_HISTORY_ENTRY_TYPE,
+    data: {
+      sequence: priorEntries + 1,
+      role: admitted.role,
+      runId: admitted.runId,
+      recordedAt: timestamp2,
+      outcome
+    },
+    id: randomUUID(),
+    parentId,
+    timestamp: timestamp2
+  })}
+`;
+  await appendFile(admitted.sessionFile, line2, "utf8");
+}
 async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
+  await appendRunAttemptHistory(admitted, outcome);
   const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
   const evidencePath = join11(artifactsDir, "audit-incomplete.json");
+  let existing;
   try {
-    const existing = await lstat3(evidencePath);
-    throw auditArtifactPublicationError(
-      existing.isSymbolicLink() ? "audit evidence destination is a symlink" : "audit evidence destination collision",
-      existing.isSymbolicLink() ? "ELOOP" : "EEXIST"
-    );
+    existing = await lstat3(evidencePath);
   } catch (error) {
     if (!isMissingPathError2(error)) throw error;
   }
-  const handle = await open2(evidencePath, "wx", 384);
+  if (existing?.isSymbolicLink()) {
+    throw auditArtifactPublicationError(
+      "audit evidence destination is a symlink",
+      "ELOOP"
+    );
+  }
+  if (existing && !existing.isFile()) {
+    throw auditArtifactPublicationError(
+      "audit evidence destination is not a regular file",
+      "EEXIST"
+    );
+  }
+  const handle = await open2(
+    evidencePath,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    384
+  );
   try {
+    if (!(await handle.stat()).isFile()) {
+      throw auditArtifactPublicationError(
+        "audit evidence destination is not a regular file",
+        "EEXIST"
+      );
+    }
     await handle.writeFile(`${JSON.stringify(outcome, null, 2)}
 `, "utf8");
     await handle.sync();
@@ -21267,6 +21316,7 @@ async function extractNavigatorFactFromAdmittedSession(admitted) {
   }
 }
 async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21311,6 +21361,7 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
   ];
 }
 async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21480,6 +21531,7 @@ function extractFixerMethodInvocations(entries, options) {
   return Object.freeze(observed);
 }
 async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21591,6 +21643,7 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
   };
 }
 async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21710,6 +21763,7 @@ async function trySettleCollectorTerminalResult(admitted) {
   return settleLawfulCollectorTerminalResult(admitted);
 }
 async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21877,6 +21931,7 @@ function extractReviewerMethodInvocations(entries, options) {
   return Object.freeze(observed);
 }
 async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -22045,6 +22100,7 @@ function extractMergerMethodInvocations(entries, options) {
   return Object.freeze(observed);
 }
 async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -22266,6 +22322,15 @@ async function publishFailureArtifacts(admitted, failure) {
     admitted.runDirectory
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
+  try {
+    await appendRunAttemptHistory(admitted, {
+      kind: "failure",
+      role: admitted.role,
+      ...failure
+    });
+  } catch (error) {
+    priorIssues.push(publicationAttemptFromError(admitted.sessionFile, error));
+  }
   const underArtifacts = baseDir === join11(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
@@ -22462,7 +22527,7 @@ function presentFailureTerminal(terminal, io) {
     }));
   }
 }
-var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS, COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC, ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC;
+var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS, COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC, ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC, ATTEMPT_HISTORY_ENTRY_TYPE;
 var init_settlement = __esm({
   "src/public-cli/settlement.ts"() {
     "use strict";
@@ -22505,6 +22570,7 @@ var init_settlement = __esm({
       cause: "output",
       identityName: "EngineDetourInfrastructureError"
     };
+    ATTEMPT_HISTORY_ENTRY_TYPE = "ak_run_attempt_history";
   }
 });
 
