@@ -45,5 +45,8 @@ grok --prompt-file /path/to/labor-prompt.md -m grok-4.6 --always-approve --outpu
 
 ## Failure handling
 
-On any spawn or model-id failure, return the soft failure to the session and
-continue labor in-seat per ADR 0071 (seat fallback with typed declaration).
+The detour is mandatory: you MUST actually invoke the CLI. On any spawn,
+quota, or model failure, return the typed failure and STOP — the run fails.
+In-seat labor after a detour failure is FORBIDDEN, and so is skipping the
+detour to work in-seat. Zero invocations is a violation, not a fallback.
+Do not silently swap to another engine id.
