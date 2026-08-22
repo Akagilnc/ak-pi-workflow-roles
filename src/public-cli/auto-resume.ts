@@ -54,12 +54,42 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
       return result;
     }
 
+    // Deterministic incomplete/audit_incomplete (merger/collector/judge) would duplicate callId bindings on retry and lose settlement
+    if (terminal !== undefined && (terminal.roleOutcome.kind === "incomplete" || terminal.roleOutcome.kind === "audit_incomplete")) {
+      if (terminal.roleOutcome.kind === "audit_incomplete") {
+        options.io.stdout(formatTerminalResult(terminal));
+      } else {
+        options.io.stdout(formatTerminalResult(terminal));
+      }
+      return result;
+    }
+    // Rich auditor retention detail would be lost on retry (stale child binding)
+    if (terminal !== undefined && terminal.roleOutcome.kind === "failure") {
+      const terminalJson = JSON.stringify(terminal);
+      if (terminalJson.includes("retentionFailure") || terminalJson.includes("ComplianceResponseRetentionError")) {
+        presentFailureTerminal(terminal, options.io);
+        return result;
+      }
+    }
+
     if (autoResumeAttempts >= AUTO_RESUME_LIMIT) {
-      if (terminal !== undefined) presentFailureTerminal(terminal, options.io);
+      if (terminal !== undefined) {
+        if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+          presentFailureTerminal(terminal, options.io);
+        } else {
+          options.io.stdout(formatTerminalResult(terminal));
+        }
+      }
       return result;
     }
     if (!(await isSessionPrincipalAvailable(options.admitted.sessionFile))) {
-      if (terminal !== undefined) presentFailureTerminal(terminal, options.io);
+      if (terminal !== undefined) {
+        if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+          presentFailureTerminal(terminal, options.io);
+        } else {
+          options.io.stdout(formatTerminalResult(terminal));
+        }
+      }
       return result;
     }
 

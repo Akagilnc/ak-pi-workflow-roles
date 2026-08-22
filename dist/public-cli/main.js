@@ -18714,7 +18714,7 @@ var init_typed_provider_http = __esm({
 });
 
 // src/public-cli/run-lifecycle.ts
-import { lstat as lstat2, open, readdir as readdir2, readFile as readFile8, unlink as unlink3, writeFile as writeFile4 } from "node:fs/promises";
+import { chmod, lstat as lstat2, open, readdir as readdir2, readFile as readFile8, unlink as unlink3, writeFile as writeFile4 } from "node:fs/promises";
 import { join as join10 } from "node:path";
 function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
@@ -18885,7 +18885,17 @@ async function acquireRunWriterLease(runDirectory) {
         if (released) return;
         released = true;
         await handle.close().catch(() => void 0);
-        await unlink3(lockPath).catch(() => void 0);
+        try {
+          await unlink3(lockPath);
+        } catch (error) {
+          if (error.code === "EACCES") {
+            try {
+              await chmod(runDirectory, 493);
+              await unlink3(lockPath);
+            } catch {
+            }
+          }
+        }
       }
     };
   } catch (error) {
@@ -18943,12 +18953,6 @@ async function loadResumableRunRecord(home, runId) {
   const run = await readRoleRunState(runDirectory);
   if (run === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
-  }
-  if (run.state === "terminal") {
-    throw new CliUsageError(`role run is already terminal: ${runId}`);
-  }
-  if (run.state !== "resumable" || run.resumable === void 0) {
-    throw new CliUsageError(`role run is not resumable: ${runId}`);
   }
   if (!await isSessionPrincipalAvailable(run.sessionFile)) {
     throw new CliUsageError(
@@ -19063,7 +19067,7 @@ async function loadResumableRunRecord(home, runId) {
   }
   return {
     run,
-    observation: run.resumable,
+    ...run.resumable === void 0 ? {} : { observation: run.resumable },
     admittedFields: {
       instruction,
       instructionEmpty,
@@ -19106,7 +19110,7 @@ async function loadResumableJudgeRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
 async function loadResumableCoderRun(home, runId) {
@@ -19152,7 +19156,7 @@ async function loadResumableCoderRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
 async function loadResumableFixerRun(home, runId) {
@@ -19201,7 +19205,7 @@ async function loadResumableFixerRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
 async function loadResumableReviewerRun(home, runId) {
@@ -19236,7 +19240,7 @@ async function loadResumableReviewerRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
 async function loadResumableMergerRun(home, runId) {
@@ -19282,7 +19286,7 @@ async function loadResumableMergerRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
 async function peekRoleRunRole(home, runId) {
@@ -19291,7 +19295,7 @@ async function peekRoleRunRole(home, runId) {
   const run = await readRoleRunState(runDirectory);
   return run?.role;
 }
-var V1_RESUMABLE_PROVIDERS, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
+var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
 var init_run_lifecycle = __esm({
   "src/public-cli/run-lifecycle.ts"() {
     "use strict";
@@ -19301,6 +19305,7 @@ var init_run_lifecycle = __esm({
     init_typed_provider_http();
     init_invocation();
     V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
+    AUTO_RESUME_LIMIT = 2;
     RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
     RUN_STATE_FILE = "run-state.json";
     WRITER_LOCK_FILE = "writer.lock";
@@ -19311,6 +19316,176 @@ var init_run_lifecycle = __esm({
         this.name = "RunWriterLeaseHeldError";
       }
     };
+  }
+});
+
+// src/public-command-renderer.ts
+function renderPublicAkRoleCommand(target) {
+  if (!PUBLIC_CALLABLE_ROLES2.has(target.role)) return void 0;
+  const role = target.role;
+  if (target.phase === null || target.phase === void 0) {
+    return `ak-role ${role}`;
+  }
+  if (role === "coder" || role === "fixer") {
+    return `ak-role ${role} ${target.phase}`;
+  }
+  return `ak-role ${role}`;
+}
+var PUBLIC_CALLABLE_ROLES2;
+var init_public_command_renderer = __esm({
+  "src/public-command-renderer.ts"() {
+    "use strict";
+    init_packaged_role_registry();
+    PUBLIC_CALLABLE_ROLES2 = new Set(
+      PACKAGED_ROLE_REGISTRY.map((entry) => entry.role)
+    );
+  }
+});
+
+// src/public-cli/command-renderer.ts
+var init_command_renderer = __esm({
+  "src/public-cli/command-renderer.ts"() {
+    "use strict";
+    init_public_command_renderer();
+  }
+});
+
+// src/public-cli/terminal.ts
+function encodeTerminalField(value) {
+  return JSON.stringify(value);
+}
+function jsonSafeComplianceCandidate(value) {
+  return value === void 0 ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
+}
+function isLawfulTypedTerminalOutcome(outcome) {
+  return outcome.kind === "accepted" || outcome.kind === "audit_escalation" || outcome.kind === "no_receipt";
+}
+function exitCodeForTerminalOutcome(outcome) {
+  return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
+}
+function buildResidualIncompleteTerminalOutcome(input) {
+  return {
+    kind: "incomplete",
+    role: input.role,
+    status: "incomplete",
+    decision: "no-usable-result",
+    candidate: input.candidate,
+    diagnostic: input.diagnostic,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-result",
+      candidate: input.candidate,
+      diagnostic: input.diagnostic,
+      acceptedReceipt: false
+    }
+  };
+}
+function buildAuditIncompleteTerminalOutcome(input) {
+  const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
+  const audit = {
+    ...input.audit,
+    candidate: jsonSafeComplianceCandidate(input.audit.candidate)
+  };
+  return {
+    kind: "audit_incomplete",
+    role: input.role,
+    status: "audit-incomplete",
+    decision: "no-usable-decision",
+    roleCandidate,
+    audit,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-decision",
+      roleCandidate,
+      auditCandidate: audit.candidate,
+      auditObservation: audit.observation,
+      observationKind: audit.observation.kind,
+      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.kind === "object-status-unreadable" ? audit.observation.status : audit.observation.kind === "missing-subject" ? audit.observation.subject : audit.observation.kind,
+      acceptedReceipt: false
+    }
+  };
+}
+function redactExactRunId(text, runId) {
+  if (runId.length === 0) return text;
+  if (!text.includes(runId)) return text;
+  return text.split(runId).join(REDACTED_RUN_ID_TOKEN);
+}
+function recommendationNavigatorFact(input) {
+  void input.modelCommand;
+  const command = renderPublicAkRoleCommand(input.next);
+  if (command === void 0) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: `recommended role is not a public callable seat: ${input.next.role}`
+    };
+  }
+  return {
+    disposition: "recommendation",
+    next: input.next,
+    reason: input.reason,
+    command,
+    ...input.route === void 0 ? {} : { route: input.route },
+    ...input.advisoryDiagnostic === void 0 ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }
+  };
+}
+function formatTerminalResult(result2) {
+  const lines = [];
+  lines.push("role	outcome	status");
+  const outcomeStatus = result2.roleOutcome.kind === "failure" ? result2.roleOutcome.cause : result2.roleOutcome.status;
+  lines.push(
+    `${result2.roleOutcome.role}	${result2.roleOutcome.kind}	${encodeTerminalField(outcomeStatus)}`
+  );
+  if (result2.roleOutcome.kind === "failure") {
+    lines.push(
+      `diagnostic	${encodeTerminalField(result2.roleOutcome.diagnostic)}`
+    );
+  }
+  const facts = result2.roleOutcome.decisiveFacts;
+  for (const [key, value] of Object.entries(facts)) {
+    if (value === void 0) continue;
+    const rendered = typeof value === "string" ? value : JSON.stringify(value);
+    lines.push(`fact	${encodeTerminalField(key)}	${encodeTerminalField(rendered)}`);
+  }
+  lines.push(`navigator	${result2.navigator.disposition}`);
+  if (result2.navigator.advisoryDiagnostic !== void 0) {
+    lines.push(`navigator-advisory	${encodeTerminalField(result2.navigator.advisoryDiagnostic)}`);
+  }
+  if (result2.navigator.disposition === "recommendation") {
+    lines.push(
+      `next	${result2.navigator.next.role}	${result2.navigator.next.phase ?? "none"}`
+    );
+    lines.push(`reason	${encodeTerminalField(result2.navigator.reason)}`);
+    lines.push(`command	${encodeTerminalField(result2.navigator.command)}`);
+  } else if (result2.navigator.disposition === "unavailable") {
+    lines.push(
+      `unavailable	${result2.navigator.source}	${encodeTerminalField(result2.navigator.reason)}`
+    );
+  }
+  for (const artifact of result2.artifacts) {
+    lines.push(`artifact	${artifact.kind}	${encodeTerminalField(artifact.path)}`);
+  }
+  if (result2.resume !== void 0) {
+    lines.push(`resume	${encodeTerminalField(result2.resume.command)}`);
+  } else if (result2.runId !== void 0) {
+    lines.push(`run	${encodeTerminalField(result2.runId)}`);
+  }
+  if (result2.autoResumeCount !== void 0) {
+    lines.push(`autoResumeCount	${encodeTerminalField(String(result2.autoResumeCount))}`);
+  }
+  return `${lines.join("\n")}
+`;
+}
+var JSON_SAFE_UNDEFINED_ARGUMENT, REDACTED_RUN_ID_TOKEN;
+var init_terminal = __esm({
+  "src/public-cli/terminal.ts"() {
+    "use strict";
+    init_command_renderer();
+    JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
+      kind: "json-safe-sentinel",
+      type: "undefined"
+    });
+    REDACTED_RUN_ID_TOKEN = "[run-id]";
   }
 });
 
@@ -19706,173 +19881,6 @@ var init_navigator_invocation_identity = __esm({
     PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
       PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
     );
-  }
-});
-
-// src/public-command-renderer.ts
-function renderPublicAkRoleCommand(target) {
-  if (!PUBLIC_CALLABLE_ROLES2.has(target.role)) return void 0;
-  const role = target.role;
-  if (target.phase === null || target.phase === void 0) {
-    return `ak-role ${role}`;
-  }
-  if (role === "coder" || role === "fixer") {
-    return `ak-role ${role} ${target.phase}`;
-  }
-  return `ak-role ${role}`;
-}
-var PUBLIC_CALLABLE_ROLES2;
-var init_public_command_renderer = __esm({
-  "src/public-command-renderer.ts"() {
-    "use strict";
-    init_packaged_role_registry();
-    PUBLIC_CALLABLE_ROLES2 = new Set(
-      PACKAGED_ROLE_REGISTRY.map((entry) => entry.role)
-    );
-  }
-});
-
-// src/public-cli/command-renderer.ts
-var init_command_renderer = __esm({
-  "src/public-cli/command-renderer.ts"() {
-    "use strict";
-    init_public_command_renderer();
-  }
-});
-
-// src/public-cli/terminal.ts
-function encodeTerminalField(value) {
-  return JSON.stringify(value);
-}
-function jsonSafeComplianceCandidate(value) {
-  return value === void 0 ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
-}
-function isLawfulTypedTerminalOutcome(outcome) {
-  return outcome.kind === "accepted" || outcome.kind === "audit_escalation" || outcome.kind === "no_receipt";
-}
-function exitCodeForTerminalOutcome(outcome) {
-  return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
-}
-function buildResidualIncompleteTerminalOutcome(input) {
-  return {
-    kind: "incomplete",
-    role: input.role,
-    status: "incomplete",
-    decision: "no-usable-result",
-    candidate: input.candidate,
-    diagnostic: input.diagnostic,
-    acceptedReceipt: false,
-    decisiveFacts: {
-      decision: "no-usable-result",
-      candidate: input.candidate,
-      diagnostic: input.diagnostic,
-      acceptedReceipt: false
-    }
-  };
-}
-function buildAuditIncompleteTerminalOutcome(input) {
-  const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
-  const audit = {
-    ...input.audit,
-    candidate: jsonSafeComplianceCandidate(input.audit.candidate)
-  };
-  return {
-    kind: "audit_incomplete",
-    role: input.role,
-    status: "audit-incomplete",
-    decision: "no-usable-decision",
-    roleCandidate,
-    audit,
-    acceptedReceipt: false,
-    decisiveFacts: {
-      decision: "no-usable-decision",
-      roleCandidate,
-      auditCandidate: audit.candidate,
-      auditObservation: audit.observation,
-      observationKind: audit.observation.kind,
-      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.kind === "object-status-unreadable" ? audit.observation.status : audit.observation.kind === "missing-subject" ? audit.observation.subject : audit.observation.kind,
-      acceptedReceipt: false
-    }
-  };
-}
-function redactExactRunId(text, runId) {
-  if (runId.length === 0) return text;
-  if (!text.includes(runId)) return text;
-  return text.split(runId).join(REDACTED_RUN_ID_TOKEN);
-}
-function recommendationNavigatorFact(input) {
-  void input.modelCommand;
-  const command = renderPublicAkRoleCommand(input.next);
-  if (command === void 0) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: `recommended role is not a public callable seat: ${input.next.role}`
-    };
-  }
-  return {
-    disposition: "recommendation",
-    next: input.next,
-    reason: input.reason,
-    command,
-    ...input.route === void 0 ? {} : { route: input.route },
-    ...input.advisoryDiagnostic === void 0 ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }
-  };
-}
-function formatTerminalResult(result2) {
-  const lines = [];
-  lines.push("role	outcome	status");
-  const outcomeStatus = result2.roleOutcome.kind === "failure" ? result2.roleOutcome.cause : result2.roleOutcome.status;
-  lines.push(
-    `${result2.roleOutcome.role}	${result2.roleOutcome.kind}	${encodeTerminalField(outcomeStatus)}`
-  );
-  if (result2.roleOutcome.kind === "failure") {
-    lines.push(
-      `diagnostic	${encodeTerminalField(result2.roleOutcome.diagnostic)}`
-    );
-  }
-  const facts = result2.roleOutcome.decisiveFacts;
-  for (const [key, value] of Object.entries(facts)) {
-    if (value === void 0) continue;
-    const rendered = typeof value === "string" ? value : JSON.stringify(value);
-    lines.push(`fact	${encodeTerminalField(key)}	${encodeTerminalField(rendered)}`);
-  }
-  lines.push(`navigator	${result2.navigator.disposition}`);
-  if (result2.navigator.advisoryDiagnostic !== void 0) {
-    lines.push(`navigator-advisory	${encodeTerminalField(result2.navigator.advisoryDiagnostic)}`);
-  }
-  if (result2.navigator.disposition === "recommendation") {
-    lines.push(
-      `next	${result2.navigator.next.role}	${result2.navigator.next.phase ?? "none"}`
-    );
-    lines.push(`reason	${encodeTerminalField(result2.navigator.reason)}`);
-    lines.push(`command	${encodeTerminalField(result2.navigator.command)}`);
-  } else if (result2.navigator.disposition === "unavailable") {
-    lines.push(
-      `unavailable	${result2.navigator.source}	${encodeTerminalField(result2.navigator.reason)}`
-    );
-  }
-  for (const artifact of result2.artifacts) {
-    lines.push(`artifact	${artifact.kind}	${encodeTerminalField(artifact.path)}`);
-  }
-  if (result2.resume !== void 0) {
-    lines.push(`resume	${encodeTerminalField(result2.resume.command)}`);
-  } else if (result2.runId !== void 0) {
-    lines.push(`run	${encodeTerminalField(result2.runId)}`);
-  }
-  return `${lines.join("\n")}
-`;
-}
-var JSON_SAFE_UNDEFINED_ARGUMENT, REDACTED_RUN_ID_TOKEN;
-var init_terminal = __esm({
-  "src/public-cli/terminal.ts"() {
-    "use strict";
-    init_command_renderer();
-    JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
-      kind: "json-safe-sentinel",
-      type: "undefined"
-    });
-    REDACTED_RUN_ID_TOKEN = "[run-id]";
   }
 });
 
@@ -22480,6 +22488,87 @@ var init_settlement = __esm({
   }
 });
 
+// src/public-cli/auto-resume.ts
+async function runWithAutoResumeLoop(options) {
+  let autoResumeAttempts = 0;
+  let isFirst = true;
+  let currentExtraArgs = options.buildInitialArgs();
+  while (true) {
+    let lease;
+    try {
+      lease = await acquireRunWriterLease(options.admitted.runDirectory);
+    } catch (error) {
+      if (error instanceof RunWriterLeaseHeldError) {
+        presentStructuralRejection(error, options.io);
+        return { exitCode: 2 };
+      }
+      throw error;
+    }
+    const result2 = await options.dispatch(currentExtraArgs, lease, isFirst, dummyIo);
+    const terminal = result2.terminal;
+    if (terminal !== void 0) {
+      terminal.autoResumeCount = autoResumeAttempts;
+    }
+    const lawful = terminal !== void 0 && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
+    if (lawful) {
+      if (terminal !== void 0) {
+        options.io.stdout(formatTerminalResult(terminal));
+      }
+      return result2;
+    }
+    if (terminal !== void 0 && (terminal.roleOutcome.kind === "incomplete" || terminal.roleOutcome.kind === "audit_incomplete")) {
+      if (terminal.roleOutcome.kind === "audit_incomplete") {
+        options.io.stdout(formatTerminalResult(terminal));
+      } else {
+        options.io.stdout(formatTerminalResult(terminal));
+      }
+      return result2;
+    }
+    if (terminal !== void 0 && terminal.roleOutcome.kind === "failure") {
+      const terminalJson = JSON.stringify(terminal);
+      if (terminalJson.includes("retentionFailure") || terminalJson.includes("ComplianceResponseRetentionError")) {
+        presentFailureTerminal(terminal, options.io);
+        return result2;
+      }
+    }
+    if (autoResumeAttempts >= AUTO_RESUME_LIMIT) {
+      if (terminal !== void 0) {
+        if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+          presentFailureTerminal(terminal, options.io);
+        } else {
+          options.io.stdout(formatTerminalResult(terminal));
+        }
+      }
+      return result2;
+    }
+    if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
+      if (terminal !== void 0) {
+        if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+          presentFailureTerminal(terminal, options.io);
+        } else {
+          options.io.stdout(formatTerminalResult(terminal));
+        }
+      }
+      return result2;
+    }
+    autoResumeAttempts++;
+    currentExtraArgs = options.buildResumeArgs();
+    isFirst = false;
+  }
+}
+var dummyIo;
+var init_auto_resume = __esm({
+  "src/public-cli/auto-resume.ts"() {
+    "use strict";
+    init_run_lifecycle();
+    init_terminal();
+    init_settlement();
+    dummyIo = { stdout: () => {
+    }, stderr: () => {
+    } };
+  }
+});
+
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
 import { join as join12 } from "node:path";
@@ -22723,16 +22812,6 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
     throw error;
   }
   await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
   let methodProvenance;
   if (admitted.phase === "apply") {
     try {
@@ -22742,7 +22821,6 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
       );
       methodProvenance = material.provenance;
     } catch (error) {
-      await lease.release();
       return await presentControlledFailure2(
         admitted,
         {
@@ -22756,23 +22834,32 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
       );
     }
   }
-  const extraArgs = buildCoderActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedCoder({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
     io,
-    extraArgs,
-    lease,
-    ...methodProvenance === void 0 ? {} : { methodProvenance },
-    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+    buildInitialArgs: () => buildCoderActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    buildResumeArgs: () => buildCoderResumeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedCoder({
+      admitted,
+      env: {
+        ...env,
+        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      },
+      io: attemptIo,
+      extraArgs,
+      lease,
+      ...methodProvenance === void 0 ? {} : { methodProvenance },
+      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
+    })
   });
 }
 async function runPublicCoderResume(argv, env, io) {
@@ -22840,7 +22927,7 @@ async function runPublicCoderResume(argv, env, io) {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedCoder({
+  const result2 = await dispatchAdmittedCoder({
     admitted,
     env: {
       ...env,
@@ -22851,6 +22938,10 @@ async function runPublicCoderResume(argv, env, io) {
     lease,
     ...methodProvenance === void 0 ? {} : { methodProvenance }
   });
+  if (result2.terminal !== void 0) {
+    result2.terminal.autoResumeCount = 0;
+  }
+  return result2;
 }
 var init_coder_run = __esm({
   "src/public-cli/coder-run.ts"() {
@@ -22864,6 +22955,7 @@ var init_coder_run = __esm({
     init_config2();
     init_public_run_credentials();
     init_run_lifecycle();
+    init_auto_resume();
     init_settlement();
   }
 });
@@ -23611,21 +23703,10 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
     throw error;
   }
   await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
   let methodMaterial;
   try {
     methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
     return await presentControlledFailure5(
       admitted,
       {
@@ -23637,24 +23718,32 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
       io
     );
   }
-  const extraArgs = buildFixerActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedFixer({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
     io,
-    extraArgs,
-    lease,
-    methodMaterial,
-    // #391: only initial Fixer dispatch records mechanical engine provenance.
-    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+    buildInitialArgs: () => buildFixerActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    buildResumeArgs: () => buildFixerResumeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedFixer({
+      admitted,
+      env: {
+        ...env,
+        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      },
+      io: attemptIo,
+      extraArgs,
+      lease,
+      methodMaterial,
+      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
+    })
   });
 }
 async function runPublicFixerResume(argv, env, io) {
@@ -23715,7 +23804,7 @@ async function runPublicFixerResume(argv, env, io) {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedFixer({
+  const result2 = await dispatchAdmittedFixer({
     admitted,
     env: {
       ...env,
@@ -23726,6 +23815,8 @@ async function runPublicFixerResume(argv, env, io) {
     lease,
     methodMaterial
   });
+  if (result2.terminal !== void 0) result2.terminal.autoResumeCount = 0;
+  return result2;
 }
 var init_fixer_run = __esm({
   "src/public-cli/fixer-run.ts"() {
@@ -23739,6 +23830,7 @@ var init_fixer_run = __esm({
     init_config2();
     init_public_run_credentials();
     init_run_lifecycle();
+    init_auto_resume();
     init_settlement();
   }
 });
@@ -23990,33 +24082,30 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     throw error;
   }
   await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  const extraArgs = buildJudgeActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedJudge({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
     io,
-    extraArgs,
-    lease,
-    // #358: only initial Judge dispatch records mechanical engine provenance.
-    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+    buildInitialArgs: () => buildJudgeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    buildResumeArgs: () => buildJudgeResumeActivationExtraArgs(admitted, {
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedJudge({
+      admitted,
+      env: {
+        ...env,
+        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      },
+      io: attemptIo,
+      extraArgs,
+      lease,
+      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
+    })
   });
 }
 async function runPublicResume(argv, env, io) {
@@ -24060,7 +24149,7 @@ async function runPublicResume(argv, env, io) {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedJudge({
+  const result2 = await dispatchAdmittedJudge({
     admitted,
     env: {
       ...env,
@@ -24070,6 +24159,10 @@ async function runPublicResume(argv, env, io) {
     extraArgs,
     lease
   });
+  if (result2.terminal !== void 0) {
+    result2.terminal.autoResumeCount = 0;
+  }
+  return result2;
 }
 var init_judge_run = __esm({
   "src/public-cli/judge-run.ts"() {
@@ -24082,6 +24175,7 @@ var init_judge_run = __esm({
     init_config2();
     init_public_run_credentials();
     init_run_lifecycle();
+    init_auto_resume();
     init_settlement();
   }
 });
@@ -24419,21 +24513,10 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
     throw error;
   }
   await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
   let methodMaterial;
   try {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
     return await presentControlledFailure7(
       admitted,
       {
@@ -24446,23 +24529,32 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
       io
     );
   }
-  const extraArgs = buildMergerActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedMerger({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
     io,
-    extraArgs,
-    lease,
-    methodMaterial,
-    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+    buildInitialArgs: () => buildMergerActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    buildResumeArgs: () => buildMergerResumeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedMerger({
+      admitted,
+      env: {
+        ...env,
+        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      },
+      io: attemptIo,
+      extraArgs,
+      lease,
+      methodMaterial,
+      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
+    })
   });
 }
 async function runPublicMergerResume(argv, env, io) {
@@ -24524,7 +24616,7 @@ async function runPublicMergerResume(argv, env, io) {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedMerger({
+  const result2 = await dispatchAdmittedMerger({
     admitted,
     env: {
       ...env,
@@ -24535,6 +24627,8 @@ async function runPublicMergerResume(argv, env, io) {
     lease,
     methodMaterial
   });
+  if (result2.terminal !== void 0) result2.terminal.autoResumeCount = 0;
+  return result2;
 }
 var init_merger_run = __esm({
   "src/public-cli/merger-run.ts"() {
@@ -24551,6 +24645,7 @@ var init_merger_run = __esm({
     init_config2();
     init_public_run_credentials();
     init_run_lifecycle();
+    init_auto_resume();
     init_settlement();
   }
 });
@@ -24835,21 +24930,10 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
     throw error;
   }
   await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
   let methodMaterial;
   try {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
     return await presentControlledFailure8(
       admitted,
       {
@@ -24861,24 +24945,32 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
       io
     );
   }
-  const extraArgs = buildReviewerActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedReviewer({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
     io,
-    extraArgs,
-    lease,
-    methodMaterial,
-    // #378: only initial Reviewer dispatch records mechanical engine provenance.
-    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+    buildInitialArgs: () => buildReviewerActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    buildResumeArgs: () => buildReviewerResumeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedReviewer({
+      admitted,
+      env: {
+        ...env,
+        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      },
+      io: attemptIo,
+      extraArgs,
+      lease,
+      methodMaterial,
+      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
+    })
   });
 }
 async function runPublicReviewerResume(argv, env, io) {
@@ -24939,7 +25031,7 @@ async function runPublicReviewerResume(argv, env, io) {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedReviewer({
+  const result2 = await dispatchAdmittedReviewer({
     admitted,
     env: {
       ...env,
@@ -24950,6 +25042,8 @@ async function runPublicReviewerResume(argv, env, io) {
     lease,
     methodMaterial
   });
+  if (result2.terminal !== void 0) result2.terminal.autoResumeCount = 0;
+  return result2;
 }
 var init_reviewer_run = __esm({
   "src/public-cli/reviewer-run.ts"() {
@@ -24963,6 +25057,7 @@ var init_reviewer_run = __esm({
     init_config2();
     init_public_run_credentials();
     init_run_lifecycle();
+    init_auto_resume();
     init_settlement();
   }
 });
