@@ -14,6 +14,7 @@ import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
 import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure, readReviewerDispatchRejection } from "./explicit-internal.ts";
 import {
+  RESUME_TRANSPORT_ENVELOPE,
   isV1ResumableProvider,
   readLatestTypedProviderHttpObservation,
   readTypedHttp429Observation,
@@ -725,7 +726,7 @@ export async function readBoundAuditorKnownFailure(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
-  const RESUME_ENVELOPE = "[ak-role:resume-continue]" as const;
+  const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
   const isResumeEnvelope = (msg: unknown): boolean => {
     if (!isRecord(msg) || msg.role !== "user") return false;
     const text = typeof msg.text === "string" ? msg.text : typeof (msg as { content?: unknown }).content === "string" ? (msg as { content: string }).content : undefined;
@@ -772,7 +773,7 @@ export async function readBoundAuditorKnownFailure(
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : undefined;
     const attemptEntryIndex = attemptEntryId === undefined ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
-    validAuditorFiles.push({ file, entries, attemptEntryId });
+    validAuditorFiles.push({ file, entries, ...(attemptEntryId === undefined ? {} : { attemptEntryId }) });
   }
   // Prefer compliance failure (retention) from any valid attempt, newest first.
   for (const { entries, attemptEntryId } of validAuditorFiles) {
