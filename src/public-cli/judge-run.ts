@@ -31,6 +31,7 @@ import {
 } from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
+  AUTO_RESUME_LIMIT,
   clearTypedProviderHttpObservation,
   isSessionPrincipalAvailable,
   isV1ResumableFailure,
@@ -459,36 +460,70 @@ export async function runPublicJudge(
 
   await markRunAdmitted(admitted);
 
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  const extraArgs = buildJudgeActivationExtraArgs(admitted, {
+  // #416 scope = single LLM call: call-local retry counter, no persistence.
+  let autoResumeAttempts = 0;
+  let isFirst = true;
+  let currentExtraArgs = buildJudgeActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
+  const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
 
-  return await dispatchAdmittedJudge({
-    admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
-    io,
-    extraArgs,
-    lease,
-    // #358: only initial Judge dispatch records mechanical engine provenance.
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
-  });
+  while (true) {
+    let lease: RunWriterLease;
+    try {
+      lease = await acquireRunWriterLease(admitted.runDirectory);
+    } catch (error) {
+      if (error instanceof RunWriterLeaseHeldError) {
+        presentStructuralRejection(error, io);
+        return { exitCode: 2 };
+      }
+      throw error;
+    }
+
+    // Use dummy Io for intermediate attempts; only final presentation goes to real io.
+    const attemptIo = dummyIo;
+    const result = await dispatchAdmittedJudge({
+      admitted,
+      env: {
+        ...env,
+        ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+      },
+      io: attemptIo,
+      extraArgs: currentExtraArgs,
+      lease,
+      ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
+    });
+
+    if (result.terminal !== undefined) {
+      (result.terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
+    }
+
+    const hasAcceptedReceipt =
+      result.terminal !== undefined && result.terminal.roleOutcome.kind === "accepted";
+    if (hasAcceptedReceipt) {
+      // Final success: present once to real io
+      if (result.terminal) io.stdout(formatTerminalResult(result.terminal));
+      return result;
+    }
+
+    if (autoResumeAttempts >= AUTO_RESUME_LIMIT) {
+      if (result.terminal) presentFailureTerminal(result.terminal, io);
+      return result;
+    }
+    if (!(await isSessionPrincipalAvailable(admitted.sessionFile))) {
+      if (result.terminal) presentFailureTerminal(result.terminal, io);
+      return result;
+    }
+    autoResumeAttempts++;
+    currentExtraArgs = buildJudgeResumeActivationExtraArgs(admitted, {
+      ...(env.model === undefined ? {} : { model: env.model }),
+      ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+    });
+    isFirst = false;
+  }
 }
 
 /**
@@ -552,7 +587,7 @@ export async function runPublicResume(
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
-  return await dispatchAdmittedJudge({
+  const result = await dispatchAdmittedJudge({
     admitted,
     env: {
       ...env,
@@ -562,4 +597,9 @@ export async function runPublicResume(
     extraArgs,
     lease,
   });
+  // Manual resume: distinct scope from per-call auto retry; just expose observation.
+  if (result.terminal !== undefined) {
+    (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+  }
+  return result;
 }
