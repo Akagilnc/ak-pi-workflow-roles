@@ -39,6 +39,7 @@ import {
 } from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
+  AUTO_RESUME_LIMIT,
   clearTypedProviderHttpObservation,
   isSessionPrincipalAvailable,
   isV1ResumableFailure,
@@ -493,23 +494,12 @@ export async function runPublicReviewer(
   }
 
   await markRunAdmitted(admitted);
-
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
+  // #416 scope = single LLM call: call-local retry counter, no persistence.
 
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
     return await presentControlledFailure(
       admitted,
       {
@@ -522,26 +512,51 @@ export async function runPublicReviewer(
     );
   }
 
-  const extraArgs = buildReviewerActivationExtraArgs(admitted, {
+  let autoResumeAttempts = 0;
+  let isFirst = true;
+  let currentExtraArgs = buildReviewerActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
-  return await dispatchAdmittedReviewer({
-    admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
-    io,
-    extraArgs,
-    lease,
-    methodMaterial,
-    // #378: only initial Reviewer dispatch records mechanical engine provenance.
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
-  });
+  while (true) {
+    let lease: RunWriterLease;
+    try {
+      lease = await acquireRunWriterLease(admitted.runDirectory);
+    } catch (error) {
+      if (error instanceof RunWriterLeaseHeldError) {
+        presentStructuralRejection(error, io);
+        return { exitCode: 2 };
+      }
+      throw error;
+    }
+    const result = await dispatchAdmittedReviewer({
+      admitted,
+      env: {
+        ...env,
+        ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+      },
+      io,
+      extraArgs: currentExtraArgs,
+      lease,
+      methodMaterial,
+      ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
+    });
+    if (result.terminal !== undefined) (result.terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
+    const hasAcceptedReceipt = result.terminal !== undefined && result.terminal.roleOutcome.kind === "accepted";
+    if (hasAcceptedReceipt) return result;
+    if (autoResumeAttempts >= AUTO_RESUME_LIMIT) return result;
+    if (!(await isSessionPrincipalAvailable(admitted.sessionFile))) return result;
+    autoResumeAttempts++;
+    currentExtraArgs = buildReviewerResumeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...(env.model === undefined ? {} : { model: env.model }),
+      ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+    });
+    isFirst = false;
+  }
 }
 
 /**
@@ -620,7 +635,7 @@ export async function runPublicReviewerResume(
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
-  return await dispatchAdmittedReviewer({
+  const result = await dispatchAdmittedReviewer({
     admitted,
     env: {
       ...env,
@@ -631,6 +646,8 @@ export async function runPublicReviewerResume(
     lease,
     methodMaterial,
   });
+  if (result.terminal !== undefined) (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+  return result;
 }
 
 export type { ExplicitInternalKnownFailure, PackagedMethodSkillProvenance };

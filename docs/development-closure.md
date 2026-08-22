@@ -60,4 +60,9 @@ be omitted only with an **explicit disposition** recorded in the trail.
 
 After session restart or context compaction, re-seed by **manually rereading**
 the artifact trail (paths, digests, receipts, dispositions) before dispatching
-new work. Do not invent package-level memory or automatic resume.
+new work. Do not invent package-level memory. Automatic resume of Role runs
+(each non-lawful LLM call retried in-place up to 2 times, call-local counter
+without persistence, runId unchanged, same session, see #416 owner decision
+2026-08-22 "某次调用被掐就像一次 toolcall 被掐然后重试, 讨论的范围一直是单次")
+is explicitly permitted and overrides the former "or automatic resume"
+prohibition in this line; package-level memory remains prohibited.

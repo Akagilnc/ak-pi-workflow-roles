@@ -36,6 +36,7 @@ import {
 } from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
+  AUTO_RESUME_LIMIT,
   clearTypedProviderHttpObservation,
   isSessionPrincipalAvailable,
   isV1ResumableFailure,
@@ -446,17 +447,7 @@ export async function runPublicCoder(
   }
 
   await markRunAdmitted(admitted);
-
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
+  // #416 scope = single LLM call: call-local retry counter, no persistence.
 
   let methodProvenance: PackagedMethodSkillProvenance | undefined;
   if (admitted.phase === "apply") {
@@ -467,7 +458,9 @@ export async function runPublicCoder(
       );
       methodProvenance = material.provenance;
     } catch (error) {
-      await lease.release();
+      // No lease yet; present failure directly (no auto loop needed for pre-dispatch error).
+      const tmpLease = await acquireRunWriterLease(admitted.runDirectory).catch(() => undefined);
+      if (tmpLease) await tmpLease.release().catch(() => undefined);
       return await presentControlledFailure(
         admitted,
         {
@@ -482,25 +475,56 @@ export async function runPublicCoder(
     }
   }
 
-  const extraArgs = buildCoderActivationExtraArgs(admitted, {
+  let autoResumeAttempts = 0;
+  let isFirst = true;
+  let currentExtraArgs = buildCoderActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
-  return await dispatchAdmittedCoder({
-    admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
-    io,
-    extraArgs,
-    lease,
-    ...(methodProvenance === undefined ? {} : { methodProvenance }),
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
-  });
+  while (true) {
+    let lease: RunWriterLease;
+    try {
+      lease = await acquireRunWriterLease(admitted.runDirectory);
+    } catch (error) {
+      if (error instanceof RunWriterLeaseHeldError) {
+        presentStructuralRejection(error, io);
+        return { exitCode: 2 };
+      }
+      throw error;
+    }
+    const result = await dispatchAdmittedCoder({
+      admitted,
+      env: {
+        ...env,
+        ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+      },
+      io,
+      extraArgs: currentExtraArgs,
+      lease,
+      ...(methodProvenance === undefined ? {} : { methodProvenance }),
+      ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
+    });
+    if (result.terminal !== undefined) {
+      (result.terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
+    }
+    const hasAcceptedReceipt =
+      result.terminal !== undefined && result.terminal.roleOutcome.kind === "accepted";
+    if (hasAcceptedReceipt) {
+      return result;
+    }
+    if (autoResumeAttempts >= AUTO_RESUME_LIMIT) return result;
+    if (!(await isSessionPrincipalAvailable(admitted.sessionFile))) return result;
+    autoResumeAttempts++;
+    currentExtraArgs = buildCoderResumeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...(env.model === undefined ? {} : { model: env.model }),
+      ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+    });
+    isFirst = false;
+  }
 }
 
 /**
@@ -587,7 +611,7 @@ export async function runPublicCoderResume(
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
-  return await dispatchAdmittedCoder({
+  const result = await dispatchAdmittedCoder({
     admitted,
     env: {
       ...env,
@@ -598,6 +622,10 @@ export async function runPublicCoderResume(
     lease,
     ...(methodProvenance === undefined ? {} : { methodProvenance }),
   });
+  if (result.terminal !== undefined) {
+    (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+  }
+  return result;
 }
 
 // Re-export for tests that assert typed credential failure channel shape.

@@ -1,8 +1,9 @@
 /**
- * Durable Role run lifecycle for public CLI (ADR 0052 / #11 / #108).
+ * Durable Role run lifecycle for public CLI (ADR 0052 / #11 / #108 / #416).
  * States: admitted → running → resumable | terminal.
- * v1 resume is limited to an observed typed HTTP 429 on Codex/xAI with no
- * lawful role terminal result. Prose is never regex-classified as quota evidence.
+ * #416 (owner 2026-08-22): resume no longer gates on terminal/resumable or typed 429 —
+ * any existing run with an available Pi session principal may be resumed; caller decides.
+ * Prose is never regex-classified as quota evidence.
  */
 import { lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -38,7 +39,9 @@ import {
   type InvocationEffectiveModel,
 } from "./invocation.ts";
 
-/** Providers eligible for v1 typed-429 resume (Codex / xAI only). */
+/** Providers eligible for v1 typed-429 resume (Codex / xAI only).
+ * @deprecated v1 429-only gate removed by #416 (owner 2026-08-22: "根本不要有限制"). Kept for compatibility; do not use for new branching.
+ */
 export const V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"] as const;
 export type V1ResumableProvider = (typeof V1_RESUMABLE_PROVIDERS)[number];
 
@@ -48,6 +51,9 @@ export type TypedHttp429Observation = {
   readonly httpStatus: 429;
   readonly provider: V1ResumableProvider;
 };
+
+/** Per single LLM call auto-resume retries (call-local, no persistence). See #416 scope correction 2026-08-22. */
+export const AUTO_RESUME_LIMIT = 2 as const;
 
 export type RoleRunRecord = {
   readonly runId: string;
@@ -69,7 +75,9 @@ export type RoleRunRecord = {
   readonly admittedRequestPath: string;
   /** Coder/Fixer — preserved for resume continuation. */
   readonly phase?: CoderPhase | FixerPhase;
-  /** Present only while state === "resumable". */
+  /** Present only while state === "resumable".
+   * @deprecated retained only for historical 429 runs; #416 no longer gates resume on this field.
+   */
   readonly resumable?: TypedHttp429Observation;
 };
 
@@ -79,12 +87,14 @@ export const RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]" as const;
 const RUN_STATE_FILE = "run-state.json";
 const WRITER_LOCK_FILE = "writer.lock";
 
+/** @deprecated #416: 429-only classification removed; kept for compatibility. */
 export function isV1ResumableProvider(
   provider: string,
 ): provider is V1ResumableProvider {
   return (V1_RESUMABLE_PROVIDERS as readonly string[]).includes(provider);
 }
 
+/** @deprecated #416: 429-only observation no longer gates resume; kept for historical runs. */
 export async function readTypedHttp429Observation(
   runDirectory: string,
 ): Promise<TypedHttp429Observation | undefined> {
@@ -96,6 +106,7 @@ export async function readTypedHttp429Observation(
 }
 
 /**
+ * @deprecated #416: 429-only resumability predicate removed from gating. Kept for compatibility.
  * True only when a typed HTTP 429 was observed and no lawful terminal exists.
  * Callers must pass the lawful-terminal fact from settlement, not re-infer it.
  */
@@ -266,6 +277,7 @@ export async function markRunRunning(
   });
 }
 
+/** @deprecated #416: 429-only resumable marker; kept for historical runs. */
 export async function markRunResumable(
   runDirectory: string,
   observation: TypedHttp429Observation,
@@ -453,7 +465,7 @@ async function loadResumableRunRecord(
   runId: string,
 ): Promise<{
   readonly run: RoleRunRecord;
-  readonly observation: TypedHttp429Observation;
+  readonly observation?: TypedHttp429Observation;
   readonly admittedFields: LoadedAdmittedRequestFields;
 }> {
   const runDirectory = await findRunDirectoryById(home, runId);
@@ -464,12 +476,8 @@ async function loadResumableRunRecord(
   if (run === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  if (run.state === "terminal") {
-    throw new CliUsageError(`role run is already terminal: ${runId}`);
-  }
-  if (run.state !== "resumable" || run.resumable === undefined) {
-    throw new CliUsageError(`role run is not resumable: ${runId}`);
-  }
+  // #416: removed terminal/resumable gates per owner decision "根本不要有限制" (2026-08-22).
+  // Only the exact Pi session principal check remains as honest failure.
   // Exact Pi session principal must be present before resume dispatches.
   if (!(await isSessionPrincipalAvailable(run.sessionFile))) {
     throw new CliUsageError(
@@ -618,7 +626,7 @@ async function loadResumableRunRecord(
   }
   return {
     run,
-    observation: run.resumable,
+    ...(run.resumable === undefined ? {} : { observation: run.resumable }),
     admittedFields: {
       instruction,
       instructionEmpty,
@@ -641,25 +649,26 @@ async function loadResumableRunRecord(
 export type LoadedResumableJudgeRun = {
   readonly admitted: AdmittedJudgeInvocation;
   readonly run: RoleRunRecord;
-  readonly observation: TypedHttp429Observation;
+  /** @deprecated #416: resumable observation no longer gates resume; may be undefined. */
+  readonly observation?: TypedHttp429Observation;
 };
 
 export type LoadedResumableCoderRun = {
   readonly admitted: AdmittedCoderInvocation;
   readonly run: RoleRunRecord;
-  readonly observation: TypedHttp429Observation;
+  readonly observation?: TypedHttp429Observation;
 };
 
 export type LoadedResumableFixerRun = {
   readonly admitted: AdmittedFixerInvocation;
   readonly run: RoleRunRecord;
-  readonly observation: TypedHttp429Observation;
+  readonly observation?: TypedHttp429Observation;
 };
 
 export type LoadedResumableReviewerRun = {
   readonly admitted: AdmittedReviewerInvocation;
   readonly run: RoleRunRecord;
-  readonly observation: TypedHttp429Observation;
+  readonly observation?: TypedHttp429Observation;
 };
 
 /**
@@ -693,7 +702,7 @@ export async function loadResumableJudgeRun(
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
   };
 }
 
@@ -747,7 +756,7 @@ export async function loadResumableCoderRun(
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
   };
 }
 
@@ -806,7 +815,7 @@ export async function loadResumableFixerRun(
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
   };
 }
 
@@ -853,14 +862,14 @@ export async function loadResumableReviewerRun(
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
   };
 }
 
 export type LoadedResumableMergerRun = {
   readonly admitted: AdmittedMergerInvocation;
   readonly run: RoleRunRecord;
-  readonly observation: TypedHttp429Observation;
+  readonly observation?: TypedHttp429Observation;
 };
 
 /**
@@ -913,7 +922,7 @@ export async function loadResumableMergerRun(
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
   };
 }
 
