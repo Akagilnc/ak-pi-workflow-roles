@@ -6,7 +6,7 @@
  * lease — never table labels/layout/prose classification.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1168,6 +1168,68 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       (error: unknown) => error instanceof RunWriterLeaseHeldError,
     );
     await first.release();
+  });
+});
+
+test("#418 lease release reports the true cleanup-failure cause via the diagnostic seam", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "runs", "run-lease-cleanup-cause@judge");
+    await mkdir(runDirectory, { recursive: true });
+    const diagnostics: string[] = [];
+    const lease = await acquireRunWriterLease(runDirectory, (line) => diagnostics.push(line));
+    // Force a truthful non-EACCES unlink failure: replace the lock file with a
+    // directory so release's unlink fails (EISDIR on Linux, EPERM on macOS).
+    // The diagnostic must carry the real identity — never a guessed
+    // EACCES/lease-held label.
+    const lockPath = join(runDirectory, "writer.lock");
+    await unlink(lockPath);
+    await mkdir(lockPath);
+    await lease.release();
+    assert.equal(diagnostics.length, 1);
+    assert.match(diagnostics[0]!, /writer lease lock cleanup failed/);
+    assert.match(diagnostics[0]!, / code=(EPERM|EISDIR)/);
+    assert.match(diagnostics[0]!, /writer\.lock/);
+    await rm(lockPath, { recursive: true });
+    // Best-effort continue semantics preserved: next acquire succeeds.
+    const next = await acquireRunWriterLease(runDirectory);
+    await next.release();
+  });
+});
+
+test("#418 lease release stays best-effort when the diagnostic sink throws", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "runs", "run-lease-sink-throws@judge");
+    await mkdir(runDirectory, { recursive: true });
+    let sinkCalls = 0;
+    const lease = await acquireRunWriterLease(runDirectory, () => {
+      sinkCalls += 1;
+      throw new Error("diagnostic sink exploded");
+    });
+    // Force a truthful non-EACCES unlink failure (same seam as above).
+    const lockPath = join(runDirectory, "writer.lock");
+    await unlink(lockPath);
+    await mkdir(lockPath);
+    // Contract: release() resolves despite the throwing sink — no propagation.
+    await lease.release();
+    assert.equal(sinkCalls, 1);
+    await rm(lockPath, { recursive: true });
+  });
+});
+
+test("#418 lease release recovery path emits no false diagnostic", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "runs", "run-lease-recover@judge");
+    await mkdir(runDirectory, { recursive: true });
+    const diagnostics: string[] = [];
+    const lease = await acquireRunWriterLease(runDirectory, (line) => diagnostics.push(line));
+    // EACCES unlink → chmod retry recovers; the success path must stay silent.
+    await chmod(runDirectory, 0o500);
+    try {
+      await lease.release();
+      assert.equal(diagnostics.length, 0);
+    } finally {
+      await chmod(runDirectory, 0o755);
+    }
   });
 });
 

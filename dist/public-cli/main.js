@@ -18866,7 +18866,22 @@ async function isSessionPrincipalAvailable(sessionFile) {
     return false;
   }
 }
-async function acquireRunWriterLease(runDirectory) {
+function describeErrorIdentity(error) {
+  const candidate = error;
+  const name = typeof candidate?.name === "string" && candidate.name !== "" ? candidate.name : typeof error;
+  const code = typeof candidate?.code === "string" || typeof candidate?.code === "number" ? ` code=${String(candidate.code)}` : "";
+  const message = typeof candidate?.message === "string" && candidate.message !== "" ? `: ${candidate.message}` : "";
+  return `${name}${code}${message}`;
+}
+async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
+  const reportCleanupFailure = (error) => {
+    try {
+      onCleanupFailure?.(
+        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join10(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
+      );
+    } catch {
+    }
+  };
   const lockPath = join10(runDirectory, WRITER_LOCK_FILE);
   try {
     const handle = await open(lockPath, "wx");
@@ -18892,8 +18907,11 @@ async function acquireRunWriterLease(runDirectory) {
             try {
               await chmod(runDirectory, 493);
               await unlink3(lockPath);
-            } catch {
+            } catch (retryError) {
+              reportCleanupFailure(retryError);
             }
+          } else {
+            reportCleanupFailure(error);
           }
         }
       }
@@ -19886,7 +19904,8 @@ var init_navigator_invocation_identity = __esm({
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { appendFile, lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
 import { dirname as dirname6, join as join11 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
@@ -20200,12 +20219,24 @@ async function readBoundAuditorKnownFailure(sessionFile) {
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === void 0) return void 0;
+  const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
+  const isResumeEnvelope = (msg) => {
+    if (!isRecord5(msg) || msg.role !== "user") return false;
+    const text = typeof msg.text === "string" ? msg.text : typeof msg.content === "string" ? msg.content : void 0;
+    if (text === RESUME_ENVELOPE) return true;
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      return content.some((p) => isRecord5(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+    }
+    return false;
+  };
   let latestParentUserIndex = -1;
   for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
-    if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
-      latestParentUserIndex = i;
-      break;
-    }
+    const entry = parentEntries[i];
+    if (entry?.type !== "message" || entry.message?.role !== "user") continue;
+    if (isResumeEnvelope(entry.message)) continue;
+    latestParentUserIndex = i;
+    break;
   }
   const childDirectory = join11(dirname6(sessionFile), "auditor-roles");
   let names;
@@ -20215,6 +20246,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     if (isMissingPathError2(error)) return void 0;
     throw sessionReadFailure(error, "failed to read bound auditor session directory");
   }
+  const validAuditorFiles = [];
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
@@ -20229,6 +20261,9 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
     const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
+    validAuditorFiles.push({ file, entries, ...attemptEntryId === void 0 ? {} : { attemptEntryId } });
+  }
+  for (const { entries, attemptEntryId } of validAuditorFiles) {
     const stop = extractSessionProviderStop(entries);
     if (stop === void 0) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -20248,6 +20283,10 @@ async function readBoundAuditorKnownFailure(sessionFile) {
         ...isRecord5(failure.details) ? { details: failure.details } : {}
       };
     }
+  }
+  for (const { entries } of validAuditorFiles) {
+    const stop = extractSessionProviderStop(entries);
+    if (stop === void 0) continue;
     const primary = knownFailureFromProviderStop(stop);
     return {
       ...primary,
@@ -20981,20 +21020,74 @@ async function ensureAuditEvidenceDirectory(runDirectory) {
   }
   return artifactsDir;
 }
+async function appendRunAttemptHistory(admitted, outcome) {
+  const entries = await readBoundSessionEntries(admitted.sessionFile);
+  let parentId = null;
+  let priorEntries = 0;
+  for (const entry of entries) {
+    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+    if (entry.type === "custom" && entry.customType === ATTEMPT_HISTORY_ENTRY_TYPE) {
+      priorEntries += 1;
+    }
+  }
+  const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
+  const line2 = `${JSON.stringify({
+    type: "custom",
+    customType: ATTEMPT_HISTORY_ENTRY_TYPE,
+    data: {
+      sequence: priorEntries + 1,
+      role: admitted.role,
+      runId: admitted.runId,
+      recordedAt: timestamp2,
+      outcome
+    },
+    id: randomUUID(),
+    parentId,
+    timestamp: timestamp2
+  })}
+`;
+  await appendFile(admitted.sessionFile, line2, "utf8");
+}
 async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
+  await appendRunAttemptHistory(admitted, outcome);
+  if (typeof fsConstants.O_NOFOLLOW !== "number" || typeof fsConstants.O_NONBLOCK !== "number") {
+    throw auditArtifactPublicationError(
+      "audit evidence publication requires O_NOFOLLOW|O_NONBLOCK open-flag support (anti-symlink/anti-planted protection must not be silently dropped); refusing to publish",
+      "ENOSYS"
+    );
+  }
   const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
   const evidencePath = join11(artifactsDir, "audit-incomplete.json");
+  let existing;
   try {
-    const existing = await lstat3(evidencePath);
-    throw auditArtifactPublicationError(
-      existing.isSymbolicLink() ? "audit evidence destination is a symlink" : "audit evidence destination collision",
-      existing.isSymbolicLink() ? "ELOOP" : "EEXIST"
-    );
+    existing = await lstat3(evidencePath);
   } catch (error) {
     if (!isMissingPathError2(error)) throw error;
   }
-  const handle = await open2(evidencePath, "wx", 384);
+  if (existing?.isSymbolicLink()) {
+    throw auditArtifactPublicationError(
+      "audit evidence destination is a symlink",
+      "ELOOP"
+    );
+  }
+  if (existing && !existing.isFile()) {
+    throw auditArtifactPublicationError(
+      "audit evidence destination is not a regular file",
+      "EEXIST"
+    );
+  }
+  const handle = await open2(
+    evidencePath,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    384
+  );
   try {
+    if (!(await handle.stat()).isFile()) {
+      throw auditArtifactPublicationError(
+        "audit evidence destination is not a regular file",
+        "EEXIST"
+      );
+    }
     await handle.writeFile(`${JSON.stringify(outcome, null, 2)}
 `, "utf8");
     await handle.sync();
@@ -21247,6 +21340,7 @@ async function extractNavigatorFactFromAdmittedSession(admitted) {
   }
 }
 async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21291,6 +21385,7 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
   ];
 }
 async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21460,6 +21555,7 @@ function extractFixerMethodInvocations(entries, options) {
   return Object.freeze(observed);
 }
 async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21571,6 +21667,7 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
   };
 }
 async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21690,6 +21787,7 @@ async function trySettleCollectorTerminalResult(admitted) {
   return settleLawfulCollectorTerminalResult(admitted);
 }
 async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21857,6 +21955,7 @@ function extractReviewerMethodInvocations(entries, options) {
   return Object.freeze(observed);
 }
 async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -22025,6 +22124,7 @@ function extractMergerMethodInvocations(entries, options) {
   return Object.freeze(observed);
 }
 async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -22246,6 +22346,15 @@ async function publishFailureArtifacts(admitted, failure) {
     admitted.runDirectory
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
+  try {
+    await appendRunAttemptHistory(admitted, {
+      kind: "failure",
+      role: admitted.role,
+      ...failure
+    });
+  } catch (error) {
+    priorIssues.push(publicationAttemptFromError(admitted.sessionFile, error));
+  }
   const underArtifacts = baseDir === join11(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
@@ -22442,7 +22551,7 @@ function presentFailureTerminal(terminal, io) {
     }));
   }
 }
-var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS, COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC, ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC;
+var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS, COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC, ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC, ATTEMPT_HISTORY_ENTRY_TYPE;
 var init_settlement = __esm({
   "src/public-cli/settlement.ts"() {
     "use strict";
@@ -22485,10 +22594,18 @@ var init_settlement = __esm({
       cause: "output",
       identityName: "EngineDetourInfrastructureError"
     };
+    ATTEMPT_HISTORY_ENTRY_TYPE = "ak_run_attempt_history";
   }
 });
 
 // src/public-cli/auto-resume.ts
+function presentTerminal(terminal, io) {
+  if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+    presentFailureTerminal(terminal, io);
+  } else {
+    io.stdout(formatTerminalResult(terminal));
+  }
+}
 async function runWithAutoResumeLoop(options) {
   let autoResumeAttempts = 0;
   let isFirst = true;
@@ -22496,7 +22613,10 @@ async function runWithAutoResumeLoop(options) {
   while (true) {
     let lease;
     try {
-      lease = await acquireRunWriterLease(options.admitted.runDirectory);
+      lease = await acquireRunWriterLease(
+        options.admitted.runDirectory,
+        (diagnostic) => options.io.stderr(diagnostic)
+      );
     } catch (error) {
       if (error instanceof RunWriterLeaseHeldError) {
         presentStructuralRejection(error, options.io);
@@ -22516,39 +22636,12 @@ async function runWithAutoResumeLoop(options) {
       }
       return result2;
     }
-    if (terminal !== void 0 && (terminal.roleOutcome.kind === "incomplete" || terminal.roleOutcome.kind === "audit_incomplete")) {
-      if (terminal.roleOutcome.kind === "audit_incomplete") {
-        options.io.stdout(formatTerminalResult(terminal));
-      } else {
-        options.io.stdout(formatTerminalResult(terminal));
-      }
-      return result2;
-    }
-    if (terminal !== void 0 && terminal.roleOutcome.kind === "failure") {
-      const terminalJson = JSON.stringify(terminal);
-      if (terminalJson.includes("retentionFailure") || terminalJson.includes("ComplianceResponseRetentionError")) {
-        presentFailureTerminal(terminal, options.io);
-        return result2;
-      }
-    }
     if (autoResumeAttempts >= AUTO_RESUME_LIMIT) {
-      if (terminal !== void 0) {
-        if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
-          presentFailureTerminal(terminal, options.io);
-        } else {
-          options.io.stdout(formatTerminalResult(terminal));
-        }
-      }
+      if (terminal !== void 0) presentTerminal(terminal, options.io);
       return result2;
     }
     if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
-      if (terminal !== void 0) {
-        if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
-          presentFailureTerminal(terminal, options.io);
-        } else {
-          options.io.stdout(formatTerminalResult(terminal));
-        }
-      }
+      if (terminal !== void 0) presentTerminal(terminal, options.io);
       return result2;
     }
     autoResumeAttempts++;
@@ -22891,7 +22984,7 @@ async function runPublicCoderResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -23155,7 +23248,7 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
   await markRunAdmitted(admitted);
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       presentStructuralRejection(error, io);
@@ -23390,7 +23483,7 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
   await markRunAdmitted(admitted);
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       presentStructuralRejection(error, io);
@@ -23775,7 +23868,7 @@ async function runPublicFixerResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -24137,7 +24230,7 @@ async function runPublicResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -24586,7 +24679,7 @@ async function runPublicMergerResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -25002,7 +25095,7 @@ async function runPublicReviewerResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
