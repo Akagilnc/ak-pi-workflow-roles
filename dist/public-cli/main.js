@@ -18866,7 +18866,19 @@ async function isSessionPrincipalAvailable(sessionFile) {
     return false;
   }
 }
-async function acquireRunWriterLease(runDirectory) {
+function describeErrorIdentity(error) {
+  const candidate = error;
+  const name = typeof candidate?.name === "string" && candidate.name !== "" ? candidate.name : typeof error;
+  const code = typeof candidate?.code === "string" || typeof candidate?.code === "number" ? ` code=${String(candidate.code)}` : "";
+  const message = typeof candidate?.message === "string" && candidate.message !== "" ? `: ${candidate.message}` : "";
+  return `${name}${code}${message}`;
+}
+async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
+  const reportCleanupFailure = (error) => {
+    onCleanupFailure?.(
+      `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join10(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
+    );
+  };
   const lockPath = join10(runDirectory, WRITER_LOCK_FILE);
   try {
     const handle = await open(lockPath, "wx");
@@ -18892,8 +18904,11 @@ async function acquireRunWriterLease(runDirectory) {
             try {
               await chmod(runDirectory, 493);
               await unlink3(lockPath);
-            } catch {
+            } catch (retryError) {
+              reportCleanupFailure(retryError);
             }
+          } else {
+            reportCleanupFailure(error);
           }
         }
       }
@@ -21032,6 +21047,12 @@ async function appendRunAttemptHistory(admitted, outcome) {
 }
 async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
   await appendRunAttemptHistory(admitted, outcome);
+  if (typeof fsConstants.O_NOFOLLOW !== "number" || typeof fsConstants.O_NONBLOCK !== "number") {
+    throw auditArtifactPublicationError(
+      "audit evidence publication requires O_NOFOLLOW|O_NONBLOCK open-flag support (anti-symlink/anti-planted protection must not be silently dropped); refusing to publish",
+      "ENOSYS"
+    );
+  }
   const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
   const evidencePath = join11(artifactsDir, "audit-incomplete.json");
   let existing;
@@ -22589,7 +22610,10 @@ async function runWithAutoResumeLoop(options) {
   while (true) {
     let lease;
     try {
-      lease = await acquireRunWriterLease(options.admitted.runDirectory);
+      lease = await acquireRunWriterLease(
+        options.admitted.runDirectory,
+        (diagnostic) => options.io.stderr(diagnostic)
+      );
     } catch (error) {
       if (error instanceof RunWriterLeaseHeldError) {
         presentStructuralRejection(error, options.io);
@@ -22957,7 +22981,7 @@ async function runPublicCoderResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -23221,7 +23245,7 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
   await markRunAdmitted(admitted);
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       presentStructuralRejection(error, io);
@@ -23456,7 +23480,7 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
   await markRunAdmitted(admitted);
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       presentStructuralRejection(error, io);
@@ -23841,7 +23865,7 @@ async function runPublicFixerResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -24203,7 +24227,7 @@ async function runPublicResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -24652,7 +24676,7 @@ async function runPublicMergerResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -25068,7 +25092,7 @@ async function runPublicReviewerResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));

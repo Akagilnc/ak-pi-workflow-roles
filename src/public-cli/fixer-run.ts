@@ -567,7 +567,7 @@ export async function runPublicFixerResume(
 
   let lease: RunWriterLease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
