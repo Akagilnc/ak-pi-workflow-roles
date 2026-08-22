@@ -193,6 +193,97 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
   });
 });
 
+test("F1: audit_incomplete settled does not auto-retry or crash presentFailureTerminal", async()=>{
+  await withTempHome(async(home)=>{
+    const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
+    const runDir=join(home,"runs","416-audit-incomplete-loop");await mkdir(join(runDir,"session"),{recursive:true});
+    const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
+    let calls=0;const {io,stdout}=captureIo();
+    const auditIncomplete={
+      kind:"audit_incomplete" as const,
+      role:"judge" as const,
+      status:"audit-incomplete" as const,
+      decision:"no-usable-decision" as const,
+      roleCandidate:{judgeStatus:"converged"},
+      audit:{status:"audit-incomplete" as const,observation:{kind:"object-status-unreadable" as const,status:"unknown"},candidate:{status:"mystery"}},
+      acceptedReceipt:false as const,
+      decisiveFacts:{acceptedReceipt:false},
+    };
+    const result=await runWithAutoResumeLoop({
+      admitted:{sessionFile,runDirectory:runDir},
+      io,
+      buildInitialArgs: ()=>["--initial"],
+      buildResumeArgs: ()=>["--resume"],
+      dispatch: async(_args, lease)=>{try{calls+=1;return{exitCode:1,terminal:{roleOutcome:auditIncomplete,navigator:{disposition:"no-advice"},artifacts:[],runId:"416-audit-incomplete-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};}finally{await lease.release();}},
+    });
+    assert.equal(calls,1);
+    assert.equal(result.exitCode,1);
+    assert.equal(result.terminal?.roleOutcome.kind,"audit_incomplete");
+    assert.equal(result.terminal?.autoResumeCount,0);
+    assert.equal(stdout.length,1);
+  });
+});
+
+test("F1: merger incomplete settled does not auto-retry or crash presentFailureTerminal", async()=>{
+  await withTempHome(async(home)=>{
+    const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
+    const runDir=join(home,"runs","416-incomplete-loop");await mkdir(join(runDir,"session"),{recursive:true});
+    const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
+    let calls=0;const {io,stdout}=captureIo();
+    const incomplete={
+      kind:"incomplete" as const,
+      role:"merger" as const,
+      status:"incomplete" as const,
+      decision:"no-usable-result" as const,
+      candidate:{},
+      diagnostic:"no usable merger result",
+      acceptedReceipt:false as const,
+      decisiveFacts:{acceptedReceipt:false},
+    };
+    const result=await runWithAutoResumeLoop({
+      admitted:{sessionFile,runDirectory:runDir},
+      io,
+      buildInitialArgs: ()=>["--initial"],
+      buildResumeArgs: ()=>["--resume"],
+      dispatch: async(_args, lease)=>{try{calls+=1;return{exitCode:1,terminal:{roleOutcome:incomplete,navigator:{disposition:"no-advice"},artifacts:[],runId:"416-incomplete-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};}finally{await lease.release();}},
+    });
+    assert.equal(calls,1);
+    assert.equal(result.exitCode,1);
+    assert.equal(result.terminal?.roleOutcome.kind,"incomplete");
+    assert.equal(result.terminal?.autoResumeCount,0);
+    assert.equal(stdout.length,1);
+  });
+});
+
+test("retry lease conflict keeps prior failure Terminal (does not wash to exit 2)", async()=>{
+  await withTempHome(async(home)=>{
+    const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
+    const runDir=join(home,"runs","416-lease-keep");await mkdir(join(runDir,"session"),{recursive:true});
+    const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
+    let calls=0;const {io,stdout}=captureIo();
+    const failure={
+      kind:"failure" as const,
+      role:"judge" as const,
+      cause:"activation" as const,
+      diagnostic:"boom",
+      decisiveFacts:{cause:"activation",diagnostic:"boom"},
+    };
+    const result=await runWithAutoResumeLoop({
+      admitted:{sessionFile,runDirectory:runDir},
+      io,
+      buildInitialArgs: ()=>["--initial"],
+      buildResumeArgs: ()=>["--resume"],
+      // Intentionally leak the writer lock so the retry acquire fails (same
+      // shape as unlink failing on an unwritable run tree).
+      dispatch: async()=>{calls+=1;return{exitCode:1,terminal:{roleOutcome:failure,navigator:{disposition:"no-advice"},artifacts:[],runId:"416-lease-keep"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
+    });
+    assert.equal(calls,1);
+    assert.equal(result.exitCode,1);
+    assert.equal(result.terminal?.roleOutcome.kind,"failure");
+    assert.equal(stdout.length,1);
+  });
+});
+
 test("block2: lawful (accepted) does not trigger auto - single presentation", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
