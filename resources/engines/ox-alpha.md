@@ -72,6 +72,7 @@ extra flags beyond these verified constraints:
 ## Failure handling
 
 On any spawn, auth, model-id, stream-stall, or connection-drop failure, return
-the soft failure to the session and continue labor in-seat per ADR 0071
-(seat fallback with typed declaration). Do not silently swap to another
+the typed failure and STOP — the run fails. In-seat labor after a detour
+failure is FORBIDDEN, and so is skipping the detour to work in-seat. Zero
+invocations is a violation, not a fallback. Do not silently swap to another
 engine id.
