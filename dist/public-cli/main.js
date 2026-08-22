@@ -22489,6 +22489,13 @@ var init_settlement = __esm({
 });
 
 // src/public-cli/auto-resume.ts
+function presentTerminal(terminal, io) {
+  if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+    presentFailureTerminal(terminal, io);
+  } else {
+    io.stdout(formatTerminalResult(terminal));
+  }
+}
 async function runWithAutoResumeLoop(options) {
   let autoResumeAttempts = 0;
   let isFirst = true;
@@ -22516,39 +22523,12 @@ async function runWithAutoResumeLoop(options) {
       }
       return result2;
     }
-    if (terminal !== void 0 && (terminal.roleOutcome.kind === "incomplete" || terminal.roleOutcome.kind === "audit_incomplete")) {
-      if (terminal.roleOutcome.kind === "audit_incomplete") {
-        options.io.stdout(formatTerminalResult(terminal));
-      } else {
-        options.io.stdout(formatTerminalResult(terminal));
-      }
-      return result2;
-    }
-    if (terminal !== void 0 && terminal.roleOutcome.kind === "failure") {
-      const terminalJson = JSON.stringify(terminal);
-      if (terminalJson.includes("retentionFailure") || terminalJson.includes("ComplianceResponseRetentionError")) {
-        presentFailureTerminal(terminal, options.io);
-        return result2;
-      }
-    }
     if (autoResumeAttempts >= AUTO_RESUME_LIMIT) {
-      if (terminal !== void 0) {
-        if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
-          presentFailureTerminal(terminal, options.io);
-        } else {
-          options.io.stdout(formatTerminalResult(terminal));
-        }
-      }
+      if (terminal !== void 0) presentTerminal(terminal, options.io);
       return result2;
     }
     if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
-      if (terminal !== void 0) {
-        if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
-          presentFailureTerminal(terminal, options.io);
-        } else {
-          options.io.stdout(formatTerminalResult(terminal));
-        }
-      }
+      if (terminal !== void 0) presentTerminal(terminal, options.io);
       return result2;
     }
     autoResumeAttempts++;

@@ -371,8 +371,11 @@ export async function acquireRunWriterLease(
             try {
               await chmod(runDirectory, 0o755);
               await unlink(lockPath);
-            } catch {}
+            } catch {
+              // best-effort cleanup: stale lock will surface as lease-held on next acquire (exit 2)
+            }
           }
+          // non-EACCES or post-chmod failure is best-effort settlement cleanup; ignore
         }
       },
     };
