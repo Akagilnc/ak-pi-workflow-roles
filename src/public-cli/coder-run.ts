@@ -548,7 +548,7 @@ export async function runPublicCoderResume(
 
   let lease: RunWriterLease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       // Concurrent resume: reject without second writer or dispatch.

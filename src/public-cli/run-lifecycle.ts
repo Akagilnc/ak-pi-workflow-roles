@@ -341,12 +341,51 @@ export type RunWriterLease = {
 };
 
 /**
+ * True error identity for diagnostics — name/code/message as-is, never a
+ * guessed label (failure-honesty constitution).
+ */
+function describeErrorIdentity(error: unknown): string {
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
+  const name =
+    typeof candidate?.name === "string" && candidate.name !== ""
+      ? candidate.name
+      : typeof error;
+  const code =
+    typeof candidate?.code === "string" || typeof candidate?.code === "number"
+      ? ` code=${String(candidate.code)}`
+      : "";
+  const message =
+    typeof candidate?.message === "string" && candidate.message !== ""
+      ? `: ${candidate.message}`
+      : "";
+  return `${name}${code}${message}`;
+}
+
+/**
  * Acquire the one-writer lease for a Role run. Concurrent acquire rejects
  * without dispatch. Exclusive create — no second writer.
+ *
+ * `onCleanupFailure` receives a non-terminal diagnostic line when release-time
+ * lock cleanup fails. Release stays best-effort (a stale lock resurfaces as
+ * RunWriterLeaseHeldError on next acquire), but the true error identity must
+ * still land somewhere observable — silent swallowing is forbidden.
  */
 export async function acquireRunWriterLease(
   runDirectory: string,
+  onCleanupFailure?: (diagnostic: string) => void,
 ): Promise<RunWriterLease> {
+  const reportCleanupFailure = (error: unknown): void => {
+    // Sink isolation: a throwing onCleanupFailure must not propagate through
+    // release() — release stays best-effort by contract. The true cleanup
+    // cause has already been handed to the sink as its argument.
+    try {
+      onCleanupFailure?.(
+        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+      );
+    } catch {
+      // diagnostic-sink failure is itself best-effort; never break release().
+    }
+  };
   const lockPath = join(runDirectory, WRITER_LOCK_FILE);
   try {
     const handle = await open(lockPath, "wx");
@@ -371,7 +410,14 @@ export async function acquireRunWriterLease(
             try {
               await chmod(runDirectory, 0o755);
               await unlink(lockPath);
-            } catch {}
+            } catch (retryError) {
+              // best-effort cleanup: stale lock will surface as lease-held on next acquire (exit 2),
+              // but the true chmod/unlink cause must be recorded, not swallowed.
+              reportCleanupFailure(retryError);
+            }
+          } else {
+            // non-EACCES unlink failure is best-effort settlement cleanup; record true cause.
+            reportCleanupFailure(error);
           }
         }
       },
