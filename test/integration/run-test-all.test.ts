@@ -21,7 +21,7 @@ import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
-const THIS_CONTRACT_REL = "test/contract/run-test-all.test.ts";
+const THIS_CONTRACT_REL = "test/integration/run-test-all.test.ts";
 
 /** Exact heavy set — independent expected literals, not runner import (#160; #319 Batch 4 R1 split). */
 const TICKET_HEAVYWEIGHT = [
