@@ -45,7 +45,6 @@ import {
   markRunRunning,
   markRunTerminal,
   renderResumeCommand,
-  AUTO_RESUME_LIMIT,
   RESUME_TRANSPORT_ENVELOPE,
   RunWriterLeaseHeldError,
   type RunWriterLease,
@@ -478,8 +477,8 @@ export async function runPublicCoder(
   return runWithAutoResumeLoop({
     admitted,
     io,
-    // #422: effective ceiling injected once; the loop never re-reads disk.
-    autoResumeLimit: env.autoResumeLimit ?? AUTO_RESUME_LIMIT,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () =>
       buildCoderActivationExtraArgs(admitted, {
         packageRoot: env.packageRoot,
