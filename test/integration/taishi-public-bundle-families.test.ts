@@ -3,8 +3,7 @@
 // B1-B4 四个 metric family，且无 sibling family 目录。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,7 +26,6 @@ import {
 } from "../../src/taishi-page.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-const fixtureHome = join(packageRoot, "test/fixtures/taishi/home");
 const BOOK = "fixture-book";
 
 type PageWithMetricFamilies = TaishiIssueMetricsPage & {
@@ -37,51 +35,10 @@ type PageWithMetricFamilies = TaishiIssueMetricsPage & {
   readonly roundTimeline?: TaishiRoundTimelineSection;
 };
 
-function gitPorcelain(cwd: string): string {
-  return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
-    cwd,
-    encoding: "utf8",
-  });
-}
-
-async function withBusinessRepo<T>(fn: (repo: string, porcelainBefore: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(join(tmpdir(), "taishi-business-"));
-  try {
-    execFileSync("git", ["init"], { cwd: businessRepo });
-    await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
-    execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
-    execFileSync(
-      "git",
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-      { cwd: businessRepo },
-    );
-    const porcelainBefore = gitPorcelain(businessRepo);
-    assert.equal(porcelainBefore, "", "business repo starts clean");
-    const result = await fn(businessRepo, porcelainBefore);
-    assert.equal(gitPorcelain(businessRepo), porcelainBefore, "business repo zero write");
-    return result;
-  } finally {
-    await rm(businessRepo, { recursive: true, force: true });
-  }
-}
-
-/**
- * Fixture injection stays below the production contract: hermetic process HOME
- * (os.homedir) — never a production invocation `home` field (ADR 0048).
- */
-async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "taishi-home-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
-  try {
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-    return await fn(home);
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    await rm(home, { recursive: true, force: true });
-  }
-}
+import {
+  withBusinessRepo,
+  withTempHome,
+} from "../helpers/taishi-fixture-kit.ts";
 
 /**
  * Public single-bundle regression: dist/public-cli/main.js must assemble B1–B4

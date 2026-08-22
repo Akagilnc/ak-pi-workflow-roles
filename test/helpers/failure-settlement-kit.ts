@@ -19,8 +19,13 @@ import type {
   TerminalResult,
 } from "../../src/public-cli/terminal.ts";
 
-export async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fail-"));
+export async function withTempHome<T>(
+  scenario: (home: string) => Promise<T>,
+  options: { prefix?: string } = {},
+): Promise<T> {
+  const home = await mkdtemp(
+    join(tmpdir(), options.prefix ?? "ak-public-cli-fail-"),
+  );
   try {
     return await scenario(home);
   } finally {
