@@ -14,6 +14,7 @@ import { readFile } from "node:fs/promises";
 import { Type, type Static } from "typebox";
 
 import { physicalPathIdentity, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
+import { resolveTaishiBookKey } from "./taishi-book-key.ts";
 import {
   runTaishiCohortMode,
   type TaishiCohortModeInput,
@@ -33,7 +34,6 @@ import {
   buildTaishiModelGroupsPage,
   type TaishiModelGroupsPage,
 } from "./taishi-model-groups.ts";
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   assertTaishiChangedLinesInput,
   buildTaishiIssueMetricsPage,
@@ -222,19 +222,11 @@ function cachedPageMatchesRequestedScope(
   return page.issueNumber === requestedTicket;
 }
 
-function tryResolveBookKey(projectRoot: string): string | undefined {
-  try {
-    return resolveBookKeyFromGit(projectRoot);
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Resolve page/scan book identity for issue mode (#399).
  * CLI supplies bookKey from cwd git common-dir.
- * Sweep/legacy without bookKey: git common-dir when possible; else stable synthetic
- * `root:<projectRoot identity>` so read/write page paths agree without a prior scan.
+ * Sweep/legacy without bookKey falls back to the single shared
+ * projectRoot→bookKey rule (git common-dir, else `root:<identity>`).
  */
 function resolveIssueBookKey(input: {
   readonly bookKey?: string;
@@ -243,13 +235,17 @@ function resolveIssueBookKey(input: {
   if (input.bookKey !== undefined && input.bookKey.trim() !== "") {
     return input.bookKey;
   }
-  const fromGit = tryResolveBookKey(input.projectRoot);
-  if (fromGit !== undefined) return fromGit;
-  return `root:${physicalPathIdentity(input.projectRoot)}`;
+  return resolveTaishiBookKey(input.projectRoot);
 }
 
 export async function readOrComputeTaishiIssuePage(
   input: TaishiIssueModeInput,
+  /**
+   * Cohort ensure only (#412): narrow the cache-miss recompute scan to this
+   * root inside the already-selected book — a miss must never widen to a
+   * whole-book scan for one index row. Not a public CLI face.
+   */
+  options?: { readonly scanProjectRoot?: string },
 ): Promise<TaishiIssueModeResult> {
   const ledgerHome = resolveActivationLedgerHome();
   const projectRoot = physicalPathIdentity(input.projectRoot);
@@ -284,7 +280,7 @@ export async function readOrComputeTaishiIssuePage(
   }
 
   try {
-    return await runTaishiIssueMode(input);
+    return await runTaishiIssueMode(input, undefined, options?.scanProjectRoot);
   } catch (error) {
     if (error instanceof TaishiIssueComputeError) throw error;
     throw new TaishiIssueComputeError({
@@ -300,6 +296,8 @@ async function runTaishiIssueMode(
   input: TaishiIssueModeInput | TaishiMergedPullRequest,
   /** Caller-supplied scan facts — skip a second ledger walk when already scanned. */
   precomputedScan?: TaishiScopedRunScan,
+  /** Cohort ensure conjunction (#412): scan this root inside the selected book. */
+  scanProjectRoot?: string,
 ): Promise<TaishiIssueModeResult> {
   // Programmatic issue/sweep entry boundary — same finite non-negative rule as attach schema.
   assertTaishiChangedLinesInput(input.changedLines);
@@ -317,6 +315,7 @@ async function runTaishiIssueMode(
     (inputBookKey !== undefined
       ? await scanTaishiIssueRuns({
           bookKey: inputBookKey,
+          ...(scanProjectRoot === undefined ? {} : { projectRoot: scanProjectRoot }),
           ...(ticketNumber === undefined ? {} : { ticketNumber }),
         })
       : ticketNumber === undefined
@@ -480,7 +479,7 @@ export async function runTaishi(input: TaishiInput): Promise<TaishiResult> {
         projectRoot,
         issueNumber,
         ...(realBookKey === undefined ? {} : { bookKey: realBookKey }),
-      });
+      }, { scanProjectRoot: projectRoot });
       return ensured.page;
     });
   }

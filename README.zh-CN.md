@@ -196,7 +196,7 @@ ak-role merger --project /path/to/worktree "Reconcile the active merge."
 | `--attach` | — | `path` | 条件:sweep | 是 | option | modes=sweep; max=sweep:1 | sweep 模式附件路径；sweep 必填且恰一次；载荷为附件正文。 |
 | `--cohort` | — | — | 否 | 否 | option | modes=cohort | 选择 cohort 模式。 |
 | `--group-a-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort A 组标签（cohort 模式必填）。 |
-| `--group-a-issues` | — | `N[,N...]` | 条件:cohort | 否 | option | modes=cohort | cohort A 组逗号分隔正整数 issue 列表（cohort 模式必填）。 |
+| `--group-a-issues` | — | `N\|book:N[,...]` | 条件:cohort | 否 | option | modes=cohort | cohort A 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿；簿键中的逗号/反斜杠用 \, / \\ 转义（cohort 模式必填）。 |
 | `--group-b-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort B 组标签（cohort 模式必填）。 |
-| `--group-b-issues` | — | `N[,N...]` | 条件:cohort | 否 | option | modes=cohort | cohort B 组逗号分隔正整数 issue 列表（cohort 模式必填）。 |
+| `--group-b-issues` | — | `N\|book:N[,...]` | 条件:cohort | 否 | option | modes=cohort | cohort B 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿；簿键中的逗号/反斜杠用 \, / \\ 转义（cohort 模式必填）。 |
 <!-- END GENERATED: public-cli-options -->
