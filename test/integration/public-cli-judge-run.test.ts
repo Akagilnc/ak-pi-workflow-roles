@@ -256,7 +256,9 @@ test(
       const retained = rows.filter(
         (row) => row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
       );
-      assert.equal(retained.length, 1);
+      // #419: history appends per attempt, so retention count follows leg count
+      // (autoResumeCount + 1 attempts in this single call).
+      assert.equal(retained.length, (result.terminal!.autoResumeCount ?? 0) + 1);
       const retainedCall = retained[0].data.response.content.find(
         (part: any) => part.type === "toolCall",
       );
