@@ -4,6 +4,7 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import { appendFile, lstat, mkdir, open, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -1925,7 +1926,6 @@ export async function appendRunAttemptHistory(
     type: "custom",
     customType: ATTEMPT_HISTORY_ENTRY_TYPE,
     data: {
-      version: 1,
       sequence: priorEntries + 1,
       role: admitted.role,
       runId: admitted.runId,
@@ -1964,14 +1964,33 @@ export async function publishComplianceAuditIncompleteEvidence(
       "ELOOP",
     );
   }
-  if (existing?.isDirectory()) {
+  if (existing && !existing.isFile()) {
     throw auditArtifactPublicationError(
-      "audit evidence destination collision",
+      "audit evidence destination is not a regular file",
       "EEXIST",
     );
   }
-  const handle = await open(evidencePath, "w", 0o600);
+  // #182-A protection restored atomically at this open seam: O_NOFOLLOW makes
+  // the open itself refuse symlinks (ELOOP), so one swapped in after the lstat
+  // above can never be followed or written through; O_NONBLOCK keeps a
+  // race-planted FIFO from blocking this open forever. The fstat below
+  // backstops any non-regular object that wins the window.
+  const handle = await open(
+    evidencePath,
+    fsConstants.O_WRONLY |
+      fsConstants.O_CREAT |
+      fsConstants.O_TRUNC |
+      fsConstants.O_NOFOLLOW |
+      fsConstants.O_NONBLOCK,
+    0o600,
+  );
   try {
+    if (!(await handle.stat()).isFile()) {
+      throw auditArtifactPublicationError(
+        "audit evidence destination is not a regular file",
+        "EEXIST",
+      );
+    }
     await handle.writeFile(`${JSON.stringify(outcome, null, 2)}\n`, "utf8");
     await handle.sync();
   } finally {

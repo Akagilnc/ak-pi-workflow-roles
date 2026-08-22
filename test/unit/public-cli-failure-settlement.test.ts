@@ -2041,6 +2041,65 @@ test("public audit evidence collision returns a typed nonzero Terminal with resi
   });
 });
 
+test("#419 symlink planted at audit evidence destination fails loudly and never writes through", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    // Worst case of the lstat→open window: a symlink occupies the destination
+    // at open time (however it got there). The open seam itself is no-follow,
+    // so this must fail loudly and leave the link target byte-identical.
+    const victimPath = join(home, "victim-audit-incomplete.json");
+    const victimSentinel = `${JSON.stringify({ sentinel: "symlink-target-must-stay-intact" })}\n`;
+    await writeFile(victimPath, victimSentinel, "utf8");
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "audit evidence symlink"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-audit-artifact-symlink-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const runDir = join(sessionDir, "..");
+          await mkdir(join(runDir, "artifacts"), { recursive: true });
+          const evidenceLink = join(runDir, "artifacts", "audit-incomplete.json");
+          try {
+            await symlink(victimPath, evidenceLink);
+          } catch (error) {
+            // Idempotent across the scene's multiple pi legs.
+            if ((error as { code?: string }).code !== "EEXIST") throw error;
+          }
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            auditIncompleteSessionRows("role-1", ["retained"]),
+            "utf8",
+          );
+          return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
+        },
+      },
+    );
+    assert.equal(result.exitCode, 1);
+    assert.equal(stdout.length, 1);
+    assert.equal(stderr.length, 1);
+    assert.ok(result.terminal);
+    const outcome = result.terminal!.roleOutcome;
+    assert.equal(outcome.kind, "failure");
+    if (outcome.kind !== "failure") throw new Error("expected publication failure");
+    assert.equal(outcome.cause, "unrecognized");
+    assert.equal(outcome.decisiveFacts.errorCode, "ELOOP");
+    assert.equal(outcome.auditResidual?.acceptedReceipt, false);
+    assert.deepEqual(outcome.auditResidual?.roleCandidate, { judgeStatus: "converged" });
+    assert.deepEqual(outcome.auditResidual?.audit.candidate, ["retained"]);
+    assert.equal(result.terminal!.artifacts.length, 0);
+    // Nothing may be written through the link to its target.
+    assert.equal(await readFile(victimPath, "utf8"), victimSentinel);
+  });
+});
+
 function auditIncompleteSessionRows(callId: string, candidate: unknown): string {
   return [
     JSON.stringify({
