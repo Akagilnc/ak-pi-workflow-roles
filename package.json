@@ -41,7 +41,7 @@
   "scripts": {
     "build": "tsx scripts/generate-tool-execution-observation-schema.ts && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
     "prepack": "npm run build",
-    "test": "pnpm run test:fast",
+    "test": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
     "test:fast": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
     "test:integration": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts",
     "test:all": "node scripts/run-test-all.mjs",
