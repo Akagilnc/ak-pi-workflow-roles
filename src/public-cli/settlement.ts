@@ -725,12 +725,24 @@ export async function readBoundAuditorKnownFailure(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
+  const RESUME_ENVELOPE = "[ak-role:resume-continue]" as const;
+  const isResumeEnvelope = (msg: unknown): boolean => {
+    if (!isRecord(msg) || msg.role !== "user") return false;
+    const text = typeof msg.text === "string" ? msg.text : typeof (msg as { content?: unknown }).content === "string" ? (msg as { content: string }).content : undefined;
+    if (text === RESUME_ENVELOPE) return true;
+    const content = (msg as { content?: unknown }).content;
+    if (Array.isArray(content)) {
+      return content.some((p) => isRecord(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+    }
+    return false;
+  };
   let latestParentUserIndex = -1;
   for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
-    if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
-      latestParentUserIndex = i;
-      break;
-    }
+    const entry = parentEntries[i];
+    if (entry?.type !== "message" || entry.message?.role !== "user") continue;
+    if (isResumeEnvelope(entry.message)) continue;
+    latestParentUserIndex = i;
+    break;
   }
   const childDirectory = join(dirname(sessionFile), "auditor-roles");
   let names: string[];
@@ -740,6 +752,12 @@ export async function readBoundAuditorKnownFailure(
     if (isMissingPathError(error)) return undefined;
     throw sessionReadFailure(error, "failed to read bound auditor session directory");
   }
+  // Auto-resume seam (owner A): stale check must ignore resume envelope and
+  // prioritize retention. Previous `attemptEntryIndex < latest` discarded the
+  // first attempt's child after resume advanced latest, losing retentionFailure
+  // when retry had no compliance entry. Fix: ignore envelope for staleness and
+  // prefer any valid compliance failure before falling back to primary.
+  const validAuditorFiles: Array<{ file: string; entries: SessionEntry[]; attemptEntryId?: string }> = [];
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries: SessionEntry[];
     try {
@@ -754,7 +772,10 @@ export async function readBoundAuditorKnownFailure(
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : undefined;
     const attemptEntryIndex = attemptEntryId === undefined ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
-
+    validAuditorFiles.push({ file, entries, attemptEntryId });
+  }
+  // Prefer compliance failure (retention) from any valid attempt, newest first.
+  for (const { entries, attemptEntryId } of validAuditorFiles) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -774,6 +795,11 @@ export async function readBoundAuditorKnownFailure(
         ...(isRecord(failure.details) ? { details: failure.details } : {}),
       };
     }
+  }
+  // No compliance failure: fall back to most recent provider stop (auto-resume latest attempt).
+  for (const { entries } of validAuditorFiles) {
+    const stop = extractSessionProviderStop(entries);
+    if (stop === undefined) continue;
     const primary = knownFailureFromProviderStop(stop)!;
     return {
       ...primary,
