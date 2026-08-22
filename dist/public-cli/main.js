@@ -18875,9 +18875,12 @@ function describeErrorIdentity(error) {
 }
 async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
   const reportCleanupFailure = (error) => {
-    onCleanupFailure?.(
-      `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join10(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
-    );
+    try {
+      onCleanupFailure?.(
+        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join10(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
+      );
+    } catch {
+    }
   };
   const lockPath = join10(runDirectory, WRITER_LOCK_FILE);
   try {
