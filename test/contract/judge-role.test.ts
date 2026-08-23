@@ -17,6 +17,7 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
+import { JISHIZHONG_OUTPUT_TOOL, MENXIA_OUTPUT_TOOL, runMenxia } from "../../src/menxia-role.ts";
 import {
   createNavigatorAttendance,
   type NavigatorEvent,
@@ -44,6 +45,7 @@ import {
   NAVIGATOR_POST_ROLE_GRACE_MS,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
+import { menxiaChildCompletion } from "../helpers/menxia-child-completion.ts";
 import { packageRoot, withActivationHome } from "../helpers/pi-test-harness.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
@@ -937,13 +939,15 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   );
 });
 
-test("coder completed submission runs the Menxia gate before terminating and reruns it after bounce", async () => {
+test("coder completed submission projects a real Menxia bounce and reruns the gate", async () => {
   const request = "Apply the approved plan.";
-  const decisions = [
-    { status: "bounce" as const, officer: "jishizhong" as const, disposition: "rewrite" as const, findings: ["add a focused regression"] },
-    { status: "pass" as const, officer: "jishizhong" as const, findings: [] },
-  ];
-  const subjects: unknown[] = [];
+  const seen: string[] = [];
+  const runCompletion = menxiaChildCompletion([
+    { tool: MENXIA_OUTPUT_TOOL, args: { status: "dispatch", officer: "jishizhong" } },
+    { tool: JISHIZHONG_OUTPUT_TOOL, args: { status: "bounce", findings: ["add a focused regression"] } },
+    { tool: MENXIA_OUTPUT_TOOL, args: { status: "dispatch", officer: "jishizhong" } },
+    { tool: JISHIZHONG_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
+  ], seen);
   const harness = extensionHarness(undefined, {
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
@@ -954,10 +958,7 @@ test("coder completed submission runs the Menxia gate before terminating and rer
       loadSoul: async () => "CODER LAW",
       loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
       loadCanonicalSkillBinding: async () => tddBinding(),
-      runMenxia: async ({ subject }: any) => {
-        subjects.push(subject);
-        return decisions.shift()!;
-      },
+      runMenxia: (options) => runMenxia({ ...options, runCompletion }),
     },
     { failInfrastructure(error) { throw error; } },
   );
@@ -971,17 +972,27 @@ test("coder completed submission runs the Menxia gate before terminating and rer
   assert.ok(tool);
   const completed = { status: "completed", report: "TDD and verification evidence" };
 
-  await assert.rejects(
-    tool.execute("bounced", completed, undefined, undefined, toolCallContext([{ id: "bounced", name: CODER_OUTPUT_TOOL_NAME }])),
-    /Menxia.*rewrite/i,
+  const submissionContext = (id: string) => Object.assign(
+    toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
+    {
+      cwd: process.cwd(),
+      model: { id: "menxia-fixture", name: "menxia-fixture", api: "fixture", provider: "fixture" },
+      modelRegistry: {
+        getProvider() { return undefined; },
+        async getProviderAuth() { return { auth: {} }; },
+        async getApiKeyAndHeaders() { return { ok: true }; },
+      },
+      thinkingLevel: "off",
+    },
   );
-  const accepted = await tool.execute("accepted", completed, undefined, undefined, toolCallContext([{ id: "accepted", name: CODER_OUTPUT_TOOL_NAME }]));
+  await assert.rejects(
+    tool.execute("bounced", completed, undefined, undefined, submissionContext("bounced")),
+    /Menxia.*rewrite.*focused regression/i,
+  );
+  const accepted = await tool.execute("accepted", completed, undefined, undefined, submissionContext("accepted"));
 
   assert.equal(accepted.terminate, true);
-  assert.deepEqual(subjects, [
-    { kind: "worker_completion", material: JSON.stringify(completed) },
-    { kind: "worker_completion", material: JSON.stringify(completed) },
-  ]);
+  assert.equal(seen.length, 4);
 });
 
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
