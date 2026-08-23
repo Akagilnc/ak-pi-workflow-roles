@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import test from "node:test";
 
-import { fauxAssistantMessage, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
 import {
   SessionManager,
   type ExtensionAPI,
@@ -17,7 +17,7 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { JISHIZHONG_OUTPUT_TOOL, MENXIA_OUTPUT_TOOL, runMenxia } from "../../src/menxia-role.ts";
+import { JISHIZHONG_OUTPUT_TOOL, MENXIA_OUTPUT_TOOL } from "../../src/menxia-role.ts";
 import {
   createNavigatorAttendance,
   type NavigatorEvent,
@@ -45,7 +45,6 @@ import {
   NAVIGATOR_POST_ROLE_GRACE_MS,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
-import { menxiaChildCompletion } from "../helpers/menxia-child-completion.ts";
 import { packageRoot, withActivationHome } from "../helpers/pi-test-harness.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
@@ -844,14 +843,18 @@ test("coder plan loads its task without construction skill and returns planned",
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const output = { status: "planned", report: "Plan the public seam first." };
+  let menxiaProviderRequests = 0;
   const result = await tool.execute(
     "coder",
     output,
     undefined,
     undefined,
-    toolCallContext([{ id: "coder", name: CODER_OUTPUT_TOOL_NAME }]),
+    Object.assign(toolCallContext([{ id: "coder", name: CODER_OUTPUT_TOOL_NAME }]), {
+      modelRegistry: { getProvider() { menxiaProviderRequests += 1; } },
+    }),
   );
   assert.deepEqual(result.details, output);
+  assert.equal(menxiaProviderRequests, 0);
 });
 
 test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", async () => {
@@ -881,15 +884,20 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     ...bare,
     reason: "prerequisite_missing: owner has not answered which adapter branch is in scope",
   };
+  let menxiaProviderRequests = 0;
+  const nonCompletedContext = (id: string) => Object.assign(
+    toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
+    { modelRegistry: { getProvider() { menxiaProviderRequests += 1; } } },
+  );
   // Positive: no reason → bounce → same-run reasoned resubmit accepted.
   await assert.rejects(
-    tool.execute("unfinished-bare", bare, undefined, undefined, toolCallContext([{ id: "unfinished-bare", name: CODER_OUTPUT_TOOL_NAME }])),
+    tool.execute("unfinished-bare", bare, undefined, undefined, nonCompletedContext("unfinished-bare")),
     (error: unknown) =>
       error instanceof Error &&
       error.message === "补理由（前置缺失/违宪之一）或继续施工",
   );
   assert.deepEqual(
-    (await tool.execute("unfinished-reasoned", reasoned, undefined, undefined, toolCallContext([{ id: "unfinished-reasoned", name: CODER_OUTPUT_TOOL_NAME }]))).details,
+    (await tool.execute("unfinished-reasoned", reasoned, undefined, undefined, nonCompletedContext("unfinished-reasoned"))).details,
     reasoned,
   );
   const { extractCoderRoleOutcome } = await import("../../src/public-cli/settlement.ts");
@@ -926,28 +934,49 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool2);
   await assert.rejects(
-    tool2.execute("u1", bare, undefined, undefined, toolCallContext([{ id: "u1", name: CODER_OUTPUT_TOOL_NAME }])),
+    tool2.execute("u1", bare, undefined, undefined, nonCompletedContext("u1")),
     /补理由（前置缺失\/违宪之一）或继续施工/,
   );
   await assert.rejects(
-    tool2.execute("u2", bare, undefined, undefined, toolCallContext([{ id: "u2", name: CODER_OUTPUT_TOOL_NAME }])),
+    tool2.execute("u2", bare, undefined, undefined, nonCompletedContext("u2")),
     /补理由（前置缺失\/违宪之一）或继续施工/,
   );
   assert.deepEqual(
-    (await tool2.execute("u3", bare, undefined, undefined, toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }]))).details,
+    (await tool2.execute("u3", bare, undefined, undefined, nonCompletedContext("u3"))).details,
     bare,
   );
+  assert.equal(menxiaProviderRequests, 0);
 });
 
-test("coder completed submission projects a real Menxia bounce and reruns the gate", async () => {
+test("coder completed submissions traverse the real Menxia provider gate until pass", async () => {
   const request = "Apply the approved plan.";
-  const seen: string[] = [];
-  const runCompletion = menxiaChildCompletion([
-    { tool: MENXIA_OUTPUT_TOOL, args: { status: "dispatch", officer: "jishizhong" } },
-    { tool: JISHIZHONG_OUTPUT_TOOL, args: { status: "bounce", findings: ["add a focused regression"] } },
-    { tool: MENXIA_OUTPUT_TOOL, args: { status: "dispatch", officer: "jishizhong" } },
-    { tool: JISHIZHONG_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
-  ], seen);
+  const faux = fauxProvider({ provider: "coder-menxia", api: "coder-menxia" });
+  const model = faux.getModel();
+  const responses: Array<AssistantMessage | Error> = [
+    new Error("provider disconnected"),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "incomplete", reason: "missing completion evidence" })),
+    fauxAssistantMessage("not a receipt"),
+    fauxAssistantMessage("still not a receipt"),
+    fauxAssistantMessage("settled without a receipt"),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "bounce", findings: ["add a focused regression"] })),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] })),
+  ];
+  let providerRequests = 0;
+  const provider = {
+    ...faux.provider,
+    stream() {
+      providerRequests += 1;
+      const next = responses.shift();
+      if (next === undefined) throw new Error("unexpected Menxia provider request");
+      if (next instanceof Error) throw next;
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => stream.end(next));
+      return stream;
+    },
+    streamSimple() { return this.stream(); },
+  };
   const harness = extensionHarness(undefined, {
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
@@ -958,7 +987,6 @@ test("coder completed submission projects a real Menxia bounce and reruns the ga
       loadSoul: async () => "CODER LAW",
       loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
       loadCanonicalSkillBinding: async () => tddBinding(),
-      runMenxia: (options) => runMenxia({ ...options, runCompletion }),
     },
     { failInfrastructure(error) { throw error; } },
   );
@@ -971,28 +999,42 @@ test("coder completed submission projects a real Menxia bounce and reruns the ga
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const completed = { status: "completed", report: "TDD and verification evidence" };
-
   const submissionContext = (id: string) => Object.assign(
     toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
     {
-      cwd: process.cwd(),
-      model: { id: "menxia-fixture", name: "menxia-fixture", api: "fixture", provider: "fixture" },
+      cwd: process.cwd(), model,
       modelRegistry: {
-        getProvider() { return undefined; },
+        getProvider(name: string) { return name === model.provider ? provider : undefined; },
         async getProviderAuth() { return { auth: {} }; },
         async getApiKeyAndHeaders() { return { ok: true }; },
       },
       thinkingLevel: "off",
     },
   );
-  await assert.rejects(
-    tool.execute("bounced", completed, undefined, undefined, submissionContext("bounced")),
-    /Menxia.*rewrite.*focused regression/i,
-  );
+  const reject = async (id: string, check: (error: Error) => void) => {
+    await assert.rejects(
+      tool.execute(id, completed, undefined, undefined, submissionContext(id)),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        check(error);
+        return true;
+      },
+    );
+  };
+
+  await reject("transport", (error) => assert.equal(error.message, "Menxia transport failure at menxia: Error: provider disconnected"));
+  await reject("incomplete", (error) => assert.equal(error.message, "Menxia incomplete at menxia: missing completion evidence; {\"status\":\"incomplete\",\"stage\":\"menxia\",\"reason\":\"missing completion evidence\"}"));
+  await reject("no-receipt", (error) => {
+    assert.match(error.message, /^Menxia no_receipt at menxia: Menxia settled without an accepted receipt;/);
+    assert.match(error.message, /\"acceptedReceipt\":false/);
+    assert.match(error.message, /\"sessionCompletion\":\"settled-without-accepted-receipt\"/);
+  });
+  await reject("bounced", (error) => assert.equal(error.message, "Menxia requires rewrite: add a focused regression"));
   const accepted = await tool.execute("accepted", completed, undefined, undefined, submissionContext("accepted"));
 
   assert.equal(accepted.terminate, true);
-  assert.equal(seen.length, 4);
+  assert.equal(providerRequests, 9);
+  assert.equal(responses.length, 0);
 });
 
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
@@ -1011,18 +1053,33 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       "ak-coder-task": "/materials/approved.md",
       "ak-coder-phase": "apply",
     });
+    const faux = fauxProvider({ provider: "coder-binding-menxia", api: "coder-binding-menxia" });
+    const model = faux.getModel();
+    let providerRequests = 0;
+    const provider = {
+      ...faux.provider,
+      stream() {
+        providerRequests += 1;
+        const response = providerRequests % 2 === 1
+          ? fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" }))
+          : fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] }));
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => stream.end(response));
+        return stream;
+      },
+      streamSimple() { return this.stream(); },
+    };
     const runtime = createCoderRoleRuntime(
       harness.pi as ExtensionAPI,
       {
         loadSoul: async () => "CODER LAW",
         loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
         loadCanonicalSkillBinding: async () => tddBinding(),
-        runMenxia: async () => ({ status: "pass", officer: "jishizhong", findings: [] }),
       },
       { failInfrastructure(error) { throw error; } },
     );
     await runtime.activate();
-    return harness;
+    return Object.assign(harness, { model, provider, providerRequests: () => providerRequests });
   };
   const submitCompleted = async (
     harness: Awaited<ReturnType<typeof start>>,
@@ -1035,7 +1092,16 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       completed,
       undefined,
       undefined,
-      toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
+      Object.assign(toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]), {
+        cwd: process.cwd(),
+        model: harness.model,
+        modelRegistry: {
+          getProvider: () => harness.provider,
+          async getProviderAuth() { return { auth: {} }; },
+          async getApiKeyAndHeaders() { return { ok: true }; },
+        },
+        thinkingLevel: "off",
+      }),
     );
   };
 
@@ -1157,6 +1223,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     };
     const refusalTool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
     assert.ok(refusalTool);
+    const requestsBeforeRefusal = harness.providerRequests();
     assert.deepEqual((await refusalTool.execute(
       "coder-refused",
       refused,
@@ -1164,6 +1231,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       undefined,
       toolCallContext([{ id: "coder-refused", name: CODER_OUTPUT_TOOL_NAME }]),
     )).details, refused);
+    assert.equal(harness.providerRequests(), requestsBeforeRefusal);
     await assert.rejects(
       refusalTool.execute(
         "coder-mixed",
