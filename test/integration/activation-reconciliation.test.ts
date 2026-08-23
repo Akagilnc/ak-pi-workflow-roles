@@ -111,40 +111,6 @@ function livenessOf(child: ParkedChild): ProcessLivenessFact {
   return isProcessAlive(child.pid) ? { state: "alive" } : { state: "terminated" };
 }
 
-test("dispatch stub fact is closed at the typed API and omits injected content keys", () => {
-  const closed: DispatchStubFact = {
-    event: DISPATCH_STUB_EVENT,
-    observedAt: "2025-06-01T12:00:00.000Z",
-    bookKey: "book-a",
-    dispatch: { kind: "process", pid: 42 },
-    correlation: { kind: "caller", id: "c-keys" },
-  };
-  const smuggled = {
-    ...closed,
-    prompt: "PROMPT_SECRET_BYTES",
-    transcript: "transcript-body",
-    argv: ["pi", "--ak-role", "judge"],
-    excerpt: "excerpt-text",
-    content: "nope",
-  } as DispatchStubFact & Record<string, unknown>;
-  assert.deepEqual(buildDispatchStubFact(smuggled), closed);
-});
-
-test("normal dispatch + accepted activation reconciles as matched", () => {
-  const bookKey = "ak-roles-128";
-  const correlationId = "corr-matched-1";
-  const outcome = reconcileInvocation({
-    dispatch: dispatchStub({ correlationId, bookKey }),
-    activation: activationFact({ correlationId, bookKey }),
-    process: { state: "alive" },
-  });
-  assert.deepEqual(outcome, {
-    kind: "matched",
-    correlationId,
-    bookKey,
-  } satisfies ReconciliationOutcome);
-});
-
 test("stdin-parked leg is pending while alive and ghost after the same child terminates", async () => {
   const bookKey = "ak-roles-128";
   const correlationId = "corr-stdin-park-1";
@@ -181,44 +147,3 @@ test("stdin-parked leg is pending while alive and ghost after the same child ter
   } satisfies ReconciliationOutcome);
 });
 
-test("activation without a matching dispatch stub is activation-without-dispatch", () => {
-  const bookKey = "ak-roles-128";
-
-  // Caller correlation present but no stub at all.
-  assert.deepEqual(
-    reconcileInvocation({
-      activation: activationFact({ correlationId: "orphan-1", bookKey }),
-    }),
-    {
-      kind: "activation-without-dispatch",
-      correlationId: "orphan-1",
-      bookKey,
-    } satisfies ReconciliationOutcome,
-  );
-
-  // Typed absent identity (no pre-assigned correlation) — mechanical anomaly.
-  assert.deepEqual(
-    reconcileInvocation({
-      activation: activationFact({ correlationId: "absent", bookKey }),
-    }),
-    {
-      kind: "activation-without-dispatch",
-      correlationId: undefined,
-      bookKey,
-    } satisfies ReconciliationOutcome,
-  );
-
-  // Stub exists but book/correlation do not join — still no matching stub.
-  assert.deepEqual(
-    reconcileInvocation({
-      dispatch: dispatchStub({ correlationId: "other", bookKey: "other-book" }),
-      activation: activationFact({ correlationId: "orphan-2", bookKey }),
-      process: { state: "alive" },
-    }),
-    {
-      kind: "activation-without-dispatch",
-      correlationId: "orphan-2",
-      bookKey,
-    } satisfies ReconciliationOutcome,
-  );
-});

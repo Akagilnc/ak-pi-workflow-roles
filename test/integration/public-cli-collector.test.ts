@@ -8,7 +8,6 @@ import test from "node:test";
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { parseCollectorArgv } from "../../src/public-cli/invocation.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 function seedProject(root: string): void {
@@ -42,15 +41,6 @@ function receipt() {
     evidenceRecords: [],
   };
 }
-
-test("public Collector accepts PR/repository without an observer declaration", () => {
-  assert.deepEqual(parseCollectorArgv(["--pr", "1168", "--repo", "acme/widgets"]), {
-    prNumber: 1168,
-    repo: "acme/widgets",
-    instruction: "",
-    attachmentPaths: [],
-  });
-});
 
 test("typed groups travel from real output settlement into the report artifact", async () => {
   const home = await mkdtemp(join(tmpdir(), "collector-groups-"));

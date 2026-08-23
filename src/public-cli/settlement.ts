@@ -4,7 +4,8 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, readdir, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { appendFile, lstat, mkdir, open, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
@@ -14,6 +15,7 @@ import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
 import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure, readReviewerDispatchRejection } from "./explicit-internal.ts";
 import {
+  RESUME_TRANSPORT_ENVELOPE,
   isV1ResumableProvider,
   readLatestTypedProviderHttpObservation,
   readTypedHttp429Observation,
@@ -725,12 +727,24 @@ export async function readBoundAuditorKnownFailure(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
+  const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
+  const isResumeEnvelope = (msg: unknown): boolean => {
+    if (!isRecord(msg) || msg.role !== "user") return false;
+    const text = typeof msg.text === "string" ? msg.text : typeof (msg as { content?: unknown }).content === "string" ? (msg as { content: string }).content : undefined;
+    if (text === RESUME_ENVELOPE) return true;
+    const content = (msg as { content?: unknown }).content;
+    if (Array.isArray(content)) {
+      return content.some((p) => isRecord(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+    }
+    return false;
+  };
   let latestParentUserIndex = -1;
   for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
-    if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
-      latestParentUserIndex = i;
-      break;
-    }
+    const entry = parentEntries[i];
+    if (entry?.type !== "message" || entry.message?.role !== "user") continue;
+    if (isResumeEnvelope(entry.message)) continue;
+    latestParentUserIndex = i;
+    break;
   }
   const childDirectory = join(dirname(sessionFile), "auditor-roles");
   let names: string[];
@@ -740,6 +754,12 @@ export async function readBoundAuditorKnownFailure(
     if (isMissingPathError(error)) return undefined;
     throw sessionReadFailure(error, "failed to read bound auditor session directory");
   }
+  // Auto-resume seam (owner A): stale check must ignore resume envelope and
+  // prioritize retention. Previous `attemptEntryIndex < latest` discarded the
+  // first attempt's child after resume advanced latest, losing retentionFailure
+  // when retry had no compliance entry. Fix: ignore envelope for staleness and
+  // prefer any valid compliance failure before falling back to primary.
+  const validAuditorFiles: Array<{ file: string; entries: SessionEntry[]; attemptEntryId?: string }> = [];
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries: SessionEntry[];
     try {
@@ -754,7 +774,10 @@ export async function readBoundAuditorKnownFailure(
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : undefined;
     const attemptEntryIndex = attemptEntryId === undefined ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
-
+    validAuditorFiles.push({ file, entries, ...(attemptEntryId === undefined ? {} : { attemptEntryId }) });
+  }
+  // Prefer compliance failure (retention) from any valid attempt, newest first.
+  for (const { entries, attemptEntryId } of validAuditorFiles) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -774,6 +797,11 @@ export async function readBoundAuditorKnownFailure(
         ...(isRecord(failure.details) ? { details: failure.details } : {}),
       };
     }
+  }
+  // No compliance failure: fall back to most recent provider stop (auto-resume latest attempt).
+  for (const { entries } of validAuditorFiles) {
+    const stop = extractSessionProviderStop(entries);
+    if (stop === undefined) continue;
     const primary = knownFailureFromProviderStop(stop)!;
     return {
       ...primary,
@@ -1852,26 +1880,131 @@ async function ensureAuditEvidenceDirectory(runDirectory: string): Promise<strin
   return artifactsDir;
 }
 
-/** Publish the retained residual with exclusive, complete-write semantics. */
+/**
+ * #419 per-attempt process history. 史必追加，指针可覆盖；指针可以覆盖的前提是史已落。
+ * Reuses the run session principal's append-only JSONL custom-entry shape
+ * (plain custom entries are state records and never enter LLM context), so no
+ * second ledger mechanism is introduced.
+ */
+export const ATTEMPT_HISTORY_ENTRY_TYPE = "ak_run_attempt_history" as const;
+
+/** Complete per-attempt result as recorded in the appended history. */
+type AttemptHistoryOutcome =
+  | TerminalRoleOutcome
+  | ({ kind: "failure"; role: string } & ControlledFailure);
+
+type AttemptHistorySource = {
+  readonly role: string;
+  readonly runId: string;
+  readonly sessionFile: string;
+};
+
+/**
+ * Append one attempt's complete result to the run's session principal.
+ * Append failure throws — callers must not overwrite a pointer artifact when
+ * the history entry backing the overwrite did not land (fail closed).
+ */
+export async function appendRunAttemptHistory(
+  admitted: AttemptHistorySource,
+  outcome: AttemptHistoryOutcome,
+): Promise<void> {
+  const entries = await readBoundSessionEntries(admitted.sessionFile);
+  let parentId: string | null = null;
+  let priorEntries = 0;
+  for (const entry of entries) {
+    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+    if (
+      entry.type === "custom" &&
+      entry.customType === ATTEMPT_HISTORY_ENTRY_TYPE
+    ) {
+      priorEntries += 1;
+    }
+  }
+  const timestamp = new Date().toISOString();
+  // Shape mirrors pi SessionManager.appendCustomEntry.
+  const line = `${JSON.stringify({
+    type: "custom",
+    customType: ATTEMPT_HISTORY_ENTRY_TYPE,
+    data: {
+      sequence: priorEntries + 1,
+      role: admitted.role,
+      runId: admitted.runId,
+      recordedAt: timestamp,
+      outcome,
+    },
+    id: randomUUID(),
+    parentId,
+    timestamp,
+  })}\n`;
+  await appendFile(admitted.sessionFile, line, "utf8");
+}
+
+/**
+ * Publish the retained residual with complete-write semantics (#419: the
+ * previous attempt's pointer file is a rebuildable view once this attempt's
+ * complete result is in the appended history; planted symlinks/directories
+ * still fail loudly with their #182-A identities).
+ */
 export async function publishComplianceAuditIncompleteEvidence(
   admitted: AdmittedRoleInvocation,
   outcome: ReturnType<typeof buildAuditIncompleteTerminalOutcome>,
 ): Promise<TerminalArtifactRef> {
+  await appendRunAttemptHistory(admitted, outcome);
+  if (
+    typeof fsConstants.O_NOFOLLOW !== "number" ||
+    typeof fsConstants.O_NONBLOCK !== "number"
+  ) {
+    // #418 fail-closed: on platforms without O_NOFOLLOW (e.g. Windows,
+    // nodejs/node#41590) the JS bitwise-or below would silently drop the flag
+    // and the #182-A anti-symlink protection would vanish. Refuse loudly via
+    // the existing publication-failure channel instead of publishing
+    // unprotected; the complete attempt result above stays in appended history.
+    throw auditArtifactPublicationError(
+      "audit evidence publication requires O_NOFOLLOW|O_NONBLOCK open-flag support (anti-symlink/anti-planted protection must not be silently dropped); refusing to publish",
+      "ENOSYS",
+    );
+  }
   const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
   const evidencePath = join(artifactsDir, "audit-incomplete.json");
+  let existing: Awaited<ReturnType<typeof lstat>> | undefined;
   try {
-    const existing = await lstat(evidencePath);
-    throw auditArtifactPublicationError(
-      existing.isSymbolicLink()
-        ? "audit evidence destination is a symlink"
-        : "audit evidence destination collision",
-      existing.isSymbolicLink() ? "ELOOP" : "EEXIST",
-    );
+    existing = await lstat(evidencePath);
   } catch (error) {
     if (!isMissingPathError(error)) throw error;
   }
-  const handle = await open(evidencePath, "wx", 0o600);
+  if (existing?.isSymbolicLink()) {
+    throw auditArtifactPublicationError(
+      "audit evidence destination is a symlink",
+      "ELOOP",
+    );
+  }
+  if (existing && !existing.isFile()) {
+    throw auditArtifactPublicationError(
+      "audit evidence destination is not a regular file",
+      "EEXIST",
+    );
+  }
+  // #182-A protection restored atomically at this open seam: O_NOFOLLOW makes
+  // the open itself refuse symlinks (ELOOP), so one swapped in after the lstat
+  // above can never be followed or written through; O_NONBLOCK keeps a
+  // race-planted FIFO from blocking this open forever. The fstat below
+  // backstops any non-regular object that wins the window.
+  const handle = await open(
+    evidencePath,
+    fsConstants.O_WRONLY |
+      fsConstants.O_CREAT |
+      fsConstants.O_TRUNC |
+      fsConstants.O_NOFOLLOW |
+      fsConstants.O_NONBLOCK,
+    0o600,
+  );
   try {
+    if (!(await handle.stat()).isFile()) {
+      throw auditArtifactPublicationError(
+        "audit evidence destination is not a regular file",
+        "EEXIST",
+      );
+    }
     await handle.writeFile(`${JSON.stringify(outcome, null, 2)}\n`, "utf8");
     await handle.sync();
   } finally {
@@ -2213,6 +2346,9 @@ export async function publishJudgeArtifacts(
   roleOutcome: TerminalRoleOutcome,
   sessionDirectory: string,
 ): Promise<TerminalArtifactRef[]> {
+  // #419: history first — report/evidence stay last-write-wins views only
+  // because every attempt's complete result has already been appended.
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2268,6 +2404,7 @@ export async function publishCoderArtifacts(
     readonly coderOutput?: CoderOutput;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2573,6 +2710,7 @@ export async function publishFixerArtifacts(
     readonly fixerOutput?: FixerOutput;
   },
 ): Promise<TerminalArtifactRef[]> {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2732,6 +2870,7 @@ export async function publishCollectorArtifacts(
     readonly collectorReceipt?: CollectorReceipt;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2891,6 +3030,7 @@ export async function publishDoctorArtifacts(
     readonly doctorOutput?: DoctorOutput;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -3155,6 +3295,7 @@ export async function publishReviewerArtifacts(
     readonly reviewerReceipt?: RuntimeReviewerReceiptV2;
   },
 ): Promise<TerminalArtifactRef[]> {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -3412,6 +3553,7 @@ export async function publishMergerArtifacts(
     readonly mergerOutput?: MergerOutput;
   },
 ): Promise<TerminalArtifactRef[]> {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -3746,6 +3888,19 @@ export async function publishFailureArtifacts(
   );
   const priorIssues: PublicationAttempt[] =
     baseAttempt === undefined ? [] : [baseAttempt];
+  // #419: each attempt's complete failure result joins the appended history
+  // before any fixed-name artifact view is rewritten. History failure must not
+  // strand the original controlled failure outside settlement — it rides
+  // publicationIssues instead of aborting durability.
+  try {
+    await appendRunAttemptHistory(admitted, {
+      kind: "failure",
+      role: admitted.role,
+      ...failure,
+    });
+  } catch (error) {
+    priorIssues.push(publicationAttemptFromError(admitted.sessionFile, error));
+  }
 
   // Prefer conventional names; unique fallback dirs keep colliding fixed paths
   // from stranding the original failure outside settlement. Include the ledger

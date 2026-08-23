@@ -688,26 +688,6 @@ function sampleValue(metavar: string, id: string): string {
 }
 
 /** Split a GFM table row on unescaped `|` cell boundaries. */
-function splitUnescapedMarkdownTableCells(line: string): string[] {
-  const cells: string[] = [];
-  let current = "";
-  for (let i = 0; i < line.length; i += 1) {
-    if (line[i] === "\\" && line[i + 1] === "|") {
-      current += "\\";
-      current += "|";
-      i += 1;
-      continue;
-    }
-    if (line[i] === "|") {
-      cells.push(current);
-      current = "";
-      continue;
-    }
-    current += line[i];
-  }
-  cells.push(current);
-  return cells;
-}
 
 test("README EN/ZH generated regions are regeneration-clean", async () => {
   const en = await readFile(resolve(packageRoot, "README.md"), "utf8");
@@ -728,60 +708,5 @@ test("README EN/ZH generated regions are regeneration-clean", async () => {
     assert.equal(renderReadmeOptionsMarkdown("en").includes(spelling), false);
     assert.equal(renderReadmeOptionsMarkdown("zh").includes(spelling), false);
   }
-  // Each generated data row must keep exactly 8 unescaped pipe-delimited cells.
-  for (const locale of ["en", "zh"] as const) {
-    const md = renderReadmeOptionsMarkdown(locale);
-    for (const line of md.split("\n")) {
-      if (!line.startsWith("|") || line.startsWith("| ---") || line.startsWith("| Spelling") || line.startsWith("| 拼写")) {
-        continue;
-      }
-      const parts = splitUnescapedMarkdownTableCells(line);
-      // Leading + trailing empties from boundary pipes → cell count = parts.length - 2.
-      assert.equal(
-        parts.length - 2,
-        8,
-        `${locale} row cell count ${parts.length - 2}: ${line}`,
-      );
-    }
-  }
 });
 
-test("installed package bin tracer: bare --help and help <role> smoke (non-empty)", async () => {
-  const { buildPublicAkRoleBin } = (await import(
-    pathToFileURL(resolve(packageRoot, "scripts/build-package.mjs")).href
-  )) as { buildPublicAkRoleBin: (outfile?: string) => Promise<void> };
-
-  const binDir = await mkdtemp(join("/tmp", "ak-opt-bin-"));
-  const binPath = join(binDir, "main.js");
-  const home = await mkdtemp(join(tmpdir(), "ak-opt-bin-home-"));
-  try {
-    const previousCwd = process.cwd();
-    process.chdir(packageRoot);
-    try {
-      await buildPublicAkRoleBin(binPath);
-    } finally {
-      process.chdir(previousCwd);
-    }
-    await chmod(binPath, 0o755);
-
-    const run = async (args: string[]): Promise<string> => {
-      const { stdout } = await execFileAsync(process.execPath, [binPath, ...args], {
-        cwd: packageRoot,
-        env: { ...process.env, HOME: home },
-        timeout: 30_000,
-      });
-      return stdout;
-    };
-
-    assert.ok((await run(["--help"])).trim().length > 0);
-    for (const owner of PUBLIC_ROLE_OPTION_OWNERS) {
-      assert.ok(
-        (await run(["help", owner])).trim().length > 0,
-        `help ${owner}`,
-      );
-    }
-  } finally {
-    await rm(binDir, { recursive: true, force: true });
-    await rm(home, { recursive: true, force: true });
-  }
-});

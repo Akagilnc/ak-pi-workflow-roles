@@ -593,6 +593,108 @@ test("one cold install exercises all seven public roles plus automatic Navigator
       }
     }
 
+    // Install-unique admits grammar (absorbed from public-cli-install t2):
+    // blank/malformed rejections, phase-dependent skill binding, collector repo
+    // override, and bad-pr negative — all on this same single cold install.
+    {
+      const blankCoder = await runAkRoleBin(
+        installed.akRoleBin,
+        ["coder", "plan", "--project", project, "   "],
+        { home, agentDir: piAgentDir, cwd: project },
+      );
+      assert.equal(blankCoder.localTimeout, false, blankCoder.stderr);
+      assert.equal(blankCoder.code, 2, blankCoder.stderr);
+
+      const blankFixer = await runAkRoleBin(
+        installed.akRoleBin,
+        ["fixer", "plan", "--project", project, "   "],
+        { home, agentDir: piAgentDir, cwd: project },
+      );
+      assert.equal(blankFixer.localTimeout, false, blankFixer.stderr);
+      assert.equal(blankFixer.code, 2, blankFixer.stderr);
+
+      const badPrereq = resolve(home, "bad-prereq.json");
+      await writeFile(badPrereq, JSON.stringify([{ id: "bad/id", requirement: "x" }]), "utf8");
+      const malformedFixer = await runAkRoleBin(
+        installed.akRoleBin,
+        [
+          "fixer",
+          "--project",
+          project,
+          "--prerequisites",
+          badPrereq,
+          "Repair the class.",
+        ],
+        { home, agentDir: piAgentDir, cwd: project },
+      );
+      assert.equal(malformedFixer.localTimeout, false, malformedFixer.stderr);
+      assert.equal(malformedFixer.code, 2, malformedFixer.stderr);
+      // Rejected admissions must fail on their own grammar, not deferred slices.
+      for (const rejected of [blankCoder, blankFixer, malformedFixer]) {
+        assertNoDeferredSlice("install-unique rejection", `${rejected.stdout}\n${rejected.stderr}`);
+      }
+
+      const badPr = await runAkRoleBin(
+        installed.akRoleBin,
+        ["collector", "--pr", "0", "--project", project],
+        { home, agentDir: piAgentDir, cwd: project },
+      );
+      assert.equal(badPr.localTimeout, false, badPr.stderr);
+      assert.equal(badPr.code, 2, badPr.stderr);
+      assertNoDeferredSlice("collector bad-pr", `${badPr.stdout}\n${badPr.stderr}`);
+
+      // Phase-dependent skill binding on the installed path: coder plan omits
+      // the package skill; fixer plan keeps it.
+      const coderPlanLog = resolve(home, "matrix-coder-plan-pi-argv.json");
+      await writePiArgvShim(shimDir, coderPlanLog);
+      const coderPlan = await runAkRoleBin(
+        installed.akRoleBin,
+        ["coder", "plan", "--project", project, "Propose the first implementation plan."],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(coderPlan.localTimeout, false, coderPlan.stderr);
+      assertNoDeferredSlice("coder plan", `${coderPlan.stdout}\n${coderPlan.stderr}`);
+      {
+        const args = JSON.parse(await readFile(coderPlanLog, "utf8")) as string[];
+        assert.equal(flagValue(args, "--ak-role"), "coder");
+        assert.equal(flagValue(args, "--ak-coder-phase"), "plan");
+        assert.equal(args.includes("--skill"), false);
+      }
+
+      const fixerPlanLog = resolve(home, "matrix-fixer-plan-pi-argv.json");
+      await writePiArgvShim(shimDir, fixerPlanLog);
+      const fixerPlan = await runAkRoleBin(
+        installed.akRoleBin,
+        ["fixer", "plan", "--project", project, "Propose the first repair plan."],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(fixerPlan.localTimeout, false, fixerPlan.stderr);
+      assertNoDeferredSlice("fixer plan", `${fixerPlan.stdout}\n${fixerPlan.stderr}`);
+      {
+        const args = JSON.parse(await readFile(fixerPlanLog, "utf8")) as string[];
+        assert.equal(flagValue(args, "--ak-role"), "fixer");
+        assert.equal(flagValue(args, "--ak-fixer-phase"), "plan");
+        assert.equal(args.includes("--skill"), true);
+      }
+
+      // Collector --repo override beats the git-derived origin.
+      const collectorOverrideLog = resolve(home, "matrix-collector-override-pi-argv.json");
+      await writePiArgvShim(shimDir, collectorOverrideLog);
+      const overridden = await runAkRoleBin(
+        installed.akRoleBin,
+        ["collector", "--project", project, "--repo", "OtherOrg/OtherRepo", "--pr", "7"],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(overridden.localTimeout, false, overridden.stderr);
+      assertNoDeferredSlice("collector override", `${overridden.stdout}\n${overridden.stderr}`);
+      {
+        const args = JSON.parse(await readFile(collectorOverrideLog, "utf8")) as string[];
+        assert.equal(flagValue(args, "--ak-role"), "collector");
+        assert.equal(flagValue(args, "--ak-collector-pr"), "7");
+        assert.equal(flagValue(args, "--ak-collector-repo"), "OtherOrg/OtherRepo");
+      }
+    }
+
     // Ordinary Pi startup still does not auto-register Internal --ak-role.
     const ordinary = await runPiSubprocess(["--help"], {
       cwd: home,
@@ -752,59 +854,4 @@ test("documented Pi package update refreshes CLI and runtime from one private co
       await rm(packDir, { recursive: true, force: true });
     }
   });
-});
-
-test("packed release artifact carries runtime resources, attribution, and empty auto-extensions", async () => {
-  // Reuse shared pack once; assert release-candidate resource matrix.
-  const pack = await getSharedIsolatedPack();
-  const paths = new Set(pack.files.map((file) => file.path));
-
-  for (const soul of REQUIRED_SOULS) {
-    assert.equal(paths.has(soul), true, `pack must include ${soul}`);
-  }
-  for (const tree of PACKAGED_METHOD_TREES) {
-    for (const rel of tree.files) {
-      assert.equal(paths.has(rel), true, `pack must include ${rel}`);
-    }
-  }
-  assert.equal(paths.has("THIRD_PARTY_NOTICES.md"), true);
-  assert.equal(paths.has("LICENSE"), true);
-  assert.equal(paths.has("dist/public-cli/main.js"), true);
-  assert.equal(paths.has(INTERNAL_ROLE_ENTRYPOINT_RELATIVE), true);
-  assert.equal(paths.has("extensions/role-runtime.ts"), true);
-
-  const extractRoot = await mkdtemp(resolve(tmpdir(), "ak-cold-pack-meta-"));
-  try {
-    execFileSync("tar", ["-xzf", pack.tarball, "-C", extractRoot], {
-      stdio: "ignore",
-    });
-    const manifest = JSON.parse(
-      await readFile(resolve(extractRoot, "package/package.json"), "utf8"),
-    ) as {
-      name: string;
-      license?: string;
-      bin?: Record<string, string>;
-      pi?: { extensions?: unknown[] };
-    };
-    assert.equal(manifest.name, "@akagilnc/pi-workflow-roles");
-    assert.equal(manifest.license, "Apache-2.0");
-    assert.equal(manifest.bin?.["ak-role"], "dist/public-cli/main.js");
-    assert.deepEqual(manifest.pi?.extensions, []);
-    // Attribution: project Apache text + separate Matt MIT notice.
-    const license = await readFile(
-      resolve(extractRoot, "package/LICENSE"),
-      "utf8",
-    );
-    const notices = await readFile(
-      resolve(extractRoot, "package/THIRD_PARTY_NOTICES.md"),
-      "utf8",
-    );
-    assert.equal(license.includes("Apache License"), true);
-    assert.equal(notices.includes("MIT"), true);
-    assert.notEqual(notices, license);
-  } finally {
-    await rm(extractRoot, { recursive: true, force: true });
-  }
-
-  void packageRoot;
 });

@@ -23,7 +23,9 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
 
-A run interrupted by a typed Codex/xAI HTTP 429 with no lawful result prints a complete `ak-role resume <runId>` command in its failure Terminal. Resume reopens the exact session; override the model for one run with the global flags. The package never auto-switches providers, only a typed 429 makes a run resumable, and unknown, terminal, or concurrently-resumed run IDs are rejected. Collector and Doctor are one-shot.
+`ak-role resume <runId>` reopens that run's exact Pi session. Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector and Doctor remain one-shot. The package never auto-switches providers; override the model for one run with the global flags.
+
+Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
 Global overrides work before or after the role: `ak-role --model xai/grok-4.5:high resume <runId>`.
 
@@ -34,9 +36,10 @@ ak-role config set navigator openai-codex/gpt-5.6-luna:medium
 # persistent labor engine (callable roles; not navigator); one-shot override remains --engine
 ak-role config set-engine judge opus
 ak-role config unset-engine judge
+ak-role config set-auto-resume-limit 3
 ```
 
-`config set` stores the seat model default; `config set-engine` / `unset-engine` store or clear the persistent labor-engine name on callable roles (same seats as `--engine`; navigator refused — no independent activation). Usage and refusal text are owned by `ak-role config` in the public CLI.
+`config set` stores the seat model default; `config set-engine` / `unset-engine` store or clear the persistent labor-engine name on callable roles (same seats as `--engine`; navigator refused — no independent activation). `config set-auto-resume-limit` stores the single-call auto-resume ceiling. Usage and refusal text are owned by `ak-role config` in the public CLI.
 
 Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned. Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
 

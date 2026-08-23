@@ -75,25 +75,25 @@ test("runtime-derived metrics permit testimony when a case exceeds evidence pagi
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
 });
 
-test("commit accounting excludes Coder self-reported commit SHAs", async () => {
+// Self-reported commit exclusion, dual fixture (absorbed from two dedicated
+// tests): neither Coder free-text SHAs nor Fixer classResults commitSha enter
+// cost accounting — one case load carries both rows.
+test("commit accounting excludes self-reported commit SHAs from Coder and Fixer legs", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-commits-"));
   const runs = homeRuns(root, 40);
+
+  // Row 1: Coder self-reported SHAs in bash output + report prose.
   await mkdir(join(runs, "coder/session"), { recursive: true });
-  const fixture = [
+  const coderFixture = [
     { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
     { type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "toolResult", toolName: "bash", content: "HEAD is now at badcafe; commit def56789" } },
     { type: "message", timestamp: "2026-08-01T00:00:02.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "mentions commit badcafe in free text" } } },
   ];
-  await writeFile(join(runs, "coder/session/commits.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
-  const patient = await loadDoctorCase(runs);
-  assert.deepEqual(patient.cost.commits, []);
-});
+  await writeFile(join(runs, "coder/session/commits.jsonl"), coderFixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
 
-test("commit accounting excludes Fixer classResults self-reported commitSha", async () => {
-  const root = await mkdtemp(join(tmpdir(), "doctor-fixer-commits-"));
-  const runs = homeRuns(root, 40);
+  // Row 2: Fixer classResults commitSha.
   await mkdir(join(runs, "fixer/session"), { recursive: true });
-  const fixture = [
+  const fixerFixture = [
     { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
     {
       type: "message",
@@ -116,7 +116,8 @@ test("commit accounting excludes Fixer classResults self-reported commitSha", as
       },
     },
   ];
-  await writeFile(join(runs, "fixer/session/commits.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  await writeFile(join(runs, "fixer/session/commits.jsonl"), fixerFixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
+
   const patient = await loadDoctorCase(runs);
   assert.equal(patient.cost.statuses[0]?.status, "completed");
   assert.deepEqual(patient.cost.commits, []);

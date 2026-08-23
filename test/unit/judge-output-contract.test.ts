@@ -4,23 +4,24 @@ import test from "node:test";
 import { validateAcceptedJudgeDetails } from "../../src/package-contracts/judge-output.ts";
 
 
-test("converged exact keys remain accepted and returned unchanged", () => {
+// validateAcceptedJudgeDetails round-trip: converged exact keys stay unchanged,
+// and retained evidence + optional note are lawful on every judge status.
+test("accepted judge details round-trip unchanged across statuses and key shapes", () => {
+  // Converged exact-keys row: accepted output is returned unchanged (same refs).
   const evidence = {
     checks: [{ name: "settled-audit", passed: true }],
     empty: {},
   } as const;
-  const verdict = {
+  const converged = {
     judgeStatus: "converged",
     note: "archive the accepted evidence",
     evidence,
   } as const;
+  const acceptedConverged = validateAcceptedJudgeDetails(converged);
+  assert.deepEqual(acceptedConverged, converged);
+  assert.equal(acceptedConverged.evidence, evidence);
 
-  const accepted = validateAcceptedJudgeDetails(verdict);
-  assert.deepEqual(accepted, verdict);
-  assert.equal(accepted.evidence, evidence);
-});
-
-test("retained evidence and optional note are lawful on every judge status", () => {
+  // Full-state loop: continue/escalate carry optional fix/classes/decisionGate.
   const verdicts = [
     { judgeStatus: "converged", note: "Archive the accepted evidence.", evidence: {} },
     {

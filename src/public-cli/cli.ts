@@ -17,6 +17,7 @@ import {
   parseModelSpec,
   resolveEffectiveSeat,
   savePublicCliConfig,
+  setAutoResumeLimit,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
   validatePublicCliConfigEngines,
@@ -58,7 +59,7 @@ import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import { runPublicMerger, runPublicMergerResume } from "./merger-run.ts";
 import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
 import { runPublicTaishi } from "./taishi-run.ts";
-import { peekRoleRunRole } from "./run-lifecycle.ts";
+import { AUTO_RESUME_LIMIT, peekRoleRunRole } from "./run-lifecycle.ts";
 import {
   AUTOMATIC_NAVIGATOR_SEAT,
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
@@ -526,6 +527,8 @@ function renderConfig(config: PublicCliConfig): string {
       lines.push(`${seat}\t${formatModelSpec(selection)}\t${engine}`);
     }
   }
+  // #422: show the effective auto-resume ceiling (configured value or default).
+  lines.push(`autoResumeLimit\t${config.autoResumeLimit ?? AUTO_RESUME_LIMIT}`);
   return `${lines.join("\n")}\n`;
 }
 
@@ -630,6 +633,39 @@ async function runConfigCommand(
     return 0;
   }
 
+  // #422: standalone verb per the set-engine/unset-engine precedent — the
+  // existing `config set` grammar stays strictly even-position seat/spec pairs.
+  if (args[0] === "set-auto-resume-limit") {
+    if (args.length !== 2) {
+      throw new CliUsageError(
+        "usage: ak-role config set-auto-resume-limit <N>",
+      );
+    }
+    const raw = args[1]!;
+    if (!/^[0-9]+$/.test(raw)) {
+      throw new CliUsageError(
+        `auto-resume limit must be a non-negative integer, got ${raw}`,
+      );
+    }
+    // #422 fidelity boundary (not an upper bound — ADR 0035 stays intact): the
+    // persisted representation is a JS number, and Number() silently rounds
+    // integers beyond 2^53-1 (e.g. 9007199254740993 → 9007199254740992). Refuse
+    // loudly instead of persisting a different N; every exactly-representable
+    // non-negative integer remains legal. The regex above guarantees pure
+    // digits, so BigInt(raw) has no leading-zero ambiguity.
+    const converted = Number(raw);
+    if (!Number.isFinite(converted) || BigInt(converted) !== BigInt(raw)) {
+      throw new CliUsageError(
+        `auto-resume limit ${raw} is not exactly representable as a number; refusing to silently round the value`,
+      );
+    }
+    let config = await loadAndValidateConfig(home, packageRoot);
+    config = setAutoResumeLimit(config, converted);
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
+
   throw new CliUsageError(`unknown config subcommand: ${args[0]}`);
 }
 
@@ -703,8 +739,8 @@ export async function runAkRole(
       };
     }
 
-    // Resume reopens an exact Role run after a typed HTTP 429 (#108/#109).
-    // Seat and dispatch follow the durable admitted role (role-correct continuation).
+    // Resume reopens an exact Role run (#416): caller decides; session principal
+    // must still exist. Seat and dispatch follow the durable admitted role.
     if (parsed.command === "resume") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
@@ -921,6 +957,10 @@ export async function runAkRole(
             ? {}
             : { timeoutMs: env.judgeTimeoutMs }),
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...(config.autoResumeLimit === undefined
+            ? {}
+            : { autoResumeLimit: config.autoResumeLimit }),
         },
         io,
         PUBLIC_ROLE_ARGV.judge.parse,
@@ -965,6 +1005,10 @@ export async function runAkRole(
             ? {}
             : { timeoutMs: env.coderTimeoutMs }),
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...(config.autoResumeLimit === undefined
+            ? {}
+            : { autoResumeLimit: config.autoResumeLimit }),
         },
         io,
         PUBLIC_ROLE_ARGV.coder.parse,
@@ -1009,6 +1053,10 @@ export async function runAkRole(
             ? {}
             : { timeoutMs: env.fixerTimeoutMs }),
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...(config.autoResumeLimit === undefined
+            ? {}
+            : { autoResumeLimit: config.autoResumeLimit }),
         },
         io,
         PUBLIC_ROLE_ARGV.fixer.parse,
@@ -1097,6 +1145,10 @@ export async function runAkRole(
             ? {}
             : { timeoutMs: env.reviewerTimeoutMs }),
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...(config.autoResumeLimit === undefined
+            ? {}
+            : { autoResumeLimit: config.autoResumeLimit }),
         },
         io,
         PUBLIC_ROLE_ARGV.reviewer.parse,
@@ -1185,6 +1237,10 @@ export async function runAkRole(
             ? {}
             : { timeoutMs: env.mergerTimeoutMs }),
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...(config.autoResumeLimit === undefined
+            ? {}
+            : { autoResumeLimit: config.autoResumeLimit }),
         },
         io,
         PUBLIC_ROLE_ARGV.merger.parse,
