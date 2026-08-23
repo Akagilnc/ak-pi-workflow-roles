@@ -126,7 +126,7 @@ test("#307 SP1: aborted without testimony projects as unknown, not child", async
   }
 });
 
-test("#380: launched-leg detour failure → seat labor report + engineLaborFallback declaration", async () => {
+test("#380/#395: launched-leg detour failure preserves stderr and terminal stdout row", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-detour-fallback-"));
   const binDir = await mkdtemp(join(tmpdir(), "ak-detour-fallback-bin-"));
   const previousEngine = process.env[AK_ROLE_ENGINE_ENV];
@@ -146,8 +146,17 @@ test("#380: launched-leg detour failure → seat labor report + engineLaborFallb
     await chmod(enginePath, 0o755);
 
     let detourIssued = false;
+    let detourResultText: string | undefined;
     const faux = fauxProvider({ provider: "detour-fallback-380" });
     const response = (context: Context) => {
+      const detourResult = [...context.messages].reverse().find(
+        (message) =>
+          message.role === "toolResult" &&
+          (message as { toolName?: string }).toolName === ENGINE_DETOUR_TOOL_NAME,
+      );
+      if (detourResult?.role === "toolResult") {
+        detourResultText = detourResult.content.find((part) => part.type === "text")?.text;
+      }
       const names = context.tools?.map((tool) => tool.name) ?? [];
       if (names.includes(ENGINE_DETOUR_TOOL_NAME) && !detourIssued) {
         detourIssued = true;
@@ -189,6 +198,27 @@ test("#380: launched-leg detour failure → seat labor report + engineLaborFallb
       field.engineLaborFallback.failure.includes(failMarker),
       true,
       `failure must carry engine stderr: ${field.engineLaborFallback.failure}`,
+    );
+
+    clearActivationEngineLaborFallbackLatch();
+    installActivationEngineLaborFallbackLatch(createEngineLaborFallbackLatch());
+    detourIssued = false;
+    const terminalRow = "  terminal API Error: 529 Overloaded  ";
+    await writeFile(
+      enginePath,
+      `#!/bin/sh\nprintf '%s\\n\\n' '${terminalRow}'\nexit 1\n`,
+      "utf8",
+    );
+    faux.setResponses([response, response, response, response]);
+    detourResultText = undefined;
+    await executeReviewerChild(
+      cwd,
+      { axis: "standards", prompt: "investigate stdout detour failure" },
+      evidenceChildContext(cwd, faux),
+    );
+    assert.ok(
+      (detourResultText ?? "").includes(terminalRow),
+      `detour toolResult text must carry the complete terminal row: ${detourResultText}`,
     );
   } finally {
     clearActivationEngineLaborFallbackLatch();
