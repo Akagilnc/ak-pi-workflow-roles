@@ -84,12 +84,14 @@ export const packageRoot = dirname(
 export const piCli = resolve(packageRoot, "node_modules/.bin/pi");
 
 /**
- * Tracked package inputs eligible for private materialization.
+ * Git-visible package inputs eligible for private materialization.
  */
 export function trackedPackageInputPaths(): string[] {
-  const raw = execFileSync("git", ["-C", packageRoot, "ls-files", "-z"], {
-    encoding: "buffer",
-  }).toString("utf8");
+  const raw = execFileSync(
+    "git",
+    ["-C", packageRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    { encoding: "buffer" },
+  ).toString("utf8");
   return raw
     .split("\0")
     .filter(Boolean);
