@@ -194,6 +194,53 @@ function withPassingMenxia(context: ExtensionContext): ExtensionContext {
   });
 }
 
+function workerCompletionMenxiaTracer(incompleteReason: string, passingRuns = 1) {
+  const faux = fauxProvider({ provider: "worker-menxia", api: "worker-menxia" });
+  const model = faux.getModel();
+  const responses: Array<AssistantMessage | Error> = [
+    new Error("provider disconnected"),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "incomplete", reason: incompleteReason })),
+    fauxAssistantMessage("not a receipt"),
+    fauxAssistantMessage("still not a receipt"),
+    fauxAssistantMessage("settled without a receipt"),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "bounce", findings: ["add a focused regression"] })),
+    ...Array.from({ length: passingRuns }, () => [
+      fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+      fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] })),
+    ]).flat(),
+  ];
+  let providerRequests = 0;
+  const provider = {
+    ...faux.provider,
+    stream() {
+      providerRequests += 1;
+      const next = responses.shift();
+      if (next === undefined) throw new Error("unexpected Menxia provider request");
+      if (next instanceof Error) throw next;
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => stream.end(next));
+      return stream;
+    },
+    streamSimple() { return this.stream(); },
+  };
+  return {
+    context(id: string, toolName: string) {
+      return Object.assign(toolCallContext([{ id, name: toolName }]), {
+        cwd: process.cwd(), model,
+        modelRegistry: {
+          getProvider(name: string) { return name === model.provider ? provider : undefined; },
+          async getProviderAuth() { return { auth: {} }; },
+          async getApiKeyAndHeaders() { return { ok: true }; },
+        },
+        thinkingLevel: "off",
+      });
+    },
+    get providerRequests() { return providerRequests; },
+    get remainingResponses() { return responses.length; },
+  };
+}
+
 function activationCtx(home: string, extras: Record<string, unknown> = {}): ExtensionContext {
   // Durable session principal under the machine ledger book (ADR 0048).
   // Default mode stays undefined so failInfrastructure does not stamp process.exitCode unless a test opts in.
@@ -980,33 +1027,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
 
 test("coder completed submissions traverse the real Menxia provider gate until pass", async () => {
   const request = "Apply the approved plan.";
-  const faux = fauxProvider({ provider: "coder-menxia", api: "coder-menxia" });
-  const model = faux.getModel();
-  const responses: Array<AssistantMessage | Error> = [
-    new Error("provider disconnected"),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "incomplete", reason: "missing completion evidence" })),
-    fauxAssistantMessage("not a receipt"),
-    fauxAssistantMessage("still not a receipt"),
-    fauxAssistantMessage("settled without a receipt"),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
-    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "bounce", findings: ["add a focused regression"] })),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
-    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] })),
-  ];
-  let providerRequests = 0;
-  const provider = {
-    ...faux.provider,
-    stream() {
-      providerRequests += 1;
-      const next = responses.shift();
-      if (next === undefined) throw new Error("unexpected Menxia provider request");
-      if (next instanceof Error) throw next;
-      const stream = createAssistantMessageEventStream();
-      queueMicrotask(() => stream.end(next));
-      return stream;
-    },
-    streamSimple() { return this.stream(); },
-  };
+  const tracer = workerCompletionMenxiaTracer("missing completion evidence");
   const harness = extensionHarness(undefined, {
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
@@ -1029,18 +1050,7 @@ test("coder completed submissions traverse the real Menxia provider gate until p
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const completed = { status: "completed", report: "TDD and verification evidence" };
-  const submissionContext = (id: string) => Object.assign(
-    toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
-    {
-      cwd: process.cwd(), model,
-      modelRegistry: {
-        getProvider(name: string) { return name === model.provider ? provider : undefined; },
-        async getProviderAuth() { return { auth: {} }; },
-        async getApiKeyAndHeaders() { return { ok: true }; },
-      },
-      thinkingLevel: "off",
-    },
-  );
+  const submissionContext = (id: string) => tracer.context(id, CODER_OUTPUT_TOOL_NAME);
   const reject = async (id: string, check: (error: Error) => void) => {
     await assert.rejects(
       tool.execute(id, completed, undefined, undefined, submissionContext(id)),
@@ -1063,40 +1073,12 @@ test("coder completed submissions traverse the real Menxia provider gate until p
   const accepted = await tool.execute("accepted", completed, undefined, undefined, submissionContext("accepted"));
 
   assert.equal(accepted.terminate, true);
-  assert.equal(providerRequests, 9);
-  assert.equal(responses.length, 0);
+  assert.equal(tracer.providerRequests, 9);
+  assert.equal(tracer.remainingResponses, 0);
 });
 
 test("fixer completed-side submissions traverse the real Menxia provider gate while non-completions skip it", async () => {
-  const faux = fauxProvider({ provider: "fixer-menxia", api: "fixer-menxia" });
-  const model = faux.getModel();
-  const responses: Array<AssistantMessage | Error> = [
-    new Error("provider disconnected"),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "incomplete", reason: "missing repair evidence" })),
-    fauxAssistantMessage("not a receipt"),
-    fauxAssistantMessage("still not a receipt"),
-    fauxAssistantMessage("settled without a receipt"),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
-    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "bounce", findings: ["add a focused regression"] })),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
-    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] })),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
-    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] })),
-  ];
-  let providerRequests = 0;
-  const provider = {
-    ...faux.provider,
-    stream() {
-      providerRequests += 1;
-      const next = responses.shift();
-      if (next === undefined) throw new Error("unexpected Menxia provider request");
-      if (next instanceof Error) throw next;
-      const stream = createAssistantMessageEventStream();
-      queueMicrotask(() => stream.end(next));
-      return stream;
-    },
-    streamSimple() { return this.stream(); },
-  };
+  const tracer = workerCompletionMenxiaTracer("missing repair evidence", 2);
   const start = async (phase: "plan" | "apply") => {
     const harness = extensionHarness(undefined, {
       "ak-fix-packet": "/materials/fix.md",
@@ -1110,18 +1092,7 @@ test("fixer completed-side submissions traverse the real Menxia provider gate wh
     await runtime.activate();
     return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
   };
-  const submissionContext = (id: string) => Object.assign(
-    toolCallContext([{ id, name: FIXER_OUTPUT_TOOL_NAME }]),
-    {
-      cwd: process.cwd(), model,
-      modelRegistry: {
-        getProvider(name: string) { return name === model.provider ? provider : undefined; },
-        async getProviderAuth() { return { auth: {} }; },
-        async getApiKeyAndHeaders() { return { ok: true }; },
-      },
-      thinkingLevel: "off",
-    },
-  );
+  const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
   const completed = {
     status: "completed" as const,
     report: "repair complete",
@@ -1160,16 +1131,16 @@ test("fixer completed-side submissions traverse the real Menxia provider gate wh
   await partialRuntime.activate();
   assert.equal((await partialHarness.tools.get(FIXER_OUTPUT_TOOL_NAME)!.execute("partial", partial, undefined, undefined, submissionContext("partial"))).terminate, true);
 
-  const beforeSkipped = providerRequests;
+  const beforeSkipped = tracer.providerRequests;
   const planTool = await start("plan");
   await planTool.execute("planned", { status: "planned", report: "plan" }, undefined, undefined, submissionContext("planned"));
   await planTool.execute("plan-refused", { status: "refused", report: "blocked", remainingScope: "owner answer", blocker: { kind: "missing_prerequisite", prerequisiteId: "owner.choice", reason: "missing" } }, undefined, undefined, submissionContext("plan-refused"));
   const applyTool = await start("apply");
   await applyTool.execute("apply-refused", { status: "refused", report: "blocked", classResults: [{ name: "Blocked", disposition: "refused", remainingScope: "owner answer", blocker: { kind: "unconstitutional", authority: "ADR", conflict: "conflict" } }] }, undefined, undefined, submissionContext("apply-refused"));
   await applyTool.execute("unfinished", { status: "unfinished", report: "handover", remainingScope: "owner answer", reason: "prerequisite_missing: owner answer" }, undefined, undefined, submissionContext("unfinished"));
-  assert.equal(providerRequests, beforeSkipped);
-  assert.equal(providerRequests, 11);
-  assert.equal(responses.length, 0);
+  assert.equal(tracer.providerRequests, beforeSkipped);
+  assert.equal(tracer.providerRequests, 11);
+  assert.equal(tracer.remainingResponses, 0);
 });
 
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
