@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { runMenxia, MENXIA_OUTPUT_TOOL, JISHIZHONG_OUTPUT_TOOL, FUBAOLANG_OUTPUT_TOOL } from "../../src/menxia-role.ts";
+import { menxiaChildCompletion as completion } from "../helpers/menxia-child-completion.ts";
 import { withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { fauxProvider } from "@earendil-works/pi-ai";
 
@@ -14,16 +15,6 @@ async function withParent(run: (context: any) => Promise<void>) {
       await run({ cwd: home, model, modelRegistry: { getProvider() { return undefined; }, async getProviderAuth() { return { auth: {} }; }, async getApiKeyAndHeaders() { return { ok: true }; } }, thinkingLevel: "off", sessionManager: session.sessionManager });
     });
   });
-}
-
-function completion(calls: Array<{ tool?: string; args?: object; text?: string }>, seen: string[]) {
-  return async (_model: any, context: any) => {
-    seen.push(context.systemPrompt);
-    const next = calls.shift();
-    if (!next) throw new Error("unexpected child turn");
-    if (next.text !== undefined) return fauxAssistantMessage(next.text);
-    return fauxAssistantMessage(fauxToolCall(next.tool!, next.args!, { id: `call-${seen.length}` }), { stopReason: "toolUse" });
-  };
 }
 
 test("internal Menxia dispatches worker completion to a real Jishizhong child and returns typed pass", async () => {
