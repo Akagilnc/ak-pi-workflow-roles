@@ -100,7 +100,10 @@ test("legacy issues/<n>/runs is still included", async () => {
   });
 });
 
-test("legacy issues/<n>/runs is listed even when another flat run is unbound", async () => {
+// Unbound isolation matrix: an unrelated unbound flat run must not pollute any
+// ticket view — legacy topology, another ticket's bound load, and empty tickets.
+test("unrelated unbound flat runs stay isolated from every ticket view", async () => {
+  // Row 1: legacy issues/<n>/runs is listed even when another flat run is unbound.
   await withBookDir(async (ledgerDir) => {
     await seedLegacyRun(ledgerDir, 176, "legacy-coder-1");
     await seedFlatRun(ledgerDir, "01jrun@judge");
@@ -108,9 +111,8 @@ test("legacy issues/<n>/runs is listed even when another flat run is unbound", a
     assert.equal(runs.some((run) => run.runId === "legacy-coder-1"), true);
     assert.equal(runs.some((run) => run.runId === "01jrun@judge"), false);
   });
-});
 
-test("ticket load does not fail when another flat run is unbound", async () => {
+  // Row 2: a bound flat-run ticket load does not fail or absorb the unbound run.
   await withBookDir(async (ledgerDir) => {
     await seedFlatRun(ledgerDir, "01bound@judge", { ticketNumber: 176 });
     await seedFlatRun(ledgerDir, "01other@fixer", { role: "fixer" });
@@ -118,9 +120,8 @@ test("ticket load does not fail when another flat run is unbound", async () => {
     assert.equal(runs.some((run) => run.runId === "01bound@judge"), true);
     assert.equal(runs.some((run) => run.runId === "01other@fixer"), false);
   });
-});
 
-test("empty ticket is not poisoned by unrelated unbound flat runs", async () => {
+  // Row 3: empty ticket not poisoned by unrelated unbound runs.
   await withBookDir(async (ledgerDir) => {
     await seedFlatRun(ledgerDir, "01jrun@judge");
     const runs = await loadTicketTrajectoryRuns(ledgerDir, 177);

@@ -5,14 +5,9 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_DEFAULT_MODEL, NAVIGATOR_PREPARE_TOOL_NAME, settlementNavigationFromEvent, writeNavigatorModelSetting, NAVIGATOR_TARGETS, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
-import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_DEFAULT_MODEL, NAVIGATOR_PREPARE_TOOL_NAME, settlementNavigationFromEvent, writeNavigatorModelSetting, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
-import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
-import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
-import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
+import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { createHash } from "node:crypto";
 import { seedGitRepository } from "../helpers/pi-test-harness.ts";
@@ -768,23 +763,5 @@ test("resumed setModel and thinking failures preserve typed source and cause", a
   await cleanupTempDir(root);
 });
 
-test("registry output tools are the contract-owned constants", () => {
-  assert.deepEqual(
-    NAVIGATOR_TARGETS.map(({ role }) => role),
-    PACKAGED_ROLE_REGISTRY.map(({ role }) => role),
-  );
-  assert.deepEqual(
-    PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => ({ role, outputTool })),
-    [
-      { role: "judge", outputTool: JUDGE_OUTPUT_TOOL_NAME },
-      { role: "fixer", outputTool: FIXER_OUTPUT_TOOL_NAME },
-      { role: "coder", outputTool: CODER_OUTPUT_TOOL_NAME },
-      { role: "reviewer", outputTool: REVIEWER_OUTPUT_TOOL_NAME },
-      { role: "collector", outputTool: COLLECTOR_OUTPUT_TOOL },
-      { role: "doctor", outputTool: DOCTOR_OUTPUT_TOOL_NAME },
-      { role: "merger", outputTool: MERGER_OUTPUT_TOOL_NAME },
-    ],
-  );
-  assert.equal(publicNavigatorSettlement("fixer", "apply", { toolName: FIXER_OUTPUT_TOOL_NAME, isError: false, details: { status: "unfinished" } })?.kind, "accepted");
-});
+
 

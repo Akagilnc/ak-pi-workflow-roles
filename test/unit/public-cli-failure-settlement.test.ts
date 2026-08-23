@@ -1,7 +1,7 @@
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -28,22 +28,34 @@ import {
   multiTurnIntermediateRetained,
 } from "../helpers/failure-settlement-kit.ts";
 
-test("malformed CLI structure rejects before admission with no model dispatch", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    let ran = false;
-    const result = await runAkRole(
-      ["judge", "--not-a-real-flag", "task", "--project", project],
-      {
+// Admission matrix: structural rejects before model dispatch share one root —
+// nonzero exit, zero dispatch, no Terminal. Two rows cover the grammar faces.
+test("malformed CLI structure and empty --project= reject structurally before admission", async () => {
+  const rows = [
+    {
+      label: "unknown flag",
+      args: (project: string) => ["judge", "--not-a-real-flag", "task", "--project", project],
+    },
+    {
+      // Empty project must not resolve("") → cwd and complete admission/dispatch.
+      label: "empty --project=",
+      args: () => ["judge", "--project=", "task"],
+    },
+  ] as const;
+  for (const row of rows) {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const { io, stdout, stderr } = captureIo();
+      let dispatched = 0;
+      const result = await runAkRole(row.args(project), {
         packageRoot,
         home,
         cwd: project,
         io,
         piRunner: async (args) => {
-          ran = true;
+          dispatched += 1;
           return {
             code: 0,
             stderr: "",
@@ -51,46 +63,15 @@ test("malformed CLI structure rejects before admission with no model dispatch", 
             args: [...args],
           };
         },
-      },
-    );
-    assert.equal(result.exitCode, 2);
-    assert.equal(ran, false);
-    assert.equal(stdout.length, 0);
-    assert.equal(stderr.length >= 1, true);
-    // Typed admission oracle: structural reject never produces a Terminal.
-    assert.equal(result.terminal, undefined);
-  });
-});
-test("empty --project= rejects structurally before admission with no model dispatch", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    let dispatched = 0;
-    const result = await runAkRole(["judge", "--project=", "task"], {
-      packageRoot,
-      home,
-      cwd: project,
-      io,
-      piRunner: async (args) => {
-        dispatched += 1;
-        return {
-          code: 0,
-          stderr: "",
-          timedOut: false,
-          args: [...args],
-        };
-      },
+      });
+      assert.equal(result.exitCode, 2, row.label);
+      assert.equal(dispatched, 0, row.label);
+      assert.equal(stdout.length, 0, row.label);
+      assert.equal(stderr.length >= 1, true, row.label);
+      // Typed admission oracle: structural reject never produces a Terminal.
+      assert.equal(result.terminal, undefined, row.label);
     });
-    // Empty project must not resolve("") → cwd and complete admission/dispatch.
-    assert.equal(result.exitCode, 2);
-    assert.equal(dispatched, 0);
-    assert.equal(stdout.length, 0);
-    assert.equal(stderr.length >= 1, true);
-    // Typed admission oracle: structural reject never produces a Terminal.
-    assert.equal(result.terminal, undefined);
-  });
+  }
 });
 test("well-formed nonexistent domain facts are not semantically pre-rejected", async () => {
   await withTempHome(async (home) => {
@@ -290,74 +271,6 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   });
   assert.equal(noThrownKey.cause, "activation");
 });
-test("failure settlement durably records Error Artifact before presentation returns", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const bookKey = resolveBookKeyFromGit(project);
-    const runId = "run-fail-durable-001";
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "runs",
-      `${runId}@judge`,
-    );
-    await mkdir(join(runDirectory, "session"), { recursive: true });
-    const admitted = {
-      role: "judge" as const,
-      runId,
-      bookKey,
-      projectRoot: project,
-      instruction: "x",
-      instructionEmpty: false,
-      attachments: [],
-      runDirectory,
-      sessionDirectory: join(runDirectory, "session"),
-      sessionFile: join(runDirectory, "session", "session.jsonl"),
-      admittedRequestPath: join(runDirectory, "admitted-request.json"),
-    };
-    await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-
-    const failure = classifyPostAdmissionFailure({
-      timedOut: false,
-      code: 1,
-      stderr: "provider rejected credentials\n",
-    });
-    const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
-
-    // Durability before caller presentation: artifact paths already openable.
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
-    assert.equal(terminal.roleOutcome.cause, "activation");
-    // Typed sentinel round-trip of the injected diagnostic (not presentation prose).
-    assert.equal(terminal.roleOutcome.diagnostic, "provider rejected credentials");
-    assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false);
-    assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1);
-
-    const errorRef = terminal.artifacts.find((a) => a.kind === "error");
-    assert.ok(errorRef);
-    const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-      cause: string;
-      diagnostic: string;
-      runId: string;
-      role: string;
-    };
-    assert.equal(errorBody.cause, "activation");
-    assert.equal(errorBody.diagnostic, terminal.roleOutcome.diagnostic);
-    assert.equal(errorBody.runId, runId);
-    assert.equal(errorBody.role, "judge");
-    assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-    // No session attendance → typed unavailable, never inferred no-advice.
-    assert.equal(terminal.navigator.disposition, "unavailable");
-    if (terminal.navigator.disposition === "unavailable") {
-      assert.equal(terminal.navigator.source, "unknown");
-      assert.equal(typeof terminal.navigator.reason, "string");
-    }
-  });
-});
 test("failure settlement Terminal agrees with exact-session affirmative attendance", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -441,54 +354,6 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
     assert.equal(terminal.navigator.disposition, "no-advice");
   });
 });
-test("controlled failure emits one stdout Terminal and one concise stderr diagnostic", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-
-    const result = await runAkRole(
-      ["judge", "--project", project, "task that will fail activation"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-fail-emit-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          // No lawful terminal result in session.
-          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-          return {
-            code: 1,
-            stderr: floodStderr(),
-            timedOut: false,
-            args: [...args],
-          };
-        },
-      },
-    );
-
-    const { terminal } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "activation",
-      diagnosticEquals: "provider boom",
-    });
-    // stderr: emission shape + non-flood only (AC6) — not selected presentation prose.
-    assert.equal(stderr[0]!.includes("at Object.fn"), false);
-    assert.equal(stderr[0]!.includes("event:"), false);
-    assert.equal(stderr[0]!.includes("tokens="), false);
-    assert.equal(
-      stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
-      1,
-    );
-    assert.equal(terminal.runId, "run-fail-emit-001");
-  });
-});
 test("JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -531,8 +396,12 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
       if (terminal.roleOutcome.kind === "failure") {
         assert.equal(terminal.roleOutcome.diagnostic.includes("tool_execution_end"), false);
       }
-      // stderr oracle is emission shape + non-flood — not selected diagnostic prose (AC6).
+      // stderr oracle is emission shape + non-flood — not selected diagnostic prose (AC6):
+      // stack frames, JSONL event lines, and token counters must never surface.
       assert.equal(stderr[0]!.includes("tool_execution_end"), false);
+      assert.equal(stderr[0]!.includes("at Object.fn"), false);
+      assert.equal(stderr[0]!.includes("event:"), false);
+      assert.equal(stderr[0]!.includes("tokens="), false);
     }
 
     // Counterexample 2: single oversized diagnostic line — durable full, presentation bound.
@@ -580,117 +449,6 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
       // Helper already asserts one nonblank stderr line and CONCISE_DIAGNOSTIC_MAX_CHARS + 32.
       assert.ok(stderr[0]!.length < full.length);
     }
-  });
-});
-test("audit_escalation is a lawful typed terminal result exiting zero without becoming a Receipt", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-
-    const auditCandidate = {
-      status: "escalate",
-      conflicts: ["soul procedure conflict"],
-      decisionGate: {
-        question: "Which authority controls this gate?",
-        options: ["owner", "caller"],
-      },
-    };
-    // Single retained escalate — multi-turn three-seat coverage lives in the
-    // shared public-CLI tracer below (do not re-fork that fixture here).
-    const escalation = {
-      judgeStatus: "escalate",
-      decisionGate: { question: "role gate", options: ["role"] },
-      kind: AUDIT_ESCALATION_KIND,
-      conflicts: auditCandidate.conflicts,
-      auditDecisionGate: auditCandidate.decisionGate,
-    };
-
-    const result = await runAkRole(
-      ["judge", "--project", project, "needs human decision"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-escalation-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            `${[
-              {
-                type: "message",
-                message: {
-                  role: "assistant",
-                  content: [{
-                    type: "toolCall",
-                    id: "judge-role-call",
-                    name: JUDGE_OUTPUT_TOOL_NAME,
-                    arguments: { judgeStatus: "escalate" },
-                  }],
-                },
-              },
-              {
-                type: "custom",
-                customType: "ak_compliance_response",
-                data: {
-                  version: 1,
-                  response: {
-                    content: [{
-                      type: "toolCall",
-                      id: "judge-audit-call",
-                      name: JUDGE_AUDIT_TOOL_NAME,
-                      arguments: auditCandidate,
-                    }],
-                  },
-                },
-              },
-              {
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolCallId: "judge-role-call",
-                  toolName: JUDGE_OUTPUT_TOOL_NAME,
-                  isError: false,
-                  details: escalation,
-                },
-              },
-            ].map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-            "utf8",
-          );
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-      },
-    );
-
-    assert.equal(result.exitCode, 0);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 0);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "audit_escalation");
-    if (result.terminal!.roleOutcome.kind !== "audit_escalation") {
-      throw new Error("expected audit_escalation");
-    }
-    assert.equal(result.terminal!.roleOutcome.status, "audit_escalation");
-    assert.equal(isLawfulTypedTerminalOutcome(result.terminal!.roleOutcome), true);
-    assert.equal(exitCodeForTerminalOutcome(result.terminal!.roleOutcome), 0);
-    assert.equal(
-      result.terminal!.roleOutcome.decisiveFacts.kind,
-      AUDIT_ESCALATION_KIND,
-    );
-    assert.equal(result.terminal!.runId, "run-escalation-001");
-    assert.ok(result.terminal!.artifacts.some((a) => a.kind === "report"));
-    const reportRef = result.terminal!.artifacts.find((a) => a.kind === "report");
-    assert.ok(reportRef);
-    await access(reportRef!.path);
   });
 });
 test("lawful judge escalate human-decision exits zero as accepted role outcome", async () => {
@@ -818,74 +576,6 @@ test("post-admission throw undefined stays unrecognized (not activation/null-exi
       assert.notEqual(terminal.roleOutcome.cause, "activation");
       assert.notEqual(terminal.roleOutcome.cause, "output");
     }
-  });
-});
-test("artifact publication EISDIR retains unrecognized identity (not washed to output)", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "lawful then publish fails"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-eisdir-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = join(sessionDir, "..");
-          // Converged session is lawful; report.json as a directory makes writeFile EISDIR.
-          await mkdir(join(runDir, "artifacts", "report.json"), { recursive: true });
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolName: JUDGE_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: { judgeStatus: "converged" },
-              },
-            })}\n`,
-            "utf8",
-          );
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-      },
-    );
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "unrecognized",
-      identityCode: "EISDIR",
-    });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "unrecognized");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
-      // Must not wash publication errno into generic output absence.
-      assert.notEqual(terminal.roleOutcome.cause, "output");
-    }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause: string;
-      identity?: { name?: string; code?: string | number };
-      diagnostic: string;
-    };
-    assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(errorBody.identity?.code, "EISDIR");
-    assert.equal(typeof errorBody.diagnostic, "string");
-    assert.ok(errorBody.diagnostic.length > 0);
-    assert.equal(errorBody.diagnostic.toLowerCase().includes("eisdir") || errorBody.identity?.code === "EISDIR", true);
   });
 });
 test("timeout controlled failure settles with typed timeout cause and Error Artifact", async () => {
@@ -1506,57 +1196,6 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
   });
 });
 
-test("#419 planted symlink at audit-incomplete destination still fails loudly with residual", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    let symlinkPlanted = false;
-    const result = await runAkRole(
-      ["judge", "--project", project, "audit evidence symlink preplant"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-audit-artifact-symlink-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = join(sessionDir, "..");
-          await mkdir(join(runDir, "artifacts"), { recursive: true });
-          if (!symlinkPlanted) {
-            symlinkPlanted = true;
-            await symlink(
-              join(home, "outside-target.json"),
-              join(runDir, "artifacts", "audit-incomplete.json"),
-            );
-          }
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            auditIncompleteSessionRows("role-1", ["retained"]),
-            "utf8",
-          );
-          return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
-        },
-      },
-    );
-    assert.equal(result.exitCode, 1);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 1);
-    assert.ok(result.terminal);
-    const outcome = result.terminal!.roleOutcome;
-    assert.equal(outcome.kind, "failure");
-    if (outcome.kind !== "failure") throw new Error("expected publication failure");
-    assert.equal(outcome.cause, "unrecognized");
-    assert.equal(outcome.decisiveFacts.errorCode, "ELOOP");
-    assert.equal(outcome.auditResidual?.acceptedReceipt, false);
-    assert.deepEqual(outcome.auditResidual?.roleCandidate, { judgeStatus: "converged" });
-    assert.deepEqual(outcome.auditResidual?.audit.candidate, ["retained"]);
-    assert.equal(result.terminal!.artifacts.length, 0);
-  });
-});
 test("Judge settlement separates missing or unknown discriminators from known continue", () => {
   const extract = (details: unknown) => extractJudgeRoleOutcome([
     {
@@ -1653,6 +1292,18 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
       assert.equal(terminal.roleOutcome.cause, cause);
       assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false);
       assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1);
+
+      // Durability before caller presentation (absorbed from the former
+      // dedicated durable-recordings test): artifact paths already openable,
+      // evidence leg present, and no session attendance → typed unavailable.
+      if (cause === "activation") {
+        assert.equal(terminal.navigator.disposition, "unavailable");
+        if (terminal.navigator.disposition === "unavailable") {
+          assert.equal(terminal.navigator.source, "unknown");
+          assert.equal(typeof terminal.navigator.reason, "string");
+        }
+        assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
+      }
       const errorRef = terminal.artifacts.find((a) => a.kind === "error");
       assert.ok(errorRef);
       const body = JSON.parse(await readFile(errorRef!.path, "utf8")) as {

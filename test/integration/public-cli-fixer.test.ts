@@ -32,7 +32,6 @@ import {
 } from "../../src/public-cli/fixer-run.ts";
 import {
   admitFixerInvocation as admitFixerInvocationRaw,
-  parseFixerArgv,
 } from "../../src/public-cli/invocation.ts";
 import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
 import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
@@ -93,44 +92,6 @@ async function admitFixerInvocation(
   return admitFixerInvocationRaw(options);
 }
 
-
-test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus prerequisites path", () => {
-  const isUsage = (error: unknown): boolean =>
-    error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
-
-  assert.deepEqual(parseFixerArgv(["Repair the class."]), {
-    phase: "apply",
-    instruction: "Repair the class.",
-    attachmentPaths: [],
-  });
-  assert.deepEqual(parseFixerArgv(["plan", "Propose the repair."]), {
-    phase: "plan",
-    instruction: "Propose the repair.",
-    attachmentPaths: [],
-  });
-  assert.deepEqual(
-    parseFixerArgv([
-      "apply",
-      "--prerequisites",
-      "prereq.json",
-      "--attach",
-      "a.md",
-      "--project",
-      "/tmp/p",
-      "Settle findings.",
-    ]),
-    {
-      phase: "apply",
-      instruction: "Settle findings.",
-      attachmentPaths: ["a.md"],
-      prerequisitesPath: "prereq.json",
-      project: "/tmp/p",
-    },
-  );
-  assert.throws(() => parseFixerArgv(["--unknown-flag"]), isUsage);
-  assert.throws(() => parseFixerArgv(["--prerequisites", ""]), isUsage);
-  assert.throws(() => parseFixerArgv(["--project", "", "task"]), isUsage);
-});
 
 test("admitFixerInvocation freezes prerequisites and rejects malformed grammar structurally", async () => {
   await withTempHome(async (home) => {

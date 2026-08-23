@@ -400,7 +400,6 @@ test("binding or API failure renders loud error — never a silent empty board",
     assert.equal(elementsWith(bindingHtml, "data-error-book")[0]?.["data-error-book"], "orch");
     assert.equal(elementsWith(bindingHtml, "data-lane").length, 0);
     assert.equal(elementsWith(bindingHtml, "data-ticket").length, 0);
-    assert.match(bindingHtml, /missing owner\/repo binding/i);
 
     const apiHtml = await renderFactoryBoardHtml(
       books,
@@ -413,7 +412,6 @@ test("binding or API failure renders loud error — never a silent empty board",
     assert.equal(elementsWith(apiHtml, "data-board-error")[0]?.["data-board-error"], "api");
     assert.equal(elementsWith(apiHtml, "data-lane").length, 0);
     assert.equal(elementsWith(apiHtml, "data-ticket").length, 0);
-    assert.match(apiHtml, /GitHub API 502/);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -591,39 +589,41 @@ async function runFactoryBoardCli(args: string[]) {
   );
 }
 
-test("CLI --out alone writes binding error page and exits nonzero", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-cli-out-alone-"));
-  try {
-    const outputPath = join(workspace, "board.html");
-    const result = await runFactoryBoardCli(["--out", outputPath]);
-    assert.notEqual(result.code, 0, "must exit nonzero on missing --book");
-    const html = await readFile(outputPath, "utf8");
-    assert.equal(elementsWith(html, "data-board-error")[0]?.["data-board-error"], "binding");
-    assert.equal(elementsWith(html, "data-lane").length, 0);
-    assert.equal(elementsWith(html, "data-ticket").length, 0);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
-});
-
-test("CLI malformed owner/repo with --out writes binding error page and exits nonzero", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-cli-malformed-"));
-  try {
-    const outputPath = join(workspace, "board.html");
-    const result = await runFactoryBoardCli([
-      "--book",
-      "roles=/tmp/not-a-ledger:not-owner-repo",
-      "--out",
-      outputPath,
-    ]);
-    assert.notEqual(result.code, 0, "must exit nonzero on malformed owner/repo");
-    const html = await readFile(outputPath, "utf8");
-    assert.equal(elementsWith(html, "data-board-error")[0]?.["data-board-error"], "binding");
-    assert.equal(elementsWith(html, "data-lane").length, 0);
-    assert.equal(elementsWith(html, "data-ticket").length, 0);
-    assert.match(html, /owner\/repo/i);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
+// Binding-failure CLI matrix (#420 整改并一)：两条同根「binding 失败 → 非零 + 错误页」
+// 收成一行表两行；断言只咬 data-* 键，不咬自由散文。
+test("CLI binding failures write the binding error page and exit nonzero", async () => {
+  const rows = [
+    {
+      label: "--out alone (missing --book)",
+      args: (outputPath: string) => ["--out", outputPath],
+    },
+    {
+      label: "malformed owner/repo",
+      args: (outputPath: string) => [
+        "--book",
+        "roles=/tmp/not-a-ledger:not-owner-repo",
+        "--out",
+        outputPath,
+      ],
+    },
+  ] as const;
+  for (const row of rows) {
+    const workspace = await mkdtemp(join(tmpdir(), "factory-board-cli-binding-"));
+    try {
+      const outputPath = join(workspace, "board.html");
+      const result = await runFactoryBoardCli(row.args(outputPath));
+      assert.notEqual(result.code, 0, `${row.label}: must exit nonzero`);
+      const html = await readFile(outputPath, "utf8");
+      assert.equal(
+        elementsWith(html, "data-board-error")[0]?.["data-board-error"],
+        "binding",
+        row.label,
+      );
+      assert.equal(elementsWith(html, "data-lane").length, 0, row.label);
+      assert.equal(elementsWith(html, "data-ticket").length, 0, row.label);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
   }
 });
 

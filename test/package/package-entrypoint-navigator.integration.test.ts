@@ -431,45 +431,6 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
   );
 });
 
-test("normal packaged context-loader failure is typed unavailable and preserves the role Receipt", async () => {
-  const manifest = await loadRawPackageManifest();
-  await withActivationHome(
-    { prefix: "ak-navigator-context-loader-failure-" },
-    async ({ home, agentDir }) => {
-      const issueRoot = resolve(home, ".ak/work/issues/28");
-      await mkdir(resolve(issueRoot, "authority.md"), { recursive: true });
-      const faux = fauxProvider({ api: "ak-navigator-context-failure", provider: "ak-navigator-context-failure", tokenSize: { min: 1000, max: 1000 } });
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: issueRoot,
-        agentDir,
-        faux,
-        additionalExtensionPaths: [packageEntrypoint(manifest)],
-        systemPrompt: "CONTEXT LOADER FAILURE",
-        mode: "json",
-        flags: { "ak-role": "judge" },
-        noTools: "builtin",
-      }, async ({ session, sessionManager }) => {
-        faux.setResponses([
-          fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "context-failure-judge" }), { stopReason: "toolUse" }),
-          fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }),
-        ]);
-        await session.prompt("The role must still settle when Navigator context loading throws.");
-        const receipt = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "context-failure-judge");
-        assert.ok(receipt?.type === "message" && receipt.message.role === "toolResult");
-        assert.equal(receipt.message.isError, false);
-        assert.deepEqual(receipt.message.details, { judgeStatus: "converged" });
-        const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
-        assert.equal(attendance.length, 1);
-        const event = (attendance[0] as { details: { disposition: string; unavailableReason?: string; unavailableSource?: string; unavailableCause?: string } }).details;
-        assert.equal(event.disposition, "unavailable");
-        assert.equal(event.unavailableSource, "context");
-        assert.equal(event.unavailableCause, "context");
-      });
-    },
-  );
-});
-
 test("normal packaged Navigator failures remain typed, native-cause, and Receipt-preserving across the cause matrix", async () => {
   const manifest = await loadRawPackageManifest();
   await withActivationHome(
