@@ -259,6 +259,9 @@ test("packed artifact ships the release inventory: souls, methods, runtime entry
     "souls/doctor.md",
     "souls/merger.md",
     "souls/navigator.md",
+    "souls/menxia.md",
+    "souls/jishizhong.md",
+    "souls/fubaolang.md",
   ];
   for (const soul of souls) {
     assert.ok(extracted.paths.includes(soul), `pack must include ${soul}`);

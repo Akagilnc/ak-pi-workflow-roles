@@ -93,6 +93,9 @@ const REQUIRED_SOULS = [
   "souls/doctor.md",
   "souls/merger.md",
   "souls/navigator.md",
+  "souls/menxia.md",
+  "souls/jishizhong.md",
+  "souls/fubaolang.md",
 ] as const;
 
 function seedGitProject(root: string): void {

@@ -278,6 +278,13 @@ export {
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
 export { executeAuditorChild } from "./evidence-child-executor.ts";
 export type { AuditorCompletion, AuditorDecisionTool } from "./evidence-child-executor.ts";
+export {
+  FUBAOLANG_OUTPUT_TOOL,
+  JISHIZHONG_OUTPUT_TOOL,
+  MENXIA_OUTPUT_TOOL,
+  runMenxia,
+} from "./menxia-role.ts";
+export type { MenxiaResult, MenxiaSubject, RunMenxiaOptions } from "./menxia-role.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
