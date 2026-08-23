@@ -226,7 +226,7 @@ export function constructionProvenance(): ConstructionProvenance {
   }).trim();
   const status = execFileSync(
     "git",
-    ["-C", packageRoot, "status", "--porcelain=v1", "-z"],
+    ["-C", packageRoot, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
     { encoding: "buffer" },
   ).toString("utf8");
   const hash = createHash("sha256").update(head).update("\0");
