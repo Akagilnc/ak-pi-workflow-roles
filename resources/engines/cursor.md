@@ -7,6 +7,11 @@ session so typed submission stays on the existing in-session path.
 
 Material is data for the model, not a code contract. Do not invent package flags.
 
+Dispatch rules — what may go into the labor prompt, process shape, and failure
+handling — are shared across all engines in `resources/engine-dispatch.md`;
+read those bytes too and follow them. This note only covers this engine's CLI
+technical parameters.
+
 ## Invocation examples (local Cursor Agent CLI)
 
 The machine entrypoint is `agent` (also exposed as `cursor-agent`). Run from the
@@ -30,10 +35,3 @@ agent -p --force --output-format stream-json "YOUR_LABOR_PROMPT"
 
 Prefer `agent --help` on the host over any remembered flag set. Do not wrap this
 engine behind `ak-role` flags.
-
-When the package detour tool is available, start exactly one subprocess per
-labor invocation through it with argv assembled from this material and the
-local CLI; return the stdout labor content to the same session for the existing
-typed submission path. One labor turn = one process (not one process for the
-whole role run). If the detour fails, continue labor in-session on the seat main
-road and still submit via the existing typed path.
