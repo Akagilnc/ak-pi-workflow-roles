@@ -10,7 +10,10 @@
  * Index rows come from the real issue-mode entry (no hand-written index assembly).
  * Index hit + page missing â†’ #338 compute-if-missing (sole kernel) restores page;
  * index miss alone remains typed vacancy. Compute failure stays loud (not absent).
- * C2 fixture runs use exclusive runId segment 019ff000-2xxx.
+ * C2 fixture runs use exclusive runId segment 019ff000-2xxx and carry typed
+ * ticketNumbers matching their issue numbers â€” T4 revised (#413 r2 U2 owner
+ * decision): cohort issueNumber IS the ticketNumber, so a cache-miss recompute
+ * admits only invocation.ticketNumber-matching runs.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -34,6 +37,22 @@ const fixtureHome = join(packageRoot, "test/fixtures/taishi/home");
 const ISSUE_201_ROOT = "/taishi-fixture/c2-issue-201";
 const ISSUE_202_ROOT = "/taishi-fixture/c2-issue-202";
 const ISSUE_203_ROOT = "/taishi-fixture/c2-issue-203";
+
+/** #412: cohort library face requires explicit bookKey per issue (no cross-book find). */
+function issueRef(projectRoot: string, issueNumber: number) {
+  return {
+    bookKey: `root:${physicalPathIdentity(projectRoot)}`,
+    issueNumber,
+  };
+}
+
+/** Vacancy refs still need a book scope â€” synthetic root of a non-indexed path. */
+function absentRef(issueNumber: number) {
+  return {
+    bookKey: `root:${physicalPathIdentity(`/taishi-fixture/c2-absent-${issueNumber}`)}`,
+    issueNumber,
+  };
+}
 
 const RUN_201_CODER_1 = "019ff000-2001-7000-8000-0000000002a1";
 const RUN_201_CODER_2 = "019ff000-2002-7000-8000-0000000002a2";
@@ -185,8 +204,14 @@ test("taishi C2 cohort: side-by-side group metrics join index by issueNumber; va
       const result = await runTaishi({
         mode: "cohort",
         groups: [
-          { groupLabel: "before", issues: [201, 202] },
-          { groupLabel: "after", issues: [203, 204] },
+          {
+            groupLabel: "before",
+            issues: [issueRef(ISSUE_201_ROOT, 201), issueRef(ISSUE_202_ROOT, 202)],
+          },
+          {
+            groupLabel: "after",
+            issues: [issueRef(ISSUE_203_ROOT, 203), absentRef(204)],
+          },
         ],
       });
 
@@ -222,7 +247,7 @@ test("taishi C2 cohort: side-by-side group metrics join index by issueNumber; va
           bookKey: `root:${physicalPathIdentity(ISSUE_203_ROOT)}`,
           projectRoot: physicalPathIdentity(ISSUE_203_ROOT),
         },
-        { issueNumber: 204, status: "absent" },
+        { issueNumber: 204, status: "absent", bookKey: absentRef(204).bookKey },
       ]);
 
       // ---- before group hand values ----
@@ -266,8 +291,14 @@ test("taishi C2 cohort: side-by-side group metrics join index by issueNumber; va
       const again = await runTaishi({
         mode: "cohort",
         groups: [
-          { groupLabel: "before", issues: [201, 202] },
-          { groupLabel: "after", issues: [203, 204] },
+          {
+            groupLabel: "before",
+            issues: [issueRef(ISSUE_201_ROOT, 201), issueRef(ISSUE_202_ROOT, 202)],
+          },
+          {
+            groupLabel: "after",
+            issues: [issueRef(ISSUE_203_ROOT, 203), absentRef(204)],
+          },
         ],
       });
       assert.deepEqual(again, result);
@@ -282,8 +313,8 @@ test("taishi C2 cohort: all-absent group yields typed vacancy aggregates (no 0/â
       const result = await runTaishi({
         mode: "cohort",
         groups: [
-          { groupLabel: "left", issues: [901, 902] },
-          { groupLabel: "right", issues: [903] },
+          { groupLabel: "left", issues: [absentRef(901), absentRef(902)] },
+          { groupLabel: "right", issues: [absentRef(903)] },
         ],
       });
 
@@ -293,15 +324,17 @@ test("taishi C2 cohort: all-absent group yields typed vacancy aggregates (no 0/â
 
       assert.equal(left.groupLabel, "left");
       assert.deepEqual(left.issues, [
-        { issueNumber: 901, status: "absent" },
-        { issueNumber: 902, status: "absent" },
+        { issueNumber: 901, status: "absent", bookKey: absentRef(901).bookKey },
+        { issueNumber: 902, status: "absent", bookKey: absentRef(902).bookKey },
       ]);
       assert.deepEqual(left.byRole, []);
       assert.deepEqual(left.reworkRatio, ABSENT);
       assert.deepEqual(left.medianWallMs, ABSENT);
 
       assert.equal(right.groupLabel, "right");
-      assert.deepEqual(right.issues, [{ issueNumber: 903, status: "absent" }]);
+      assert.deepEqual(right.issues, [
+        { issueNumber: 903, status: "absent", bookKey: absentRef(903).bookKey },
+      ]);
       assert.deepEqual(right.byRole, []);
       assert.deepEqual(right.reworkRatio, ABSENT);
       assert.deepEqual(right.medianWallMs, ABSENT);
@@ -326,8 +359,8 @@ test("taishi C2 cohort: index hit + page missing recomputes via sole kernel (not
       const result = await runTaishi({
         mode: "cohort",
         groups: [
-          { groupLabel: "left", issues: [201] },
-          { groupLabel: "right", issues: [999] },
+          { groupLabel: "left", issues: [issueRef(ISSUE_201_ROOT, 201)] },
+          { groupLabel: "right", issues: [absentRef(999)] },
         ],
       });
 
@@ -340,9 +373,11 @@ test("taishi C2 cohort: index hit + page missing recomputes via sole kernel (not
           projectRoot: physicalPathIdentity(ISSUE_201_ROOT),
         },
       ]);
-      // Right group index-miss stays typed vacancy (not a compute target).
+      // Right group index-miss stays typed vacancy (not a compute target);
+      // the vacancy carries the requested bookKey (U4) so cross-book same
+      // numbers stay self-describing.
       assert.deepEqual(result.groups[1]!.issues, [
-        { issueNumber: 999, status: "absent" },
+        { issueNumber: 999, status: "absent", bookKey: absentRef(999).bookKey },
       ]);
       // Page restored through sole writer entry.
       const restored = JSON.parse(

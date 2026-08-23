@@ -8,20 +8,26 @@ const GIT_DISCOVERY_ENV_KEYS = [
   "GIT_DISCOVERY_ACROSS_FILESYSTEM"
 ];
 function envWithoutGitDiscovery(base = process.env) {
-  const env = { ...base };
+  const env = { ...base, LC_ALL: "C" };
   for (const key of GIT_DISCOVERY_ENV_KEYS) {
     delete env[key];
   }
   return env;
 }
+const CONFIRMED_NON_REPOSITORY_STDERR = /^fatal:\s*not a git repository/i;
+function isConfirmedNonRepositoryStderr(stderr) {
+  return CONFIRMED_NON_REPOSITORY_STDERR.test(stderr);
+}
 class ActivationGitRepositoryRequiredError extends Error {
   code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
+  confirmedNonRepository;
   constructor(detail, options) {
     super(
       `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
       options?.cause === void 0 ? void 0 : { cause: options.cause }
     );
     this.name = "ActivationGitRepositoryRequiredError";
+    this.confirmedNonRepository = options?.confirmedNonRepository ?? false;
   }
 }
 function isGitSpawnInfrastructureError(error) {
@@ -49,7 +55,10 @@ function resolveBookKeyFromGit(cwd) {
     }
     const err = error;
     const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
-    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
+    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", {
+      cause: error,
+      confirmedNonRepository: isConfirmedNonRepositoryStderr(detail)
+    });
   }
   if (commonDir.length === 0) {
     throw new Error("git rev-parse --git-common-dir returned an empty path");
@@ -64,5 +73,6 @@ function resolveBookKeyFromGit(cwd) {
 }
 export {
   ActivationGitRepositoryRequiredError,
+  isConfirmedNonRepositoryStderr,
   resolveBookKeyFromGit
 };

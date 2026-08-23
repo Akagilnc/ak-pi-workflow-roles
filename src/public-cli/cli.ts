@@ -436,9 +436,10 @@ function appendUsageAndExamples(
 
 function renderHelp(): string {
   const doc = helpDocument();
-  const top = projectCommandHelp("top");
+  // "top" is a required PUBLIC_COMMAND_HELP topic — no fallback prose (#412/397-F3).
+  const top = projectCommandHelp("top")!;
   const lines: string[] = [
-    `ak-role — ${top?.summary ?? "public role CLI"}`,
+    `ak-role — ${top.summary}`,
   ];
   appendUsageAndExamples(lines, "top");
   lines.push("", PUBLIC_NAVIGATOR_HELP_NOTE);
@@ -493,11 +494,9 @@ function renderCommandHelp(command: string): string | undefined {
     lines.push(`ak-role ${match.name}`);
   }
   appendUsageAndExamples(lines, command);
-  if (command in PUBLIC_ROLE_ARGV || command === "global") {
-    const owner =
-      command === "global"
-        ? "global"
-        : (command as keyof typeof PUBLIC_ROLE_ARGV);
+  // listHelpCapabilities never yields "global"; only role owners carry OPTIONS (#412/397-F3).
+  if (command in PUBLIC_ROLE_ARGV) {
+    const owner = command as keyof typeof PUBLIC_ROLE_ARGV;
     lines.push("", "OPTIONS");
     lines.push(...renderHumanOwnerOptionLines(owner));
   }
