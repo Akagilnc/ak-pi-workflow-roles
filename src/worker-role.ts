@@ -30,6 +30,7 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "./package-contracts/fixer-packet.ts";
+import { runMenxia, type MenxiaResult, type RunMenxiaOptions } from "./menxia-role.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -133,6 +134,7 @@ export type CoderRoleDependencies = {
   loadCanonicalSkillBinding?(
     name: "tdd",
   ): Promise<AnyCanonicalSkillBinding>;
+  runMenxia?(options: RunMenxiaOptions): Promise<MenxiaResult>;
 };
 
 export type WorkerRoleRuntime = {
@@ -436,6 +438,29 @@ export function createCoderRoleRuntime(
               ctx,
               toolCallId,
             );
+            if (output.status === "completed") {
+              const menxia = await (dependencies.runMenxia ?? runMenxia)({
+                context: ctx,
+                subject: {
+                  kind: "worker_completion",
+                  material: JSON.stringify(output),
+                },
+                ...(_signal === undefined ? {} : { signal: _signal }),
+              });
+              if (menxia.status === "transport_failure") {
+                hostActions.failInfrastructure(
+                  new Error(`Menxia transport failure at ${menxia.stage}: ${menxia.reason}`),
+                  ctx,
+                  toolCallId,
+                );
+              }
+              if (menxia.status === "bounce") {
+                throw new Error(`Menxia requires rewrite: ${menxia.findings.join("; ")}`);
+              }
+              if (menxia.status === "incomplete" || menxia.status === "no_receipt") {
+                throw new Error(`Menxia ${menxia.status} at ${menxia.stage}: ${menxia.reason}; ${JSON.stringify(menxia)}`);
+              }
+            }
             // #391: attach sole-built engineLaborFallback when detour fell back to seat labor.
             const acceptedDetails = withEngineLaborFallbackField(
               output,

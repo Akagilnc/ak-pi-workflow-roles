@@ -937,6 +937,53 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   );
 });
 
+test("coder completed submission runs the Menxia gate before terminating and reruns it after bounce", async () => {
+  const request = "Apply the approved plan.";
+  const decisions = [
+    { status: "bounce" as const, officer: "jishizhong" as const, disposition: "rewrite" as const, findings: ["add a focused regression"] },
+    { status: "pass" as const, officer: "jishizhong" as const, findings: [] },
+  ];
+  const subjects: unknown[] = [];
+  const harness = extensionHarness(undefined, {
+    "ak-coder-task": "/materials/approved.md",
+    "ak-coder-phase": "apply",
+  });
+  const runtime = createCoderRoleRuntime(
+    harness.pi as ExtensionAPI,
+    {
+      loadSoul: async () => "CODER LAW",
+      loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
+      loadCanonicalSkillBinding: async () => tddBinding(),
+      runMenxia: async ({ subject }: any) => {
+        subjects.push(subject);
+        return decisions.shift()!;
+      },
+    },
+    { failInfrastructure(error) { throw error; } },
+  );
+  await runtime.activate();
+  await harness.handlers.get("input")?.({ text: request }, {});
+  await harness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: expandedTdd(request) },
+    { abort() {}, mode: "tui" },
+  );
+  const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+  const completed = { status: "completed", report: "TDD and verification evidence" };
+
+  await assert.rejects(
+    tool.execute("bounced", completed, undefined, undefined, toolCallContext([{ id: "bounced", name: CODER_OUTPUT_TOOL_NAME }])),
+    /Menxia.*rewrite/i,
+  );
+  const accepted = await tool.execute("accepted", completed, undefined, undefined, toolCallContext([{ id: "accepted", name: CODER_OUTPUT_TOOL_NAME }]));
+
+  assert.equal(accepted.terminate, true);
+  assert.deepEqual(subjects, [
+    { kind: "worker_completion", material: JSON.stringify(completed) },
+    { kind: "worker_completion", material: JSON.stringify(completed) },
+  ]);
+});
+
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
   // #319 Batch 3 (M1): lightweight expansion-binding API seam.
   // Publish-surface packaged Pi coverage stays in package-entrypoint (M1.4/M1.5).
@@ -959,6 +1006,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
         loadSoul: async () => "CODER LAW",
         loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
         loadCanonicalSkillBinding: async () => tddBinding(),
+        runMenxia: async () => ({ status: "pass", officer: "jishizhong", findings: [] }),
       },
       { failInfrastructure(error) { throw error; } },
     );
