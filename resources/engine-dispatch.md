@@ -23,10 +23,6 @@ the outsourced process run from the project root and read those bytes
 themselves. Stuffing large bodies into argv/prompt is the verified cause of
 `spawn ENAMETOOLONG` failures (ming #1234 reviewer r1, 2026-08-17).
 
-Where a leg's transport has no filesystem access of its own, how referenced
-material reaches that transport is a technical constraint of that leg and is
-stated in that engine's note — it does not reopen a second dispatch pattern.
-
 ## Process shape
 
 - When the package detour tool is available, start exactly one subprocess per
@@ -37,9 +33,8 @@ stated in that engine's note — it does not reopen a second dispatch pattern.
 
 ## Failure handling
 
-The detour is mandatory: you MUST actually invoke the engine CLI. On any
-spawn, auth, quota, model-id, stream-stall, or connection-drop failure, return
-the typed failure and STOP — the run fails. In-seat labor after a detour
-failure is FORBIDDEN, and so is skipping the detour to work in-seat. Zero
-invocations is a violation, not a fallback. Do not silently swap to another
-engine id.
+If an attempted detour fails because of spawn, auth, quota, model-id,
+stream-stall, connection-drop, or another engine-process failure, continue the
+labor in the seat and submit through the existing typed path. The resulting
+typed receipt carries the attached `engineLaborFallback` declaration. Do not
+silently swap to another engine id.
