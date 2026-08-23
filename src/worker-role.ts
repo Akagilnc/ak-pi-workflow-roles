@@ -30,7 +30,7 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "./package-contracts/fixer-packet.ts";
-import { runMenxia, type MenxiaResult, type RunMenxiaOptions } from "./menxia-role.ts";
+import { runMenxia } from "./menxia-role.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -134,7 +134,6 @@ export type CoderRoleDependencies = {
   loadCanonicalSkillBinding?(
     name: "tdd",
   ): Promise<AnyCanonicalSkillBinding>;
-  runMenxia?(options: RunMenxiaOptions): Promise<MenxiaResult>;
 };
 
 export type WorkerRoleRuntime = {
@@ -439,7 +438,7 @@ export function createCoderRoleRuntime(
               toolCallId,
             );
             if (output.status === "completed") {
-              const menxia = await (dependencies.runMenxia ?? runMenxia)({
+              const menxia = await runMenxia({
                 context: ctx,
                 subject: {
                   kind: "worker_completion",
