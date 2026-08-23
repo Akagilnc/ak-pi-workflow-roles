@@ -1093,7 +1093,7 @@ const SUPPORT_COMMAND_HELP = {
   },
   config: {
     command: "config",
-    summary: "Persistent seat model and labor-engine defaults.",
+    summary: "Persistent seat model, labor-engine, and auto-resume defaults.",
     usage: [
       "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
       "ak-role config set-engine <seat> <name>",
@@ -1114,7 +1114,7 @@ const SUPPORT_COMMAND_HELP = {
   },
   resume: {
     command: "resume",
-    summary: "Reopen an exact role run after a typed HTTP 429.",
+    summary: "Reopen an exact role run whose Pi session principal still exists.",
     usage: ["ak-role resume <runId>"],
     examples: ["ak-role resume 01abc…"],
   },
