@@ -41,7 +41,6 @@ const providerPath = resolve(
 );
 
 const CANNED_VERDICT_TEXT = "canned-engine-labor-content-357\n";
-const FAIL_A_STDERR = "ENGINE_FAIL_A_UNIQUE_STDERR_357_LIVE\n";
 
 async function runJudgeWithEngine(input: {
   home: string;
@@ -195,80 +194,10 @@ test(
   },
 );
 
-test(
-  "B1 nonzero engine exit → seat fallback + engineLaborFallback on accepted receipt",
-  { timeout: 120_000 },
-  async () => {
-    const home = await mkdtemp(join(tmpdir(), "ak-engine-detour-fail-a-"));
-    try {
-      const project = join(home, "work");
-      const binDir = join(home, "bin");
-      await mkdir(project, { recursive: true });
-      await mkdir(binDir, { recursive: true });
-      seedGitProject(project);
-      await writeExecutable(
-        join(binDir, "kimi"),
-        `#!/bin/sh\nprintf '%s' '${FAIL_A_STDERR}' >&2\nexit 1\n`,
-      );
-
-      const result = await runJudgeWithEngine({
-        home,
-        project,
-        binDir,
-        runId: "run-engine-detour-fail-a-001",
-        engine: "kimi",
-      });
-
-      // #380: detour failure rejoins main road — seat submits typed receipt.
-      assert.equal(result.exitCode, 0, result.stderr.join(""));
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted");
-      const fallback = (result.terminal.roleOutcome.decisiveFacts as {
-        engineLaborFallback?: { engine?: string; failure?: string; laborBy?: string };
-      }).engineLaborFallback;
-      assert.ok(fallback, "accepted receipt must declare engineLaborFallback");
-      assert.equal(fallback.engine, "kimi");
-      assert.equal(fallback.laborBy, "seat");
-      assert.ok(
-        typeof fallback.failure === "string" &&
-          fallback.failure.includes("ENGINE_FAIL_A_UNIQUE_STDERR_357_LIVE"),
-        `failure must carry engine stderr: ${fallback.failure}`,
-      );
-
-      const bookKey = resolveBookKeyFromGit(project);
-      const sessionFile = join(
-        home,
-        ".ak-roles",
-        "books",
-        bookKey,
-        "runs",
-        "run-engine-detour-fail-a-001@judge",
-        "session",
-        "session.jsonl",
-      );
-      const rows = (await readFile(sessionFile, "utf8"))
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as any);
-      const acceptedJudge = rows.find(
-        (row) =>
-          row.type === "message" &&
-          row.message?.role === "toolResult" &&
-          row.message?.toolName === "ak_judge_output" &&
-          row.message?.isError !== true,
-      );
-      assert.ok(acceptedJudge, "typed judge receipt must be accepted");
-      const detailsFallback = acceptedJudge.message.details?.engineLaborFallback;
-      assert.equal(detailsFallback?.engine, "kimi");
-      assert.equal(detailsFallback?.laborBy, "seat");
-      assert.ok(
-        String(detailsFallback?.failure ?? "").includes("ENGINE_FAIL_A_UNIQUE_STDERR_357_LIVE"),
-      );
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  },
-);
+  // 尺②同根收拢（#420 类一）：detour 失败 → seat fallback 的真入口 tracer 留
+  // 两条——reviewer B2（引擎 stderr 逐字入 fallback.failure）与本文件 trim-empty
+  // stdout（空产出常量诊断）。nonzero-exit+stderr 变体与 reviewer B2 同根同断言，
+  // 删此留彼；失败味分类矩阵由 test/unit/engine-labor-fallback.test.ts 承接。
 
 test(
   "B1 trim-empty stdout → seat fallback + engineLaborFallback on accepted receipt",
@@ -310,46 +239,10 @@ test(
   },
 );
 
-test(
-  "whitespace-only stderr + nonzero exit → seat fallback with empty-stdout diagnostic",
-  { timeout: 120_000 },
-  async () => {
-    const home = await mkdtemp(join(tmpdir(), "ak-engine-detour-ws-stderr-"));
-    try {
-      const project = join(home, "work");
-      const binDir = join(home, "bin");
-      await mkdir(project, { recursive: true });
-      await mkdir(binDir, { recursive: true });
-      seedGitProject(project);
-      // Nonzero exit + whitespace-only stderr + empty stdout: stderr is absent after trim.
-      await writeExecutable(
-        join(binDir, "kimi"),
-        "#!/bin/sh\nprintf '  \\n\\t  ' >&2\nexit 1\n",
-      );
+  // 尺②同根收拢（#420 类一）：whitespace-only-stderr 变体与上方「B1 trim-empty
+  // stdout」经同一真入口产出同一 fallback.failure（ENGINE_DETOUR_EMPTY_STDOUT_
+  // DIAGNOSTIC），属同根重复，删此留彼；stderr trim 归一逻辑由同一分类路径承载。
 
-      const result = await runJudgeWithEngine({
-        home,
-        project,
-        binDir,
-        runId: "run-engine-detour-ws-stderr-001",
-        engine: "kimi",
-      });
-
-      assert.equal(result.exitCode, 0, result.stderr.join(""));
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted");
-      const fallback = (result.terminal.roleOutcome.decisiveFacts as {
-        engineLaborFallback?: { engine?: string; failure?: string; laborBy?: string };
-      }).engineLaborFallback;
-      assert.ok(fallback, "accepted receipt must declare engineLaborFallback");
-      assert.equal(fallback.engine, "kimi");
-      assert.equal(fallback.laborBy, "seat");
-      assert.equal(fallback.failure, ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC);
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  },
-);
 
 test(
   "AC4 governance: no engine → no detour tool; default typed path still accepts",

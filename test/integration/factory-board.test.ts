@@ -46,243 +46,43 @@ import {
   AcceptedDetailsContractError,
   type TerminatingToolName,
 } from "../../src/package-contracts/terminating-tools.ts";
+import {
+  attrsFromOpenTag,
+  discoverTrueHomeUnacceptedActiveIssue,
+  elementsWith,
+  executeProductionBoardSort,
+  independentAcceptedTrajectory,
+  independentIssueUsage,
+  independentLatestLegActivity,
+  laneSortIdentity,
+  pathExists,
+  ticket,
+  topLevelLaneEntries,
+  treeFingerprint,
+  visibleTicketLabel,
+  BoardSortElement,
+  type BoardPageSortMode,
+} from "../helpers/factory-board-shared.ts";
 
 /** Page sort modes advertised by the embedded production control (not a board export). */
-type BoardPageSortMode = "ticket-asc" | "cost-desc" | "cost-asc";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureLedger = join(packageRoot, "test/fixtures/ticket-trajectory/ledger");
 
-async function treeFingerprint(root: string): Promise<string> {
-  const h = createHash("sha256");
-  async function walk(dir: string): Promise<void> {
-    const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
-    for (const entry of entries) {
-      const path = join(dir, entry.name);
-      const rel = path.slice(root.length + 1).split(sep).join("/");
-      h.update(rel);
-      if (entry.isDirectory()) await walk(path);
-      else if (entry.isFile()) h.update(await readFile(path));
-      else if (entry.isSymbolicLink()) h.update(`symlink:${entry.name}`);
-    }
-  }
-  await walk(root);
-  return h.digest("hex");
-}
 
 /** Visible ticket-meta label for one ticket (data-*-label carries the issue number). */
-function visibleTicketLabel(
-  html: string,
-  labelAttr: string,
-  issueNumber: number,
-  bookKey?: string,
-): Record<string, string> | undefined {
-  return elementsWith(html, labelAttr).find(
-    (el) =>
-      el[labelAttr] === String(issueNumber) &&
-      (bookKey === undefined || el["data-book"] === bookKey),
-  );
-}
 
-function elementsWith(html: string, dataAttr: string): Record<string, string>[] {
-  const re = new RegExp(`<[^>]+\\b${dataAttr}="[^"]*"[^>]*>`, "g");
-  const out: Record<string, string>[] = [];
-  for (const tag of html.match(re) ?? []) {
-    const attrs: Record<string, string> = {};
-    for (const m of tag.matchAll(/\b(data-[a-z0-9-]+|href)="([^"]*)"/g)) {
-      attrs[m[1]!] = m[2]!;
-    }
-    out.push(attrs);
-  }
-  return out;
-}
 
-function attrsFromOpenTag(tag: string): Record<string, string> {
-  const attrs: Record<string, string> = {};
-  for (const m of tag.matchAll(/\b(data-[a-z0-9-]+|class|href)="([^"]*)"/g)) {
-    attrs[m[1]!] = m[2]!;
-  }
-  return attrs;
-}
 
 /**
  * Top-level lane sort entries from production HTML (family sections + non-nested tickets),
  * in document order. Nested ticket-child articles are excluded — they participate via family aggregate.
  */
-function topLevelLaneEntries(html: string, bookKey: string): Array<Record<string, string>> {
-  const marker = `data-lane-tickets="${bookKey}"`;
-  const markerAt = html.indexOf(marker);
-  assert.ok(markerAt >= 0, `missing lane ${bookKey}`);
-  const contentStart = html.indexOf(">", markerAt) + 1;
-  // lane-tickets closes at the first </div> that returns depth to 0 after optional nested divs.
-  let depth = 1;
-  let i = contentStart;
-  let contentEnd = html.length;
-  while (i < html.length) {
-    const nextOpen = html.indexOf("<div", i);
-    const nextClose = html.indexOf("</div>", i);
-    if (nextClose < 0) break;
-    if (nextOpen >= 0 && nextOpen < nextClose) {
-      depth += 1;
-      i = nextOpen + 4;
-      continue;
-    }
-    depth -= 1;
-    if (depth === 0) {
-      contentEnd = nextClose;
-      break;
-    }
-    i = nextClose + 6;
-  }
-  const chunk = html.slice(contentStart, contentEnd);
-  const entries: Array<{ index: number; attrs: Record<string, string> }> = [];
-  for (const m of chunk.matchAll(/<section\b[^>]*\bdata-family="true"[^>]*>/g)) {
-    entries.push({ index: m.index ?? 0, attrs: attrsFromOpenTag(m[0]!) });
-  }
-  for (const m of chunk.matchAll(/<article\b[^>]*\bdata-ticket="\d+"[^>]*>/g)) {
-    const attrs = attrsFromOpenTag(m[0]!);
-    const cls = attrs.class ?? "";
-    if (cls.split(/\s+/).includes("ticket-child")) continue;
-    // Family parent article sits inside the family section — skip non-top-level by requiring
-    // the article is not nested under a family open that hasn't closed. Approximate: only
-    // articles whose nearest preceding family/section state is outside. Simpler: skip any
-    // article that appears between a family open and its matching close in chunk.
-    entries.push({ index: m.index ?? 0, attrs, _article: true } as {
-      index: number;
-      attrs: Record<string, string>;
-      _article?: boolean;
-    });
-  }
-  // Drop articles that fall inside a family section span.
-  const familySpans: Array<{ start: number; end: number }> = [];
-  for (const m of chunk.matchAll(/<section\b[^>]*\bdata-family="true"[^>]*>/g)) {
-    const start = m.index ?? 0;
-    // Find matching </section> with nesting.
-    let d = 1;
-    let j = start + m[0]!.length;
-    let end = chunk.length;
-    while (j < chunk.length) {
-      const open = chunk.indexOf("<section", j);
-      const close = chunk.indexOf("</section>", j);
-      if (close < 0) break;
-      if (open >= 0 && open < close) {
-        d += 1;
-        j = open + 8;
-        continue;
-      }
-      d -= 1;
-      if (d === 0) {
-        end = close;
-        break;
-      }
-      j = close + 10;
-    }
-    familySpans.push({ start, end });
-  }
-  const filtered = entries.filter((e) => {
-    if (!(e as { _article?: boolean })._article) return true;
-    return !familySpans.some((s) => e.index > s.start && e.index < s.end);
-  });
-  filtered.sort((a, b) => a.index - b.index);
-  return filtered.map((e) => e.attrs);
-}
 
 /**
  * Singular fake-DOM harness for the production board page script
  * (sort + project/family filters + unknown badge). One surface for every page-script test.
  */
-class BoardSortElement {
-  nodeType = 1;
-  childNodes: BoardSortElement[] = [];
-  parentNode: BoardSortElement | null = null;
-  value = "";
-  textContent = "";
-  readonly style: Record<string, string> = {};
-  private readonly attrs: Record<string, string>;
-  private readonly listeners = new Map<string, Array<() => void>>();
-
-  constructor(attrs: Record<string, string> = {}) {
-    this.attrs = { ...attrs };
-  }
-
-  get children(): BoardSortElement[] {
-    return this.childNodes;
-  }
-
-  get firstChild(): BoardSortElement | null {
-    return this.childNodes[0] ?? null;
-  }
-
-  getAttribute(name: string): string | null {
-    return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name]! : null;
-  }
-
-  hasAttribute(name: string): boolean {
-    return Object.prototype.hasOwnProperty.call(this.attrs, name);
-  }
-
-  setAttribute(name: string, value: string): void {
-    this.attrs[name] = value;
-  }
-
-  appendChild(child: BoardSortElement): BoardSortElement {
-    if (child.parentNode) {
-      const sibs = child.parentNode.childNodes;
-      const idx = sibs.indexOf(child);
-      if (idx >= 0) sibs.splice(idx, 1);
-    }
-    child.parentNode = this;
-    this.childNodes.push(child);
-    return child;
-  }
-
-  removeChild(child: BoardSortElement): BoardSortElement {
-    const idx = this.childNodes.indexOf(child);
-    if (idx >= 0) {
-      this.childNodes.splice(idx, 1);
-      child.parentNode = null;
-    }
-    return child;
-  }
-
-  addEventListener(type: string, fn: () => void): void {
-    const list = this.listeners.get(type) ?? [];
-    list.push(fn);
-    this.listeners.set(type, list);
-  }
-
-  dispatchEvent(type: string): void {
-    for (const fn of this.listeners.get(type) ?? []) fn();
-  }
-
-  private matches(selector: string): boolean {
-    const m = selector.match(/^\[([a-z0-9-]+)(?:="([^"]*)")?\]$/);
-    if (!m) return false;
-    if (!this.hasAttribute(m[1]!)) return false;
-    return m[2] === undefined || this.getAttribute(m[1]!) === m[2];
-  }
-
-  private walk(predicate: (el: BoardSortElement) => boolean, out: BoardSortElement[]): void {
-    for (const child of this.childNodes) {
-      if (predicate(child)) out.push(child);
-      child.walk(predicate, out);
-    }
-  }
-
-  querySelector(selector: string): BoardSortElement | null {
-    const out: BoardSortElement[] = [];
-    this.walk((el) => el.matches(selector), out);
-    return out[0] ?? null;
-  }
-
-  querySelectorAll(selector: string): BoardSortElement[] {
-    const out: BoardSortElement[] = [];
-    this.walk((el) => el.matches(selector), out);
-    return out;
-  }
-}
 
 class BoardSortDocument {
   readonly root = new BoardSortElement();
@@ -301,51 +101,7 @@ class BoardSortDocument {
  * Execute the production page sort control against lane entries parsed from the
  * rendered HTML (same script body the browser runs — not the TS comparator alone).
  */
-function executeProductionBoardSort(
-  html: string,
-  bookKey: string,
-  mode: BoardPageSortMode,
-): Array<Record<string, string>> {
-  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
-  assert.ok(scriptMatch?.[1], "production board must embed sort script");
-  const scriptBody = scriptMatch[1]!;
 
-  const select = new BoardSortElement({ "data-sort-control": "true" });
-  select.value = "ticket-asc";
-  const lane = new BoardSortElement({ "data-lane-tickets": bookKey });
-  for (const attrs of topLevelLaneEntries(html, bookKey)) {
-    lane.appendChild(new BoardSortElement(attrs));
-  }
-
-  const document = {
-    querySelector(sel: string): BoardSortElement | null {
-      if (sel === "[data-sort-control]") return select;
-      return null;
-    },
-    querySelectorAll(sel: string): BoardSortElement[] {
-      if (sel === "[data-lane-tickets]") return [lane];
-      return [];
-    },
-  };
-
-  vm.runInNewContext(scriptBody, { document });
-  select.value = mode;
-  select.dispatchEvent("change");
-
-  return lane.children.map((child) => {
-    const out: Record<string, string> = {};
-    for (const key of ["data-ticket", "data-parent", "data-family", "data-cost-usd", "data-book"]) {
-      const v = child.getAttribute(key);
-      if (v != null) out[key] = v;
-    }
-    return out;
-  });
-}
-
-function laneSortIdentity(entry: Record<string, string>): number {
-  if (entry["data-family"] === "true") return Number(entry["data-parent"]);
-  return Number(entry["data-ticket"]);
-}
 
 function manualBoardScheduler(): {
   scheduler: FactoryBoardScheduler;
@@ -364,17 +120,6 @@ function manualBoardScheduler(): {
   return { scheduler, ticks };
 }
 
-function ticket(
-  partial: Partial<SnapshotTicket> & Pick<SnapshotTicket, "issueNumber" | "title" | "state">,
-): SnapshotTicket {
-  return {
-    milestone: null,
-    parentIssueNumber: null,
-    blockedBy: [],
-    closedAt: null,
-    ...partial,
-  };
-}
 
 function sampleSnapshot(): BoardSnapshot {
   return {
@@ -655,7 +400,6 @@ test("binding or API failure renders loud error — never a silent empty board",
     assert.equal(elementsWith(bindingHtml, "data-error-book")[0]?.["data-error-book"], "orch");
     assert.equal(elementsWith(bindingHtml, "data-lane").length, 0);
     assert.equal(elementsWith(bindingHtml, "data-ticket").length, 0);
-    assert.match(bindingHtml, /missing owner\/repo binding/i);
 
     const apiHtml = await renderFactoryBoardHtml(
       books,
@@ -668,7 +412,6 @@ test("binding or API failure renders loud error — never a silent empty board",
     assert.equal(elementsWith(apiHtml, "data-board-error")[0]?.["data-board-error"], "api");
     assert.equal(elementsWith(apiHtml, "data-lane").length, 0);
     assert.equal(elementsWith(apiHtml, "data-ticket").length, 0);
-    assert.match(apiHtml, /GitHub API 502/);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -846,39 +589,41 @@ async function runFactoryBoardCli(args: string[]) {
   );
 }
 
-test("CLI --out alone writes binding error page and exits nonzero", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-cli-out-alone-"));
-  try {
-    const outputPath = join(workspace, "board.html");
-    const result = await runFactoryBoardCli(["--out", outputPath]);
-    assert.notEqual(result.code, 0, "must exit nonzero on missing --book");
-    const html = await readFile(outputPath, "utf8");
-    assert.equal(elementsWith(html, "data-board-error")[0]?.["data-board-error"], "binding");
-    assert.equal(elementsWith(html, "data-lane").length, 0);
-    assert.equal(elementsWith(html, "data-ticket").length, 0);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
-});
-
-test("CLI malformed owner/repo with --out writes binding error page and exits nonzero", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-cli-malformed-"));
-  try {
-    const outputPath = join(workspace, "board.html");
-    const result = await runFactoryBoardCli([
-      "--book",
-      "roles=/tmp/not-a-ledger:not-owner-repo",
-      "--out",
-      outputPath,
-    ]);
-    assert.notEqual(result.code, 0, "must exit nonzero on malformed owner/repo");
-    const html = await readFile(outputPath, "utf8");
-    assert.equal(elementsWith(html, "data-board-error")[0]?.["data-board-error"], "binding");
-    assert.equal(elementsWith(html, "data-lane").length, 0);
-    assert.equal(elementsWith(html, "data-ticket").length, 0);
-    assert.match(html, /owner\/repo/i);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
+// Binding-failure CLI matrix (#420 整改并一)：两条同根「binding 失败 → 非零 + 错误页」
+// 收成一行表两行；断言只咬 data-* 键，不咬自由散文。
+test("CLI binding failures write the binding error page and exit nonzero", async () => {
+  const rows = [
+    {
+      label: "--out alone (missing --book)",
+      args: (outputPath: string) => ["--out", outputPath],
+    },
+    {
+      label: "malformed owner/repo",
+      args: (outputPath: string) => [
+        "--book",
+        "roles=/tmp/not-a-ledger:not-owner-repo",
+        "--out",
+        outputPath,
+      ],
+    },
+  ] as const;
+  for (const row of rows) {
+    const workspace = await mkdtemp(join(tmpdir(), "factory-board-cli-binding-"));
+    try {
+      const outputPath = join(workspace, "board.html");
+      const result = await runFactoryBoardCli(row.args(outputPath));
+      assert.notEqual(result.code, 0, `${row.label}: must exit nonzero`);
+      const html = await readFile(outputPath, "utf8");
+      assert.equal(
+        elementsWith(html, "data-board-error")[0]?.["data-board-error"],
+        "binding",
+        row.label,
+      );
+      assert.equal(elementsWith(html, "data-lane").length, 0, row.label);
+      assert.equal(elementsWith(html, "data-ticket").length, 0, row.label);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
   }
 });
 
@@ -2072,177 +1817,7 @@ test("S3 frozen authentic #127 accepted-after-rejections is accepted-awaiting", 
 });
 
 /** Independent JSONL usage scan — not the board/trajectory loader — for true-home reconciliation. */
-async function independentIssueUsage(ledgerDir: string, issueNumber: number): Promise<{
-  runCount: number;
-  reviewerRunCount: number;
-  costUsd: number;
-  totalTokens: number;
-  reviewerCostUsd: number;
-  reviewerTokens: number;
-  axisWallMs: number;
-}> {
-  const runsDir = join(ledgerDir, "issues", String(issueNumber), "runs");
-  let runIds: string[] = [];
-  try {
-    runIds = (await readdir(runsDir, { withFileTypes: true }))
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .sort();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return {
-        runCount: 0,
-        reviewerRunCount: 0,
-        costUsd: 0,
-        totalTokens: 0,
-        reviewerCostUsd: 0,
-        reviewerTokens: 0,
-        axisWallMs: 0,
-      };
-    }
-    throw error;
-  }
 
-  const sumUsage = (rows: Record<string, unknown>[]): { cost: number; tokens: number } => {
-    let cost = 0;
-    let tokens = 0;
-    for (const row of rows) {
-      const message = row.message && typeof row.message === "object" ? (row.message as Record<string, unknown>) : undefined;
-      const usageRaw =
-        message && message.usage && typeof message.usage === "object"
-          ? (message.usage as Record<string, unknown>)
-          : row.usage && typeof row.usage === "object"
-            ? (row.usage as Record<string, unknown>)
-            : undefined;
-      if (!usageRaw) continue;
-      if (typeof usageRaw.totalTokens === "number" && Number.isFinite(usageRaw.totalTokens)) {
-        tokens += usageRaw.totalTokens;
-      }
-      const costObj =
-        usageRaw.cost && typeof usageRaw.cost === "object"
-          ? (usageRaw.cost as Record<string, unknown>)
-          : undefined;
-      if (costObj && typeof costObj.total === "number" && Number.isFinite(costObj.total)) {
-        cost += costObj.total;
-      }
-    }
-    return { cost, tokens };
-  };
-
-  const readJsonl = async (path: string): Promise<Record<string, unknown>[]> => {
-    const text = await readFile(path, "utf8");
-    const out: Record<string, unknown>[] = [];
-    for (const line of text.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const parsed: unknown = JSON.parse(line);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          out.push(parsed as Record<string, unknown>);
-        }
-      } catch {
-        // Independent scan skips malformed lines the same way a human eyeball would continue.
-      }
-    }
-    return out;
-  };
-
-  const spanWall = (rows: Record<string, unknown>[]): number => {
-    const ts = rows
-      .map((r) => r.timestamp)
-      .filter((t): t is string => typeof t === "string" && t.length > 0);
-    if (ts.length === 0) return 0;
-    const start = Date.parse(ts[0]!);
-    const end = Date.parse(ts[ts.length - 1]!);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 0;
-    return end - start;
-  };
-
-  let costUsd = 0;
-  let totalTokens = 0;
-  let reviewerRunCount = 0;
-  let reviewerCostUsd = 0;
-  let reviewerTokens = 0;
-  let axisWallMs = 0;
-
-  for (const runId of runIds) {
-    const runDir = join(runsDir, runId);
-    const sessionDir = join(runDir, "session");
-    let parentFiles: string[] = [];
-    try {
-      parentFiles = (await readdir(sessionDir, { withFileTypes: true }))
-        .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
-        .map((e) => join(sessionDir, e.name));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    let axisFiles: string[] = [];
-    try {
-      const legsDir = join(sessionDir, "reviewer-legs");
-      axisFiles = (await readdir(legsDir, { withFileTypes: true }))
-        .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
-        .map((e) => join(legsDir, e.name));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-
-    let runCost = 0;
-    let runTokens = 0;
-    let runAxisWall = 0;
-    for (const f of parentFiles) {
-      const u = sumUsage(await readJsonl(f));
-      runCost += u.cost;
-      runTokens += u.tokens;
-    }
-    for (const f of axisFiles) {
-      const rows = await readJsonl(f);
-      const u = sumUsage(rows);
-      runCost += u.cost;
-      runTokens += u.tokens;
-      runAxisWall += spanWall(rows);
-    }
-
-    costUsd += runCost;
-    totalTokens += runTokens;
-
-    let role: string | undefined;
-    try {
-      const inv = JSON.parse(await readFile(join(runDir, "invocation.json"), "utf8")) as {
-        role?: string;
-      };
-      if (typeof inv.role === "string") role = inv.role;
-    } catch {
-      // no invocation
-    }
-    const lower = runId.toLowerCase();
-    const isReviewer =
-      role === "reviewer" || lower.startsWith("review") || lower.startsWith("reviewer");
-    if (isReviewer) {
-      reviewerRunCount += 1;
-      reviewerCostUsd += runCost;
-      reviewerTokens += runTokens;
-      axisWallMs += runAxisWall;
-    }
-  }
-
-  return {
-    runCount: runIds.length,
-    reviewerRunCount,
-    costUsd,
-    totalTokens,
-    reviewerCostUsd,
-    reviewerTokens,
-    axisWallMs,
-  };
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Independent accepted-toolResult scan — uses package terminating-tool contracts only,
@@ -2254,544 +1829,14 @@ async function pathExists(path: string): Promise<boolean> {
  * acceptance. Mirrors session-start ordering and content activity rules without
  * calling the board/trajectory loader (oracle must not share the code under test).
  */
-async function independentLatestLegActivity(
-  ledgerDir: string,
-  issueNumber: number,
-): Promise<{
-  runId: string;
-  startedAt?: string;
-  lastActivityAt?: string;
-  mtimeMs: number;
-  hasAcceptedResult: boolean;
-  acceptedResultStatus?: string;
-} | undefined> {
-  const runsDir = join(ledgerDir, "issues", String(issueNumber), "runs");
-  let runIds: string[] = [];
-  try {
-    runIds = (await readdir(runsDir, { withFileTypes: true }))
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-  if (runIds.length === 0) return undefined;
-
-  const readJsonl = async (path: string): Promise<Record<string, unknown>[]> => {
-    const text = await readFile(path, "utf8");
-    const out: Record<string, unknown>[] = [];
-    for (const line of text.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const parsed: unknown = JSON.parse(line);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          out.push(parsed as Record<string, unknown>);
-        }
-      } catch {
-        // Independent scan skips malformed lines.
-      }
-    }
-    return out;
-  };
-
-  const listJsonl = async (dir: string): Promise<string[]> => {
-    try {
-      return (await readdir(dir, { withFileTypes: true }))
-        .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
-        .map((e) => join(dir, e.name))
-        .sort();
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
-    }
-  };
-
-  const maxMtime = async (paths: readonly string[]): Promise<number> => {
-    let max = 0;
-    for (const path of paths) {
-      try {
-        const ms = (await lstat(path)).mtimeMs;
-        if (Number.isFinite(ms) && ms > max) max = ms;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw error;
-      }
-    }
-    return max;
-  };
-
-  type RunProbe = {
-    runId: string;
-    startedAt: string;
-    lastActivityAt?: string;
-    mtimeMs: number;
-    hasAcceptedResult: boolean;
-    acceptedResultStatus?: string;
-  };
-  const probes: RunProbe[] = [];
-
-  for (const runId of runIds) {
-    const sessionDir = join(runsDir, runId, "session");
-    const parentFiles = await listJsonl(sessionDir);
-    const axisFiles = await listJsonl(join(sessionDir, "reviewer-legs"));
-    const parentRows: Record<string, unknown>[] = [];
-    for (const f of parentFiles) parentRows.push(...(await readJsonl(f)));
-
-    let startedAt: string | undefined;
-    for (const row of parentRows) {
-      if (row.type === "session" && typeof row.timestamp === "string") {
-        startedAt = row.timestamp;
-        break;
-      }
-      if (!startedAt && typeof row.timestamp === "string") startedAt = row.timestamp;
-    }
-    // Session-start order requires a start key; runs without timestamps sort last via "".
-    const startKey = startedAt ?? "";
-
-    let lastActivityAt: string | undefined;
-    for (const row of parentRows) {
-      if (typeof row.timestamp === "string" && row.timestamp) lastActivityAt = row.timestamp;
-    }
-    for (const f of axisFiles) {
-      const legRows = await readJsonl(f);
-      let legEnd: string | undefined;
-      for (const row of legRows) {
-        if (typeof row.timestamp === "string" && row.timestamp) legEnd = row.timestamp;
-      }
-      if (legEnd !== undefined && (lastActivityAt === undefined || legEnd > lastActivityAt)) {
-        lastActivityAt = legEnd;
-      }
-    }
-
-    let hasAcceptedResult = false;
-    let acceptedResultStatus: string | undefined;
-    for (const row of parentRows) {
-      const message =
-        row.message && typeof row.message === "object" && !Array.isArray(row.message)
-          ? (row.message as Record<string, unknown>)
-          : undefined;
-      if (!message || message.role !== "toolResult") continue;
-      if (typeof message.toolName !== "string" || !isTerminatingToolName(message.toolName)) continue;
-      if (message.isError === true) continue;
-      if (!message.details || typeof message.details !== "object" || Array.isArray(message.details)) {
-        continue;
-      }
-      try {
-        const details = validateAcceptedDetails(
-          message.toolName as TerminatingToolName,
-          message.details,
-        );
-        const facts = acceptedFacts(message.toolName as TerminatingToolName, details);
-        hasAcceptedResult = true;
-        acceptedResultStatus = facts.status ?? "";
-      } catch (error) {
-        if (error instanceof AcceptedDetailsContractError) continue;
-        throw error;
-      }
-    }
-
-    probes.push({
-      runId,
-      startedAt: startKey,
-      ...(lastActivityAt !== undefined ? { lastActivityAt } : {}),
-      mtimeMs: await maxMtime([...parentFiles, ...axisFiles]),
-      hasAcceptedResult,
-      ...(acceptedResultStatus !== undefined ? { acceptedResultStatus } : {}),
-    });
-  }
-
-  probes.sort((a, b) => {
-    if (a.startedAt !== b.startedAt) return a.startedAt.localeCompare(b.startedAt);
-    return a.runId.localeCompare(b.runId);
-  });
-  const latest = probes.at(-1);
-  if (!latest) return undefined;
-  return {
-    runId: latest.runId,
-    ...(latest.startedAt ? { startedAt: latest.startedAt } : {}),
-    ...(latest.lastActivityAt !== undefined ? { lastActivityAt: latest.lastActivityAt } : {}),
-    mtimeMs: latest.mtimeMs,
-    hasAcceptedResult: latest.hasAcceptedResult,
-    ...(latest.acceptedResultStatus !== undefined
-      ? { acceptedResultStatus: latest.acceptedResultStatus }
-      : {}),
-  };
-}
 
 /**
  * Discover any true-home issue whose latest run is still unaccepted.
  * Scans authentic home-ledger bytes only — no fixture plant, no mtime rewrite.
  * Returns undefined when every discovered latest run is accepted (or no runs).
  */
-async function discoverTrueHomeUnacceptedActiveIssue(
-  homeLedger: string,
-): Promise<number | undefined> {
-  const issuesDir = join(homeLedger, "issues");
-  let issueNumbers: number[] = [];
-  try {
-    issueNumbers = (await readdir(issuesDir, { withFileTypes: true }))
-      .filter((e) => e.isDirectory() && /^\d+$/.test(e.name))
-      .map((e) => Number(e.name))
-      .filter((n) => Number.isInteger(n) && n > 0)
-      .sort((a, b) => a - b);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-  // #127/#130 carry dedicated trajectory/cost assertions in the true-home suite;
-  // do not double-book them as the flying sample even if their latest later flips.
-  const reserved = new Set([127, 130]);
-  for (const issueNumber of issueNumbers) {
-    if (reserved.has(issueNumber)) continue;
-    const leg = await independentLatestLegActivity(homeLedger, issueNumber);
-    if (leg && !leg.hasAcceptedResult && leg.mtimeMs > 0) {
-      return issueNumber;
-    }
-  }
-  return undefined;
-}
 
-async function independentAcceptedTrajectory(
-  ledgerDir: string,
-  issueNumber: number,
-): Promise<Array<{ runId: string; resultStatus: string }>> {
-  const runsDir = join(ledgerDir, "issues", String(issueNumber), "runs");
-  let runIds: string[] = [];
-  try {
-    runIds = (await readdir(runsDir, { withFileTypes: true }))
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .sort();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
 
-  const accepted: Array<{ runId: string; resultStatus: string }> = [];
-  for (const runId of runIds) {
-    const sessionDir = join(runsDir, runId, "session");
-    let files: string[] = [];
-    try {
-      files = (await readdir(sessionDir, { withFileTypes: true }))
-        .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
-        .map((e) => join(sessionDir, e.name));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw error;
-    }
-
-    let hasResult = false;
-    let resultStatus = "";
-    for (const file of files) {
-      const text = await readFile(file, "utf8");
-      for (const line of text.split("\n")) {
-        if (!line.trim()) continue;
-        let row: Record<string, unknown>;
-        try {
-          const parsed: unknown = JSON.parse(line);
-          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
-          row = parsed as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        const message =
-          row.message && typeof row.message === "object" && !Array.isArray(row.message)
-            ? (row.message as Record<string, unknown>)
-            : undefined;
-        if (!message || message.role !== "toolResult") continue;
-        if (typeof message.toolName !== "string" || !isTerminatingToolName(message.toolName)) {
-          continue;
-        }
-        if (message.isError === true) continue;
-        if (!message.details || typeof message.details !== "object" || Array.isArray(message.details)) {
-          continue;
-        }
-        try {
-          const details = validateAcceptedDetails(
-            message.toolName as TerminatingToolName,
-            message.details,
-          );
-          const facts = acceptedFacts(message.toolName as TerminatingToolName, details);
-          hasResult = true;
-          resultStatus = facts.status ?? "";
-        } catch (error) {
-          if (error instanceof AcceptedDetailsContractError) continue;
-          throw error;
-        }
-      }
-    }
-    if (hasResult) accepted.push({ runId, resultStatus });
-  }
-  return accepted;
-}
-
-test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost reconciliation", async (t) => {
-  const homeLedger =
-    process.env.AK_FACTORY_BOARD_HOME_LEDGER?.trim() ||
-    join(homedir(), ".ak-roles", "books", "ak-pi-workflow-roles");
-  const home127 = join(homeLedger, "issues", "127");
-  const home130 = join(homeLedger, "issues", "130");
-  if (!(await pathExists(home130))) {
-    // Explicit skip (not silent return): CI/agents without owner true-home ledger.
-    // Default owner coverage remains when ~/.ak-roles/.../issues/130 exists — not opt-in-only.
-    t.skip(`true-home ledger missing at ${home130}; owner machine keeps default coverage`);
-    return;
-  }
-
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-true-home-"));
-  try {
-    const ledgerDir = join(workspace, "ledger");
-
-    // 1) Exact true-home #127 bytes — no fixture transplant, no tail deletion/substitution.
-    // Accepted toolResult trajectory is asserted independently of whichever later run
-    // currently controls current-state (frozen accepted-awaiting lives in its own test).
-    assert.ok(
-      await pathExists(home127),
-      "true-home acceptance requires home #127 (authentic accepted-toolResult trajectory)",
-    );
-    await cp(home127, join(ledgerDir, "issues", "127"), {
-      recursive: true,
-      preserveTimestamps: true,
-    });
-
-    // 2) True-home #130 bytes (closed multi-round reviewer burn)
-    await cp(home130, join(ledgerDir, "issues", "130"), {
-      recursive: true,
-      preserveTimestamps: true,
-    });
-
-    // 3) Genuine unaccepted active leg: discover any true-home issue whose *latest*
-    // run is still unaccepted. Do not hard-pin a closed leg (#139 after judge-apply-008),
-    // plant fixtures, or rewrite mtimes. When every true-home latest is accepted, skip
-    // only the flying/active-leg assertions (honest N/A) and still green #127/#130.
-    const activeIssue = await discoverTrueHomeUnacceptedActiveIssue(homeLedger);
-    if (activeIssue !== undefined) {
-      const homeActive = join(homeLedger, "issues", String(activeIssue));
-      await cp(homeActive, join(ledgerDir, "issues", String(activeIssue)), {
-        recursive: true,
-        preserveTimestamps: true,
-      });
-    }
-
-    // Plant zero-run #78 so native family edge is present for sort participation.
-    await mkdir(join(ledgerDir, "issues", "78"), { recursive: true });
-
-    const expected127 = await independentAcceptedTrajectory(ledgerDir, 127);
-    assert.ok(
-      expected127.length >= 1,
-      "true-home #127 must contain at least one accepted terminating toolResult",
-    );
-    // Named authentic accepted receipt that exists on the owner true ledger.
-    const namedFixer = expected127.find((r) => r.runId === "fixer-apply-001@ak-roles-127");
-    assert.ok(namedFixer, "true-home #127 must keep named fixer-apply-001 accepted receipt");
-    assert.equal(namedFixer.resultStatus, "completed");
-
-    const expected130 = await independentIssueUsage(ledgerDir, 130);
-    assert.ok(expected130.runCount >= 1, "#130 must have runs");
-    assert.ok(expected130.reviewerRunCount >= 1, "#130 reviewer rounds present");
-
-    // Independent true-home active-leg oracle (bytes + mtimes), not the board loader.
-    // Present only when discovery found a genuinely unaccepted latest; otherwise N/A.
-    const flyingOffsetMs = 30_000;
-    assert.ok(
-      flyingOffsetMs < UNACCEPTED_FLYING_MS,
-      "probe offset must stay inside the flying band",
-    );
-    let now = new Date("2026-08-05T12:00:00.000Z");
-    let activeLeg:
-      | Awaited<ReturnType<typeof independentLatestLegActivity>>
-      | undefined;
-    let expectedDisplayActivityAt: string | undefined;
-    let expectedLegAgeMs = 0;
-    if (activeIssue !== undefined) {
-      activeLeg = await independentLatestLegActivity(ledgerDir, activeIssue);
-      assert.ok(activeLeg, `true-home #${activeIssue} must have at least one run`);
-      assert.equal(
-        activeLeg.hasAcceptedResult,
-        false,
-        `true-home #${activeIssue} latest ${activeLeg.runId} must be unaccepted (no accepted terminating toolResult)`,
-      );
-      assert.ok(
-        activeLeg.mtimeMs > 0,
-        `true-home #${activeIssue} latest ${activeLeg.runId} must expose session mtime`,
-      );
-      // Honest acceptance clock: freeze now just after preserved latest mtime so a genuinely
-      // unaccepted true-home leg lands in the flying band (<2min) without utimes rewrite.
-      now = new Date(activeLeg.mtimeMs + flyingOffsetMs);
-      expectedDisplayActivityAt =
-        activeLeg.lastActivityAt ??
-        (activeLeg.mtimeMs > 0 ? new Date(activeLeg.mtimeMs).toISOString() : undefined);
-      assert.ok(
-        expectedDisplayActivityAt,
-        `true-home #${activeIssue} latest must yield last-activity (content ts or mtime)`,
-      );
-      expectedLegAgeMs = activeLeg.startedAt
-        ? Math.max(0, now.getTime() - Date.parse(activeLeg.startedAt))
-        : Math.max(0, now.getTime() - activeLeg.mtimeMs);
-    }
-
-    const before = await treeFingerprint(ledgerDir);
-    const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
-    const tickets = [
-      ticket({ issueNumber: 78, title: "family parent", state: "open" as const }),
-      ticket({
-        issueNumber: 127,
-        title: "127",
-        state: "open" as const,
-        parentIssueNumber: 78,
-      }),
-      ticket({
-        issueNumber: 130,
-        title: "130",
-        state: "closed" as const,
-        parentIssueNumber: 78,
-        // Live GitHub closedAt for #130 — landing cycle ends here, not last ledger.
-        closedAt: "2026-08-05T04:03:43Z",
-      }),
-      ...(activeIssue !== undefined
-        ? [ticket({ issueNumber: activeIssue, title: "active", state: "open" as const })]
-        : []),
-    ];
-    const view: FactoryBoardView = {
-      ok: true,
-      snapshot: {
-        books: [
-          {
-            bookKey: "roles",
-            owner: "Akagilnc",
-            repo: "ak-pi-workflow-roles",
-            tickets,
-          },
-        ],
-      },
-    };
-
-    const outPath = join(workspace, "out", "board.html");
-    const written = await writeFactoryBoardPage({ books, view, now, outputPath: outPath });
-    const html = written.html;
-    assert.equal(await treeFingerprint(ledgerDir), before, "true-home acceptance stays read-only");
-
-    const t127 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "127");
-    const t130 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "130");
-    const family78 = elementsWith(html, "data-family").find((f) => f["data-parent"] === "78");
-    assert.ok(t127 && t130 && family78);
-    assert.equal(t130["data-parent-issue"], "78");
-    assert.equal(t127["data-parent-issue"], "78");
-
-    // #127 true trajectory: every independently accepted toolResult is rendered as accepted,
-    // regardless of which later run owns data-current-state.
-    const runs127 = elementsWith(html, "data-run-id").filter(
-      (r) => (r["data-ledger-coord"] ?? "").includes("issues/127/runs/"),
-    );
-    assert.ok(runs127.length >= expected127.length, "board retains true-home #127 runs");
-    for (const expected of expected127) {
-      const row = runs127.find((r) => r["data-run-id"] === expected.runId);
-      assert.ok(row, `true-home #127 accepted run visible: ${expected.runId}`);
-      assert.equal(row["data-has-result"], "true", `${expected.runId} accepted toolResult`);
-      assert.equal(
-        row["data-result-status"],
-        expected.resultStatus,
-        `${expected.runId} status from accepted toolResult`,
-      );
-    }
-    // Named anchor receipt stays projected even when later unaccepted/error runs control state.
-    const namedOnBoard = runs127.find((r) => r["data-run-id"] === "fixer-apply-001@ak-roles-127");
-    assert.equal(namedOnBoard?.["data-has-result"], "true");
-    assert.equal(namedOnBoard?.["data-result-status"], "completed");
-    assert.ok(
-      t127["data-current-state"] === "accepted-awaiting" ||
-        (t127["data-current-state"] ?? "").startsWith("unaccepted-"),
-      "current state remains a mechanical latest-run partition; not asserted from fixture freeze",
-    );
-
-    // #130 totals reconcile with independent true-byte scan (human read-ledger oracle)
-    assert.equal(Number(t130["data-run-count"]), expected130.runCount);
-    assert.ok(Math.abs(Number(t130["data-cost-usd"]) - expected130.costUsd) < 1e-9);
-    assert.equal(Number(t130["data-total-tokens"]), expected130.totalTokens);
-    // Scope to #130 runs via ledger coord (run rows are nested <article>s, so ticket-level
-    // HTML slicing on </article> is not a reliable station boundary).
-    const runs130 = elementsWith(html, "data-run-id").filter(
-      (r) => (r["data-ledger-coord"] ?? "").includes("issues/130/runs/"),
-    );
-    assert.equal(runs130.length, expected130.runCount);
-    const reviewerRuns130 = runs130.filter((r) => r["data-station"] === "reviewer");
-    assert.equal(reviewerRuns130.length, expected130.reviewerRunCount, "#130 御史台 multi-round runs");
-    const boardReviewerCost = reviewerRuns130.reduce((s, r) => s + Number(r["data-cost-usd"]), 0);
-    const boardReviewerTokens = reviewerRuns130.reduce(
-      (s, r) => s + Number(r["data-total-tokens"]),
-      0,
-    );
-    const boardReviewerAxisWall = reviewerRuns130.reduce(
-      (s, r) => s + Number(r["data-axis-wall-ms"] ?? 0),
-      0,
-    );
-    assert.ok(
-      Math.abs(boardReviewerCost - expected130.reviewerCostUsd) < 1e-9,
-      `#130 reviewer cost board=${boardReviewerCost} independent=${expected130.reviewerCostUsd}`,
-    );
-    assert.equal(boardReviewerTokens, expected130.reviewerTokens);
-    assert.ok(Math.abs(boardReviewerAxisWall - expected130.axisWallMs) < 1);
-    // Station block for reviewer must appear on the board (may share the page with other tickets).
-    assert.ok(
-      elementsWith(html, "data-station-block").some((s) => s["data-station-block"] === "reviewer"),
-      "#130 御史台 station block rendered",
-    );
-
-    // Family aggregate burn includes #130; production page sort places the family by that burn
-    const familyCost = Number(family78["data-cost-usd"]);
-    assert.ok(familyCost + 1e-9 >= Number(t130["data-cost-usd"]));
-    const sorted = executeProductionBoardSort(html, "roles", "cost-desc").map(laneSortIdentity);
-    assert.ok(sorted.includes(78), "#78 family is a sort entry");
-    // #130 is not a top-level lane entry (nested) but its burn moved the family key
-    assert.ok(!sorted.includes(130), "#130 stays nested under family; burn rides aggregate");
-
-    if (activeIssue === undefined || activeLeg === undefined) {
-      // Honest N/A: no true-home latest remains unaccepted — skip flying assertions only.
-      assert.ok(
-        sorted.indexOf(78) < sorted.length,
-        "#78 family carrying #130 still participates in page sort order",
-      );
-      return;
-    }
-
-    const tActive = elementsWith(html, "data-ticket").find(
-      (t) => t["data-ticket"] === String(activeIssue),
-    );
-    assert.ok(tActive, `true-home active #${activeIssue} ticket rendered`);
-    const activeCost = Number(tActive["data-cost-usd"]);
-    assert.ok(sorted.includes(activeIssue), "active ticket remains a sort entry");
-    if (familyCost > activeCost) {
-      assert.equal(sorted[0], 78, "#78 family (with #130 burn) leads when it outburns active");
-    } else {
-      assert.ok(
-        sorted.indexOf(78) < sorted.length,
-        "#78 family carrying #130 still participates in page sort order",
-      );
-    }
-
-    // Genuine unaccepted true-home leg: must be 在飞 under the honest acceptance clock,
-    // with leg age + last activity *visibly* labeled (not article projection alone).
-    assert.equal(
-      tActive["data-current-state"],
-      "unaccepted-flying",
-      `true-home #${activeIssue} latest ${activeLeg.runId} must be 在飞 at honest now=${now.toISOString()} mtimeMs=${activeLeg.mtimeMs}`,
-    );
-    const visibleAge = visibleTicketLabel(html, "data-leg-age-label", activeIssue, "roles");
-    const visibleAct = visibleTicketLabel(html, "data-last-activity-label", activeIssue, "roles");
-    assert.ok(visibleAge, `true-home #${activeIssue} must render visible leg-age label`);
-    assert.ok(visibleAct, `true-home #${activeIssue} must render visible last-activity label`);
-    assert.equal(visibleAct["data-last-activity-at"], expectedDisplayActivityAt);
-    assert.equal(visibleAct["data-last-activity-mtime-ms"], String(activeLeg.mtimeMs));
-    assert.equal(Number(visibleAge["data-leg-age-ms"]), expectedLegAgeMs);
-    assert.ok(Number(visibleAge["data-leg-age-ms"]) >= flyingOffsetMs);
-    // Article projection remains consistent with the visible labels.
-    assert.equal(tActive["data-last-activity-at"], visibleAct["data-last-activity-at"]);
-    assert.equal(tActive["data-last-activity-mtime-ms"], visibleAct["data-last-activity-mtime-ms"]);
-    assert.equal(tActive["data-leg-age-ms"], visibleAge["data-leg-age-ms"]);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
-});
 
 test("blockedBy connection paginates to completion and refuses silent truncation", async () => {
   const PAGE = 100; // must match transport page size

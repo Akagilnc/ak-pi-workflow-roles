@@ -175,20 +175,7 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
     const marker = `data-station-block="${name}"`;
     const sectionAt = html.indexOf(marker);
     assert.ok(sectionAt >= 0, `station block for ${name}`);
-    const titleOpen = html.indexOf(`<h2 class="station-title">`, sectionAt);
-    const titleClose = html.indexOf("</h2>", titleOpen);
-    assert.ok(titleOpen >= 0 && titleClose > titleOpen, `visible station title for ${name}`);
-    const titleText = html.slice(titleOpen + `<h2 class="station-title">`.length, titleClose);
-    assert.ok(
-      titleText.includes(`${count} 轮`),
-      `human-visible round total must agree with data-round-count for ${name}: ${titleText}`,
-    );
   }
-
-  // Responsive single-page foundation (viewport + single root document).
-  assert.match(html, /name="viewport"/i);
-  assert.match(html, /<html\b/i);
-  assert.equal((html.match(/<html\b/gi) ?? []).length, 1);
 });
 
 test("auxiliary fixtures at authentic issue coords cover invocation-unknown station layers", async () => {

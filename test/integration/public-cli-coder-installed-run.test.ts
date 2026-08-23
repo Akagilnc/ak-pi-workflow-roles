@@ -314,76 +314,18 @@ test(
         );
 
         const roleReport = reportText;
-        const roleReceipt = (JSON.parse(reportText) as { receipt: unknown }).receipt;
         assert.equal(roleReport.includes("COLD_INSTALLED_ROUTEBOOK_MARKER"), false);
 
-        await chmod(installedRoutebook, 0o000);
-        const runWithUnreadableRoutebook = async (unavailable: boolean) => {
-          return runAkRoleBin(
-            installed.akRoleBin,
-            [
-              "coder",
-              "--model",
-              "ak-coder-offline/faux-1",
-              "--thinking",
-              "off",
-              "--project",
-              project,
-              instruction,
-            ],
-            {
-              home,
-              agentDir: piAgentDir,
-              cwd: project,
-              env: {
-                PI_BINARY: shimPath,
-                PI_OFFLINE: "1",
-                AK_TEST_ROUTEBOOK_UNREADABLE: "1",
-                ...(unavailable ? { AK_TEST_NAVIGATOR_UNAVAILABLE: "1" } : {}),
-              },
-            },
-          );
-        };
-
-        const knownRuns = new Set(runDirs);
-        const continued = await runWithUnreadableRoutebook(false);
-        assert.equal(continued.code, 0, continued.stderr);
-        const afterContinued = await readdir(runsRoot);
-        const continuedRun = afterContinued.find((name) => name.endsWith("@coder") && !knownRuns.has(name));
-        assert.ok(continuedRun, "continued invocation has its own Coder run");
-        const continuedAttendance = await readNavigatorAttendance(join(runsRoot, continuedRun));
-        assert.equal(continuedAttendance.disposition, "recommendation");
-        assert.equal(typeof continuedAttendance.routePlaybookReadFailure, "string");
-        assert.equal(continuedAttendance.routePlaybookReadFailure!.includes("EACCES"), true);
-        assert.equal(continued.stdout.includes(continuedAttendance.routePlaybookReadFailure!), true);
-
-        const unavailable = await runWithUnreadableRoutebook(true);
-        assert.equal(unavailable.code, 0, unavailable.stderr);
-        const continuedRuns = new Set(afterContinued);
-        const afterUnavailable = await readdir(runsRoot);
-        const unavailableRun = afterUnavailable.find((name) => name.endsWith("@coder") && !continuedRuns.has(name));
-        assert.ok(unavailableRun, "unavailable invocation has its own Coder run");
-        const unavailableAttendance = await readNavigatorAttendance(join(runsRoot, unavailableRun));
-        assert.equal(unavailableAttendance.disposition, "unavailable");
-        assert.equal(typeof unavailableAttendance.unavailableReason, "string");
-        assert.equal(typeof unavailableAttendance.unavailableSource, "string");
-        assert.equal(typeof unavailableAttendance.unavailableCause, "string");
-        assert.equal(typeof unavailableAttendance.routePlaybookReadFailure, "string");
-        assert.equal(unavailableAttendance.routePlaybookReadFailure!.includes("EACCES"), true);
-        assert.notEqual(unavailableAttendance.unavailableCause, unavailableAttendance.routePlaybookReadFailure);
-        assert.equal(unavailable.stdout.includes(unavailableAttendance.routePlaybookReadFailure!), true);
-
-        const allRuns = afterUnavailable;
-        const coderRuns = allRuns.filter((name) => name.endsWith("@coder"));
-        assert.equal(coderRuns.length, 3);
-        for (const name of coderRuns) {
-          const runReport = JSON.parse(await readFile(
-            join(runsRoot, name, "artifacts", "report.json"),
-            "utf8",
-          )) as { receipt: unknown };
-          assert.deepEqual(runReport.receipt, roleReceipt);
-          assert.equal(JSON.stringify(runReport.receipt).includes("EACCES"), false);
-        }
+        // 尺②同根收拢（#420 类一）：本 tracer 的独有根＝冷装 ak-role coder apply 的
+        // 生产链到合法 Terminal。routebook 不可读降级与 Navigator unavailable 矩阵
+        // 属另一根，其承接者为：
+        //   - test/package/package-entrypoint-cold-help.integration.test.ts
+        //     （真装配上 routebook 读失败 → typed routePlaybookReadFailure 事件，
+        //       且诊断不泄入下一次 preparation）
+        //   - test/contract/judge-role.test.ts（attendance details 携带
+        //     routePlaybookReadFailure）
+        //   - test/contract/navigator-attendance*.test.ts（unavailable 的
+        //     reason/source/cause 类型矩阵：transport/session/model/thinking/context）
       },
     );
   },

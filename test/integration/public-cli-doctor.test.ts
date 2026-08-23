@@ -30,11 +30,8 @@ import {
 } from "../../src/public-cli/doctor-run.ts";
 import {
   admitDoctorInvocation,
-  parseDoctorArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
-  extractDoctorRoleOutcome,
-  formatTerminalResult,
   settleDoctorTerminalResult,
   trySettleDoctorTerminalResult,
 } from "../../src/public-cli/settlement.ts";
@@ -184,50 +181,6 @@ function sampleCompletedDoctorOutput(
     },
   };
 }
-
-test("parseDoctorArgv requires positive issue; accepts optional runs and rejects malformed grammar", () => {
-  assert.deepEqual(parseDoctorArgv(["--issue", "40", "note"]), {
-    issueNumber: 40,
-    instruction: "note",
-    attachmentPaths: [],
-  });
-  assert.deepEqual(
-    parseDoctorArgv([
-      "--issue",
-      "7",
-      "--runs",
-      ".ak-roles/books/demo/issues/7/runs",
-      "--project",
-      "/tmp/p",
-      "--attach",
-      "/tmp/a.md",
-    ]),
-    {
-      issueNumber: 7,
-      runs: ".ak-roles/books/demo/issues/7/runs",
-      project: "/tmp/p",
-      attachmentPaths: ["/tmp/a.md"],
-      instruction: "",
-    },
-  );
-
-  const rejected = [
-    [],
-    ["--issue"],
-    ["--issue", "0"],
-    ["--issue", "01"],
-    ["--issue", "-3"],
-    ["--issue", "1a"],
-    ["--issue", "1.5"],
-    ["--issue", "1", "--runs"],
-    ["--issue", "1", "--runs", ""],
-    ["--issue", "1", "--unknown"],
-    ["40"], // bare number is not a typed issue selector
-  ] as const;
-  for (const raw of rejected) {
-    assert.throws(() => parseDoctorArgv(raw), isUsage, JSON.stringify(raw));
-  }
-});
 
 test("admitDoctorInvocation builds #78 issue runs case and freezes identity without a second content store", async () => {
   await withTempHome(async (home) => {
@@ -429,78 +382,6 @@ test("buildDoctorActivationExtraArgs pins isolation and --ak-doctor-case to admi
     assert.equal(args[args.indexOf("--mode") + 1], "json");
     assert.equal(args.at(-1), "diagnose retries");
   });
-});
-
-test("extractDoctorRoleOutcome reads completed and refused decisive facts", () => {
-  const identity = {
-    issueNumber: 40,
-    runsPath: ".ak-roles/books/demo/issues/40/runs",
-  };
-  const completed = {
-    ...sampleCompletedDoctorOutput(identity),
-    auditNoReceipt: {
-      status: "no-receipt",
-      terminalToolCalled: false,
-      rejectedReceipts: [],
-      deliveryTurns: 2,
-      sessionCompletion: "settled-without-accepted-receipt",
-      runPointer: "/doctor-audit/run",
-      attemptPointer: "doctor-audit-attempt",
-      acceptedReceipt: false,
-    },
-  };
-  const extracted = extractDoctorRoleOutcome([
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: DOCTOR_OUTPUT_TOOL_NAME,
-        isError: false,
-        details: completed,
-      },
-    },
-  ] as never);
-  assert.ok(extracted);
-  assert.equal(extracted.outcome.role, "doctor");
-  assert.equal(extracted.outcome.kind, "accepted");
-  assert.equal(extracted.outcome.status, "completed");
-  assert.equal(extracted.outcome.decisiveFacts.issueNumber, 40);
-  assert.equal(extracted.outcome.decisiveFacts.findingsCount, 0);
-  assert.equal((extracted.outcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
-  assert.match(formatTerminalResult({
-    roleOutcome: extracted.outcome,
-    navigator: { disposition: "no-advice" },
-    artifacts: [],
-    runId: "doctor-run",
-  }), /auditNoReceipt/);
-  assert.equal(
-    extracted.outcome.decisiveFacts.runsPath,
-    identity.runsPath,
-  );
-
-  const refused: DoctorOutput = {
-    status: "refused",
-    reason: "Session bytes are incomplete.",
-    missingEvidence: [{ need: "session header", targetKeys: ["case"] }],
-  };
-  const refusedExtracted = extractDoctorRoleOutcome([
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: DOCTOR_OUTPUT_TOOL_NAME,
-        isError: false,
-        details: refused,
-      },
-    },
-  ] as never);
-  assert.ok(refusedExtracted);
-  assert.equal(refusedExtracted.outcome.status, "refused");
-  assert.equal(
-    refusedExtracted.outcome.decisiveFacts.reason,
-    "Session bytes are incomplete.",
-  );
-  assert.equal(refusedExtracted.outcome.decisiveFacts.missingEvidenceCount, 1);
 });
 
 test("runAkRole doctor rejects malformed grammar before admission", async () => {

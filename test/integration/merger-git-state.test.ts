@@ -114,51 +114,59 @@ test("production Merger Git seam rejects pre-existing tracked and untracked dirt
   }
 });
 
-test("production Merger Git seam accepts a clean source-only first-parent change", async () => {
-  const fixture = await conflictedRepo();
-  try {
-    const state = createProductionMergerGitState(fixture.cwd);
-    const active = await state.activeMerge();
-    await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n");
-    git(fixture.cwd, "add", "conflict.txt");
-    git(fixture.cwd, "commit", "-m", "resolve assigned merge");
-    const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
-    assert.deepEqual(
-      (await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths,
-      ["conflict.txt"],
-    );
-    // source-only.txt is in first-parent diff but not in resolutionChangedPaths.
-    assert.match(
-      git(fixture.cwd, "diff", "--name-only", `${mergeCommitId}^1`, mergeCommitId),
-      /source-only\.txt/,
-    );
-    assert.equal(
-      (await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths.includes(
-        "source-only.txt",
-      ),
-      false,
-    );
-  } finally {
-    await rm(fixture.cwd, { recursive: true, force: true });
+// resolutionChangedPaths matrix (#420 整改并一)：clean source-only first-parent
+// change 与 tampered source-side path 同根「merge commit 的解析改动计算」，
+// 收成一条两场景案。
+test("production Merger Git seam computes resolutionChangedPaths across clean and tampered merge commits", async () => {
+  // Scenario 1: clean resolve — only the conflict path counts; a source-only
+  // first-parent change stays out of resolutionChangedPaths.
+  {
+    const fixture = await conflictedRepo();
+    try {
+      const state = createProductionMergerGitState(fixture.cwd);
+      const active = await state.activeMerge();
+      await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n");
+      git(fixture.cwd, "add", "conflict.txt");
+      git(fixture.cwd, "commit", "-m", "resolve assigned merge");
+      const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
+      assert.deepEqual(
+        (await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths,
+        ["conflict.txt"],
+      );
+      // source-only.txt is in first-parent diff but not in resolutionChangedPaths.
+      assert.match(
+        git(fixture.cwd, "diff", "--name-only", `${mergeCommitId}^1`, mergeCommitId),
+        /source-only\.txt/,
+      );
+      assert.equal(
+        (await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths.includes(
+          "source-only.txt",
+        ),
+        false,
+      );
+    } finally {
+      await rm(fixture.cwd, { recursive: true, force: true });
+    }
   }
-});
 
-test("production Merger Git seam reports tampering with a clean source-side path", async () => {
-  const fixture = await conflictedRepo();
-  try {
-    const state = createProductionMergerGitState(fixture.cwd);
-    const active = await state.activeMerge();
-    await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n");
-    await writeFile(resolve(fixture.cwd, "source-only.txt"), "tampered\n");
-    git(fixture.cwd, "add", ".");
-    git(fixture.cwd, "commit", "-m", "resolve assigned merge");
-    const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
-    assert.deepEqual(
-      (await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths,
-      ["conflict.txt", "source-only.txt"],
-    );
-  } finally {
-    await rm(fixture.cwd, { recursive: true, force: true });
+  // Scenario 2: tampering with a clean source-side path pulls it into the set.
+  {
+    const fixture = await conflictedRepo();
+    try {
+      const state = createProductionMergerGitState(fixture.cwd);
+      const active = await state.activeMerge();
+      await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n");
+      await writeFile(resolve(fixture.cwd, "source-only.txt"), "tampered\n");
+      git(fixture.cwd, "add", ".");
+      git(fixture.cwd, "commit", "-m", "resolve assigned merge");
+      const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
+      assert.deepEqual(
+        (await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths,
+        ["conflict.txt", "source-only.txt"],
+      );
+    } finally {
+      await rm(fixture.cwd, { recursive: true, force: true });
+    }
   }
 });
 

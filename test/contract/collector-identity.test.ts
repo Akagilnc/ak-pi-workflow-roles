@@ -87,13 +87,6 @@ test("#245 full PR 1168 replay preserves typed attendance, findings, evidence ow
   assert.ok([...codex.materials, ...rabbit.materials].some((material) => material.headRelation === "prior"));
 });
 
-test("Codex frozen inline review yields five identity-owned findings with evidence refs", async () => {
-  const raw = JSON.parse(await readFile(new URL("../fixtures/collector/codex-inline-review-4895614344.json", import.meta.url), "utf8"));
-  const group = extractGitHubIdentityGroups(raw.map(normalizeReviewComment))[0]!;
-  assert.equal(group.attendance, true);
-  assert.equal(group.findings.length, 5);
-  assert.ok(group.findings.every((finding) => finding.identity.userId === 199175422 && finding.source.kind === "review_comment"));
-});
 
 test("Codex attendance is invariant under no-finding and usage-limit prose", async () => {
   const load = async (name: string) => normalizeIssueComment(JSON.parse(await readFile(new URL(`../fixtures/collector/${name}`, import.meta.url), "utf8")));

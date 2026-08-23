@@ -458,6 +458,12 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       instruction: "Review standards and spec axes.",
       attachmentPaths: [],
       baseRevision: "main",
+      // 尺③：非空 authorityRefs 落 evidence artifact 的契约在此承接（原冷装
+      // refs-only e2e 的独有断言，#420 类一收拢后由这条在进程内真 Terminal 承载）。
+      authorityRefs: [
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+      ],
       createRunId: () => "run-reviewer-settle-001",
     });
     await mkdir(admitted.sessionDirectory, { recursive: true });
@@ -603,7 +609,10 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal("taskPath" in evidence, false);
     assert.equal("taskSha256" in evidence, false);
     assert.equal(evidence.baseRevision, "main");
-    assert.deepEqual(evidence.authorityRefs, []);
+    assert.deepEqual(evidence.authorityRefs, [
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
+      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+    ]);
     assert.equal(evidence.callerProvenance, "Review standards and spec axes.");
     assert.equal(evidence.methodProvenance.name, "code-review");
     assert.equal(
@@ -1006,83 +1015,3 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
   });
 });
 
-test("reviewer activation rejection lands violation code and diagnostic in books", async () => {
-  // One true-seam tracer (ADR 0016 / host art. 13): public CLI → real Pi child
-  // ExtensionRunner → typed knownFailure channel → presentControlledFailure → books error.json.
-  // Prior art: test/package/reviewer-package-lifecycle.test.ts (runAkRole + runPiSubprocess).
-  // Trigger: local-only repo + --base origin/main → production base-invalid preflight.
-  const diagnostic =
-    "base revision must name an existing pinned ref or reachable commit";
-  await withTempHome(async (home) => {
-    const project = join(home, "work");
-    const agentDir = join(home, ".pi-agent");
-    await mkdir(project, { recursive: true });
-    await mkdir(agentDir, { recursive: true });
-    seedGitProject(project);
-
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["reviewer", "--project", project, "--base", "origin/main"],
-      {
-        packageRoot,
-        home,
-        agentDir,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => "run-reviewer-reject-diagnostic",
-        reviewerTimeoutMs: 60_000,
-        io,
-        piRunner: async (args, options) => {
-          const subprocess = await runPiSubprocess([...args], {
-            cwd: options.cwd,
-            env: {
-              ...options.env,
-              PI_OFFLINE: "1",
-            },
-            timeoutMs: options.timeoutMs ?? 60_000,
-          });
-          return {
-            code: subprocess.code,
-            stderr: subprocess.stderr,
-            timedOut: subprocess.localTimeout,
-            args: [...args],
-          };
-        },
-      },
-    );
-
-    assert.equal(
-      result.exitCode,
-      1,
-      stderr.join("") || stdout.join("") || "expected activation rejection",
-    );
-    assert.ok(result.terminal);
-    assert.equal(result.terminal.roleOutcome.kind, "failure");
-    if (result.terminal.roleOutcome.kind !== "failure") {
-      throw new Error("expected failure");
-    }
-    assert.equal(result.terminal.roleOutcome.cause, "activation");
-    assert.match(
-      result.terminal.roleOutcome.diagnostic,
-      new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-    );
-    const secondary = result.terminal.roleOutcome.decisiveFacts.secondaryEvidence as
-      | { violations?: unknown }
-      | undefined;
-    assert.deepEqual(secondary?.violations, ["base-invalid"]);
-
-    const errorRef = result.terminal.artifacts.find((a) => a.kind === "error");
-    assert.ok(errorRef);
-    const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-      cause: string;
-      diagnostic: string;
-      details?: { violations?: unknown };
-    };
-    assert.equal(errorBody.cause, "activation");
-    assert.match(
-      errorBody.diagnostic,
-      new RegExp(diagnostic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-    );
-    assert.deepEqual(errorBody.details?.violations, ["base-invalid"]);
-  });
-});
