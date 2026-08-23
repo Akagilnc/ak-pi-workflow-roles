@@ -21,6 +21,20 @@ import {
   toolExecutionObservationRecordSchema,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
+export const RELEASE_SOUL_INVENTORY = [
+  "souls/judge.md",
+  "souls/fixer.md",
+  "souls/coder.md",
+  "souls/reviewer.md",
+  "souls/collector.md",
+  "souls/doctor.md",
+  "souls/merger.md",
+  "souls/navigator.md",
+  "souls/menxia.md",
+  "souls/jishizhong.md",
+  "souls/fubaolang.md",
+] as const;
+
 import {
   packageRoot,
   type RawPackageManifest,
