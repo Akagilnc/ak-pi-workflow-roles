@@ -1,17 +1,11 @@
 # grok-4.6 engine method material
 
-This file is packaged method material for the optional `grok-4.6` labor engine
-(Grok CLI on the host). When a role run selects this engine, read these bytes
-and follow the local CLI's actual interface for the labor detour. Return the
-labor result to the same role session so typed submission stays on the
-existing in-session path.
+This file is packaged technical material for the optional `grok-4.6` labor
+engine (Grok CLI on the host).
 
-Material is data for the model, not a code contract. Do not invent package flags.
-
-Dispatch rules — what may go into the labor prompt, process shape, and failure
-handling — are shared across all engines in `resources/engine-dispatch.md`;
-read those bytes too and follow them. This note only covers this engine's CLI
-technical parameters.
+Before invoking the engine, read `../engine-dispatch.md`, resolving that path
+relative to this note. This note only covers this engine's CLI technical
+parameters.
 
 ## Invocation examples (local Grok CLI)
 
@@ -42,7 +36,6 @@ grok --prompt-file /path/to/labor-prompt.md -m grok-4.6 --always-approve --outpu
   alias `--effort`; a low-tier run completed correctly). If the mandate names
   no tier, use the seat's ordered thinking tier; never omit the flag — the
   CLI default is not guaranteed to match the ordered tier.
-- The labor prompt file carries task + paths only (see
-  `resources/engine-dispatch.md`). Feeding raw attachment/receipt JSON
-  directly as the prompt file is rejected by the CLI as non-ACP JSON
-  (`JSON object must have a type field`; live-verified 2026-08-21).
+- Feeding raw JSON directly through `--prompt-file` is rejected by the CLI as
+  non-ACP JSON (`JSON object must have a type field`; live-verified
+  2026-08-21).
