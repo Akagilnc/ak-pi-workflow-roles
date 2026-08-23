@@ -11,7 +11,7 @@ const GIT_DISCOVERY_ENV_KEYS = [
 ] as const;
 
 function envWithoutGitDiscovery(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...base };
+  const env: NodeJS.ProcessEnv = { ...base, LC_ALL: "C" };
   for (const key of GIT_DISCOVERY_ENV_KEYS) {
     delete env[key];
   }
@@ -19,17 +19,42 @@ function envWithoutGitDiscovery(base: NodeJS.ProcessEnv = process.env): NodeJS.P
 }
 
 /**
- * Typed book-key discovery failure: a git child ran and reported non-repository status.
- * Original git cause (nonzero exit) is retained. Spawn/OS failures never become this type.
+ * #413 r2 U5 — single failure-classification owner. A git child nonzero exit is
+ * only a *confirmed* non-repository verdict when git's own diagnostic says so
+ * ("fatal: not a git repository …", forced to the C locale so the wording is
+ * deterministic). Every other diagnostic — dubious ownership exit 128,
+ * permissions, anything unknown — leaves the question open: git found or
+ * refuses to adjudicate a repository-shaped situation without certifying
+ * "non repository". Classification by diagnostic identity, not by exit code
+ * alone, because both faces share exit 128.
+ */
+const CONFIRMED_NON_REPOSITORY_STDERR = /^fatal:\s*not a git repository/i;
+
+export function isConfirmedNonRepositoryStderr(stderr: string): boolean {
+  return CONFIRMED_NON_REPOSITORY_STDERR.test(stderr);
+}
+
+/**
+ * Typed book-key discovery failure: a git child ran and exited nonzero.
+ * Original git cause (nonzero exit) is retained. Spawn/OS failures never become
+ * this type. `confirmedNonRepository` records whether git itself certified
+ * "no repository here" (true) or merely failed for an unadjudicated reason
+ * such as dubious ownership (false) — consumers may only synthesize fallback
+ * identities from the confirmed face.
  */
 export class ActivationGitRepositoryRequiredError extends Error {
   readonly code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED" as const;
-  constructor(detail: string, options?: { cause?: unknown }) {
+  readonly confirmedNonRepository: boolean;
+  constructor(
+    detail: string,
+    options?: { cause?: unknown; confirmedNonRepository?: boolean },
+  ) {
     super(
       `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
       options?.cause === undefined ? undefined : { cause: options.cause },
     );
     this.name = "ActivationGitRepositoryRequiredError";
+    this.confirmedNonRepository = options?.confirmedNonRepository ?? false;
   }
 }
 
@@ -79,7 +104,10 @@ export function resolveBookKeyFromGit(cwd: string): string {
       : typeof err.message === "string"
       ? err.message
       : "";
-    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
+    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", {
+      cause: error,
+      confirmedNonRepository: isConfirmedNonRepositoryStderr(detail),
+    });
   }
   if (commonDir.length === 0) {
     throw new Error("git rev-parse --git-common-dir returned an empty path");

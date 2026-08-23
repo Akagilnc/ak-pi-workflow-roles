@@ -170,7 +170,7 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | `--attach` | — | `path` | when:sweep | yes | option | modes=sweep; max=sweep:1 | Sweep-mode attachment path; required exactly once in sweep; payload is the attachment body. |
 | `--cohort` | — | — | no | no | option | modes=cohort | Select cohort mode. |
 | `--group-a-label` | — | `label` | when:cohort | no | option | modes=cohort | Cohort group A label (required in cohort mode). |
-| `--group-a-issues` | — | `N[,N...]` | when:cohort | no | option | modes=cohort | Cohort group A comma-separated positive issue numbers (required in cohort mode). |
+| `--group-a-issues` | — | `N\|book:N[,...]` | when:cohort | no | option | modes=cohort | Cohort group A issues: bare N joins cwd book; book:N selects another book; escape a literal comma/backslash in a book key as \, / \\ (required in cohort mode). |
 | `--group-b-label` | — | `label` | when:cohort | no | option | modes=cohort | Cohort group B label (required in cohort mode). |
-| `--group-b-issues` | — | `N[,N...]` | when:cohort | no | option | modes=cohort | Cohort group B comma-separated positive issue numbers (required in cohort mode). |
+| `--group-b-issues` | — | `N\|book:N[,...]` | when:cohort | no | option | modes=cohort | Cohort group B issues: bare N joins cwd book; book:N selects another book; escape a literal comma/backslash in a book key as \, / \\ (required in cohort mode). |
 <!-- END GENERATED: public-cli-options -->

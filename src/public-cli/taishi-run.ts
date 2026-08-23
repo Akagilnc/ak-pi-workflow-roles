@@ -184,9 +184,33 @@ export async function runPublicTaishi(
     }
 
     if (parsed.query === "cohort") {
+      // #412: bare N → cwd book (same口径 as #399 --ticket); book:N stays explicit.
+      // No cross-book silent scan — callers pass book:N for another repo's issues.
+      // Cwd book resolution is lazy and resolved at most once: an all-book:N
+      // cohort never touches cwd Git, so a non-git cwd cannot reject a purely
+      // explicit cross-book query.
+      let defaultBookKey: string | undefined;
+      const resolveIssue = (
+        token: (typeof parsed.groups)[0]["issues"][number],
+      ) => {
+        if (token.kind === "book-qualified") {
+          return { bookKey: token.bookKey, issueNumber: token.issueNumber };
+        }
+        defaultBookKey ??= resolveTaishiIssueBookKeyFromCwd();
+        return { bookKey: defaultBookKey, issueNumber: token.issueNumber };
+      };
       const result = await runTaishi({
         mode: "cohort",
-        groups: parsed.groups,
+        groups: [
+          {
+            groupLabel: parsed.groups[0].groupLabel,
+            issues: parsed.groups[0].issues.map(resolveIssue),
+          },
+          {
+            groupLabel: parsed.groups[1].groupLabel,
+            issues: parsed.groups[1].issues.map(resolveIssue),
+          },
+        ],
       });
       io.stdout(`${JSON.stringify(result, null, 2)}\n`);
       return { exitCode: 0 };
