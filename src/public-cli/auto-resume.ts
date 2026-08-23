@@ -13,7 +13,7 @@
  */
 import { constants as fsConstants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, open, readFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, open, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -21,6 +21,7 @@ import {
   describeErrorIdentity,
   isSessionPrincipalAvailable,
   acquireRunWriterLease,
+  markRunTerminal,
   RunWriterLeaseHeldError,
   type RunWriterLease,
 } from "./run-lifecycle.ts";
@@ -39,6 +40,22 @@ function presentTerminal(terminal: TerminalResult, io: CliIo): void {
   }
 }
 
+/**
+ * Best-effort finalization of the durable run state before an exception-path
+ * synthetic failure terminal is returned (#426 review: taishi-ledger classifies
+ * running runs as live — an exhausted invocation must not remain live
+ * indefinitely). Finalization failure must not mask the real cause.
+ */
+async function finalizeExceptionRunBestEffort(runDirectory: string, io: CliIo): Promise<void> {
+  try {
+    await markRunTerminal(runDirectory);
+  } catch (error) {
+    io.stderr(
+      `run terminal-state finalization failed (best-effort continue): ${describeErrorIdentity(error)}\n`,
+    );
+  }
+}
+
 export type AutoResumeDispatchResult = {
   exitCode: number;
   terminal?: TerminalResult;
@@ -53,17 +70,52 @@ function runArtifactsDirectory(runDirectory: string): string {
 }
 
 /**
+ * #182-A hardened path identity, mirrored from settlement.ts's
+ * ensureAuditEvidenceDirectory: a planted symlink at the run directory or the
+ * artifacts path must not receive the dispatch error dump (O_NOFOLLOW only
+ * protects the final file name; recursive mkdir would accept a symlinked
+ * parent). Fails loudly with the true cause instead.
+ */
+async function ensureRealArtifactsDirectory(runDirectory: string): Promise<string> {
+  const runStat = await lstat(runDirectory);
+  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
+    throw new Error("dispatch error retention: run directory is not a real directory");
+  }
+  const artifactsDir = runArtifactsDirectory(runDirectory);
+  try {
+    const existing = await lstat(artifactsDir);
+    if (existing.isSymbolicLink() || !existing.isDirectory()) {
+      throw new Error("dispatch error retention: artifacts path is not a real directory");
+    }
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    await mkdir(artifactsDir, { recursive: true });
+    const created = await lstat(artifactsDir);
+    if (created.isSymbolicLink() || !created.isDirectory()) {
+      throw new Error("dispatch error retention: artifacts directory is not a real directory");
+    }
+  }
+  return artifactsDir;
+}
+
+/**
  * Whole-object transfer of a thrown value (owner 2026-08-23: 「记录所有错误信息。
  * 不能丢详细情况」). Every own property of the Error object — enumerable or not,
  * which is how message/stack and any attached identity land verbatim — plus the
  * constructor name and the full cause chain. No field list is prescribed or
  * filtered: whatever the exception object carries goes into the file as-is.
  */
-function serializeThrownValue(value: unknown, depth = 0): unknown {
+function serializeThrownValue(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
   if (value instanceof Error) {
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
     const transferred: Record<string, unknown> = {};
     for (const key of Object.getOwnPropertyNames(value)) {
-      transferred[key] = (value as unknown as Record<string, unknown>)[key];
+      transferred[key] = transferNestedValue(
+        (value as unknown as Record<string, unknown>)[key],
+        depth + 1,
+        seen,
+      );
     }
     return {
       errorKind: "Error",
@@ -75,9 +127,46 @@ function serializeThrownValue(value: unknown, depth = 0): unknown {
             causeChain:
               depth >= 10
                 ? "[cause-chain-depth-limit]"
-                : serializeThrownValue(value.cause, depth + 1),
+                : serializeThrownValue(value.cause, depth + 1, seen),
           }),
     };
+  }
+  return value;
+}
+
+/** ENOENT identity shared with settlement.ts's hardened audit-artifact path. */
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+/**
+ * Recursive Error-property transfer (#426 review: nested Errors must not be
+ * passed raw to JSON.stringify — their non-enumerable message/stack would
+ * serialize as {}). Depth-limited; cycle-safe via the seen set so the recursive
+ * construction itself cannot diverge before stringify runs.
+ */
+function transferNestedValue(value: unknown, depth: number, seen: WeakSet<object>): unknown {
+  if (value instanceof Error) return serializeThrownValue(value, depth, seen);
+  if (depth >= 10) return "[nested-depth-limit]";
+  if (Array.isArray(value)) {
+    return value.map((item) => transferNestedValue(item, depth + 1, seen));
+  }
+  if (value !== null && typeof value === "object") {
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
+    const transferred: Record<string, unknown> = {};
+    for (const key of Object.getOwnPropertyNames(value)) {
+      transferred[key] = transferNestedValue(
+        (value as unknown as Record<string, unknown>)[key],
+        depth + 1,
+        seen,
+      );
+    }
+    return transferred;
   }
   return value;
 }
@@ -107,8 +196,7 @@ async function retainDispatchError(
   attempt: number,
   error: unknown,
 ): Promise<string> {
-  const artifactsDir = runArtifactsDirectory(admitted.runDirectory);
-  await mkdir(artifactsDir, { recursive: true });
+  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
   const filePath = join(
     artifactsDir,
     `dispatch-error-attempt-${attempt}-${randomUUID()}.json`,
@@ -143,22 +231,40 @@ async function retainDispatchError(
   // Addressable pointer in the dossier (卷宗): reuses the session principal's
   // appended custom-entry shape (mirrors pi SessionManager.appendCustomEntry,
   // same mechanism as #419 attempt history — no second ledger introduced).
-  const text = await readFile(admitted.sessionFile, "utf8");
-  let parentId: string | null = null;
-  for (const line of text.trim().split("\n").filter(Boolean)) {
-    const entry = JSON.parse(line) as { id?: unknown };
-    if (typeof entry.id === "string") parentId = entry.id;
+  // The one-writer lease is held for the append (#426 review: production
+  // dispatchers release the lease in their finally before the rejection reaches
+  // this point); if a concurrent writer already holds it, the append is skipped
+  // gracefully — the error file itself is already durably retained.
+  let pointerLease: RunWriterLease;
+  try {
+    pointerLease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) return filePath;
+    throw error;
   }
-  const timestamp = new Date().toISOString();
-  const pointerLine = `${JSON.stringify({
-    type: "custom",
-    customType: DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
-    data: { version: 1, attempt, file: filePath, recordedAt: timestamp },
-    id: randomUUID(),
-    parentId,
-    timestamp,
-  })}\n`;
-  await appendFile(admitted.sessionFile, pointerLine, "utf8");
+  try {
+    const text = await readFile(admitted.sessionFile, "utf8");
+    // Session headers are not branch entries (#419 precedent in
+    // appendRunAttemptHistory excludes type === "session"); leave parentId null
+    // until a non-header entry exists so the pointer stays addressable.
+    let parentId: string | null = null;
+    for (const line of text.trim().split("\n").filter(Boolean)) {
+      const entry = JSON.parse(line) as { id?: unknown; type?: unknown };
+      if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+    }
+    const timestamp = new Date().toISOString();
+    const pointerLine = `${JSON.stringify({
+      type: "custom",
+      customType: DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
+      data: { version: 1, attempt, file: filePath, recordedAt: timestamp },
+      id: randomUUID(),
+      parentId,
+      timestamp,
+    })}\n`;
+    await appendFile(admitted.sessionFile, pointerLine, "utf8");
+  } finally {
+    await pointerLease.release();
+  }
   return filePath;
 }
 
@@ -174,8 +280,15 @@ function dispatchExceptionFailureTerminal(input: {
   errorFiles: readonly string[];
   autoResumeAttempts: number;
   endReason: string;
+  /** True only when every attempt threw; otherwise describe just the final attempt. */
+  everyAttemptThrew: boolean;
 }): TerminalResult {
-  const diagnostic = `dispatch threw an exception on every attempt (${input.endReason}; resumes used ${input.autoResumeAttempts}); last cause: ${describeErrorIdentity(input.causeError)}`;
+  // #426 review: this terminal fires whenever the FINAL dispatch throws, not
+  // only when every attempt threw — do not misrepresent a mixed retry history.
+  const history = input.everyAttemptThrew
+    ? "dispatch threw an exception on every attempt"
+    : "the final dispatch threw an exception";
+  const diagnostic = `${history} (${input.endReason}; resumes used ${input.autoResumeAttempts}); last cause: ${describeErrorIdentity(input.causeError)}`;
   const decisiveFacts: Record<string, unknown> = {
     cause: "unrecognized",
     diagnostic,
@@ -238,6 +351,7 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
   let currentExtraArgs = options.buildInitialArgs();
   let dispatchOrdinal = 0;
   let lastThrownError: unknown;
+  let everyAttemptThrew = true;
   const retainedErrorFiles: string[] = [];
 
   while (true) {
@@ -266,20 +380,23 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
       lastThrownError = error;
       const attempt = dispatchOrdinal;
       try {
+        // Track the file immediately after its successful write (#426 review):
+        // a later pointer-append failure must never orphan the retained file.
         const file = await retainDispatchError(options.admitted, attempt, error);
         retainedErrorFiles.push(file);
         options.io.stderr(
-          `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}`,
+          `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}\n`,
         );
       } catch (retentionError) {
         options.io.stderr(
-          `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}`,
+          `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}\n`,
         );
       }
     }
     dispatchOrdinal += 1;
 
     if (result !== undefined) {
+      everyAttemptThrew = false;
       const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (terminal !== undefined) {
         (terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
@@ -305,29 +422,37 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
     } else {
       // Exception path: continue through the identical budget/session gates.
       if (autoResumeAttempts >= limit) {
+        const terminal = dispatchExceptionFailureTerminal({
+          role: options.admitted.role,
+          runId: options.admitted.runId,
+          causeError: lastThrownError,
+          errorFiles: retainedErrorFiles,
+          autoResumeAttempts,
+          endReason: "auto-resume budget exhausted",
+          everyAttemptThrew,
+        });
+        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+        presentTerminal(terminal, options.io);
         return {
           exitCode: 1,
-          terminal: dispatchExceptionFailureTerminal({
-            role: options.admitted.role,
-            runId: options.admitted.runId,
-            causeError: lastThrownError,
-            errorFiles: retainedErrorFiles,
-            autoResumeAttempts,
-            endReason: "auto-resume budget exhausted",
-          }),
+          terminal,
         } as T;
       }
       if (!(await isSessionPrincipalAvailable(options.admitted.sessionFile))) {
+        const terminal = dispatchExceptionFailureTerminal({
+          role: options.admitted.role,
+          runId: options.admitted.runId,
+          causeError: lastThrownError,
+          errorFiles: retainedErrorFiles,
+          autoResumeAttempts,
+          endReason: "session principal unavailable before further resume",
+          everyAttemptThrew,
+        });
+        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+        presentTerminal(terminal, options.io);
         return {
           exitCode: 1,
-          terminal: dispatchExceptionFailureTerminal({
-            role: options.admitted.role,
-            runId: options.admitted.runId,
-            causeError: lastThrownError,
-            errorFiles: retainedErrorFiles,
-            autoResumeAttempts,
-            endReason: "session principal unavailable before further resume",
-          }),
+          terminal,
         } as T;
       }
     }
