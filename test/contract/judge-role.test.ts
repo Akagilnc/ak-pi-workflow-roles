@@ -165,6 +165,34 @@ function toolCallContext(
   return { sessionManager, abort } as unknown as ExtensionContext;
 }
 
+function withPassingMenxia(context: ExtensionContext): ExtensionContext {
+  const faux = fauxProvider({ provider: "passing-menxia", api: "passing-menxia" });
+  const model = faux.getModel();
+  const responses = [
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] })),
+  ];
+  const provider = {
+    ...faux.provider,
+    stream() {
+      const next = responses.shift();
+      if (next === undefined) throw new Error("unexpected Menxia provider request");
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => stream.end(next));
+      return stream;
+    },
+    streamSimple() { return this.stream(); },
+  };
+  return Object.assign(context, {
+    cwd: process.cwd(), model,
+    modelRegistry: {
+      getProvider(name: string) { return name === model.provider ? provider : undefined; },
+      async getProviderAuth() { return { auth: {} }; },
+      async getApiKeyAndHeaders() { return { ok: true }; },
+    },
+    thinkingLevel: "off",
+  });
+}
 
 function activationCtx(home: string, extras: Record<string, unknown> = {}): ExtensionContext {
   // Durable session principal under the machine ledger book (ADR 0048).
@@ -568,7 +596,9 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       fixture.output,
       undefined,
       undefined,
-      toolCallContext([{ id: "receipt", name: fixture.name }]),
+      fixture.role === "fixer"
+        ? withPassingMenxia(toolCallContext([{ id: "receipt", name: fixture.name }]))
+        : toolCallContext([{ id: "receipt", name: fixture.name }]),
     );
     assert.equal(result.content[0].text, fixture.acceptedText);
     assert.deepEqual(result.details, fixture.output);
@@ -1037,6 +1067,111 @@ test("coder completed submissions traverse the real Menxia provider gate until p
   assert.equal(responses.length, 0);
 });
 
+test("fixer completed-side submissions traverse the real Menxia provider gate while non-completions skip it", async () => {
+  const faux = fauxProvider({ provider: "fixer-menxia", api: "fixer-menxia" });
+  const model = faux.getModel();
+  const responses: Array<AssistantMessage | Error> = [
+    new Error("provider disconnected"),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "incomplete", reason: "missing repair evidence" })),
+    fauxAssistantMessage("not a receipt"),
+    fauxAssistantMessage("still not a receipt"),
+    fauxAssistantMessage("settled without a receipt"),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "bounce", findings: ["add a focused regression"] })),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] })),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] })),
+  ];
+  let providerRequests = 0;
+  const provider = {
+    ...faux.provider,
+    stream() {
+      providerRequests += 1;
+      const next = responses.shift();
+      if (next === undefined) throw new Error("unexpected Menxia provider request");
+      if (next instanceof Error) throw next;
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => stream.end(next));
+      return stream;
+    },
+    streamSimple() { return this.stream(); },
+  };
+  const start = async (phase: "plan" | "apply") => {
+    const harness = extensionHarness(undefined, {
+      "ak-fix-packet": "/materials/fix.md",
+      "ak-fixer-phase": phase,
+    });
+    const runtime = createFixerRoleRuntime(
+      harness.pi as ExtensionAPI,
+      { loadSoul: async () => "FIXER LAW", loadPacket: async () => emptyFixPacket },
+      { failInfrastructure(error) { throw error; } },
+    );
+    await runtime.activate();
+    return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
+  };
+  const submissionContext = (id: string) => Object.assign(
+    toolCallContext([{ id, name: FIXER_OUTPUT_TOOL_NAME }]),
+    {
+      cwd: process.cwd(), model,
+      modelRegistry: {
+        getProvider(name: string) { return name === model.provider ? provider : undefined; },
+        async getProviderAuth() { return { auth: {} }; },
+        async getApiKeyAndHeaders() { return { ok: true }; },
+      },
+      thinkingLevel: "off",
+    },
+  );
+  const completed = {
+    status: "completed" as const,
+    report: "repair complete",
+    classResults: [{ name: "Gate", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }],
+  };
+  const completedTool = await start("apply");
+  const reject = async (id: string, check: (error: Error) => void) => {
+    await assert.rejects(completedTool.execute(id, completed, undefined, undefined, submissionContext(id)), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      check(error);
+      return true;
+    });
+  };
+  await reject("transport", (error) => assert.equal(error.message, "Menxia transport failure at menxia: Error: provider disconnected"));
+  await reject("incomplete", (error) => assert.equal(error.message, "Menxia incomplete at menxia: missing repair evidence; {\"status\":\"incomplete\",\"stage\":\"menxia\",\"reason\":\"missing repair evidence\"}"));
+  await reject("no-receipt", (error) => {
+    assert.match(error.message, /^Menxia no_receipt at menxia: Menxia settled without an accepted receipt;/);
+    assert.match(error.message, /\"acceptedReceipt\":false/);
+  });
+  await reject("bounce", (error) => assert.equal(error.message, "Menxia requires rewrite: add a focused regression"));
+  assert.equal((await completedTool.execute("pass", completed, undefined, undefined, submissionContext("pass"))).terminate, true);
+
+  const partial = {
+    status: "partially_completed" as const,
+    report: "mixed lawful settlement",
+    classResults: [
+      completed.classResults[0],
+      { name: "Blocked", disposition: "refused" as const, remainingScope: "owner choice", blocker: { kind: "missing_prerequisite" as const, prerequisiteId: "owner.choice", reason: "owner choice missing" } },
+    ],
+  };
+  const partialHarness = extensionHarness(undefined, { "ak-fix-packet": "/materials/fix.md", "ak-fixer-prerequisites": "/materials/prereqs.json", "ak-fixer-phase": "apply" });
+  const partialRuntime = createFixerRoleRuntime(partialHarness.pi as ExtensionAPI, {
+    loadSoul: async () => "FIXER LAW",
+    loadPacket: async (path) => path.endsWith("prereqs.json") ? declaredFixPrerequisites : emptyFixPacket,
+  }, { failInfrastructure(error) { throw error; } });
+  await partialRuntime.activate();
+  assert.equal((await partialHarness.tools.get(FIXER_OUTPUT_TOOL_NAME)!.execute("partial", partial, undefined, undefined, submissionContext("partial"))).terminate, true);
+
+  const beforeSkipped = providerRequests;
+  const planTool = await start("plan");
+  await planTool.execute("planned", { status: "planned", report: "plan" }, undefined, undefined, submissionContext("planned"));
+  await planTool.execute("plan-refused", { status: "refused", report: "blocked", remainingScope: "owner answer", blocker: { kind: "missing_prerequisite", prerequisiteId: "owner.choice", reason: "missing" } }, undefined, undefined, submissionContext("plan-refused"));
+  const applyTool = await start("apply");
+  await applyTool.execute("apply-refused", { status: "refused", report: "blocked", classResults: [{ name: "Blocked", disposition: "refused", remainingScope: "owner answer", blocker: { kind: "unconstitutional", authority: "ADR", conflict: "conflict" } }] }, undefined, undefined, submissionContext("apply-refused"));
+  await applyTool.execute("unfinished", { status: "unfinished", report: "handover", remainingScope: "owner answer", reason: "prerequisite_missing: owner answer" }, undefined, undefined, submissionContext("unfinished"));
+  assert.equal(providerRequests, beforeSkipped);
+  assert.equal(providerRequests, 11);
+  assert.equal(responses.length, 0);
+});
+
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
   // #319 Batch 3 (M1): lightweight expansion-binding API seam.
   // Publish-surface packaged Pi coverage stays in package-entrypoint (M1.4/M1.5).
@@ -1296,13 +1431,13 @@ test("undeclared prerequisite submissions are rejected; declared references acce
       ],
     };
     await assert.rejects(tool.execute("partial", partial, undefined, undefined, toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }])), /未观察到 commit/);
-    const second = await tool.execute("partial2", partial, undefined, undefined, toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }]));
+    const second = await tool.execute("partial2", partial, undefined, undefined, withPassingMenxia(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }])));
     assert.deepEqual(second.details, partial);
 
     const sharedCommit = "shared-commit";
     const classA = { name: "Reviewer diagnostics", disposition: "completed" as const, searchScope: "reviewer admission and dispatch", exceptions: [], commitSha: sharedCommit };
     const classB = { name: "Fixer projection", disposition: "completed" as const, searchScope: "fixer output branches", exceptions: [], commitSha: sharedCommit };
-    const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }]));
+    const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, withPassingMenxia(toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }])));
     assert.equal(shared.terminate, true);
     assert.deepEqual(shared.details.classResults, [classA, classB]);
   });
@@ -1433,7 +1568,7 @@ test("fixer output must be the sole call in its assistant batch", async () => {
       output,
       undefined,
       undefined,
-      toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }]),
+      withPassingMenxia(toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }])),
     );
     assert.deepEqual(accepted.details, output);
   });
@@ -1891,7 +2026,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           await plain.runtime.activate();
           const tool = plain.harness.tools.get(toolName);
           assert.ok(tool);
-          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-pass`));
+          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, withPassingMenxia(outputContext(tool.name, `${role}-pass`)));
           assert.equal(accepted.terminate, true);
           assert.deepEqual(accepted.details, outputs[role]);
           assert.equal(plain.auditCalls, 0);

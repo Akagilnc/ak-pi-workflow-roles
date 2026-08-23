@@ -293,6 +293,29 @@ export function createFixerRoleRuntime(
               ctx,
               toolCallId,
             );
+            if (output.status === "completed" || output.status === "partially_completed") {
+              const menxia = await runMenxia({
+                context: ctx,
+                subject: {
+                  kind: "worker_completion",
+                  material: JSON.stringify(output),
+                },
+                ...(_signal === undefined ? {} : { signal: _signal }),
+              });
+              if (menxia.status === "transport_failure") {
+                hostActions.failInfrastructure(
+                  new Error(`Menxia transport failure at ${menxia.stage}: ${menxia.reason}`),
+                  ctx,
+                  toolCallId,
+                );
+              }
+              if (menxia.status === "bounce") {
+                throw new Error(`Menxia requires rewrite: ${menxia.findings.join("; ")}`);
+              }
+              if (menxia.status === "incomplete" || menxia.status === "no_receipt") {
+                throw new Error(`Menxia ${menxia.status} at ${menxia.stage}: ${menxia.reason}; ${JSON.stringify(menxia)}`);
+              }
+            }
             // #391: attach sole-built engineLaborFallback when detour fell back to seat labor.
             const acceptedDetails = withEngineLaborFallbackField(
               output,
