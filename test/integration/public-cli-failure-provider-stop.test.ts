@@ -476,360 +476,211 @@ test("typed output failure cannot bind a call from an earlier attempt", async ()
     }), undefined);
   });
 });
-test("session provider-stop produces provider cause without injected knownFailure", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    // Real production shape: default runner never sets knownFailure; Pi leaves a
-    // native assistant stopReason=error in the session (print-mode provider path).
-    // Credentials are present so the credential channel cannot supply the cause.
-    const result = await runAkRole(
-      ["--model", "xai/grok-4:off", "judge", "--project", project, "session provider stop"],
+// Session provider-stop causal matrix (#420 整改并一)：三条同根「session stop
+// 因果穿越退出码形态」——code=1 / code=0 / timedOut——收成一条三行表。
+test("session provider-stop retains typed identity across exit-code shapes", async () => {
+  const sessionRows = (errorMessage: string): string =>
+    [
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "go" }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage,
+          provider: "xai",
+          model: "grok-4",
+          api: "openai-responses",
+        },
+      }),
+    ].join("\n") + "\n";
+  const rows = [
+    {
+      label: "nonzero exit keeps session-stop cause without injected knownFailure",
+      runId: "run-session-provider-stop-001",
+      errorMessage: "WebSocket error",
+      child: { code: 1 as const, stderr: "activation wrapper exited nonzero\n", timedOut: false as const },
+    },
+    {
+      label: "zero-exit still reads session provider-stop (not washed to output)",
+      runId: "run-zero-exit-session-provider-stop-001",
+      errorMessage: "upstream websocket failed",
+      child: { code: 0 as const, stderr: "", timedOut: false as const },
+    },
+    {
+      label: "timedOut co-present keeps session provider identity (AC2)",
+      runId: "run-timeout-provider-stop-001",
+      errorMessage: "provider hung then killed",
+      child: { code: null as unknown as number, stderr: "still running\n", timedOut: true as const },
+    },
+  ] as const;
+  for (const row of rows) {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const { io, stdout, stderr } = captureIo();
+      const result = await runAkRole(
+        ["--model", "xai/grok-4:off", "judge", "--project", project, `session provider stop: ${row.label}`],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => row.runId,
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(join(sessionDir, "session.jsonl"), sessionRows(row.errorMessage), "utf8");
+            return {
+              ...row.child,
+              args: [...args],
+              // deliberately omit knownFailure — production default runner path
+            };
+          },
+        },
+      );
+      const { terminal, errorRef } = await assertPublicFailureSettlement({
+        result,
+        stdout,
+        stderr,
+        expectedCause: "unrecognized",
+        diagnosticEquals: row.errorMessage,
+      });
+      assert.equal(terminal.roleOutcome.kind, "failure", row.label);
+      if (terminal.roleOutcome.kind === "failure") {
+        assert.equal(terminal.roleOutcome.cause, "unrecognized", row.label);
+        assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined, row.label);
+        assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined, row.label);
+        assert.equal(terminal.roleOutcome.diagnostic, row.errorMessage, row.label);
+      }
+      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+        cause: string;
+        diagnostic: string;
+        identity?: { name?: string; code?: string | number };
+        details?: { timedOut?: boolean; errorMessage?: string };
+      };
+      assert.equal(errorBody.cause, "unrecognized", row.label);
+      assert.equal(errorBody.diagnostic, row.errorMessage, row.label);
+      assert.equal(errorBody.identity, undefined, row.label);
+      assert.equal(errorBody.details?.errorMessage, row.errorMessage, row.label);
+      if (row.child.timedOut) {
+        // AC2: timeout must not wash the co-present provider-stop identity.
+        assert.equal(errorBody.details?.timedOut, true, row.label);
+      }
+    });
+  }
+
+  // Typed seam unit: stopReason error without upstream testimony is unknown; other stops ignored.
+  const fromStop = knownFailureFromProviderStop({
+    stopReason: "error",
+    errorMessage: "WebSocket error",
+    provider: "xai",
+  });
+  assert.equal(fromStop?.cause, "unrecognized");
+  assert.equal(fromStop?.identity, undefined);
+  assert.equal(fromStop?.diagnostic, "WebSocket error");
+  assert.deepEqual(
+    fromStop?.details,
+    { errorMessage: "WebSocket error" },
+  );
+  // Prose "500:" alone is not testimony (kept once here; no duplicate helper block).
+  assert.equal(
+    knownFailureFromProviderStop({
+      stopReason: "error",
+      errorMessage: "500: Internal error during token generation",
+      provider: "openai-codex",
+    })?.cause,
+    "unrecognized",
+  );
+  assert.equal(
+    knownFailureFromProviderStop({ stopReason: "end_turn", errorMessage: "ok" }),
+    undefined,
+  );
+  assert.deepEqual(
+    extractSessionProviderStop([
       {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => "run-session-provider-stop-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            [
-              JSON.stringify({
-                type: "message",
-                message: {
-                  role: "user",
-                  content: [{ type: "text", text: "go" }],
-                },
-              }),
-              JSON.stringify({
-                type: "message",
-                message: {
-                  role: "assistant",
-                  stopReason: "error",
-                  errorMessage: "WebSocket error",
-                  provider: "xai",
-                  model: "grok-4",
-                  api: "openai-responses",
-                },
-              }),
-            ].join("\n") + "\n",
-            "utf8",
-          );
-          return {
-            code: 1,
-            // Deliberately misleading prose — cause must come from session stop, not stderr.
-            stderr: "activation wrapper exited nonzero\n",
-            timedOut: false,
-            args: [...args],
-            // deliberately omit knownFailure
-          };
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "WebSocket error",
+          provider: "xai",
         },
       },
-    );
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "unrecognized",
-      diagnosticEquals: "WebSocket error",
-    });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "unrecognized");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined);
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined);
-      assert.equal(terminal.roleOutcome.diagnostic, "WebSocket error");
-    }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause: string;
-      diagnostic: string;
-      identity?: { name?: string; code?: string | number };
-      details?: { errorMessage?: string };
-    };
-    assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(errorBody.diagnostic, "WebSocket error");
-    assert.equal(errorBody.identity, undefined);
-    assert.equal(errorBody.details?.errorMessage, "WebSocket error");
-    // Typed seam unit: stopReason error without upstream testimony is unknown; other stops ignored.
-    const fromStop = knownFailureFromProviderStop({
+    ]),
+    {
       stopReason: "error",
       errorMessage: "WebSocket error",
       provider: "xai",
-    });
-    assert.equal(fromStop?.cause, "unrecognized");
-    assert.equal(fromStop?.identity, undefined);
-    assert.equal(fromStop?.diagnostic, "WebSocket error");
-    assert.deepEqual(
-      fromStop?.details,
-      { errorMessage: "WebSocket error" },
-    );
-    // Prose "500:" alone is not testimony (kept once here; no duplicate helper block).
-    assert.equal(
-      knownFailureFromProviderStop({
-        stopReason: "error",
-        errorMessage: "500: Internal error during token generation",
-        provider: "openai-codex",
-      })?.cause,
-      "unrecognized",
-    );
-    assert.equal(
-      knownFailureFromProviderStop({ stopReason: "end_turn", errorMessage: "ok" }),
-      undefined,
-    );
-    assert.deepEqual(
-      extractSessionProviderStop([
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            stopReason: "error",
-            errorMessage: "WebSocket error",
-            provider: "xai",
-          },
-        },
-      ]),
+    },
+  );
+  // AC5: later non-error assistant stop closes the trajectory — do not reach
+  // back past it to an older provider error (would wash final no-lawful-output).
+  assert.equal(
+    extractSessionProviderStop([
       {
-        stopReason: "error",
-        errorMessage: "WebSocket error",
-        provider: "xai",
-      },
-    );
-    // AC5: later non-error assistant stop closes the trajectory — do not reach
-    // back past it to an older provider error (would wash final no-lawful-output).
-    assert.equal(
-      extractSessionProviderStop([
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            stopReason: "error",
-            errorMessage: "older provider boom",
-            provider: "openai-codex",
-          },
-        },
-        {
-          type: "message",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "retry" }],
-          },
-        },
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            stopReason: "end_turn",
-            content: [{ type: "text", text: "could not finish" }],
-            provider: "openai-codex",
-          },
-        },
-      ]),
-      undefined,
-    );
-    // Latest assistant error still counts even with earlier non-error turns.
-    assert.deepEqual(
-      extractSessionProviderStop([
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            stopReason: "end_turn",
-            provider: "xai",
-          },
-        },
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            stopReason: "error",
-            errorMessage: "final provider boom",
-            provider: "xai",
-          },
-        },
-      ]),
-      {
-        stopReason: "error",
-        errorMessage: "final provider boom",
-        provider: "xai",
-      },
-    );
-  });
-});
-test("zero-exit session provider-stop retains provider cause (not washed to output)", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    // Counterexample class: Pi leaves typed stopReason=error but runner code=0.
-    // No-lawful path must still read session provider-stop — exit code must not
-    // gate the typed cause channel into generic output.
-    const result = await runAkRole(
-      [
-        "--model",
-        "xai/grok-4:off",
-        "judge",
-        "--project",
-        project,
-        "zero-exit session provider stop",
-      ],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => "run-zero-exit-session-provider-stop-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            [
-              JSON.stringify({
-                type: "message",
-                message: {
-                  role: "user",
-                  content: [{ type: "text", text: "go" }],
-                },
-              }),
-              JSON.stringify({
-                type: "message",
-                message: {
-                  role: "assistant",
-                  stopReason: "error",
-                  errorMessage: "upstream websocket failed",
-                  provider: "xai",
-                  model: "grok-4",
-                  api: "openai-responses",
-                },
-              }),
-            ].join("\n") + "\n",
-            "utf8",
-          );
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-            // deliberately omit knownFailure — production default runner path
-          };
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "older provider boom",
+          provider: "openai-codex",
         },
       },
-    );
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "unrecognized",
-      diagnosticEquals: "upstream websocket failed",
-    });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "unrecognized");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined);
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined);
-      assert.equal(terminal.roleOutcome.diagnostic, "upstream websocket failed");
-    }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause: string;
-      diagnostic: string;
-      identity?: { name?: string; code?: string | number };
-      details?: { errorMessage?: string };
-    };
-    assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(errorBody.diagnostic, "upstream websocket failed");
-    assert.equal(errorBody.identity, undefined);
-    assert.equal(errorBody.details?.errorMessage, "upstream websocket failed");
-    assert.equal(stdout.length, 1);
-    assert.equal(
-      stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
-      1,
-    );
-  });
-});
-test("timedOut with session provider-stop retains provider identity (AC2)", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      [
-        "--model",
-        "xai/grok-4:off",
-        "judge",
-        "--project",
-        project,
-        "timeout co-present with provider stop",
-      ],
       {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => "run-timeout-provider-stop-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            [
-              JSON.stringify({
-                type: "message",
-                message: {
-                  role: "assistant",
-                  stopReason: "error",
-                  errorMessage: "provider hung then killed",
-                  provider: "xai",
-                  model: "grok-4",
-                },
-              }),
-            ].join("\n") + "\n",
-            "utf8",
-          );
-          return {
-            code: null,
-            stderr: "still running\n",
-            timedOut: true,
-            args: [...args],
-          };
+        type: "message",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "retry" }],
         },
       },
-    );
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "unrecognized",
-      diagnosticEquals: "provider hung then killed",
-    });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "unrecognized");
-      assert.equal(terminal.roleOutcome.diagnostic, "provider hung then killed");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined);
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined);
-    }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause: string;
-      diagnostic: string;
-      identity?: { name?: string; code?: string | number };
-      details?: { timedOut?: boolean; errorMessage?: string };
-    };
-    assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(errorBody.diagnostic, "provider hung then killed");
-    assert.equal(errorBody.identity, undefined);
-    assert.equal(errorBody.details?.timedOut, true);
-    assert.equal(errorBody.details?.errorMessage, "provider hung then killed");
-  });
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "end_turn",
+          content: [{ type: "text", text: "could not finish" }],
+          provider: "openai-codex",
+        },
+      },
+    ]),
+    undefined,
+  );
+  // Latest assistant error still counts even with earlier non-error turns.
+  assert.deepEqual(
+    extractSessionProviderStop([
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "end_turn",
+          provider: "xai",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "final provider boom",
+          provider: "xai",
+        },
+      },
+    ]),
+    {
+      stopReason: "error",
+      errorMessage: "final provider boom",
+      provider: "xai",
+    },
+  );
 });
 test("#307 navigator raw: onResponse status reaches durable session + run typed HTTP sink", async () => {
   // S6/S7: navigator durable path is createRecordSession(kind/subject) under ledger home —

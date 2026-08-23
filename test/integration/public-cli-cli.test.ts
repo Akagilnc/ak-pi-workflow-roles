@@ -16,7 +16,8 @@ import {
   resolveInternalRoleEntrypoint,
   runAkRole,
 } from "../../src/public-cli/cli.ts";
-import { PUBLIC_CALLABLE_ROLES, PUBLIC_CONFIGURABLE_SEATS } from "../../src/public-cli/registry.ts";
+import { PUBLIC_CALLABLE_ROLES } from "../../src/public-cli/registry.ts";
+import { loadPublicCliConfig, publicCliConfigPath, resolveEffectiveSeat, type CredentialProviders } from "../../src/public-cli/config.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -58,30 +59,30 @@ test("help document capabilities match typed registry without depending on layou
   assert.equal((names as readonly string[]).includes("navigator"), false);
 });
 
-test("roles lists seven callable seats plus automatic Navigator with effective models", async () => {
+// Config persistence round-trip on the typed seat face (#420 整改：原四条呈现案
+// 并一——TSV 行型正则把列序/措辞变承重结构违 ADR 0052，改咬 loadPublicCliConfig /
+// resolveEffectiveSeat / public-cli.json 字节 / 退出码；进程级可见性契约保留)。
+test("config persistence round-trips across processes on the typed seat face", async () => {
   await withTempHome(async (home) => {
-    const { io, stdout } = captureIo();
-    const result = await runAkRole(["roles"], {
+    // Fresh home: roles exits zero and every configurable seat enumerates from
+    // typed defaults — judge's startup default comes from available credentials.
+    const fresh = await runAkRole(["roles"], {
       packageRoot,
       home,
       credentials: { "openai-codex": true, xai: false },
-      io,
+      io: captureIo().io,
     });
-    assert.equal(result.exitCode, 0);
-    const text = stdout.join("");
-    // Contract: every configurable seat appears once; kind markers present.
-    for (const seat of PUBLIC_CONFIGURABLE_SEATS) {
-      assert.match(text, new RegExp(`^${seat}\\t`, "m"));
-    }
-    assert.match(text, /^navigator\tautomatic\t/m);
-    assert.match(text, /^judge\tcallable\tstartup\topenai-codex\/gpt-5\.6-sol:high$/m);
-    assert.equal(text.includes("auditor"), false);
-  });
-});
+    assert.equal(fresh.exitCode, 0);
+    const codexOnly: CredentialProviders = { "openai-codex": true, xai: false };
+    const judgeDefault = resolveEffectiveSeat(await loadPublicCliConfig(home), "judge", codexOnly);
+    assert.equal(judgeDefault.source, "startup");
+    assert.deepEqual(judgeDefault.selection, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
+    });
 
-test("config set bulk write is visible to a subsequent roles process; local override does not persist", async () => {
-  await withTempHome(async (home) => {
-    const first = captureIo();
+    // Bulk config set is visible to a subsequent process via the config bytes.
     const setResult = await runAkRole(
       [
         "config",
@@ -91,43 +92,104 @@ test("config set bulk write is visible to a subsequent roles process; local over
         "navigator",
         "openai-codex/gpt-5.6-luna:medium",
       ],
-      { packageRoot, home, io: first.io },
+      { packageRoot, home, io: captureIo().io },
     );
     assert.equal(setResult.exitCode, 0);
+    const persisted = await loadPublicCliConfig(home);
+    assert.deepEqual(persisted.seats.judge, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+    });
+    assert.deepEqual(persisted.seats.navigator, {
+      provider: "openai-codex",
+      model: "gpt-5.6-luna",
+      thinking: "medium",
+    });
 
-    const second = captureIo();
     const rolesResult = await runAkRole(["roles"], {
       packageRoot,
       home,
       credentials: { "openai-codex": true, xai: true },
-      io: second.io,
+      io: captureIo().io,
     });
     assert.equal(rolesResult.exitCode, 0);
-    const rolesText = second.stdout.join("");
-    assert.match(rolesText, /^judge\tcallable\tpersistent\txai\/grok-4\.5:high$/m);
-    assert.match(
-      rolesText,
-      /^navigator\tautomatic\tpersistent\topenai-codex\/gpt-5\.6-luna:medium$/m,
-    );
 
+    // Local invocation override wins for the process but never persists.
     const before = await readFile(join(home, ".ak-roles", "public-cli.json"), "utf8");
-    const third = captureIo();
     const overrideResult = await runAkRole(
       ["roles", "--model", "openai-codex/gpt-5.6-sol", "--thinking", "high"],
       {
         packageRoot,
         home,
         credentials: { "openai-codex": true, xai: true },
-        io: third.io,
+        io: captureIo().io,
       },
     );
     assert.equal(overrideResult.exitCode, 0);
-    assert.match(
-      third.stdout.join(""),
-      /^judge\tcallable\tinvocation\topenai-codex\/gpt-5\.6-sol:high$/m,
+    const invocationEffective = resolveEffectiveSeat(
+      await loadPublicCliConfig(home),
+      "judge",
+      { "openai-codex": true, xai: true },
+      { model: "openai-codex/gpt-5.6-sol", thinking: "high" },
     );
+    assert.equal(invocationEffective.source, "invocation");
+    assert.deepEqual(invocationEffective.selection, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
+    });
     const after = await readFile(join(home, ".ak-roles", "public-cli.json"), "utf8");
     assert.equal(after, before);
+
+    // #346: bare --model provider/model without :thinking is legal and records
+    // no invented thinking suffix.
+    const bareRoles = await runAkRole(
+      ["roles", "--model", "kimi-coding/k3-256k"],
+      {
+        packageRoot,
+        home,
+        credentials: { "openai-codex": true, xai: false },
+        io: captureIo().io,
+      },
+    );
+    assert.equal(bareRoles.exitCode, 0);
+    const bareEffective = resolveEffectiveSeat(
+      await loadPublicCliConfig(home),
+      "coder",
+      { "openai-codex": true, xai: false },
+      { model: "kimi-coding/k3-256k" },
+    );
+    assert.equal(bareEffective.source, "invocation");
+    assert.deepEqual(bareEffective.selection, {
+      provider: "kimi-coding",
+      model: "k3-256k",
+    });
+
+    // #384: persistent config set keeps a bare provider/model bare, and an
+    // explicit :thinking suffix stays intact through the same seam.
+    const bareSet = await runAkRole(
+      ["config", "set", "coder", "kimi-coding/k3-256k"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(bareSet.exitCode, 0);
+    const barePersisted = (await loadPublicCliConfig(home)).seats.coder;
+    assert.deepEqual(barePersisted && { provider: barePersisted.provider, model: barePersisted.model }, {
+      provider: "kimi-coding",
+      model: "k3-256k",
+    });
+    assert.equal(barePersisted?.thinking, undefined);
+
+    const thinkingSet = await runAkRole(
+      ["config", "set", "coder", "kimi-coding/k3-256k:high"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(thinkingSet.exitCode, 0);
+    assert.deepEqual((await loadPublicCliConfig(home)).seats.coder, {
+      provider: "kimi-coding",
+      model: "k3-256k",
+      thinking: "high",
+    });
   });
 });
 
@@ -275,61 +337,4 @@ test("unknown command exits nonzero without touching config", async () => {
   });
 });
 
-// #346: --model provider/model without :thinking is legal on the public CLI.
-test("roles accepts bare --model provider/model and records it without invented thinking", async () => {
-  await withTempHome(async (home) => {
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["roles", "--model", "kimi-coding/k3-256k"],
-      {
-        packageRoot,
-        home,
-        credentials: { "openai-codex": true, xai: false },
-        io,
-      },
-    );
-    assert.equal(result.exitCode, 0, stderr.join("") || "roles bare model failed");
-    const text = stdout.join("");
-    assert.match(text, /^coder\tcallable\tinvocation\tkimi-coding\/k3-256k$/m);
-    assert.equal(text.includes("kimi-coding/k3-256k:"), false);
-  });
-});
 
-// #384: persistent config set no longer forces :thinking (owner 2026-08-17).
-test("config set accepts bare provider/model and keeps :thinking suffix", async () => {
-  await withTempHome(async (home) => {
-    const bare = captureIo();
-    const bareResult = await runAkRole(
-      ["config", "set", "coder", "kimi-coding/k3-256k"],
-      { packageRoot, home, io: bare.io },
-    );
-    assert.equal(bareResult.exitCode, 0, bare.stderr.join("") || "config set bare failed");
-    assert.match(bare.stdout.join(""), /^coder\tkimi-coding\/k3-256k\t-$/m);
-
-    const roles = captureIo();
-    const rolesResult = await runAkRole(["roles"], {
-      packageRoot,
-      home,
-      credentials: { "openai-codex": true, xai: false },
-      io: roles.io,
-    });
-    assert.equal(rolesResult.exitCode, 0, roles.stderr.join("") || "roles after bare set failed");
-    assert.match(
-      roles.stdout.join(""),
-      /^coder\tcallable\tpersistent\tkimi-coding\/k3-256k$/m,
-    );
-    assert.equal(roles.stdout.join("").includes("kimi-coding/k3-256k:"), false);
-
-    const withThinking = captureIo();
-    const withThinkingResult = await runAkRole(
-      ["config", "set", "coder", "kimi-coding/k3-256k:high"],
-      { packageRoot, home, io: withThinking.io },
-    );
-    assert.equal(
-      withThinkingResult.exitCode,
-      0,
-      withThinking.stderr.join("") || "config set with thinking failed",
-    );
-    assert.match(withThinking.stdout.join(""), /^coder\tkimi-coding\/k3-256k:high\t-$/m);
-  });
-});

@@ -121,46 +121,25 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
     assert.notEqual(reloaded.snapshot, binding.snapshot);
     assert.equal(binding.snapshot.raw, raw);
     assert.match(reloaded.snapshot.body, /Changed after activation/);
-  });
-});
 
-test("canonical binding proves only the complete native expansion", async () => {
-  await withHome(async (home) => {
-    const raw = [
-      "---",
-      "name: code-review",
-      "description: fixture",
-      "---",
-      "",
-      "# Canonical review",
-      "",
-      "Inspect behavior and standards.",
-    ].join("\n");
-    const path = await writeConfiguredSkill(home, "code-review", raw);
-    const binding = await loadCanonicalSkillBinding("code-review");
-    const request = "Review the requested fixed point.";
-    const content = `References are relative to ${dirname(path)}.\n\n# Canonical review\n\nInspect behavior and standards.`;
-    const exact = `<skill name="code-review" location="${path}">\n${content}\n</skill>\n\n${request}`;
-
-    const evidence = binding.captureExpansion(exact, request);
-    assert.deepEqual(evidence, {
-      name: "code-review",
-      location: path,
-      content,
-      userMessage: request,
-    });
+    // Only the complete native expansion proves capture (absorbed from the
+    // former dedicated expansion-proof test): evidence is frozen, freshly
+    // allocated per capture, and a closed matrix rejects partial/foreign shapes.
+    const evidence = binding.captureExpansion(configuredExpansion, request);
+    assert.ok(evidence);
     assert.ok(Object.isFrozen(evidence));
-    assert.notEqual(binding.captureExpansion(exact, request), evidence);
+    assert.notEqual(binding.captureExpansion(configuredExpansion, request), evidence);
 
+    const exact = resolvedExpansion;
     const rejected = [
-      '<skill name="code-review" location="/copy/SKILL.md">',
+      '<skill name="tdd" location="/copy/SKILL.md">',
       `prose\n${exact}`,
       `${exact}\nassistant prose`,
-      exact.replace('name="code-review"', 'name="tdd"'),
-      exact.replace(path, "/alternate/code-review/SKILL.md"),
-      exact.replace(content, "# Canonical review"),
-      exact.replace(`References are relative to ${dirname(path)}.\n\n`, ""),
-      exact.replace(`References are relative to ${dirname(path)}.`, "References are relative elsewhere."),
+      exact.replace('name="tdd"', 'name="code-review"'),
+      exact.replace(canonicalPath, "/alternate/tdd/SKILL.md"),
+      exact.replace(resolvedContent, body),
+      exact.replace(`References are relative to ${dirname(canonicalPath)}.\n\n`, ""),
+      exact.replace(`References are relative to ${dirname(canonicalPath)}.`, "References are relative elsewhere."),
       exact.replace(request, "Review a different point."),
     ];
     for (const prompt of rejected) {

@@ -29,133 +29,93 @@ import {
 
 // #107 公开入口——Error Artifact 耐久性与 provider 身份家族（#420 整改拆分第二片）。
 
-test("Error Artifact primary collision retains original failure cause with Terminal emission", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "activation then error artifact collision"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-error-artifact-collision-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = join(sessionDir, "..");
-          // Primary Error Artifact path occupied as a directory → writeFile EISDIR.
-          // Settlement must fall back durably and keep the original activation cause.
-          await mkdir(join(runDir, "artifacts", "error.json"), { recursive: true });
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-          return {
-            code: 1,
-            stderr: "Error: original activation boom\n",
-            timedOut: false,
-            args: [...args],
-          };
-        },
+// Error Artifact durable-fallback depth matrix (#420 整改并一)：单碰撞与耗尽三名
+// 同根「发布碰撞 → 耐久回退保原因」，收成一条两深度场景案。
+test("Error Artifact publication collisions retain original cause via durable fallback at both depths", async () => {
+  const rows = [
+    {
+      label: "single primary collision",
+      runId: "run-error-artifact-collision-001",
+      plant: async (runDir: string) => {
+        // Primary Error Artifact path occupied as a directory → writeFile EISDIR.
+        await mkdir(join(runDir, "artifacts", "error.json"), { recursive: true });
       },
-    );
-
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "activation",
-      diagnosticEquals: "original activation boom",
-    });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      // Original controlled failure must not be washed to the publication errno.
-      assert.equal(terminal.roleOutcome.cause, "activation");
-      assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
-      assert.equal(terminal.roleOutcome.diagnostic, "original activation boom");
-    }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause: string;
-      diagnostic: string;
-      publicationIssues?: Array<{ identity?: { code?: string | number } }>;
-    };
-    assert.equal(errorBody.cause, "activation");
-    assert.equal(errorBody.diagnostic, "original activation boom");
-    assert.ok(Array.isArray(errorBody.publicationIssues));
-    assert.ok(
-      errorBody.publicationIssues!.some((issue) => issue.identity?.code === "EISDIR"),
-      "durable fallback must retain the primary publication collision identity",
-    );
-    // One complete Terminal — must not escape to outer raw catch with zero stdout.
-    assert.equal(stdout.length, 1);
-    assert.equal(result.terminal !== undefined, true);
-  });
-});
-test("exhausted fixed Error Artifact names still settle original cause via unique fallback", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "exhaust fixed error artifact names"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-error-artifact-exhausted-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = join(sessionDir, "..");
-          // Occupy every fixed preferred Error Artifact candidate as a directory.
-          // Settlement must not escape to outer catch with only the last EISDIR.
-          await mkdir(join(runDir, "artifacts", "error.json"), { recursive: true });
-          await mkdir(join(runDir, "artifacts", "error.settlement.json"), {
-            recursive: true,
-          });
-          await mkdir(join(runDir, "error.settlement.json"), { recursive: true });
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-          return {
-            code: 1,
-            stderr: "Error: original activation boom\n",
-            timedOut: false,
-            args: [...args],
-          };
-        },
+    },
+    {
+      label: "exhausted fixed names",
+      runId: "run-error-artifact-exhausted-001",
+      plant: async (runDir: string) => {
+        // Occupy every fixed preferred Error Artifact candidate as a directory.
+        // Settlement must not escape to outer catch with only the last EISDIR.
+        await mkdir(join(runDir, "artifacts", "error.json"), { recursive: true });
+        await mkdir(join(runDir, "artifacts", "error.settlement.json"), { recursive: true });
+        await mkdir(join(runDir, "error.settlement.json"), { recursive: true });
       },
-    );
+    },
+  ] as const;
+  for (const row of rows) {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const { io, stdout, stderr } = captureIo();
+      const result = await runAkRole(
+        ["judge", "--project", project, `activation then ${row.label}`],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => row.runId,
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            const runDir = join(sessionDir, "..");
+            await row.plant(runDir);
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+            return {
+              code: 1,
+              stderr: "Error: original activation boom\n",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
 
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "activation",
-      diagnosticEquals: "original activation boom",
+      const { terminal, errorRef } = await assertPublicFailureSettlement({
+        result,
+        stdout,
+        stderr,
+        expectedCause: "activation",
+        diagnosticEquals: "original activation boom",
+      });
+      assert.equal(terminal.roleOutcome.kind, "failure", row.label);
+      if (terminal.roleOutcome.kind === "failure") {
+        // Original controlled failure must not be washed to the publication errno.
+        assert.equal(terminal.roleOutcome.cause, "activation", row.label);
+        assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR", row.label);
+        assert.equal(terminal.roleOutcome.diagnostic, "original activation boom", row.label);
+      }
+      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+        cause: string;
+        diagnostic: string;
+        publicationIssues?: Array<{ identity?: { code?: string | number } }>;
+      };
+      assert.equal(errorBody.cause, "activation", row.label);
+      assert.equal(errorBody.diagnostic, "original activation boom", row.label);
+      assert.ok(Array.isArray(errorBody.publicationIssues), row.label);
+      assert.ok(
+        errorBody.publicationIssues!.some((issue) => issue.identity?.code === "EISDIR"),
+        `${row.label}: durable fallback must retain the primary publication collision identity`,
+      );
+      // One complete Terminal — must not escape to outer raw catch with zero stdout.
+      assert.equal(stdout.length, 1, row.label);
+      assert.equal(result.terminal !== undefined, true, row.label);
     });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "activation");
-      assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
-      assert.equal(terminal.roleOutcome.diagnostic, "original activation boom");
-    }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause: string;
-      diagnostic: string;
-      publicationIssues?: Array<{ identity?: { code?: string | number } }>;
-    };
-    assert.equal(errorBody.cause, "activation");
-    assert.equal(errorBody.diagnostic, "original activation boom");
-    assert.ok(Array.isArray(errorBody.publicationIssues));
-    assert.ok(
-      errorBody.publicationIssues!.some((issue) => issue.identity?.code === "EISDIR"),
-    );
-    assert.equal(stdout.length, 1);
-    assert.equal(result.terminal !== undefined, true);
-  });
+  }
 });
+
 test("malformed session JSONL settles as typed session failure retaining SyntaxError identity", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");

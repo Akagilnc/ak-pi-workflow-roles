@@ -23,7 +23,6 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   isEngineAxisSeat,
   loadPublicCliConfig,
-  resolveEffectiveSeat,
   savePublicCliConfig,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
@@ -72,46 +71,6 @@ function readJudgeInvocation(
   return readRoleInvocation(home, bookKey, runId, "judge");
 }
 
-/** Frozen baseline golden: Judge activation argv + session initial material @ 3aec6621. */
-const BASELINE_GOLDEN_PATH = join(
-  packageRoot,
-  "test/fixtures/engine-axis-baseline/default-path-no-engine.json",
-);
-
-type BaselineGolden = {
-  provenance: {
-    baseline: string;
-    note: string;
-    command: string;
-    generator?: string;
-  };
-  inputs: {
-    judge: AdmittedJudgeInvocation;
-    packageRoot: string;
-  };
-  outputs: {
-    judge: { transportPrompt: string; activationArgv: string[] };
-  };
-};
-
-function loadBaselineGolden(): BaselineGolden {
-  return JSON.parse(readFileSync(BASELINE_GOLDEN_PATH, "utf8")) as BaselineGolden;
-}
-
-/** Byte-stable JSON form used for argv/prompt oracle comparison. */
-function stableBytes(value: unknown): Buffer {
-  return Buffer.from(JSON.stringify(value), "utf8");
-}
-
-function assertBytesEqual(actual: unknown, expected: unknown, label: string): void {
-  const a = stableBytes(actual);
-  const e = stableBytes(expected);
-  assert.equal(
-    a.equals(e),
-    true,
-    `${label} byte mismatch\n actual=${a.toString("utf8")}\n expect=${e.toString("utf8")}`,
-  );
-}
 
 /** With-notes coordinates: name + absolute material path. No prose/layout pins. */
 function assertEngineCoordinatesWithMaterial(
@@ -310,89 +269,36 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     const freeName = await loadPublicCliConfig(home);
     validatePublicCliConfigEngines(freeName, packageRoot);
     assert.equal(freeName.seats.judge?.engine, "ghost-engine");
+
+    // unset-engine clears a persistent judge engine through the public CLI
+    // (absorbed from the former dedicated unset-engine test; golden byte
+    // reassertion deleted with the frozen-baseline oracle).
+    {
+      const cliHome = await mkdtemp(join(tmpdir(), "ak-engine-unset-"));
+      try {
+        await runAkRole(
+          ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
+          { packageRoot, home: cliHome, io: captureIo().io },
+        );
+        await runAkRole(
+          ["config", "set-engine", "judge", "cursor"],
+          { packageRoot, home: cliHome, io: captureIo().io },
+        );
+        assert.equal((await loadPublicCliConfig(cliHome)).seats.judge?.engine, "cursor");
+
+        const unset = await runAkRole(
+          ["config", "unset-engine", "judge"],
+          { packageRoot, home: cliHome, io: captureIo().io },
+        );
+        assert.equal(unset.exitCode, 0);
+        assert.equal((await loadPublicCliConfig(cliHome)).seats.judge?.engine, undefined);
+      } finally {
+        await rm(cliHome, { recursive: true, force: true });
+      }
+    }
   });
 });
-
-test("engine priority: invocation > persistent > unconfigured (judge only)", () => {
-  const config = setPersistentSeatEngine(
-    setPersistentSeatConfig(
-      { seats: {} },
-      "judge",
-      { provider: "xai", model: "grok-4.5", thinking: "high" },
-    ),
-    "judge",
-    "cursor",
-  );
-
-  const fromPersistent = resolveEffectiveSeat(config, "judge", credentials);
-  assert.equal(fromPersistent.engine, "cursor");
-  assert.equal(fromPersistent.engineSource, "persistent");
-  assert.equal(fromPersistent.source, "persistent");
-
-  const fromInvocation = resolveEffectiveSeat(config, "judge", credentials, {
-    engine: "opus",
-  });
-  assert.equal(fromInvocation.engine, "opus");
-  assert.equal(fromInvocation.engineSource, "invocation");
-  // Model still from persistent when only engine is overridden.
-  assert.equal(fromInvocation.source, "persistent");
-  assert.deepEqual(fromInvocation.selection, {
-    provider: "xai",
-    model: "grok-4.5",
-    thinking: "high",
-  });
-
-  const bare = resolveEffectiveSeat({ seats: {} }, "judge", credentials);
-  assert.equal(bare.engine, undefined);
-  assert.equal(bare.engineSource, "unconfigured");
-
-  // Reviewer seat attaches engine the same way (#378).
-  const reviewerConfig = setPersistentSeatEngine(
-    setPersistentSeatConfig(
-      { seats: {} },
-      "reviewer",
-      { provider: "xai", model: "grok-4.5", thinking: "high" },
-    ),
-    "reviewer",
-    "cursor",
-  );
-  const reviewerPersistent = resolveEffectiveSeat(reviewerConfig, "reviewer", credentials);
-  assert.equal(reviewerPersistent.engine, "cursor");
-  assert.equal(reviewerPersistent.engineSource, "persistent");
-  const reviewerInvocation = resolveEffectiveSeat(reviewerConfig, "reviewer", credentials, {
-    engine: "opus",
-  });
-  assert.equal(reviewerInvocation.engine, "opus");
-  assert.equal(reviewerInvocation.engineSource, "invocation");
-
-  // Fixer seat attaches engine the same way (#391).
-  const fixer = resolveEffectiveSeat({ seats: {} }, "fixer", credentials, {
-    engine: "opus",
-  });
-  assert.equal(fixer.engine, "opus");
-  assert.equal(fixer.engineSource, "invocation");
-});
-
 // --- default-path byte oracle (frozen baseline 3aec6621 golden) --------------
-
-test("default path byte oracle: no-engine judge activation argv + transport prompt match frozen baseline", () => {
-  const golden = loadBaselineGolden();
-  assert.equal(golden.provenance.baseline, "3aec6621");
-
-  const { judge } = golden.inputs;
-
-  // Construction-head builders under the same frozen inputs must match golden bytes.
-  assertBytesEqual(
-    buildJudgeTransportPrompt(judge),
-    golden.outputs.judge.transportPrompt,
-    "judge transport prompt",
-  );
-  assertBytesEqual(
-    buildJudgeActivationExtraArgs(judge, {}),
-    golden.outputs.judge.activationArgv,
-    "judge activation argv",
-  );
-});
 
 test("engine material delivery: cursor with-notes coordinates; argv gains no engine flags", () => {
   const judge: AdmittedJudgeInvocation = {
@@ -1186,36 +1092,6 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
     if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
     else process.env[AK_ROLE_ENGINE_ENV] = previous;
   }
-});
-
-test("unset-engine clears persistent judge engine; no-engine path keeps default-path oracle", async () => {
-  await withTempHome(async (home) => {
-    await runAkRole(
-      ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
-      { packageRoot, home, io: captureIo().io },
-    );
-    await runAkRole(
-      ["config", "set-engine", "judge", "cursor"],
-      { packageRoot, home, io: captureIo().io },
-    );
-    assert.equal((await loadPublicCliConfig(home)).seats.judge?.engine, "cursor");
-
-    const unset = await runAkRole(
-      ["config", "unset-engine", "judge"],
-      { packageRoot, home, io: captureIo().io },
-    );
-    assert.equal(unset.exitCode, 0);
-    const after = await loadPublicCliConfig(home);
-    assert.equal(after.seats.judge?.engine, undefined);
-
-    // Transport oracle: judge without engine remains exact frozen default-path bytes.
-    const golden = loadBaselineGolden();
-    assertBytesEqual(
-      buildJudgeTransportPrompt(golden.inputs.judge),
-      golden.outputs.judge.transportPrompt,
-      "judge transport after unset-engine path",
-    );
-  });
 });
 
 // --- #391 E4: table-driven full PUBLIC_CALLABLE_ROLES + negative table ------------

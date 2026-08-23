@@ -418,191 +418,220 @@ test("public CLI multi-turn audit escalate covers three seats; named revises sta
     );
   });
 });
-test("public audit evidence collision returns a typed nonzero Terminal with residual", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "audit evidence collision"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-audit-artifact-collision-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = join(sessionDir, "..");
-          await mkdir(join(runDir, "artifacts", "audit-incomplete.json"), { recursive: true });
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "assistant",
-                content: [{ type: "toolCall", id: "role-1", name: JUDGE_OUTPUT_TOOL_NAME, arguments: { judgeStatus: "converged" } }],
-              },
-            })}\n${JSON.stringify({
-              type: "custom",
-              customType: "ak_compliance_response",
-              data: { response: { content: [{ type: "toolCall", name: JUDGE_AUDIT_TOOL_NAME, arguments: ["retained"] }] } },
-            })}\n${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolCallId: "role-1",
-                toolName: JUDGE_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: { status: "audit-incomplete", observation: { kind: "non-object-arguments", type: "array" }, candidate: ["ignored"] },
-              },
-            })}\n`,
-            "utf8",
-          );
-          return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
-        },
+// Publication errno matrix: lawful session, then publication fails on a hostile
+// destination — the errno identity must survive, never washed into output absence.
+test("public audit evidence publication failures retain typed errno identity", async () => {
+  // EEXIST: destination occupied as a directory; EISDIR: report.json occupied
+  // as a directory. ELOOP stays in the #419 symlink family (unique safety
+  // semantics: victim sentinel byte readback).
+  const rows = [
+    {
+      label: "EEXIST collision on audit evidence",
+      // Destination occupied as a directory ahead of audit-evidence publication.
+      plant: async (runDir: string) => {
+        await mkdir(join(runDir, "artifacts", "audit-incomplete.json"), { recursive: true });
       },
-    );
-    assert.equal(result.exitCode, 1);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 1);
-    assert.ok(result.terminal);
-    const outcome = result.terminal!.roleOutcome;
-    assert.equal(outcome.kind, "failure");
-    if (outcome.kind !== "failure") throw new Error("expected publication failure");
-    assert.equal(outcome.cause, "unrecognized");
-    assert.equal(outcome.decisiveFacts.errorCode, "EEXIST");
-    assert.equal(outcome.auditResidual?.acceptedReceipt, false);
-    assert.deepEqual(outcome.auditResidual?.roleCandidate, { judgeStatus: "converged" });
-    assert.deepEqual(outcome.auditResidual?.audit.candidate, ["retained"]);
-    assert.equal(result.terminal!.artifacts.length, 0);
-  });
-});
-test("zero-exit missing session classifies as session cause via public entry", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "no session bytes"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-session-missing-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          // Admitted session directory exists but holds no transcript.
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-          };
-        },
+      seedSession: async (sessionFile: string) => {
+        await writeFile(
+          sessionFile,
+          `${JSON.stringify({
+            type: "message",
+            message: {
+              role: "assistant",
+              content: [{ type: "toolCall", id: "role-1", name: JUDGE_OUTPUT_TOOL_NAME, arguments: { judgeStatus: "converged" } }],
+            },
+          })}\n${JSON.stringify({
+            type: "custom",
+            customType: "ak_compliance_response",
+            data: { response: { content: [{ type: "toolCall", name: JUDGE_AUDIT_TOOL_NAME, arguments: ["retained"] }] } },
+          })}\n${JSON.stringify({
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolCallId: "role-1",
+              toolName: JUDGE_OUTPUT_TOOL_NAME,
+              isError: false,
+              details: { status: "audit-incomplete", observation: { kind: "non-object-arguments", type: "array" }, candidate: ["ignored"] },
+            },
+          })}\n`,
+          "utf8",
+        );
       },
-    );
-    await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "session",
+      expectedCode: "EEXIST",
+    },
+    {
+      label: "EISDIR on report publication",
+      // Converged session is lawful; report.json as a directory makes writeFile EISDIR.
+      plant: async (runDir: string) => {
+        await mkdir(join(runDir, "artifacts", "report.json"), { recursive: true });
+      },
+      seedSession: async (sessionFile: string) => {
+        await writeFile(
+          sessionFile,
+          `${JSON.stringify({
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolName: JUDGE_OUTPUT_TOOL_NAME,
+              isError: false,
+              details: { judgeStatus: "converged" },
+            },
+          })}\n`,
+          "utf8",
+        );
+      },
+      expectedCode: "EISDIR",
+    },
+  ] as const;
+  for (const row of rows) {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const { io, stdout, stderr } = captureIo();
+      const result = await runAkRole(
+        ["judge", "--project", project, "lawful then publish fails"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-audit-artifact-errno-001",
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            const runDir = join(sessionDir, "..");
+            await row.plant(runDir);
+            await mkdir(sessionDir, { recursive: true });
+            await row.seedSession(join(sessionDir, "session.jsonl"));
+            return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
+            return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
+          },
+        },
+      );
+      assert.equal(result.exitCode, 1, row.label);
+      assert.equal(stdout.length, 1, row.label);
+      assert.equal(stderr.length, 1, row.label);
+      assert.ok(result.terminal, row.label);
+      const outcome = result.terminal!.roleOutcome;
+      assert.equal(outcome.kind, "failure", row.label);
+      if (outcome.kind !== "failure") throw new Error("expected publication failure");
+      // Must not wash publication errno into generic output absence.
+      assert.equal(outcome.cause, "unrecognized", row.label);
+      assert.notEqual(outcome.cause, "output", row.label);
+      assert.equal(outcome.decisiveFacts.errorCode, row.expectedCode, row.label);
+      if (row.expectedCode === "EEXIST") {
+        assert.equal(outcome.auditResidual?.acceptedReceipt, false, row.label);
+        assert.deepEqual(outcome.auditResidual?.roleCandidate, { judgeStatus: "converged" }, row.label);
+        assert.deepEqual(outcome.auditResidual?.audit.candidate, ["retained"], row.label);
+        assert.equal(result.terminal!.artifacts.length, 0, row.label);
+      } else {
+        const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
+        assert.ok(errorRef, row.label);
+        const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
+          cause: string;
+          identity?: { name?: string; code?: string | number };
+          diagnostic: string;
+        };
+        assert.equal(errorBody.cause, "unrecognized", row.label);
+        assert.equal(errorBody.identity?.code, "EISDIR", row.label);
+        assert.ok(errorBody.diagnostic.length > 0, row.label);
+      }
     });
-  });
+  }
 });
-test("zero-exit invalid coder details retain coder typed identity through shared output fallback", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io } = captureIo();
-    const result = await runAkRole(
-      ["coder", "apply", "--project", project, "bogus details"],
-      {
+// Post-admission child failure matrix: admission succeeded, the pi child exits
+// zero without a lawful terminal — one shared shape, three classified causes.
+test("zero-exit post-admission failures classify typed causes via public entry", async () => {
+  const rows = [
+    {
+      label: "missing session → cause=session",
+      argv: (project: string) => ["judge", "--project", project, "no session bytes"],
+      runId: "run-session-missing-001",
+      seedSession: async (_sessionFile: string) => {
+        // Admitted session directory exists but holds no transcript.
+      },
+      expectedCause: "session" as const,
+      expectedRole: undefined,
+    },
+    {
+      label: "invalid coder details → coder identity fallback",
+      argv: (project: string) => ["coder", "apply", "--project", project, "bogus details"],
+      runId: "run-coder-output-bogus-001",
+      seedSession: async (sessionFile: string) => {
+        await writeFile(
+          sessionFile,
+          `${JSON.stringify({
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolName: CODER_OUTPUT_TOOL_NAME,
+              isError: false,
+              details: { status: "not-a-coder-status" },
+            },
+          })}\n`,
+          "utf8",
+        );
+      },
+      expectedCause: "output" as const,
+      expectedRole: "coder" as const,
+    },
+    {
+      label: "invalid judge details → cause=output",
+      argv: (project: string) => ["judge", "--project", project, "bogus details"],
+      runId: "run-output-bogus-001",
+      seedSession: async (sessionFile: string) => {
+        await writeFile(
+          sessionFile,
+          `${JSON.stringify({
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolName: JUDGE_OUTPUT_TOOL_NAME,
+              isError: false,
+              details: { judgeStatus: "bogus" },
+            },
+          })}\n`,
+          "utf8",
+        );
+      },
+      expectedCause: "output" as const,
+      expectedRole: undefined,
+    },
+  ] as const;
+  for (const row of rows) {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const { io, stdout, stderr } = captureIo();
+      const result = await runAkRole(row.argv(project), {
         packageRoot,
         home,
         cwd: project,
-        createRunId: () => "run-coder-output-bogus-001",
+        createRunId: () => row.runId,
         io,
         piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolName: CODER_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: { status: "not-a-coder-status" },
-              },
-            })}\n`,
-            "utf8",
-          );
+          await row.seedSession(join(sessionDir, "session.jsonl"));
           return { code: 0, stderr: "", timedOut: false, args: [...args] };
         },
-      },
-    );
-
-    assert.equal(result.terminal?.roleOutcome.role, "coder");
-    const errorRef = result.terminal?.artifacts.find((artifact) => artifact.kind === "error");
-    assert.ok(errorRef);
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as { role: string };
-    assert.equal(errorBody.role, "coder");
-  });
-});
-test("zero-exit invalid judge details classifies as output cause via public entry", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "bogus details"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-output-bogus-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolName: JUDGE_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: { judgeStatus: "bogus" },
-              },
-            })}\n`,
-            "utf8",
-          );
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-      },
-    );
-    await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "output",
+      });
+      await assertPublicFailureSettlement({
+        result,
+        stdout,
+        stderr,
+        expectedCause: row.expectedCause,
+      });
+      if (row.expectedRole !== undefined) {
+        assert.equal(result.terminal?.roleOutcome.role, row.expectedRole, row.label);
+        const errorRef = result.terminal?.artifacts.find((artifact) => artifact.kind === "error");
+        assert.ok(errorRef, row.label);
+        const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as { role: string };
+        assert.equal(errorBody.role, row.expectedRole, row.label);
+      }
     });
-  });
+  }
 });
 test("production knownFailure channel reaches settlement as provider with typed identity", async () => {
   await withTempHome(async (home) => {

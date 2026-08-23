@@ -5,8 +5,13 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
-import { createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
+import { createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
+import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
+import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
+import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
@@ -332,6 +337,25 @@ test("advice command derives phase token from registry metadata for every packag
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+
+    // Registry output tools are the contract-owned constants: Navigator targets
+    // mirror the packaged registry exactly (absorbed from routes constants test).
+    assert.deepEqual(
+      NAVIGATOR_TARGETS.map(({ role }) => role),
+      PACKAGED_ROLE_REGISTRY.map(({ role }) => role),
+    );
+    assert.deepEqual(
+      PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => ({ role, outputTool })),
+      [
+        { role: "judge", outputTool: JUDGE_OUTPUT_TOOL_NAME },
+        { role: "fixer", outputTool: FIXER_OUTPUT_TOOL_NAME },
+        { role: "coder", outputTool: CODER_OUTPUT_TOOL_NAME },
+        { role: "reviewer", outputTool: REVIEWER_OUTPUT_TOOL_NAME },
+        { role: "collector", outputTool: COLLECTOR_OUTPUT_TOOL },
+        { role: "doctor", outputTool: DOCTOR_OUTPUT_TOOL_NAME },
+        { role: "merger", outputTool: MERGER_OUTPUT_TOOL_NAME },
+      ],
+    );
 
     // Command ownership is registry phases on normalized next — no parallel role-name list.
     // Unmatched next is rebound once then passed through as-is (no next.role legality table).
