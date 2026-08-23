@@ -23,8 +23,8 @@
 - **未完终态(Unfinished)**:两个 worker 角色 apply 阶段的合法交卷状态，语义为**受阻求援**——仅当前置条件缺失或违宪导致本次调用无法完成时可用，回执必须说明理由；缺待拍决策/答复＝前置缺失的一种(2026-08-12 收窄与执法位见 ADR 0050 Amendment / #292)。它是**可续的交棒,不是失败,也不是验收结论**:既不表达基础设施故障(那走非零退出),也不豁免任何验收。规范见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。#72 的 #75/#76 两条施工腿均已装配。
 - **Reviewer(御史台)**:围绕一个固定目标形成独立、可追溯代码评审的角色;不修复、不发布、不路由、不作最终裁决。经 Pi 原生 `/skill:code-review` 使用外部 canonical 方法,回执只表达 `completed` 或 `refused`,不表达批准、合并或流转语义。
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
-- **门下省(Menxia province)**:质量保证省部级席位。当前内部入口在一次省内政中按受审物派给事中或符宝郎；省不是纯分类词，也不是外层编排器。给事中与符宝郎仍是独立角色，自己提交 typed 结果。[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md) 已批准开 PR 前交卷挂钩设计，但当前实现尚未把入口焊到将作监、修内司或大理寺交卷。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)。
-_Avoid_:把「门下省」当作通进司的公开角色名；把已批准的交卷挂钩设计误述为当前已实现行为。
+- **门下省(Menxia province)**:质量保证省部级席位。内部入口在一次省内政中按受审物派给事中或符宝郎；省不是纯分类词，也不是外层编排器。给事中与符宝郎仍是独立角色，自己提交 typed 结果。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 与 [ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。
+_Avoid_:把「门下省」当作通进司的公开角色名。
 - **给事中(Quality-gate officer)**:门下省下的**独立**质检角色（寺监级）。只审**复杂度**与**测试质量**；受审物是将作监/修内司的交卷产出；形态比照审刑院硬闸（封驳＝当场打回重写交卷，不是本局失败）。不改大理寺灵魂。可被门下省在一次省内政里派发，也可被外层调用者单独派发。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)。
 - **符宝郎(Document-fidelity auditor)**:门下省下的**独立**文书核验角色（寺监级）。只审**引语真伪**与**票面对齐**；受审物是大理寺拟判；形态比照审刑院硬闸（封驳＝当场打回重写拟判，不是本局失败）。进单、交卷是拟判的两种场合，不是两个官。可被门下省派发，也可被单独派发。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)。
 - **通进司(Collector)**:门下省下的收证衙门。单次调用内独立观察外部 GitHub PR 材料、可选请求、判定停止观察并提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`。canonical 键仍为 `collector`。
