@@ -22762,9 +22762,10 @@ async function retainDispatchError(admitted, attempt, error) {
   try {
     pointerLease = await acquireRunWriterLease(admitted.runDirectory);
   } catch (error2) {
-    if (error2 instanceof RunWriterLeaseHeldError) return filePath;
+    if (error2 instanceof RunWriterLeaseHeldError) return { file: filePath };
     throw error2;
   }
+  let pointerError;
   try {
     const text = await readFile10(admitted.sessionFile, "utf8");
     let parentId = null;
@@ -22783,10 +22784,12 @@ async function retainDispatchError(admitted, attempt, error) {
     })}
 `;
     await appendFile2(admitted.sessionFile, pointerLine, "utf8");
+  } catch (error2) {
+    pointerError = error2;
   } finally {
     await pointerLease.release();
   }
-  return filePath;
+  return pointerError === void 0 ? { file: filePath } : { file: filePath, pointerError };
 }
 function dispatchExceptionFailureTerminal(input) {
   const history = input.everyAttemptThrew ? "dispatch threw an exception on every attempt" : "the final dispatch threw an exception";
@@ -22854,12 +22857,18 @@ async function runWithAutoResumeLoop(options) {
       lastThrownError = error;
       const attempt = dispatchOrdinal;
       try {
-        const file = await retainDispatchError(options.admitted, attempt, error);
+        const { file, pointerError } = await retainDispatchError(options.admitted, attempt, error);
         retainedErrorFiles.push(file);
         options.io.stderr(
           `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}
 `
         );
+        if (pointerError !== void 0) {
+          options.io.stderr(
+            `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(pointerError)}
+`
+          );
+        }
       } catch (retentionError) {
         options.io.stderr(
           `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}

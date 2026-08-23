@@ -195,7 +195,7 @@ async function retainDispatchError(
   admitted: { sessionFile: string; runDirectory: string },
   attempt: number,
   error: unknown,
-): Promise<string> {
+): Promise<{ file: string; pointerError?: unknown }> {
   const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
   const filePath = join(
     artifactsDir,
@@ -239,9 +239,16 @@ async function retainDispatchError(
   try {
     pointerLease = await acquireRunWriterLease(admitted.runDirectory);
   } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) return filePath;
+    if (error instanceof RunWriterLeaseHeldError) return { file: filePath };
     throw error;
   }
+  // Pointer-stage failure (#426 fix_now #5) is separated from the file write:
+  // once the error file is durably on disk, a failed readFile/JSON.parse/
+  // appendFile must not reject through here and orphan it — the file path is
+  // still handed back to the caller (retainedErrorFiles → terminal
+  // dispatchErrorFiles/artifacts), and the pointer failure is reported
+  // separately by the caller.
+  let pointerError: unknown;
   try {
     const text = await readFile(admitted.sessionFile, "utf8");
     // Session headers are not branch entries (#419 precedent in
@@ -262,10 +269,12 @@ async function retainDispatchError(
       timestamp,
     })}\n`;
     await appendFile(admitted.sessionFile, pointerLine, "utf8");
+  } catch (error) {
+    pointerError = error;
   } finally {
     await pointerLease.release();
   }
-  return filePath;
+  return pointerError === undefined ? { file: filePath } : { file: filePath, pointerError };
 }
 
 /**
@@ -380,13 +389,19 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
       lastThrownError = error;
       const attempt = dispatchOrdinal;
       try {
-        // Track the file immediately after its successful write (#426 review):
-        // a later pointer-append failure must never orphan the retained file.
-        const file = await retainDispatchError(options.admitted, attempt, error);
+        // Track the file as soon as it is durably written (#426 review):
+        // a pointer-stage failure comes back separately (pointerError) and must
+        // never orphan the retained file (#426 fix_now #5).
+        const { file, pointerError } = await retainDispatchError(options.admitted, attempt, error);
         retainedErrorFiles.push(file);
         options.io.stderr(
           `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}\n`,
         );
+        if (pointerError !== undefined) {
+          options.io.stderr(
+            `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(pointerError)}\n`,
+          );
+        }
       } catch (retentionError) {
         options.io.stderr(
           `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}\n`,
