@@ -52,7 +52,10 @@ export type TypedHttp429Observation = {
   readonly provider: V1ResumableProvider;
 };
 
-/** Per single LLM call auto-resume retries (call-local, no persistence). See #416 scope correction 2026-08-22. */
+/** Default for the #422 configurable single-call auto-resume ceiling
+ * (public-cli.json top-level `autoResumeLimit`). No longer the runtime truth
+ * source: runWithAutoResumeLoop receives the effective value once per call.
+ */
 export const AUTO_RESUME_LIMIT = 2 as const;
 
 export type RoleRunRecord = {
