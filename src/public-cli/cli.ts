@@ -740,8 +740,8 @@ export async function runAkRole(
       };
     }
 
-    // Resume reopens an exact Role run after a typed HTTP 429 (#108/#109).
-    // Seat and dispatch follow the durable admitted role (role-correct continuation).
+    // Resume reopens an exact Role run (#416): caller decides; session principal
+    // must still exist. Seat and dispatch follow the durable admitted role.
     if (parsed.command === "resume") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
