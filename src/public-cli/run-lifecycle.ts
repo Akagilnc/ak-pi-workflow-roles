@@ -347,7 +347,7 @@ export type RunWriterLease = {
  * True error identity for diagnostics — name/code/message as-is, never a
  * guessed label (failure-honesty constitution).
  */
-function describeErrorIdentity(error: unknown): string {
+export function describeErrorIdentity(error: unknown): string {
   const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
   const name =
     typeof candidate?.name === "string" && candidate.name !== ""

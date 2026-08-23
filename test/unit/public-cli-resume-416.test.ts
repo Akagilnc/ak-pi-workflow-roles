@@ -164,7 +164,7 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
     let calls=0;const {io,stdout}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir},
+      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
       buildInitialArgs: ()=>["--initial"],
@@ -184,7 +184,7 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
     let calls=0;const {io,stdout}=captureIo();
     const noReceiptFacts={acceptedReceipt:false, rejectedReceipts:[], deliveryTurns:0, sessionCompletion:"completed" as const};
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir},
+      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
       buildInitialArgs: ()=>["--initial"],
