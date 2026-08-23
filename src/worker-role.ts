@@ -123,6 +123,33 @@ export type WorkerRoleHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
 };
 
+async function requireWorkerCompletionMenxiaPass(
+  output: WorkerOutputParameters,
+  signal: AbortSignal | undefined,
+  hostActions: WorkerRoleHostActions,
+  ctx: ExtensionContext,
+  toolCallId: string,
+): Promise<void> {
+  const menxia = await runMenxia({
+    context: ctx,
+    subject: { kind: "worker_completion", material: JSON.stringify(output) },
+    ...(signal === undefined ? {} : { signal }),
+  });
+  if (menxia.status === "transport_failure") {
+    hostActions.failInfrastructure(
+      new Error(`Menxia transport failure at ${menxia.stage}: ${menxia.reason}`),
+      ctx,
+      toolCallId,
+    );
+  }
+  if (menxia.status === "bounce") {
+    throw new Error(`Menxia requires rewrite: ${menxia.findings.join("; ")}`);
+  }
+  if (menxia.status === "incomplete" || menxia.status === "no_receipt") {
+    throw new Error(`Menxia ${menxia.status} at ${menxia.stage}: ${menxia.reason}; ${JSON.stringify(menxia)}`);
+  }
+}
+
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadPacket(path: string): Promise<string>;
@@ -294,27 +321,7 @@ export function createFixerRoleRuntime(
               toolCallId,
             );
             if (output.status === "completed" || output.status === "partially_completed") {
-              const menxia = await runMenxia({
-                context: ctx,
-                subject: {
-                  kind: "worker_completion",
-                  material: JSON.stringify(output),
-                },
-                ...(_signal === undefined ? {} : { signal: _signal }),
-              });
-              if (menxia.status === "transport_failure") {
-                hostActions.failInfrastructure(
-                  new Error(`Menxia transport failure at ${menxia.stage}: ${menxia.reason}`),
-                  ctx,
-                  toolCallId,
-                );
-              }
-              if (menxia.status === "bounce") {
-                throw new Error(`Menxia requires rewrite: ${menxia.findings.join("; ")}`);
-              }
-              if (menxia.status === "incomplete" || menxia.status === "no_receipt") {
-                throw new Error(`Menxia ${menxia.status} at ${menxia.stage}: ${menxia.reason}; ${JSON.stringify(menxia)}`);
-              }
+              await requireWorkerCompletionMenxiaPass(output, _signal, hostActions, ctx, toolCallId);
             }
             // #391: attach sole-built engineLaborFallback when detour fell back to seat labor.
             const acceptedDetails = withEngineLaborFallbackField(
@@ -461,27 +468,7 @@ export function createCoderRoleRuntime(
               toolCallId,
             );
             if (output.status === "completed") {
-              const menxia = await runMenxia({
-                context: ctx,
-                subject: {
-                  kind: "worker_completion",
-                  material: JSON.stringify(output),
-                },
-                ...(_signal === undefined ? {} : { signal: _signal }),
-              });
-              if (menxia.status === "transport_failure") {
-                hostActions.failInfrastructure(
-                  new Error(`Menxia transport failure at ${menxia.stage}: ${menxia.reason}`),
-                  ctx,
-                  toolCallId,
-                );
-              }
-              if (menxia.status === "bounce") {
-                throw new Error(`Menxia requires rewrite: ${menxia.findings.join("; ")}`);
-              }
-              if (menxia.status === "incomplete" || menxia.status === "no_receipt") {
-                throw new Error(`Menxia ${menxia.status} at ${menxia.stage}: ${menxia.reason}; ${JSON.stringify(menxia)}`);
-              }
+              await requireWorkerCompletionMenxiaPass(output, _signal, hostActions, ctx, toolCallId);
             }
             // #391: attach sole-built engineLaborFallback when detour fell back to seat labor.
             const acceptedDetails = withEngineLaborFallbackField(
