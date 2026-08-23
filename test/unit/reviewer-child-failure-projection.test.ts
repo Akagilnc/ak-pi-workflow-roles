@@ -126,7 +126,7 @@ test("#307 SP1: aborted without testimony projects as unknown, not child", async
   }
 });
 
-test("#380: launched-leg detour failure → seat labor report + engineLaborFallback declaration", async () => {
+test("#380/#395: launched-leg detour failure preserves stderr and terminal stdout row", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-detour-fallback-"));
   const binDir = await mkdtemp(join(tmpdir(), "ak-detour-fallback-bin-"));
   const previousEngine = process.env[AK_ROLE_ENGINE_ENV];
@@ -189,6 +189,28 @@ test("#380: launched-leg detour failure → seat labor report + engineLaborFallb
       field.engineLaborFallback.failure.includes(failMarker),
       true,
       `failure must carry engine stderr: ${field.engineLaborFallback.failure}`,
+    );
+
+    clearActivationEngineLaborFallbackLatch();
+    installActivationEngineLaborFallbackLatch(createEngineLaborFallbackLatch());
+    detourIssued = false;
+    const terminalRow = "  terminal API Error: 529 Overloaded  ";
+    await writeFile(
+      enginePath,
+      `#!/bin/sh\nprintf '%s\\n\\n' '${terminalRow}'\nexit 1\n`,
+      "utf8",
+    );
+    faux.setResponses([response, response, response, response]);
+    await executeReviewerChild(
+      cwd,
+      { axis: "standards", prompt: "investigate stdout detour failure" },
+      evidenceChildContext(cwd, faux),
+    );
+    const stdoutField = readActivationEngineLaborFallbackField();
+    assert.ok(stdoutField, "activation latch must hold stdout detour failure");
+    assert.equal(
+      stdoutField.engineLaborFallback.failure,
+      `engine detour exited with code 1: ${terminalRow}`,
     );
   } finally {
     clearActivationEngineLaborFallbackLatch();

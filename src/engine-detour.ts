@@ -148,9 +148,15 @@ export function engineDetourFailureDiagnostic(result: {
 }): string {
   if (result.stderr.trim().length > 0) return result.stderr;
   if (result.stdout.trim() === "") return ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC;
-  const rows = result.stdout.trimEnd().split("\n");
-  const lastRow = rows[rows.length - 1] ?? "";
-  return `engine detour exited with code ${result.code}: ${lastRow.trim()}`;
+  const rows = result.stdout.split("\n");
+  let lastRow = "";
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    if (rows[index]!.trim() !== "") {
+      lastRow = rows[index]!;
+      break;
+    }
+  }
+  return `engine detour exited with code ${result.code}: ${lastRow}`;
 }
 
 /** Non-empty trimmed engine name from process.env, else undefined. */
