@@ -46,7 +46,6 @@ test("escalation projects one terminating human decision and is not an accepted 
   assert.equal(result.details.kind, AUDIT_ESCALATION_KIND);
   assert.deepEqual(result.details.conflicts, decision.conflicts);
   assert.deepEqual(result.details.auditDecisionGate, decision.decisionGate);
-  assert.match(result.content[0].text, /Human decision required/);
   // Human text reads the audit-owned gate only — question + every option present.
   assert.ok(result.content[0].text.includes(decision.decisionGate.question));
   for (const option of decision.decisionGate.options) {

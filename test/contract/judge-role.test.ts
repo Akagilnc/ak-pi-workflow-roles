@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import test from "node:test";
 
 import { fauxAssistantMessage, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { transcriptFromContext as productionTranscriptFromContext } from "../../extensions/role-runtime.ts";
+import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
@@ -43,7 +44,7 @@ import {
   NAVIGATOR_POST_ROLE_GRACE_MS,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
-import { withActivationHome } from "../helpers/pi-test-harness.ts";
+import { packageRoot, withActivationHome } from "../helpers/pi-test-harness.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type Tool = {
@@ -1571,3 +1572,261 @@ test(
     }
   },
 );
+
+// #420 整改移档（自 package-entrypoint-packaged-workers.integration.test.ts）：
+// 纯进程内模块逻辑（Source-tree imports，无任何装包边界），性质属快档。
+// 契约断言一字不减：revise→errored / pass→terminate / escalate 全矩阵在此。
+test("role outputs run nested audits through pass, revise, and escalation", async () => {
+  // Source-tree imports: cold-install boundary is owned by neighbouring install tests;
+  // this carrier owns revise→errored / pass→terminate / escalate per role output tool.
+  const root = packageRoot;
+  const importSrc = (rel: string) => import(resolve(root, rel));
+  const nestedRunDir = await mkdtemp(join(tmpdir(), "ak-nested-audit-run-"));
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  process.env.AK_ROLE_RUN_DIR = nestedRunDir;
+  try {
+  {
+      const [judge, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
+        importSrc("src/judge-auditor.ts"),
+        importSrc("src/reviewer-auditor.ts"),
+        importSrc("src/doctor-auditor.ts"),
+        importSrc("src/judge-role.ts"),
+        importSrc("src/worker-role.ts"),
+        importSrc("src/reviewer-role.ts"),
+        importSrc("src/doctor-role.ts"),
+        importSrc("src/package-contracts/terminating-tools.ts"),
+      ]);
+
+      const patient = {
+        version: 1,
+        identity: { issueNumber: 58, runsPath: ".ak/work/issues/58/runs" },
+        evidence: [],
+        cost: { invocations: { total: 0, sources: [] }, bytes: 0 },
+      };
+      const skill = "canonical review skill";
+      const escalation = {
+        status: "escalate" as const,
+        violations: [],
+        conflicts: ["Soul conflicts with controlling authority"],
+        decisionGate: {
+          question: "Which authority governs this submission?",
+          options: ["Soul", "Controlling authority"],
+        },
+      };
+      const revise = {
+        status: "revise" as const,
+        violations: ["one concrete procedural violation"],
+        conflicts: [],
+        decisionGate: null,
+      };
+      const pass = {
+        status: "pass" as const,
+        violations: [],
+        conflicts: [],
+        decisionGate: null,
+      };
+      const outputs = {
+        judge: { judgeStatus: "converged" },
+        fixer: { status: "completed", report: "done", classResults: [
+          { name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
+          { name: "Audit", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
+        ] },
+        reviewer: { status: "refused", diagnostic: "no accepted dispatch" },
+        doctor: { status: "refused", reason: "missing", missingEvidence: [{ need: "case evidence", targetKeys: ["case"] }] },
+      } as const;
+      const toolNames = {
+        judge: judge.JUDGE_AUDIT_TOOL_NAME,
+        reviewer: reviewer.REVIEWER_AUDIT_TOOL_NAME,
+        doctor: doctor.DOCTOR_AUDIT_TOOL_NAME,
+      } as const;
+      const acceptedNames = {
+        judge: "ak_judge_output",
+        fixer: "ak_fixer_output",
+        reviewer: "ak_reviewer_output",
+        doctor: "ak_doctor_output",
+      } as const;
+
+      const makeHarness = (flags: Record<string, string> = {}) => {
+        const tools = new Map<string, any>();
+        const handlers = new Map<string, any>();
+        const hostTools = ["read", "write", "grep", "find", "bash"];
+        let activeTools: string[] = [...hostTools];
+        const pi = {
+          registerFlag() {},
+          getFlag(name: string) { return flags[name]; },
+          registerTool(tool: any) { tools.set(tool.name, tool); },
+          getAllTools() { return [...hostTools, ...tools.keys()].map((name) => ({ name })); },
+          setActiveTools(names: string[]) { activeTools = [...names]; },
+          getActiveTools() { return activeTools; },
+          on(name: string, handler: any) { handlers.set(name, handler); },
+        };
+        return { pi, tools, handlers, activeTools: () => [...activeTools] };
+      };
+      const outputContext = (name: string, id: string, arguments_: Record<string, unknown> = {}) => {
+        const sessionManager = SessionManager.inMemory();
+        sessionManager.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
+        sessionManager.appendMessage({
+          role: "assistant",
+          content: [{ type: "toolCall", id, name, arguments: arguments_ }],
+          api: "openai-responses",
+          provider: "installed-role",
+          model: "installed-role",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "toolUse",
+          timestamp: Date.now(),
+        });
+        return {
+          sessionManager,
+          model: { api: "openai-responses", provider: "installed-auditor", id: "installed-auditor" },
+          modelRegistry: {
+            async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
+            async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+          },
+        } as any;
+      };
+
+      const createRole = (role: keyof typeof outputs, decision: typeof pass | typeof revise | typeof escalation) => {
+        const harness = role === "fixer"
+          ? makeHarness({ "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" })
+          : role === "reviewer"
+            ? makeHarness({ "ak-review-base": "review-base" })
+            : role === "doctor"
+              ? makeHarness({ "ak-doctor-case": "/case" })
+              : makeHarness();
+        let auditCalls = 0;
+        let selectedDecision = decision;
+        const complete = async (_model: unknown, _request: Context) => {
+          auditCalls += 1;
+          const auditTool = toolNames[role as Exclude<typeof role, "fixer">];
+          return fauxAssistantMessage(fauxToolCall(auditTool, selectedDecision), { stopReason: "toolUse" });
+        };
+// Judge/reviewer/doctor: zero-arg materials (#233). Fixer LLM auditor retired (#242).
+        const auditCompliance = (options: any) => {
+          if (role === "judge") return judge.createPiJudgeAuditor(complete)(options);
+          if (role === "reviewer") return reviewer.createPiReviewerAuditor(complete)(options);
+          return doctor.createPiDoctorAuditor(complete)(options);
+        };
+        let runtime: any;
+        if (role === "judge") {
+          runtime = judgeRole.createJudgeRoleRuntime(harness.pi, {
+            loadSoul: async () => "judge law",
+            auditSoulCompliance: auditCompliance,
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        } else if (role === "fixer") {
+          runtime = workerRole.createFixerRoleRuntime(harness.pi, {
+            loadSoul: async () => "fixer law",
+            loadPacket: async () => "repair packet",
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        } else if (role === "doctor") {
+          runtime = doctorRole.createDoctorRoleRuntime(harness.pi, {
+            loadSoul: async () => "doctor law",
+            loadCase: async () => patient,
+            auditCompliance,
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        } else {
+          const pin = { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "target", refs: {} };
+          runtime = reviewerRole.createReviewerRoleRuntime(harness.pi, {
+            loadSoul: async () => "reviewer law",
+            loadCanonicalSkillBinding: async () => ({
+              name: "code-review",
+              snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: Object.freeze({ text: skill }) },
+              invocation: (request: string) => request,
+              captureExpansion: () => ({ name: "code-review" as const, location: "/skill", content: skill }),
+            }),
+            createPinnedGitReader: async () => ({
+              pin,
+              snapshot: async () => pin,
+              resolve: async () => "base",
+              range: async () => ({ base: "base", target: "target", diffCommand: "git diff base...target", diffSha256: "a".repeat(64), commits: ["target"] }),
+              featureTokens: async () => Object.freeze([]),
+              listSpecCandidatePaths: async () => Object.freeze([]),
+              originRepository: async () => undefined,
+              commitMessagesNewestFirst: async () => Object.freeze([]),
+              readPinnedText: async () => undefined,
+            }),
+            runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
+            auditCompliance,
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        }
+        return {
+          harness,
+          runtime,
+          setDecision(next: typeof pass | typeof revise | typeof escalation) { selectedDecision = next; },
+          get auditCalls() { return auditCalls; },
+        };
+      };
+
+      for (const role of ["judge", "fixer", "reviewer", "doctor"] as const) {
+        const toolName = role === "judge" ? judgeRole.JUDGE_OUTPUT_TOOL_NAME : role === "fixer" ? workerRole.FIXER_OUTPUT_TOOL_NAME : role === "reviewer" ? reviewerRole.REVIEWER_OUTPUT_TOOL_NAME : doctorRole.DOCTOR_OUTPUT_TOOL_NAME;
+        if (role === "fixer") {
+          // #242: Fixer LLM auditor retired — accept on schema validate only, no audit leg.
+          const plain = createRole(role, pass);
+          await plain.runtime.activate();
+          const tool = plain.harness.tools.get(toolName);
+          assert.ok(tool);
+          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-pass`));
+          assert.equal(accepted.terminate, true);
+          assert.deepEqual(accepted.details, outputs[role]);
+          assert.equal(plain.auditCalls, 0);
+          continue;
+        }
+        const retriable = createRole(role, revise);
+        if (role === "reviewer") {
+          await retriable.runtime.activate(undefined, { baseRevision: "review-base" });
+        } else {
+          await retriable.runtime.activate();
+        }
+        if (role === "reviewer") {
+          assert.deepEqual(
+            retriable.harness.activeTools(),
+            ["read", "write", "grep", "find", "bash"],
+            "Reviewer activation must preserve Pi's evidence tool surface",
+          );
+        }
+        const tool = retriable.harness.tools.get(toolName);
+        assert.ok(tool);
+        await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-revise`, outputs[role] as Record<string, unknown>)), /violation|violates its|closed contract/);
+        retriable.setDecision(pass);
+        const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-pass`, outputs[role] as Record<string, unknown>));
+        assert.equal(accepted.terminate, true);
+        if (role === "judge") assert.equal(accepted.details.judgeStatus, outputs[role].judgeStatus);
+        else assert.equal(accepted.details.status, outputs[role].status);
+        if (role !== "reviewer") assert.deepEqual(accepted.details, outputs[role]);
+        assert.equal(retriable.auditCalls, 2, `${role} must audit the rejected submission and its resubmission`);
+
+        const escalated = createRole(role, escalation);
+        if (role === "reviewer") {
+          await escalated.runtime.activate(undefined, { baseRevision: "review-base" });
+        } else {
+          await escalated.runtime.activate();
+        }
+        const escalationTool = escalated.harness.tools.get(tool.name);
+        const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-escalate`, outputs[role] as Record<string, unknown>));
+        assert.equal(result.terminate, true);
+        // Escalation face carries audit kind/conflicts/gate AND the seat's
+        // already-delivered fields (ADR 0055). Old "exactly three keys" deepEqual
+        // encoded the destruction this ticket forbids.
+        assert.equal(result.details.kind, "audit_escalation");
+        assert.deepEqual(result.details.conflicts, escalation.conflicts);
+        assert.deepEqual(result.details.auditDecisionGate, escalation.decisionGate);
+        for (const [key, value] of Object.entries(outputs[role])) {
+          assert.deepEqual(
+            (result.details as Record<string, unknown>)[key],
+            value,
+            `${role} delivered field ${key} must ride the escalate face`,
+          );
+        }
+        assert.equal(isAuditEscalationResult(result.details), true);
+        assert.throws(
+          () => terminating.validateAcceptedDetails(acceptedNames[role], result.details),
+          (error: unknown) => error instanceof Error && error.name === "AcceptedDetailsContractError",
+        );
+        assert.equal(escalated.auditCalls, 1);
+      }
+  }
+  } finally {
+    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+    await rm(nestedRunDir, { recursive: true, force: true });
+  }
+});

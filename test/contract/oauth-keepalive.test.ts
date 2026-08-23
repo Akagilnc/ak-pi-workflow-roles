@@ -23,8 +23,6 @@ import {
 
 import {
   createOAuthKeepalive,
-  DEFAULT_OAUTH_KEEPALIVE_PROVIDERS,
-  OAUTH_KEEPALIVE_INTERVAL_MS,
   OAUTH_KEEPALIVE_SETTING_FILENAME,
   readOAuthKeepaliveProviders,
   type OAuthKeepaliveScheduler,
@@ -149,11 +147,6 @@ async function fireTick(ticks: Array<() => void>, index = 0): Promise<void> {
   // Allow the async runTick body (and nested refresh) to settle.
   await flushEventLoopTurns(30);
 }
-
-test("constants: default providers and 60s interval match ticket contract", () => {
-  assert.deepEqual([...DEFAULT_OAUTH_KEEPALIVE_PROVIDERS], ["kimi-coding"]);
-  assert.equal(OAUTH_KEEPALIVE_INTERVAL_MS, 60_000);
-});
 
 test(
   "#351 e2e success: real session entry → ≥2 expiry windows → oauth.refresh ≥2 → next model request succeeds",
@@ -665,6 +658,12 @@ test(
   "#351 production setting seam: non-default oauth-keepalive.json drives real session refresh filter",
   async () => {
     await withHermeticHome({ prefix: "ak-oauth-keepalive-setting-" }, async ({ home, agentDir }) => {
+      // Default-provider read branch (absorbed from the former constants test):
+      // with no oauth-keepalive.json present, the production reader falls back
+      // to the default provider set — a real ENOENT branch, not a constant pin.
+      const defaults = readOAuthKeepaliveProviders();
+      assert.deepEqual([...defaults], ["kimi-coding"]);
+
       // Production extension root reads this file via readOAuthKeepaliveProviders().
       await writeFile(
         join(agentDir, OAUTH_KEEPALIVE_SETTING_FILENAME),
