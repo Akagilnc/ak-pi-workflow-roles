@@ -33,8 +33,9 @@ themselves. Stuffing large bodies into argv/prompt is the verified cause of
 
 ## Failure handling
 
-If an attempted detour fails because of spawn, auth, quota, model-id,
-stream-stall, connection-drop, or another engine-process failure, continue the
-labor in the seat and submit through the existing typed path. The resulting
-typed receipt carries the attached `engineLaborFallback` declaration. Do not
-silently swap to another engine id.
+Once an engine is selected, the detour is mandatory: you MUST actually invoke
+that engine CLI. On any spawn, auth, quota, model-id, stream-stall,
+connection-drop, or other engine-process failure, return the typed failure and
+STOP — the run fails. In-seat labor after a detour failure is FORBIDDEN, and so
+is skipping the detour to work in-seat. Zero invocations is a violation, not a
+fallback. Do not silently swap to another engine id.
