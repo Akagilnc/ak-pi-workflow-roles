@@ -194,7 +194,14 @@ function withPassingMenxia(context: ExtensionContext): ExtensionContext {
   });
 }
 
-function workerCompletionMenxiaTracer(incompleteReason: string, passingRuns = 1) {
+function workerCompletionMenxiaHarness(options: {
+  execute: (id: string, output: unknown, context: ExtensionContext) => Promise<unknown>;
+  toolName: string;
+  output: unknown;
+  incompleteReason: string;
+  passingRuns?: number;
+}) {
+  const { execute, toolName, output, incompleteReason, passingRuns = 1 } = options;
   const faux = fauxProvider({ provider: "worker-menxia", api: "worker-menxia" });
   const model = faux.getModel();
   const responses: Array<AssistantMessage | Error> = [
@@ -235,6 +242,23 @@ function workerCompletionMenxiaTracer(incompleteReason: string, passingRuns = 1)
         },
         thinkingLevel: "off",
       });
+    },
+    async assertRejectSequence() {
+      const reject = async (id: string, check: (error: Error) => void) => {
+        await assert.rejects(execute(id, output, this.context(id, toolName)), (error: unknown) => {
+          assert.ok(error instanceof Error);
+          check(error);
+          return true;
+        });
+      };
+      await reject("transport", (error) => assert.equal(error.message, "Menxia transport failure at menxia: Error: provider disconnected"));
+      await reject("incomplete", (error) => assert.equal(error.message, `Menxia incomplete at menxia: ${incompleteReason}; {"status":"incomplete","stage":"menxia","reason":"${incompleteReason}"}`));
+      await reject("no-receipt", (error) => {
+        assert.match(error.message, /^Menxia no_receipt at menxia: Menxia settled without an accepted receipt;/);
+        assert.match(error.message, /"acceptedReceipt":false/);
+        assert.match(error.message, /"sessionCompletion":"settled-without-accepted-receipt"/);
+      });
+      await reject("bounce", (error) => assert.equal(error.message, "Menxia requires rewrite: add a focused regression"));
     },
     get providerRequests() { return providerRequests; },
     get remainingResponses() { return responses.length; },
@@ -1027,7 +1051,6 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
 
 test("coder completed submissions traverse the real Menxia provider gate until pass", async () => {
   const request = "Apply the approved plan.";
-  const tracer = workerCompletionMenxiaTracer("missing completion evidence");
   const harness = extensionHarness(undefined, {
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
@@ -1050,27 +1073,14 @@ test("coder completed submissions traverse the real Menxia provider gate until p
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const completed = { status: "completed", report: "TDD and verification evidence" };
-  const submissionContext = (id: string) => tracer.context(id, CODER_OUTPUT_TOOL_NAME);
-  const reject = async (id: string, check: (error: Error) => void) => {
-    await assert.rejects(
-      tool.execute(id, completed, undefined, undefined, submissionContext(id)),
-      (error: unknown) => {
-        assert.ok(error instanceof Error);
-        check(error);
-        return true;
-      },
-    );
-  };
-
-  await reject("transport", (error) => assert.equal(error.message, "Menxia transport failure at menxia: Error: provider disconnected"));
-  await reject("incomplete", (error) => assert.equal(error.message, "Menxia incomplete at menxia: missing completion evidence; {\"status\":\"incomplete\",\"stage\":\"menxia\",\"reason\":\"missing completion evidence\"}"));
-  await reject("no-receipt", (error) => {
-    assert.match(error.message, /^Menxia no_receipt at menxia: Menxia settled without an accepted receipt;/);
-    assert.match(error.message, /\"acceptedReceipt\":false/);
-    assert.match(error.message, /\"sessionCompletion\":\"settled-without-accepted-receipt\"/);
+  const tracer = workerCompletionMenxiaHarness({
+    execute: (id, output, context) => tool.execute(id, output as typeof completed, undefined, undefined, context),
+    toolName: CODER_OUTPUT_TOOL_NAME,
+    output: completed,
+    incompleteReason: "missing completion evidence",
   });
-  await reject("bounced", (error) => assert.equal(error.message, "Menxia requires rewrite: add a focused regression"));
-  const accepted = await tool.execute("accepted", completed, undefined, undefined, submissionContext("accepted"));
+  await tracer.assertRejectSequence();
+  const accepted = await tool.execute("accepted", completed, undefined, undefined, tracer.context("accepted", CODER_OUTPUT_TOOL_NAME));
 
   assert.equal(accepted.terminate, true);
   assert.equal(tracer.providerRequests, 9);
@@ -1078,7 +1088,6 @@ test("coder completed submissions traverse the real Menxia provider gate until p
 });
 
 test("fixer completed-side submissions traverse the real Menxia provider gate while non-completions skip it", async () => {
-  const tracer = workerCompletionMenxiaTracer("missing repair evidence", 2);
   const start = async (phase: "plan" | "apply") => {
     const harness = extensionHarness(undefined, {
       "ak-fix-packet": "/materials/fix.md",
@@ -1092,27 +1101,21 @@ test("fixer completed-side submissions traverse the real Menxia provider gate wh
     await runtime.activate();
     return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
   };
-  const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
   const completed = {
     status: "completed" as const,
     report: "repair complete",
     classResults: [{ name: "Gate", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }],
   };
   const completedTool = await start("apply");
-  const reject = async (id: string, check: (error: Error) => void) => {
-    await assert.rejects(completedTool.execute(id, completed, undefined, undefined, submissionContext(id)), (error: unknown) => {
-      assert.ok(error instanceof Error);
-      check(error);
-      return true;
-    });
-  };
-  await reject("transport", (error) => assert.equal(error.message, "Menxia transport failure at menxia: Error: provider disconnected"));
-  await reject("incomplete", (error) => assert.equal(error.message, "Menxia incomplete at menxia: missing repair evidence; {\"status\":\"incomplete\",\"stage\":\"menxia\",\"reason\":\"missing repair evidence\"}"));
-  await reject("no-receipt", (error) => {
-    assert.match(error.message, /^Menxia no_receipt at menxia: Menxia settled without an accepted receipt;/);
-    assert.match(error.message, /\"acceptedReceipt\":false/);
+  const tracer = workerCompletionMenxiaHarness({
+    execute: (id, output, context) => completedTool.execute(id, output as typeof completed, undefined, undefined, context),
+    toolName: FIXER_OUTPUT_TOOL_NAME,
+    output: completed,
+    incompleteReason: "missing repair evidence",
+    passingRuns: 2,
   });
-  await reject("bounce", (error) => assert.equal(error.message, "Menxia requires rewrite: add a focused regression"));
+  const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
+  await tracer.assertRejectSequence();
   assert.equal((await completedTool.execute("pass", completed, undefined, undefined, submissionContext("pass"))).terminate, true);
 
   const partial = {
