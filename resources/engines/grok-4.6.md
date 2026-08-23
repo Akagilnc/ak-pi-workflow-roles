@@ -8,6 +8,11 @@ existing in-session path.
 
 Material is data for the model, not a code contract. Do not invent package flags.
 
+Dispatch rules — what may go into the labor prompt, process shape, and failure
+handling — are shared across all engines in `resources/engine-dispatch.md`;
+read those bytes too and follow them. This note only covers this engine's CLI
+technical parameters.
+
 ## Invocation examples (local Grok CLI)
 
 The machine entrypoint is `grok` (NOT `grok-4.6` — the engine name is the model
@@ -37,16 +42,7 @@ grok --prompt-file /path/to/labor-prompt.md -m grok-4.6 --always-approve --outpu
   alias `--effort`; a low-tier run completed correctly). If the mandate names
   no tier, use the seat's ordered thinking tier; never omit the flag — the
   CLI default is not guaranteed to match the ordered tier.
-- **Labor prompt must be seat-authored**: write the complete task brief into a
-  temp file and pass it via `--prompt-file`. Attachments/receipt JSON are
-  evidence material, not the prompt body — feeding them directly is rejected
-  by the CLI as non-ACP JSON (`JSON object must have a type field`;
-  live-verified 2026-08-21).
-
-## Failure handling
-
-The detour is mandatory: you MUST actually invoke the CLI. On any spawn,
-quota, or model failure, return the typed failure and STOP — the run fails.
-In-seat labor after a detour failure is FORBIDDEN, and so is skipping the
-detour to work in-seat. Zero invocations is a violation, not a fallback.
-Do not silently swap to another engine id.
+- The labor prompt file carries task + paths only (see
+  `resources/engine-dispatch.md`). Feeding raw attachment/receipt JSON
+  directly as the prompt file is rejected by the CLI as non-ACP JSON
+  (`JSON object must have a type field`; live-verified 2026-08-21).

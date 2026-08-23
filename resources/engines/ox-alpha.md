@@ -9,6 +9,11 @@ existing in-session path.
 
 Material is data for the model, not a code contract. Do not invent package flags.
 
+Dispatch rules — what may go into the labor prompt, process shape, and failure
+handling — are shared across all engines in `resources/engine-dispatch.md`;
+read those bytes too and follow them. This note only covers this engine's CLI
+/ API technical parameters.
+
 ## Identity and warnings
 
 - Model id: `stealth/ox-alpha` on OpenRouter (listed 2026-08-20). Anonymous
@@ -39,12 +44,6 @@ Smoke: prompt `只回两个字：收到` → `收到` (agentic leg usable).
 
 - `-m openrouter/stealth/ox-alpha` selects the model; confirm the current id
   with `opencode models` before long labor — stealth ids can vanish.
-- **Labor prompt must be seat-authored**: write the complete task brief
-  (goal, constraints, required output shape, and any evidence the seat has
-  already distilled) into the prompt argument or a temp file the seat reads
-  in. Attachments/receipt JSON are evidence material, not the prompt body —
-  feed a self-contained brief the way the grok-4.6 note requires a
-  seat-authored `--prompt-file`.
 - Effort tier: align with the labor mandate's ordered tier (`low` / `medium` /
   `high`). Live wall-times on the same 148KB grading payload:
   low 73s / medium 59s / high 228s — all produced correct three-state verdicts.
@@ -66,13 +65,5 @@ extra flags beyond these verified constraints:
   `delta.reasoning` is the thinking stream, not the answer — do not treat it
   as the labor result.
 - Large payloads (>140KB) are connection-unstable (three consecutive drops
-  recorded). On drop: shrink the brief or retry; do not keep hammering the
+  recorded). On drop: shrink the payload or retry; do not keep hammering the
   same oversized body.
-
-## Failure handling
-
-On any spawn, auth, model-id, stream-stall, or connection-drop failure, return
-the typed failure and STOP — the run fails. In-seat labor after a detour
-failure is FORBIDDEN, and so is skipping the detour to work in-seat. Zero
-invocations is a violation, not a fallback. Do not silently swap to another
-engine id.
