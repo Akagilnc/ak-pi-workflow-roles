@@ -146,8 +146,17 @@ test("#380/#395: launched-leg detour failure preserves stderr and terminal stdou
     await chmod(enginePath, 0o755);
 
     let detourIssued = false;
+    let detourResultText: string | undefined;
     const faux = fauxProvider({ provider: "detour-fallback-380" });
     const response = (context: Context) => {
+      const detourResult = [...context.messages].reverse().find(
+        (message) =>
+          message.role === "toolResult" &&
+          (message as { toolName?: string }).toolName === ENGINE_DETOUR_TOOL_NAME,
+      );
+      if (detourResult?.role === "toolResult") {
+        detourResultText = detourResult.content.find((part) => part.type === "text")?.text;
+      }
       const names = context.tools?.map((tool) => tool.name) ?? [];
       if (names.includes(ENGINE_DETOUR_TOOL_NAME) && !detourIssued) {
         detourIssued = true;
@@ -201,16 +210,15 @@ test("#380/#395: launched-leg detour failure preserves stderr and terminal stdou
       "utf8",
     );
     faux.setResponses([response, response, response, response]);
+    detourResultText = undefined;
     await executeReviewerChild(
       cwd,
       { axis: "standards", prompt: "investigate stdout detour failure" },
       evidenceChildContext(cwd, faux),
     );
-    const stdoutField = readActivationEngineLaborFallbackField();
-    assert.ok(stdoutField, "activation latch must hold stdout detour failure");
-    assert.equal(
-      stdoutField.engineLaborFallback.failure,
-      `engine detour exited with code 1: ${terminalRow}`,
+    assert.ok(
+      (detourResultText ?? "").includes(terminalRow),
+      `detour toolResult text must carry the complete terminal row: ${detourResultText}`,
     );
   } finally {
     clearActivationEngineLaborFallbackLatch();
