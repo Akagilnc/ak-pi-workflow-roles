@@ -49,7 +49,7 @@ test("#422 loop honors injected effective limit once (N=4 → 5 dispatches, coun
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
     let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir},
+      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:4,
       buildInitialArgs: ()=>["--initial"],
@@ -68,7 +68,7 @@ test("#422 loop with injected limit 0 disables auto resume (single dispatch)", a
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
     let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir},
+      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
       buildInitialArgs: ()=>["--initial"],
@@ -228,7 +228,7 @@ test("#422 loop entry rejects NaN/negative/fractional/Infinity limits loudly bef
       let calls=0;const {io}=captureIo();
       await assert.rejects(
         ()=>runWithAutoResumeLoop({
-          admitted:{sessionFile,runDirectory:runDir},
+          admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
           io,
           autoResumeLimit:bad,
           buildInitialArgs: ()=>["--initial"],

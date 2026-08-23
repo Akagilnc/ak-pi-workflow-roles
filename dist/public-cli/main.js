@@ -22627,6 +22627,10 @@ var init_settlement = __esm({
 });
 
 // src/public-cli/auto-resume.ts
+import { constants as fsConstants2 } from "node:fs";
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { appendFile as appendFile2, mkdir as mkdir4, open as open3, readFile as readFile10 } from "node:fs/promises";
+import { join as join12 } from "node:path";
 function presentTerminal(terminal, io) {
   if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
     presentFailureTerminal(terminal, io);
@@ -22634,12 +22638,128 @@ function presentTerminal(terminal, io) {
     io.stdout(formatTerminalResult(terminal));
   }
 }
+function runArtifactsDirectory(runDirectory) {
+  return join12(runDirectory, "artifacts");
+}
+function serializeThrownValue(value, depth = 0) {
+  if (value instanceof Error) {
+    const transferred = {};
+    for (const key of Object.getOwnPropertyNames(value)) {
+      transferred[key] = value[key];
+    }
+    return {
+      errorKind: "Error",
+      constructorName: value.constructor?.name,
+      ...transferred,
+      ...value.cause === void 0 ? {} : {
+        causeChain: depth >= 10 ? "[cause-chain-depth-limit]" : serializeThrownValue(value.cause, depth + 1)
+      }
+    };
+  }
+  return value;
+}
+function jsonSafeReplacer() {
+  const seen = /* @__PURE__ */ new WeakSet();
+  return (_key, value) => {
+    if (typeof value === "bigint") return `${value}n`;
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) return "[circular]";
+      seen.add(value);
+    }
+    return value;
+  };
+}
+async function retainDispatchError(admitted, attempt, error) {
+  const artifactsDir = runArtifactsDirectory(admitted.runDirectory);
+  await mkdir4(artifactsDir, { recursive: true });
+  const filePath = join12(
+    artifactsDir,
+    `dispatch-error-attempt-${attempt}-${randomUUID2()}.json`
+  );
+  const payload = `${JSON.stringify(
+    {
+      version: 1,
+      attempt,
+      recordedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      error: serializeThrownValue(error)
+    },
+    jsonSafeReplacer(),
+    2
+  )}
+`;
+  const noFollowFlag = typeof fsConstants2.O_NOFOLLOW === "number" ? fsConstants2.O_NOFOLLOW : 0;
+  const handle = await open3(
+    filePath,
+    fsConstants2.O_WRONLY | fsConstants2.O_CREAT | fsConstants2.O_EXCL | noFollowFlag,
+    384
+  );
+  try {
+    await handle.writeFile(payload, "utf8");
+  } finally {
+    await handle.close();
+  }
+  const text = await readFile10(admitted.sessionFile, "utf8");
+  let parentId = null;
+  for (const line2 of text.trim().split("\n").filter(Boolean)) {
+    const entry = JSON.parse(line2);
+    if (typeof entry.id === "string") parentId = entry.id;
+  }
+  const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
+  const pointerLine = `${JSON.stringify({
+    type: "custom",
+    customType: DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
+    data: { version: 1, attempt, file: filePath, recordedAt: timestamp2 },
+    id: randomUUID2(),
+    parentId,
+    timestamp: timestamp2
+  })}
+`;
+  await appendFile2(admitted.sessionFile, pointerLine, "utf8");
+  return filePath;
+}
+function dispatchExceptionFailureTerminal(input) {
+  const diagnostic = `dispatch threw an exception on every attempt (${input.endReason}; resumes used ${input.autoResumeAttempts}); last cause: ${describeErrorIdentity(input.causeError)}`;
+  const decisiveFacts = {
+    cause: "unrecognized",
+    diagnostic,
+    resumesUsed: input.autoResumeAttempts,
+    dispatchErrorFiles: [...input.errorFiles]
+  };
+  if (input.errorFiles.length > 0) {
+    decisiveFacts.lastDispatchErrorFile = input.errorFiles[input.errorFiles.length - 1];
+  }
+  const candidate = input.causeError;
+  if (typeof candidate?.name === "string") decisiveFacts.errorName = candidate.name;
+  if (typeof candidate?.code === "string" || typeof candidate?.code === "number") {
+    decisiveFacts.errorCode = candidate.code;
+  }
+  const artifacts = input.errorFiles.map((path) => ({
+    kind: "error",
+    path
+  }));
+  return {
+    roleOutcome: {
+      kind: "failure",
+      role: input.role,
+      cause: "unrecognized",
+      diagnostic,
+      decisiveFacts
+    },
+    navigator: { disposition: "no-advice" },
+    artifacts,
+    runId: input.runId,
+    autoResumeCount: input.autoResumeAttempts
+  };
+}
 async function runWithAutoResumeLoop(options) {
   const limit = options.autoResumeLimit ?? AUTO_RESUME_LIMIT;
   parseAutoResumeLimit(limit);
   let autoResumeAttempts = 0;
   let isFirst = true;
   let currentExtraArgs = options.buildInitialArgs();
+  let dispatchOrdinal = 0;
+  let lastThrownError;
+  const retainedErrorFiles = [];
   while (true) {
     let lease;
     try {
@@ -22654,32 +22774,79 @@ async function runWithAutoResumeLoop(options) {
       }
       throw error;
     }
-    const result2 = await options.dispatch(currentExtraArgs, lease, isFirst, dummyIo);
-    const terminal = result2.terminal;
-    if (terminal !== void 0) {
-      terminal.autoResumeCount = autoResumeAttempts;
-    }
-    const lawful = terminal !== void 0 && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
-    if (lawful) {
-      if (terminal !== void 0) {
-        options.io.stdout(formatTerminalResult(terminal));
+    let result2;
+    try {
+      result2 = await options.dispatch(currentExtraArgs, lease, isFirst, dummyIo);
+    } catch (error) {
+      lastThrownError = error;
+      const attempt = dispatchOrdinal;
+      try {
+        const file = await retainDispatchError(options.admitted, attempt, error);
+        retainedErrorFiles.push(file);
+        options.io.stderr(
+          `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}`
+        );
+      } catch (retentionError) {
+        options.io.stderr(
+          `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}`
+        );
       }
-      return result2;
     }
-    if (autoResumeAttempts >= limit) {
-      if (terminal !== void 0) presentTerminal(terminal, options.io);
-      return result2;
-    }
-    if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
-      if (terminal !== void 0) presentTerminal(terminal, options.io);
-      return result2;
+    dispatchOrdinal += 1;
+    if (result2 !== void 0) {
+      const terminal = result2.terminal;
+      if (terminal !== void 0) {
+        terminal.autoResumeCount = autoResumeAttempts;
+      }
+      const lawful = terminal !== void 0 && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
+      if (lawful) {
+        if (terminal !== void 0) {
+          options.io.stdout(formatTerminalResult(terminal));
+        }
+        return result2;
+      }
+      if (autoResumeAttempts >= limit) {
+        if (terminal !== void 0) presentTerminal(terminal, options.io);
+        return result2;
+      }
+      if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
+        if (terminal !== void 0) presentTerminal(terminal, options.io);
+        return result2;
+      }
+    } else {
+      if (autoResumeAttempts >= limit) {
+        return {
+          exitCode: 1,
+          terminal: dispatchExceptionFailureTerminal({
+            role: options.admitted.role,
+            runId: options.admitted.runId,
+            causeError: lastThrownError,
+            errorFiles: retainedErrorFiles,
+            autoResumeAttempts,
+            endReason: "auto-resume budget exhausted"
+          })
+        };
+      }
+      if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
+        return {
+          exitCode: 1,
+          terminal: dispatchExceptionFailureTerminal({
+            role: options.admitted.role,
+            runId: options.admitted.runId,
+            causeError: lastThrownError,
+            errorFiles: retainedErrorFiles,
+            autoResumeAttempts,
+            endReason: "session principal unavailable before further resume"
+          })
+        };
+      }
     }
     autoResumeAttempts++;
     currentExtraArgs = options.buildResumeArgs();
     isFirst = false;
   }
 }
-var dummyIo;
+var dummyIo, DISPATCH_ERROR_RETENTION_ENTRY_TYPE;
 var init_auto_resume = __esm({
   "src/public-cli/auto-resume.ts"() {
     "use strict";
@@ -22690,12 +22857,13 @@ var init_auto_resume = __esm({
     dummyIo = { stdout: () => {
     }, stderr: () => {
     } };
+    DISPATCH_ERROR_RETENTION_ENTRY_TYPE = "ak_run_dispatch_error_retention";
   }
 });
 
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 function buildCoderActivationExtraArgs(admitted, options) {
   const prompt = buildCoderTransportPrompt(
     admitted,
@@ -22857,7 +23025,7 @@ async function dispatchAdmittedCoder(input) {
     }
     try {
       await writeFile6(
-        join12(admitted.runDirectory, "stderr.log"),
+        join13(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -23088,7 +23256,7 @@ var init_coder_run = __esm({
 
 // src/public-cli/collector-run.ts
 import { writeFile as writeFile7 } from "node:fs/promises";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 function buildCollectorActivationExtraArgs(admitted, options = {}) {
   const prompt = buildCollectorTransportPrompt(
     admitted,
@@ -23193,7 +23361,7 @@ async function dispatchAdmittedCollector(input) {
     }
     try {
       await writeFile7(
-        join13(admitted.runDirectory, "stderr.log"),
+        join14(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -23324,7 +23492,7 @@ var init_collector_run = __esm({
 
 // src/public-cli/doctor-run.ts
 import { writeFile as writeFile8 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 function buildDoctorActivationExtraArgs(admitted, options = {}) {
   const prompt = buildDoctorTransportPrompt(
     admitted,
@@ -23422,7 +23590,7 @@ async function dispatchAdmittedDoctor(input) {
     }
     try {
       await writeFile8(
-        join14(admitted.runDirectory, "stderr.log"),
+        join15(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -23556,7 +23724,7 @@ var init_doctor_run = __esm({
 
 // src/public-cli/fixer-run.ts
 import { writeFile as writeFile9 } from "node:fs/promises";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 function buildFixerActivationExtraArgs(admitted, options) {
   const prompt = buildFixerTransportPrompt(
     admitted,
@@ -23727,7 +23895,7 @@ async function dispatchAdmittedFixer(input) {
     }
     try {
       await writeFile9(
-        join15(admitted.runDirectory, "stderr.log"),
+        join16(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -23965,7 +24133,7 @@ var init_fixer_run = __esm({
 
 // src/public-cli/judge-run.ts
 import { writeFile as writeFile10 } from "node:fs/promises";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 function buildJudgeActivationExtraArgs(admitted, options = {}) {
   const prompt = buildJudgeTransportPrompt(
     admitted,
@@ -24113,7 +24281,7 @@ async function dispatchAdmittedJudge(input) {
     }
     try {
       await writeFile10(
-        join16(admitted.runDirectory, "stderr.log"),
+        join17(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -24311,8 +24479,8 @@ var init_judge_run = __esm({
 });
 
 // src/public-cli/merger-run.ts
-import { mkdir as mkdir4, writeFile as writeFile11 } from "node:fs/promises";
-import { join as join17, resolve as resolve6 } from "node:path";
+import { mkdir as mkdir5, writeFile as writeFile11 } from "node:fs/promises";
+import { join as join18, resolve as resolve6 } from "node:path";
 function buildMergerActivationExtraArgs(admitted, options) {
   const prompt = buildMergerTransportPrompt(
     admitted,
@@ -24472,7 +24640,7 @@ async function dispatchAdmittedMerger(input) {
     }
     try {
       await writeFile11(
-        join17(admitted.runDirectory, "stderr.log"),
+        join18(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -24545,7 +24713,7 @@ async function admitMergerShellForActivationFailure(options) {
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  await mkdir4(runDirectory, { recursive: true });
+  await mkdir5(runDirectory, { recursive: true });
   const emptyDerived = {
     targetObjectId: "",
     sourceObjectId: "",
@@ -24553,8 +24721,8 @@ async function admitMergerShellForActivationFailure(options) {
     expectedConflictPaths: [],
     resolutionScope: []
   };
-  const admittedRequestPath = join17(runDirectory, "admitted-request.json");
-  const mergerInputPath = join17(runDirectory, "merger-input.json");
+  const admittedRequestPath = join18(runDirectory, "admitted-request.json");
+  const mergerInputPath = join18(runDirectory, "merger-input.json");
   await writeFile11(
     admittedRequestPath,
     `${JSON.stringify(
@@ -24784,7 +24952,7 @@ var init_merger_run = __esm({
 
 // src/public-cli/reviewer-run.ts
 import { writeFile as writeFile12 } from "node:fs/promises";
-import { join as join18 } from "node:path";
+import { join as join19 } from "node:path";
 function buildReviewerTicketNumberArgs(ticketNumber) {
   return ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(ticketNumber)];
 }
@@ -24953,7 +25121,7 @@ async function dispatchAdmittedReviewer(input) {
     }
     try {
       await writeFile12(
-        join18(admitted.runDirectory, "stderr.log"),
+        join19(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -25197,12 +25365,12 @@ var init_reviewer_run = __esm({
 });
 
 // src/atomic-write.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 import { rename, rm, writeFile as writeFile13 } from "node:fs/promises";
-import { dirname as dirname7, join as join19 } from "node:path";
+import { dirname as dirname7, join as join20 } from "node:path";
 async function writeFileAtomically(destination, contents) {
   const parent = dirname7(destination);
-  const temporary = join19(parent, `.atomic-write-${randomUUID2()}.tmp`);
+  const temporary = join20(parent, `.atomic-write-${randomUUID3()}.tmp`);
   try {
     await writeFile13(temporary, contents);
     await rename(temporary, destination);
@@ -25218,8 +25386,8 @@ var init_atomic_write = __esm({
 });
 
 // src/taishi-index.ts
-import { open as open3, readFile as readFile10, unlink as unlink4 } from "node:fs/promises";
-import { dirname as dirname8, join as join20 } from "node:path";
+import { open as open4, readFile as readFile11, unlink as unlink4 } from "node:fs/promises";
+import { dirname as dirname8, join as join21 } from "node:path";
 function sleep(ms) {
   return new Promise((resolve8) => {
     setTimeout(resolve8, ms);
@@ -25228,12 +25396,12 @@ function sleep(ms) {
 async function withTaishiLibraryIndexLock(ledgerHome, fn) {
   const indexPath = taishiLibraryIndexPath(ledgerHome);
   ensureRealDirectoryTree(ledgerHome, dirname8(indexPath));
-  const lockPath = join20(dirname8(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  const lockPath = join21(dirname8(indexPath), LIBRARY_INDEX_LOCK_NAME);
   assertLedgerFileInsideHome(lockPath, ledgerHome);
   const startedAt = Date.now();
   while (true) {
     try {
-      const handle = await open3(lockPath, "wx");
+      const handle = await open4(lockPath, "wx");
       try {
         await handle.writeFile(`${process.pid}
 `, "utf8");
@@ -25255,7 +25423,7 @@ async function withTaishiLibraryIndexLock(ledgerHome, fn) {
   }
 }
 function taishiLibraryIndexPath(ledgerHome) {
-  return join20(ledgerHome, "taishi", "library-index.json");
+  return join21(ledgerHome, "taishi", "library-index.json");
 }
 function rowFromIssueMetricsPage(page) {
   return {
@@ -25334,7 +25502,7 @@ async function readTaishiLibraryIndexPage(ledgerHome) {
   const path = taishiLibraryIndexPath(ledgerHome);
   let raw;
   try {
-    raw = await readFile10(path, "utf8");
+    raw = await readFile11(path, "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
       return void 0;
@@ -25495,12 +25663,12 @@ var init_taishi_cohort = __esm({
 });
 
 // src/ledger-session-read.ts
-import { readFile as readFile11 } from "node:fs/promises";
+import { readFile as readFile12 } from "node:fs/promises";
 function isRecord6(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function readLedgerSessionJsonl(path) {
-  const text = await readFile11(path, "utf8");
+  const text = await readFile12(path, "utf8");
   const lines = text.split("\n");
   const rows = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -25610,8 +25778,8 @@ function extractSessionToolIntervals(rows) {
       if (resultTimestamp === void 0 || resultTimestamp.length === 0) {
         throw new Error(`toolResult ${message.toolCallId} missing timestamp`);
       }
-      const open4 = openById.get(message.toolCallId);
-      if (open4 === void 0) {
+      const open5 = openById.get(message.toolCallId);
+      if (open5 === void 0) {
         const toolName = typeof message.toolName === "string" && message.toolName.length > 0 ? message.toolName : "unknown";
         order.push({
           toolCallId: message.toolCallId,
@@ -25621,10 +25789,10 @@ function extractSessionToolIntervals(rows) {
         });
         continue;
       }
-      if (open4.endedAt !== void 0) {
+      if (open5.endedAt !== void 0) {
         throw new Error(`duplicate toolResult for toolCallId ${message.toolCallId}`);
       }
-      open4.endedAt = resultTimestamp;
+      open5.endedAt = resultTimestamp;
     }
   }
   return order.map((interval) => {
@@ -25657,8 +25825,8 @@ var init_ledger_session_read = __esm({
 });
 
 // src/run-terminal-artifacts.ts
-import { readdir as readdir4, readFile as readFile12 } from "node:fs/promises";
-import { basename as basename4, dirname as dirname9, join as join21 } from "node:path";
+import { readdir as readdir4, readFile as readFile13 } from "node:fs/promises";
+import { basename as basename4, dirname as dirname9, join as join22 } from "node:path";
 function isMissingPathError3(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -25689,7 +25857,7 @@ function readUsableTerminalArtifactBody(body) {
 async function readTerminalArtifactAtPath(path, file) {
   let raw;
   try {
-    raw = await readFile12(path, "utf8");
+    raw = await readFile13(path, "utf8");
   } catch (error) {
     if (isMissingPathError3(error)) return void 0;
     return {
@@ -25733,7 +25901,7 @@ async function listUniqueErrorFallbackPaths(directories) {
     }
     for (const name of names.sort((a, b) => a.localeCompare(b))) {
       if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
-      found.push(join21(dir, name));
+      found.push(join22(dir, name));
     }
   }
   return found;
@@ -25749,14 +25917,14 @@ function presentUniqueFallbackBoundToRun(body, expectedRunId) {
   return typeof body.runId === "string" && body.runId === expectedRunId;
 }
 async function readRunTerminalArtifact(runDirectory) {
-  const artifactsDir = join21(runDirectory, "artifacts");
+  const artifactsDir = join22(runDirectory, "artifacts");
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    const path = join21(artifactsDir, file);
+    const path = join22(artifactsDir, file);
     const read3 = await readTerminalArtifactAtPath(path, file);
     if (read3 !== void 0) return read3;
   }
   for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    const path = join21(runDirectory, relative3);
+    const path = join22(runDirectory, relative3);
     const read3 = await readTerminalArtifactAtPath(path, "error.json");
     if (read3 !== void 0) return read3;
   }
@@ -25793,8 +25961,8 @@ var init_run_terminal_artifacts = __esm({
 });
 
 // src/taishi-ledger.ts
-import { readdir as readdir5, readFile as readFile13 } from "node:fs/promises";
-import { join as join22 } from "node:path";
+import { readdir as readdir5, readFile as readFile14 } from "node:fs/promises";
+import { join as join23 } from "node:path";
 function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -25807,7 +25975,7 @@ function isRecord8(value) {
 async function readExistingRunLifecycleState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile13(join22(runDirectory, "run-state.json"), "utf8")
+      await readFile14(join23(runDirectory, "run-state.json"), "utf8")
     );
     if (!isRecord8(raw) || typeof raw.state !== "string") return void 0;
     return raw.state;
@@ -25839,7 +26007,7 @@ async function listLedgerBookNames(booksRoot) {
 async function readInvocationScopeFields(runDirectory) {
   let raw;
   try {
-    raw = await readFile13(join22(runDirectory, "invocation.json"), "utf8");
+    raw = await readFile14(join23(runDirectory, "invocation.json"), "utf8");
   } catch (error) {
     if (isMissingPathError4(error)) return void 0;
     throw error;
@@ -25871,7 +26039,7 @@ function decideIssueScope(input) {
 }
 async function resolveSessionFile(runDirectory) {
   try {
-    const raw = await readFile13(join22(runDirectory, "invocation.json"), "utf8");
+    const raw = await readFile14(join23(runDirectory, "invocation.json"), "utf8");
     const parsed = JSON.parse(raw);
     if (isRecord8(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
       return parsed.sessionFile;
@@ -25879,7 +26047,7 @@ async function resolveSessionFile(runDirectory) {
   } catch (error) {
     if (!isMissingPathError4(error)) throw error;
   }
-  return join22(runDirectory, "session", "session.jsonl");
+  return join23(runDirectory, "session", "session.jsonl");
 }
 async function classifyScopedRun(input) {
   const missingSources = [];
@@ -26003,7 +26171,7 @@ async function classifyScopedRun(input) {
 async function scanTaishiIssueRuns(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const scopeTicketNumber = input.ticketNumber;
-  const booksRoot = join22(ledgerHome, "books");
+  const booksRoot = join23(ledgerHome, "books");
   let wholeBook = false;
   let scopeRootIdentity;
   let bookNames;
@@ -26030,7 +26198,7 @@ async function scanTaishiIssueRuns(input) {
   const unreadable = [];
   const scopeConflicts = [];
   for (const book of bookNames) {
-    const runsDir = join22(booksRoot, book, "runs");
+    const runsDir = join23(booksRoot, book, "runs");
     let runNames;
     try {
       const entries = await readdir5(runsDir, { withFileTypes: true });
@@ -26042,7 +26210,7 @@ async function scanTaishiIssueRuns(input) {
     for (const runName of runNames) {
       const parsed = parseRunDirectoryName(runName);
       if (parsed === void 0) continue;
-      const runDirectory = join22(runsDir, runName);
+      const runDirectory = join23(runsDir, runName);
       let scopeFields;
       try {
         scopeFields = await readInvocationScopeFields(runDirectory);
@@ -26817,7 +26985,7 @@ var init_taishi_metric_family = __esm({
 
 // src/taishi-page.ts
 import { createHash as createHash4 } from "node:crypto";
-import { dirname as dirname10, join as join23 } from "node:path";
+import { dirname as dirname10, join as join24 } from "node:path";
 function taishiIssuePageKey(address) {
   const parts = ["book", address.bookKey];
   if (address.issueNumber !== void 0) {
@@ -26828,7 +26996,7 @@ function taishiIssuePageKey(address) {
   return createHash4("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
 }
 function taishiIssuePagePath(ledgerHome, address) {
-  return join23(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(address)}.json`);
+  return join24(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(address)}.json`);
 }
 function taishiIssuePageAddressFromPage(page) {
   return {
@@ -26964,7 +27132,7 @@ var init_taishi_page = __esm({
 });
 
 // src/taishi-entry.ts
-import { readFile as readFile14 } from "node:fs/promises";
+import { readFile as readFile15 } from "node:fs/promises";
 function isMissingPathError5(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -27003,7 +27171,7 @@ async function readOrComputeTaishiIssuePage(input) {
     ...issueNumber === void 0 && input.bookKey === void 0 ? { scopeRootIdentity: projectRoot } : {}
   });
   try {
-    const raw = await readFile14(pagePath, "utf8");
+    const raw = await readFile15(pagePath, "utf8");
     const page = JSON.parse(raw);
     if (cachedPageMatchesRequestedScope(page, { bookKey, ...input })) {
       return { mode: "issue", page, pagePath };
@@ -27096,7 +27264,7 @@ async function runTaishiModelGroupsMode(input) {
       scopeRootIdentity: projectRoot
     });
     try {
-      const raw = await readFile14(pagePath, "utf8");
+      const raw = await readFile15(pagePath, "utf8");
       JSON.parse(raw);
     } catch (error) {
       if (!isMissingPathError5(error)) {
@@ -27194,7 +27362,7 @@ var init_taishi_entry = __esm({
 });
 
 // src/public-cli/taishi-run.ts
-import { readFile as readFile15 } from "node:fs/promises";
+import { readFile as readFile16 } from "node:fs/promises";
 import { isAbsolute as isAbsolute5, resolve as resolve7 } from "node:path";
 function resolveTaishiIssueBookKeyFromCwd(cwd = process.cwd()) {
   try {
@@ -27247,7 +27415,7 @@ async function buildTaishiSweepModeInputFromAttachmentPaths(attachmentPaths) {
   const absolute = isAbsolute5(sourcePath) ? sourcePath : resolve7(sourcePath);
   let bytes;
   try {
-    bytes = await readFile15(absolute);
+    bytes = await readFile16(absolute);
   } catch (error) {
     throw new CliUsageError(
       `taishi sweep attachment is not a readable regular file: ${sourcePath}`,
@@ -27349,7 +27517,7 @@ __export(cli_exports, {
 });
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { join as join24 } from "node:path";
+import { join as join25 } from "node:path";
 function takePublicGlobalFlag(argv, index, options) {
   const tokens = argv.slice(index);
   const taken = options.takeDashed(tokens);
@@ -27395,7 +27563,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join24(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join25(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -28265,7 +28433,7 @@ var init_cli = __esm({
 
 // src/public-cli/main.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { dirname as dirname11, join as join25 } from "node:path";
+import { dirname as dirname11, join as join26 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -28354,8 +28522,8 @@ function linkPackage(packageRoot2, name, targetDir) {
 // src/public-cli/main.ts
 var here = dirname11(fileURLToPath2(import.meta.url));
 function resolvePackageRoot(binDir) {
-  const canonical = join25(binDir, "..", "..");
-  if (existsSync3(join25(canonical, "package.json"))) {
+  const canonical = join26(binDir, "..", "..");
+  if (existsSync3(join26(canonical, "package.json"))) {
     return canonical;
   }
   return binDir;
