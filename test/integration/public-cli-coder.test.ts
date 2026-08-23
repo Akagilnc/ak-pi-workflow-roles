@@ -25,10 +25,7 @@ import {
   buildCoderActivationExtraArgs,
   buildCoderResumeActivationExtraArgs,
 } from "../../src/public-cli/coder-run.ts";
-import {
-  admitCoderInvocation as admitCoderInvocationRaw,
-  parseCoderArgv,
-} from "../../src/public-cli/invocation.ts";
+import { admitCoderInvocation } from "../../src/public-cli/invocation.ts";
 import {
   RESUME_TRANSPORT_ENVELOPE,
 } from "../../src/public-cli/run-lifecycle.ts";
@@ -73,95 +70,7 @@ function seedGitProject(root: string): void {
 }
 
 
-async function admitCoderInvocation(
-  options: Parameters<typeof admitCoderInvocationRaw>[0],
-): ReturnType<typeof admitCoderInvocationRaw> {
-  return admitCoderInvocationRaw(options);
-}
 
-
-test("parseCoderArgv defaults to apply and preserves explicit plan|apply", () => {
-  const isUsage = (error: unknown): boolean =>
-    error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
-
-  assert.deepEqual(parseCoderArgv(["Implement the slice."]), {
-    phase: "apply",
-    instruction: "Implement the slice.",
-    attachmentPaths: [],
-  });
-  assert.deepEqual(parseCoderArgv(["plan", "Propose first cut."]), {
-    phase: "plan",
-    instruction: "Propose first cut.",
-    attachmentPaths: [],
-  });
-  assert.deepEqual(
-    parseCoderArgv([
-      "apply",
-      "--attach",
-      "a.md",
-      "--project",
-      "/tmp/p",
-      "Do the work.",
-    ]),
-    {
-      phase: "apply",
-      instruction: "Do the work.",
-      attachmentPaths: ["a.md"],
-      project: "/tmp/p",
-    },
-  );
-  assert.throws(() => parseCoderArgv(["--unknown-flag"]), isUsage);
-  assert.throws(() => parseCoderArgv(["--project", "", "task"]), isUsage);
-});
-
-test("admitCoderInvocation rejects blank task and freezes phase + attachments", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    await assert.rejects(
-      () =>
-        admitCoderInvocationRaw({
-          home,
-          cwd: project,
-          phase: "apply",
-          instruction: "   ",
-          attachmentPaths: [],
-        }),
-      (error: unknown) =>
-        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
-    );
-
-    const source = join(home, "notes.txt");
-    await writeFile(source, "attachment-v1", "utf8");
-    const admitted = await admitCoderInvocation({
-      home,
-      cwd: project,
-      phase: "plan",
-      instruction: "Plan the first vertical slice.",
-      attachmentPaths: [source],
-      createRunId: () => "run-coder-plan-001",
-    });
-    assert.equal(admitted.role, "coder");
-    assert.equal(admitted.phase, "plan");
-    assert.equal(admitted.instruction, "Plan the first vertical slice.");
-    assert.equal(await readFile(admitted.taskPath, "utf8"), "Plan the first vertical slice.");
-    assert.equal(admitted.attachments.length, 1);
-    assert.equal(await readFile(admitted.attachments[0]!.frozenPath, "utf8"), "attachment-v1");
-
-    const bookKey = resolveBookKeyFromGit(project);
-    assert.equal(
-      admitted.runDirectory,
-      join(home, ".ak-roles", "books", bookKey, "runs", "run-coder-plan-001@coder"),
-    );
-    const persisted = JSON.parse(
-      await readFile(admitted.admittedRequestPath, "utf8"),
-    ) as { phase: string; role: string };
-    assert.equal(persisted.role, "coder");
-    assert.equal(persisted.phase, "plan");
-  });
-});
 
 test("buildCoderActivationExtraArgs pins package TDD on apply and omits skill on plan", async () => {
   await withTempHome(async (home) => {

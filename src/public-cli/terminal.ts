@@ -231,11 +231,16 @@ export function redactExactRunId(text: string, runId: string): string {
  * One admitted Role run's typed Terminal aggregate.
  * Resumable failures carry `resume` and must not re-disclose the run ID via
  * top-level `runId` or public artifact path components — only `resume.command`.
+ * #416: autoResumeCount (0..2) is a call-local observation of how many in-place
+ * auto-resumes occurred during this single LLM call; it is not persisted to
+ * run-state.json and does not participate in limit decisions.
  */
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
+  /** Call-local auto-resume observation (0..2) for this single LLM call; read-only, not persisted. */
+  autoResumeCount?: number;
 } & (
   | {
       /** Resumable failure: run ID appears only inside resume.command. */
@@ -329,6 +334,9 @@ export function formatTerminalResult(result: TerminalResult): string {
     lines.push(`resume\t${encodeTerminalField(result.resume.command)}`);
   } else if (result.runId !== undefined) {
     lines.push(`run\t${encodeTerminalField(result.runId)}`);
+  }
+  if (result.autoResumeCount !== undefined) {
+    lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);
   }
   return `${lines.join("\n")}\n`;
 }

@@ -50,6 +50,7 @@ import {
   type RunWriterLease,
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
+import { runWithAutoResumeLoop } from "./auto-resume.ts";
 import {
   classifyPostAdmissionFailure,
   exitCodeForTerminalOutcome,
@@ -85,6 +86,8 @@ export type CoderRunEnv = {
   engine?: string;
   credentials?: CredentialProviders;
   createRunId?: () => string;
+  /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
+  autoResumeLimit?: number;
   extraPiArgs?: readonly string[];
   timeoutMs?: number;
 };
@@ -446,17 +449,7 @@ export async function runPublicCoder(
   }
 
   await markRunAdmitted(admitted);
-
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
+  // #416 scope = single LLM call: call-local retry counter, no persistence.
 
   let methodProvenance: PackagedMethodSkillProvenance | undefined;
   if (admitted.phase === "apply") {
@@ -467,7 +460,6 @@ export async function runPublicCoder(
       );
       methodProvenance = material.provenance;
     } catch (error) {
-      await lease.release();
       return await presentControlledFailure(
         admitted,
         {
@@ -482,24 +474,37 @@ export async function runPublicCoder(
     }
   }
 
-  const extraArgs = buildCoderActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-  });
-
-  return await dispatchAdmittedCoder({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
     io,
-    extraArgs,
-    lease,
-    ...(methodProvenance === undefined ? {} : { methodProvenance }),
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
+    buildInitialArgs: () =>
+      buildCoderActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    buildResumeArgs: () =>
+      buildCoderResumeActivationExtraArgs(admitted, {
+        packageRoot: env.packageRoot,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+      }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
+      dispatchAdmittedCoder({
+        admitted,
+        env: {
+          ...env,
+          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+        },
+        io: attemptIo,
+        extraArgs,
+        lease,
+        ...(methodProvenance === undefined ? {} : { methodProvenance }),
+        ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
+      }),
   });
 }
 
@@ -547,7 +552,7 @@ export async function runPublicCoderResume(
 
   let lease: RunWriterLease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       // Concurrent resume: reject without second writer or dispatch.
@@ -587,7 +592,7 @@ export async function runPublicCoderResume(
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
   });
 
-  return await dispatchAdmittedCoder({
+  const result = await dispatchAdmittedCoder({
     admitted,
     env: {
       ...env,
@@ -598,6 +603,10 @@ export async function runPublicCoderResume(
     lease,
     ...(methodProvenance === undefined ? {} : { methodProvenance }),
   });
+  if (result.terminal !== undefined) {
+    (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+  }
+  return result;
 }
 
 // Re-export for tests that assert typed credential failure channel shape.

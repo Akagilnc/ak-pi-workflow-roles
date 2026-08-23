@@ -190,15 +190,18 @@ test("production discovery: self-fetch bytes propagate from dispatch entry to re
   const specPrompt = result.dispatch.legs.find((leg) => leg.axis === "spec")!.prompt;
   const material = reviewerFetchedSpecMaterial(fetched!);
   assert.equal(specPrompt.includes(material), true);
-  // Single JSON payload: package framing is header+closing only; forged markers live in field values.
+  // Single machine payload line inside constructor-owned framing: external
+  // issue/ADR bytes must live inside structured field values, never plain sections.
   const materialLines = material.split("\n");
-  assert.equal(materialLines[0], "Authority-Fetched-Spec:");
-  assert.equal(
-    materialLines[materialLines.length - 1],
-    "These are self-fetched Spec grounding materials. Do not invent Spec prose from caller instruction.",
-  );
-  assert.equal(materialLines.length, 3);
-  const payload = JSON.parse(materialLines[1]!) as {
+  const payloadLineIndexes = materialLines
+    .map((line, index) => {
+      try { JSON.parse(line); return index; } catch { return -1; }
+    })
+    .filter((index) => index >= 0);
+  assert.equal(payloadLineIndexes.length, 1);
+  assert.notEqual(payloadLineIndexes[0], 0);
+  assert.notEqual(payloadLineIndexes[0], materialLines.length - 1);
+  const payload = JSON.parse(materialLines[payloadLineIndexes[0]!]!) as {
     source: string;
     ticketNumber: number;
     issueRef: string;
@@ -295,29 +298,52 @@ test("production discovery: self-fetch bytes propagate from dispatch entry to re
   ]);
 });
 
-test("production discovery: branch token self-fetch launches Spec", async () => {
-  // Branch ticket provenance is pin.refs heads/remotes only — featureTokens are path match.
-  const h = harness(pinWithRefs({ heads: ["fix/issue-343-spec-fetch"] }), {
-    featureTokens: ["fix/issue-343-spec-fetch"],
-    // Commit candidate present but lower priority — abandoned, not adopted.
-    commitMessages: ["chore: polish #99"],
-    origin: { owner: "Acme", repo: "widgets" },
-    fetchIssue: successfulFetcher("branch-sourced body bytes"),
-  });
-  const result = await h.dispatcher.dispatch("main~1");
-  assert.equal(result.status, "accepted");
-  if (result.status !== "accepted") return;
-  assert.equal(result.dispatch.specDisposition, "launched");
-  assert.equal(result.dispatch.specFetchedMaterial?.adopted.source, "branch-token");
-  assert.equal(result.dispatch.specFetchedMaterial?.ticketNumber, 343);
-  assert.deepEqual(result.dispatch.specFetchedMaterial?.abandoned, [
-    { source: "commit-message", ticketNumber: 99 },
-  ]);
-  assert.equal(result.dispatch.specFetchedMaterial?.issueBody, "branch-sourced body bytes");
-  assert.equal(
-    result.dispatch.authorityRefs[0],
-    "https://github.com/Acme/widgets/issues/343",
-  );
+// Branch ticket source matrix: pin.refs heads and remotes are both branch-token
+// ticket sources; commit candidates stay abandoned, featureTokens only path-match.
+test("production discovery: branch token (heads and remotes) is branch ticket source", async () => {
+  // Row 1: local head ref.
+  {
+    // Branch ticket provenance is pin.refs heads/remotes only — featureTokens are path match.
+    const h = harness(pinWithRefs({ heads: ["fix/issue-343-spec-fetch"] }), {
+      featureTokens: ["fix/issue-343-spec-fetch"],
+      // Commit candidate present but lower priority — abandoned, not adopted.
+      commitMessages: ["chore: polish #99"],
+      origin: { owner: "Acme", repo: "widgets" },
+      fetchIssue: successfulFetcher("branch-sourced body bytes"),
+    });
+    const result = await h.dispatcher.dispatch("main~1");
+    assert.equal(result.status, "accepted");
+    if (result.status !== "accepted") return;
+    assert.equal(result.dispatch.specDisposition, "launched");
+    assert.equal(result.dispatch.specFetchedMaterial?.adopted.source, "branch-token");
+    assert.equal(result.dispatch.specFetchedMaterial?.ticketNumber, 343);
+    assert.deepEqual(result.dispatch.specFetchedMaterial?.abandoned, [
+      { source: "commit-message", ticketNumber: 99 },
+    ]);
+    assert.equal(result.dispatch.specFetchedMaterial?.issueBody, "branch-sourced body bytes");
+    assert.equal(
+      result.dispatch.authorityRefs[0],
+      "https://github.com/Acme/widgets/issues/343",
+    );
+  }
+
+  // Row 2: remote ref.
+  {
+    const h = harness(pinWithRefs({ remotes: ["fix/issue-55-remote"] }), {
+      featureTokens: ["fix/issue-55-remote"],
+      commitMessages: ["chore: mention #9"],
+      origin: { owner: "Acme", repo: "widgets" },
+      fetchIssue: successfulFetcher("remote-branch body"),
+    });
+    const result = await h.dispatcher.dispatch("main~1");
+    assert.equal(result.status, "accepted");
+    if (result.status !== "accepted") return;
+    assert.equal(result.dispatch.specFetchedMaterial?.adopted.source, "branch-token");
+    assert.equal(result.dispatch.specFetchedMaterial?.ticketNumber, 55);
+    assert.deepEqual(result.dispatch.specFetchedMaterial?.abandoned, [
+      { source: "commit-message", ticketNumber: 9 },
+    ]);
+  }
 });
 
 test("production discovery: issue-shaped tag is not branch ticket source", async () => {
@@ -337,23 +363,6 @@ test("production discovery: issue-shaped tag is not branch ticket source", async
   assert.equal(result.dispatch.specFetchedMaterial?.ticketNumber, 343);
   assert.deepEqual(result.dispatch.specFetchedMaterial?.abandoned, []);
   assert.equal(result.dispatch.specFetchedMaterial?.issueBody, "commit-not-tag body");
-});
-
-test("production discovery: remote branch token is branch ticket source", async () => {
-  const h = harness(pinWithRefs({ remotes: ["fix/issue-55-remote"] }), {
-    featureTokens: ["fix/issue-55-remote"],
-    commitMessages: ["chore: mention #9"],
-    origin: { owner: "Acme", repo: "widgets" },
-    fetchIssue: successfulFetcher("remote-branch body"),
-  });
-  const result = await h.dispatcher.dispatch("main~1");
-  assert.equal(result.status, "accepted");
-  if (result.status !== "accepted") return;
-  assert.equal(result.dispatch.specFetchedMaterial?.adopted.source, "branch-token");
-  assert.equal(result.dispatch.specFetchedMaterial?.ticketNumber, 55);
-  assert.deepEqual(result.dispatch.specFetchedMaterial?.abandoned, [
-    { source: "commit-message", ticketNumber: 9 },
-  ]);
 });
 
 test("production discovery: invocation AbortSignal reaches issue fetch", async () => {

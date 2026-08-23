@@ -14505,6 +14505,9 @@ async function savePublicCliConfig(config, home = homedir()) {
 function setPersistentSeatConfig(config, seat, selection) {
   const previous = config.seats[seat];
   return {
+    // Spread preserves sibling top-level keys such as autoResumeLimit (#422):
+    // a seat write must never silently drop them.
+    ...config,
     seats: {
       ...config.seats,
       [seat]: {
@@ -14528,6 +14531,7 @@ function setPersistentSeatEngine(config, seat, engine) {
   if (engine === void 0) {
     const { engine: _dropped, ...modelOnly } = previous;
     return {
+      ...config,
       seats: {
         ...config.seats,
         [seat]: modelOnly
@@ -14535,11 +14539,23 @@ function setPersistentSeatEngine(config, seat, engine) {
     };
   }
   return {
+    ...config,
     seats: {
       ...config.seats,
       [seat]: { ...previous, engine }
     }
   };
+}
+function parseAutoResumeLimit(value) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(
+      `auto-resume limit must be a non-negative integer, got ${JSON.stringify(value)}`
+    );
+  }
+  return value;
+}
+function setAutoResumeLimit(config, limit) {
+  return { ...config, autoResumeLimit: parseAutoResumeLimit(limit) };
 }
 function seatModelOnly(seat) {
   return seat.thinking === void 0 ? { provider: seat.provider, model: seat.model } : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
@@ -14610,8 +14626,15 @@ function parsePublicCliConfig(value) {
     throw new Error("public CLI config must be an object");
   }
   const record4 = value;
+  let autoResumeLimit;
+  if (record4.autoResumeLimit !== void 0) {
+    autoResumeLimit = parseAutoResumeLimit(record4.autoResumeLimit);
+  }
   if (record4.seats === void 0) {
-    return { seats: {} };
+    return {
+      seats: {},
+      ...autoResumeLimit === void 0 ? {} : { autoResumeLimit }
+    };
   }
   if (record4.seats === null || typeof record4.seats !== "object" || Array.isArray(record4.seats)) {
     throw new Error("public CLI config.seats must be an object");
@@ -14625,7 +14648,10 @@ function parsePublicCliConfig(value) {
     }
     seats[key] = parseSeatModelConfig(raw, key);
   }
-  return { seats };
+  return {
+    seats,
+    ...autoResumeLimit === void 0 ? {} : { autoResumeLimit }
+  };
 }
 function parseSeatModelConfig(value, seat) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -16475,15 +16501,17 @@ var init_option_definitions = __esm({
       },
       config: {
         command: "config",
-        summary: "Persistent seat model and labor-engine defaults.",
+        summary: "Persistent seat model, labor-engine, and auto-resume defaults.",
         usage: [
           "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
           "ak-role config set-engine <seat> <name>",
-          "ak-role config unset-engine <seat>"
+          "ak-role config unset-engine <seat>",
+          "ak-role config set-auto-resume-limit <N>"
         ],
         examples: [
           "ak-role config set judge openai-codex/gpt-5.6-sol:high",
-          "ak-role config set-engine judge opus"
+          "ak-role config set-engine judge opus",
+          "ak-role config set-auto-resume-limit 3"
         ]
       },
       help: {
@@ -16494,7 +16522,7 @@ var init_option_definitions = __esm({
       },
       resume: {
         command: "resume",
-        summary: "Reopen an exact role run after a typed HTTP 429.",
+        summary: "Reopen an exact role run whose Pi session principal still exists.",
         usage: ["ak-role resume <runId>"],
         examples: ["ak-role resume 01abc\u2026"]
       }
@@ -18788,7 +18816,7 @@ var init_typed_provider_http = __esm({
 });
 
 // src/public-cli/run-lifecycle.ts
-import { lstat as lstat2, open, readdir as readdir2, readFile as readFile8, unlink as unlink3, writeFile as writeFile4 } from "node:fs/promises";
+import { chmod, lstat as lstat2, open, readdir as readdir2, readFile as readFile8, unlink as unlink3, writeFile as writeFile4 } from "node:fs/promises";
 import { join as join10 } from "node:path";
 function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
@@ -18940,7 +18968,22 @@ async function isSessionPrincipalAvailable(sessionFile) {
     return false;
   }
 }
-async function acquireRunWriterLease(runDirectory) {
+function describeErrorIdentity(error) {
+  const candidate = error;
+  const name = typeof candidate?.name === "string" && candidate.name !== "" ? candidate.name : typeof error;
+  const code = typeof candidate?.code === "string" || typeof candidate?.code === "number" ? ` code=${String(candidate.code)}` : "";
+  const message = typeof candidate?.message === "string" && candidate.message !== "" ? `: ${candidate.message}` : "";
+  return `${name}${code}${message}`;
+}
+async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
+  const reportCleanupFailure = (error) => {
+    try {
+      onCleanupFailure?.(
+        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join10(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
+      );
+    } catch {
+    }
+  };
   const lockPath = join10(runDirectory, WRITER_LOCK_FILE);
   try {
     const handle = await open(lockPath, "wx");
@@ -18959,7 +19002,20 @@ async function acquireRunWriterLease(runDirectory) {
         if (released) return;
         released = true;
         await handle.close().catch(() => void 0);
-        await unlink3(lockPath).catch(() => void 0);
+        try {
+          await unlink3(lockPath);
+        } catch (error) {
+          if (error.code === "EACCES") {
+            try {
+              await chmod(runDirectory, 493);
+              await unlink3(lockPath);
+            } catch (retryError) {
+              reportCleanupFailure(retryError);
+            }
+          } else {
+            reportCleanupFailure(error);
+          }
+        }
       }
     };
   } catch (error) {
@@ -19017,12 +19073,6 @@ async function loadResumableRunRecord(home, runId) {
   const run = await readRoleRunState(runDirectory);
   if (run === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
-  }
-  if (run.state === "terminal") {
-    throw new CliUsageError(`role run is already terminal: ${runId}`);
-  }
-  if (run.state !== "resumable" || run.resumable === void 0) {
-    throw new CliUsageError(`role run is not resumable: ${runId}`);
   }
   if (!await isSessionPrincipalAvailable(run.sessionFile)) {
     throw new CliUsageError(
@@ -19137,7 +19187,7 @@ async function loadResumableRunRecord(home, runId) {
   }
   return {
     run,
-    observation: run.resumable,
+    ...run.resumable === void 0 ? {} : { observation: run.resumable },
     admittedFields: {
       instruction,
       instructionEmpty,
@@ -19180,7 +19230,7 @@ async function loadResumableJudgeRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
 async function loadResumableCoderRun(home, runId) {
@@ -19226,7 +19276,7 @@ async function loadResumableCoderRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
 async function loadResumableFixerRun(home, runId) {
@@ -19275,7 +19325,7 @@ async function loadResumableFixerRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
 async function loadResumableReviewerRun(home, runId) {
@@ -19310,7 +19360,7 @@ async function loadResumableReviewerRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
 async function loadResumableMergerRun(home, runId) {
@@ -19356,7 +19406,7 @@ async function loadResumableMergerRun(home, runId) {
   return {
     admitted,
     run: loaded.run,
-    observation: loaded.observation
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
 async function peekRoleRunRole(home, runId) {
@@ -19365,7 +19415,7 @@ async function peekRoleRunRole(home, runId) {
   const run = await readRoleRunState(runDirectory);
   return run?.role;
 }
-var V1_RESUMABLE_PROVIDERS, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
+var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
 var init_run_lifecycle = __esm({
   "src/public-cli/run-lifecycle.ts"() {
     "use strict";
@@ -19375,6 +19425,7 @@ var init_run_lifecycle = __esm({
     init_typed_provider_http();
     init_invocation();
     V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
+    AUTO_RESUME_LIMIT = 2;
     RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
     RUN_STATE_FILE = "run-state.json";
     WRITER_LOCK_FILE = "writer.lock";
@@ -19385,6 +19436,176 @@ var init_run_lifecycle = __esm({
         this.name = "RunWriterLeaseHeldError";
       }
     };
+  }
+});
+
+// src/public-command-renderer.ts
+function renderPublicAkRoleCommand(target) {
+  if (!PUBLIC_CALLABLE_ROLES2.has(target.role)) return void 0;
+  const role = target.role;
+  if (target.phase === null || target.phase === void 0) {
+    return `ak-role ${role}`;
+  }
+  if (role === "coder" || role === "fixer") {
+    return `ak-role ${role} ${target.phase}`;
+  }
+  return `ak-role ${role}`;
+}
+var PUBLIC_CALLABLE_ROLES2;
+var init_public_command_renderer = __esm({
+  "src/public-command-renderer.ts"() {
+    "use strict";
+    init_packaged_role_registry();
+    PUBLIC_CALLABLE_ROLES2 = new Set(
+      PACKAGED_ROLE_REGISTRY.map((entry) => entry.role)
+    );
+  }
+});
+
+// src/public-cli/command-renderer.ts
+var init_command_renderer = __esm({
+  "src/public-cli/command-renderer.ts"() {
+    "use strict";
+    init_public_command_renderer();
+  }
+});
+
+// src/public-cli/terminal.ts
+function encodeTerminalField(value) {
+  return JSON.stringify(value);
+}
+function jsonSafeComplianceCandidate(value) {
+  return value === void 0 ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
+}
+function isLawfulTypedTerminalOutcome(outcome) {
+  return outcome.kind === "accepted" || outcome.kind === "audit_escalation" || outcome.kind === "no_receipt";
+}
+function exitCodeForTerminalOutcome(outcome) {
+  return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
+}
+function buildResidualIncompleteTerminalOutcome(input) {
+  return {
+    kind: "incomplete",
+    role: input.role,
+    status: "incomplete",
+    decision: "no-usable-result",
+    candidate: input.candidate,
+    diagnostic: input.diagnostic,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-result",
+      candidate: input.candidate,
+      diagnostic: input.diagnostic,
+      acceptedReceipt: false
+    }
+  };
+}
+function buildAuditIncompleteTerminalOutcome(input) {
+  const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
+  const audit = {
+    ...input.audit,
+    candidate: jsonSafeComplianceCandidate(input.audit.candidate)
+  };
+  return {
+    kind: "audit_incomplete",
+    role: input.role,
+    status: "audit-incomplete",
+    decision: "no-usable-decision",
+    roleCandidate,
+    audit,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-decision",
+      roleCandidate,
+      auditCandidate: audit.candidate,
+      auditObservation: audit.observation,
+      observationKind: audit.observation.kind,
+      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.kind === "object-status-unreadable" ? audit.observation.status : audit.observation.kind === "missing-subject" ? audit.observation.subject : audit.observation.kind,
+      acceptedReceipt: false
+    }
+  };
+}
+function redactExactRunId(text, runId) {
+  if (runId.length === 0) return text;
+  if (!text.includes(runId)) return text;
+  return text.split(runId).join(REDACTED_RUN_ID_TOKEN);
+}
+function recommendationNavigatorFact(input) {
+  void input.modelCommand;
+  const command = renderPublicAkRoleCommand(input.next);
+  if (command === void 0) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: `recommended role is not a public callable seat: ${input.next.role}`
+    };
+  }
+  return {
+    disposition: "recommendation",
+    next: input.next,
+    reason: input.reason,
+    command,
+    ...input.route === void 0 ? {} : { route: input.route },
+    ...input.advisoryDiagnostic === void 0 ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }
+  };
+}
+function formatTerminalResult(result2) {
+  const lines = [];
+  lines.push("role	outcome	status");
+  const outcomeStatus = result2.roleOutcome.kind === "failure" ? result2.roleOutcome.cause : result2.roleOutcome.status;
+  lines.push(
+    `${result2.roleOutcome.role}	${result2.roleOutcome.kind}	${encodeTerminalField(outcomeStatus)}`
+  );
+  if (result2.roleOutcome.kind === "failure") {
+    lines.push(
+      `diagnostic	${encodeTerminalField(result2.roleOutcome.diagnostic)}`
+    );
+  }
+  const facts = result2.roleOutcome.decisiveFacts;
+  for (const [key, value] of Object.entries(facts)) {
+    if (value === void 0) continue;
+    const rendered = typeof value === "string" ? value : JSON.stringify(value);
+    lines.push(`fact	${encodeTerminalField(key)}	${encodeTerminalField(rendered)}`);
+  }
+  lines.push(`navigator	${result2.navigator.disposition}`);
+  if (result2.navigator.advisoryDiagnostic !== void 0) {
+    lines.push(`navigator-advisory	${encodeTerminalField(result2.navigator.advisoryDiagnostic)}`);
+  }
+  if (result2.navigator.disposition === "recommendation") {
+    lines.push(
+      `next	${result2.navigator.next.role}	${result2.navigator.next.phase ?? "none"}`
+    );
+    lines.push(`reason	${encodeTerminalField(result2.navigator.reason)}`);
+    lines.push(`command	${encodeTerminalField(result2.navigator.command)}`);
+  } else if (result2.navigator.disposition === "unavailable") {
+    lines.push(
+      `unavailable	${result2.navigator.source}	${encodeTerminalField(result2.navigator.reason)}`
+    );
+  }
+  for (const artifact of result2.artifacts) {
+    lines.push(`artifact	${artifact.kind}	${encodeTerminalField(artifact.path)}`);
+  }
+  if (result2.resume !== void 0) {
+    lines.push(`resume	${encodeTerminalField(result2.resume.command)}`);
+  } else if (result2.runId !== void 0) {
+    lines.push(`run	${encodeTerminalField(result2.runId)}`);
+  }
+  if (result2.autoResumeCount !== void 0) {
+    lines.push(`autoResumeCount	${encodeTerminalField(String(result2.autoResumeCount))}`);
+  }
+  return `${lines.join("\n")}
+`;
+}
+var JSON_SAFE_UNDEFINED_ARGUMENT, REDACTED_RUN_ID_TOKEN;
+var init_terminal = __esm({
+  "src/public-cli/terminal.ts"() {
+    "use strict";
+    init_command_renderer();
+    JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
+      kind: "json-safe-sentinel",
+      type: "undefined"
+    });
+    REDACTED_RUN_ID_TOKEN = "[run-id]";
   }
 });
 
@@ -19783,176 +20004,10 @@ var init_navigator_invocation_identity = __esm({
   }
 });
 
-// src/public-command-renderer.ts
-function renderPublicAkRoleCommand(target) {
-  if (!PUBLIC_CALLABLE_ROLES2.has(target.role)) return void 0;
-  const role = target.role;
-  if (target.phase === null || target.phase === void 0) {
-    return `ak-role ${role}`;
-  }
-  if (role === "coder" || role === "fixer") {
-    return `ak-role ${role} ${target.phase}`;
-  }
-  return `ak-role ${role}`;
-}
-var PUBLIC_CALLABLE_ROLES2;
-var init_public_command_renderer = __esm({
-  "src/public-command-renderer.ts"() {
-    "use strict";
-    init_packaged_role_registry();
-    PUBLIC_CALLABLE_ROLES2 = new Set(
-      PACKAGED_ROLE_REGISTRY.map((entry) => entry.role)
-    );
-  }
-});
-
-// src/public-cli/command-renderer.ts
-var init_command_renderer = __esm({
-  "src/public-cli/command-renderer.ts"() {
-    "use strict";
-    init_public_command_renderer();
-  }
-});
-
-// src/public-cli/terminal.ts
-function encodeTerminalField(value) {
-  return JSON.stringify(value);
-}
-function jsonSafeComplianceCandidate(value) {
-  return value === void 0 ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
-}
-function isLawfulTypedTerminalOutcome(outcome) {
-  return outcome.kind === "accepted" || outcome.kind === "audit_escalation" || outcome.kind === "no_receipt";
-}
-function exitCodeForTerminalOutcome(outcome) {
-  return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
-}
-function buildResidualIncompleteTerminalOutcome(input) {
-  return {
-    kind: "incomplete",
-    role: input.role,
-    status: "incomplete",
-    decision: "no-usable-result",
-    candidate: input.candidate,
-    diagnostic: input.diagnostic,
-    acceptedReceipt: false,
-    decisiveFacts: {
-      decision: "no-usable-result",
-      candidate: input.candidate,
-      diagnostic: input.diagnostic,
-      acceptedReceipt: false
-    }
-  };
-}
-function buildAuditIncompleteTerminalOutcome(input) {
-  const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
-  const audit = {
-    ...input.audit,
-    candidate: jsonSafeComplianceCandidate(input.audit.candidate)
-  };
-  return {
-    kind: "audit_incomplete",
-    role: input.role,
-    status: "audit-incomplete",
-    decision: "no-usable-decision",
-    roleCandidate,
-    audit,
-    acceptedReceipt: false,
-    decisiveFacts: {
-      decision: "no-usable-decision",
-      roleCandidate,
-      auditCandidate: audit.candidate,
-      auditObservation: audit.observation,
-      observationKind: audit.observation.kind,
-      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.kind === "object-status-unreadable" ? audit.observation.status : audit.observation.kind === "missing-subject" ? audit.observation.subject : audit.observation.kind,
-      acceptedReceipt: false
-    }
-  };
-}
-function redactExactRunId(text, runId) {
-  if (runId.length === 0) return text;
-  if (!text.includes(runId)) return text;
-  return text.split(runId).join(REDACTED_RUN_ID_TOKEN);
-}
-function recommendationNavigatorFact(input) {
-  void input.modelCommand;
-  const command = renderPublicAkRoleCommand(input.next);
-  if (command === void 0) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: `recommended role is not a public callable seat: ${input.next.role}`
-    };
-  }
-  return {
-    disposition: "recommendation",
-    next: input.next,
-    reason: input.reason,
-    command,
-    ...input.route === void 0 ? {} : { route: input.route },
-    ...input.advisoryDiagnostic === void 0 ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }
-  };
-}
-function formatTerminalResult(result2) {
-  const lines = [];
-  lines.push("role	outcome	status");
-  const outcomeStatus = result2.roleOutcome.kind === "failure" ? result2.roleOutcome.cause : result2.roleOutcome.status;
-  lines.push(
-    `${result2.roleOutcome.role}	${result2.roleOutcome.kind}	${encodeTerminalField(outcomeStatus)}`
-  );
-  if (result2.roleOutcome.kind === "failure") {
-    lines.push(
-      `diagnostic	${encodeTerminalField(result2.roleOutcome.diagnostic)}`
-    );
-  }
-  const facts = result2.roleOutcome.decisiveFacts;
-  for (const [key, value] of Object.entries(facts)) {
-    if (value === void 0) continue;
-    const rendered = typeof value === "string" ? value : JSON.stringify(value);
-    lines.push(`fact	${encodeTerminalField(key)}	${encodeTerminalField(rendered)}`);
-  }
-  lines.push(`navigator	${result2.navigator.disposition}`);
-  if (result2.navigator.advisoryDiagnostic !== void 0) {
-    lines.push(`navigator-advisory	${encodeTerminalField(result2.navigator.advisoryDiagnostic)}`);
-  }
-  if (result2.navigator.disposition === "recommendation") {
-    lines.push(
-      `next	${result2.navigator.next.role}	${result2.navigator.next.phase ?? "none"}`
-    );
-    lines.push(`reason	${encodeTerminalField(result2.navigator.reason)}`);
-    lines.push(`command	${encodeTerminalField(result2.navigator.command)}`);
-  } else if (result2.navigator.disposition === "unavailable") {
-    lines.push(
-      `unavailable	${result2.navigator.source}	${encodeTerminalField(result2.navigator.reason)}`
-    );
-  }
-  for (const artifact of result2.artifacts) {
-    lines.push(`artifact	${artifact.kind}	${encodeTerminalField(artifact.path)}`);
-  }
-  if (result2.resume !== void 0) {
-    lines.push(`resume	${encodeTerminalField(result2.resume.command)}`);
-  } else if (result2.runId !== void 0) {
-    lines.push(`run	${encodeTerminalField(result2.runId)}`);
-  }
-  return `${lines.join("\n")}
-`;
-}
-var JSON_SAFE_UNDEFINED_ARGUMENT, REDACTED_RUN_ID_TOKEN;
-var init_terminal = __esm({
-  "src/public-cli/terminal.ts"() {
-    "use strict";
-    init_command_renderer();
-    JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
-      kind: "json-safe-sentinel",
-      type: "undefined"
-    });
-    REDACTED_RUN_ID_TOKEN = "[run-id]";
-  }
-});
-
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { appendFile, lstat as lstat3, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
 import { dirname as dirname6, join as join11 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
@@ -20266,12 +20321,24 @@ async function readBoundAuditorKnownFailure(sessionFile) {
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === void 0) return void 0;
+  const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
+  const isResumeEnvelope = (msg) => {
+    if (!isRecord5(msg) || msg.role !== "user") return false;
+    const text = typeof msg.text === "string" ? msg.text : typeof msg.content === "string" ? msg.content : void 0;
+    if (text === RESUME_ENVELOPE) return true;
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      return content.some((p) => isRecord5(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+    }
+    return false;
+  };
   let latestParentUserIndex = -1;
   for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
-    if (parentEntries[i]?.type === "message" && parentEntries[i]?.message?.role === "user") {
-      latestParentUserIndex = i;
-      break;
-    }
+    const entry = parentEntries[i];
+    if (entry?.type !== "message" || entry.message?.role !== "user") continue;
+    if (isResumeEnvelope(entry.message)) continue;
+    latestParentUserIndex = i;
+    break;
   }
   const childDirectory = join11(dirname6(sessionFile), "auditor-roles");
   let names;
@@ -20281,6 +20348,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     if (isMissingPathError2(error)) return void 0;
     throw sessionReadFailure(error, "failed to read bound auditor session directory");
   }
+  const validAuditorFiles = [];
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
@@ -20295,6 +20363,9 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
     const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
+    validAuditorFiles.push({ file, entries, ...attemptEntryId === void 0 ? {} : { attemptEntryId } });
+  }
+  for (const { entries, attemptEntryId } of validAuditorFiles) {
     const stop = extractSessionProviderStop(entries);
     if (stop === void 0) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -20314,6 +20385,10 @@ async function readBoundAuditorKnownFailure(sessionFile) {
         ...isRecord5(failure.details) ? { details: failure.details } : {}
       };
     }
+  }
+  for (const { entries } of validAuditorFiles) {
+    const stop = extractSessionProviderStop(entries);
+    if (stop === void 0) continue;
     const primary = knownFailureFromProviderStop(stop);
     return {
       ...primary,
@@ -21047,20 +21122,74 @@ async function ensureAuditEvidenceDirectory(runDirectory) {
   }
   return artifactsDir;
 }
+async function appendRunAttemptHistory(admitted, outcome) {
+  const entries = await readBoundSessionEntries(admitted.sessionFile);
+  let parentId = null;
+  let priorEntries = 0;
+  for (const entry of entries) {
+    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+    if (entry.type === "custom" && entry.customType === ATTEMPT_HISTORY_ENTRY_TYPE) {
+      priorEntries += 1;
+    }
+  }
+  const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
+  const line2 = `${JSON.stringify({
+    type: "custom",
+    customType: ATTEMPT_HISTORY_ENTRY_TYPE,
+    data: {
+      sequence: priorEntries + 1,
+      role: admitted.role,
+      runId: admitted.runId,
+      recordedAt: timestamp2,
+      outcome
+    },
+    id: randomUUID(),
+    parentId,
+    timestamp: timestamp2
+  })}
+`;
+  await appendFile(admitted.sessionFile, line2, "utf8");
+}
 async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
+  await appendRunAttemptHistory(admitted, outcome);
+  if (typeof fsConstants.O_NOFOLLOW !== "number" || typeof fsConstants.O_NONBLOCK !== "number") {
+    throw auditArtifactPublicationError(
+      "audit evidence publication requires O_NOFOLLOW|O_NONBLOCK open-flag support (anti-symlink/anti-planted protection must not be silently dropped); refusing to publish",
+      "ENOSYS"
+    );
+  }
   const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
   const evidencePath = join11(artifactsDir, "audit-incomplete.json");
+  let existing;
   try {
-    const existing = await lstat3(evidencePath);
-    throw auditArtifactPublicationError(
-      existing.isSymbolicLink() ? "audit evidence destination is a symlink" : "audit evidence destination collision",
-      existing.isSymbolicLink() ? "ELOOP" : "EEXIST"
-    );
+    existing = await lstat3(evidencePath);
   } catch (error) {
     if (!isMissingPathError2(error)) throw error;
   }
-  const handle = await open2(evidencePath, "wx", 384);
+  if (existing?.isSymbolicLink()) {
+    throw auditArtifactPublicationError(
+      "audit evidence destination is a symlink",
+      "ELOOP"
+    );
+  }
+  if (existing && !existing.isFile()) {
+    throw auditArtifactPublicationError(
+      "audit evidence destination is not a regular file",
+      "EEXIST"
+    );
+  }
+  const handle = await open2(
+    evidencePath,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    384
+  );
   try {
+    if (!(await handle.stat()).isFile()) {
+      throw auditArtifactPublicationError(
+        "audit evidence destination is not a regular file",
+        "EEXIST"
+      );
+    }
     await handle.writeFile(`${JSON.stringify(outcome, null, 2)}
 `, "utf8");
     await handle.sync();
@@ -21313,6 +21442,7 @@ async function extractNavigatorFactFromAdmittedSession(admitted) {
   }
 }
 async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21357,6 +21487,7 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
   ];
 }
 async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21526,6 +21657,7 @@ function extractFixerMethodInvocations(entries, options) {
   return Object.freeze(observed);
 }
 async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21637,6 +21769,7 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
   };
 }
 async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21756,6 +21889,7 @@ async function trySettleCollectorTerminalResult(admitted) {
   return settleLawfulCollectorTerminalResult(admitted);
 }
 async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -21923,6 +22057,7 @@ function extractReviewerMethodInvocations(entries, options) {
   return Object.freeze(observed);
 }
 async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -22091,6 +22226,7 @@ function extractMergerMethodInvocations(entries, options) {
   return Object.freeze(observed);
 }
 async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  await appendRunAttemptHistory(admitted, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join11(artifactsDir, "report.json");
   const evidencePath = join11(artifactsDir, "evidence.json");
@@ -22312,6 +22448,15 @@ async function publishFailureArtifacts(admitted, failure) {
     admitted.runDirectory
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
+  try {
+    await appendRunAttemptHistory(admitted, {
+      kind: "failure",
+      role: admitted.role,
+      ...failure
+    });
+  } catch (error) {
+    priorIssues.push(publicationAttemptFromError(admitted.sessionFile, error));
+  }
   const underArtifacts = baseDir === join11(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
@@ -22508,7 +22653,7 @@ function presentFailureTerminal(terminal, io) {
     }));
   }
 }
-var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS, COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC, ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC;
+var CONCISE_DIAGNOSTIC_MAX_CHARS, COLLECTOR_INFRASTRUCTURE_TOOLS, COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC, ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC, ATTEMPT_HISTORY_ENTRY_TYPE;
 var init_settlement = __esm({
   "src/public-cli/settlement.ts"() {
     "use strict";
@@ -22551,12 +22696,341 @@ var init_settlement = __esm({
       cause: "output",
       identityName: "EngineDetourInfrastructureError"
     };
+    ATTEMPT_HISTORY_ENTRY_TYPE = "ak_run_attempt_history";
+  }
+});
+
+// src/public-cli/auto-resume.ts
+import { constants as fsConstants2 } from "node:fs";
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { appendFile as appendFile2, lstat as lstat4, mkdir as mkdir4, open as open3, readFile as readFile10 } from "node:fs/promises";
+import { join as join12 } from "node:path";
+function presentTerminal(terminal, io) {
+  if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+    presentFailureTerminal(terminal, io);
+  } else {
+    io.stdout(formatTerminalResult(terminal));
+  }
+}
+async function finalizeExceptionRunBestEffort(runDirectory, io) {
+  try {
+    await markRunTerminal(runDirectory);
+  } catch (error) {
+    io.stderr(
+      `run terminal-state finalization failed (best-effort continue): ${describeErrorIdentity(error)}
+`
+    );
+  }
+}
+function runArtifactsDirectory(runDirectory) {
+  return join12(runDirectory, "artifacts");
+}
+async function ensureRealArtifactsDirectory(runDirectory) {
+  const runStat = await lstat4(runDirectory);
+  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
+    throw new Error("dispatch error retention: run directory is not a real directory");
+  }
+  const artifactsDir = runArtifactsDirectory(runDirectory);
+  try {
+    const existing = await lstat4(artifactsDir);
+    if (existing.isSymbolicLink() || !existing.isDirectory()) {
+      throw new Error("dispatch error retention: artifacts path is not a real directory");
+    }
+  } catch (error) {
+    if (!isMissingPathError3(error)) throw error;
+    await mkdir4(artifactsDir, { recursive: true });
+    const created = await lstat4(artifactsDir);
+    if (created.isSymbolicLink() || !created.isDirectory()) {
+      throw new Error("dispatch error retention: artifacts directory is not a real directory");
+    }
+  }
+  return artifactsDir;
+}
+function serializeThrownValue(value, depth = 0, seen = /* @__PURE__ */ new WeakSet()) {
+  if (value instanceof Error) {
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
+    const transferred = {};
+    for (const key of Object.getOwnPropertyNames(value)) {
+      transferred[key] = transferNestedValue(
+        value[key],
+        depth + 1,
+        seen
+      );
+    }
+    return {
+      errorKind: "Error",
+      constructorName: value.constructor?.name,
+      ...transferred,
+      ...value.cause === void 0 ? {} : {
+        causeChain: depth >= 10 ? "[cause-chain-depth-limit]" : serializeThrownValue(value.cause, depth + 1, seen)
+      }
+    };
+  }
+  return value;
+}
+function isMissingPathError3(error) {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+function transferNestedValue(value, depth, seen) {
+  if (value instanceof Error) return serializeThrownValue(value, depth, seen);
+  if (depth >= 10) return "[nested-depth-limit]";
+  if (Array.isArray(value)) {
+    return value.map((item) => transferNestedValue(item, depth + 1, seen));
+  }
+  if (value !== null && typeof value === "object") {
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
+    const transferred = {};
+    for (const key of Object.getOwnPropertyNames(value)) {
+      transferred[key] = transferNestedValue(
+        value[key],
+        depth + 1,
+        seen
+      );
+    }
+    return transferred;
+  }
+  return value;
+}
+function jsonSafeReplacer() {
+  const seen = /* @__PURE__ */ new WeakSet();
+  return (_key, value) => {
+    if (typeof value === "bigint") return `${value}n`;
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) return "[circular]";
+      seen.add(value);
+    }
+    return value;
+  };
+}
+async function retainDispatchError(admitted, attempt, error) {
+  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
+  const filePath = join12(
+    artifactsDir,
+    `dispatch-error-attempt-${attempt}-${randomUUID2()}.json`
+  );
+  const payload = `${JSON.stringify(
+    {
+      version: 1,
+      attempt,
+      recordedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      error: serializeThrownValue(error)
+    },
+    jsonSafeReplacer(),
+    2
+  )}
+`;
+  const noFollowFlag = typeof fsConstants2.O_NOFOLLOW === "number" ? fsConstants2.O_NOFOLLOW : 0;
+  const handle = await open3(
+    filePath,
+    fsConstants2.O_WRONLY | fsConstants2.O_CREAT | fsConstants2.O_EXCL | noFollowFlag,
+    384
+  );
+  try {
+    await handle.writeFile(payload, "utf8");
+  } finally {
+    await handle.close();
+  }
+  let pointerLease;
+  try {
+    pointerLease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error2) {
+    if (error2 instanceof RunWriterLeaseHeldError) return { file: filePath };
+    throw error2;
+  }
+  let pointerError;
+  try {
+    const text = await readFile10(admitted.sessionFile, "utf8");
+    let parentId = null;
+    for (const line2 of text.trim().split("\n").filter(Boolean)) {
+      const entry = JSON.parse(line2);
+      if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+    }
+    const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
+    const pointerLine = `${JSON.stringify({
+      type: "custom",
+      customType: DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
+      data: { version: 1, attempt, file: filePath, recordedAt: timestamp2 },
+      id: randomUUID2(),
+      parentId,
+      timestamp: timestamp2
+    })}
+`;
+    await appendFile2(admitted.sessionFile, pointerLine, "utf8");
+  } catch (error2) {
+    pointerError = error2;
+  } finally {
+    await pointerLease.release();
+  }
+  return pointerError === void 0 ? { file: filePath } : { file: filePath, pointerError };
+}
+function dispatchExceptionFailureTerminal(input) {
+  const history = input.everyAttemptThrew ? "dispatch threw an exception on every attempt" : "the final dispatch threw an exception";
+  const diagnostic = `${history} (${input.endReason}; resumes used ${input.autoResumeAttempts}); last cause: ${describeErrorIdentity(input.causeError)}`;
+  const decisiveFacts = {
+    cause: "unrecognized",
+    diagnostic,
+    resumesUsed: input.autoResumeAttempts,
+    dispatchErrorFiles: [...input.errorFiles]
+  };
+  if (input.errorFiles.length > 0) {
+    decisiveFacts.lastDispatchErrorFile = input.errorFiles[input.errorFiles.length - 1];
+  }
+  const candidate = input.causeError;
+  if (typeof candidate?.name === "string") decisiveFacts.errorName = candidate.name;
+  if (typeof candidate?.code === "string" || typeof candidate?.code === "number") {
+    decisiveFacts.errorCode = candidate.code;
+  }
+  const artifacts = input.errorFiles.map((path) => ({
+    kind: "error",
+    path
+  }));
+  return {
+    roleOutcome: {
+      kind: "failure",
+      role: input.role,
+      cause: "unrecognized",
+      diagnostic,
+      decisiveFacts
+    },
+    navigator: { disposition: "no-advice" },
+    artifacts,
+    runId: input.runId,
+    autoResumeCount: input.autoResumeAttempts
+  };
+}
+async function runWithAutoResumeLoop(options) {
+  const limit = options.autoResumeLimit ?? AUTO_RESUME_LIMIT;
+  parseAutoResumeLimit(limit);
+  let autoResumeAttempts = 0;
+  let isFirst = true;
+  let currentExtraArgs = options.buildInitialArgs();
+  let dispatchOrdinal = 0;
+  let lastThrownError;
+  let everyAttemptThrew = true;
+  const retainedErrorFiles = [];
+  while (true) {
+    let lease;
+    try {
+      lease = await acquireRunWriterLease(
+        options.admitted.runDirectory,
+        (diagnostic) => options.io.stderr(diagnostic)
+      );
+    } catch (error) {
+      if (error instanceof RunWriterLeaseHeldError) {
+        presentStructuralRejection(error, options.io);
+        return { exitCode: 2 };
+      }
+      throw error;
+    }
+    let result2;
+    try {
+      result2 = await options.dispatch(currentExtraArgs, lease, isFirst, dummyIo);
+    } catch (error) {
+      lastThrownError = error;
+      const attempt = dispatchOrdinal;
+      try {
+        const { file, pointerError } = await retainDispatchError(options.admitted, attempt, error);
+        retainedErrorFiles.push(file);
+        options.io.stderr(
+          `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}
+`
+        );
+        if (pointerError !== void 0) {
+          options.io.stderr(
+            `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(pointerError)}
+`
+          );
+        }
+      } catch (retentionError) {
+        options.io.stderr(
+          `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}
+`
+        );
+      }
+    }
+    dispatchOrdinal += 1;
+    if (result2 !== void 0) {
+      everyAttemptThrew = false;
+      const terminal = result2.terminal;
+      if (terminal !== void 0) {
+        terminal.autoResumeCount = autoResumeAttempts;
+      }
+      const lawful = terminal !== void 0 && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
+      if (lawful) {
+        if (terminal !== void 0) {
+          options.io.stdout(formatTerminalResult(terminal));
+        }
+        return result2;
+      }
+      if (autoResumeAttempts >= limit) {
+        if (terminal !== void 0) presentTerminal(terminal, options.io);
+        return result2;
+      }
+      if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
+        if (terminal !== void 0) presentTerminal(terminal, options.io);
+        return result2;
+      }
+    } else {
+      if (autoResumeAttempts >= limit) {
+        const terminal = dispatchExceptionFailureTerminal({
+          role: options.admitted.role,
+          runId: options.admitted.runId,
+          causeError: lastThrownError,
+          errorFiles: retainedErrorFiles,
+          autoResumeAttempts,
+          endReason: "auto-resume budget exhausted",
+          everyAttemptThrew
+        });
+        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+        presentTerminal(terminal, options.io);
+        return {
+          exitCode: 1,
+          terminal
+        };
+      }
+      if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
+        const terminal = dispatchExceptionFailureTerminal({
+          role: options.admitted.role,
+          runId: options.admitted.runId,
+          causeError: lastThrownError,
+          errorFiles: retainedErrorFiles,
+          autoResumeAttempts,
+          endReason: "session principal unavailable before further resume",
+          everyAttemptThrew
+        });
+        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+        presentTerminal(terminal, options.io);
+        return {
+          exitCode: 1,
+          terminal
+        };
+      }
+    }
+    autoResumeAttempts++;
+    currentExtraArgs = options.buildResumeArgs();
+    isFirst = false;
+  }
+}
+var dummyIo, DISPATCH_ERROR_RETENTION_ENTRY_TYPE;
+var init_auto_resume = __esm({
+  "src/public-cli/auto-resume.ts"() {
+    "use strict";
+    init_run_lifecycle();
+    init_config2();
+    init_terminal();
+    init_settlement();
+    dummyIo = { stdout: () => {
+    }, stderr: () => {
+    } };
+    DISPATCH_ERROR_RETENTION_ENTRY_TYPE = "ak_run_dispatch_error_retention";
   }
 });
 
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 function buildCoderActivationExtraArgs(admitted, options) {
   const prompt = buildCoderTransportPrompt(
     admitted,
@@ -22718,7 +23192,7 @@ async function dispatchAdmittedCoder(input) {
     }
     try {
       await writeFile6(
-        join12(admitted.runDirectory, "stderr.log"),
+        join13(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -22797,16 +23271,6 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
     throw error;
   }
   await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
   let methodProvenance;
   if (admitted.phase === "apply") {
     try {
@@ -22816,7 +23280,6 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
       );
       methodProvenance = material.provenance;
     } catch (error) {
-      await lease.release();
       return await presentControlledFailure2(
         admitted,
         {
@@ -22830,23 +23293,34 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
       );
     }
   }
-  const extraArgs = buildCoderActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedCoder({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
     io,
-    extraArgs,
-    lease,
-    ...methodProvenance === void 0 ? {} : { methodProvenance },
-    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
+    buildInitialArgs: () => buildCoderActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    buildResumeArgs: () => buildCoderResumeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedCoder({
+      admitted,
+      env: {
+        ...env,
+        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      },
+      io: attemptIo,
+      extraArgs,
+      lease,
+      ...methodProvenance === void 0 ? {} : { methodProvenance },
+      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
+    })
   });
 }
 async function runPublicCoderResume(argv, env, io) {
@@ -22878,7 +23352,7 @@ async function runPublicCoderResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -22914,7 +23388,7 @@ async function runPublicCoderResume(argv, env, io) {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedCoder({
+  const result2 = await dispatchAdmittedCoder({
     admitted,
     env: {
       ...env,
@@ -22925,6 +23399,10 @@ async function runPublicCoderResume(argv, env, io) {
     lease,
     ...methodProvenance === void 0 ? {} : { methodProvenance }
   });
+  if (result2.terminal !== void 0) {
+    result2.terminal.autoResumeCount = 0;
+  }
+  return result2;
 }
 var init_coder_run = __esm({
   "src/public-cli/coder-run.ts"() {
@@ -22938,13 +23416,14 @@ var init_coder_run = __esm({
     init_config2();
     init_public_run_credentials();
     init_run_lifecycle();
+    init_auto_resume();
     init_settlement();
   }
 });
 
 // src/public-cli/collector-run.ts
 import { writeFile as writeFile7 } from "node:fs/promises";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 function buildCollectorActivationExtraArgs(admitted, options = {}) {
   const prompt = buildCollectorTransportPrompt(
     admitted,
@@ -23049,7 +23528,7 @@ async function dispatchAdmittedCollector(input) {
     }
     try {
       await writeFile7(
-        join13(admitted.runDirectory, "stderr.log"),
+        join14(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -23137,7 +23616,7 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
   await markRunAdmitted(admitted);
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       presentStructuralRejection(error, io);
@@ -23180,7 +23659,7 @@ var init_collector_run = __esm({
 
 // src/public-cli/doctor-run.ts
 import { writeFile as writeFile8 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 function buildDoctorActivationExtraArgs(admitted, options = {}) {
   const prompt = buildDoctorTransportPrompt(
     admitted,
@@ -23278,7 +23757,7 @@ async function dispatchAdmittedDoctor(input) {
     }
     try {
       await writeFile8(
-        join14(admitted.runDirectory, "stderr.log"),
+        join15(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -23372,7 +23851,7 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
   await markRunAdmitted(admitted);
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       presentStructuralRejection(error, io);
@@ -23412,7 +23891,7 @@ var init_doctor_run = __esm({
 
 // src/public-cli/fixer-run.ts
 import { writeFile as writeFile9 } from "node:fs/promises";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 function buildFixerActivationExtraArgs(admitted, options) {
   const prompt = buildFixerTransportPrompt(
     admitted,
@@ -23583,7 +24062,7 @@ async function dispatchAdmittedFixer(input) {
     }
     try {
       await writeFile9(
-        join15(admitted.runDirectory, "stderr.log"),
+        join16(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -23685,21 +24164,10 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
     throw error;
   }
   await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
   let methodMaterial;
   try {
     methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
     return await presentControlledFailure5(
       admitted,
       {
@@ -23711,24 +24179,34 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
       io
     );
   }
-  const extraArgs = buildFixerActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedFixer({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
     io,
-    extraArgs,
-    lease,
-    methodMaterial,
-    // #391: only initial Fixer dispatch records mechanical engine provenance.
-    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
+    buildInitialArgs: () => buildFixerActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    buildResumeArgs: () => buildFixerResumeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedFixer({
+      admitted,
+      env: {
+        ...env,
+        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      },
+      io: attemptIo,
+      extraArgs,
+      lease,
+      methodMaterial,
+      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
+    })
   });
 }
 async function runPublicFixerResume(argv, env, io) {
@@ -23760,7 +24238,7 @@ async function runPublicFixerResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -23789,7 +24267,7 @@ async function runPublicFixerResume(argv, env, io) {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedFixer({
+  const result2 = await dispatchAdmittedFixer({
     admitted,
     env: {
       ...env,
@@ -23800,6 +24278,8 @@ async function runPublicFixerResume(argv, env, io) {
     lease,
     methodMaterial
   });
+  if (result2.terminal !== void 0) result2.terminal.autoResumeCount = 0;
+  return result2;
 }
 var init_fixer_run = __esm({
   "src/public-cli/fixer-run.ts"() {
@@ -23813,13 +24293,14 @@ var init_fixer_run = __esm({
     init_config2();
     init_public_run_credentials();
     init_run_lifecycle();
+    init_auto_resume();
     init_settlement();
   }
 });
 
 // src/public-cli/judge-run.ts
 import { writeFile as writeFile10 } from "node:fs/promises";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 function buildJudgeActivationExtraArgs(admitted, options = {}) {
   const prompt = buildJudgeTransportPrompt(
     admitted,
@@ -23967,7 +24448,7 @@ async function dispatchAdmittedJudge(input) {
     }
     try {
       await writeFile10(
-        join16(admitted.runDirectory, "stderr.log"),
+        join17(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -24064,33 +24545,32 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     throw error;
   }
   await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  const extraArgs = buildJudgeActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedJudge({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
     io,
-    extraArgs,
-    lease,
-    // #358: only initial Judge dispatch records mechanical engine provenance.
-    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
+    buildInitialArgs: () => buildJudgeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    buildResumeArgs: () => buildJudgeResumeActivationExtraArgs(admitted, {
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedJudge({
+      admitted,
+      env: {
+        ...env,
+        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      },
+      io: attemptIo,
+      extraArgs,
+      lease,
+      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
+    })
   });
 }
 async function runPublicResume(argv, env, io) {
@@ -24122,7 +24602,7 @@ async function runPublicResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -24134,7 +24614,7 @@ async function runPublicResume(argv, env, io) {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedJudge({
+  const result2 = await dispatchAdmittedJudge({
     admitted,
     env: {
       ...env,
@@ -24144,6 +24624,10 @@ async function runPublicResume(argv, env, io) {
     extraArgs,
     lease
   });
+  if (result2.terminal !== void 0) {
+    result2.terminal.autoResumeCount = 0;
+  }
+  return result2;
 }
 var init_judge_run = __esm({
   "src/public-cli/judge-run.ts"() {
@@ -24156,13 +24640,14 @@ var init_judge_run = __esm({
     init_config2();
     init_public_run_credentials();
     init_run_lifecycle();
+    init_auto_resume();
     init_settlement();
   }
 });
 
 // src/public-cli/merger-run.ts
-import { mkdir as mkdir4, writeFile as writeFile11 } from "node:fs/promises";
-import { join as join17, resolve as resolve6 } from "node:path";
+import { mkdir as mkdir5, writeFile as writeFile11 } from "node:fs/promises";
+import { join as join18, resolve as resolve6 } from "node:path";
 function buildMergerActivationExtraArgs(admitted, options) {
   const prompt = buildMergerTransportPrompt(
     admitted,
@@ -24322,7 +24807,7 @@ async function dispatchAdmittedMerger(input) {
     }
     try {
       await writeFile11(
-        join17(admitted.runDirectory, "stderr.log"),
+        join18(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -24395,7 +24880,7 @@ async function admitMergerShellForActivationFailure(options) {
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  await mkdir4(runDirectory, { recursive: true });
+  await mkdir5(runDirectory, { recursive: true });
   const emptyDerived = {
     targetObjectId: "",
     sourceObjectId: "",
@@ -24403,8 +24888,8 @@ async function admitMergerShellForActivationFailure(options) {
     expectedConflictPaths: [],
     resolutionScope: []
   };
-  const admittedRequestPath = join17(runDirectory, "admitted-request.json");
-  const mergerInputPath = join17(runDirectory, "merger-input.json");
+  const admittedRequestPath = join18(runDirectory, "admitted-request.json");
+  const mergerInputPath = join18(runDirectory, "merger-input.json");
   await writeFile11(
     admittedRequestPath,
     `${JSON.stringify(
@@ -24493,21 +24978,10 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
     throw error;
   }
   await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
   let methodMaterial;
   try {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
     return await presentControlledFailure7(
       admitted,
       {
@@ -24520,23 +24994,34 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
       io
     );
   }
-  const extraArgs = buildMergerActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedMerger({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
     io,
-    extraArgs,
-    lease,
-    methodMaterial,
-    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
+    buildInitialArgs: () => buildMergerActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    buildResumeArgs: () => buildMergerResumeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedMerger({
+      admitted,
+      env: {
+        ...env,
+        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      },
+      io: attemptIo,
+      extraArgs,
+      lease,
+      methodMaterial,
+      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
+    })
   });
 }
 async function runPublicMergerResume(argv, env, io) {
@@ -24568,7 +25053,7 @@ async function runPublicMergerResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -24598,7 +25083,7 @@ async function runPublicMergerResume(argv, env, io) {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedMerger({
+  const result2 = await dispatchAdmittedMerger({
     admitted,
     env: {
       ...env,
@@ -24609,6 +25094,8 @@ async function runPublicMergerResume(argv, env, io) {
     lease,
     methodMaterial
   });
+  if (result2.terminal !== void 0) result2.terminal.autoResumeCount = 0;
+  return result2;
 }
 var init_merger_run = __esm({
   "src/public-cli/merger-run.ts"() {
@@ -24625,13 +25112,14 @@ var init_merger_run = __esm({
     init_config2();
     init_public_run_credentials();
     init_run_lifecycle();
+    init_auto_resume();
     init_settlement();
   }
 });
 
 // src/public-cli/reviewer-run.ts
 import { writeFile as writeFile12 } from "node:fs/promises";
-import { join as join18 } from "node:path";
+import { join as join19 } from "node:path";
 function buildReviewerTicketNumberArgs(ticketNumber) {
   return ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(ticketNumber)];
 }
@@ -24800,7 +25288,7 @@ async function dispatchAdmittedReviewer(input) {
     }
     try {
       await writeFile12(
-        join18(admitted.runDirectory, "stderr.log"),
+        join19(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -24909,21 +25397,10 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
     throw error;
   }
   await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
   let methodMaterial;
   try {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
     return await presentControlledFailure8(
       admitted,
       {
@@ -24935,24 +25412,34 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
       io
     );
   }
-  const extraArgs = buildReviewerActivationExtraArgs(admitted, {
-    packageRoot: env.packageRoot,
-    ...env.model === void 0 ? {} : { model: env.model },
-    ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-  });
-  return await dispatchAdmittedReviewer({
+  return runWithAutoResumeLoop({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
     io,
-    extraArgs,
-    lease,
-    methodMaterial,
-    // #378: only initial Reviewer dispatch records mechanical engine provenance.
-    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
+    buildInitialArgs: () => buildReviewerActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    buildResumeArgs: () => buildReviewerResumeActivationExtraArgs(admitted, {
+      packageRoot: env.packageRoot,
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    }),
+    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedReviewer({
+      admitted,
+      env: {
+        ...env,
+        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      },
+      io: attemptIo,
+      extraArgs,
+      lease,
+      methodMaterial,
+      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
+    })
   });
 }
 async function runPublicReviewerResume(argv, env, io) {
@@ -24984,7 +25471,7 @@ async function runPublicReviewerResume(argv, env, io) {
   const { admitted } = loaded;
   let lease;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -25013,7 +25500,7 @@ async function runPublicReviewerResume(argv, env, io) {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedReviewer({
+  const result2 = await dispatchAdmittedReviewer({
     admitted,
     env: {
       ...env,
@@ -25024,6 +25511,8 @@ async function runPublicReviewerResume(argv, env, io) {
     lease,
     methodMaterial
   });
+  if (result2.terminal !== void 0) result2.terminal.autoResumeCount = 0;
+  return result2;
 }
 var init_reviewer_run = __esm({
   "src/public-cli/reviewer-run.ts"() {
@@ -25037,6 +25526,7 @@ var init_reviewer_run = __esm({
     init_config2();
     init_public_run_credentials();
     init_run_lifecycle();
+    init_auto_resume();
     init_settlement();
   }
 });
@@ -25076,12 +25566,12 @@ var init_taishi_book_key = __esm({
 });
 
 // src/atomic-write.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 import { rename, rm, writeFile as writeFile13 } from "node:fs/promises";
-import { dirname as dirname7, join as join19 } from "node:path";
+import { dirname as dirname7, join as join20 } from "node:path";
 async function writeFileAtomically(destination, contents) {
   const parent = dirname7(destination);
-  const temporary = join19(parent, `.atomic-write-${randomUUID2()}.tmp`);
+  const temporary = join20(parent, `.atomic-write-${randomUUID3()}.tmp`);
   try {
     await writeFile13(temporary, contents);
     await rename(temporary, destination);
@@ -25097,8 +25587,8 @@ var init_atomic_write = __esm({
 });
 
 // src/taishi-index.ts
-import { open as open3, readFile as readFile10, unlink as unlink4 } from "node:fs/promises";
-import { dirname as dirname8, join as join20 } from "node:path";
+import { open as open4, readFile as readFile11, unlink as unlink4 } from "node:fs/promises";
+import { dirname as dirname8, join as join21 } from "node:path";
 function sleep(ms) {
   return new Promise((resolve8) => {
     setTimeout(resolve8, ms);
@@ -25107,12 +25597,12 @@ function sleep(ms) {
 async function withTaishiLibraryIndexLock(ledgerHome, fn) {
   const indexPath = taishiLibraryIndexPath(ledgerHome);
   ensureRealDirectoryTree(ledgerHome, dirname8(indexPath));
-  const lockPath = join20(dirname8(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  const lockPath = join21(dirname8(indexPath), LIBRARY_INDEX_LOCK_NAME);
   assertLedgerFileInsideHome(lockPath, ledgerHome);
   const startedAt = Date.now();
   while (true) {
     try {
-      const handle = await open3(lockPath, "wx");
+      const handle = await open4(lockPath, "wx");
       try {
         await handle.writeFile(`${process.pid}
 `, "utf8");
@@ -25134,7 +25624,7 @@ async function withTaishiLibraryIndexLock(ledgerHome, fn) {
   }
 }
 function taishiLibraryIndexPath(ledgerHome) {
-  return join20(ledgerHome, "taishi", "library-index.json");
+  return join21(ledgerHome, "taishi", "library-index.json");
 }
 function rowFromIssueMetricsPage(page) {
   return {
@@ -25225,7 +25715,7 @@ async function readTaishiLibraryIndexPage(ledgerHome) {
   const path = taishiLibraryIndexPath(ledgerHome);
   let raw;
   try {
-    raw = await readFile10(path, "utf8");
+    raw = await readFile11(path, "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
       return void 0;
@@ -25395,12 +25885,12 @@ var init_taishi_cohort = __esm({
 });
 
 // src/ledger-session-read.ts
-import { readFile as readFile11 } from "node:fs/promises";
+import { readFile as readFile12 } from "node:fs/promises";
 function isRecord6(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function readLedgerSessionJsonl(path) {
-  const text = await readFile11(path, "utf8");
+  const text = await readFile12(path, "utf8");
   const lines = text.split("\n");
   const rows = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -25510,8 +26000,8 @@ function extractSessionToolIntervals(rows) {
       if (resultTimestamp === void 0 || resultTimestamp.length === 0) {
         throw new Error(`toolResult ${message.toolCallId} missing timestamp`);
       }
-      const open4 = openById.get(message.toolCallId);
-      if (open4 === void 0) {
+      const open5 = openById.get(message.toolCallId);
+      if (open5 === void 0) {
         const toolName = typeof message.toolName === "string" && message.toolName.length > 0 ? message.toolName : "unknown";
         order.push({
           toolCallId: message.toolCallId,
@@ -25521,10 +26011,10 @@ function extractSessionToolIntervals(rows) {
         });
         continue;
       }
-      if (open4.endedAt !== void 0) {
+      if (open5.endedAt !== void 0) {
         throw new Error(`duplicate toolResult for toolCallId ${message.toolCallId}`);
       }
-      open4.endedAt = resultTimestamp;
+      open5.endedAt = resultTimestamp;
     }
   }
   return order.map((interval) => {
@@ -25557,9 +26047,9 @@ var init_ledger_session_read = __esm({
 });
 
 // src/run-terminal-artifacts.ts
-import { readdir as readdir4, readFile as readFile12 } from "node:fs/promises";
-import { basename as basename4, dirname as dirname9, join as join21 } from "node:path";
-function isMissingPathError3(error) {
+import { readdir as readdir4, readFile as readFile13 } from "node:fs/promises";
+import { basename as basename4, dirname as dirname9, join as join22 } from "node:path";
+function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function errorText2(error) {
@@ -25589,9 +26079,9 @@ function readUsableTerminalArtifactBody(body) {
 async function readTerminalArtifactAtPath(path, file) {
   let raw;
   try {
-    raw = await readFile12(path, "utf8");
+    raw = await readFile13(path, "utf8");
   } catch (error) {
-    if (isMissingPathError3(error)) return void 0;
+    if (isMissingPathError4(error)) return void 0;
     return {
       status: "unreadable",
       file,
@@ -25628,12 +26118,12 @@ async function listUniqueErrorFallbackPaths(directories) {
     try {
       names = await readdir4(dir);
     } catch (error) {
-      if (isMissingPathError3(error)) continue;
+      if (isMissingPathError4(error)) continue;
       throw error;
     }
     for (const name of names.sort((a, b) => a.localeCompare(b))) {
       if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
-      found.push(join21(dir, name));
+      found.push(join22(dir, name));
     }
   }
   return found;
@@ -25649,14 +26139,14 @@ function presentUniqueFallbackBoundToRun(body, expectedRunId) {
   return typeof body.runId === "string" && body.runId === expectedRunId;
 }
 async function readRunTerminalArtifact(runDirectory) {
-  const artifactsDir = join21(runDirectory, "artifacts");
+  const artifactsDir = join22(runDirectory, "artifacts");
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    const path = join21(artifactsDir, file);
+    const path = join22(artifactsDir, file);
     const read3 = await readTerminalArtifactAtPath(path, file);
     if (read3 !== void 0) return read3;
   }
   for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    const path = join21(runDirectory, relative3);
+    const path = join22(runDirectory, relative3);
     const read3 = await readTerminalArtifactAtPath(path, "error.json");
     if (read3 !== void 0) return read3;
   }
@@ -25693,9 +26183,9 @@ var init_run_terminal_artifacts = __esm({
 });
 
 // src/taishi-ledger.ts
-import { readdir as readdir5, readFile as readFile13 } from "node:fs/promises";
-import { join as join22 } from "node:path";
-function isMissingPathError4(error) {
+import { readdir as readdir5, readFile as readFile14 } from "node:fs/promises";
+import { join as join23 } from "node:path";
+function isMissingPathError5(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function errorText3(error) {
@@ -25707,7 +26197,7 @@ function isRecord8(value) {
 async function readExistingRunLifecycleState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile13(join22(runDirectory, "run-state.json"), "utf8")
+      await readFile14(join23(runDirectory, "run-state.json"), "utf8")
     );
     if (!isRecord8(raw) || typeof raw.state !== "string") return void 0;
     return raw.state;
@@ -25732,16 +26222,16 @@ async function listLedgerBookNames(booksRoot) {
     const entries = await readdir5(booksRoot, { withFileTypes: true });
     return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch (error) {
-    if (isMissingPathError4(error)) return [];
+    if (isMissingPathError5(error)) return [];
     throw error;
   }
 }
 async function readInvocationScopeFields(runDirectory) {
   let raw;
   try {
-    raw = await readFile13(join22(runDirectory, "invocation.json"), "utf8");
+    raw = await readFile14(join23(runDirectory, "invocation.json"), "utf8");
   } catch (error) {
-    if (isMissingPathError4(error)) return void 0;
+    if (isMissingPathError5(error)) return void 0;
     throw error;
   }
   const parsed = JSON.parse(raw);
@@ -25771,15 +26261,15 @@ function decideIssueScope(input) {
 }
 async function resolveSessionFile(runDirectory) {
   try {
-    const raw = await readFile13(join22(runDirectory, "invocation.json"), "utf8");
+    const raw = await readFile14(join23(runDirectory, "invocation.json"), "utf8");
     const parsed = JSON.parse(raw);
     if (isRecord8(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
       return parsed.sessionFile;
     }
   } catch (error) {
-    if (!isMissingPathError4(error)) throw error;
+    if (!isMissingPathError5(error)) throw error;
   }
-  return join22(runDirectory, "session", "session.jsonl");
+  return join23(runDirectory, "session", "session.jsonl");
 }
 async function classifyScopedRun(input) {
   const missingSources = [];
@@ -25903,7 +26393,7 @@ async function classifyScopedRun(input) {
 async function scanTaishiIssueRuns(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const scopeTicketNumber = input.ticketNumber;
-  const booksRoot = join22(ledgerHome, "books");
+  const booksRoot = join23(ledgerHome, "books");
   let wholeBook = false;
   let scopeRootIdentity;
   let bookNames;
@@ -25935,19 +26425,19 @@ async function scanTaishiIssueRuns(input) {
   const unreadable = [];
   const scopeConflicts = [];
   for (const book of bookNames) {
-    const runsDir = join22(booksRoot, book, "runs");
+    const runsDir = join23(booksRoot, book, "runs");
     let runNames;
     try {
       const entries = await readdir5(runsDir, { withFileTypes: true });
       runNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
     } catch (error) {
-      if (isMissingPathError4(error)) continue;
+      if (isMissingPathError5(error)) continue;
       throw error;
     }
     for (const runName of runNames) {
       const parsed = parseRunDirectoryName(runName);
       if (parsed === void 0) continue;
-      const runDirectory = join22(runsDir, runName);
+      const runDirectory = join23(runsDir, runName);
       let scopeFields;
       try {
         scopeFields = await readInvocationScopeFields(runDirectory);
@@ -26722,7 +27212,7 @@ var init_taishi_metric_family = __esm({
 
 // src/taishi-page.ts
 import { createHash as createHash4 } from "node:crypto";
-import { dirname as dirname10, join as join23 } from "node:path";
+import { dirname as dirname10, join as join24 } from "node:path";
 function taishiIssuePageKey(address) {
   const parts = ["book", address.bookKey];
   if (address.issueNumber !== void 0) {
@@ -26733,7 +27223,7 @@ function taishiIssuePageKey(address) {
   return createHash4("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
 }
 function taishiIssuePagePath(ledgerHome, address) {
-  return join23(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(address)}.json`);
+  return join24(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(address)}.json`);
 }
 function taishiIssuePageAddressFromPage(page) {
   return {
@@ -26869,8 +27359,8 @@ var init_taishi_page = __esm({
 });
 
 // src/taishi-entry.ts
-import { readFile as readFile14 } from "node:fs/promises";
-function isMissingPathError5(error) {
+import { readFile as readFile15 } from "node:fs/promises";
+function isMissingPathError6(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function cachedPageMatchesRequestedScope(page, input) {
@@ -26899,13 +27389,13 @@ async function readOrComputeTaishiIssuePage(input, options) {
     ...issueNumber === void 0 && input.bookKey === void 0 ? { scopeRootIdentity: projectRoot } : {}
   });
   try {
-    const raw = await readFile14(pagePath, "utf8");
+    const raw = await readFile15(pagePath, "utf8");
     const page = JSON.parse(raw);
     if (cachedPageMatchesRequestedScope(page, { bookKey, ...input })) {
       return { mode: "issue", page, pagePath };
     }
   } catch (error) {
-    if (!isMissingPathError5(error)) {
+    if (!isMissingPathError6(error)) {
       throw new TaishiIssueComputeError({
         bookKey,
         projectRoot,
@@ -26993,10 +27483,10 @@ async function runTaishiModelGroupsMode(input) {
       scopeRootIdentity: projectRoot
     });
     try {
-      const raw = await readFile14(pagePath, "utf8");
+      const raw = await readFile15(pagePath, "utf8");
       JSON.parse(raw);
     } catch (error) {
-      if (!isMissingPathError5(error)) {
+      if (!isMissingPathError6(error)) {
         throw new TaishiIssueComputeError({ bookKey, projectRoot, cause: error });
       }
       try {
@@ -27092,7 +27582,7 @@ var init_taishi_entry = __esm({
 });
 
 // src/public-cli/taishi-run.ts
-import { readFile as readFile15 } from "node:fs/promises";
+import { readFile as readFile16 } from "node:fs/promises";
 import { isAbsolute as isAbsolute6, resolve as resolve7 } from "node:path";
 function resolveTaishiIssueBookKeyFromCwd(cwd = process.cwd()) {
   try {
@@ -27145,7 +27635,7 @@ async function buildTaishiSweepModeInputFromAttachmentPaths(attachmentPaths) {
   const absolute = isAbsolute6(sourcePath) ? sourcePath : resolve7(sourcePath);
   let bytes;
   try {
-    bytes = await readFile15(absolute);
+    bytes = await readFile16(absolute);
   } catch (error) {
     throw new CliUsageError(
       `taishi sweep attachment is not a readable regular file: ${sourcePath}`,
@@ -27264,7 +27754,7 @@ __export(cli_exports, {
 });
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { join as join24 } from "node:path";
+import { join as join25 } from "node:path";
 function takePublicGlobalFlag(argv, index, options) {
   const tokens = argv.slice(index);
   const taken = options.takeDashed(tokens);
@@ -27310,7 +27800,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join24(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join25(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -27550,6 +28040,7 @@ function renderConfig(config) {
       lines.push(`${seat}	${formatModelSpec(selection)}	${engine}`);
     }
   }
+  lines.push(`autoResumeLimit	${config.autoResumeLimit ?? AUTO_RESUME_LIMIT}`);
   return `${lines.join("\n")}
 `;
 }
@@ -27639,6 +28130,30 @@ async function runConfigCommand(args, home, packageRoot2, io) {
         { cause: error }
       );
     }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
+  if (args[0] === "set-auto-resume-limit") {
+    if (args.length !== 2) {
+      throw new CliUsageError(
+        "usage: ak-role config set-auto-resume-limit <N>"
+      );
+    }
+    const raw = args[1];
+    if (!/^[0-9]+$/.test(raw)) {
+      throw new CliUsageError(
+        `auto-resume limit must be a non-negative integer, got ${raw}`
+      );
+    }
+    const converted = Number(raw);
+    if (!Number.isFinite(converted) || BigInt(converted) !== BigInt(raw)) {
+      throw new CliUsageError(
+        `auto-resume limit ${raw} is not exactly representable as a number; refusing to silently round the value`
+      );
+    }
+    let config = await loadAndValidateConfig(home, packageRoot2);
+    config = setAutoResumeLimit(config, converted);
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));
     return 0;
@@ -27852,7 +28367,9 @@ async function runAkRole(argv, env) {
           ...projectSeatEngine(seat),
           ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
           ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
         },
         io,
         PUBLIC_ROLE_ARGV.judge.parse
@@ -27887,7 +28404,9 @@ async function runAkRole(argv, env) {
           ...projectSeatEngine(seat),
           ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
           ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
         },
         io,
         PUBLIC_ROLE_ARGV.coder.parse
@@ -27922,7 +28441,9 @@ async function runAkRole(argv, env) {
           ...projectSeatEngine(seat),
           ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
           ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
         },
         io,
         PUBLIC_ROLE_ARGV.fixer.parse
@@ -27992,7 +28513,9 @@ async function runAkRole(argv, env) {
           ...projectSeatEngine(seat),
           ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
           ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
         },
         io,
         PUBLIC_ROLE_ARGV.reviewer.parse
@@ -28062,7 +28585,9 @@ async function runAkRole(argv, env) {
           ...projectSeatEngine(seat),
           ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
           ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
+          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
         },
         io,
         PUBLIC_ROLE_ARGV.merger.parse
@@ -28145,7 +28670,7 @@ var init_cli = __esm({
 
 // src/public-cli/main.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { dirname as dirname11, join as join25 } from "node:path";
+import { dirname as dirname11, join as join26 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -28234,8 +28759,8 @@ function linkPackage(packageRoot2, name, targetDir) {
 // src/public-cli/main.ts
 var here = dirname11(fileURLToPath2(import.meta.url));
 function resolvePackageRoot(binDir) {
-  const canonical = join25(binDir, "..", "..");
-  if (existsSync3(join25(canonical, "package.json"))) {
+  const canonical = join26(binDir, "..", "..");
+  if (existsSync3(join26(canonical, "package.json"))) {
     return canonical;
   }
   return binDir;
