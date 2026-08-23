@@ -22629,7 +22629,7 @@ var init_settlement = __esm({
 // src/public-cli/auto-resume.ts
 import { constants as fsConstants2 } from "node:fs";
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { appendFile as appendFile2, mkdir as mkdir4, open as open3, readFile as readFile10 } from "node:fs/promises";
+import { appendFile as appendFile2, lstat as lstat4, mkdir as mkdir4, open as open3, readFile as readFile10 } from "node:fs/promises";
 import { join as join12 } from "node:path";
 function presentTerminal(terminal, io) {
   if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
@@ -22638,23 +22638,84 @@ function presentTerminal(terminal, io) {
     io.stdout(formatTerminalResult(terminal));
   }
 }
+async function finalizeExceptionRunBestEffort(runDirectory, io) {
+  try {
+    await markRunTerminal(runDirectory);
+  } catch (error) {
+    io.stderr(
+      `run terminal-state finalization failed (best-effort continue): ${describeErrorIdentity(error)}
+`
+    );
+  }
+}
 function runArtifactsDirectory(runDirectory) {
   return join12(runDirectory, "artifacts");
 }
-function serializeThrownValue(value, depth = 0) {
+async function ensureRealArtifactsDirectory(runDirectory) {
+  const runStat = await lstat4(runDirectory);
+  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
+    throw new Error("dispatch error retention: run directory is not a real directory");
+  }
+  const artifactsDir = runArtifactsDirectory(runDirectory);
+  try {
+    const existing = await lstat4(artifactsDir);
+    if (existing.isSymbolicLink() || !existing.isDirectory()) {
+      throw new Error("dispatch error retention: artifacts path is not a real directory");
+    }
+  } catch (error) {
+    if (!isMissingPathError3(error)) throw error;
+    await mkdir4(artifactsDir, { recursive: true });
+    const created = await lstat4(artifactsDir);
+    if (created.isSymbolicLink() || !created.isDirectory()) {
+      throw new Error("dispatch error retention: artifacts directory is not a real directory");
+    }
+  }
+  return artifactsDir;
+}
+function serializeThrownValue(value, depth = 0, seen = /* @__PURE__ */ new WeakSet()) {
   if (value instanceof Error) {
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
     const transferred = {};
     for (const key of Object.getOwnPropertyNames(value)) {
-      transferred[key] = value[key];
+      transferred[key] = transferNestedValue(
+        value[key],
+        depth + 1,
+        seen
+      );
     }
     return {
       errorKind: "Error",
       constructorName: value.constructor?.name,
       ...transferred,
       ...value.cause === void 0 ? {} : {
-        causeChain: depth >= 10 ? "[cause-chain-depth-limit]" : serializeThrownValue(value.cause, depth + 1)
+        causeChain: depth >= 10 ? "[cause-chain-depth-limit]" : serializeThrownValue(value.cause, depth + 1, seen)
       }
     };
+  }
+  return value;
+}
+function isMissingPathError3(error) {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+function transferNestedValue(value, depth, seen) {
+  if (value instanceof Error) return serializeThrownValue(value, depth, seen);
+  if (depth >= 10) return "[nested-depth-limit]";
+  if (Array.isArray(value)) {
+    return value.map((item) => transferNestedValue(item, depth + 1, seen));
+  }
+  if (value !== null && typeof value === "object") {
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
+    const transferred = {};
+    for (const key of Object.getOwnPropertyNames(value)) {
+      transferred[key] = transferNestedValue(
+        value[key],
+        depth + 1,
+        seen
+      );
+    }
+    return transferred;
   }
   return value;
 }
@@ -22670,8 +22731,7 @@ function jsonSafeReplacer() {
   };
 }
 async function retainDispatchError(admitted, attempt, error) {
-  const artifactsDir = runArtifactsDirectory(admitted.runDirectory);
-  await mkdir4(artifactsDir, { recursive: true });
+  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
   const filePath = join12(
     artifactsDir,
     `dispatch-error-attempt-${attempt}-${randomUUID2()}.json`
@@ -22698,27 +22758,39 @@ async function retainDispatchError(admitted, attempt, error) {
   } finally {
     await handle.close();
   }
-  const text = await readFile10(admitted.sessionFile, "utf8");
-  let parentId = null;
-  for (const line2 of text.trim().split("\n").filter(Boolean)) {
-    const entry = JSON.parse(line2);
-    if (typeof entry.id === "string") parentId = entry.id;
+  let pointerLease;
+  try {
+    pointerLease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error2) {
+    if (error2 instanceof RunWriterLeaseHeldError) return filePath;
+    throw error2;
   }
-  const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
-  const pointerLine = `${JSON.stringify({
-    type: "custom",
-    customType: DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
-    data: { version: 1, attempt, file: filePath, recordedAt: timestamp2 },
-    id: randomUUID2(),
-    parentId,
-    timestamp: timestamp2
-  })}
+  try {
+    const text = await readFile10(admitted.sessionFile, "utf8");
+    let parentId = null;
+    for (const line2 of text.trim().split("\n").filter(Boolean)) {
+      const entry = JSON.parse(line2);
+      if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+    }
+    const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
+    const pointerLine = `${JSON.stringify({
+      type: "custom",
+      customType: DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
+      data: { version: 1, attempt, file: filePath, recordedAt: timestamp2 },
+      id: randomUUID2(),
+      parentId,
+      timestamp: timestamp2
+    })}
 `;
-  await appendFile2(admitted.sessionFile, pointerLine, "utf8");
+    await appendFile2(admitted.sessionFile, pointerLine, "utf8");
+  } finally {
+    await pointerLease.release();
+  }
   return filePath;
 }
 function dispatchExceptionFailureTerminal(input) {
-  const diagnostic = `dispatch threw an exception on every attempt (${input.endReason}; resumes used ${input.autoResumeAttempts}); last cause: ${describeErrorIdentity(input.causeError)}`;
+  const history = input.everyAttemptThrew ? "dispatch threw an exception on every attempt" : "the final dispatch threw an exception";
+  const diagnostic = `${history} (${input.endReason}; resumes used ${input.autoResumeAttempts}); last cause: ${describeErrorIdentity(input.causeError)}`;
   const decisiveFacts = {
     cause: "unrecognized",
     diagnostic,
@@ -22759,6 +22831,7 @@ async function runWithAutoResumeLoop(options) {
   let currentExtraArgs = options.buildInitialArgs();
   let dispatchOrdinal = 0;
   let lastThrownError;
+  let everyAttemptThrew = true;
   const retainedErrorFiles = [];
   while (true) {
     let lease;
@@ -22784,16 +22857,19 @@ async function runWithAutoResumeLoop(options) {
         const file = await retainDispatchError(options.admitted, attempt, error);
         retainedErrorFiles.push(file);
         options.io.stderr(
-          `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}`
+          `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}
+`
         );
       } catch (retentionError) {
         options.io.stderr(
-          `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}`
+          `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}
+`
         );
       }
     }
     dispatchOrdinal += 1;
     if (result2 !== void 0) {
+      everyAttemptThrew = false;
       const terminal = result2.terminal;
       if (terminal !== void 0) {
         terminal.autoResumeCount = autoResumeAttempts;
@@ -22815,29 +22891,37 @@ async function runWithAutoResumeLoop(options) {
       }
     } else {
       if (autoResumeAttempts >= limit) {
+        const terminal = dispatchExceptionFailureTerminal({
+          role: options.admitted.role,
+          runId: options.admitted.runId,
+          causeError: lastThrownError,
+          errorFiles: retainedErrorFiles,
+          autoResumeAttempts,
+          endReason: "auto-resume budget exhausted",
+          everyAttemptThrew
+        });
+        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+        presentTerminal(terminal, options.io);
         return {
           exitCode: 1,
-          terminal: dispatchExceptionFailureTerminal({
-            role: options.admitted.role,
-            runId: options.admitted.runId,
-            causeError: lastThrownError,
-            errorFiles: retainedErrorFiles,
-            autoResumeAttempts,
-            endReason: "auto-resume budget exhausted"
-          })
+          terminal
         };
       }
       if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
+        const terminal = dispatchExceptionFailureTerminal({
+          role: options.admitted.role,
+          runId: options.admitted.runId,
+          causeError: lastThrownError,
+          errorFiles: retainedErrorFiles,
+          autoResumeAttempts,
+          endReason: "session principal unavailable before further resume",
+          everyAttemptThrew
+        });
+        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+        presentTerminal(terminal, options.io);
         return {
           exitCode: 1,
-          terminal: dispatchExceptionFailureTerminal({
-            role: options.admitted.role,
-            runId: options.admitted.runId,
-            causeError: lastThrownError,
-            errorFiles: retainedErrorFiles,
-            autoResumeAttempts,
-            endReason: "session principal unavailable before further resume"
-          })
+          terminal
         };
       }
     }
@@ -25827,7 +25911,7 @@ var init_ledger_session_read = __esm({
 // src/run-terminal-artifacts.ts
 import { readdir as readdir4, readFile as readFile13 } from "node:fs/promises";
 import { basename as basename4, dirname as dirname9, join as join22 } from "node:path";
-function isMissingPathError3(error) {
+function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function errorText2(error) {
@@ -25859,7 +25943,7 @@ async function readTerminalArtifactAtPath(path, file) {
   try {
     raw = await readFile13(path, "utf8");
   } catch (error) {
-    if (isMissingPathError3(error)) return void 0;
+    if (isMissingPathError4(error)) return void 0;
     return {
       status: "unreadable",
       file,
@@ -25896,7 +25980,7 @@ async function listUniqueErrorFallbackPaths(directories) {
     try {
       names = await readdir4(dir);
     } catch (error) {
-      if (isMissingPathError3(error)) continue;
+      if (isMissingPathError4(error)) continue;
       throw error;
     }
     for (const name of names.sort((a, b) => a.localeCompare(b))) {
@@ -25963,7 +26047,7 @@ var init_run_terminal_artifacts = __esm({
 // src/taishi-ledger.ts
 import { readdir as readdir5, readFile as readFile14 } from "node:fs/promises";
 import { join as join23 } from "node:path";
-function isMissingPathError4(error) {
+function isMissingPathError5(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function errorText3(error) {
@@ -26000,7 +26084,7 @@ async function listLedgerBookNames(booksRoot) {
     const entries = await readdir5(booksRoot, { withFileTypes: true });
     return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch (error) {
-    if (isMissingPathError4(error)) return [];
+    if (isMissingPathError5(error)) return [];
     throw error;
   }
 }
@@ -26009,7 +26093,7 @@ async function readInvocationScopeFields(runDirectory) {
   try {
     raw = await readFile14(join23(runDirectory, "invocation.json"), "utf8");
   } catch (error) {
-    if (isMissingPathError4(error)) return void 0;
+    if (isMissingPathError5(error)) return void 0;
     throw error;
   }
   const parsed = JSON.parse(raw);
@@ -26045,7 +26129,7 @@ async function resolveSessionFile(runDirectory) {
       return parsed.sessionFile;
     }
   } catch (error) {
-    if (!isMissingPathError4(error)) throw error;
+    if (!isMissingPathError5(error)) throw error;
   }
   return join23(runDirectory, "session", "session.jsonl");
 }
@@ -26204,7 +26288,7 @@ async function scanTaishiIssueRuns(input) {
       const entries = await readdir5(runsDir, { withFileTypes: true });
       runNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
     } catch (error) {
-      if (isMissingPathError4(error)) continue;
+      if (isMissingPathError5(error)) continue;
       throw error;
     }
     for (const runName of runNames) {
@@ -27133,7 +27217,7 @@ var init_taishi_page = __esm({
 
 // src/taishi-entry.ts
 import { readFile as readFile15 } from "node:fs/promises";
-function isMissingPathError5(error) {
+function isMissingPathError6(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function cachedPageMatchesRequestedScope(page, input) {
@@ -27177,7 +27261,7 @@ async function readOrComputeTaishiIssuePage(input) {
       return { mode: "issue", page, pagePath };
     }
   } catch (error) {
-    if (!isMissingPathError5(error)) {
+    if (!isMissingPathError6(error)) {
       throw new TaishiIssueComputeError({
         bookKey,
         projectRoot,
@@ -27267,7 +27351,7 @@ async function runTaishiModelGroupsMode(input) {
       const raw = await readFile15(pagePath, "utf8");
       JSON.parse(raw);
     } catch (error) {
-      if (!isMissingPathError5(error)) {
+      if (!isMissingPathError6(error)) {
         throw new TaishiIssueComputeError({ bookKey, projectRoot, cause: error });
       }
       try {
