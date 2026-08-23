@@ -199,9 +199,17 @@ function workerCompletionMenxiaHarness(options: {
   toolName: string;
   output: unknown;
   incompleteReason: string;
+  jishizhongIncompleteReason?: string;
   passingRuns?: number;
 }) {
-  const { execute, toolName, output, incompleteReason, passingRuns = 1 } = options;
+  const {
+    execute,
+    toolName,
+    output,
+    incompleteReason,
+    jishizhongIncompleteReason = `officer ${incompleteReason}`,
+    passingRuns = 1,
+  } = options;
   const faux = fauxProvider({ provider: "worker-menxia", api: "worker-menxia" });
   const model = faux.getModel();
   const responses: Array<AssistantMessage | Error> = [
@@ -210,6 +218,14 @@ function workerCompletionMenxiaHarness(options: {
     fauxAssistantMessage("not a receipt"),
     fauxAssistantMessage("still not a receipt"),
     fauxAssistantMessage("settled without a receipt"),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    new Error("officer provider disconnected"),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "incomplete", reason: jishizhongIncompleteReason })),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    fauxAssistantMessage("officer did not submit a receipt"),
+    fauxAssistantMessage("officer still did not submit a receipt"),
+    fauxAssistantMessage("officer settled without a receipt"),
     fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
     fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "bounce", findings: ["add a focused regression"] })),
     ...Array.from({ length: passingRuns }, () => [
@@ -255,6 +271,13 @@ function workerCompletionMenxiaHarness(options: {
       await reject("incomplete", (error) => assert.equal(error.message, `Menxia incomplete at menxia: ${incompleteReason}; {"status":"incomplete","stage":"menxia","reason":"${incompleteReason}"}`));
       await reject("no-receipt", (error) => {
         assert.match(error.message, /^Menxia no_receipt at menxia: Menxia settled without an accepted receipt;/);
+        assert.match(error.message, /"acceptedReceipt":false/);
+        assert.match(error.message, /"sessionCompletion":"settled-without-accepted-receipt"/);
+      });
+      await reject("jishizhong-transport", (error) => assert.equal(error.message, "Menxia transport failure at jishizhong: Error: officer provider disconnected"));
+      await reject("jishizhong-incomplete", (error) => assert.equal(error.message, `Menxia incomplete at jishizhong: ${jishizhongIncompleteReason}; {"status":"incomplete","stage":"jishizhong","reason":"${jishizhongIncompleteReason}"}`));
+      await reject("jishizhong-no-receipt", (error) => {
+        assert.match(error.message, /^Menxia no_receipt at jishizhong: jishizhong settled without an accepted receipt;/);
         assert.match(error.message, /"acceptedReceipt":false/);
         assert.match(error.message, /"sessionCompletion":"settled-without-accepted-receipt"/);
       });
@@ -1083,7 +1106,7 @@ test("coder completed submissions traverse the real Menxia provider gate until p
   const accepted = await tool.execute("accepted", completed, undefined, undefined, tracer.context("accepted", CODER_OUTPUT_TOOL_NAME));
 
   assert.equal(accepted.terminate, true);
-  assert.equal(tracer.providerRequests, 9);
+  assert.equal(tracer.providerRequests, 17);
   assert.equal(tracer.remainingResponses, 0);
 });
 
@@ -1142,7 +1165,7 @@ test("fixer completed-side submissions traverse the real Menxia provider gate wh
   await applyTool.execute("apply-refused", { status: "refused", report: "blocked", classResults: [{ name: "Blocked", disposition: "refused", remainingScope: "owner answer", blocker: { kind: "unconstitutional", authority: "ADR", conflict: "conflict" } }] }, undefined, undefined, submissionContext("apply-refused"));
   await applyTool.execute("unfinished", { status: "unfinished", report: "handover", remainingScope: "owner answer", reason: "prerequisite_missing: owner answer" }, undefined, undefined, submissionContext("unfinished"));
   assert.equal(tracer.providerRequests, beforeSkipped);
-  assert.equal(tracer.providerRequests, 11);
+  assert.equal(tracer.providerRequests, 19);
   assert.equal(tracer.remainingResponses, 0);
 });
 
