@@ -23,7 +23,9 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-被 Codex/xAI typed HTTP 429 打断且无合法终态的运行，其失败 Terminal 内含完整 `ak-role resume <runId>` 命令。resume 重开同一 session；临时换模型用全局旗标。包绝不自动换 provider；只有 typed 429 可恢复；未知、已终结、并发重复的 run ID 一律拒绝。门下省、太医署为一次性，无 resume。
+`ak-role resume <runId>` 重开该次运行的同一 Pi session。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。门下省、太医署仍为一次性，无 resume。包绝不自动换 provider；临时换模型用全局旗标。
+
+大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
 全局覆盖前后皆可：`ak-role --model xai/grok-4.5:high resume <runId>`。
 
@@ -34,9 +36,10 @@ ak-role config set navigator openai-codex/gpt-5.6-luna:medium
 # 持久劳务引擎（可调用角色；不含 navigator）；一次性覆盖仍用 --engine
 ak-role config set-engine judge opus
 ak-role config unset-engine judge
+ak-role config set-auto-resume-limit 3
 ```
 
-`config set` 存席位模型默认；`config set-engine` / `unset-engine` 在可调用角色上写入或清除持久劳务引擎名（与 `--engine` 同轴；拒收 navigator——无独立 activation）。用法与拒绝文案以公开 CLI 的 `ak-role config` 为准。
+`config set` 存席位模型默认；`config set-engine` / `unset-engine` 在可调用角色上写入或清除持久劳务引擎名（与 `--engine` 同轴；拒收 navigator——无独立 activation）。`config set-auto-resume-limit` 写入单次调用自动续跑上限。用法与拒绝文案以公开 CLI 的 `ak-role config` 为准。
 
 回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
 

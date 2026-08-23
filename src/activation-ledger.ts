@@ -152,6 +152,17 @@ function appendActivationLedgerLine(
   ensureRealDirectoryTree(resolvedHome, parent);
   assertLedgerFileInsideHome(resolvedLedger, resolvedHome);
 
+  // Fail-closed guard (same shape as PR #418's publication seam): on platforms
+  // without O_NOFOLLOW (e.g. Windows, nodejs/node#41590) the JS bitwise-or in
+  // ACTIVATION_LEDGER_APPEND_OPEN_FLAGS would silently drop the flag and the
+  // lstat→open TOCTOU anti-symlink protection would vanish while the comment
+  // above still claims it. Refuse loudly via the existing typed ledger failure
+  // channel instead of appending unprotected; never silently degrade.
+  if (typeof constants.O_NOFOLLOW !== "number") {
+    throw new ActivationLedgerError(
+      "activation ledger append requires O_NOFOLLOW open-flag support (anti-symlink TOCTOU protection must not be silently dropped); refusing to append",
+    );
+  }
   const bytes = Buffer.isBuffer(line) ? line : Buffer.from(line);
   let ledgerFd: number | undefined;
   let primaryFailure: unknown;

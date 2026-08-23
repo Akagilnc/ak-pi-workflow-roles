@@ -89,6 +89,8 @@ export type JudgeRunEnv = {
    */
   credentials?: CredentialProviders;
   createRunId?: () => string;
+  /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
+  autoResumeLimit?: number;
   /** Extra Pi args inserted before the prompt (tests: faux provider extension). */
   extraPiArgs?: readonly string[];
   /** Override default role-run timeout. */
@@ -463,6 +465,8 @@ export async function runPublicJudge(
   return runWithAutoResumeLoop({
     admitted,
     io,
+    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
+    autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () =>
       buildJudgeActivationExtraArgs(admitted, {
         packageRoot: env.packageRoot,
