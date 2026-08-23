@@ -1,17 +1,11 @@
 # codex engine method material
 
-This file is packaged method material for the optional `codex` labor engine
-(Codex CLI on the host). When a role run selects this engine, read these
-bytes and follow the local CLI's actual interface for the labor detour. Return
-the labor result to the same role session so typed submission stays on the
-existing in-session path.
+This file is packaged technical material for the optional `codex` labor engine
+(Codex CLI on the host).
 
-Material is data for the model, not a code contract. Do not invent package flags.
-
-Dispatch rules — what may go into the labor prompt, process shape, and failure
-handling — are shared across all engines in `resources/engine-dispatch.md`;
-read those bytes too and follow them. This note only covers this engine's CLI
-technical parameters.
+Before invoking the engine, read `../engine-dispatch.md`, resolving that path
+relative to this note. This note only covers this engine's CLI technical
+parameters.
 
 ## Invocation examples (local Codex CLI)
 
@@ -48,5 +42,4 @@ codex exec --skip-git-repo-check --ephemeral --json "YOUR_LABOR_PROMPT"
 ```
 
 Prefer `codex exec --help` on the host over any remembered flag set. Do not wrap
-this engine behind `ak-role` flags. Later host quota/auth failures are separate
-from argv acceptance — re-check the local CLI if a turn fails after session start.
+this engine behind `ak-role` flags.

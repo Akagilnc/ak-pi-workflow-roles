@@ -1,18 +1,11 @@
 # ox-alpha engine method material
 
-This file is packaged method material for the optional `ox-alpha` labor engine
-(OpenRouter stealth preview model, reached via OpenCode CLI or the OpenRouter
-chat-completions API). When a role run selects this engine, read these bytes
-and follow the local CLI / API's actual interface for the labor detour. Return
-the labor result to the same role session so typed submission stays on the
-existing in-session path.
+This file is packaged technical material for the optional `ox-alpha` labor
+engine (OpenRouter stealth preview model, reached via OpenCode CLI).
 
-Material is data for the model, not a code contract. Do not invent package flags.
-
-Dispatch rules — what may go into the labor prompt, process shape, and failure
-handling — are shared across all engines in `resources/engine-dispatch.md`;
-read those bytes too and follow them. This note only covers this engine's CLI
-/ API technical parameters.
+Before invoking the engine, read `../engine-dispatch.md`, resolving that path
+relative to this note. This note only covers this engine's CLI technical
+parameters.
 
 ## Identity and warnings
 
@@ -49,21 +42,3 @@ Smoke: prompt `只回两个字：收到` → `收到` (agentic leg usable).
   low 73s / medium 59s / high 228s — all produced correct three-state verdicts.
   Prefer the ordered tier; when the mandate is silent, medium was the
   fastest correct run on that payload.
-
-### Bare OpenRouter API (fallback only)
-
-Endpoint `https://openrouter.ai/api/v1/chat/completions`, model
-`stealth/ox-alpha`. Live lessons from long grading jobs — do not invent
-extra flags beyond these verified constraints:
-
-- **Must** send `"stream": true`. Buffered (non-stream) responses keep the
-  connection alive with empty fill bytes and stall out (live: 540s, no body).
-- **Must** send explicit `"reasoning": {"effort": "low|medium|high"}` matching
-  the ordered tier. Default effort burns `max_tokens` on thinking and finishes
-  with `finish=length` and 0 content characters.
-- Reconstruct the answer by concatenating SSE `delta.content` chunks in order.
-  `delta.reasoning` is the thinking stream, not the answer — do not treat it
-  as the labor result.
-- Large payloads (>140KB) are connection-unstable (three consecutive drops
-  recorded). On drop: shrink the payload or retry; do not keep hammering the
-  same oversized body.
