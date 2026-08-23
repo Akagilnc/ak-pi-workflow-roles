@@ -8,6 +8,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { RELEASE_SOUL_INVENTORY } from "../helpers/package-entrypoint-fixtures.ts";
 import {
   getSharedIsolatedPack,
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
@@ -250,20 +251,7 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
  * contract/fixer-prerequisite-contract).
  */
 test("packed artifact ships the release inventory: souls, methods, runtime entrypoints, packets", async () => {
-  const souls = [
-    "souls/judge.md",
-    "souls/fixer.md",
-    "souls/coder.md",
-    "souls/reviewer.md",
-    "souls/collector.md",
-    "souls/doctor.md",
-    "souls/merger.md",
-    "souls/navigator.md",
-    "souls/menxia.md",
-    "souls/jishizhong.md",
-    "souls/fubaolang.md",
-  ];
-  for (const soul of souls) {
+  for (const soul of RELEASE_SOUL_INVENTORY) {
     assert.ok(extracted.paths.includes(soul), `pack must include ${soul}`);
   }
 

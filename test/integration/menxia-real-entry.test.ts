@@ -16,12 +16,13 @@ async function withParent(run: (context: any) => Promise<void>) {
   });
 }
 
-function completion(calls: Array<{ tool: string; args: object }>, seen: string[]) {
+function completion(calls: Array<{ tool?: string; args?: object; text?: string }>, seen: string[]) {
   return async (_model: any, context: any) => {
     seen.push(context.systemPrompt);
     const next = calls.shift();
     if (!next) throw new Error("unexpected child turn");
-    return fauxAssistantMessage(fauxToolCall(next.tool, next.args, { id: `call-${seen.length}` }), { stopReason: "toolUse" });
+    if (next.text !== undefined) return fauxAssistantMessage(next.text);
+    return fauxAssistantMessage(fauxToolCall(next.tool!, next.args!, { id: `call-${seen.length}` }), { stopReason: "toolUse" });
   };
 }
 
@@ -38,13 +39,28 @@ test("internal Menxia dispatches worker completion to a real Jishizhong child an
     });
     assert.deepEqual(result, { status: "pass", officer: "jishizhong", findings: [] });
     assert.equal(seen.length, 2);
-    assert.match(seen[0]!, /门下省/);
-    assert.match(seen[1]!, /给事中/);
-    assert.doesNotMatch(seen[1]!, /只审大理寺拟判/);
+    for (const prompt of seen) {
+      assert.match(prompt, /取证工具不受白名单限制/);
+      assert.match(prompt, /自行恢复/);
+    }
   });
 });
 
-test("internal Menxia dispatches judge draft only to Fubaolang and bounce means rewrite", async () => {
+test("Menxia accepts its typed officer choice instead of machine-rejecting dispatch", async () => {
+  await withParent(async (context) => {
+    const result = await runMenxia({
+      context,
+      subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
+      runCompletion: completion([
+        { tool: MENXIA_OUTPUT_TOOL, args: { status: "dispatch", officer: "jishizhong" } },
+        { tool: JISHIZHONG_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
+      ], []),
+    });
+    assert.deepEqual(result, { status: "pass", officer: "jishizhong", findings: [] });
+  });
+});
+
+test("internal Menxia dispatches judge draft to Fubaolang and bounce means rewrite", async () => {
   await withParent(async (context) => {
     const result = await runMenxia({
       context,
@@ -68,6 +84,46 @@ test("Menxia lets the role report typed incomplete for insufficient subject", as
       ], []),
     });
     assert.deepEqual(result, { status: "incomplete", stage: "menxia", reason: "missing completion evidence" });
+  });
+});
+
+test("Menxia stage settlement without an accepted receipt is loud typed no_receipt", async () => {
+  await withParent(async (context) => {
+    const result = await runMenxia({
+      context,
+      subject: { kind: "worker_completion", material: "completion" },
+      runCompletion: completion([
+        { text: "not a receipt" },
+        { text: "still not a receipt" },
+        { text: "settled without a receipt" },
+      ], []),
+    });
+    assert.equal(result.status, "no_receipt");
+    if (result.status === "no_receipt") {
+      assert.equal(result.stage, "menxia");
+      assert.equal(result.facts.sessionCompletion, "settled-without-accepted-receipt");
+      assert.match(result.reason, /accepted receipt/i);
+    }
+  });
+});
+
+test("officer stage settlement without an accepted receipt is loud typed no_receipt", async () => {
+  await withParent(async (context) => {
+    const result = await runMenxia({
+      context,
+      subject: { kind: "worker_completion", material: "completion" },
+      runCompletion: completion([
+        { tool: MENXIA_OUTPUT_TOOL, args: { status: "dispatch", officer: "jishizhong" } },
+        { text: "not a receipt" },
+        { text: "still not a receipt" },
+        { text: "settled without a receipt" },
+      ], []),
+    });
+    assert.equal(result.status, "no_receipt");
+    if (result.status === "no_receipt") {
+      assert.equal(result.stage, "jishizhong");
+      assert.equal(result.facts.acceptedReceipt, false);
+    }
   });
 });
 
