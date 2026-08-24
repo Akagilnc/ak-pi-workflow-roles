@@ -241,7 +241,8 @@ export type AnalystReadableRunFacts = {
   readonly models: readonly string[];
   /**
    * Paired gate-cycle rounds from session/auditor-roles/ (#446).
-   * Missing directory → empty (lawful zero rounds); never a leg unreadable cause.
+   * Missing directory → empty (lawful zero rounds).
+   * Damaged discovered nested JSONL → leg unreadable (`auditor-roles` source).
    */
   readonly gateCycles: readonly AnalystGateCycleRound[];
 };
@@ -395,11 +396,27 @@ async function classifyScopedRun(input: {
     );
   }
 
-  // Optional enrichment: nested auditor-roles gate pairs (missing → []).
-  // Stays inside the sole scan — families must not readdir this tree again.
-  const gateCycles = await readAnalystGateCyclesFromAuditorRoles(
-    join(input.runDirectory, "session", "auditor-roles"),
-  );
+  // Nested auditor-roles gate pairs stay inside the sole scan (families must
+  // not readdir this tree again). Missing directory → []. Damaged discovered
+  // nested JSONL is page-local unreadable — never silently under-count rounds.
+  let gateCycles: readonly AnalystGateCycleRound[];
+  try {
+    gateCycles = await readAnalystGateCyclesFromAuditorRoles(
+      join(input.runDirectory, "session", "auditor-roles"),
+    );
+  } catch (error) {
+    return {
+      kind: "unreadable",
+      entry: {
+        runId: input.runId,
+        book: input.book,
+        missingSources: ["auditor-roles"],
+        reason: errorText(error),
+        firstFrameAt: { status: "present", at: frameSpan.startedAt },
+        lastFrameAt: { status: "present", at: frameSpan.endedAt },
+      },
+    };
+  }
 
   return {
     kind: "readable",

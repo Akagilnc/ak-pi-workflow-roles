@@ -8,9 +8,10 @@
  * the current gatekeeper/inspector/notary English face. Projection always uses
  * the current English officer identity (inspector | notary).
  *
- * Missing auditor-roles directory → empty rounds (lawful zero). Individual
- * unclassifiable nested volumes are omitted from pairing; they do not mark the
- * parent leg unreadable (optional enrichment contract).
+ * Missing auditor-roles directory → empty rounds (lawful zero).
+ * Discovered nested JSONL that fails canonical read/parse must fail loudly
+ * (never silently under-count). Readable volumes that simply lack a gate
+ * terminating tool are omitted from pairing — that is not a read failure.
  */
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -143,13 +144,8 @@ type ClassifiedVolume =
 async function classifyAuditorVolume(
   filePath: string,
 ): Promise<ClassifiedVolume | undefined> {
-  let rows: readonly LedgerSessionRow[];
-  try {
-    rows = await readLedgerSessionJsonl(filePath);
-  } catch {
-    // Optional nested volume — unreadable file is omitted, not parent-leg death.
-    return undefined;
-  }
+  // Canonical JSONL errors propagate — failure honesty (never wash to fewer rounds).
+  const rows = await readLedgerSessionJsonl(filePath);
   const span = extractSessionTimestampSpan(rows);
   if (span.startedAt === undefined || span.endedAt === undefined) return undefined;
   const startedMs = Date.parse(span.startedAt);

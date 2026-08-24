@@ -4,6 +4,8 @@
  * Seams:
  * - readAnalystGateCyclesFromAuditorRoles (sole nested-volume reader)
  * - runAnalyst issue page → gateCycles section (A2 family composition)
+ * - runAnalyst cohort → gateCyclesByOfficer fold from ensured pages
+ * - damaged nested JSONL → loud reader failure / page-local unreadable
  *
  * Oracles are hand values from fixture volumes (typed status / span / findings
  * length only) — never findings prose.
@@ -15,8 +17,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { readAnalystGateCyclesFromAuditorRoles } from "../../src/analyst-gate-cycles-read.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
+import { LedgerSessionJsonlError } from "../../src/ledger-session-read.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 
@@ -305,5 +309,126 @@ test("analyst gate-cycles via runAnalyst: 7-round leg + zero-round siblings", as
         meanOfficerWallMs: 40_000,
       },
     ]);
+  });
+});
+
+test("gate-cycle reader: completed malformed nested JSONL fails loudly", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "analyst-gate-bad-"));
+  try {
+    await writeFile(join(dir, "bad.jsonl"), "{bad}\n", "utf8");
+    await assert.rejects(
+      () => readAnalystGateCyclesFromAuditorRoles(dir),
+      (error: unknown) => {
+        assert.ok(error instanceof LedgerSessionJsonlError);
+        assert.match(error.message, /malformed JSONL record/);
+        return true;
+      },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable leg", async () => {
+  await withTempHome(async (home) => {
+    const auditorDir = join(
+      home,
+      ".ak-roles",
+      "books",
+      BOOK,
+      "runs",
+      GATE_JUDGE_DIR,
+      "session",
+      "auditor-roles",
+    );
+    await mkdir(auditorDir, { recursive: true });
+    // Completed-by-terminator malformed line — canonical reader must not under-count.
+    await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
+
+    const result = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_PROJECT_ROOT,
+    });
+
+    const damaged = result.page.unreadable.find((entry) => entry.runId === GATE_JUDGE_RUN);
+    assert.ok(damaged, "judge leg with damaged auditor-roles must be page-local unreadable");
+    assert.deepEqual(damaged.missingSources, ["auditor-roles"]);
+    assert.match(damaged.reason, /malformed JSONL record/);
+
+    // Must not appear as a zero-round readable leg (wash → under-count).
+    const section = gateSection(result.page);
+    assert.equal(
+      section.legs.some((leg) => leg.runId === GATE_JUDGE_RUN),
+      false,
+      "damaged gate leg must not contribute readable gateCycles rows",
+    );
+  });
+});
+
+test("analyst gate-cycles via runAnalyst cohort: merges byOfficer from ensured pages", async () => {
+  await withTempHome(async (home) => {
+    const auditorDir = join(
+      home,
+      ".ak-roles",
+      "books",
+      BOOK,
+      "runs",
+      GATE_JUDGE_DIR,
+      "session",
+      "auditor-roles",
+    );
+    await writeSevenRoundHistoricalFixture(auditorDir);
+
+    // Issue mode materializes page + library index row (cohort join key).
+    const issue = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_PROJECT_ROOT,
+      issueNumber: 446,
+    });
+    assert.equal(issue.page.issueNumber, 446);
+    const bookKey = issue.page.bookKey;
+    assert.equal(typeof bookKey, "string");
+    assert.ok(bookKey.length > 0);
+
+    const result = await runAnalyst({
+      mode: "cohort",
+      groups: [
+        {
+          groupLabel: "with-gates",
+          issues: [{ bookKey, issueNumber: 446 }],
+        },
+        {
+          groupLabel: "vacant",
+          issues: [
+            {
+              bookKey: `root:${physicalPathIdentity("/analyst-fixture/cohort-gate-absent")}`,
+              issueNumber: 999,
+            },
+          ],
+        },
+      ],
+    });
+
+    assert.equal(result.mode, "cohort");
+    const withGates = result.groups[0]!;
+    const vacant = result.groups[1]!;
+
+    assert.equal(withGates.groupLabel, "with-gates");
+    assert.equal(withGates.issues[0]?.status, "present");
+    // External cohort result must project gate-cycle fold (not only hidden page section).
+    assert.deepEqual(withGates.gateCyclesByOfficer, [
+      {
+        officer: "notary",
+        rounds: 7,
+        bounceCount: 5,
+        passCount: 2,
+        bounceRate: { status: "present", value: 5 / 7 },
+        meanOfficerWallMs: { status: "present", value: 40_000 },
+      },
+    ]);
+
+    assert.equal(vacant.groupLabel, "vacant");
+    assert.equal(vacant.issues[0]?.status, "absent");
+    assert.deepEqual(vacant.gateCyclesByOfficer, []);
   });
 });
