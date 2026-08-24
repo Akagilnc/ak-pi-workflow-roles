@@ -28,7 +28,7 @@ import {
   buildNavigatorInfrastructureFailureFact,
   FIXER_OUTPUT_TOOL_NAME,
 } from "../../src/role-runtime.ts";
-import { createRecordSession } from "../../src/sitian-record-entry.ts";
+import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,

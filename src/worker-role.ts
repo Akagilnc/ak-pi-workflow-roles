@@ -137,7 +137,7 @@ export type CoderRoleDependencies = {
 
 export type WorkerRoleRuntime = {
   activate(ctx?: ExtensionContext): Promise<void>;
-  /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Parent feeds sitian durability. */
+  /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Parent feeds archivist durability. */
   armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
 };
 

@@ -1,3 +1,0 @@
-{"type":"session","version":3,"id":"s-c2-203-a","timestamp":"2026-08-03T02:00:00.000Z","cwd":"/taishi-fixture/c2-issue-203"}
-{"type":"message","id":"m1","parentId":null,"timestamp":"2026-08-03T02:00:00.000Z","message":{"role":"assistant","timestamp":"2026-08-03T02:00:00.000Z","content":[]}}
-{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-08-03T02:00:40.000Z","message":{"role":"assistant","timestamp":"2026-08-03T02:00:40.000Z","content":[]}}

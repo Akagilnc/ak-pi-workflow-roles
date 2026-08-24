@@ -1,3 +1,0 @@
-{"type":"session","version":3,"id":"s-00f6","timestamp":"2026-08-01T00:03:00.000Z","cwd":"/taishi-fixture/issue-demo"}
-{"type":"message","id":"m1","parentId":null,"timestamp":"2026-08-01T00:03:00.000Z","message":{"role":"assistant","timestamp":"2026-08-01T00:03:00.000Z","content":[]}}
-{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-08-01T00:03:05.000Z","message":{"role":"assistant","timestamp":"2026-08-01T00:03:05.000Z","content":[]}}

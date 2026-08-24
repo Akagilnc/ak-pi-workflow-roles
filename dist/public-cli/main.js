@@ -14472,7 +14472,7 @@ var init_registry2 = __esm({
         { provider: "xai", model: "grok-4.5", thinking: "high" }
       ]
     };
-    PUBLIC_DETERMINISTIC_COMMANDS = ["taishi"];
+    PUBLIC_DETERMINISTIC_COMMANDS = ["analyst"];
   }
 });
 
@@ -15157,7 +15157,7 @@ var init_activation_ledger_git = __esm({
   }
 });
 
-// src/sitian-role-run-coordinates.ts
+// src/archivist-role-run-coordinates.ts
 import { join as join5 } from "node:path";
 function roleRunSessionCoordinates(options) {
   const ledgerHome = resolveActivationLedgerHome(
@@ -15178,8 +15178,8 @@ function roleRunSessionCoordinates(options) {
     sessionFile: join5(sessionDirectory, "session.jsonl")
   };
 }
-var init_sitian_role_run_coordinates = __esm({
-  "src/sitian-role-run-coordinates.ts"() {
+var init_archivist_role_run_coordinates = __esm({
+  "src/archivist-role-run-coordinates.ts"() {
     "use strict";
     init_activation_ledger_git();
     init_activation_ledger_topology();
@@ -15701,20 +15701,20 @@ var init_uuidv7 = __esm({
 });
 
 // src/public-cli/option-definitions.ts
-function resolveTaishiMode(presentOptionIds) {
+function resolveAnalystMode(presentOptionIds) {
   const selected = /* @__PURE__ */ new Set();
-  for (const def of optionsForOwner("taishi")) {
+  for (const def of optionsForOwner("analyst")) {
     if (def.selectsMode === void 0) continue;
     if (presentOptionIds.has(def.id)) selected.add(def.selectsMode);
   }
-  if (selected.size === 0) return TAISHI_DEFAULT_MODE;
+  if (selected.size === 0) return ANALYST_DEFAULT_MODE;
   if (selected.has("cohort")) return "cohort";
   if (selected.has("sweep")) return "sweep";
   if (selected.has("issue")) return "issue";
-  return TAISHI_DEFAULT_MODE;
+  return ANALYST_DEFAULT_MODE;
 }
-function evaluateTaishiModeOptionContract(mode, counts) {
-  const definitions = optionsForOwner("taishi");
+function evaluateAnalystModeOptionContract(mode, counts) {
+  const definitions = optionsForOwner("analyst");
   const byId = new Map(definitions.map((def) => [def.id, def]));
   for (const def of definitions) {
     const count2 = counts.get(def.id) ?? 0;
@@ -15724,7 +15724,7 @@ function evaluateTaishiModeOptionContract(mode, counts) {
       const other = byId.get(otherId);
       return {
         ok: false,
-        message: `taishi accepts only one of ${def.canonical} / ${other?.canonical ?? otherId}`
+        message: `analyst accepts only one of ${def.canonical} / ${other?.canonical ?? otherId}`
       };
     }
   }
@@ -15735,19 +15735,19 @@ function evaluateTaishiModeOptionContract(mode, counts) {
       if (mode === "sweep") {
         return {
           ok: false,
-          message: `taishi sweep --attach cannot combine with ${def.canonical}`
+          message: `analyst sweep --attach cannot combine with ${def.canonical}`
         };
       }
       return {
         ok: false,
-        message: `taishi ${mode} does not accept ${def.canonical}`
+        message: `analyst ${mode} does not accept ${def.canonical}`
       };
     }
     const max = def.maxCountByMode?.[mode];
     if (max !== void 0 && count2 > max) {
       return {
         ok: false,
-        message: max === 1 ? `taishi ${mode} accepts at most one ${def.canonical}` : `taishi ${mode} accepts at most ${max} ${def.canonical}`
+        message: max === 1 ? `analyst ${mode} accepts at most one ${def.canonical}` : `analyst ${mode} accepts at most ${max} ${def.canonical}`
       };
     }
   }
@@ -15761,28 +15761,28 @@ function evaluateTaishiModeOptionContract(mode, counts) {
     if (mode === "cohort") {
       return {
         ok: false,
-        message: "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>"
+        message: "usage: ak-role analyst --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>"
       };
     }
     return {
       ok: false,
-      message: `usage: ak-role taishi ${mode} requires ${missingRequired.map((def) => def.canonical).join(" ")}`
+      message: `usage: ak-role analyst ${mode} requires ${missingRequired.map((def) => def.canonical).join(" ")}`
     };
   }
-  for (const rule of TAISHI_REQUIRE_ANY_OF) {
+  for (const rule of ANALYST_REQUIRE_ANY_OF) {
     if (rule.mode !== mode) continue;
     const hit = rule.optionIds.some((id) => (counts.get(id) ?? 0) > 0);
     if (hit) continue;
     if (mode === "issue") {
       return {
         ok: false,
-        message: "usage: ak-role taishi ([--ticket <N>] | [sweep] --attach <sweep.json> | --cohort ...)"
+        message: "usage: ak-role analyst ([--ticket <N>] | [sweep] --attach <sweep.json> | --cohort ...)"
       };
     }
     const flags = rule.optionIds.map((id) => byId.get(id)?.canonical ?? id).join(" | ");
     return {
       ok: false,
-      message: `usage: ak-role taishi ${mode} requires one of ${flags}`
+      message: `usage: ak-role analyst ${mode} requires one of ${flags}`
     };
   }
   return { ok: true };
@@ -15950,13 +15950,13 @@ function renderHumanOwnerOptionLines(owner, locale2 = "en") {
   }
   return lines;
 }
-var TAISHI_REQUIRE_ANY_OF, TAISHI_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, SHARED_PROJECT_SEMANTICS, SHARED_ATTACH_SEMANTICS, JUDGE_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, MERGER_OPTIONS, TAISHI_OPTIONS, PUBLIC_OPTION_TABLE, PUBLIC_NAVIGATOR_HELP_NOTE, TOP_LEVEL_HELP, ROLE_COMMAND_HELP, SUPPORT_COMMAND_HELP, PUBLIC_COMMAND_HELP;
+var ANALYST_REQUIRE_ANY_OF, ANALYST_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, SHARED_PROJECT_SEMANTICS, SHARED_ATTACH_SEMANTICS, JUDGE_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, MERGER_OPTIONS, ANALYST_OPTIONS, PUBLIC_OPTION_TABLE, PUBLIC_NAVIGATOR_HELP_NOTE, TOP_LEVEL_HELP, ROLE_COMMAND_HELP, SUPPORT_COMMAND_HELP, PUBLIC_COMMAND_HELP;
 var init_option_definitions = __esm({
   "src/public-cli/option-definitions.ts"() {
     "use strict";
     init_cli_errors();
-    TAISHI_REQUIRE_ANY_OF = [];
-    TAISHI_DEFAULT_MODE = "issue";
+    ANALYST_REQUIRE_ANY_OF = [];
+    ANALYST_DEFAULT_MODE = "issue";
     REJECTED_PUBLIC_SPELLINGS = [
       {
         owner: "judge",
@@ -15975,15 +15975,15 @@ var init_option_definitions = __esm({
         }
       },
       {
-        owner: "taishi",
+        owner: "analyst",
         spellings: ["--project-root"],
         reason: {
-          en: "Deleted (#399). taishi no longer accepts --project-root; use bare call for whole book or --ticket N (cwd git common-dir selects the book).",
-          zh: "\u5DF2\u5220\u9664\uFF08#399\uFF09\u3002taishi \u4E0D\u518D\u63A5\u53D7 --project-root\uFF1B\u88F8\u8C03\u7528=\u6574\u7C3F\uFF0C\u6216 --ticket N\uFF08cwd git common-dir \u5B9A\u7C3F\uFF09\u3002"
+          en: "Deleted (#399). analyst no longer accepts --project-root; use bare call for whole book or --ticket N (cwd git common-dir selects the book).",
+          zh: "\u5DF2\u5220\u9664\uFF08#399\uFF09\u3002analyst \u4E0D\u518D\u63A5\u53D7 --project-root\uFF1B\u88F8\u8C03\u7528=\u6574\u7C3F\uFF0C\u6216 --ticket N\uFF08cwd git common-dir \u5B9A\u7C3F\uFF09\u3002"
         }
       },
       {
-        owner: "taishi",
+        owner: "analyst",
         spellings: ["--model-groups"],
         reason: {
           en: "Public CLI face disabled (#399). Input face is being redesigned for multi-issue comparison (see follow-up ticket). Library kernel retained.",
@@ -16261,10 +16261,10 @@ var init_option_definitions = __esm({
       },
       bindOwner("merger", SHARED_ATTACH_SEMANTICS)
     ];
-    TAISHI_OPTIONS = [
+    ANALYST_OPTIONS = [
       {
         id: "sweep",
-        owner: "taishi",
+        owner: "analyst",
         canonical: "sweep",
         aliases: [],
         valueMetavar: null,
@@ -16280,7 +16280,7 @@ var init_option_definitions = __esm({
       },
       {
         id: "ticket",
-        owner: "taishi",
+        owner: "analyst",
         canonical: "--ticket",
         aliases: [],
         valueMetavar: "number",
@@ -16295,7 +16295,7 @@ var init_option_definitions = __esm({
       },
       {
         id: "attach",
-        owner: "taishi",
+        owner: "analyst",
         canonical: "--attach",
         aliases: [],
         valueMetavar: "path",
@@ -16313,7 +16313,7 @@ var init_option_definitions = __esm({
       },
       {
         id: "cohort",
-        owner: "taishi",
+        owner: "analyst",
         canonical: "--cohort",
         aliases: [],
         valueMetavar: null,
@@ -16329,7 +16329,7 @@ var init_option_definitions = __esm({
       },
       {
         id: "group-a-label",
-        owner: "taishi",
+        owner: "analyst",
         canonical: "--group-a-label",
         aliases: [],
         valueMetavar: "label",
@@ -16345,7 +16345,7 @@ var init_option_definitions = __esm({
       },
       {
         id: "group-a-issues",
-        owner: "taishi",
+        owner: "analyst",
         canonical: "--group-a-issues",
         aliases: [],
         valueMetavar: "N|book:N[,...]",
@@ -16361,7 +16361,7 @@ var init_option_definitions = __esm({
       },
       {
         id: "group-b-label",
-        owner: "taishi",
+        owner: "analyst",
         canonical: "--group-b-label",
         aliases: [],
         valueMetavar: "label",
@@ -16377,7 +16377,7 @@ var init_option_definitions = __esm({
       },
       {
         id: "group-b-issues",
-        owner: "taishi",
+        owner: "analyst",
         canonical: "--group-b-issues",
         aliases: [],
         valueMetavar: "N|book:N[,...]",
@@ -16401,7 +16401,7 @@ var init_option_definitions = __esm({
       collector: COLLECTOR_OPTIONS,
       doctor: DOCTOR_OPTIONS,
       merger: MERGER_OPTIONS,
-      taishi: TAISHI_OPTIONS
+      analyst: ANALYST_OPTIONS
     };
     PUBLIC_NAVIGATOR_HELP_NOTE = "Navigator attends automatically on every run; configure with `ak-role config set navigator <provider/model[:thinking]>` (not a caller command).";
     TOP_LEVEL_HELP = {
@@ -16477,18 +16477,18 @@ var init_option_definitions = __esm({
           'ak-role merger --project /path/to/worktree "Reconcile the active merge."'
         ]
       },
-      taishi: {
-        command: "taishi",
+      analyst: {
+        command: "analyst",
         summary: "Deterministic analysis seat (issue / sweep / cohort).",
         usage: [
-          "ak-role taishi [--ticket <N>]",
-          "ak-role taishi [sweep] --attach <path>",
-          "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>"
+          "ak-role analyst [--ticket <N>]",
+          "ak-role analyst [sweep] --attach <path>",
+          "ak-role analyst --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>"
         ],
         examples: [
-          "ak-role taishi",
-          "ak-role taishi --ticket 125",
-          "ak-role taishi sweep --attach ./sweep.json"
+          "ak-role analyst",
+          "ak-role analyst --ticket 125",
+          "ak-role analyst sweep --attach ./sweep.json"
         ]
       }
     };
@@ -17900,22 +17900,22 @@ function buildMergerTransportPrompt(admitted, engineMaterial) {
   }
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
-function parseTaishiTicketNumber(raw, flag = "--ticket") {
+function parseAnalystTicketNumber(raw, flag = "--ticket") {
   const trimmed = raw.trim();
-  if (!TAISHI_TICKET_NUMBER_PATTERN.test(trimmed)) {
+  if (!ANALYST_TICKET_NUMBER_PATTERN.test(trimmed)) {
     throw new CliUsageError(
-      `taishi ${flag} must be a positive integer, got ${raw}`
+      `analyst ${flag} must be a positive integer, got ${raw}`
     );
   }
   const value = Number(trimmed);
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new CliUsageError(
-      `taishi ${flag} must be a positive integer, got ${raw}`
+      `analyst ${flag} must be a positive integer, got ${raw}`
     );
   }
   return value;
 }
-function parseTaishiCohortIssueToken(raw, flag) {
+function parseAnalystCohortIssueToken(raw, flag) {
   const trimmed = raw.trim();
   if (trimmed === "") {
     throw new CliUsageError(
@@ -17925,7 +17925,7 @@ function parseTaishiCohortIssueToken(raw, flag) {
   const sep4 = trimmed.lastIndexOf(":");
   if (sep4 > 0) {
     const rhs = trimmed.slice(sep4 + 1);
-    if (TAISHI_TICKET_NUMBER_PATTERN.test(rhs)) {
+    if (ANALYST_TICKET_NUMBER_PATTERN.test(rhs)) {
       const bookKey = trimmed.slice(0, sep4);
       if (bookKey.trim() === "") {
         throw new CliUsageError(
@@ -17935,16 +17935,16 @@ function parseTaishiCohortIssueToken(raw, flag) {
       return {
         kind: "book-qualified",
         bookKey,
-        issueNumber: parseTaishiTicketNumber(rhs, flag)
+        issueNumber: parseAnalystTicketNumber(rhs, flag)
       };
     }
   }
   return {
     kind: "bare",
-    issueNumber: parseTaishiTicketNumber(trimmed, flag)
+    issueNumber: parseAnalystTicketNumber(trimmed, flag)
   };
 }
-function splitTaishiCohortIssueListParts(raw) {
+function splitAnalystCohortIssueListParts(raw) {
   const parts = [];
   let current = "";
   let escaped = false;
@@ -17968,14 +17968,14 @@ function splitTaishiCohortIssueListParts(raw) {
   parts.push(escaped ? `${current}\\` : current);
   return parts;
 }
-function parseTaishiCohortIssueTokenList(raw, flag) {
+function parseAnalystCohortIssueTokenList(raw, flag) {
   const trimmed = raw.trim();
   if (trimmed === "") {
     throw new CliUsageError(
       `${flag} requires a comma-separated list of N or book:N`
     );
   }
-  const parts = splitTaishiCohortIssueListParts(trimmed).map(
+  const parts = splitAnalystCohortIssueListParts(trimmed).map(
     (part) => part.trim()
   );
   if (parts.some((part) => part === "")) {
@@ -17983,7 +17983,7 @@ function parseTaishiCohortIssueTokenList(raw, flag) {
       `${flag} requires a comma-separated list of N or book:N`
     );
   }
-  return parts.map((part) => parseTaishiCohortIssueToken(part, flag));
+  return parts.map((part) => parseAnalystCohortIssueToken(part, flag));
 }
 function requireOptionValue(flag, value, what) {
   if (value === void 0 || value.trim() === "") {
@@ -17991,10 +17991,10 @@ function requireOptionValue(flag, value, what) {
   }
   return value;
 }
-function parseTaishiArgv(args) {
+function parseAnalystArgv(args) {
   const valueLists = /* @__PURE__ */ new Map();
   const tokens = [...args];
-  const definitions = roleOptions("taishi");
+  const definitions = roleOptions("analyst");
   const options = createTypedOptionConsumer(definitions);
   const pushValue = (id, value) => {
     const existing = valueLists.get(id);
@@ -18005,7 +18005,7 @@ function parseTaishiArgv(args) {
     if (tokens[0] === "--") {
       tokens.shift();
       if (tokens.length > 0) {
-        throw new CliUsageError(`unexpected taishi argument: ${tokens[0]}`);
+        throw new CliUsageError(`unexpected analyst argument: ${tokens[0]}`);
       }
       break;
     }
@@ -18017,7 +18017,7 @@ function parseTaishiArgv(args) {
       }
       if (taken.def.id === "ticket") {
         if (taken.value === void 0 || taken.value.trim() === "") {
-          throw new CliUsageError("taishi --ticket requires a positive integer");
+          throw new CliUsageError("analyst --ticket requires a positive integer");
         }
         pushValue("ticket", taken.value);
         continue;
@@ -18047,39 +18047,39 @@ function parseTaishiArgv(args) {
         );
         continue;
       }
-      throw new CliUsageError(`unknown taishi option: ${taken.def.canonical}`);
+      throw new CliUsageError(`unknown analyst option: ${taken.def.canonical}`);
     }
     const token = tokens.shift();
-    if (isRejectedPublicSpelling("taishi", token)) {
+    if (isRejectedPublicSpelling("analyst", token)) {
       if (token === "--project-root" || token.startsWith("--project-root=")) {
         throw new CliUsageError(
-          "taishi no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)"
+          "analyst no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)"
         );
       }
       if (token === "--model-groups" || token.startsWith("--model-groups=")) {
         throw new CliUsageError(
-          "taishi --model-groups public CLI face is disabled; input face is being redesigned for multi-issue comparison (see follow-up ticket)"
+          "analyst --model-groups public CLI face is disabled; input face is being redesigned for multi-issue comparison (see follow-up ticket)"
         );
       }
-      throw new CliUsageError(`unknown taishi option: ${token}`);
+      throw new CliUsageError(`unknown analyst option: ${token}`);
     }
     if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown taishi option: ${token}`);
+      throw new CliUsageError(`unknown analyst option: ${token}`);
     }
     const positional = options.takePositional(token);
     if (positional !== void 0) {
       pushValue(positional.id, "");
       continue;
     }
-    throw new CliUsageError(`unexpected taishi argument: ${token}`);
+    throw new CliUsageError(`unexpected analyst argument: ${token}`);
   }
   const counts = /* @__PURE__ */ new Map();
   for (const [id, values] of valueLists) {
     counts.set(id, values.length);
   }
   options.assertRequired();
-  const mode = resolveTaishiMode(new Set(counts.keys()));
-  const verdict = evaluateTaishiModeOptionContract(mode, counts);
+  const mode = resolveAnalystMode(new Set(counts.keys()));
+  const verdict = evaluateAnalystModeOptionContract(mode, counts);
   if (!verdict.ok) {
     throw new CliUsageError(verdict.message);
   }
@@ -18093,14 +18093,14 @@ function parseTaishiArgv(args) {
       groups: [
         {
           groupLabel: groupALabel,
-          issues: parseTaishiCohortIssueTokenList(
+          issues: parseAnalystCohortIssueTokenList(
             groupAIssuesRaw,
             "--group-a-issues"
           )
         },
         {
           groupLabel: groupBLabel,
-          issues: parseTaishiCohortIssueTokenList(
+          issues: parseAnalystCohortIssueTokenList(
             groupBIssuesRaw,
             "--group-b-issues"
           )
@@ -18117,16 +18117,16 @@ function parseTaishiArgv(args) {
   const ticketRaw = valueLists.get("ticket")?.[0];
   return {
     query: "issue",
-    ...ticketRaw === void 0 ? {} : { ticket: parseTaishiTicketNumber(ticketRaw) }
+    ...ticketRaw === void 0 ? {} : { ticket: parseAnalystTicketNumber(ticketRaw) }
   };
 }
-var MergerEnvelopeDerivationError, DOCTOR_ISSUE_NUMBER_PATTERN, DOCTOR_CASE_RUNS_PATH_PATTERN, TAISHI_TICKET_NUMBER_PATTERN;
+var MergerEnvelopeDerivationError, DOCTOR_ISSUE_NUMBER_PATTERN, DOCTOR_CASE_RUNS_PATH_PATTERN, ANALYST_TICKET_NUMBER_PATTERN;
 var init_invocation = __esm({
   "src/public-cli/invocation.ts"() {
     "use strict";
     init_activation_ledger_topology();
     init_activation_ledger_git();
-    init_sitian_role_run_coordinates();
+    init_archivist_role_run_coordinates();
     init_ticket_frontmatter();
     init_doctor_evidence();
     init_collector_config();
@@ -18149,7 +18149,7 @@ var init_invocation = __esm({
     };
     DOCTOR_ISSUE_NUMBER_PATTERN = /^[1-9]\d*$/;
     DOCTOR_CASE_RUNS_PATH_PATTERN = /\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/;
-    TAISHI_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
+    ANALYST_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
   }
 });
 
@@ -25103,7 +25103,7 @@ var init_merger_run = __esm({
   "src/public-cli/merger-run.ts"() {
     "use strict";
     init_activation_ledger_topology();
-    init_sitian_role_run_coordinates();
+    init_archivist_role_run_coordinates();
     init_engine_detour();
     init_engine_material();
     init_method_skill();
@@ -25533,10 +25533,10 @@ var init_reviewer_run = __esm({
   }
 });
 
-// src/taishi-book-key.ts
+// src/analyst-book-key.ts
 import { statSync as statSync2 } from "node:fs";
 import { isAbsolute as isAbsolute5 } from "node:path";
-function resolveTaishiBookKey(projectRoot) {
+function resolveAnalystBookKey(projectRoot) {
   const identity = physicalPathIdentity(projectRoot);
   let stats;
   try {
@@ -25556,11 +25556,11 @@ function resolveTaishiBookKey(projectRoot) {
     throw error;
   }
 }
-function isSyntheticTaishiBookKey(bookKey) {
+function isSyntheticAnalystBookKey(bookKey) {
   return bookKey.startsWith("root:") && isAbsolute5(bookKey.slice("root:".length));
 }
-var init_taishi_book_key = __esm({
-  "src/taishi-book-key.ts"() {
+var init_analyst_book_key = __esm({
+  "src/analyst-book-key.ts"() {
     "use strict";
     init_activation_ledger_git();
     init_activation_ledger_topology();
@@ -25588,7 +25588,7 @@ var init_atomic_write = __esm({
   }
 });
 
-// src/taishi-index.ts
+// src/analyst-index.ts
 import { open as open4, readFile as readFile11, unlink as unlink4 } from "node:fs/promises";
 import { dirname as dirname8, join as join21 } from "node:path";
 function sleep(ms) {
@@ -25596,8 +25596,8 @@ function sleep(ms) {
     setTimeout(resolve8, ms);
   });
 }
-async function withTaishiLibraryIndexLock(ledgerHome, fn) {
-  const indexPath = taishiLibraryIndexPath(ledgerHome);
+async function withAnalystLibraryIndexLock(ledgerHome, fn) {
+  const indexPath = analystLibraryIndexPath(ledgerHome);
   ensureRealDirectoryTree(ledgerHome, dirname8(indexPath));
   const lockPath = join21(dirname8(indexPath), LIBRARY_INDEX_LOCK_NAME);
   assertLedgerFileInsideHome(lockPath, ledgerHome);
@@ -25618,15 +25618,15 @@ async function withTaishiLibraryIndexLock(ledgerHome, fn) {
       if (code !== "EEXIST") throw error;
       if (Date.now() - startedAt > LIBRARY_INDEX_LOCK_TIMEOUT_MS) {
         throw new Error(
-          `taishi library-index lock timeout after ${LIBRARY_INDEX_LOCK_TIMEOUT_MS}ms: ${lockPath}`
+          `analyst library-index lock timeout after ${LIBRARY_INDEX_LOCK_TIMEOUT_MS}ms: ${lockPath}`
         );
       }
       await sleep(LIBRARY_INDEX_LOCK_RETRY_MS);
     }
   }
 }
-function taishiLibraryIndexPath(ledgerHome) {
-  return join21(ledgerHome, "taishi", "library-index.json");
+function analystLibraryIndexPath(ledgerHome) {
+  return join21(ledgerHome, "analyst", "library-index.json");
 }
 function rowFromIssueMetricsPage(page) {
   return {
@@ -25640,14 +25640,14 @@ function rowFromIssueMetricsPage(page) {
     lastActivityAt: page.lastActivityAt
   };
 }
-function normalizeTaishiLibraryIndexRow(row) {
+function normalizeAnalystLibraryIndexRow(row) {
   const rawBook = row.bookKey;
   if (typeof rawBook === "string" && rawBook !== "") {
     if (rawBook === row.bookKey) return row;
     return { ...row, bookKey: rawBook };
   }
   const projectRoot = physicalPathIdentity(row.projectRoot);
-  return { ...row, projectRoot, bookKey: resolveTaishiBookKey(projectRoot) };
+  return { ...row, projectRoot, bookKey: resolveAnalystBookKey(projectRoot) };
 }
 function sortRows(rows) {
   return [...rows].sort((a, b) => {
@@ -25663,13 +25663,13 @@ function sortRows(rows) {
     return aNum - bNum;
   });
 }
-function buildTaishiLibraryIndexPage(rows) {
+function buildAnalystLibraryIndexPage(rows) {
   return {
-    kind: "taishi-library-index",
-    rows: sortRows(rows.map(normalizeTaishiLibraryIndexRow))
+    kind: "analyst-library-index",
+    rows: sortRows(rows.map(normalizeAnalystLibraryIndexRow))
   };
 }
-function findTaishiLibraryIndexRow(index, issueNumber, bookKey) {
+function findAnalystLibraryIndexRow(index, issueNumber, bookKey) {
   if (index === void 0) return void 0;
   return index.rows.find(
     (row) => row.issueNumber === issueNumber && row.bookKey === bookKey
@@ -25681,11 +25681,11 @@ function indexRowKey(row) {
 function issueBookKey(bookKey, issueNumber) {
   return `${bookKey}\0${issueNumber}`;
 }
-function upsertTaishiLibraryIndexRows(existing, upserts) {
+function upsertAnalystLibraryIndexRows(existing, upserts) {
   const byKey = /* @__PURE__ */ new Map();
   const keyByIssue = /* @__PURE__ */ new Map();
   const ingest = (row) => {
-    row = normalizeTaishiLibraryIndexRow(row);
+    row = normalizeAnalystLibraryIndexRow(row);
     const key = indexRowKey(row);
     if (row.issueNumber !== void 0) {
       const issueKey = issueBookKey(row.bookKey, row.issueNumber);
@@ -25711,10 +25711,10 @@ function upsertTaishiLibraryIndexRows(existing, upserts) {
   for (const row of upserts) {
     ingest(row);
   }
-  return buildTaishiLibraryIndexPage([...byKey.values()]);
+  return buildAnalystLibraryIndexPage([...byKey.values()]);
 }
-async function readTaishiLibraryIndexPage(ledgerHome) {
-  const path = taishiLibraryIndexPath(ledgerHome);
+async function readAnalystLibraryIndexPage(ledgerHome) {
+  const path = analystLibraryIndexPath(ledgerHome);
   let raw;
   try {
     raw = await readFile11(path, "utf8");
@@ -25728,41 +25728,41 @@ async function readTaishiLibraryIndexPage(ledgerHome) {
   if (parsed === null || typeof parsed !== "object" || !Array.isArray(parsed.rows)) {
     const shape = parsed === null ? "null" : typeof parsed !== "object" ? typeof parsed : `object with non-array rows (${typeof parsed.rows})`;
     throw new Error(
-      `taishi library-index at ${path} is malformed (${shape}; expected an index page with a rows array) \u2014 rejected at the read boundary`
+      `analyst library-index at ${path} is malformed (${shape}; expected an index page with a rows array) \u2014 rejected at the read boundary`
     );
   }
-  return buildTaishiLibraryIndexPage(parsed.rows);
+  return buildAnalystLibraryIndexPage(parsed.rows);
 }
-async function writeTaishiLibraryIndexPage(ledgerHome, page) {
-  const path = taishiLibraryIndexPath(ledgerHome);
+async function writeAnalystLibraryIndexPage(ledgerHome, page) {
+  const path = analystLibraryIndexPath(ledgerHome);
   ensureRealDirectoryTree(ledgerHome, dirname8(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
   return path;
 }
-async function mergeTaishiLibraryIndexRows(ledgerHome, upserts) {
-  return withTaishiLibraryIndexLock(ledgerHome, async () => {
-    const existing = await readTaishiLibraryIndexPage(ledgerHome);
-    const index = upsertTaishiLibraryIndexRows(existing, upserts);
-    const indexPath = await writeTaishiLibraryIndexPage(ledgerHome, index);
+async function mergeAnalystLibraryIndexRows(ledgerHome, upserts) {
+  return withAnalystLibraryIndexLock(ledgerHome, async () => {
+    const existing = await readAnalystLibraryIndexPage(ledgerHome);
+    const index = upsertAnalystLibraryIndexRows(existing, upserts);
+    const indexPath = await writeAnalystLibraryIndexPage(ledgerHome, index);
     return { index, indexPath };
   });
 }
 var LIBRARY_INDEX_LOCK_NAME, LIBRARY_INDEX_LOCK_TIMEOUT_MS, LIBRARY_INDEX_LOCK_RETRY_MS;
-var init_taishi_index = __esm({
-  "src/taishi-index.ts"() {
+var init_analyst_index = __esm({
+  "src/analyst-index.ts"() {
     "use strict";
     init_atomic_write();
     init_activation_ledger_topology();
-    init_taishi_book_key();
+    init_analyst_book_key();
     LIBRARY_INDEX_LOCK_NAME = ".library-index.lock";
     LIBRARY_INDEX_LOCK_TIMEOUT_MS = 3e4;
     LIBRARY_INDEX_LOCK_RETRY_MS = 15;
   }
 });
 
-// src/taishi-median.ts
+// src/analyst-median.ts
 function medianNumber(values) {
   if (values.length === 0) return void 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -25772,13 +25772,13 @@ function medianNumber(values) {
   }
   return (sorted[mid - 1] + sorted[mid]) / 2;
 }
-var init_taishi_median = __esm({
-  "src/taishi-median.ts"() {
+var init_analyst_median = __esm({
+  "src/analyst-median.ts"() {
     "use strict";
   }
 });
 
-// src/taishi-cohort.ts
+// src/analyst-cohort.ts
 function presentMetric(value) {
   return { status: "present", value };
 }
@@ -25824,7 +25824,7 @@ async function aggregateGroup(index, input, ensureIssuePage) {
   const legWalls = [];
   for (const ref of input.issues) {
     const { issueNumber, bookKey } = ref;
-    const row = findTaishiLibraryIndexRow(index, issueNumber, bookKey);
+    const row = findAnalystLibraryIndexRow(index, issueNumber, bookKey);
     if (row === void 0) {
       issueEntries.push({ issueNumber, status: "absent", bookKey });
       continue;
@@ -25867,8 +25867,8 @@ async function aggregateGroup(index, input, ensureIssuePage) {
     medianWallMs: optionalMedian(legWalls)
   };
 }
-async function runTaishiCohortMode(ledgerHome, input, ensureIssuePage) {
-  const index = await readTaishiLibraryIndexPage(ledgerHome);
+async function runAnalystCohortMode(ledgerHome, input, ensureIssuePage) {
+  const index = await readAnalystLibraryIndexPage(ledgerHome);
   const group0 = await aggregateGroup(index, input.groups[0], ensureIssuePage);
   const group1 = await aggregateGroup(index, input.groups[1], ensureIssuePage);
   return {
@@ -25877,11 +25877,11 @@ async function runTaishiCohortMode(ledgerHome, input, ensureIssuePage) {
   };
 }
 var ABSENT;
-var init_taishi_cohort = __esm({
-  "src/taishi-cohort.ts"() {
+var init_analyst_cohort = __esm({
+  "src/analyst-cohort.ts"() {
     "use strict";
-    init_taishi_index();
-    init_taishi_median();
+    init_analyst_index();
+    init_analyst_median();
     ABSENT = { status: "absent" };
   }
 });
@@ -26184,7 +26184,7 @@ var init_run_terminal_artifacts = __esm({
   }
 });
 
-// src/taishi-ledger.ts
+// src/analyst-ledger.ts
 import { readdir as readdir5, readFile as readFile14 } from "node:fs/promises";
 import { join as join23 } from "node:path";
 function isMissingPathError5(error) {
@@ -26392,7 +26392,7 @@ async function classifyScopedRun(input) {
     }
   };
 }
-async function scanTaishiIssueRuns(input) {
+async function scanAnalystIssueRuns(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const scopeTicketNumber = input.ticketNumber;
   const booksRoot = join23(ledgerHome, "books");
@@ -26474,8 +26474,8 @@ async function scanTaishiIssueRuns(input) {
   };
 }
 var LIVE_RUN_STATES;
-var init_taishi_ledger = __esm({
-  "src/taishi-ledger.ts"() {
+var init_analyst_ledger = __esm({
+  "src/analyst-ledger.ts"() {
     "use strict";
     init_activation_ledger_git();
     init_activation_ledger_topology();
@@ -26485,7 +26485,7 @@ var init_taishi_ledger = __esm({
   }
 });
 
-// src/taishi-metric-families/acceptance-success-rework.ts
+// src/analyst-metric-families/acceptance-success-rework.ts
 function isRecord9(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -26682,7 +26682,7 @@ function buildAcceptanceSuccessReworkSection(runs) {
   if (runs.length === 0) return void 0;
   const legs = projectLegs(runs);
   return {
-    kind: "taishi-acceptance-success-rework",
+    kind: "analyst-acceptance-success-rework",
     legs,
     byRole: aggregateByRole(legs),
     rework: reworkLens(legs)
@@ -26690,10 +26690,10 @@ function buildAcceptanceSuccessReworkSection(runs) {
 }
 var WORKER_ROLES, ACCEPTED_STATUS, SUCCESS_STATUS, acceptanceSuccessReworkFamily, acceptance_success_rework_default;
 var init_acceptance_success_rework = __esm({
-  "src/taishi-metric-families/acceptance-success-rework.ts"() {
+  "src/analyst-metric-families/acceptance-success-rework.ts"() {
     "use strict";
     init_engine_labor_fallback();
-    init_taishi_median();
+    init_analyst_median();
     WORKER_ROLES = /* @__PURE__ */ new Set(["coder", "fixer"]);
     ACCEPTED_STATUS = {
       coder: /* @__PURE__ */ new Set(["completed", "refused", "partially_completed", "unfinished", "planned"]),
@@ -26724,8 +26724,8 @@ var init_acceptance_success_rework = __esm({
   }
 });
 
-// src/taishi-model-groups.ts
-function taishiModelGroupKey(models) {
+// src/analyst-model-groups.ts
+function analystModelGroupKey(models) {
   if (models.length === 0) return void 0;
   if (models.length === 1) return models[0];
   return `mixed:${models.join("+")}`;
@@ -26756,11 +26756,11 @@ function modelIdentityAbsentEntry(run) {
     lastFrameAt: { status: "present", at: run.frameSpan.endedAt }
   };
 }
-function buildTaishiModelGroupsPage(input) {
+function buildAnalystModelGroupsPage(input) {
   const groupedRuns = [];
   const modelAbsent = [];
   for (const run of input.runs) {
-    const rawGroupKey = taishiModelGroupKey(run.models);
+    const rawGroupKey = analystModelGroupKey(run.models);
     if (rawGroupKey === void 0) {
       modelAbsent.push(modelIdentityAbsentEntry(run));
     } else {
@@ -26778,7 +26778,7 @@ function buildTaishiModelGroupsPage(input) {
     const leg = legByRunId.get(run.runId);
     if (leg === void 0) {
       throw new Error(
-        `taishi model-groups: missing acceptance projection for run ${run.runId}`
+        `analyst model-groups: missing acceptance projection for run ${run.runId}`
       );
     }
     let acc = byRaw.get(rawGroupKey);
@@ -26818,7 +26818,7 @@ function buildTaishiModelGroupsPage(input) {
   });
   const unreadable = sortUnreadable([...input.unreadable, ...modelAbsent]);
   return {
-    kind: "taishi-model-groups",
+    kind: "analyst-model-groups",
     mode: "model-groups",
     projectRoots: [...input.projectRoots].sort((a, b) => a.localeCompare(b)),
     groups,
@@ -26827,15 +26827,15 @@ function buildTaishiModelGroupsPage(input) {
     unreadable
   };
 }
-var init_taishi_model_groups = __esm({
-  "src/taishi-model-groups.ts"() {
+var init_analyst_model_groups = __esm({
+  "src/analyst-model-groups.ts"() {
     "use strict";
     init_acceptance_success_rework();
-    init_taishi_median();
+    init_analyst_median();
   }
 });
 
-// src/taishi-metric-families/b2-frame-buckets-actions.ts
+// src/analyst-metric-families/b2-frame-buckets-actions.ts
 function timestampMs(iso) {
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) {
@@ -26954,7 +26954,7 @@ function sortActionsDescending(actions) {
     return 0;
   });
 }
-function computeTaishiB2RunMetrics(facts) {
+function computeAnalystB2RunMetrics(facts) {
   const frameStartMs = timestampMs(facts.frameSpan.startedAt);
   const frameEndMs = timestampMs(facts.frameSpan.endedAt);
   const wallMs = Math.max(0, frameEndMs - frameStartMs);
@@ -26984,20 +26984,20 @@ function computeTaishiB2RunMetrics(facts) {
 }
 var b2FrameBucketsActionsFamily, b2_frame_buckets_actions_default;
 var init_b2_frame_buckets_actions = __esm({
-  "src/taishi-metric-families/b2-frame-buckets-actions.ts"() {
+  "src/analyst-metric-families/b2-frame-buckets-actions.ts"() {
     "use strict";
-    init_taishi_median();
+    init_analyst_median();
     b2FrameBucketsActionsFamily = {
       id: "b2-frame-buckets-actions",
       contribute(input) {
         if (input.runs.length === 0) return void 0;
-        const runs = [...input.runs].map(computeTaishiB2RunMetrics).sort((a, b) => {
+        const runs = [...input.runs].map(computeAnalystB2RunMetrics).sort((a, b) => {
           if (a.book !== b.book) return a.book.localeCompare(b.book);
           if (a.role !== b.role) return a.role.localeCompare(b.role);
           return a.runId.localeCompare(b.runId);
         });
         const section = {
-          kind: "taishi-b2-frame-buckets-actions",
+          kind: "analyst-b2-frame-buckets-actions",
           runs
         };
         return { b2FrameBucketsActions: section };
@@ -27007,7 +27007,7 @@ var init_b2_frame_buckets_actions = __esm({
   }
 });
 
-// src/taishi-metric-families/leg-wall-clock.ts
+// src/analyst-metric-families/leg-wall-clock.ts
 function frameSpanWallMs(span) {
   return Date.parse(span.endedAt) - Date.parse(span.startedAt);
 }
@@ -27027,9 +27027,9 @@ function compareRankingDesc(a, b) {
 }
 var legWallClockFamily, leg_wall_clock_default;
 var init_leg_wall_clock = __esm({
-  "src/taishi-metric-families/leg-wall-clock.ts"() {
+  "src/analyst-metric-families/leg-wall-clock.ts"() {
     "use strict";
-    init_taishi_median();
+    init_analyst_median();
     legWallClockFamily = {
       id: "leg-wall-clock",
       contribute(input) {
@@ -27045,7 +27045,7 @@ var init_leg_wall_clock = __esm({
         let totalElapsedMs = 0;
         for (const wallMs of walls) totalElapsedMs += wallMs;
         const section = {
-          kind: "taishi-leg-wall-clock",
+          kind: "analyst-leg-wall-clock",
           ranking,
           medianWallMs,
           totalElapsedMs
@@ -27057,7 +27057,7 @@ var init_leg_wall_clock = __esm({
   }
 });
 
-// src/taishi-metric-families/round-timeline.ts
+// src/analyst-metric-families/round-timeline.ts
 function isRecord10(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -27156,7 +27156,7 @@ function buildLanes(runs, unreadable) {
 }
 var roundTimelineFamily, round_timeline_default;
 var init_round_timeline = __esm({
-  "src/taishi-metric-families/round-timeline.ts"() {
+  "src/analyst-metric-families/round-timeline.ts"() {
     "use strict";
     roundTimelineFamily = {
       id: "round-timeline",
@@ -27165,7 +27165,7 @@ var init_round_timeline = __esm({
           return void 0;
         }
         const section = {
-          kind: "taishi-round-timeline",
+          kind: "analyst-round-timeline",
           lanes: buildLanes(input.runs, input.unreadable)
         };
         return { roundTimeline: section };
@@ -27175,13 +27175,13 @@ var init_round_timeline = __esm({
   }
 });
 
-// src/taishi-metric-families.ts
-async function loadTaishiIssueMetricFamilies() {
+// src/analyst-metric-families.ts
+async function loadAnalystIssueMetricFamilies() {
   return ISSUE_METRIC_FAMILIES;
 }
 var ISSUE_METRIC_FAMILIES;
-var init_taishi_metric_families = __esm({
-  "src/taishi-metric-families.ts"() {
+var init_analyst_metric_families = __esm({
+  "src/analyst-metric-families.ts"() {
     "use strict";
     init_acceptance_success_rework();
     init_b2_frame_buckets_actions();
@@ -27196,8 +27196,8 @@ var init_taishi_metric_families = __esm({
   }
 });
 
-// src/taishi-metric-family.ts
-function composeTaishiMetricFamilySections(families, input) {
+// src/analyst-metric-family.ts
+function composeAnalystMetricFamilySections(families, input) {
   const sections = {};
   for (const family of families) {
     const piece = family.contribute(input);
@@ -27206,16 +27206,16 @@ function composeTaishiMetricFamilySections(families, input) {
   }
   return sections;
 }
-var init_taishi_metric_family = __esm({
-  "src/taishi-metric-family.ts"() {
+var init_analyst_metric_family = __esm({
+  "src/analyst-metric-family.ts"() {
     "use strict";
   }
 });
 
-// src/taishi-page.ts
+// src/analyst-page.ts
 import { createHash as createHash4 } from "node:crypto";
 import { dirname as dirname10, join as join24 } from "node:path";
-function taishiIssuePageKey(address) {
+function analystIssuePageKey(address) {
   const parts = ["book", address.bookKey];
   if (address.issueNumber !== void 0) {
     parts.push("ticket", String(address.issueNumber));
@@ -27224,10 +27224,10 @@ function taishiIssuePageKey(address) {
   }
   return createHash4("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
 }
-function taishiIssuePagePath(ledgerHome, address) {
-  return join24(ledgerHome, "taishi", "issues", `${taishiIssuePageKey(address)}.json`);
+function analystIssuePagePath(ledgerHome, address) {
+  return join24(ledgerHome, "analyst", "issues", `${analystIssuePageKey(address)}.json`);
 }
-function taishiIssuePageAddressFromPage(page) {
+function analystIssuePageAddressFromPage(page) {
   return {
     bookKey: page.bookKey,
     ...page.issueNumber === void 0 ? {} : { issueNumber: page.issueNumber },
@@ -27255,22 +27255,22 @@ function sortScopeConflicts(conflicts) {
     return a.projectRoot.localeCompare(b.projectRoot);
   });
 }
-function assertTaishiChangedLinesInput(changedLines) {
+function assertAnalystChangedLinesInput(changedLines) {
   if (changedLines === void 0) return;
   if (typeof changedLines !== "number" || !Number.isFinite(changedLines) || changedLines < 0) {
     throw new Error(
-      `taishi changedLines must be a finite non-negative number, got ${String(changedLines)}`
+      `analyst changedLines must be a finite non-negative number, got ${String(changedLines)}`
     );
   }
 }
-function normalizeTaishiChangedLines(changedLines) {
-  assertTaishiChangedLinesInput(changedLines);
+function normalizeAnalystChangedLines(changedLines) {
+  assertAnalystChangedLinesInput(changedLines);
   if (changedLines === void 0 || changedLines === 0) {
     return { status: "absent" };
   }
   return { status: "present", value: changedLines };
 }
-function computeTaishiMsPerKLines(totalElapsedMs, changedLines) {
+function computeAnalystMsPerKLines(totalElapsedMs, changedLines) {
   if (changedLines.status === "absent") return { status: "absent" };
   return {
     status: "present",
@@ -27280,7 +27280,7 @@ function computeTaishiMsPerKLines(totalElapsedMs, changedLines) {
 function frameSpanWallMs2(span) {
   return Date.parse(span.endedAt) - Date.parse(span.startedAt);
 }
-function summarizeTaishiRunEfficiency(runs, unreadable = []) {
+function summarizeAnalystRunEfficiency(runs, unreadable = []) {
   let totalElapsedMs = 0;
   let latestEndedAt;
   for (const run of runs) {
@@ -27300,8 +27300,8 @@ function summarizeTaishiRunEfficiency(runs, unreadable = []) {
   const lastActivityAt = latestEndedAt === void 0 ? { status: "absent" } : { status: "present", at: latestEndedAt };
   return { totalElapsedMs, lastActivityAt };
 }
-async function buildTaishiIssueMetricsPage(input) {
-  const families = await loadTaishiIssueMetricFamilies();
+async function buildAnalystIssueMetricsPage(input) {
+  const families = await loadAnalystIssueMetricFamilies();
   const legs = sortLegs(
     input.runs.map((run) => ({
       runId: run.runId,
@@ -27312,14 +27312,14 @@ async function buildTaishiIssueMetricsPage(input) {
   const unreadable = sortUnreadable2(input.unreadable);
   const scopeConflicts = sortScopeConflicts(input.scopeConflicts ?? []);
   const projectRoot = physicalPathIdentity(input.projectRoot);
-  const { totalElapsedMs, lastActivityAt } = summarizeTaishiRunEfficiency(
+  const { totalElapsedMs, lastActivityAt } = summarizeAnalystRunEfficiency(
     input.runs,
     unreadable
   );
-  const changedLines = normalizeTaishiChangedLines(input.changedLines);
-  const msPerKLines = computeTaishiMsPerKLines(totalElapsedMs, changedLines);
+  const changedLines = normalizeAnalystChangedLines(input.changedLines);
+  const msPerKLines = computeAnalystMsPerKLines(totalElapsedMs, changedLines);
   const envelope = {
-    kind: "taishi-issue-metrics",
+    kind: "analyst-issue-metrics",
     mode: "issue",
     bookKey: input.bookKey,
     projectRoot,
@@ -27335,32 +27335,32 @@ async function buildTaishiIssueMetricsPage(input) {
     msPerKLines,
     lastActivityAt
   };
-  const sections = composeTaishiMetricFamilySections(families, {
+  const sections = composeAnalystMetricFamilySections(families, {
     projectRoot,
     runs: input.runs,
     unreadable
   });
   return { ...envelope, ...sections };
 }
-async function writeTaishiIssueMetricsPage(ledgerHome, page) {
-  const path = taishiIssuePagePath(ledgerHome, taishiIssuePageAddressFromPage(page));
+async function writeAnalystIssueMetricsPage(ledgerHome, page) {
+  const path = analystIssuePagePath(ledgerHome, analystIssuePageAddressFromPage(page));
   ensureRealDirectoryTree(ledgerHome, dirname10(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
   return path;
 }
-var init_taishi_page = __esm({
-  "src/taishi-page.ts"() {
+var init_analyst_page = __esm({
+  "src/analyst-page.ts"() {
     "use strict";
     init_atomic_write();
     init_activation_ledger_topology();
-    init_taishi_metric_families();
-    init_taishi_metric_family();
+    init_analyst_metric_families();
+    init_analyst_metric_family();
   }
 });
 
-// src/taishi-entry.ts
+// src/analyst-entry.ts
 import { readFile as readFile15 } from "node:fs/promises";
 function isMissingPathError6(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
@@ -27377,14 +27377,14 @@ function resolveIssueBookKey(input) {
   if (input.bookKey !== void 0 && input.bookKey.trim() !== "") {
     return input.bookKey;
   }
-  return resolveTaishiBookKey(input.projectRoot);
+  return resolveAnalystBookKey(input.projectRoot);
 }
-async function readOrComputeTaishiIssuePage(input, options) {
+async function readOrComputeAnalystIssuePage(input, options) {
   const ledgerHome = resolveActivationLedgerHome();
   const projectRoot = physicalPathIdentity(input.projectRoot);
   const bookKey = resolveIssueBookKey(input);
   const issueNumber = input.ticketNumber ?? input.issueNumber;
-  const pagePath = taishiIssuePagePath(ledgerHome, {
+  const pagePath = analystIssuePagePath(ledgerHome, {
     bookKey,
     ...issueNumber === void 0 ? {} : { issueNumber },
     // Sweep/legacy path-narrow pages (no ticket, no explicit CLI book-only scope).
@@ -27398,7 +27398,7 @@ async function readOrComputeTaishiIssuePage(input, options) {
     }
   } catch (error) {
     if (!isMissingPathError6(error)) {
-      throw new TaishiIssueComputeError({
+      throw new AnalystIssueComputeError({
         bookKey,
         projectRoot,
         ...issueNumber === void 0 ? {} : { issueNumber },
@@ -27407,10 +27407,10 @@ async function readOrComputeTaishiIssuePage(input, options) {
     }
   }
   try {
-    return await runTaishiIssueMode(input, void 0, options?.scanProjectRoot);
+    return await runAnalystIssueMode(input, void 0, options?.scanProjectRoot);
   } catch (error) {
-    if (error instanceof TaishiIssueComputeError) throw error;
-    throw new TaishiIssueComputeError({
+    if (error instanceof AnalystIssueComputeError) throw error;
+    throw new AnalystIssueComputeError({
       bookKey,
       projectRoot,
       ...issueNumber === void 0 ? {} : { issueNumber },
@@ -27418,24 +27418,24 @@ async function readOrComputeTaishiIssuePage(input, options) {
     });
   }
 }
-async function runTaishiIssueMode(input, precomputedScan, scanProjectRoot) {
-  assertTaishiChangedLinesInput(input.changedLines);
+async function runAnalystIssueMode(input, precomputedScan, scanProjectRoot) {
+  assertAnalystChangedLinesInput(input.changedLines);
   const ledgerHome = resolveActivationLedgerHome();
   const projectRoot = input.projectRoot;
   const ticketNumber = "ticketNumber" in input ? input.ticketNumber : void 0;
   const inputBookKey = "bookKey" in input && typeof input.bookKey === "string" && input.bookKey.trim() !== "" ? input.bookKey : void 0;
-  const scan = precomputedScan ?? (inputBookKey !== void 0 ? await scanTaishiIssueRuns({
+  const scan = precomputedScan ?? (inputBookKey !== void 0 ? await scanAnalystIssueRuns({
     bookKey: inputBookKey,
     ...scanProjectRoot === void 0 ? {} : { projectRoot: scanProjectRoot },
     ...ticketNumber === void 0 ? {} : { ticketNumber }
-  }) : ticketNumber === void 0 ? await scanTaishiIssueRuns({ projectRoot }) : await scanTaishiIssueRuns({ projectRoot, ticketNumber }));
+  }) : ticketNumber === void 0 ? await scanAnalystIssueRuns({ projectRoot }) : await scanAnalystIssueRuns({ projectRoot, ticketNumber }));
   const issueNumber = "issueNumber" in input ? input.issueNumber : void 0;
   const bookKey = resolveIssueBookKey({
     ...inputBookKey === void 0 ? {} : { bookKey: inputBookKey },
     projectRoot
   });
   const scopeRootIdentity = inputBookKey === void 0 && ticketNumber === void 0 && issueNumber === void 0 ? physicalPathIdentity(projectRoot) : void 0;
-  const page = await buildTaishiIssueMetricsPage({
+  const page = await buildAnalystIssueMetricsPage({
     bookKey,
     projectRoot,
     runs: scan.runs,
@@ -27445,25 +27445,25 @@ async function runTaishiIssueMode(input, precomputedScan, scanProjectRoot) {
     ...issueNumber === void 0 ? {} : { issueNumber },
     ...scopeRootIdentity === void 0 ? {} : { scopeRootIdentity }
   });
-  const pagePath = await writeTaishiIssueMetricsPage(ledgerHome, page);
+  const pagePath = await writeAnalystIssueMetricsPage(ledgerHome, page);
   if (issueNumber !== void 0) {
-    await mergeTaishiLibraryIndexRows(ledgerHome, [
+    await mergeAnalystLibraryIndexRows(ledgerHome, [
       rowFromIssueMetricsPage(page)
     ]);
   }
   return { mode: "issue", page, pagePath };
 }
-async function runTaishiSweepMode(input) {
+async function runAnalystSweepMode(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const issuePages = [];
   for (const entry of input.mergedPullRequests) {
-    issuePages.push(await runTaishiIssueMode(entry));
+    issuePages.push(await runAnalystIssueMode(entry));
   }
   const upserts = issuePages.map((result2) => rowFromIssueMetricsPage(result2.page));
-  const { index, indexPath } = await mergeTaishiLibraryIndexRows(ledgerHome, upserts);
+  const { index, indexPath } = await mergeAnalystLibraryIndexRows(ledgerHome, upserts);
   return { mode: "sweep", issuePages, index, indexPath };
 }
-async function runTaishiModelGroupsMode(input) {
+async function runAnalystModelGroupsMode(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const runs = [];
   const unreadable = [];
@@ -27476,11 +27476,11 @@ async function runTaishiModelGroupsMode(input) {
     projectRoots.push(identity);
   }
   for (const projectRoot of projectRoots) {
-    const scan = await scanTaishiIssueRuns({ projectRoot });
+    const scan = await scanAnalystIssueRuns({ projectRoot });
     runs.push(...scan.runs);
     unreadable.push(...scan.unreadable);
     const bookKey = resolveIssueBookKey({ projectRoot });
-    const pagePath = taishiIssuePagePath(ledgerHome, {
+    const pagePath = analystIssuePagePath(ledgerHome, {
       bookKey,
       scopeRootIdentity: projectRoot
     });
@@ -27489,17 +27489,17 @@ async function runTaishiModelGroupsMode(input) {
       JSON.parse(raw);
     } catch (error) {
       if (!isMissingPathError6(error)) {
-        throw new TaishiIssueComputeError({ bookKey, projectRoot, cause: error });
+        throw new AnalystIssueComputeError({ bookKey, projectRoot, cause: error });
       }
       try {
-        await runTaishiIssueMode({ mode: "issue", projectRoot }, scan);
+        await runAnalystIssueMode({ mode: "issue", projectRoot }, scan);
       } catch (computeError) {
-        if (computeError instanceof TaishiIssueComputeError) throw computeError;
-        throw new TaishiIssueComputeError({ bookKey, projectRoot, cause: computeError });
+        if (computeError instanceof AnalystIssueComputeError) throw computeError;
+        throw new AnalystIssueComputeError({ bookKey, projectRoot, cause: computeError });
       }
     }
   }
-  const page = input.combinationMapping === void 0 ? buildTaishiModelGroupsPage({ projectRoots, runs, unreadable }) : buildTaishiModelGroupsPage({
+  const page = input.combinationMapping === void 0 ? buildAnalystModelGroupsPage({ projectRoots, runs, unreadable }) : buildAnalystModelGroupsPage({
     projectRoots,
     runs,
     unreadable,
@@ -27507,15 +27507,15 @@ async function runTaishiModelGroupsMode(input) {
   });
   return { mode: "model-groups", page };
 }
-async function runTaishi(input) {
+async function runAnalyst(input) {
   if (input.mode === "sweep") {
-    return runTaishiSweepMode(input);
+    return runAnalystSweepMode(input);
   }
   if (input.mode === "cohort") {
     const ledgerHome = resolveActivationLedgerHome();
-    return runTaishiCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber, bookKey }) => {
-      const realBookKey = bookKey !== void 0 && !isSyntheticTaishiBookKey(bookKey) ? bookKey : void 0;
-      const ensured = await readOrComputeTaishiIssuePage({
+    return runAnalystCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber, bookKey }) => {
+      const realBookKey = bookKey !== void 0 && !isSyntheticAnalystBookKey(bookKey) ? bookKey : void 0;
+      const ensured = await readOrComputeAnalystIssuePage({
         mode: "issue",
         projectRoot,
         issueNumber,
@@ -27526,24 +27526,24 @@ async function runTaishi(input) {
     });
   }
   if (input.mode === "model-groups") {
-    return runTaishiModelGroupsMode(input);
+    return runAnalystModelGroupsMode(input);
   }
-  return runTaishiIssueMode(input);
+  return runAnalystIssueMode(input);
 }
-var TaishiIssueComputeError, taishiSweepModeInputSchema;
-var init_taishi_entry = __esm({
-  "src/taishi-entry.ts"() {
+var AnalystIssueComputeError, analystSweepModeInputSchema;
+var init_analyst_entry = __esm({
+  "src/analyst-entry.ts"() {
     "use strict";
     init_build();
     init_activation_ledger_topology();
-    init_taishi_book_key();
-    init_taishi_cohort();
-    init_taishi_ledger();
-    init_taishi_index();
-    init_taishi_model_groups();
-    init_taishi_page();
-    TaishiIssueComputeError = class extends Error {
-      code = "taishi-issue-compute-failed";
+    init_analyst_book_key();
+    init_analyst_cohort();
+    init_analyst_ledger();
+    init_analyst_index();
+    init_analyst_model_groups();
+    init_analyst_page();
+    AnalystIssueComputeError = class extends Error {
+      code = "analyst-issue-compute-failed";
       bookKey;
       projectRoot;
       issueNumber;
@@ -27551,10 +27551,10 @@ var init_taishi_entry = __esm({
         const root = physicalPathIdentity(input.projectRoot);
         const causeText = input.cause instanceof Error ? input.cause.message || input.cause.name : String(input.cause);
         const issueFace = input.issueNumber === void 0 ? `book ${input.bookKey} (projectRoot ${root})` : `issue ${input.issueNumber} book ${input.bookKey} (projectRoot ${root})`;
-        super(`taishi compute failed for ${issueFace}: ${causeText}`, {
+        super(`analyst compute failed for ${issueFace}: ${causeText}`, {
           cause: input.cause
         });
-        this.name = "TaishiIssueComputeError";
+        this.name = "AnalystIssueComputeError";
         this.bookKey = input.bookKey;
         this.projectRoot = root;
         if (input.issueNumber !== void 0) {
@@ -27562,7 +27562,7 @@ var init_taishi_entry = __esm({
         }
       }
     };
-    taishiSweepModeInputSchema = typebox_exports.Object(
+    analystSweepModeInputSchema = typebox_exports.Object(
       {
         mode: typebox_exports.Literal("sweep"),
         mergedPullRequests: typebox_exports.Array(
@@ -27583,25 +27583,25 @@ var init_taishi_entry = __esm({
   }
 });
 
-// src/public-cli/taishi-run.ts
+// src/public-cli/analyst-run.ts
 import { readFile as readFile16 } from "node:fs/promises";
 import { isAbsolute as isAbsolute6, resolve as resolve7 } from "node:path";
-function resolveTaishiIssueBookKeyFromCwd(cwd = process.cwd()) {
+function resolveAnalystIssueBookKeyFromCwd(cwd = process.cwd()) {
   try {
     return resolveBookKeyFromGit(cwd);
   } catch (error) {
     if (error instanceof ActivationGitRepositoryRequiredError) {
       throw new CliUsageError(
-        "taishi issue query requires a git repository cwd (book = git common-dir); run inside a repository (bare = whole book, or --ticket N)",
+        "analyst issue query requires a git repository cwd (book = git common-dir); run inside a repository (bare = whole book, or --ticket N)",
         { cause: error }
       );
     }
     throw error;
   }
 }
-async function buildTaishiIssueModeInputFromPublicArgv(parsed, _ledgerHome) {
+async function buildAnalystIssueModeInputFromPublicArgv(parsed, _ledgerHome) {
   const cwd = process.cwd();
-  const bookKey = resolveTaishiIssueBookKeyFromCwd(cwd);
+  const bookKey = resolveAnalystIssueBookKeyFromCwd(cwd);
   const projectRoot = physicalPathIdentity(cwd);
   const ticket = parsed.ticket;
   if (ticket === void 0) {
@@ -27619,18 +27619,18 @@ async function buildTaishiIssueModeInputFromPublicArgv(parsed, _ledgerHome) {
     issueNumber: ticket
   };
 }
-function parseTaishiSweepModeInputFromJsonValue(value) {
-  if (!value_exports.Check(taishiSweepModeInputSchema, value)) {
+function parseAnalystSweepModeInputFromJsonValue(value) {
+  if (!value_exports.Check(analystSweepModeInputSchema, value)) {
     throw new CliUsageError(
-      "taishi sweep attachment must match TaishiSweepModeInput"
+      "analyst sweep attachment must match AnalystSweepModeInput"
     );
   }
   return value;
 }
-async function buildTaishiSweepModeInputFromAttachmentPaths(attachmentPaths) {
+async function buildAnalystSweepModeInputFromAttachmentPaths(attachmentPaths) {
   if (attachmentPaths.length !== 1) {
     throw new CliUsageError(
-      "taishi sweep requires exactly one --attach typed JSON attachment"
+      "analyst sweep requires exactly one --attach typed JSON attachment"
     );
   }
   const sourcePath = attachmentPaths[0];
@@ -27640,13 +27640,13 @@ async function buildTaishiSweepModeInputFromAttachmentPaths(attachmentPaths) {
     bytes = await readFile16(absolute);
   } catch (error) {
     throw new CliUsageError(
-      `taishi sweep attachment is not a readable regular file: ${sourcePath}`,
+      `analyst sweep attachment is not a readable regular file: ${sourcePath}`,
       { cause: error }
     );
   }
   let text;
   try {
-    text = exactUtf8(bytes, "taishi sweep attachment");
+    text = exactUtf8(bytes, "analyst sweep attachment");
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new CliUsageError(detail, { cause: error });
@@ -27656,21 +27656,21 @@ async function buildTaishiSweepModeInputFromAttachmentPaths(attachmentPaths) {
     parsed = JSON.parse(text);
   } catch (error) {
     throw new CliUsageError(
-      "taishi sweep attachment is not valid JSON",
+      "analyst sweep attachment is not valid JSON",
       { cause: error }
     );
   }
-  return parseTaishiSweepModeInputFromJsonValue(parsed);
+  return parseAnalystSweepModeInputFromJsonValue(parsed);
 }
-async function runPublicTaishi(argv, _env, io, parseTaishiArgv2) {
+async function runPublicAnalyst(argv, _env, io, parseAnalystArgv2) {
   try {
-    const parsed = parseTaishiArgv2(argv);
+    const parsed = parseAnalystArgv2(argv);
     const ledgerHome = resolveActivationLedgerHome();
     if (parsed.query === "sweep") {
-      const input2 = await buildTaishiSweepModeInputFromAttachmentPaths(
+      const input2 = await buildAnalystSweepModeInputFromAttachmentPaths(
         parsed.attachmentPaths
       );
-      const result3 = await runTaishi(input2);
+      const result3 = await runAnalyst(input2);
       io.stdout(`${JSON.stringify(result3, null, 2)}
 `);
       return { exitCode: 0 };
@@ -27681,10 +27681,10 @@ async function runPublicTaishi(argv, _env, io, parseTaishiArgv2) {
         if (token.kind === "book-qualified") {
           return { bookKey: token.bookKey, issueNumber: token.issueNumber };
         }
-        defaultBookKey ??= resolveTaishiIssueBookKeyFromCwd();
+        defaultBookKey ??= resolveAnalystIssueBookKeyFromCwd();
         return { bookKey: defaultBookKey, issueNumber: token.issueNumber };
       };
-      const result3 = await runTaishi({
+      const result3 = await runAnalyst({
         mode: "cohort",
         groups: [
           {
@@ -27701,8 +27701,8 @@ async function runPublicTaishi(argv, _env, io, parseTaishiArgv2) {
 `);
       return { exitCode: 0 };
     }
-    const input = await buildTaishiIssueModeInputFromPublicArgv(parsed, ledgerHome);
-    const result2 = await readOrComputeTaishiIssuePage(input);
+    const input = await buildAnalystIssueModeInputFromPublicArgv(parsed, ledgerHome);
+    const result2 = await readOrComputeAnalystIssuePage(input);
     io.stdout(`${JSON.stringify(result2, null, 2)}
 `);
     return { exitCode: 0 };
@@ -27711,7 +27711,7 @@ async function runPublicTaishi(argv, _env, io, parseTaishiArgv2) {
       presentStructuralRejection(error, io);
       return { exitCode: 2 };
     }
-    if (error instanceof TaishiIssueComputeError) {
+    if (error instanceof AnalystIssueComputeError) {
       const code = errnoCode(error.cause);
       presentControlledFailure({
         cause: "output",
@@ -27729,14 +27729,14 @@ async function runPublicTaishi(argv, _env, io, parseTaishiArgv2) {
     throw error;
   }
 }
-var init_taishi_run = __esm({
-  "src/public-cli/taishi-run.ts"() {
+var init_analyst_run = __esm({
+  "src/public-cli/analyst-run.ts"() {
     "use strict";
     init_value2();
     init_activation_ledger_git();
     init_activation_ledger_topology();
     init_exact_utf8();
-    init_taishi_entry();
+    init_analyst_entry();
     init_cli_errors();
     init_settlement();
   }
@@ -27936,7 +27936,7 @@ function helpDocumentForCommand(command) {
     const owner = command;
     return {
       command: owner,
-      kind: owner === "taishi" ? "deterministic" : "role",
+      kind: owner === "analyst" ? "deterministic" : "role",
       options: projectOwnerOptions(owner)
     };
   }
@@ -28599,12 +28599,12 @@ async function runAkRole(argv, env) {
         ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
       };
     }
-    if (parsed.command === "taishi") {
-      const result2 = await runPublicTaishi(
+    if (parsed.command === "analyst") {
+      const result2 = await runPublicAnalyst(
         parsed.args,
         { home },
         io,
-        PUBLIC_ROLE_ARGV.taishi.parse
+        PUBLIC_ROLE_ARGV.analyst.parse
       );
       return { exitCode: result2.exitCode };
     }
@@ -28640,7 +28640,7 @@ var init_cli = __esm({
     init_judge_run();
     init_merger_run();
     init_reviewer_run();
-    init_taishi_run();
+    init_analyst_run();
     init_run_lifecycle();
     init_registry2();
     init_settlement();
@@ -28655,7 +28655,7 @@ var init_cli = __esm({
       merger: { parse: parseMergerArgv, options: optionsForOwner("merger") },
       reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
       /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
-      taishi: { parse: parseTaishiArgv, options: optionsForOwner("taishi") }
+      analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") }
     };
     PUBLIC_GLOBAL_OPTIONS = optionsForOwner("global");
     THINKING_LEVELS2 = /* @__PURE__ */ new Set([

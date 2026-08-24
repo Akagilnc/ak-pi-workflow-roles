@@ -1,3 +1,0 @@
-{"type":"session","version":3,"id":"s-b2","timestamp":"2026-08-01T00:01:00.000Z","cwd":"/taishi-fixture/issue-demo"}
-{"type":"message","id":"j1","parentId":null,"timestamp":"2026-08-01T00:01:05.000Z","message":{"role":"assistant","timestamp":"2026-08-01T00:01:05.000Z","content":[{"type":"toolCall","id":"call_judge_b","name":"ak_judge_output","arguments":{}}]}}
-{"type":"message","id":"j2","parentId":"j1","timestamp":"2026-08-01T00:01:08.000Z","message":{"role":"toolResult","toolCallId":"call_judge_b","toolName":"ak_judge_output","timestamp":"2026-08-01T00:01:08.000Z","isError":false,"content":[{"type":"text","text":"ok"}],"details":{"status":"converged"}}}

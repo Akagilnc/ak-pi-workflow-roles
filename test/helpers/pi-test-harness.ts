@@ -751,7 +751,7 @@ export async function withHermeticHome<T>(
   return await withProcessGlobalLock(async () => {
     // Prefer /tmp over os.tmpdir(): Linux CI tmpdir is /tmp already; macOS
     // os.tmpdir() is deeper under /var/folders and can hide shallow-path
-    // footguns (host-pi-runtime / taishi bundle layout). Same pin as those tests.
+    // footguns (host-pi-runtime / analyst bundle layout). Same pin as those tests.
     const home = await mkdtemp(
       resolve("/tmp", options.prefix ?? "ak-pi-test-"),
     );
