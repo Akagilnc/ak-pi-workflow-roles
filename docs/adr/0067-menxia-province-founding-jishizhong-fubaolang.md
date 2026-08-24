@@ -1,6 +1,6 @@
 # 0067 — 门下省开府：质量保证省与给事中、符宝郎
 
-Status: proposed（陛下 2026-08-11 grill 收口「暂定这样吧」并令「先落设计。再 /to-spec」；待设计评审闭环转 accepted。decision keys 与绑定原话见下）
+Status: accepted（陛下 2026-08-11 grill 收口「暂定这样吧」并令「先落设计。再 /to-spec」；后续 /to-spec（#430）与 ADR 0072 均已收口 accepted，2026-08-24 陛下确认设计早已定、状态系漏转，补转 accepted。decision keys 与绑定原话见下）
 
 **门下省**定为质量保证省：与干活的尚书省角色（将作监/修内司）对举，下辖收证（Collector）、合规审计（Soul 审刑院）与两名新官——**给事中**（对将作监/修内司产出行复杂度与测试质量两轴质检）、**符宝郎**（独立文书核验：引语真伪与票面对齐，进单口与交卷口双位）。本 ADR 只立**角色与能力**，不立编排：挂哪站、是否默认挂、未来独立流程，均归调用方与后续决策（[ADR 0010](0010-callers-own-role-composition-and-repetition.md)）。
 
