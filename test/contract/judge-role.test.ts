@@ -292,7 +292,12 @@ function workerCompletionGatekeeperHarness(options: {
       await reject("transport", (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
       await reject("incomplete", (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
-        assert.deepEqual(error.result, { status: "incomplete", stage: "gatekeeper", reason: incompleteReason });
+        assert.equal(error.result.status, "incomplete");
+        if (error.result.status === "incomplete") {
+          assert.equal(error.result.stage, "gatekeeper");
+          assert.equal(error.result.reason, incompleteReason);
+          assert.deepEqual(error.result.submission, { status: "incomplete", reason: incompleteReason });
+        }
       });
       await reject("no-receipt", (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
@@ -306,7 +311,12 @@ function workerCompletionGatekeeperHarness(options: {
       await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
       await reject(`${officer}-incomplete`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
-        assert.deepEqual(error.result, { status: "incomplete", stage: officer, reason: officerIncompleteReason });
+        assert.equal(error.result.status, "incomplete");
+        if (error.result.status === "incomplete") {
+          assert.equal(error.result.stage, officer);
+          assert.equal(error.result.reason, officerIncompleteReason);
+          assert.deepEqual(error.result.submission, { status: "incomplete", reason: officerIncompleteReason });
+        }
       });
       await reject(`${officer}-no-receipt`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
@@ -319,12 +329,16 @@ function workerCompletionGatekeeperHarness(options: {
       });
       await reject("bounce", (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
-        assert.deepEqual(error.result, {
-          status: "bounce",
-          officer,
-          disposition: "rewrite",
-          findings: ["add a focused regression"],
-        });
+        assert.equal(error.result.status, "bounce");
+        if (error.result.status === "bounce") {
+          assert.equal(error.result.officer, officer);
+          assert.equal(error.result.disposition, "rewrite");
+          assert.deepEqual(error.result.findings, ["add a focused regression"]);
+          assert.deepEqual(error.result.submission, {
+            status: "bounce",
+            findings: ["add a focused regression"],
+          });
+        }
       });
     },
     get providerRequests() { return providerRequests; },
@@ -1129,17 +1143,19 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
     await harness.handlers.get("session_start")?.({}, ctx);
     const findings = ["add a focused regression"];
     const toolCallId = "judge-gk-bounce";
+    const bounceSubmission = { status: "bounce", findings };
     const expected = {
       status: "bounce" as const,
       officer: "inspector" as const,
       disposition: "rewrite" as const,
       findings,
+      submission: bounceSubmission,
     };
     const faux = fauxProvider({ provider: "gk-tool-result", api: "gk-tool-result" });
     const model = faux.getModel();
     const responses = [
       fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })),
-      fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "bounce", findings })),
+      fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, bounceSubmission)),
     ];
     const provider = {
       ...faux.provider,

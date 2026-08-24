@@ -11,15 +11,19 @@ export const INSPECTOR_OUTPUT_TOOL = "ak_inspector_output";
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 const SUBJECT_TOOL = "ak_gatekeeper_subject";
 
-const MALFORMED_ACCEPTED_SUBMISSION = "malformed accepted submission";
-
 export type GatekeeperSubject =
   | { readonly kind: "worker_completion"; readonly material: string }
   | { readonly kind: "judge_draft"; readonly material: string };
 
 export type GatekeeperResult =
   | { readonly status: "pass"; readonly officer: "inspector" | "notary"; readonly findings: readonly string[] }
-  | { readonly status: "bounce"; readonly officer: "inspector" | "notary"; readonly disposition: "rewrite"; readonly findings: readonly string[] }
+  | {
+      readonly status: "bounce";
+      readonly officer: "inspector" | "notary";
+      readonly disposition: "rewrite";
+      readonly findings: readonly string[];
+      readonly submission: unknown;
+    }
   | {
       readonly status: "incomplete";
       readonly stage: "gatekeeper" | "inspector" | "notary";
@@ -133,16 +137,22 @@ function asStringArray(value: unknown): readonly string[] {
 /** Serializable stand-in when the child tool call had no arguments object. */
 export const MISSING_ARGUMENTS_SUBMISSION = Object.freeze({ missing: "arguments" as const });
 
-function malformedIncomplete(
+/** Keep original decision bytes for the next reader; undefined becomes a serializable missing-args fact. */
+function retainedSubmission(decision: unknown): unknown {
+  // undefined must not be stored: JSON drops it and the missing-args fact vanishes.
+  return decision === undefined ? MISSING_ARGUMENTS_SUBMISSION : decision;
+}
+
+/** Neutral bookkeeping when no explicit release path is present — no format judgment. */
+function noExplicitReleaseIncomplete(
   stage: "gatekeeper" | "inspector" | "notary",
-  submission: unknown,
+  decision: unknown,
 ): Extract<GatekeeperResult, { status: "incomplete" }> {
   return {
     status: "incomplete",
     stage,
-    reason: MALFORMED_ACCEPTED_SUBMISSION,
-    // undefined must not be stored: JSON drops it and the missing-args fact vanishes.
-    submission: submission === undefined ? MISSING_ARGUMENTS_SUBMISSION : submission,
+    reason: stage === "gatekeeper" ? "decision 无显式 dispatch" : "decision 无显式 pass",
+    submission: retainedSubmission(decision),
   };
 }
 
@@ -153,18 +163,19 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
 
 function projectProvinceDecision(decision: unknown): GatekeeperResult | { status: "dispatch"; officer: "inspector" | "notary" } {
   const record = readRecord(decision);
-  if (record === undefined) return malformedIncomplete("gatekeeper", decision);
+  if (record === undefined) return noExplicitReleaseIncomplete("gatekeeper", decision);
   if (record.status === "incomplete") {
     const reason = record.reason;
     if (typeof reason === "string" && reason.trim() !== "") {
-      return { status: "incomplete", stage: "gatekeeper", reason };
+      // Role's own incomplete reason is kept as-is; machine does not rewrite it.
+      return { status: "incomplete", stage: "gatekeeper", reason, submission: retainedSubmission(decision) };
     }
-    return malformedIncomplete("gatekeeper", decision);
+    return noExplicitReleaseIncomplete("gatekeeper", decision);
   }
   if (record.status === "dispatch" && (record.officer === "inspector" || record.officer === "notary")) {
     return { status: "dispatch", officer: record.officer };
   }
-  return malformedIncomplete("gatekeeper", decision);
+  return noExplicitReleaseIncomplete("gatekeeper", decision);
 }
 
 function projectOfficerDecision(
@@ -172,13 +183,14 @@ function projectOfficerDecision(
   decision: unknown,
 ): GatekeeperResult {
   const record = readRecord(decision);
-  if (record === undefined) return malformedIncomplete(officer, decision);
+  if (record === undefined) return noExplicitReleaseIncomplete(officer, decision);
   if (record.status === "incomplete") {
     const reason = record.reason;
     if (typeof reason === "string" && reason.trim() !== "") {
-      return { status: "incomplete", stage: officer, reason };
+      // Role's own incomplete reason is kept as-is; machine does not rewrite it.
+      return { status: "incomplete", stage: officer, reason, submission: retainedSubmission(decision) };
     }
-    return malformedIncomplete(officer, decision);
+    return noExplicitReleaseIncomplete(officer, decision);
   }
   if (record.status === "bounce") {
     return {
@@ -186,6 +198,7 @@ function projectOfficerDecision(
       officer,
       disposition: "rewrite",
       findings: asStringArray(record.findings),
+      submission: retainedSubmission(decision),
     };
   }
   if (record.status === "pass") {
@@ -195,7 +208,7 @@ function projectOfficerDecision(
       findings: asStringArray(record.findings),
     };
   }
-  return malformedIncomplete(officer, decision);
+  return noExplicitReleaseIncomplete(officer, decision);
 }
 
 export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {

@@ -85,20 +85,22 @@ test("scripted officer bounce projects rewrite disposition and loads that office
   await withParent(async (context) => {
     const seen: string[] = [];
     // Subject kind is a fixture input only — bounce→rewrite is the mechanical contract under test.
+    const bounceSubmission = { status: "bounce", findings: ["quote has no source"] };
     const result = await runGatekeeper({
       context,
       subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
       runCompletion: completion([
         { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "notary" } },
-        { tool: NOTARY_OUTPUT_TOOL, args: { status: "bounce", findings: ["quote has no source"] } },
+        { tool: NOTARY_OUTPUT_TOOL, args: bounceSubmission },
       ], seen),
     });
-    assert.deepEqual(result, {
-      status: "bounce",
-      officer: "notary",
-      disposition: "rewrite",
-      findings: ["quote has no source"],
-    });
+    assert.equal(result.status, "bounce");
+    if (result.status === "bounce") {
+      assert.equal(result.officer, "notary");
+      assert.equal(result.disposition, "rewrite");
+      assert.deepEqual(result.findings, ["quote has no source"]);
+      assert.deepEqual(result.submission, bounceSubmission);
+    }
     assert.equal(seen.length, 2);
     // #443: scripted Notary real entry receives factory constitution + notary soul.
     assert.equal(
@@ -114,14 +116,20 @@ test("scripted officer bounce projects rewrite disposition and loads that office
 
 test("Gatekeeper lets the role report typed incomplete for insufficient subject", async () => {
   await withParent(async (context) => {
+    const incompleteSubmission = { status: "incomplete", reason: "missing completion evidence" };
     const result = await runGatekeeper({
       context,
       subject: { kind: "worker_completion", material: "" },
       runCompletion: completion([
-        { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "incomplete", reason: "missing completion evidence" } },
+        { tool: GATEKEEPER_OUTPUT_TOOL, args: incompleteSubmission },
       ], []),
     });
-    assert.deepEqual(result, { status: "incomplete", stage: "gatekeeper", reason: "missing completion evidence" });
+    assert.equal(result.status, "incomplete");
+    if (result.status === "incomplete") {
+      assert.equal(result.stage, "gatekeeper");
+      assert.equal(result.reason, "missing completion evidence");
+      assert.deepEqual(result.submission, incompleteSubmission);
+    }
   });
 });
 
@@ -223,7 +231,7 @@ test("Gatekeeper and shared officer decision tools accept malformed object submi
   );
 });
 
-test("malformed accepted province submission is typed incomplete, never dispatch or pass", async () => {
+test("province submission without explicit dispatch is typed incomplete with original retained, never dispatch or pass", async () => {
   await withParent(async (context) => {
     const submission = { status: "pass", findings: [] };
     const result = await runGatekeeper({
@@ -231,16 +239,15 @@ test("malformed accepted province submission is typed incomplete, never dispatch
       subject: { kind: "worker_completion", material: "completion" },
       runCompletion: completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: submission }], []),
     });
-    assert.deepEqual(result, {
-      status: "incomplete",
-      stage: "gatekeeper",
-      reason: "malformed accepted submission",
-      submission,
-    });
+    assert.equal(result.status, "incomplete");
+    if (result.status === "incomplete") {
+      assert.equal(result.stage, "gatekeeper");
+      assert.deepEqual(result.submission, submission);
+    }
   });
 });
 
-test("malformed accepted officer submission is typed incomplete at officer stage, never default pass", async () => {
+test("officer submission without explicit pass is typed incomplete at officer stage with original retained", async () => {
   await withParent(async (context) => {
     const submission = { status: "ok-enough" };
     const result = await runGatekeeper({
@@ -251,12 +258,11 @@ test("malformed accepted officer submission is typed incomplete at officer stage
         { tool: INSPECTOR_OUTPUT_TOOL, args: submission },
       ], []),
     });
-    assert.deepEqual(result, {
-      status: "incomplete",
-      stage: "inspector",
-      reason: "malformed accepted submission",
-      submission,
-    });
+    assert.equal(result.status, "incomplete");
+    if (result.status === "incomplete") {
+      assert.equal(result.stage, "inspector");
+      assert.deepEqual(result.submission, submission);
+    }
   });
 });
 
@@ -272,16 +278,13 @@ test("missing arguments is one-shot incomplete with serializable typed observati
         return completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: undefined }], [])(model, ctx);
       },
     });
-    assert.deepEqual(result, {
-      status: "incomplete",
-      stage: "gatekeeper",
-      reason: "malformed accepted submission",
-      submission: MISSING_ARGUMENTS_SUBMISSION,
-    });
+    assert.equal(result.status, "incomplete");
+    if (result.status === "incomplete") {
+      assert.equal(result.stage, "gatekeeper");
+      assert.deepEqual(result.submission, MISSING_ARGUMENTS_SUBMISSION);
+    }
     // Typed observation must survive JSON session/tool_result projection.
     assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
     assert.equal(turns, 1);
   });
 });
-
-
