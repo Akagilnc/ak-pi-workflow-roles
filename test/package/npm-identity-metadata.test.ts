@@ -254,6 +254,11 @@ test("packed artifact ships the release inventory: souls, methods, runtime entry
   for (const soul of RELEASE_SOUL_INVENTORY) {
     assert.ok(extracted.paths.includes(soul), `pack must include ${soul}`);
   }
+  // #443: factory constitution ships on the files surface for every role session.
+  assert.ok(
+    extracted.paths.includes("CLAUDE.md"),
+    "npm pack file list must include CLAUDE.md",
+  );
 
   // Method trees (deep provenance above; presence here completes the inventory).
   for (const method of [
