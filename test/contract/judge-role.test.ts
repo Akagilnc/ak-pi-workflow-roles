@@ -279,6 +279,8 @@ function workerCompletionGatekeeperHarness(options: {
       await reject("incomplete", (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
         assert.deepEqual(error.result, { status: "incomplete", stage: "gatekeeper", reason: incompleteReason });
+        // Message is the model-visible throw surface (createErrorToolResult).
+        assert.equal(error.message, `Gatekeeper incomplete at gatekeeper: ${incompleteReason}`);
       });
       await reject("no-receipt", (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
@@ -287,12 +289,17 @@ function workerCompletionGatekeeperHarness(options: {
           assert.equal(error.result.stage, "gatekeeper");
           assert.equal(error.result.facts.acceptedReceipt, false);
           assert.equal(error.result.facts.sessionCompletion, "settled-without-accepted-receipt");
+          assert.equal(
+            error.message,
+            `Gatekeeper no_receipt at gatekeeper: ${error.result.reason}`,
+          );
         }
       });
       await reject(`${officer}-transport`, (error) => assert.equal(error.message, `Gatekeeper transport failure at ${officer}: Error: officer provider disconnected`));
       await reject(`${officer}-incomplete`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
         assert.deepEqual(error.result, { status: "incomplete", stage: officer, reason: officerIncompleteReason });
+        assert.equal(error.message, `Gatekeeper incomplete at ${officer}: ${officerIncompleteReason}`);
       });
       await reject(`${officer}-no-receipt`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
@@ -301,6 +308,10 @@ function workerCompletionGatekeeperHarness(options: {
           assert.equal(error.result.stage, officer);
           assert.equal(error.result.facts.acceptedReceipt, false);
           assert.equal(error.result.facts.sessionCompletion, "settled-without-accepted-receipt");
+          assert.equal(
+            error.message,
+            `Gatekeeper no_receipt at ${officer}: ${error.result.reason}`,
+          );
         }
       });
       await reject("bounce", (error) => {
@@ -311,6 +322,8 @@ function workerCompletionGatekeeperHarness(options: {
           disposition: "rewrite",
           findings: ["add a focused regression"],
         });
+        // Rewrite basis must reach the model via message text.
+        assert.equal(error.message, "Gatekeeper requires rewrite: add a focused regression");
       });
     },
     get providerRequests() { return providerRequests; },
